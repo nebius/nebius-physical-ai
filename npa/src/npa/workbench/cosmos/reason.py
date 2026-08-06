@@ -114,18 +114,40 @@ def vlm_k8s_component(component: str) -> bool:
 
 
 def task_description_from_manifest(manifest: dict[str, Any]) -> str:
+    description = ""
     for key in ("task_description", "task", "instruction", "prompt"):
         value = str(manifest.get(key) or "").strip()
         if value:
-            return value
-    return (
-        "Evaluate whether the robot rollout completes the manipulation task. "
-        "Use the camera frames and the listed actions to judge physical success, "
-        "stability, target alignment, and contact mistakes."
+            description = value
+            break
+    if not description:
+        description = (
+            "Evaluate whether the robot rollout completes the manipulation task. "
+            "Use the camera frames and the listed actions to judge physical success, "
+            "stability, target alignment, and contact mistakes."
+        )
+    augmentation = dict(manifest.get("scenario_source_augmentation") or {})
+    if not any(
+        (
+            manifest.get("scenario_difficulty"),
+            manifest.get("scenario_config_digest"),
+            augmentation.get("lineage_id"),
+        )
+    ):
+        return description
+    context = (
+        f" Scenario difficulty={manifest.get('scenario_difficulty', '')}; "
+        f"applied_config_digest={manifest.get('scenario_config_digest', '')}; "
+        f"Cosmos-Transfer lineage={augmentation.get('lineage_id', '')}. "
+        "The visible frames are authoritative; lineage identifies the domain-"
+        "randomization source and does not imply that Transfer pixels trained the state policy."
     )
+    return description + context
 
 
-def resolve_cosmos_reason_model_id(model: str, *, default: str = DEFAULT_REASON2_MODEL) -> str:
+def resolve_cosmos_reason_model_id(
+    model: str, *, default: str = DEFAULT_REASON2_MODEL
+) -> str:
     candidate = str(model or "").strip()
     if candidate in REFERENCE_VLM_ALIASES:
         env_default = (
@@ -152,17 +174,35 @@ def merge_dual_reason_evaluations(
     success = bool(reason2_eval.get("success")) and bool(reason3_eval.get("success"))
     if not success and score >= threshold:
         success = score >= threshold
-    steps2 = {int(item.get("step", index)): item for index, item in enumerate(reason2_eval.get("per_step") or [])}
-    steps3 = {int(item.get("step", index)): item for index, item in enumerate(reason3_eval.get("per_step") or [])}
+    steps2 = {
+        int(item.get("step", index)): item
+        for index, item in enumerate(reason2_eval.get("per_step") or [])
+    }
+    steps3 = {
+        int(item.get("step", index)): item
+        for index, item in enumerate(reason3_eval.get("per_step") or [])
+    }
     merged_steps: list[dict[str, Any]] = []
     for step in sorted(set(steps2) | set(steps3)):
         left = steps2.get(step, {})
         right = steps3.get(step, {})
-        tags = list(
-            dict.fromkeys(
-                list(left.get("error_tags") or []) + list(right.get("error_tags") or [])
-            )
+        left_tags = _normalize_error_tags(left.get("error_tags") or [])
+        right_tags = _normalize_error_tags(right.get("error_tags") or [])
+        tags = list(dict.fromkeys(left_tags + right_tags))
+        disagreement = bool(left and right and set(left_tags) != set(right_tags))
+        source_values = {
+            str(item.get("critique_source") or "model_per_step")
+            for item in (left, right)
+            if item
+        }
+        confidence = min(
+            float(left.get("confidence", 0.65)) if left else 0.25,
+            float(right.get("confidence", 0.65)) if right else 0.25,
         )
+        if disagreement:
+            confidence *= 0.5
+        if "summary_broadcast" in source_values:
+            confidence = min(confidence, 0.10)
         critique_parts = [
             part.strip()
             for part in (
@@ -184,6 +224,15 @@ def merge_dual_reason_evaluations(
                 ),
                 "reason2_critique": left.get("critique_text", ""),
                 "reason3_critique": right.get("critique_text", ""),
+                "reason2_tags": left_tags,
+                "reason3_tags": right_tags,
+                "model_disagreement": disagreement,
+                "confidence": round(max(0.0, min(1.0, confidence)), 6),
+                "critique_source": (
+                    "summary_broadcast"
+                    if "summary_broadcast" in source_values
+                    else "dual_model_per_step"
+                ),
             }
         )
     summary_parts = [
@@ -192,7 +241,9 @@ def merge_dual_reason_evaluations(
     ]
     return {
         "schema": VLM_EVAL_SCHEMA,
-        "rollout_id": str(reason2_eval.get("rollout_id") or reason3_eval.get("rollout_id") or ""),
+        "rollout_id": str(
+            reason2_eval.get("rollout_id") or reason3_eval.get("rollout_id") or ""
+        ),
         "success": success,
         "score": score,
         "per_step": merged_steps,
@@ -362,7 +413,7 @@ def _cosmos_reason_prompt(
     actions: list[dict[str, Any]],
     frame_names: list[str],
 ) -> str:
-    action_excerpt = json.dumps(actions[:16], sort_keys=True)
+    action_excerpt = json.dumps(actions[:64], sort_keys=True)
     label = {
         "reason1": "Cosmos-Reason1",
         "reason2": "Cosmos-Reason2",
@@ -412,6 +463,7 @@ def _parse_cosmos_reason_output(
                 "critique_text": critique,
                 "error_tags": tags,
                 "critique_source": "summary_broadcast",
+                "confidence": 0.10,
                 "camera_observation": f"camera-{int(action.get('step', index)):03d}.ppm",
             }
             for index, action in enumerate(actions)
@@ -439,9 +491,26 @@ def _parse_cosmos_reason_output(
                 "step": step,
                 "critique_text": critique,
                 "error_tags": normalized_tags,
-                "action": actions[index].get("action", []) if index < len(actions) else [],
+                "action": actions[index].get("action", [])
+                if index < len(actions)
+                else [],
                 "camera_observation": str(
                     raw.get("camera_observation") or f"camera-{step:03d}.ppm"
+                ),
+                "critique_source": str(raw.get("critique_source") or "model_per_step"),
+                "confidence": max(
+                    0.0,
+                    min(
+                        1.0,
+                        float(
+                            raw.get(
+                                "confidence",
+                                0.10
+                                if raw.get("critique_source") == "summary_broadcast"
+                                else 0.65,
+                            )
+                        ),
+                    ),
                 ),
             }
         )

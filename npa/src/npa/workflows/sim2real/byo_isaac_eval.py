@@ -23,6 +23,7 @@ report for unit tests / wiring checks.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -44,6 +45,7 @@ _RENDERS_LOCAL_DIR = ""
 _RENDER_MANIFEST: dict[str, Any] = {}
 _LAST_GPU_PROVENANCE: dict[str, Any] = {}
 _CHECKPOINT_PROVENANCE: dict[str, Any] = {}
+_APPLIED_SCENARIO_AUDIT: dict[str, Any] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -56,6 +58,13 @@ def extract_checkpoint_uri(inner_evidence: dict[str, Any]) -> str:
     no real checkpoint is present (e.g. reference trainer).
     """
 
+    selected = str(
+        inner_evidence.get("selected_checkpoint_uri")
+        or inner_evidence.get("final_checkpoint_uri")
+        or ""
+    ).strip()
+    if selected.startswith("s3://"):
+        return selected
     iterations = inner_evidence.get("iterations") or []
     for record in reversed(iterations):
         update = (record or {}).get("update") or {}
@@ -89,8 +98,55 @@ def build_heldout_report(
             success_summary[f"success@{thr:.2f}"] = round(
                 sum(1 for d in dists if d < thr) / len(dists), 4
             )
-        success_summary["mean_object_goal_distance_m"] = round(sum(dists) / len(dists), 6)
+        success_summary["mean_object_goal_distance_m"] = round(
+            sum(dists) / len(dists), 6
+        )
         success_summary["min_object_goal_distance_m"] = round(min(dists), 6)
+        closest: list[float] = []
+        for row in per_env:
+            value = (row.get("details") or {}).get("closest_object_goal_distance_m")
+            if value is not None:
+                closest.append(float(value))
+        if closest:
+            success_summary["mean_closest_object_goal_distance_m"] = round(
+                sum(closest) / len(closest), 6
+            )
+            success_summary["min_closest_object_goal_distance_m"] = round(
+                min(closest), 6
+            )
+
+    n = len(per_env)
+    strict_count = sum(bool(row.get("success")) for row in per_env)
+
+    def _wilson(k: int, total: int) -> list[float]:
+        if total <= 0:
+            return [0.0, 0.0]
+        z = 1.959963984540054
+        p = k / total
+        denom = 1.0 + z * z / total
+        center = (p + z * z / (2 * total)) / denom
+        half = z * ((p * (1 - p) / total + z * z / (4 * total * total)) ** 0.5) / denom
+        return [round(max(0.0, center - half), 6), round(min(1.0, center + half), 6)]
+
+    decomposed = {}
+    for key in ("reach", "contact", "stable_grasp", "lift", "place"):
+        count = sum(bool((row.get("details") or {}).get(key)) for row in per_env)
+        decomposed[key] = {
+            "count": count,
+            "rate": round(count / n, 6) if n else 0.0,
+            "wilson_95": _wilson(count, n),
+        }
+    strata: dict[str, dict[str, Any]] = {}
+    for row in per_env:
+        difficulty = str((row.get("details") or {}).get("difficulty") or "unknown")
+        entry = strata.setdefault(difficulty, {"count": 0, "strict_success_count": 0})
+        entry["count"] += 1
+        entry["strict_success_count"] += int(bool(row.get("success")))
+    for entry in strata.values():
+        entry["strict_success_rate"] = round(
+            entry["strict_success_count"] / entry["count"], 6
+        )
+        entry["wilson_95"] = _wilson(entry["strict_success_count"], entry["count"])
 
     return {
         "schema": "npa.sim2real.heldout_eval.v1",
@@ -100,12 +156,21 @@ def build_heldout_report(
         "policy_checkpoint": checkpoint_uri,
         "deployable_policy_eval": bool(checkpoint_uri),
         "success_summary": success_summary,
+        "strict_success": {
+            "distance_m": DEFAULT_SUCCESS_DIST_M,
+            "count": strict_count,
+            "episodes": n,
+            "rate": round(strict_count / n, 6) if n else 0.0,
+            "wilson_95": _wilson(strict_count, n),
+        },
+        "decomposed_metrics": decomposed,
+        "per_difficulty": strata,
         "per_env": per_env,
     }
 
 
 def read_generated_envs(envs_dir: str, *, limit: int = 0) -> list[dict[str, Any]]:
-    """Read the GENERATED held-out env specs (env_id + seed) from envs.jsonl.
+    """Read complete generated environment records without relabelling them.
 
     The envgen stage emits one record per generated env with a per-env ``seed``
     and scene composition. We use those seeds to drive the Isaac eval so the
@@ -125,16 +190,48 @@ def read_generated_envs(envs_dir: str, *, limit: int = 0) -> list[dict[str, Any]
             rec = json.loads(line)
         except Exception:
             continue
-        envs.append(
-            {
-                "env_id": str(rec.get("env_id") or f"env-{len(envs):05d}"),
-                "seed": int(rec.get("seed") or 0),
-                "scene": rec.get("scene") or {},
-            }
-        )
+        envs.append(rec)
         if limit and len(envs) >= limit:
             break
     return envs
+
+
+def select_stratified_eval_envs(
+    rows: list[dict[str, Any]], *, count: int, split: str
+) -> list[dict[str, Any]]:
+    """Choose a deterministic balanced fixed validation/gold scenario set."""
+
+    if count <= 0 or len(rows) < count:
+        raise ValueError(f"{split} evaluation needs {count} rows; found {len(rows)}")
+    buckets: dict[str, list[dict[str, Any]]] = {
+        name: [] for name in ("easy", "medium", "hard")
+    }
+    for row in rows:
+        difficulty = str(row.get("difficulty") or "")
+        if difficulty not in buckets:
+            raise ValueError(f"unsupported {split} difficulty: {difficulty!r}")
+        buckets[difficulty].append(row)
+    for difficulty, bucket in buckets.items():
+        if not bucket:
+            raise ValueError(f"{split} split contains no {difficulty} scenarios")
+        bucket.sort(
+            key=lambda row: hashlib.sha256(
+                f"{split}:{row.get('scenario_config_digest')}".encode()
+            ).hexdigest()
+        )
+    selected: list[dict[str, Any]] = []
+    while len(selected) < count:
+        for difficulty in ("easy", "medium", "hard"):
+            if buckets[difficulty] and len(selected) < count:
+                selected.append(buckets[difficulty].pop(0))
+        if not any(buckets.values()) and len(selected) < count:
+            break
+    if len(selected) != count:
+        raise ValueError(f"could not select {count} balanced {split} scenarios")
+    digests = [str(row.get("scenario_config_digest") or "") for row in selected]
+    if not all(digests) or len(set(digests)) != len(digests):
+        raise ValueError(f"{split} evaluation rows need unique config digests")
+    return selected
 
 
 def per_env_from_distances(
@@ -143,6 +240,8 @@ def per_env_from_distances(
     success_dist_m: float,
     env_ids: list[str] | None = None,
     seeds: list[int] | None = None,
+    generated_envs: list[dict[str, Any]] | None = None,
+    runtime_metrics: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert per-env final object-to-goal distances into scored per-env rows.
 
@@ -155,14 +254,43 @@ def per_env_from_distances(
     for index, dist in enumerate(distances):
         d = max(0.0, float(dist))
         score = max(0.0, min(1.0, 1.0 - d / (2.0 * success_dist_m)))
-        env_id = env_ids[index] if env_ids and index < len(env_ids) else f"heldout-{index:04d}"
+        env_id = (
+            env_ids[index]
+            if env_ids and index < len(env_ids)
+            else f"heldout-{index:04d}"
+        )
         details: dict[str, Any] = {"object_goal_distance_m": round(d, 6)}
         if seeds and index < len(seeds):
             details["generated_env_seed"] = int(seeds[index])
+        if generated_envs and index < len(generated_envs):
+            generated = generated_envs[index]
+            details.update(
+                {
+                    "generated_env_seed": int(generated.get("seed") or 0),
+                    "difficulty": generated.get("difficulty"),
+                    "scenario_config_digest": generated.get("scenario_config_digest"),
+                    "applied_config_provenance": "isaac_runtime_reset_event",
+                }
+            )
+        if runtime_metrics and index < len(runtime_metrics):
+            details.update(runtime_metrics[index])
+        metrics = (
+            runtime_metrics[index]
+            if runtime_metrics and index < len(runtime_metrics)
+            else {}
+        )
+        stable_place = bool(
+            metrics.get("placement_stable", metrics.get("place", False))
+        )
+        # A final 5 cm distance without a stable placement is not task success.
+        # Runtime-free callers (unit/dry-run fixtures) retain distance-only behavior.
+        strict_success = d < success_dist_m and (
+            stable_place if runtime_metrics is not None else True
+        )
         rows.append(
             {
                 "env_id": env_id,
-                "success": bool(d < success_dist_m),
+                "success": strict_success,
                 "score": round(score, 6),
                 "details": details,
             }
@@ -174,7 +302,7 @@ def per_env_from_distances(
 # standard Isaac Lab + rsl_rl play API, derives per-env final object-to-goal
 # distance, and writes per_env_distances.json. Verbose so the first run reveals
 # the exact API if anything mismatches.
-ISAAC_EVAL_SCRIPT = r'''
+ISAAC_EVAL_SCRIPT = r"""
 import hashlib, json, os, sys, traceback
 import numpy as np
 N = int(os.environ.get("EVAL_NUM_ENVS", "4"))
@@ -198,9 +326,11 @@ def checkpoint_provenance():
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return {"uri": CKPT_URI, "sha256": h.hexdigest(), "size_bytes": os.path.getsize(CKPT)}
-def dump(distances, note, episodes=None):
+def dump(distances, note, episodes=None, metrics=None, applied=None):
     json.dump({"object_goal_distances": list(distances), "note": note,
                "render_episodes": episodes or [],
+               "per_env_metrics": metrics or [],
+               "applied_scenarios": applied or {},
                "camera_views": [view["name"] for view in CAMERA_VIEWS],
                "camera_metadata": CAMERA_VIEWS,
                "capture": {"width": CAPTURE_WIDTH, "height": CAPTURE_HEIGHT,
@@ -226,10 +356,13 @@ try:
                 TASK = _byo_task
                 print("EVAL_BYO_ROBOT_TASK", TASK, flush=True)
             else:
-                print("EVAL_BYO_ROBOT_TASK none (stock fallback)", flush=True)
+                raise RuntimeError(
+                    "task/scenario contract did not register an evaluation task"
+                )
         except Exception as _e:
             print("EVAL_BYO_ROBOT_REGISTER_FAILED", repr(_e), flush=True)
             traceback.print_exc()
+            raise
     from isaaclab_tasks.utils import parse_env_cfg
     import isaaclab.sim as sim_utils
     from isaaclab.sensors import TiledCameraCfg
@@ -247,7 +380,7 @@ try:
             env_cfg.scene.object.spawn.usd_path = OBJECT_USD
             print("EVAL_OBJECT_USD_APPLIED", OBJECT_USD, flush=True)
         except Exception as e:
-            print("could not set object usd:", repr(e), flush=True)
+            raise RuntimeError("could not apply task-contract object USD: %r" % (e,)) from e
     # Drive randomization from the GENERATED env seed so the trained policy is
     # tested on the envgen-produced env distribution, not stock defaults.
     if SEED:
@@ -289,6 +422,10 @@ try:
         )
     print("EVAL_CAMERA_VIEWS", [view["name"] for view in CAMERA_VIEWS], flush=True)
     env = gym.make(TASK, cfg=env_cfg)
+    if OBJECT_USD:
+        got_object_usd = getattr(env.unwrapped.scene["object"].cfg.spawn, "usd_path", None)
+        if got_object_usd != OBJECT_USD:
+            raise RuntimeError("evaluation object USD mismatch; refusing stock fallback")
     env = RslRlVecEnvWrapper(env)
     # Load the COMPLETE rsl_rl agent cfg from the task registry (has save_interval,
     # network dims, etc.) — a hand-built cfg is missing keys OnPolicyRunner needs.
@@ -477,6 +614,17 @@ try:
                 print("capture_err", view_name, repr(e), flush=True)
         capture_pointcloud()
     min_dist = np.full(N, 1e9)
+    final_dist = np.full(N, 1e9)
+    reach = np.zeros(N, dtype=bool)
+    contact = np.zeros(N, dtype=bool)
+    grasp = np.zeros(N, dtype=bool)
+    lift = np.zeros(N, dtype=bool)
+    place = np.zeros(N, dtype=bool)
+    final_place = np.zeros(N, dtype=bool)
+    stable_grasp_steps = np.zeros(N, dtype=np.int64)
+    stable_place_steps = np.zeros(N, dtype=np.int64)
+    termination = np.array(["max_steps"] * N, dtype=object)
+    initial_obj_z = None
     for _step in range(STEPS):
         with torch.inference_mode():
             actions = policy(_batched_obs(obs))
@@ -503,8 +651,44 @@ try:
                 cmd = uenv.command_manager.get_command("object_pose")
                 obj = uenv.scene["object"].data.root_pos_w[:, :3]
                 goal = cmd[:, :3] + uenv.scene.env_origins[:, :3]
-                per = torch.linalg.norm(obj - goal, dim=1).detach().cpu().numpy()
-                min_dist = np.minimum(min_dist, per);
+                per_t = torch.linalg.norm(obj - goal, dim=1)
+                per = per_t.detach().cpu().numpy()
+                final_dist = per
+                min_dist = np.minimum(min_dist, per)
+                ee = uenv.scene["ee_frame"].data.target_pos_w[..., 0, :]
+                ee_dist = torch.linalg.norm(obj - ee, dim=1).detach().cpu().numpy()
+                reach |= ee_dist < 0.05
+                if initial_obj_z is None:
+                    initial_obj_z = obj[:, 2].detach().cpu().numpy()
+                height = obj[:, 2].detach().cpu().numpy() - initial_obj_z
+                lift |= height >= 0.05
+                contact_now = ee_dist < 0.035
+                try:
+                    forces = uenv.scene["object_contact"].data.net_forces_w_history
+                    contact_now = np.linalg.norm(
+                        forces.detach().cpu().numpy(), axis=-1
+                    ).reshape(N, -1).max(axis=1) > 1.0e-3
+                except Exception:
+                    pass
+                contact |= contact_now
+                stable_grasp_steps = np.where(contact_now & (height > 0.015), stable_grasp_steps + 1, 0)
+                grasp |= stable_grasp_steps >= 3
+                try:
+                    obj_speed = torch.linalg.norm(
+                        uenv.scene["object"].data.root_lin_vel_w[:, :3], dim=1
+                    ).detach().cpu().numpy()
+                except Exception:
+                    obj_speed = np.full(N, 1.0)
+                stable_place_steps = np.where(
+                    (per < 0.05) & (obj_speed < 0.03), stable_place_steps + 1, 0
+                )
+                final_place = stable_place_steps >= 3
+                place |= final_place
+                try:
+                    done_np = dones.detach().cpu().numpy().astype(bool)
+                    termination[(termination == "max_steps") & done_np] = "task_or_timeout"
+                except Exception:
+                    pass
                 continue
         except Exception:
             pass
@@ -521,7 +705,24 @@ try:
         for i in range(N)
         if any(frame_names[i].values())
     ]
-    dump([float(x if x < 1e8 else 0.5) for x in min_dist], "rollout_ok", episodes)
+    import isaac_scenario_task as _scenarios
+    applied = _scenarios.runtime_audit(env.unwrapped)
+    metrics = [
+        {
+            "closest_object_goal_distance_m": float(min_dist[i] if min_dist[i] < 1e8 else 0.5),
+            "final_object_goal_distance_m": float(final_dist[i] if final_dist[i] < 1e8 else 0.5),
+            "reach": bool(reach[i]), "contact": bool(contact[i]),
+            "stable_grasp": bool(grasp[i]), "lift": bool(lift[i]),
+            "place": bool(place[i]), "placement_stable": bool(final_place[i]),
+            "termination_reason": (
+                "success" if final_place[i] else str(termination[i])
+            ),
+        }
+        for i in range(N)
+    ]
+    # Strict success uses FINAL stable placement distance. Closest distance is a
+    # diagnostic only and can never promote a policy that moved away again.
+    dump([m["final_object_goal_distance_m"] for m in metrics], "rollout_ok", episodes, metrics, applied)
 except Exception as e:
     traceback.print_exc()
     dump([0.5]*N, "rollout_failed:%s" % e)
@@ -550,7 +751,7 @@ except Exception as _e:
     print("inproc_upload_err", repr(_e), flush=True)
 sys.stdout.flush(); sys.stderr.flush()
 os._exit(0)
-'''
+"""
 
 
 def _isaac_eula_env_entries() -> list[dict[str, str]]:
@@ -596,6 +797,7 @@ def build_isaac_eval_job_manifest(
     task_config: dict[str, Any] | None = None,
     camera_views: str = "",
     capture: dict[str, Any] | None = None,
+    scenarios_jsonl: str = "",
 ) -> dict[str, Any]:
     """Isaac eval Job: download checkpoint, roll trained policy, upload distances.
 
@@ -624,8 +826,11 @@ def build_isaac_eval_job_manifest(
         robot_stage = ""
         if robot_usd_uri and usd_dest:
             robot_stage = (
-                "ROBOT_USD_URI=" + _shlex.quote(robot_usd_uri)
-                + " ROBOT_USD_DEST=" + _shlex.quote(usd_dest) + ' "$PY" - <<\'ROBOTDLEOF\'\n'
+                "ROBOT_USD_URI="
+                + _shlex.quote(robot_usd_uri)
+                + " ROBOT_USD_DEST="
+                + _shlex.quote(usd_dest)
+                + " \"$PY\" - <<'ROBOTDLEOF'\n"
                 "import os, boto3\n"
                 "from urllib.parse import urlparse\n"
                 "u = urlparse(os.environ['ROBOT_USD_URI'])\n"
@@ -644,21 +849,41 @@ def build_isaac_eval_job_manifest(
         if task_config:
             task_cfg_export = (
                 "export NPA_BYO_TASK_CONFIG_JSON="
-                + _shlex.quote(_json.dumps(task_config, sort_keys=True)) + "\n"
+                + _shlex.quote(_json.dumps(task_config, sort_keys=True))
+                + "\n"
             )
         robot_block = (
             "cat > /tmp/evalwork/isaac_byo_robot_task.py <<'ROBOTEOF'\n"
-            + _robotmod.module_source() + "\nROBOTEOF\n"
+            + _robotmod.module_source()
+            + "\nROBOTEOF\n"
             + robot_stage
             + "export NPA_ROBOT_MODULE_DIR=/tmp/evalwork\n"
-            + "export NPA_BYO_ROBOT_SPEC_JSON=" + _shlex.quote(spec_json) + "\n"
+            + "export NPA_BYO_ROBOT_SPEC_JSON="
+            + _shlex.quote(spec_json)
+            + "\n"
             + task_cfg_export
+        )
+    if scenarios_jsonl:
+        from npa.workflows.sim2real import isaac_scenario_task as _scenarios
+
+        robot_block += (
+            "cat > /tmp/evalwork/isaac_scenario_task.py <<'SCENARIOPYEOF'\n"
+            + _scenarios.module_source()
+            + "\nSCENARIOPYEOF\n"
+            "cat > /tmp/evalwork/scenarios.jsonl <<'SCENARIOJSONEOF'\n"
+            + scenarios_jsonl.rstrip()
+            + "\nSCENARIOJSONEOF\n"
+            "export NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/evalwork/scenarios.jsonl\n"
+            "export NPA_SIM2REAL_TASK_CONTRACT_DIGEST="
+            + _shlex.quote(_env("NPA_SIM2REAL_TASK_CONTRACT_DIGEST"))
+            + "\n"
+            "export NPA_SIM2REAL_SCENARIO_ROTATE_ON_RESET=0\n"
         )
 
     render_upload = ""
     if renders_s3_prefix:
         render_upload = (
-            'RENDERS_URI=' + _shlex.quote(renders_s3_prefix) + ' "$PY" - <<\'RLEOF\'\n'
+            "RENDERS_URI=" + _shlex.quote(renders_s3_prefix) + " \"$PY\" - <<'RLEOF'\n"
             "import os, boto3, glob\n"
             "from urllib.parse import urlparse\n"
             "u = urlparse(os.environ['RENDERS_URI'])\n"
@@ -673,36 +898,36 @@ def build_isaac_eval_job_manifest(
         )
     script = (
         "set -euo pipefail\n"
-        'exec > >(tee -a /tmp/byo-eval.log) 2>&1\n'
-        'if [ -x /isaac-sim/python.sh ]; then\n'
-        '  PY=/isaac-sim/python.sh\n'
-        'elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n'
-        '  cat > /tmp/isaac-python <<\'ISPYEOF\'\n'
-        '#!/usr/bin/env bash\n'
+        "exec > >(tee -a /tmp/byo-eval.log) 2>&1\n"
+        "if [ -x /isaac-sim/python.sh ]; then\n"
+        "  PY=/isaac-sim/python.sh\n"
+        "elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n"
+        "  cat > /tmp/isaac-python <<'ISPYEOF'\n"
+        "#!/usr/bin/env bash\n"
         'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
-        'ISPYEOF\n'
-        '  chmod +x /tmp/isaac-python\n'
-        '  PY=/tmp/isaac-python\n'
-        'else\n'
+        "ISPYEOF\n"
+        "  chmod +x /tmp/isaac-python\n"
+        "  PY=/tmp/isaac-python\n"
+        "else\n"
         '  PY="$(command -v python3 || command -v python || true)"\n'
-        'fi\n'
+        "fi\n"
         '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
         '"$PY" -m pip install --quiet boto3 pillow 2>/dev/null || true\n'
         "mkdir -p /tmp/evalwork/renders; cd /tmp/evalwork\n"
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
         f'EVAL_OBJECT_USD="{object_usd}" EVAL_ENV_IDS={_shlex.quote(env_ids_json)} '
-        f'EVAL_CAMERA_VIEWS_JSON={_shlex.quote(camera_views or camera_views_json())} '
+        f"EVAL_CAMERA_VIEWS_JSON={_shlex.quote(camera_views or camera_views_json())} "
         f'EVAL_CAPTURE_WIDTH="{capture["width"]}" '
         f'EVAL_CAPTURE_HEIGHT="{capture["height"]}" '
         f'EVAL_CAPTURE_STRIDE="{capture["heldout_stride"]}" '
         f'EVAL_PNG_COMPRESS_LEVEL="{capture["png_compress_level"]}" '
         f'EVAL_CAPTURE_FPS="{capture["fps"]}" '
-        f'EVAL_CKPT_URI={_shlex.quote(checkpoint_uri)} '
-        f'EVAL_OUT_S3={_shlex.quote(per_env_s3_uri)} '
-        f'EVAL_RENDERS_S3={_shlex.quote(renders_s3_prefix)} '
-        'EVAL_RENDERS_DIR=/tmp/evalwork/renders '
-        'EVAL_CKPT_LOCAL=/tmp/evalwork/policy.pt '
-        'EVAL_OUT_JSON=/tmp/evalwork/per_env_distances.json\n'
+        f"EVAL_CKPT_URI={_shlex.quote(checkpoint_uri)} "
+        f"EVAL_OUT_S3={_shlex.quote(per_env_s3_uri)} "
+        f"EVAL_RENDERS_S3={_shlex.quote(renders_s3_prefix)} "
+        "EVAL_RENDERS_DIR=/tmp/evalwork/renders "
+        "EVAL_CKPT_LOCAL=/tmp/evalwork/policy.pt "
+        "EVAL_OUT_JSON=/tmp/evalwork/per_env_distances.json\n"
         f'CKPT_URI="{checkpoint_uri}" OUT_URI="{per_env_s3_uri}" "$PY" - <<\'DLEOF\'\n'
         "import os, boto3\n"
         "from urllib.parse import urlparse\n"
@@ -710,9 +935,7 @@ def build_isaac_eval_job_manifest(
         "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
         "s3.download_file(u.netloc, u.path.lstrip('/'), '/tmp/evalwork/policy.pt')\n"
         "print('DOWNLOADED_CKPT', os.environ['CKPT_URI'])\n"
-        "DLEOF\n"
-        + robot_block
-        + 'cat > /tmp/evalwork/eval_rollout.py <<\'PYEOF\'\n'
+        "DLEOF\n" + robot_block + "cat > /tmp/evalwork/eval_rollout.py <<'PYEOF'\n"
         f"{ISAAC_EVAL_SCRIPT}\n"
         "PYEOF\n"
         '"$PY" /tmp/evalwork/eval_rollout.py\n'
@@ -723,9 +946,7 @@ def build_isaac_eval_job_manifest(
         "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
         "s3.upload_file('/tmp/evalwork/per_env_distances.json', u.netloc, u.path.lstrip('/'))\n"
         "print('UPLOADED_DISTANCES', os.environ['OUT_URI'])\n"
-        "ULEOF\n"
-        + render_upload
-        + 'echo "BYO_EVAL_DONE"\n'
+        "ULEOF\n" + render_upload + 'echo "BYO_EVAL_DONE"\n'
     )
     return {
         "apiVersion": "batch/v1",
@@ -797,7 +1018,9 @@ def build_isaac_eval_job_manifest(
 # --------------------------------------------------------------------------- #
 def _kubectl(args: list[str], *, stdin: str | None = None, timeout: int = 300):
     cmd = [os.environ.get("NPA_KUBECTL_BIN") or "kubectl", *args]
-    return subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=timeout, check=False)
+    return subprocess.run(
+        cmd, input=stdin, capture_output=True, text=True, timeout=timeout, check=False
+    )
 
 
 def _env(name: str, default: str = "") -> str:
@@ -824,24 +1047,41 @@ def run_isaac_eval_job(
 ) -> list[dict[str, Any]]:
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
-    bucket = _env("NPA_SIM2REAL_BUCKET") or _env("S3_BUCKET") or _env("NPA_SIM2REAL_S3_BUCKET")
+    bucket = (
+        _env("NPA_SIM2REAL_BUCKET")
+        or _env("S3_BUCKET")
+        or _env("NPA_SIM2REAL_S3_BUCKET")
+    )
     s3_prefix = _env("NPA_SIM2REAL_PREFIX", "sim2real-b").strip("/")
     namespace = _env("NPA_SIM2REAL_K8S_NAMESPACE", "default")
     sa = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
-    success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)
+    success_dist = float(
+        _env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M))
+        or DEFAULT_SUCCESS_DIST_M
+    )
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "0") or 0)
     capture = capture_settings()
     from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
 
     eval_tag = artifact_tag(_env("NPA_SIM2REAL_EVAL_TAG"))
     job_name = k8s_job_name("s2r-byo-isaac-eval", run_id, eval_tag)
-    per_env_uri = f"s3://{bucket}/{s3_prefix}/{run_id}/byo-eval/{job_name}/per_env_distances.json"
+    per_env_uri = (
+        f"s3://{bucket}/{s3_prefix}/{run_id}/byo-eval/{job_name}/per_env_distances.json"
+    )
 
     gen = generated_envs or []
     env_ids = [e["env_id"] for e in gen] or None
     seeds = [e["seed"] for e in gen] or None
-    seed = int(gen[0]["seed"]) if gen else 0  # drive randomization from a generated-env seed
+    seed = int(_env("NPA_SIM2REAL_SEED", "0") or 0)
+    if len(gen) != num_envs:
+        raise RuntimeError(
+            f"gold evaluation requires {num_envs} complete scenario records; got {len(gen)}"
+        )
+    digests = [str(row.get("scenario_config_digest") or "") for row in gen]
+    if not all(digests) or len(set(digests)) != len(digests):
+        raise RuntimeError("gold evaluation scenarios lack unique config digests")
+    scenarios_jsonl = "\n".join(json.dumps(row, sort_keys=True) for row in gen) + "\n"
     # Eval must spawn the SAME manipuland the policy trained on (default: the
     # proven rigid-ready USD, not the stock primitive cube).
     from npa.workflows.sim2real.byo_isaac_trainer import resolve_object_usd
@@ -861,7 +1101,10 @@ def run_isaac_eval_job(
 
         spec = _trainer._resolve_byo_robot_spec()
         usd_dest = ""
-        if spec is not None and str(getattr(spec, "robot_source", "")) != "stock_franka":
+        if (
+            spec is not None
+            and str(getattr(spec, "robot_source", "")) != "stock_franka"
+        ):
             robot_uri = str(getattr(spec, "robot_uri", "") or "")
             if robot_uri.startswith("s3://"):
                 robot_usd_uri = robot_uri
@@ -875,19 +1118,38 @@ def run_isaac_eval_job(
         # shrunk-object policy is scored on the stock ~5 cm cube and reports a false
         # zero. register() in the eval sibling consumes it via task_config_from_env().
         task_config_dict = _robotmod.task_config_from_env()
-        print(f"byo_isaac_eval: BYO-ROBOT eval path "
-              f"{'ON' if robot_spec_dict else 'OFF (no spec)'} -> {robot_spec_dict}", flush=True)
-        print(f"byo_isaac_eval: BYO task config "
-              f"{'-> ' + json.dumps(task_config_dict, sort_keys=True) if task_config_dict else 'none'}",
-              flush=True)
+        print(
+            f"byo_isaac_eval: BYO-ROBOT eval path "
+            f"{'ON' if robot_spec_dict else 'OFF (no spec)'} -> {robot_spec_dict}",
+            flush=True,
+        )
+        print(
+            f"byo_isaac_eval: BYO task config "
+            f"{'-> ' + json.dumps(task_config_dict, sort_keys=True) if task_config_dict else 'none'}",
+            flush=True,
+        )
+    if robot_spec_dict is None:
+        robot_spec_dict = {"robot_source": "stock_franka", "name": "franka"}
 
     manifest = build_isaac_eval_job_manifest(
-        job_name=job_name, run_id=run_id, image=image, task=task, num_envs=num_envs,
-        checkpoint_uri=checkpoint_uri, per_env_s3_uri=per_env_uri,
-        s3_endpoint=_env("AWS_ENDPOINT_URL"), namespace=namespace,
-        service_account=sa, gpu_product=gpu_product, seed=seed, object_usd=object_usd,
-        env_ids_json=json.dumps([e["env_id"] for e in gen]), renders_s3_prefix=renders_prefix,
-        robot_spec=robot_spec_dict, robot_usd_uri=robot_usd_uri, task_config=task_config_dict,
+        job_name=job_name,
+        run_id=run_id,
+        image=image,
+        task=task,
+        num_envs=num_envs,
+        checkpoint_uri=checkpoint_uri,
+        per_env_s3_uri=per_env_uri,
+        s3_endpoint=_env("AWS_ENDPOINT_URL"),
+        namespace=namespace,
+        service_account=sa,
+        gpu_product=gpu_product,
+        seed=seed,
+        object_usd=object_usd,
+        env_ids_json=json.dumps([e["env_id"] for e in gen]),
+        renders_s3_prefix=renders_prefix,
+        robot_spec=robot_spec_dict,
+        robot_usd_uri=robot_usd_uri,
+        task_config=task_config_dict,
         camera_views=json.dumps(
             camera_metadata(
                 _env("NPA_SIM2REAL_CAMERA_VIEWS"),
@@ -897,6 +1159,7 @@ def run_isaac_eval_job(
             separators=(",", ":"),
         ),
         capture=capture,
+        scenarios_jsonl=scenarios_jsonl,
     )
     from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 
@@ -908,9 +1171,7 @@ def run_isaac_eval_job(
             .setdefault("template", {})
             .setdefault("spec", {})
         )
-        pod_spec["nodeSelector"] = {
-            "nvidia.com/gpu.product": product
-        }
+        pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
         return candidate
 
     def kubectl(args: list[str], **kwargs: Any):
@@ -945,6 +1206,12 @@ def run_isaac_eval_job(
             "real Isaac held-out inference returned "
             f"{len(distances)} distances for {num_envs} environments"
         )
+    runtime_metrics = list(out.get("per_env_metrics") or [])
+    if len(runtime_metrics) != num_envs:
+        raise RuntimeError(
+            "real Isaac held-out inference did not return decomposed metrics for "
+            f"all {num_envs} environments"
+        )
     checkpoint_provenance = dict(out.get("policy_checkpoint") or {})
     if (
         checkpoint_provenance.get("uri") != checkpoint_uri
@@ -954,8 +1221,25 @@ def run_isaac_eval_job(
         raise RuntimeError(
             "held-out inference did not prove the loaded candidate checkpoint bytes"
         )
-    global _CHECKPOINT_PROVENANCE
+    global _APPLIED_SCENARIO_AUDIT, _CHECKPOINT_PROVENANCE
     _CHECKPOINT_PROVENANCE = checkpoint_provenance
+    applied = dict(out.get("applied_scenarios") or {})
+    applied_records = applied.get("records") or []
+    actually_applied = {
+        str(row.get("scenario_config_digest"))
+        for row in applied_records
+        if int(row.get("applied_count") or 0) > 0
+    }
+    if actually_applied != set(digests):
+        raise RuntimeError(
+            "Isaac runtime applied-scenario digests do not exactly match reported gold rows"
+        )
+    _APPLIED_SCENARIO_AUDIT = {
+        **applied,
+        "expected_config_digests": digests,
+        "exact_digest_match": True,
+        "applied_record_count": len(applied_records),
+    }
     # Pull the rendered frames of the (custom) object down to the local heldout
     # renders dir so stage-14 Rerun viz logs them under heldout/camera/**.
     episodes = out.get("render_episodes") or []
@@ -963,6 +1247,7 @@ def run_isaac_eval_job(
         try:
             import boto3
             from urllib.parse import urlparse
+
             u = urlparse(renders_prefix)
             s3 = boto3.client("s3", endpoint_url=_env("AWS_ENDPOINT_URL") or None)
             base = u.path.lstrip("/").rstrip("/")
@@ -981,7 +1266,9 @@ def run_isaac_eval_job(
             for page in paginator.paginate(Bucket=u.netloc, Prefix=pointcloud_prefix):
                 for item in page.get("Contents", []) or []:
                     key = str(item.get("Key") or "")
-                    if not key.endswith(".npz") or not key.startswith(pointcloud_prefix):
+                    if not key.endswith(".npz") or not key.startswith(
+                        pointcloud_prefix
+                    ):
                         continue
                     relative = key[len(base) + 1 :]
                     dst = Path(_RENDERS_LOCAL_DIR) / relative
@@ -989,7 +1276,13 @@ def run_isaac_eval_job(
                     s3.download_file(u.netloc, key, str(dst))
                     pointcloud_count += 1
             total = sum(
-                len({name for names in (e.get("camera_views") or {}).values() for name in names})
+                len(
+                    {
+                        name
+                        for names in (e.get("camera_views") or {}).values()
+                        for name in names
+                    }
+                )
                 or len(e.get("frames", []))
                 for e in episodes
             )
@@ -1011,13 +1304,25 @@ def run_isaac_eval_job(
         "policy_checkpoint": checkpoint_provenance,
         "episodes": episodes,
     }
-    return per_env_from_distances(distances, success_dist_m=success_dist, env_ids=env_ids, seeds=seeds)
+    return per_env_from_distances(
+        distances,
+        success_dist_m=success_dist,
+        env_ids=env_ids,
+        seeds=seeds,
+        generated_envs=gen,
+        runtime_metrics=runtime_metrics,
+    )
 
 
 def main() -> int:
-    global _CHECKPOINT_PROVENANCE, _LAST_GPU_PROVENANCE, _RENDER_MANIFEST
+    global \
+        _APPLIED_SCENARIO_AUDIT, \
+        _CHECKPOINT_PROVENANCE, \
+        _LAST_GPU_PROVENANCE, \
+        _RENDER_MANIFEST
     _LAST_GPU_PROVENANCE = {}
     _CHECKPOINT_PROVENANCE = {}
+    _APPLIED_SCENARIO_AUDIT = {}
     _RENDER_MANIFEST = {}
     output_json = _env("NPA_SIM2REAL_OUTPUT_JSON")
     if not output_json:
@@ -1029,7 +1334,10 @@ def main() -> int:
     # Heldout renders live next to the report so stage-14 viz finds them.
     global _RENDERS_LOCAL_DIR
     _RENDERS_LOCAL_DIR = str(Path(output_json).parent / "renders")
-    success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)
+    success_dist = float(
+        _env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M))
+        or DEFAULT_SUCCESS_DIST_M
+    )
 
     inner_evidence = {}
     ev_path = _env("NPA_SIM2REAL_INNER_EVIDENCE_JSON")
@@ -1040,28 +1348,44 @@ def main() -> int:
     # GENERATED held-out env specs (env_id + seed) — drive eval on the envgen
     # distribution and label results by the real generated env_id.
     envs_dir = _env("NPA_SIM2REAL_HELDOUT_ENVS_DIR")
-    generated_envs = read_generated_envs(envs_dir, limit=num_envs) if envs_dir else []
+    generated_envs = read_generated_envs(envs_dir) if envs_dir else []
     if generated_envs:
-        num_envs = len(generated_envs)
+        generated_envs = select_stratified_eval_envs(
+            generated_envs,
+            count=num_envs,
+            split=_env("NPA_SIM2REAL_EVALUATION_SPLIT", "heldout"),
+        )
 
     if _env("NPA_BYO_ISAAC_DRYRUN") == "1":
         gids = [e["env_id"] for e in generated_envs] or None
         seeds = [e["seed"] for e in generated_envs] or None
         per_env = per_env_from_distances(
-            [0.02, 0.04, 0.08, 0.12][:num_envs], success_dist_m=success_dist,
-            env_ids=gids, seeds=seeds)
+            [0.02, 0.04, 0.08, 0.12][:num_envs],
+            success_dist_m=success_dist,
+            env_ids=gids,
+            seeds=seeds,
+        )
     elif not checkpoint_uri:
-        print("byo_isaac_eval: no trained checkpoint in inner evidence — refusing to fake success",
-              file=sys.stderr)
+        print(
+            "byo_isaac_eval: no trained checkpoint in inner evidence — refusing to fake success",
+            file=sys.stderr,
+        )
         return 3
     else:
         per_env = run_isaac_eval_job(
-            run_id, checkpoint_uri=checkpoint_uri, num_envs=num_envs,
-            generated_envs=generated_envs)
+            run_id,
+            checkpoint_uri=checkpoint_uri,
+            num_envs=num_envs,
+            generated_envs=generated_envs,
+        )
 
     report = build_heldout_report(
-        per_env, isaac_task=task, checkpoint_uri=checkpoint_uri,
-        source="byo_isaac_eval_dryrun" if _env("NPA_BYO_ISAAC_DRYRUN") == "1" else "byo_isaac_eval",
+        per_env,
+        isaac_task=task,
+        checkpoint_uri=checkpoint_uri,
+        source="byo_isaac_eval_dryrun"
+        if _env("NPA_BYO_ISAAC_DRYRUN") == "1"
+        else "byo_isaac_eval",
     )
     report["generated_envs_tested"] = len(generated_envs)
     report["generated_env_ids"] = [e["env_id"] for e in generated_envs]
@@ -1080,9 +1404,7 @@ def main() -> int:
             height=int(capture["height"]),
         )
     )
-    report["policy_checkpoint_sha256"] = str(
-        _CHECKPOINT_PROVENANCE.get("sha256") or ""
-    )
+    report["policy_checkpoint_sha256"] = str(_CHECKPOINT_PROVENANCE.get("sha256") or "")
     report["policy_checkpoint_size_bytes"] = int(
         _CHECKPOINT_PROVENANCE.get("size_bytes") or 0
     )
@@ -1094,13 +1416,17 @@ def main() -> int:
         "loaded_for_inference": bool(_CHECKPOINT_PROVENANCE),
         "stock_or_scripted_policy": False,
     }
+    report["applied_scenario_proof"] = _APPLIED_SCENARIO_AUDIT
     if _RENDER_MANIFEST.get("episodes"):
         report["render_manifest"] = _RENDER_MANIFEST
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
     Path(output_json).write_text(json.dumps(report, indent=2), encoding="utf-8")
     passed = sum(1 for r in per_env if r["success"])
-    print(f"byo_isaac_eval: wrote {output_json} per_env={len(per_env)} passed={passed} "
-          f"checkpoint={checkpoint_uri or 'NONE'}", flush=True)
+    print(
+        f"byo_isaac_eval: wrote {output_json} per_env={len(per_env)} passed={passed} "
+        f"checkpoint={checkpoint_uri or 'NONE'}",
+        flush=True,
+    )
     return 0
 
 

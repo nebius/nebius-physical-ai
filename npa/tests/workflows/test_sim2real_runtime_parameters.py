@@ -78,9 +78,9 @@ def test_capture_and_ppo_defaults_are_inspection_and_training_grade() -> None:
     }
     assert ppo == {
         "num_envs": 1024,
-        "iterations": 150,
+        "iterations": 500,
         "steps_per_env": 24,
-        "total_environment_steps": 3_686_400,
+        "total_environment_steps": 12_288_000,
     }
 
 
@@ -115,6 +115,7 @@ def test_materialized_job_carries_capture_ppo_and_visualization_knobs() -> None:
         "NPA_BYO_ISAAC_NUM_ENVS",
         "NPA_BYO_ISAAC_ITERATIONS",
         "NPA_BYO_ISAAC_STEPS_PER_ENV",
+        "NPA_BYO_ISAAC_VALIDATION_INTERVAL",
         "NPA_SIM2REAL_MCAP",
         "NPA_SIM2REAL_REQUIRE_VISUALIZATION",
         "NPA_SIM2REAL_K8S_JOB_TIMEOUT_S",
@@ -128,6 +129,11 @@ def test_materialized_job_carries_capture_ppo_and_visualization_knobs() -> None:
     [
         ({"NPA_SIM2REAL_CAPTURE_WIDTH": "319"}, "CAPTURE_WIDTH"),
         ({"NPA_BYO_ISAAC_STEPS_PER_ENV": "0"}, "STEPS_PER_ENV"),
+        ({"NPA_BYO_ISAAC_VALIDATION_INTERVAL": "0"}, "VALIDATION_INTERVAL"),
+        (
+            {"NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS": "31"},
+            "ROLLOUT_HORIZON_STEPS",
+        ),
         ({"NPA_SIM2REAL_CAMERA_VIEWS": "rear"}, "camera view"),
         ({"SUCCESS_THRESHOLD": "1.1"}, "SUCCESS_THRESHOLD"),
         ({"NPA_BYO_ISAAC_SUCCESS_DIST_M": "0"}, "SUCCESS_DIST_M"),
@@ -162,9 +168,7 @@ def test_component_command_default_has_no_deadline(monkeypatch, tmp_path: Path) 
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
     monkeypatch.setattr(engine.subprocess, "run", fake_run)
-    engine._run_component_command(
-        "true", cwd=tmp_path, env={}, component="trainer"
-    )
+    engine._run_component_command("true", cwd=tmp_path, env={}, component="trainer")
     assert observed["timeout"] is None
 
 

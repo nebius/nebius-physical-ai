@@ -86,7 +86,7 @@ flowchart LR
     S1["1 Trigger<br/>stage_01_trigger/trigger.json"]
     S2["2 Assets<br/>BYO consume or external_stub.json"]
     S3["3 Augment<br/>augment/manifest.json"]
-    S4["4–6 Envgen<br/>envs/raw, train, heldout<br/>tokens/manifest.json"]
+    S4["4–6 Curated envgen<br/>train, validation, gold-heldout<br/>tokens/manifest.json"]
     S1 --> S2 --> S3 --> S4
   end
 
@@ -114,23 +114,24 @@ flowchart LR
 
 ## Inner loop (Stages 7–9) — always in the orchestrator process
 
-`run_inner_loop()` runs `INNER_ITERATIONS` times per outer iteration. Action
-rollouts are **always** generated locally (`generate_action_rollouts`); they are
-not sibling K8s jobs today.
+`run_inner_loop()` runs `INNER_ITERATIONS` times per outer iteration. The real
+path dispatches Isaac rollout and RSL-RL sibling Jobs; only bucketless developer
+smokes use generated local fixtures.
 
 ```mermaid
 flowchart TD
   subgraph inner["run_inner_loop (per inner iteration)"]
-    AR["7 generate_action_rollouts<br/>actions/train/outer-XX/iter-YY/"]
+    AR["7 curated-scenario Isaac rollouts<br/>actions/train/outer-XX/iter-YY/"]
     AR --> PER{"for each rollout"}
     PER --> VLM["8 evaluate_rollout_with_vlm"]
     VLM --> SIG["9 _convert_eval_to_signal"]
-    SIG --> BATCH["signals-iter-YY.json"]
+    SIG --> BATCH["simulator-grounded dense signals-iter-YY.json"]
     BATCH --> TRAIN{"trainer path"}
     TRAIN -->|BYO_TRAINER_COMMAND| BYOT["_run_trainer_via_command"]
     TRAIN -->|else| REF["run_vlm_signal_training_step"]
     REF --> CTRL["no-signal control<br/>(always reference trainer)"]
-    BYOT --> EVID
+    BYOT --> VAL["fixed validation split<br/>rank exact checkpoint"]
+    VAL --> EVID
     CTRL --> EVID["inner_loop/outer-XX/evidence.json"]
   end
 ```
@@ -177,7 +178,10 @@ even when BYO trainer is configured.
 
 ## Held-out eval (Stage 10)
 
-`run_heldout_eval()` writes `eval/heldout/report.json`.
+Each PPO checkpoint is evaluated on `eval/validation/`; the selected checkpoint
+alone reaches final Stage 10 at `eval/gold-heldout/`. Scenario config digests must
+match the Isaac runtime audit exactly, and strict success requires a stable final
+placement within 5 cm.
 
 ```mermaid
 flowchart TD
@@ -194,7 +198,7 @@ flowchart TD
   K8S --> UP["Upload heldout envs + inner evidence to S3"]
   UP --> JOB["Sibling Job on heldout_backend_image()"]
   JOB --> SUB["component-heldout-eval<br/>run_heldout_eval_component_from_s3"]
-  SUB --> DL["Download report.json to local eval/heldout/"]
+  SUB --> DL["Download report.json to local eval/validation or eval/gold-heldout"]
 ```
 
 **`heldout_backend_image()`** (actual code):
@@ -209,17 +213,17 @@ Sibling held-out job injects NPA source via `NPA_SOURCE_REPO`/`NPA_SOURCE_REF` o
 
 ## Threshold gate (Stage 11)
 
-`threshold_decision()` compares `heldout_report.success_rate` to `SUCCESS_THRESHOLD`.
+`threshold_decision()` uses strict success plus gold-split, checkpoint-load,
+non-scripted-policy, scenario-application, and episode-coverage gates.
 
 | Outcome | Decision | Artifacts |
 | --- | --- | --- |
 | `success_rate >= threshold` | `promote_checkpoint` | `checkpoints/candidate/candidate.json` |
 | else | `loop_back_to_inner_loop` | `outer_loop/loopback.json` |
 
-Always writes `outer_loop/decision.json`. The runbook bash loop breaks on
-`promote_checkpoint`; otherwise it continues to the next outer iteration (up to
-`OUTER_ITERATIONS`). `run_single_outer_iteration` bumps `current_quality` when not
-promoted.
+Always writes `outer_loop/decision.json`. The canonical fixed-count run continues
+through every configured outer iteration. `current_quality` is the measured
+validation/gold strict-success rate; there is no synthetic quality increment.
 
 ---
 
@@ -228,8 +232,8 @@ promoted.
 `run_finalize()`:
 
 1. **Stage 12** — `stage_12_external_validation/external_stub.json` (documented BYO seam).
-2. **Stage 13** — `stage_13_retrigger/retrigger.json` (loop-of-loops metadata;
-   `should_retrigger` when `LOOP_OF_LOOPS_ITERATIONS > 1`).
+2. **Stage 13** — `stage_13_retrigger/retrigger.json`; retrigger is true only
+   when genuinely new verified real-failure or corrected scenario data exists.
 3. **Rerun viz** — `_run_sim2real_viz_stage` → `reports/sim2real.rrd` when
    `NPA_SIM2REAL_RERUN=1` (default). Degrades to WARN if `rerun-sdk` missing.
    Optional `BYO_RERUN_COMMAND` override.
@@ -297,13 +301,14 @@ Local root: `{output_dir}` (default `/tmp/npa-sim2real-{run_id}`).
 | `stage_01_trigger/trigger.json` | Stage 1 trigger record |
 | `stage_02_assets/` | BYO assets or `external_stub.json` |
 | `augment/manifest.json` | Stage 3 augmentation manifest |
-| `envs/raw/`, `envs/train/`, `envs/heldout/` | Stage 4–6 env manifests |
+| `envs/raw/`, `envs/train/`, `envs/validation/`, `envs/gold-heldout/` | Stage 4–6 curated scenario manifests |
 | `tokens/manifest.json` | Stage 6 token manifest |
 | `actions/train/outer-XX/iter-YY/` | Stage 7 rollouts |
 | `vlm_eval/train/outer-XX/iter-YY/` | Stage 8 VLM evaluations |
 | `training_signal/train/outer-XX/iter-YY/` | Stage 9 RL signals |
 | `inner_loop/outer-XX/evidence.json` | Inner-loop evidence per outer iteration |
-| `eval/heldout/report.json` | Stage 10 held-out report |
+| `eval/validation/**/report.json` | checkpoint-selection reports |
+| `eval/gold-heldout/**/report.json` | final Stage 10 gold report |
 | `outer_loop/decision.json` | Stage 11 threshold decision |
 | `checkpoints/candidate/` | Promoted checkpoint metadata |
 | `stage_12_external_validation/` | Stage 12 stub |

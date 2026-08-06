@@ -16,16 +16,16 @@ graph runtime or demo toolRefs.
 
 | Stage | Work | Required evidence |
 | --- | --- | --- |
-| 1 | consume the LeRobot trigger | `stage_01_trigger/trigger.json` |
-| 2 | resolve scene, robot, and camera assets | `stage_02_assets/consumed_*_spec.json` |
-| 3 | real Cosmos Transfer augmentation | `augment/manifest.json`, generated frames/video |
-| 4 | generate raw environments | `envs/raw/` |
-| 5 | disjoint train split | `envs/train/envs.jsonl` |
-| 6 | tokenize/index environments | `tokens/manifest.json` |
-| 7 | real Isaac policy rollouts | `actions/train/` and camera provenance |
-| 8 | real Cosmos Reason critique | `vlm_eval/train/**/*.json` |
-| 9 | critique-to-reward plus real RSL-RL PPO | `training_signal/train/`, `model_*.pt` |
-| 10 | candidate-loaded held-out Isaac inference | `eval/heldout/report.json` and RGB-D captures |
+| 1 | validate the task-aligned Isaac seed dataset | `stage_01_trigger/task-dataset-manifest.json` |
+| 2 | normalize task, scene, robot, and camera contracts | `stage_02_assets/task-contract.json`, `consumed_*_spec.json` |
+| 3 | real Cosmos Transfer augmentation, coupled to scenario/VLM lineage | `augment/manifest.json`, generated frames/video |
+| 4 | generate and curate scenario configs | `envs/manifest/curation-manifest.json`, `envs/raw/` |
+| 5 | disjoint stratified train/validation/gold splits | `envs/{train,validation,gold-heldout}/envs.jsonl`, `envs/manifest/split-manifest.json` |
+| 6 | record scenario features and their honest state-PPO consumer | `tokens/manifest.json` |
+| 7 | real Isaac rollouts across curated configs | `actions/train/`, applied config digests, simulator event telemetry |
+| 8 | dual Cosmos Reason critique plus simulator-grounded temporal credit | `vlm_eval/train/**/*.json`, `training_signal/train/**/*.json` |
+| 9 | real RSL-RL PPO plus fixed-validation checkpoint selection | `byo-trainer/**/{model_*.pt,model_latest.pt,ppo-telemetry.json}`, `checkpoints/validation-selection/` |
+| 10 | exact selected-checkpoint gold Isaac inference | `eval/gold-heldout/**/report.json` and RGB-D captures |
 | 11 | aggregate threshold decision | `outer_loop/decision.json` |
 | 12 | external real-robot validation record | intentional `SEAM` stub; no GPU compute |
 | 13 | retrigger record | `stage_13_retrigger/retrigger.json` |
@@ -50,7 +50,7 @@ Configure these non-secret values in `~/.npa/config.yaml`:
 - `storage.endpoint_url`: its endpoint.
 - `storage.registry`: qualified Nebius registry, for example
   `cr.eu-north1.nebius.cloud/<registry-id>`.
-- `storage.sim2real_stock_trigger_uri`: a populated LeRobot trigger prefix.
+- `storage.sim2real_stock_trigger_uri`: a populated Isaac lift-cube seed prefix.
 - Kubernetes context/profile for the target cluster.
 
 Keep S3 HMAC credentials, `HF_TOKEN`, `NGC_API_KEY`, registry credentials, and
@@ -99,14 +99,14 @@ RUN=sim2real-production-$(date -u +%Y%m%dt%H%M%Sz)
 BUCKET=<artifact-bucket>
 ENDPOINT=https://storage.us-central1.nebius.cloud
 REGISTRY=cr.eu-north1.nebius.cloud/<registry-id>
-TRIGGER=s3://${BUCKET}/sim2real-triggers/<batch>/lerobot-pusht/
+TRIGGER=s3://${BUCKET}/sim2real-triggers/<batch>/isaac-lift-cube-franka/
 
 npa/.venv/bin/npa workbench workflow submit npa/workflows/sim2real.yaml \
   --run-id "${RUN}" \
   --var NPA_SIM2REAL_BUCKET="${BUCKET}" \
   --var AWS_ENDPOINT_URL="${ENDPOINT}" \
   --var NPA_SIM2REAL_TRIGGER_DATASET_URI="${TRIGGER}" \
-  --var NPA_SIM2REAL_TRIGGER_DATASET_ID=lerobot/pusht \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_ID=npa/isaac-lift-cube-franka-seed-v1 \
   --var AUGMENT_IMAGE="${REGISTRY}/npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z" \
   --var ENVGEN_IMAGE="${REGISTRY}/npa-envgen:cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z" \
   --var POLICY_IMAGE="${REGISTRY}/npa-lerobot-vlm-rl:cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z" \
@@ -120,17 +120,21 @@ npa/.venv/bin/npa workbench workflow submit npa/workflows/sim2real.yaml \
   --var BYO_TRAINER_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_trainer' \
   --var BYO_EVAL_COMMAND='python3 -m npa.workflows.sim2real.byo_isaac_eval' \
   --var INNER_ITERATIONS=3 \
-  --var OUTER_ITERATIONS=2 \
+  --var OUTER_ITERATIONS=3 \
   --var LOOP_OF_LOOPS_ITERATIONS=1 \
   --var NPA_SIM2REAL_EARLY_EXIT=0 \
   --var NPA_ENV_COUNT=10000 \
-  --var ROLLOUT_COUNT=8 \
-  --var STEPS_PER_ROLLOUT=6 \
-  --var HELDOUT_ENV_COUNT=8 \
+  --var ROLLOUT_COUNT=64 \
+  --var STEPS_PER_ROLLOUT=32 \
+  --var NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS=300 \
+  --var VALIDATION_ENV_COUNT=64 \
+  --var HELDOUT_ENV_COUNT=64 \
   --var NPA_SIM2REAL_HELDOUT_EVAL_LIMIT=0 \
   --var NPA_BYO_ISAAC_NUM_ENVS=1024 \
-  --var NPA_BYO_ISAAC_ITERATIONS=150 \
+  --var NPA_BYO_ISAAC_ITERATIONS=500 \
+  --var NPA_BYO_ISAAC_VALIDATION_INTERVAL=100 \
   --var NPA_BYO_ISAAC_STEPS_PER_ENV=24 \
+  --var NPA_BYO_ISAAC_PPO_LEARNING_RATE=0.001 \
   --var NPA_SIM2REAL_CAMERA_VIEWS=primary,side,overhead \
   --var NPA_SIM2REAL_CAPTURE_WIDTH=640 \
   --var NPA_SIM2REAL_CAPTURE_HEIGHT=480 \
@@ -152,6 +156,22 @@ Use `--plan-only` on the same command to materialize and validate without
 applying the Job. Every `--var KEY=VALUE` is passed into the materialized
 orchestrator environment; it is not limited to a small allowlist.
 
+The trigger prefix must contain `task-dataset-manifest.json` with schema
+`npa.sim2real.task_seed_dataset.v1`, the exact task ID, dataset ID, task-contract
+digest, Isaac source run, positive trajectory/action/camera counts, and an S3 URI
+to a sample rollout manifest containing actions and camera observations. The
+canonical real path fails closed if this contract is absent or if a PushT source
+is paired with the Franka lift task. The normalized task contract also fixes the
+embodiment, object/scale, goal and physics ranges, cameras, state observation and
+action terms, 5 cm stable-placement definition, and train/eval parity ID.
+
+Environment generation rejects schema/digest mismatches, unreachable or
+intersecting placements, missing assets/cameras, unusable physics, and duplicate
+config digests. It balances difficulty strata and emits count/reason/coverage and
+leakage evidence. Training rotates the full curated train distribution across
+parallel environments and reset episodes; validation and gold inference require
+the exact runtime-applied digest set to match their reported rows.
+
 ## Parameter contract
 
 ### Loop, evaluation, and thresholds
@@ -159,34 +179,37 @@ orchestrator environment; it is not limited to a small allowlist.
 | Variable | Default | Allowed value / unit | Operational effect |
 | --- | ---: | --- | --- |
 | `INNER_ITERATIONS` | `3` | integer ≥1 | rollout→critique→PPO passes per outer pass |
-| `OUTER_ITERATIONS` | `2` | integer ≥1 | held-out evaluation and threshold decisions |
+| `OUTER_ITERATIONS` | `3` | integer ≥1 | validation decisions followed by final-gold evaluation |
 | `LOOP_OF_LOOPS_ITERATIONS` | `1` | integer ≥1 | Stage 13 external retrigger-cycle ceiling; one run records one cycle and whether another should be triggered |
 | `NPA_SIM2REAL_EARLY_EXIT` | `0` | boolean | if true, stop outer passes after promotion; false runs fixed counts |
 | `SUCCESS_THRESHOLD` | `0.50` | 0..1 fraction | aggregate held-out success-rate gate at Stage 11 |
 | `NPA_BYO_ISAAC_SUCCESS_DIST_M` | `0.05` | 0.001..10 m | per-episode cube-to-goal success distance in Isaac |
-| `ROLLOUT_COUNT` | `8` | integer ≥1 | policy rollouts per inner pass |
-| `STEPS_PER_ROLLOUT` | `6` | integer ≥1 | policy steps per rollout |
+| `ROLLOUT_COUNT` | `64` | integer ≥1 | distinct curated-scenario policy rollouts per inner pass |
+| `STEPS_PER_ROLLOUT` | `32` | integer ≥1 | simulator-grounded decision/event samples per rollout |
+| `NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS` | `300` | integer ≥ sampled points | task-length Isaac steps over which the decision/event samples are evenly taken |
 | `NPA_ENV_COUNT` | `10000` | integer ≥1 | generated environments before split |
-| `NPA_TRAIN_FRACTION` | `0.8` | 0..1 fraction | train share; remainder is held out |
-| `HELDOUT_ENV_COUNT` | `8` | integer ≥1 | held-out episodes requested from Stage 10 |
+| `NPA_TRAIN_FRACTION` | `0.8` | 0..1 fraction | exact stratified train share; remainder is divided between validation and untouched gold-heldout |
+| `VALIDATION_ENV_COUNT` | `64` | integer ≥1 | fixed validation episodes used only for checkpoint ranking |
+| `HELDOUT_ENV_COUNT` | `64` | integer ≥1 | untouched gold episodes requested from final Stage 10 |
 | `NPA_SIM2REAL_HELDOUT_EVAL_LIMIT` | `0` | integer ≥0 | cap on held-out input rows; `0` means uncapped |
 
 The two thresholds are intentionally different: a single Isaac episode succeeds
-when final distance is below `NPA_BYO_ISAAC_SUCCESS_DIST_M`; Stage 11 promotes
+when its final distance is below `NPA_BYO_ISAAC_SUCCESS_DIST_M` and the placement
+is stable; Stage 11 promotes
 only when the fraction of successful held-out episodes reaches
 `SUCCESS_THRESHOLD`.
 
 Candidate packaging is distinct from promotion. When PPO produced a real
-checkpoint, `checkpoints/candidate/candidate.json` remains deployable and names
-those exact weights even if Stage 11 records `loop_back_to_inner_loop`. In that
-case `threshold_met` is false and `candidate_status` is
-`below_threshold_deployable_candidate`; operators must not present it as a
-promoted policy.
+checkpoint, `checkpoints/candidate/candidate.json` keeps downloadable exact
+weights even below threshold (`policy_bytes_available=true`), but
+`deployable_policy=false` until every promotion gate passes. Validation ranks
+checkpoints with strict success dominant; the final gold split is never used for
+selection. Diagnostic 10/15/20 cm distances never relax the strict 5 cm gate.
 
 Fixed-count evidence run:
 
 ```bash
---var INNER_ITERATIONS=3 --var OUTER_ITERATIONS=2 --var NPA_SIM2REAL_EARLY_EXIT=0
+--var INNER_ITERATIONS=3 --var OUTER_ITERATIONS=3 --var NPA_SIM2REAL_EARLY_EXIT=0
 ```
 
 Promotion-short-circuit run:
@@ -200,21 +223,30 @@ Promotion-short-circuit run:
 | Variable | Default | Allowed value / unit | Operational effect |
 | --- | ---: | --- | --- |
 | `NPA_BYO_ISAAC_NUM_ENVS` | `1024` | 1..65536 environments | vectorized Isaac PPO environments |
-| `NPA_BYO_ISAAC_ITERATIONS` | `150` | 1..1000000 iterations | RSL-RL optimization iterations |
+| `NPA_BYO_ISAAC_ITERATIONS` | `500` | 1..1000000 iterations | RSL-RL optimization iterations per inner pass |
 | `NPA_BYO_ISAAC_STEPS_PER_ENV` | `24` | 1..16384 steps | rollout horizon per environment and iteration |
+| `NPA_BYO_ISAAC_VALIDATION_INTERVAL` | `100` | positive integer iterations | validation sweep interval over durable `model_*.pt` checkpoints; the final numbered checkpoint is always included |
+| `NPA_BYO_ISAAC_PPO_LEARNING_RATE` | `0.001` | positive scalar | native RSL-RL optimizer initial rate before its adaptive schedule |
 | `LEARNING_RATE` | `0.08` | positive scalar | VLM signal-adapter/no-signal-control step size; does not override the Isaac PPO optimizer |
 
-The default PPO workload is 3,686,400 environment steps per inner pass. Stage 9
-records these dimensions, training curves, and the real `model_*.pt` URI. Later
-rollout/eval Jobs must load the exact bytes or fail closed.
+The canonical 10,000 scenarios split exactly into 8,000 train, 1,000 validation,
+and 1,000 gold-heldout records. Stage 5 downloads and hashes every expected Stage
+4 raw shard before curation; both manifests carry the shard names, row counts, and
+SHA-256 values.
+
+The default PPO workload is 12,288,000 environment steps per inner pass. Stage 9
+records structured per-iteration return, value/surrogate losses, entropy, noise,
+task rewards, distances, termination rates, and the real `model_*.pt` URI. Fixed
+periodic validation adds authoritative reach/contact/stable-grasp/lift/place rates
+to checkpoint comparison and Rerun; those rates are not inferred from reward
+proxies. Later rollout/eval Jobs must load the exact bytes or fail closed.
 
 `0.08` is intentional: it is the longstanding canonical adapter step used by
 the runbook; the Python model/CLI default was synchronized to it from `0.05`.
 The BYO Isaac trainer uses the value for its adapter-result provenance while
-RSL-RL keeps the selected Isaac task's optimizer configuration. Training
-evidence, candidate metadata, and the final report record the effective adapter
-learning rate and this scope so it cannot be mistaken for a PPO optimizer
-override.
+RSL-RL separately receives `NPA_BYO_ISAAC_PPO_LEARNING_RATE` and records it with
+its entropy/noise/reward settings. The adapter and native optimizer scopes remain
+separately named in every result.
 
 ### Cameras and recording
 
@@ -330,17 +362,19 @@ The run root is `s3://<bucket>/sim2real-b/<run-id>/`. Key objects are:
 | `reports/sim2real-report.json` | all-stage report, tiers, Jobs, digests, metrics, runtime parameters |
 | `reports/sim2real.rrd` | Rerun 3D scene, synchronized cameras, charts, timeline, provenance |
 | `reports/sim2real.mcap` | aligned Foxglove/Lichtblick cameras, point cloud, signals, provenance |
-| `eval/heldout/report.json` | per-env result and exact loaded checkpoint SHA/size |
+| `envs/manifest/{curation-manifest.json,split-manifest.json}` | curation coverage, strata, and no-leakage proof |
+| `checkpoints/validation-selection/*.json` | fixed-validation checkpoint ranking |
+| `eval/gold-heldout/**/report.json` | gold per-env result and exact loaded checkpoint SHA/size |
 | `outer_loop/decision.json` | aggregate threshold and promotion decision |
-| `checkpoints/candidate/candidate.json` | deployable candidate metadata, promotion status, and authenticated access instructions |
-| `byo-trainer/**/model_latest.pt` | real learned policy weights |
+| `checkpoints/candidate/candidate.json` | packaged candidate bytes/provenance, honest deployability/promotion status, and authenticated access instructions |
+| `byo-trainer/**/{model_*.pt,model_latest.pt,ppo-telemetry.json}` | enumerated real weights, latest compatibility alias, and PPO curves |
 
 Download and inspect without presigned URLs:
 
 ```bash
 PREFIX=s3://${BUCKET}/sim2real-b/${RUN}
 aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/reports/sim2real-report.json" - | jq .
-aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/eval/heldout/report.json" - | \
+aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/eval/gold-heldout/outer-03/report.json" - | \
   jq '{success_rate, policy_inference_provenance, capture, camera_metadata}'
 aws --endpoint-url "${ENDPOINT}" s3 cp "${PREFIX}/checkpoints/candidate/candidate.json" - | \
   jq '{deployable_policy, candidate_status, threshold_met, promotion_decision, policy_checkpoint_uri, policy_checkpoint_sha256, policy_checkpoint_size_bytes}'

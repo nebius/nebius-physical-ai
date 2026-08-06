@@ -38,13 +38,12 @@ def build_progress_metrics(
                     "mean_reward": iteration.get("mean_reward"),
                     "loss_before": update.get("loss_before"),
                     "loss_after": update.get("loss_after"),
-                    "quality_after": iteration.get(
-                        "quality_after", iteration.get("next_rollout_quality")
+                    "training_proxy_score": iteration.get(
+                        "training_proxy_score",
+                        iteration.get("next_rollout_training_proxy"),
                     ),
                     "checkpoint_uri": update.get("checkpoint_path", ""),
-                    "effective_learning_rate": iteration.get(
-                        "effective_learning_rate"
-                    ),
+                    "effective_learning_rate": iteration.get("effective_learning_rate"),
                     "learning_rate_scope": iteration.get("learning_rate_scope", ""),
                 }
             )
@@ -63,7 +62,14 @@ def build_progress_metrics(
                 "iterations": iterations,
                 "reward_trend": list(evidence.get("reward_trend") or []),
                 "loss_trend": loss_trend,
-                "final_quality": evidence.get("final_quality"),
+                "selected_validation_strict_success": evidence.get(
+                    "selected_validation_strict_success",
+                    evidence.get("final_quality"),
+                ),
+                "efficacy_metric_definition": evidence.get(
+                    "efficacy_metric_definition",
+                    "legacy evidence; inspect component_source before treating as efficacy",
+                ),
                 "evaluation_success_rate": decision.get("success_rate"),
                 "evaluation_threshold": decision.get("threshold"),
                 "decision": decision.get("decision", ""),

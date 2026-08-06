@@ -11,6 +11,7 @@ from npa.workflows.sim2real_envgen import (
     EnvGenConfig,
     build_policy_image_contract,
     build_scene_spec_for_augmented_frames,
+    load_raw_shards,
     write_action_conditioned_envs,
     write_raw_shard,
     write_split_manifest,
@@ -51,7 +52,9 @@ def raw_shard_cmd(
         byo_mesh_uri=byo_mesh_uri,
         augmented_frames_uri=augmented_frames_uri,
     )
-    typer.echo(json.dumps(write_raw_shard(config, output_dir), indent=2, sort_keys=True))
+    typer.echo(
+        json.dumps(write_raw_shard(config, output_dir), indent=2, sort_keys=True)
+    )
 
 
 @app.command("split")
@@ -60,10 +63,11 @@ def split_cmd(
     output_uri: str = typer.Option(..., "--output-uri"),
     env_count: int = typer.Option(10_000, "--env-count"),
     train_fraction: float = typer.Option(0.8, "--train-fraction"),
+    shard_count: int = typer.Option(1, "--shard-count"),
     seed: int = typer.Option(42, "--seed"),
     output_dir: Path = typer.Option(Path("/tmp/npa-envgen"), "--output-dir"),
 ) -> None:
-    """Generate and upload deterministic disjoint train/heldout split manifests."""
+    """Consume raw shards and upload disjoint train/validation/gold splits."""
 
     config = _config(
         run_id=run_id,
@@ -71,8 +75,21 @@ def split_cmd(
         env_count=env_count,
         train_fraction=train_fraction,
         seed=seed,
+        shard_count=shard_count,
     )
-    typer.echo(json.dumps(write_split_manifest(config, output_dir), indent=2, sort_keys=True))
+    raw_envs, raw_proof = load_raw_shards(config, output_dir / "stage-04-raw")
+    typer.echo(
+        json.dumps(
+            write_split_manifest(
+                config,
+                output_dir,
+                raw_envs=raw_envs,
+                raw_input_proof=raw_proof,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 @app.command("actions")
@@ -89,7 +106,9 @@ def actions_cmd(
 ) -> None:
     """Generate and upload action-conditioned train envs for a representative slice."""
 
-    config = _config(run_id=run_id, output_uri=output_uri, env_count=env_count, seed=seed)
+    config = _config(
+        run_id=run_id, output_uri=output_uri, env_count=env_count, seed=seed
+    )
     typer.echo(
         json.dumps(
             write_action_conditioned_envs(

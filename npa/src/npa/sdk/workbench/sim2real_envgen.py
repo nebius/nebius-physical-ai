@@ -10,6 +10,7 @@ from npa.workflows.sim2real_envgen import (
     SceneSpec,
     build_policy_image_contract,
     build_scene_spec,
+    load_raw_shards,
     write_action_conditioned_envs,
     write_raw_shard,
     write_split_manifest,
@@ -25,7 +26,14 @@ def raw_shard(config: EnvGenConfig, output_dir: str | Path) -> dict[str, Any]:
 
 
 def split(config: EnvGenConfig, output_dir: str | Path) -> dict[str, Any]:
-    return write_split_manifest(config, Path(output_dir))
+    target = Path(output_dir)
+    raw_envs, raw_proof = load_raw_shards(config, target / "stage-04-raw")
+    return write_split_manifest(
+        config,
+        target,
+        raw_envs=raw_envs,
+        raw_input_proof=raw_proof,
+    )
 
 
 def actions(
@@ -47,7 +55,9 @@ def actions(
     )
 
 
-def policy_image_contract(*, train_envs_uri: str, actions_uri: str, default_policy_image: str) -> dict[str, Any]:
+def policy_image_contract(
+    *, train_envs_uri: str, actions_uri: str, default_policy_image: str
+) -> dict[str, Any]:
     return build_policy_image_contract(
         train_envs_uri=train_envs_uri,
         output_uri=actions_uri,

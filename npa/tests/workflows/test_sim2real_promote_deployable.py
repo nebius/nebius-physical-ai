@@ -25,6 +25,20 @@ def _candidate(tmp_path):
     )
 
 
+def _real_report(success_rate: float) -> dict:
+    return {
+        "success_rate": success_rate,
+        "evaluation_split": "gold_heldout",
+        "policy_checkpoint": "s3://b/run/byo-trainer/model_latest.pt",
+        "per_env": [{"env_id": f"gold-{index:04d}"} for index in range(64)],
+        "policy_inference_provenance": {
+            "loaded_for_inference": True,
+            "stock_or_scripted_policy": False,
+        },
+        "applied_scenario_proof": {"exact_digest_match": True},
+    }
+
+
 def test_engine_preserves_threshold_decision_import() -> None:
     from npa.workflows.sim2real import decision, engine
 
@@ -32,10 +46,7 @@ def test_engine_preserves_threshold_decision_import() -> None:
 
 
 def test_promote_deployable_with_real_checkpoint(tmp_path):
-    report = {
-        "success_rate": 1.0,
-        "policy_checkpoint": "s3://b/run/byo-trainer/model_latest.pt",
-    }
+    report = _real_report(1.0)
     d = threshold_decision(
         _cfg(tmp_path), local_dir=tmp_path, heldout_report=report, outer_iteration=1
     )
@@ -51,7 +62,7 @@ def test_promote_deployable_with_real_checkpoint(tmp_path):
 
 
 def test_promote_stub_without_real_checkpoint(tmp_path):
-    report = {"success_rate": 1.0}  # reference path: no policy_checkpoint
+    report = {"success_rate": 1.0, "per_env": [{"env_id": "reference-0"}]}
     d = threshold_decision(
         _cfg(tmp_path), local_dir=tmp_path, heldout_report=report, outer_iteration=1
     )
@@ -62,11 +73,8 @@ def test_promote_stub_without_real_checkpoint(tmp_path):
     assert not (tmp_path / "outer_loop" / "loopback.json").exists()
 
 
-def test_below_threshold_real_checkpoint_remains_deployable_candidate(tmp_path):
-    report = {
-        "success_rate": 0.125,
-        "policy_checkpoint": "s3://b/run/byo-trainer/model_latest.pt",
-    }
+def test_below_threshold_real_checkpoint_remains_packaged_candidate(tmp_path):
+    report = _real_report(0.125)
 
     decision = threshold_decision(
         _cfg(tmp_path),
@@ -77,12 +85,13 @@ def test_below_threshold_real_checkpoint_remains_deployable_candidate(tmp_path):
 
     assert decision["decision"] == "loop_back_to_inner_loop"
     candidate = _candidate(tmp_path)
-    assert candidate["deployable_policy"] is True
+    assert candidate["deployable_policy"] is False
+    assert candidate["policy_bytes_available"] is True
     assert candidate["policy_artifact_kind"] == "isaac_rsl_rl_checkpoint"
     assert candidate["policy_checkpoint_uri"].endswith("model_latest.pt")
     assert candidate["threshold_met"] is False
     assert candidate["promotion_decision"] == "loop_back_to_inner_loop"
-    assert candidate["candidate_status"] == "below_threshold_deployable_candidate"
+    assert candidate["candidate_status"] == "below_threshold_policy_artifact"
     assert candidate["promoted_at"] == ""
     loopback = json.loads((tmp_path / "outer_loop" / "loopback.json").read_text())
     assert loopback["schema"] == "npa.sim2real.loopback.v1"
@@ -94,7 +103,7 @@ def test_below_threshold_real_checkpoint_remains_deployable_candidate(tmp_path):
     assert loopback["score"] == 0.125
     assert loopback["threshold"] == 0.45
     assert loopback["outer_iteration"] == 1
-    assert loopback["remaining_outer_iterations"] == 1
+    assert loopback["remaining_outer_iterations"] == 2
     assert loopback["remaining_work"] == "run_next_outer_iteration"
     assert loopback["decision"]["decision"] == "loop_back_to_inner_loop"
 
@@ -121,10 +130,7 @@ def test_real_checkpoint_candidate_hashes_without_path_read_bytes(
         raise AssertionError("Path.read_bytes() must not hash candidate checkpoints")
 
     monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
-    report = {
-        "success_rate": 1.0,
-        "policy_checkpoint": "s3://b/run/byo-trainer/model_latest.pt",
-    }
+    report = _real_report(1.0)
 
     threshold_decision(
         _cfg(tmp_path),
@@ -143,6 +149,7 @@ def test_real_checkpoint_candidate_hashes_without_path_read_bytes(
         "effective_learning_rate",
         "learning_rate_scope",
         "policy_artifact_kind",
+        "policy_bytes_available",
         "policy_checkpoint_identity",
         "policy_checkpoint_sha256",
         "policy_checkpoint_size_bytes",
@@ -151,6 +158,7 @@ def test_real_checkpoint_candidate_hashes_without_path_read_bytes(
         "policy_ui_action",
         "promoted_at",
         "promotion_decision",
+        "promotion_gates",
         "run_id",
         "schema",
         "source",

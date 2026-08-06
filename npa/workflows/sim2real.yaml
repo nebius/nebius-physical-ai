@@ -9,26 +9,28 @@
 # ---------------------------------------------------------------------------
 # Trigger bucket & S3-compatible storage (operator checklist)
 # ---------------------------------------------------------------------------
-# Stage 1 reads a LeRobot dataset from a trigger prefix under your object store.
+# Stage 1 reads a task-aligned Isaac trajectory seed from a trigger prefix.
 # The same bucket also holds run artifacts (sim2real-b/<run-id>/…).
 #
 # | What | Runbook env (materialized) | Operator shell | npa configure / ~/.npa |
 # | --- | --- | --- | --- |
 # | Artifact + trigger parent bucket | NPA_SIM2REAL_BUCKET | S3_BUCKET (alias) | storage.bucket in ~/.npa/config.yaml |
 # | S3-compatible endpoint | AWS_ENDPOINT_URL, S3_ENDPOINT_URL | AWS_ENDPOINT_URL | storage.endpoint_url in config.yaml |
-# | LeRobot trigger prefix (required) | NPA_SIM2REAL_TRIGGER_DATASET_URI | TRIGGER_DATASET_URI (alias) | storage.sim2real_stock_trigger_uri (seed path) |
+# | Task seed trigger prefix (required) | NPA_SIM2REAL_TRIGGER_DATASET_URI | TRIGGER_DATASET_URI (alias) | storage.sim2real_stock_trigger_uri (seed path) |
 # | Source dataset id | NPA_SIM2REAL_TRIGGER_DATASET_ID | TRIGGER_DATASET_ID (alias) | — |
 # | S3 access keys (cluster Jobs) | via secretRef npa-storage-credentials | AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY | ~/.npa/credentials.yaml storage.aws_* |
 #
 # Trigger path shape (no s3:// on bucket-only vars):
-#   s3://<your-bucket>/sim2real-triggers/<batch-id>/lerobot-pusht/
+#   s3://<your-bucket>/sim2real-triggers/<batch-id>/isaac-lift-cube-franka/
+# It must contain task-dataset-manifest.json plus the referenced real Isaac
+# rollout manifest/actions/camera frames. PushT data fails the task contract.
 #
 # External object-store bucket (GCS S3-compatible API):
 #   storage.bucket: <your-object-store-bucket>
 #   storage.endpoint_url: https://storage.googleapis.com
 #     (or regional, e.g. https://storage.us-central1.rep.googleapis.com)
 #   credentials.yaml: GCS HMAC keys as storage.aws_access_key_id / aws_secret_access_key
-#   operator env: NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-object-store-bucket>/sim2real-triggers/<batch>/lerobot-pusht/
+#   operator env: NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-object-store-bucket>/sim2real-triggers/<batch>/isaac-lift-cube-franka/
 #
 # Where to set values:
 #   1. Persistent defaults — `npa configure` writes ~/.npa/config.yaml + credentials.yaml
@@ -38,7 +40,7 @@
 #   4. Direct K8s submit — `npa workbench workflow submit` resolves config,
 #      stages current source, materializes this task, and applies the Job.
 #
-# Seed a valid LeRobot trigger prefix before first submit, set
+# Seed a valid task-aligned trigger prefix before first submit, set
 # storage.sim2real_stock_trigger_uri to it, and ensure the cluster's
 # npa-storage-credentials secret carries AWS_ENDPOINT_URL plus HMAC keys.
 #
@@ -50,7 +52,7 @@
 # | Sim assets (scene/robot/cameras) | BYO URIs, stage 2 assets, operator env | ASSETS_URI, SCENE_SPEC_URI, CAMERAS_URI, NPA_SIM2REAL_CAMERAS_URI, ROBOT_SPEC_URI, NPA_SIM2REAL_ROBOT_SPEC_URI, ROBOT_PRESET, NPA_SIM2REAL_ROBOT_PRESET |
 # | Artifact bucket vs trigger bucket | config.yaml, operator env, runbook NPA_SIM2REAL_* | NPA_SIM2REAL_BUCKET (alias S3_BUCKET), NPA_SIM2REAL_TRIGGER_DATASET_URI (alias TRIGGER_DATASET_URI), storage.bucket, storage.sim2real_stock_trigger_uri |
 # | External object-store bucket | endpoint + HMAC keys | AWS_ENDPOINT_URL, S3_ENDPOINT_URL, storage.endpoint_url, ~/.npa/credentials.yaml storage.aws_* |
-# | LeRobot custom/trigger dataset | trigger URI, dataset id | NPA_SIM2REAL_TRIGGER_DATASET_URI, NPA_SIM2REAL_TRIGGER_DATASET_ID (alias TRIGGER_DATASET_ID), default lerobot/pusht |
+# | Task seed dataset | trigger URI, dataset id | NPA_SIM2REAL_TRIGGER_DATASET_URI, NPA_SIM2REAL_TRIGGER_DATASET_ID (alias TRIGGER_DATASET_ID), default npa/isaac-lift-cube-franka-seed-v1 |
 # | Custom container images | operator env before submit | AUGMENT_IMAGE, ENVGEN_IMAGE, POLICY_IMAGE, TRAINER_IMAGE, VLM_IMAGE, VLM_REASON2_IMAGE, VLM_REASON3_IMAGE, EVAL_IMAGE, ISAAC_IMAGE, NPA_RERUN_VIEWER_IMAGE (alias NPA_SIM2REAL_RERUN_IMAGE) |
 #
 # Sim assets: Stage 2 reads ASSETS_URI and/or SCENE_SPEC_URI (and optional
@@ -98,12 +100,14 @@ envs:
   NPA_SIM2REAL_BUCKET: "example-bucket"
   NPA_SIM2REAL_PREFIX: "sim2real-b"
   NPA_SIM2REAL_TRIGGER_DATASET_URI: ""
-  NPA_SIM2REAL_TRIGGER_DATASET_ID: "lerobot/pusht"
+  NPA_SIM2REAL_TRIGGER_DATASET_ID: "npa/isaac-lift-cube-franka-seed-v1"
   AWS_ENDPOINT_URL: ""
   S3_ENDPOINT_URL: ""
   ACTION_ROLLOUTS_URI: ""
   TRAIN_ENVS_URI: ""
+  VALIDATION_ENVS_URI: ""
   HELDOUT_ENVS_URI: ""
+  GOLD_HELDOUT_ENVS_URI: ""
   ASSETS_URI: ""
   SCENE_SPEC_URI: ""
   AUGMENT_IMAGE: ""
@@ -129,23 +133,33 @@ envs:
   # Record the Stage 11 promotion decision, but run every configured outer pass.
   NPA_SIM2REAL_EARLY_EXIT: "0"
   INNER_ITERATIONS: "3"
-  OUTER_ITERATIONS: "2"
+  OUTER_ITERATIONS: "3"
   NPA_ENV_COUNT: "10000"
   NPA_TRAIN_FRACTION: "0.8"
-  INITIAL_QUALITY: "0.42"
+  INITIAL_QUALITY: "0.0"
   LOOP_OF_LOOPS_ITERATIONS: "1"
-  ROLLOUT_COUNT: "8"
-  STEPS_PER_ROLLOUT: "6"
-  HELDOUT_ENV_COUNT: "8"
+  ROLLOUT_COUNT: "64"
+  STEPS_PER_ROLLOUT: "32"
+  # Execute a task-length trajectory and sample 32 evenly spaced decision/event
+  # points for temporal credit; this is not a 32-simulation-step micro-rollout.
+  NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS: "300"
+  VALIDATION_ENV_COUNT: "64"
+  HELDOUT_ENV_COUNT: "64"
   # Per-episode Isaac metric in metres. This is intentionally separate from
   # SUCCESS_THRESHOLD, which gates the aggregate held-out success rate.
   NPA_BYO_ISAAC_SUCCESS_DIST_M: "0.05"
-  # Genuine RSL-RL PPO workload: 1024 envs × 150 iterations × 24 steps/env.
+  # Genuine RSL-RL PPO workload: 1024 envs × 500 iterations × 24 steps/env.
   # Allowed ranges are validated before submit: envs 1..65536, iterations
   # 1..1000000, and steps/env 1..16384.
   NPA_BYO_ISAAC_NUM_ENVS: "1024"
-  NPA_BYO_ISAAC_ITERATIONS: "150"
+  NPA_BYO_ISAAC_ITERATIONS: "500"
   NPA_BYO_ISAAC_STEPS_PER_ENV: "24"
+  # Validate durable numbered checkpoints every 100 PPO iterations and always
+  # include the final checkpoint; selection uses validation, never gold-heldout.
+  NPA_BYO_ISAAC_VALIDATION_INTERVAL: "100"
+  # Native PPO optimizer initial LR (adaptive task schedule). Independent from
+  # LEARNING_RATE, which applies only to the signal adapter/control attribution.
+  NPA_BYO_ISAAC_PPO_LEARNING_RATE: "0.001"
   NPA_ENVGEN_SHARD_COUNT: "16"
   NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS: "16"
   # Advanced defaults (leave unless tuning specific infra/runtime behavior).
@@ -315,10 +329,12 @@ run: |
     --s3-prefix "${NPA_SIM2REAL_PREFIX:-sim2real-b}"
     --s3-endpoint "${AWS_ENDPOINT_URL:-${S3_ENDPOINT_URL:-}}"
     --trigger-dataset-uri "${NPA_SIM2REAL_TRIGGER_DATASET_URI:-}"
-    --trigger-dataset-id "${NPA_SIM2REAL_TRIGGER_DATASET_ID:-lerobot/pusht}"
+    --trigger-dataset-id "${NPA_SIM2REAL_TRIGGER_DATASET_ID:-npa/isaac-lift-cube-franka-seed-v1}"
     --action-rollouts-uri "${ACTION_ROLLOUTS_URI:-}"
     --train-envs-uri "${TRAIN_ENVS_URI:-}"
+    --validation-envs-uri "${VALIDATION_ENVS_URI:-}"
     --heldout-envs-uri "${HELDOUT_ENVS_URI:-}"
+    --gold-heldout-envs-uri "${GOLD_HELDOUT_ENVS_URI:-}"
     --assets-uri "${ASSETS_URI:-}"
     --scene-spec-uri "${SCENE_SPEC_URI:-}"
     --augment-image "${AUGMENT_IMAGE:-}"
@@ -338,13 +354,14 @@ run: |
     --vlm-dual-reason
     --threshold "${SUCCESS_THRESHOLD:-0.50}"
     --inner-iterations "${INNER_ITERATIONS:-3}"
-    --outer-iterations "${OUTER_ITERATIONS:-2}"
+    --outer-iterations "${OUTER_ITERATIONS:-3}"
     --env-count "${NPA_ENV_COUNT:-10000}"
     --train-fraction "${NPA_TRAIN_FRACTION:-0.8}"
     --loop-of-loops-iterations "${LOOP_OF_LOOPS_ITERATIONS:-1}"
-    --rollout-count "${ROLLOUT_COUNT:-8}"
-    --steps-per-rollout "${STEPS_PER_ROLLOUT:-6}"
-    --heldout-env-count "${HELDOUT_ENV_COUNT:-8}"
+    --rollout-count "${ROLLOUT_COUNT:-64}"
+    --steps-per-rollout "${STEPS_PER_ROLLOUT:-32}"
+    --validation-env-count "${VALIDATION_ENV_COUNT:-64}"
+    --heldout-env-count "${HELDOUT_ENV_COUNT:-64}"
     --signal-loss-weight "${SIGNAL_LOSS_WEIGHT:-1.0}"
     --learning-rate "${LEARNING_RATE:-0.08}"
     --byo-signal-converter "${BYO_SIGNAL_CONVERTER:-}"
@@ -376,5 +393,5 @@ run: |
 
   ./npa/.venv/bin/python -m npa.workflows.sim2real run \
     "${common_args[@]}" \
-    --initial-quality "${INITIAL_QUALITY:-0.42}" \
+    --initial-quality "${INITIAL_QUALITY:-0.0}" \
     --upload-artifacts

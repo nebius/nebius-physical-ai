@@ -10,9 +10,13 @@ import time
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from npa.workflows.cosmos_split import Cosmos2TransferConfig, build_cosmos2_transfer_manifest
+from npa.workflows.cosmos_split import (
+    Cosmos2TransferConfig,
+    build_cosmos2_transfer_manifest,
+)
 from npa.workflows.sim2real_envgen import (
     EnvGenConfig,
+    load_raw_shards,
     write_raw_shard,
     write_split_manifest,
 )
@@ -32,7 +36,9 @@ def resolve_augment_frame_count(*, rollout_count: int = 0, override: int = 0) ->
     env_override = int(os.environ.get("NPA_SIM2REAL_AUGMENT_FRAME_COUNT", "0") or "0")
     if env_override > 0:
         return min(1024, env_override)
-    rollout = rollout_count or int(os.environ.get("NPA_SIM2REAL_ROLLOUT_COUNT", "0") or "0")
+    rollout = rollout_count or int(
+        os.environ.get("NPA_SIM2REAL_ROLLOUT_COUNT", "0") or "0"
+    )
     if rollout > 0:
         return min(1024, max(16, rollout * 4))
     return 1024
@@ -81,7 +87,11 @@ def k8s_image_ready(image: str) -> bool:
     from npa.workflows.sim2real_health import _looks_registry_qualified
 
     ref = str(image or "").strip()
-    return bool(ref) and _looks_registry_qualified(ref) and not unresolved_image_placeholders(ref)
+    return (
+        bool(ref)
+        and _looks_registry_qualified(ref)
+        and not unresolved_image_placeholders(ref)
+    )
 
 
 def _gpu_invocation_artifacts(invocation: dict[str, Any]) -> dict[str, Any]:
@@ -181,21 +191,23 @@ def run_envgen_split_stage(
     scene_spec_uri: str = "",
     robot_spec_uri: str = "",
 ) -> dict[str, Any]:
-    """Stages 4–6: generate raw envs, 80/20 split, token manifest."""
+    """Stages 4–6: generate, curate, and split train/validation/gold scenarios."""
 
     stage_group_started = time.monotonic()
     env_count = effective_env_count(config)
     train_count = effective_train_count(config)
-    heldout_count = effective_heldout_count(config)
-    if train_count + heldout_count != env_count:
+    non_train_count = effective_heldout_count(config)
+    if train_count + non_train_count != env_count:
         raise Sim2RealStageError("train + heldout counts must equal env_count")
 
     from npa.workflows.sim2real_assets import build_envgen_scene_spec
 
     scene = build_envgen_scene_spec(
         config,
-        scene_spec_uri=scene_spec_uri or str(local_dir / "stage_02_assets" / "consumed_scene_spec.json"),
-        robot_spec_uri=robot_spec_uri or str(local_dir / "stage_02_assets" / "consumed_robot_spec.json"),
+        scene_spec_uri=scene_spec_uri
+        or str(local_dir / "stage_02_assets" / "consumed_scene_spec.json"),
+        robot_spec_uri=robot_spec_uri
+        or str(local_dir / "stage_02_assets" / "consumed_robot_spec.json"),
         augmented_frames_uri=augmented_frames_uri,
     )
     env_root = local_dir / "envs"
@@ -214,6 +226,7 @@ def run_envgen_split_stage(
             shard_count=shard_count,
             scene_spec=scene,
         )
+        split_envgen = envgen
         envgen_invocation: dict[str, Any] = {}
         if k8s_image_ready(config.envgen_image) and shard_count > 1:
             from npa.workflows.sim2real.engine import run_envgen_sharded_component
@@ -224,7 +237,8 @@ def run_envgen_split_stage(
             evidence = (
                 f"Generated {env_count} raw envs across {shard_count} indexed GPU "
                 f"shards (parallelism capped at {min(shard_count, config.k8s_max_parallel_gpus)}) "
-                f"with {train_count}/{heldout_count} train/heldout split via sim2real_envgen on S3."
+                f"with {train_count}/{non_train_count} train/non-train partition via "
+                "sim2real_envgen on S3."
             )
         else:
             envgen_single = EnvGenConfig(
@@ -237,26 +251,51 @@ def run_envgen_split_stage(
                 shard_count=1,
                 scene_spec=scene,
             )
+            split_envgen = envgen_single
             with tempfile.TemporaryDirectory(prefix="npa-envgen-") as tmp:
                 tmp_path = Path(tmp)
                 write_raw_shard(envgen_single, tmp_path)
             tier = "WORKS" if k8s_image_ready(config.envgen_image) else "SEAM"
             if tier == "SEAM":
                 evidence = (
-                    f"Generated {env_count} raw envs with {train_count}/{heldout_count} "
-                    "train/heldout split via orchestrator in-process envgen because "
+                    f"Generated {env_count} raw envs with {train_count}/{non_train_count} "
+                    "train/non-train partition via orchestrator in-process envgen because "
                     "ENVGEN_IMAGE is not registry-qualified."
                 )
             else:
                 evidence = (
-                    f"Generated {env_count} raw envs with {train_count}/{heldout_count} "
-                    "train/heldout split via orchestrator in-process envgen (single shard)."
+                    f"Generated {env_count} raw envs with {train_count}/{non_train_count} "
+                    "train/non-train partition via orchestrator in-process envgen (single shard)."
                 )
         with tempfile.TemporaryDirectory(prefix="npa-envgen-split-") as tmp:
-            split = write_split_manifest(envgen, Path(tmp) / "split")
+            tmp_path = Path(tmp)
+            raw_rows, raw_proof = load_raw_shards(
+                split_envgen, tmp_path / "stage-04-raw"
+            )
+            split = write_split_manifest(
+                split_envgen,
+                tmp_path / "split",
+                raw_envs=raw_rows,
+                raw_input_proof=raw_proof,
+            )
+        train_count = int(split["train_count"])
+        validation_count = int(split["validation_count"])
+        gold_heldout_count = int(split["gold_heldout_count"])
+        heldout_count = int(split["heldout_count"])
+        if train_count + validation_count + gold_heldout_count != env_count:
+            raise Sim2RealStageError(
+                "curated train + validation + gold-heldout counts must equal env_count"
+            )
+        if validation_count + gold_heldout_count != non_train_count:
+            raise Sim2RealStageError(
+                "validation + gold-heldout counts must equal the configured non-train count"
+            )
         train_envs_uri = split["uploaded_train"]
+        validation_envs_uri = split["uploaded_validation"]
         heldout_envs_uri = split["uploaded_heldout"]
+        gold_heldout_envs_uri = split["uploaded_gold_heldout"]
         split_manifest_uri = split["uploaded_manifest"]
+        curation_manifest_uri = split["uploaded_curation"]
         _mirror_env_manifests(config, local_dir, envgen, split)
     else:
         from npa.workflows.sim2real_loop import (
@@ -264,6 +303,7 @@ def run_envgen_split_stage(
             _write_train_heldout_split,
         )
 
+        heldout_count = non_train_count
         raw = _write_env_manifest(
             env_root / "raw",
             count=env_count,
@@ -278,9 +318,16 @@ def run_envgen_split_stage(
         )
         train_envs_uri = str(env_root / "train" / "manifest.json")
         heldout_envs_uri = str(env_root / "heldout" / "manifest.json")
+        validation_envs_uri = heldout_envs_uri
+        gold_heldout_envs_uri = heldout_envs_uri
+        validation_count = heldout_count
+        gold_heldout_count = heldout_count
         split_manifest_uri = ""
+        curation_manifest_uri = ""
         tier = "WORKS"
-        evidence = f"Generated {env_count} local reference env manifests with 80/20 split."
+        evidence = (
+            f"Generated {env_count} local reference env manifests with 80/20 split."
+        )
         _write_json(
             local_dir / "tokens" / "manifest.json",
             {
@@ -315,12 +362,16 @@ def run_envgen_split_stage(
             "tier": tier,
             "evidence": (
                 f"Split the {env_count} generated environments into "
-                f"{train_count} train and {heldout_count} held-out records."
+                f"{train_count} train, {validation_count} validation, and "
+                f"{gold_heldout_count} final gold-heldout records."
             ),
             "artifacts": {
                 "train_envs": train_envs_uri,
+                "validation_envs": validation_envs_uri,
                 "heldout_envs": heldout_envs_uri,
+                "gold_heldout_envs": gold_heldout_envs_uri,
                 "split_manifest": split_manifest_uri,
+                "curation_manifest": curation_manifest_uri,
                 "job_name": config.run_id,
                 "execution": "orchestrator_record_from_stage_04_gpu_outputs",
                 "upstream_job_name": str(envgen_invocation.get("job_name") or ""),
@@ -331,7 +382,10 @@ def run_envgen_split_stage(
         {
             "name": "stage_06_tokens",
             "tier": tier,
-            "evidence": "Wrote the train/held-out token manifest from the generated environment catalog.",
+            "evidence": (
+                "Recorded scenario features as reporting/lineage inputs for the "
+                "state PPO; pixels/tokens are not falsely advertised as policy observations."
+            ),
             "artifacts": {
                 "tokens": f"{artifact_output_uri(config)}/tokens/manifest.json"
                 if config.s3_bucket
@@ -349,9 +403,14 @@ def run_envgen_split_stage(
         "env_count": env_count,
         "train_count": train_count,
         "heldout_count": heldout_count,
+        "validation_count": validation_count,
+        "gold_heldout_count": gold_heldout_count,
         "train_envs_uri": train_envs_uri,
+        "validation_envs_uri": validation_envs_uri,
         "heldout_envs_uri": heldout_envs_uri,
+        "gold_heldout_envs_uri": gold_heldout_envs_uri,
         "split_manifest_uri": split_manifest_uri,
+        "curation_manifest_uri": curation_manifest_uri,
         "components": stage_components,
         "component": {
             "name": "stage_04_06_env_gen_split_tokens",
@@ -372,6 +431,7 @@ def run_policy_rollouts(
     actions_dir: Path,
     outer_iteration: int,
     iteration: int,
+    checkpoint_uri: str = "",
 ) -> list[Path]:
     """Stage 7: swappable LeRobot policy container or local reference rollouts."""
 
@@ -383,7 +443,7 @@ def run_policy_rollouts(
         and train_uri.startswith("s3://")
         and k8s_image_ready(config.policy_image)
     ):
-        from npa.workflows import sim2real_loop as loop
+        from npa.workflows.sim2real import engine as loop
 
         return loop.run_policy_rollout_component(
             config,
@@ -392,6 +452,7 @@ def run_policy_rollouts(
             outer_iteration=outer_iteration,
             iteration=iteration,
             train_envs_uri=train_uri,
+            checkpoint_uri=checkpoint_uri,
         )
     return generate_action_rollouts(
         actions_dir,
@@ -442,9 +503,7 @@ def _reference_augment_local(
         root = f"{artifact_output_uri(config)}/augment/frames/"
         for item in index:
             client.upload_file(item["local"], f"{root}{Path(item['local']).name}")
-        client.upload_file(
-            str(frames_dir / "index.json"), f"{root}index.json"
-        )
+        client.upload_file(str(frames_dir / "index.json"), f"{root}index.json")
         output_uri = root
     manifest = build_cosmos2_transfer_manifest(
         Cosmos2TransferConfig(
@@ -462,7 +521,9 @@ def _reference_augment_local(
     return manifest, output_uri
 
 
-def _mirror_augment_frames(frames_uri: str, augment_dir: Path, *, attempts: int = 6) -> bool:
+def _mirror_augment_frames(
+    frames_uri: str, augment_dir: Path, *, attempts: int = 6
+) -> bool:
     """Mirror remote augmentation descriptors/images into the orchestrator tree."""
 
     uri = str(frames_uri or "").strip()
@@ -508,7 +569,9 @@ def _mirror_env_manifests(
     env_root.mkdir(parents=True, exist_ok=True)
     for sub, uri_key in (
         ("train", "uploaded_train"),
+        ("validation", "uploaded_validation"),
         ("heldout", "uploaded_heldout"),
+        ("gold-heldout", "uploaded_gold_heldout"),
     ):
         target = env_root / sub / "envs.jsonl"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -516,23 +579,38 @@ def _mirror_env_manifests(
     _write_json(
         env_root / "split-manifest.json",
         {
-            "schema": "npa.sim2real.split_manifest.v1",
+            "schema": "npa.sim2real.split_manifest.v2",
             "run_id": config.run_id,
             "train_count": split["train_count"],
             "heldout_count": split["heldout_count"],
+            "validation_count": split["validation_count"],
+            "gold_heldout_count": split["gold_heldout_count"],
             "raw_count": split["raw_count"],
             "train_uri": split["train_uri"],
             "heldout_uri": split["heldout_uri"],
+            "validation_uri": split["validation_uri"],
+            "gold_heldout_uri": split["gold_heldout_uri"],
+            "config_digest_leakage": split["config_digest_leakage"],
+            "coverage": split["coverage"],
+            "raw_input_proof": split.get("raw_input_proof", {}),
             "remote_manifest": split.get("uploaded_manifest", ""),
         },
+    )
+    client.download_path(
+        split["uploaded_curation"], str(env_root / "curation-manifest.json")
     )
     _write_json(
         local_dir / "tokens" / "manifest.json",
         {
-            "schema": "npa.sim2real.tokens.v1",
+            "schema": "npa.sim2real.tokens.v2",
             "stage": 6,
             "train_env_count": split["train_count"],
             "heldout_env_count": split["heldout_count"],
+            "validation_env_count": split["validation_count"],
+            "gold_heldout_env_count": split["gold_heldout_count"],
+            "learning_consumer": "lineage_and_reporting_only_for_state_ppo",
+            "policy_observation_consumer": False,
+            "rollout_consumer": "scenario_config_digest",
             "status": "ready",
         },
     )
@@ -541,4 +619,6 @@ def _mirror_env_manifests(
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )

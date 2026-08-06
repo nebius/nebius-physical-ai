@@ -19,9 +19,12 @@ from npa.workflows.sim2real.utils import _artifact_root_uri
 
 def _placement_artifacts(invocation: dict[str, Any]) -> dict[str, Any]:
     provenance = dict(invocation.get("gpu_provenance") or {})
-    selected = provenance.get("selected_product") or provenance.get("selected_products") or ""
+    selected = (
+        provenance.get("selected_product") or provenance.get("selected_products") or ""
+    )
     nodes = provenance.get("selected_node") or provenance.get("selected_nodes") or ""
     return {
+        "job_name": str(provenance.get("job_name") or invocation.get("job_name") or ""),
         "gpu_candidate_order": provenance.get("candidate_order", []),
         "gpu_attempts": provenance.get("attempts", []),
         "selected_gpu_product": selected,
@@ -54,6 +57,7 @@ def _loop_component_records(
         )
     )
     rollout_sources: set[str] = set()
+    rollout_scenario_digests: set[str] = set()
     rollout_invocations: list[dict[str, Any]] = []
     for manifest_path in action_manifests:
         try:
@@ -61,6 +65,7 @@ def _loop_component_records(
         except (OSError, json.JSONDecodeError):
             continue
         rollout_sources.add(str(payload.get("source") or ""))
+        rollout_scenario_digests.add(str(payload.get("scenario_config_digest") or ""))
         if payload.get("component_invocation"):
             rollout_invocations.append(dict(payload["component_invocation"]))
     stage_07_works = bool(
@@ -71,6 +76,16 @@ def _loop_component_records(
         and k8s_image_ready(config.policy_image)
         and k8s_image_ready(config.isaac_image)
         and rollout_sources == {"byo_isaac_policy_rollout"}
+        and rollout_invocations
+        and {str(invocation.get("mode") or "") for invocation in rollout_invocations}
+        == {"kubernetes_job"}
+        and all(
+            (invocation.get("gpu_provenance") or {}).get("selected_product")
+            and (invocation.get("gpu_provenance") or {}).get("image_digests")
+            for invocation in rollout_invocations
+        )
+        and "" not in rollout_scenario_digests
+        and len(action_manifests) >= config.rollout_count * config.inner_iterations
     )
 
     vlm_modes = {
@@ -82,9 +97,20 @@ def _loop_component_records(
         )
         for item in iterations
     }
+    vlm_invocation = dict(
+        (
+            (iterations[-1].get("sample_vlm_eval") or {}).get("component_invocation")
+            or {}
+        )
+        if iterations
+        else {}
+    )
     stage_08_works = bool(
         iterations
         and vlm_modes == {"kubernetes_job_dual_reason"}
+        and vlm_invocation
+        and (vlm_invocation.get("gpu_provenance") or {}).get("selected_products")
+        and (vlm_invocation.get("gpu_provenance") or {}).get("image_digests")
         and k8s_image_ready(config.vlm_image)
     )
 
@@ -96,22 +122,61 @@ def _loop_component_records(
         str((item.get("update") or {}).get("checkpoint_path") or "")
         for item in iterations
     ]
+    trainer_scenario_proofs = [
+        dict((item.get("update") or {}).get("applied_scenario_proof") or {})
+        for item in iterations
+    ]
+    trainer_telemetry_uris = [
+        str((item.get("update") or {}).get("ppo_telemetry_uri") or "")
+        for item in iterations
+    ]
+    trainer_invocation = dict(
+        iterations[-1].get("trainer_component_invocation") or {} if iterations else {}
+    )
     stage_09_works = bool(
         iterations
         and trainer_sources == {"byo_command"}
         and trainer_backends == {"isaac_rsl_rl_ppo"}
-        and all(uri.startswith("s3://") and uri.endswith(".pt") for uri in checkpoint_uris)
+        and all(
+            uri.startswith("s3://") and uri.endswith(".pt") for uri in checkpoint_uris
+        )
+        and all(
+            float(proof.get("coverage_rate") or 0.0) >= 0.90
+            and int(proof.get("applied_unique_config_digests") or 0) > 0
+            for proof in trainer_scenario_proofs
+        )
+        and all(uri.startswith("s3://") for uri in trainer_telemetry_uris)
+        and bool(trainer_invocation.get("job_name"))
+        and (trainer_invocation.get("gpu_provenance") or {}).get("selected_product")
+        and (trainer_invocation.get("gpu_provenance") or {}).get("image_digests")
         and k8s_image_ready(config.trainer_image)
         and k8s_image_ready(config.isaac_image)
     )
 
     eval_invocation = dict(heldout_report.get("component_invocation") or {})
     heldout_image = str(heldout_report.get("heldout_backend_image") or "")
+    eval_inference = dict(heldout_report.get("policy_inference_provenance") or {})
+    eval_scenario_proof = dict(heldout_report.get("applied_scenario_proof") or {})
+    eval_split = str(heldout_report.get("evaluation_split") or "")
+    required_eval_count = (
+        config.heldout_env_count
+        if eval_split == "gold_heldout"
+        else config.validation_env_count
+        if eval_split == "validation"
+        else 1
+    )
     stage_10_works = bool(
         heldout_report.get("status") == "completed"
         and heldout_report.get("sim_backend") == SIM_BACKEND_ISAAC
         and heldout_report.get("deployable_policy_eval") is True
         and int(eval_invocation.get("returncode", 1)) == 0
+        and eval_inference.get("loaded_for_inference") is True
+        and eval_inference.get("stock_or_scripted_policy") is False
+        and bool(heldout_report.get("policy_checkpoint_sha256"))
+        and eval_scenario_proof.get("exact_digest_match") is True
+        and len(heldout_report.get("per_env") or []) >= required_eval_count
+        and (eval_invocation.get("gpu_provenance") or {}).get("selected_product")
+        and (eval_invocation.get("gpu_provenance") or {}).get("image_digests")
         and k8s_image_ready(heldout_image)
     )
 
@@ -130,19 +195,25 @@ def _loop_component_records(
     rollout_placement = _placement_artifacts(
         rollout_invocations[-1] if rollout_invocations else {}
     )
-    vlm_invocation = dict(
-        ((iterations[-1].get("sample_vlm_eval") or {}).get("component_invocation") or {})
-        if iterations
-        else {}
-    )
     vlm_placement = _placement_artifacts(vlm_invocation)
-    trainer_invocation = dict(
-        iterations[-1].get("trainer_component_invocation") or {}
-        if iterations
-        else {}
-    )
     trainer_placement = _placement_artifacts(trainer_invocation)
     eval_placement = _placement_artifacts(eval_invocation)
+    isaac_rollout_job = str(rollout_placement.pop("job_name", "")) or isaac_rollout_job
+    vlm_job = str(vlm_placement.pop("job_name", "")) or "s2r-vlm-eval-reason{2,3}-*"
+    isaac_trainer_job = str(trainer_placement.pop("job_name", "")) or isaac_trainer_job
+    isaac_eval_job = str(eval_placement.pop("job_name", "")) or isaac_eval_job
+    local_report_uri = str(heldout_report.get("report_uri") or "")
+    try:
+        report_relative = Path(local_report_uri).relative_to(local_dir).as_posix()
+    except (TypeError, ValueError):
+        report_relative = ""
+    report_artifact_uri = (
+        f"{root}/{report_relative}" if report_relative else local_report_uri
+    )
+    last_update = dict((iterations[-1].get("update") or {}) if iterations else {})
+    last_calibration = dict(
+        (iterations[-1].get("signal_calibration") or {}) if iterations else {}
+    )
     records = [
         ComponentRecord(
             "stage_07_actions_train",
@@ -155,6 +226,12 @@ def _loop_component_records(
             ),
             {
                 "prefix": f"{root}/actions/train/outer-{outer_iteration:02d}/",
+                "applied_scenario_config_digests": sorted(
+                    digest for digest in rollout_scenario_digests if digest
+                ),
+                "applied_scenario_count": len(
+                    {digest for digest in rollout_scenario_digests if digest}
+                ),
                 "job_name": isaac_rollout_job,
                 "image": config.isaac_image,
                 "gpu_request": {
@@ -175,7 +252,8 @@ def _loop_component_records(
             ),
             {
                 "prefix": f"{root}/vlm_eval/train/outer-{outer_iteration:02d}/",
-                "job_name": "s2r-vlm-eval-reason{2,3}-*",
+                "signal_calibration": last_calibration,
+                "job_name": vlm_job,
                 "image": config.vlm_image,
                 "gpu_request": {
                     "resource": config.k8s_gpu_resource,
@@ -196,6 +274,22 @@ def _loop_component_records(
             {
                 "prefix": f"{root}/training_signal/train/outer-{outer_iteration:02d}/",
                 "checkpoint": str(inner.get("final_checkpoint_uri") or ""),
+                "ppo_telemetry": str(last_update.get("ppo_telemetry_uri") or ""),
+                "ppo_raw_log": str(last_update.get("ppo_raw_log_uri") or ""),
+                "ppo_hyperparameters": dict(
+                    last_update.get("ppo_hyperparameters") or {}
+                ),
+                "applied_scenarios": str(
+                    last_update.get("applied_scenarios_uri") or ""
+                ),
+                "applied_scenario_proof": dict(
+                    last_update.get("applied_scenario_proof") or {}
+                ),
+                "checkpoint_selection": str(
+                    (inner.get("checkpoint_selection") or {}).get(
+                        "selection_report_uri", ""
+                    )
+                ),
                 "job_name": isaac_trainer_job,
                 "image": config.isaac_image,
                 "gpu_request": {
@@ -215,7 +309,12 @@ def _loop_component_records(
                 else "Held-out evaluation did not prove the real Isaac Kubernetes contract."
             ),
             {
-                "report": f"{root}/eval/heldout/report.json",
+                "report": report_artifact_uri,
+                "evaluation_split": str(heldout_report.get("evaluation_split") or ""),
+                "applied_scenario_proof": heldout_report.get(
+                    "applied_scenario_proof", {}
+                ),
+                "checkpoint_sha256": heldout_report.get("policy_checkpoint_sha256", ""),
                 "job_name": isaac_eval_job,
                 "image": heldout_image,
                 "gpu_request": {
@@ -274,7 +373,9 @@ def _expand_envgen_component_records(
         if component.get("name") != "stage_04_06_env_gen_split_tokens"
     ]
     tier = str(grouped.get("tier") or "SEAM")
-    evidence = str(grouped.get("evidence") or "Environment generation record unavailable.")
+    evidence = str(
+        grouped.get("evidence") or "Environment generation record unavailable."
+    )
     artifacts = dict(grouped.get("artifacts") or {})
     root = _artifact_root_uri(config)
     stage_04_common = {
@@ -305,11 +406,26 @@ def _expand_envgen_component_records(
         ComponentRecord(
             "stage_05_envs_train",
             tier,
-            "Split the generated environment catalog into train and held-out records.",
+            "Curated deterministic, disjoint, stratified train, validation, and gold-heldout records.",
             {
-                "train_envs": artifacts.get("train_envs", f"{root}/envs/train/envs.jsonl"),
+                "train_envs": artifacts.get(
+                    "train_envs", f"{root}/envs/train/envs.jsonl"
+                ),
+                "validation_envs": artifacts.get(
+                    "validation_envs", f"{root}/envs/validation/envs.jsonl"
+                ),
                 "heldout_envs": artifacts.get(
                     "heldout_envs", f"{root}/envs/heldout/envs.jsonl"
+                ),
+                "gold_heldout_envs": artifacts.get(
+                    "gold_heldout_envs", f"{root}/envs/gold-heldout/envs.jsonl"
+                ),
+                "split_manifest": artifacts.get(
+                    "split_manifest", f"{root}/envs/manifest/split-manifest.json"
+                ),
+                "curation_manifest": artifacts.get(
+                    "curation_manifest",
+                    f"{root}/envs/manifest/curation-manifest.json",
                 ),
                 "job_name": config.run_id,
                 "execution": "orchestrator_record_from_stage_04_gpu_outputs",
@@ -319,9 +435,15 @@ def _expand_envgen_component_records(
         ComponentRecord(
             "stage_06_tokens",
             tier,
-            "Wrote the token manifest from the generated train/held-out catalog.",
+            (
+                "Recorded scenario features as lineage/reporting inputs for state PPO; "
+                "tokens and pixels are not policy observations."
+            ),
             {
                 "tokens": f"{root}/tokens/manifest.json",
+                "learning_consumer": "lineage_and_reporting_only_for_state_ppo",
+                "policy_observation_consumer": False,
+                "rollout_consumer": "scenario_config_digest",
                 "job_name": config.run_id,
                 "execution": "orchestrator_record_from_stage_04_gpu_outputs",
                 "upstream_job_name": stage_04_common["job_name"],

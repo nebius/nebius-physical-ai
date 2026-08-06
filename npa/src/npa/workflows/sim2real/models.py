@@ -39,9 +39,11 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_TRAINER_TAG,
     DEFAULT_TRAIN_FRACTION,
     DEFAULT_VLM_IMAGE_TAG,
+    DEFAULT_VALIDATION_ENVS,
     SIM_BACKEND_ISAAC,
     SIM_BACKENDS,
 )
+
 
 class Sim2RealLoopError(Exception):
     """Raised when the Sim2Real loop cannot produce a valid artifact."""
@@ -71,7 +73,11 @@ class Sim2RealLoopConfig:
     trigger_dataset_id: str = DEFAULT_LEROBOT_DATASET_ID
     action_rollouts_uri: str = ""
     train_envs_uri: str = ""
+    validation_envs_uri: str = ""
     heldout_envs_uri: str = ""
+    gold_heldout_envs_uri: str = ""
+    task_contract_uri: str = ""
+    task_contract_digest: str = ""
     assets_uri: str = ""
     scene_spec_uri: str = ""
     cameras_uri: str = ""
@@ -112,6 +118,7 @@ class Sim2RealLoopConfig:
     rollout_count: int = DEFAULT_ROLLOUT_COUNT
     steps_per_rollout: int = DEFAULT_STEPS_PER_ROLLOUT
     heldout_env_count: int = DEFAULT_HELDOUT_ENVS
+    validation_env_count: int = DEFAULT_VALIDATION_ENVS
     seed: int = 42
     upload_artifacts: bool = False
     no_guardrails: bool = False
@@ -126,7 +133,9 @@ class Sim2RealLoopConfig:
     rerun_enabled: bool = True
     k8s_namespace: str = ""
     k8s_service_account: str = "agent-sa"
-    k8s_image_pull_secrets: str = "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
+    k8s_image_pull_secrets: str = (
+        "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
+    )
     k8s_env_secret_names: str = "hf-ngc-tokens,npa-storage-credentials"
     k8s_gpu_resource: str = "nvidia.com/gpu"
     k8s_gpu_product: str = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
@@ -158,12 +167,16 @@ class Sim2RealLoopConfig:
             raise Sim2RealLoopError("steps_per_rollout must be positive")
         if self.heldout_env_count <= 0:
             raise Sim2RealLoopError("heldout_env_count must be positive")
+        if self.validation_env_count <= 0:
+            raise Sim2RealLoopError("validation_env_count must be positive")
         if self.learning_rate <= 0:
             raise Sim2RealLoopError("learning_rate must be positive")
         if self.signal_loss_weight < 0:
             raise Sim2RealLoopError("signal_loss_weight must be non-negative")
         if self.k8s_job_timeout_s < 0:
-            raise Sim2RealLoopError("k8s_job_timeout_s must be non-negative (0 is unlimited)")
+            raise Sim2RealLoopError(
+                "k8s_job_timeout_s must be non-negative (0 is unlimited)"
+            )
         if self.k8s_max_parallel_gpus <= 0:
             raise Sim2RealLoopError("k8s_max_parallel_gpus must be positive")
         if self.heldout_eval_limit < 0:
@@ -180,6 +193,18 @@ class Sim2RealLoopConfig:
             raise Sim2RealLoopError(
                 f"sim_backend must be one of {SIM_BACKENDS}, got {self.sim_backend!r}"
             )
+        from npa.workflows.sim2real.task_contract import validate_task_dataset
+
+        validate_task_dataset(
+            task_id=self.isaac_task,
+            dataset_id=self.trigger_dataset_id,
+            dataset_uri=self.trigger_dataset_uri,
+            real_required=bool(
+                self.s3_bucket
+                and self.sim_backend == SIM_BACKEND_ISAAC
+                and self.byo_trainer_command.strip()
+            ),
+        )
 
     def heldout_backend_image(self) -> str:
         """Return the container image that runs the held-out rollout backend.

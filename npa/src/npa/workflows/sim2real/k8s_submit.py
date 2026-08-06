@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Iterator
 
 from npa.deploy.images import container_image_for_tool
-from npa.workflows.sim2real.constants import DEFAULT_PREFIX
+from npa.workflows.sim2real.constants import DEFAULT_LEROBOT_DATASET_ID, DEFAULT_PREFIX
 from npa.workflows.sim2real.materialize import default_runbook_path, materialize_k8s_job
 from npa.workflows.sim2real.monitor import (
     load_operator_config,
@@ -159,6 +159,7 @@ def _validate_real_runtime_env(values: dict[str, str]) -> None:
         "LOOP_OF_LOOPS_ITERATIONS",
         "ROLLOUT_COUNT",
         "STEPS_PER_ROLLOUT",
+        "VALIDATION_ENV_COUNT",
         "HELDOUT_ENV_COUNT",
         "NPA_ENV_COUNT",
     ):
@@ -166,6 +167,13 @@ def _validate_real_runtime_env(values: dict[str, str]) -> None:
     integer("NPA_SIM2REAL_HELDOUT_EVAL_LIMIT", minimum=0)
     integer("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S", minimum=0)
     integer("NPA_BYO_ISAAC_JOB_TIMEOUT_S", minimum=0)
+    integer("NPA_BYO_ISAAC_VALIDATION_INTERVAL")
+    rollout_horizon = integer("NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS")
+    sampled_points = integer("STEPS_PER_ROLLOUT")
+    if rollout_horizon < sampled_points:
+        raise ValueError(
+            "NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS must be >= STEPS_PER_ROLLOUT"
+        )
 
     threshold = float(values.get("SUCCESS_THRESHOLD", "0.50"))
     if not 0.0 <= threshold <= 1.0:
@@ -390,7 +398,7 @@ def submit_sim2real_staged_job(
     *,
     run_id: str = "",
     trigger_dataset_uri: str = "",
-    trigger_dataset_id: str = "lerobot/pusht",
+    trigger_dataset_id: str = DEFAULT_LEROBOT_DATASET_ID,
     s3_bucket: str = "",
     s3_prefix: str = DEFAULT_PREFIX,
     s3_endpoint: str = "",
@@ -651,7 +659,7 @@ def submit_sim2real_from_workflow_vars(
         normalized.get("NPA_SIM2REAL_TRIGGER_DATASET_ID")
         or os.environ.get("NPA_SIM2REAL_TRIGGER_DATASET_ID")
         or os.environ.get("TRIGGER_DATASET_ID")
-        or "lerobot/pusht"
+        or DEFAULT_LEROBOT_DATASET_ID
     )
     inner = normalized.get("INNER_ITERATIONS")
     outer = normalized.get("OUTER_ITERATIONS")

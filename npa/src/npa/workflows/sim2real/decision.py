@@ -27,7 +27,6 @@ def threshold_decision(
 
     stage_started = time.monotonic()
     success_rate = float(heldout_report["success_rate"])
-    promoted = success_rate >= config.threshold
     checkpoint_dir = local_dir / "checkpoints" / "candidate"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     candidate_path = checkpoint_dir / "candidate.json"
@@ -38,6 +37,27 @@ def threshold_decision(
     is_real_policy = real_checkpoint.startswith("s3://") and real_checkpoint.endswith(
         ".pt"
     )
+    inference = dict(heldout_report.get("policy_inference_provenance") or {})
+    scenario_proof = dict(heldout_report.get("applied_scenario_proof") or {})
+    split = str(heldout_report.get("evaluation_split") or "")
+    promotion_gates = {
+        "strict_success_threshold": success_rate >= config.threshold,
+        "final_gold_split": split in {"", "gold_heldout"},
+        "checkpoint_loaded_for_inference": (
+            bool(inference.get("loaded_for_inference")) if is_real_policy else True
+        ),
+        "stock_or_scripted_policy_false": (
+            inference.get("stock_or_scripted_policy") is False
+            if is_real_policy
+            else True
+        ),
+        "applied_scenario_digest_match": (
+            bool(scenario_proof.get("exact_digest_match")) if is_real_policy else True
+        ),
+        "minimum_episode_coverage": len(heldout_report.get("per_env") or [])
+        >= (config.heldout_env_count if split == "gold_heldout" else 1),
+    }
+    promoted = all(promotion_gates.values())
     checkpoint_uri = real_checkpoint if is_real_policy else str(checkpoint_dir)
     checkpoint_metadata: dict[str, Any] = {}
     if is_real_policy:
@@ -76,7 +96,10 @@ def threshold_decision(
         "outer_iteration": outer_iteration,
         "success_rate": round(success_rate, 6),
         "threshold": config.threshold,
+        "threshold_met": promotion_gates["strict_success_threshold"],
         "decision": "promote_checkpoint" if promoted else "loop_back_to_inner_loop",
+        "evaluation_split": split or "legacy_heldout",
+        "promotion_gates": promotion_gates,
         "checkpoint_uri": checkpoint_uri,
         "max_outer_iterations": config.outer_iterations,
         "remaining_outer_iterations": max(0, config.outer_iterations - outer_iteration),
@@ -95,7 +118,8 @@ def threshold_decision(
                 "source": (
                     "isaac-rsl-rl-ppo" if is_real_policy else "vlm-rl-reference-update"
                 ),
-                "deployable_policy": is_real_policy,
+                "deployable_policy": bool(is_real_policy and promoted),
+                "policy_bytes_available": is_real_policy,
                 "policy_artifact_kind": (
                     "isaac_rsl_rl_checkpoint"
                     if is_real_policy
@@ -106,14 +130,15 @@ def threshold_decision(
                 "handoff_doc": "docs/workbench/guides/sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam",
                 "heldout_success_rate": round(success_rate, 6),
                 "threshold": config.threshold,
-                "threshold_met": promoted,
+                "threshold_met": promotion_gates["strict_success_threshold"],
+                "promotion_gates": promotion_gates,
                 "effective_learning_rate": config.learning_rate,
                 "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
                 "promotion_decision": (
                     "promote_checkpoint" if promoted else "loop_back_to_inner_loop"
                 ),
                 "candidate_status": (
-                    "promoted" if promoted else "below_threshold_deployable_candidate"
+                    "promoted" if promoted else "below_threshold_policy_artifact"
                 ),
                 "evaluated_at": _utc_now(),
                 "promoted_at": _utc_now() if promoted else "",
@@ -132,10 +157,13 @@ def threshold_decision(
                 "outer_iteration": outer_iteration,
                 "score": round(success_rate, 6),
                 "threshold": config.threshold,
-                "threshold_met": False,
+                "threshold_met": promotion_gates["strict_success_threshold"],
+                "promotion_gates": promotion_gates,
                 "real_policy": is_real_policy,
                 "policy_checkpoint_uri": real_checkpoint if is_real_policy else "",
-                "candidate_path": str(candidate_path) if candidate_path.is_file() else "",
+                "candidate_path": str(candidate_path)
+                if candidate_path.is_file()
+                else "",
                 "remaining_outer_iterations": remaining,
                 "remaining_work": (
                     "run_next_outer_iteration"

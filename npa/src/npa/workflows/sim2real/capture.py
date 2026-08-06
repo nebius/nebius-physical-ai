@@ -18,7 +18,7 @@ DEFAULT_HELDOUT_CAPTURE_STRIDE = 20
 DEFAULT_PNG_COMPRESS_LEVEL = 3
 DEFAULT_CAPTURE_FPS = 10.0
 DEFAULT_PPO_NUM_ENVS = 1024
-DEFAULT_PPO_ITERATIONS = 150
+DEFAULT_PPO_ITERATIONS = 500
 DEFAULT_PPO_STEPS_PER_ENV = 24
 
 
@@ -36,7 +36,12 @@ def _integer(
 
 
 def _number(
-    values: Mapping[str, Any], name: str, default: float, *, minimum: float, maximum: float
+    values: Mapping[str, Any],
+    name: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
 ) -> float:
     raw = values.get(name, default)
     try:
@@ -131,7 +136,9 @@ def ppo_settings(values: Mapping[str, Any] | None = None) -> dict[str, int]:
     }
 
 
-def runtime_parameter_metadata(values: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def runtime_parameter_metadata(
+    values: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Combined parameters persisted into reports and visualization provenance."""
 
     return {"capture": capture_settings(values), "ppo": ppo_settings(values)}

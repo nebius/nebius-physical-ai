@@ -70,6 +70,7 @@ def build_rollout_manifest(
     capture: dict[str, Any] | None = None,
     checkpoint_sha256: str = "",
     checkpoint_size_bytes: int = 0,
+    scenario: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build an ``npa.sim2real.action_rollout.v1`` manifest for one rollout.
 
@@ -81,6 +82,7 @@ def build_rollout_manifest(
     views = {name: list(names) for name, names in (camera_views or {}).items()}
     if not views:
         views = {"primary": list(frames)}
+    scenario = dict(scenario or {})
     return {
         "schema": ROLLOUT_SCHEMA,
         "rollout_id": rollout_id,
@@ -99,7 +101,54 @@ def build_rollout_manifest(
         "policy_checkpoint_sha256": checkpoint_sha256,
         "policy_checkpoint_size_bytes": int(checkpoint_size_bytes),
         "policy_trained": bool(is_trained),
+        "scenario_env_id": str(scenario.get("env_id") or ""),
+        "scenario_config_digest": str(scenario.get("scenario_config_digest") or ""),
+        "scenario_difficulty": str(scenario.get("difficulty") or ""),
+        "task_contract_digest": str(scenario.get("task_contract_digest") or ""),
+        "scenario_source_augmentation": dict(scenario.get("source_augmentation") or {}),
     }
+
+
+def select_rollout_scenarios(
+    rows: list[dict[str, Any]], *, count: int, selection_tag: str
+) -> list[dict[str, Any]]:
+    """Deterministically balance rollout scenarios across difficulty strata."""
+
+    if count <= 0:
+        raise ValueError("rollout scenario count must be positive")
+    if len(rows) < count:
+        raise ValueError(f"rollout needs {count} curated scenarios; found {len(rows)}")
+    buckets: dict[str, list[dict[str, Any]]] = {
+        name: [] for name in ("easy", "medium", "hard")
+    }
+    for row in rows:
+        difficulty = str(row.get("difficulty") or "")
+        if difficulty not in buckets:
+            raise ValueError(f"unsupported scenario difficulty: {difficulty!r}")
+        buckets[difficulty].append(row)
+    for difficulty, bucket in buckets.items():
+        if not bucket:
+            raise ValueError(f"curated rollout split has no {difficulty} scenarios")
+        bucket.sort(
+            key=lambda row: (
+                __import__("hashlib")
+                .sha256(f"{selection_tag}:{row.get('scenario_config_digest')}".encode())
+                .hexdigest()
+            )
+        )
+    selected: list[dict[str, Any]] = []
+    while len(selected) < count:
+        progressed = False
+        for difficulty in ("easy", "medium", "hard"):
+            if buckets[difficulty] and len(selected) < count:
+                selected.append(buckets[difficulty].pop(0))
+                progressed = True
+        if not progressed:
+            break
+    digests = [str(row.get("scenario_config_digest") or "") for row in selected]
+    if not all(digests) or len(set(digests)) != len(digests):
+        raise ValueError("selected rollout scenarios need unique config digests")
+    return selected
 
 
 def latest_checkpoint_uri(
@@ -178,10 +227,15 @@ def write_dryrun_rollouts(
             frames.append(name)
             actions.append({"step": step, "action": [0.01 * step, -0.01 * index, 0.0]})
         manifest = build_rollout_manifest(
-            rollout_id=rollout_id, frames=frames, actions=actions,
-            checkpoint_uri=checkpoint_uri, is_trained=is_trained,
+            rollout_id=rollout_id,
+            frames=frames,
+            actions=actions,
+            checkpoint_uri=checkpoint_uri,
+            is_trained=is_trained,
         )
-        (rdir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (rdir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
         dirs.append(str(rdir))
     return dirs
 
@@ -191,11 +245,16 @@ def write_dryrun_rollouts(
 # frames + the policy's actions, and uploads them to S3. Mirrors the proven
 # byo_isaac_eval rollout (reset-first batched obs; whole obs (Tensor)Dict to the
 # policy; per-env [realN,...] sizing) but records actions instead of distances.
-ISAAC_ROLLOUT_SCRIPT = r'''
+ISAAC_ROLLOUT_SCRIPT = r"""
 import hashlib, json, os, sys, traceback
 import numpy as np
 N = int(os.environ.get("ROLLOUT_COUNT", "4"))
 STEPS = int(os.environ.get("ROLLOUT_STEPS", "8"))
+HORIZON_STEPS = int(os.environ.get("ROLLOUT_HORIZON_STEPS", "300"))
+if STEPS < 1 or HORIZON_STEPS < STEPS:
+    raise RuntimeError("rollout horizon must be >= decision/event sample count")
+SAMPLE_STEPS = np.linspace(0, HORIZON_STEPS - 1, STEPS, dtype=np.int64).tolist()
+SAMPLE_INDEX = {int(sim_step): index for index, sim_step in enumerate(SAMPLE_STEPS)}
 TASK = os.environ["ROLLOUT_TASK"]
 CKPT = os.environ.get("ROLLOUT_CKPT_LOCAL", "").strip()
 OUT_S3 = os.environ["ROLLOUT_OUT_S3"]            # s3 prefix for frames+actions
@@ -216,14 +275,16 @@ def checkpoint_provenance():
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return {"uri": CKPT_URI, "sha256": h.hexdigest(), "size_bytes": os.path.getsize(CKPT)}
-def upload_and_exit(rollouts, note):
+def upload_and_exit(rollouts, note, applied=None):
     # rollouts: list of {rollout_id, frames:[names], actions:[{step,action}]}
     checkpoint = checkpoint_provenance()
     meta = {"rollouts": rollouts, "note": note, "policy_trained": bool(trained),
+            "applied_scenarios": applied or {},
             "policy_checkpoint": checkpoint,
             "camera_metadata": CAMERA_VIEWS,
             "capture": {"width": CAPTURE_WIDTH, "height": CAPTURE_HEIGHT,
                         "rollout_stride": CAPTURE_STRIDE,
+                        "decision_points": STEPS, "horizon_steps": HORIZON_STEPS,
                         "png_compress_level": PNG_COMPRESS_LEVEL, "fps": CAPTURE_FPS}}
     json.dump(meta, open("/tmp/rollwork/rollouts.json", "w"))
     print("ROLLOUT_WROTE", note, "rollouts", len(rollouts), flush=True)
@@ -248,6 +309,14 @@ try:
     app = AppLauncher(headless=True, enable_cameras=True).app
     import gymnasium as gym, torch
     import isaaclab_tasks  # noqa: F401
+    if os.environ.get("NPA_BYO_ROBOT_SPEC_JSON"):
+        sys.path.insert(0, "/tmp/rollwork")
+        import isaac_byo_robot_task as _robotmod
+        _scenario_task = _robotmod.register()
+        if not _scenario_task:
+            raise RuntimeError("task contract did not register a rollout task")
+        TASK = _scenario_task
+        print("ROLLOUT_SCENARIO_TASK", TASK, flush=True)
     from isaaclab_tasks.utils import parse_env_cfg
     import isaaclab.sim as sim_utils
     from isaaclab.sensors import TiledCameraCfg
@@ -263,7 +332,7 @@ try:
             env_cfg.scene.object.spawn.usd_path = OBJECT_USD
             print("ROLLOUT_OBJECT_USD_APPLIED", OBJECT_USD, flush=True)
         except Exception as e:
-            print("could not set object usd:", repr(e), flush=True)
+            raise RuntimeError("could not apply task-contract object USD: %r" % (e,)) from e
     def _camera_key(name):
         return "rollout_cam" if name == "primary" else "rollout_cam_" + name
     for view in CAMERA_VIEWS:
@@ -288,6 +357,16 @@ try:
         )
     print("ROLLOUT_CAMERA_VIEWS", [view["name"] for view in CAMERA_VIEWS], flush=True)
     env = gym.make(TASK, cfg=env_cfg)
+    if OBJECT_USD:
+        got_object_usd = getattr(env.unwrapped.scene["object"].cfg.spawn, "usd_path", None)
+        if got_object_usd != OBJECT_USD:
+            raise RuntimeError("rollout object USD mismatch; refusing stock fallback")
+    EXPECTED_ROBOT_USD = os.environ.get("NPA_EXPECTED_ROBOT_USD", "").strip()
+    if EXPECTED_ROBOT_USD:
+        got_robot_usd = getattr(env.unwrapped.scene["robot"].cfg.spawn, "usd_path", None)
+        print("ROLLOUT_ROBOT_USD", "want", EXPECTED_ROBOT_USD, "got", got_robot_usd, flush=True)
+        if got_robot_usd != EXPECTED_ROBOT_USD:
+            raise RuntimeError("BYO rollout robot USD mismatch; refusing stock fallback")
     env = RslRlVecEnvWrapper(env)
     agent_cfg = None
     for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
@@ -335,7 +414,10 @@ try:
             pass
         return o
     obs = _batched_obs(obs)
-    print("ROLLOUT realN", realN, "STEPS", STEPS, flush=True)
+    print(
+        "ROLLOUT realN", realN, "DECISION_POINTS", STEPS,
+        "HORIZON_STEPS", HORIZON_STEPS, flush=True,
+    )
     try:
         from PIL import Image as _PILImage
         _have_pil = True
@@ -351,10 +433,16 @@ try:
         for i in range(N)
     }
     actions_log = {i: [] for i in range(N)}
+    uenv = env.unwrapped
+    previous_goal_distance = np.full(N, np.nan)
+    previous_ee_distance = np.full(N, np.nan)
+    initial_object_z = None
+    stable_grasp_steps = np.zeros(N, dtype=np.int64)
+    stable_place_steps = np.zeros(N, dtype=np.int64)
     def capture(step):
         if not _have_pil:
             return
-        if step % CAPTURE_STRIDE != 0 and step != STEPS:
+        if step % CAPTURE_STRIDE != 0 and step != HORIZON_STEPS:
             return
         for view in CAMERA_VIEWS:
             view_name = view["name"]
@@ -387,30 +475,114 @@ try:
                     })
             except Exception as e:
                 print("capture_err", view_name, repr(e), flush=True)
-    for _step in range(STEPS):
+    for _step in range(HORIZON_STEPS):
         with torch.inference_mode():
             actions = policy(_batched_obs(obs))
         if _step == 0:
             print("STEP0 act_shape", tuple(getattr(actions, "shape", ())), flush=True)
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
-        capture(_step)
+        if _step in SAMPLE_INDEX:
+            capture(_step)
         a_np = actions.detach().cpu().numpy()
-        for i in range(min(N, a_np.shape[0])):
-            actions_log[i].append({"step": _step, "action": [round(float(x), 5) for x in a_np[i].tolist()]})
         obs, _, dones, extras = env.step(actions)
-    capture(STEPS)
+        obj = uenv.scene["object"].data.root_pos_w[:, :3]
+        cmd = uenv.command_manager.get_command("object_pose")
+        goal = cmd[:, :3] + uenv.scene.env_origins[:, :3]
+        goal_distance = torch.linalg.norm(obj - goal, dim=1).detach().cpu().numpy()
+        ee = uenv.scene["ee_frame"].data.target_pos_w[..., 0, :]
+        ee_distance = torch.linalg.norm(obj - ee, dim=1).detach().cpu().numpy()
+        if initial_object_z is None:
+            initial_object_z = obj[:, 2].detach().cpu().numpy().copy()
+        lift_m = obj[:, 2].detach().cpu().numpy() - initial_object_z
+        obj_velocity = torch.linalg.norm(
+            uenv.scene["object"].data.root_lin_vel_w, dim=1
+        ).detach().cpu().numpy()
+        contact_now = ee_distance < 0.04
+        try:
+            force = uenv.scene["object_contact"].data.net_forces_w_history
+            force_contact = np.linalg.norm(
+                force.detach().cpu().numpy(), axis=-1
+            ).reshape(N, -1).max(axis=1) > 1.0e-3
+            contact_now &= force_contact
+        except Exception as e:
+            print("ROLLOUT_CONTACT_SENSOR_FALLBACK", repr(e), flush=True)
+        gripper_closed = a_np[:, -1] < 0.0
+        stable_grasp_now = contact_now & gripper_closed & (lift_m > 0.01)
+        stable_grasp_steps = np.where(stable_grasp_now, stable_grasp_steps + 1, 0)
+        stable_grasp_now = stable_grasp_steps >= 3
+        stable_place_now = (goal_distance <= 0.05) & (obj_velocity <= 0.05)
+        stable_place_steps = np.where(stable_place_now, stable_place_steps + 1, 0)
+        stable_place_now = stable_place_steps >= 3
+        done_np = dones.detach().cpu().numpy().astype(bool)
+        scenario_rows = getattr(uenv, "npa_scenario_rows", [])
+        scenario_indices = getattr(uenv, "npa_scenario_indices", None)
+        scenario_cpu = (
+            scenario_indices.detach().cpu().tolist()
+            if scenario_indices is not None
+            else list(range(N))
+        )
+        if _step not in SAMPLE_INDEX:
+            continue
+        decision_step = SAMPLE_INDEX[_step]
+        for i in range(min(N, a_np.shape[0])):
+            scenario = scenario_rows[int(scenario_cpu[i])] if scenario_rows else {}
+            goal_change = (
+                0.0
+                if np.isnan(previous_goal_distance[i])
+                else float(previous_goal_distance[i] - goal_distance[i])
+            )
+            ee_change = (
+                0.0
+                if np.isnan(previous_ee_distance[i])
+                else float(previous_ee_distance[i] - ee_distance[i])
+            )
+            actions_log[i].append({
+                "step": decision_step,
+                "sim_step": _step,
+                "action": [round(float(x), 5) for x in a_np[i].tolist()],
+                "scenario_config_digest": str(scenario.get("scenario_config_digest") or ""),
+                "simulator_ground_truth": {
+                    "object_goal_distance_m": round(float(goal_distance[i]), 6),
+                    "object_goal_distance_change_m": round(goal_change, 6),
+                    "end_effector_object_distance_m": round(float(ee_distance[i]), 6),
+                    "end_effector_distance_change_m": round(ee_change, 6),
+                    "contact": bool(contact_now[i]),
+                    "gripper_closed": bool(gripper_closed[i]),
+                    "stable_grasp": bool(stable_grasp_now[i]),
+                    "object_height_m": round(float(obj[i, 2].item()), 6),
+                    "object_lift_m": round(float(lift_m[i]), 6),
+                    "placement_stable": bool(stable_place_now[i]),
+                    "terminated": bool(done_np[i]),
+                    "termination_reason": "success" if stable_place_now[i] else (
+                        "task_or_timeout" if done_np[i] else "running"
+                    ),
+                    "scenario_config_digest": str(scenario.get("scenario_config_digest") or ""),
+                },
+            })
+        previous_goal_distance = goal_distance.copy()
+        previous_ee_distance = ee_distance.copy()
+    capture(HORIZON_STEPS)
+    scenario_rows = getattr(uenv, "npa_scenario_rows", [])
+    scenario_indices = getattr(uenv, "npa_scenario_indices", None)
+    scenario_cpu = scenario_indices.detach().cpu().tolist() if scenario_indices is not None else list(range(N))
     rollouts = [{"rollout_id": rollout_ids[i],
                  "frames": frame_names[i].get("primary", []),
                  "camera_views": frame_names[i],
                  "camera_frame_metadata": frame_metadata[i],
+                 "scenario": scenario_rows[int(scenario_cpu[i])] if scenario_rows else {},
                  "actions": actions_log[i]}
                 for i in range(N)]
-    upload_and_exit(rollouts, "rollout_ok" if trained else "rollout_ok_untrained")
+    applied = _scenarios.runtime_audit(uenv)
+    upload_and_exit(
+        rollouts,
+        "rollout_ok" if trained else "rollout_ok_untrained",
+        applied=applied,
+    )
 except Exception as e:
     traceback.print_exc()
     upload_and_exit([], "rollout_failed:%s" % e)
-'''
+"""
 
 
 def _isaac_eula_env_entries() -> list[dict[str, str]]:
@@ -447,10 +619,15 @@ def build_isaac_rollout_job_manifest(
     namespace: str,
     service_account: str,
     gpu_product: str,
+    horizon_steps: int = 300,
     gpu_resource: str = "nvidia.com/gpu",
     object_usd: str = "",
     camera_views: str = "",
     capture: dict[str, Any] | None = None,
+    scenarios_jsonl: str = "",
+    robot_spec: dict[str, Any] | None = None,
+    robot_usd_uri: str = "",
+    task_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Isaac policy-rollout Job: roll the policy, capture frames+actions, upload.
 
@@ -466,7 +643,7 @@ def build_isaac_rollout_job_manifest(
     download = ""
     if checkpoint_uri:
         download = (
-            f'CKPT_URI={_shlex.quote(checkpoint_uri)} "$PY" - <<\'DLEOF\'\n'
+            f"CKPT_URI={_shlex.quote(checkpoint_uri)} \"$PY\" - <<'DLEOF'\n"
             "import os, boto3\n"
             "from urllib.parse import urlparse\n"
             "u = urlparse(os.environ['CKPT_URI'])\n"
@@ -479,38 +656,96 @@ def build_isaac_rollout_job_manifest(
     else:
         ckpt_local = ""
 
+    scenario_block = ""
+    if scenarios_jsonl:
+        from npa.workflows.sim2real import isaac_scenario_task as _scenarios
+
+        scenario_block = (
+            "cat > /tmp/rollwork/isaac_scenario_task.py <<'SCENARIOPYEOF'\n"
+            + _scenarios.module_source()
+            + "\nSCENARIOPYEOF\n"
+            "cat > /tmp/rollwork/scenarios.jsonl <<'SCENARIOJSONEOF'\n"
+            + scenarios_jsonl.rstrip()
+            + "\nSCENARIOJSONEOF\n"
+            "export NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/rollwork/scenarios.jsonl\n"
+            "export NPA_SIM2REAL_TASK_CONTRACT_DIGEST="
+            + _shlex.quote(_env("NPA_SIM2REAL_TASK_CONTRACT_DIGEST"))
+            + "\n"
+            "export NPA_SIM2REAL_SCENARIO_ROTATE_ON_RESET=0\n"
+        )
+
+    robot_block = ""
+    if robot_spec:
+        from npa.workflows.sim2real import isaac_byo_robot_task as _robotmod
+
+        robot_block = (
+            "cat > /tmp/rollwork/isaac_byo_robot_task.py <<'ROBOTPYEOF'\n"
+            + _robotmod.module_source()
+            + "\nROBOTPYEOF\n"
+            "export NPA_BYO_ROBOT_SPEC_JSON="
+            + _shlex.quote(json.dumps(robot_spec, sort_keys=True))
+            + "\n"
+        )
+        if task_config:
+            robot_block += (
+                "export NPA_BYO_TASK_CONFIG_JSON="
+                + _shlex.quote(json.dumps(task_config, sort_keys=True))
+                + "\n"
+            )
+        expected_usd = str(robot_spec.get("usd_path") or "").strip()
+        if robot_usd_uri and expected_usd:
+            robot_block += (
+                "ROBOT_USD_URI="
+                + _shlex.quote(robot_usd_uri)
+                + " ROBOT_USD_DEST="
+                + _shlex.quote(expected_usd)
+                + " \"$PY\" - <<'ROBOTDLEOF'\n"
+                "import os, boto3\n"
+                "from urllib.parse import urlparse\n"
+                "u = urlparse(os.environ['ROBOT_USD_URI'])\n"
+                "dest = os.environ['ROBOT_USD_DEST']\n"
+                "os.makedirs(os.path.dirname(dest), exist_ok=True)\n"
+                "boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None).download_file(u.netloc, u.path.lstrip('/'), dest)\n"
+                "print('STAGED_ROBOT_USD', dest)\n"
+                "ROBOTDLEOF\n"
+                "export NPA_EXPECTED_ROBOT_USD=" + _shlex.quote(expected_usd) + "\n"
+            )
+
     script = (
         "set -euo pipefail\n"
-        'exec > >(tee -a /tmp/byo-rollout.log) 2>&1\n'
-        'if [ -x /isaac-sim/python.sh ]; then\n'
-        '  PY=/isaac-sim/python.sh\n'
-        'elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n'
-        '  cat > /tmp/isaac-python <<\'ISPYEOF\'\n'
-        '#!/usr/bin/env bash\n'
+        "exec > >(tee -a /tmp/byo-rollout.log) 2>&1\n"
+        "if [ -x /isaac-sim/python.sh ]; then\n"
+        "  PY=/isaac-sim/python.sh\n"
+        "elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n"
+        "  cat > /tmp/isaac-python <<'ISPYEOF'\n"
+        "#!/usr/bin/env bash\n"
         'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
-        'ISPYEOF\n'
-        '  chmod +x /tmp/isaac-python\n'
-        '  PY=/tmp/isaac-python\n'
-        'else\n'
+        "ISPYEOF\n"
+        "  chmod +x /tmp/isaac-python\n"
+        "  PY=/tmp/isaac-python\n"
+        "else\n"
         '  PY="$(command -v python3 || command -v python || true)"\n'
-        'fi\n'
+        "fi\n"
         '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
         '"$PY" -m pip install --quiet boto3 pillow 2>/dev/null || true\n'
         "mkdir -p /tmp/rollwork/frames; cd /tmp/rollwork\n"
         f'export ROLLOUT_TASK="{task}" ROLLOUT_COUNT="{rollout_count}" '
         f'ROLLOUT_STEPS="{steps_per_rollout}" ROLLOUT_OBJECT_USD="{object_usd}" '
-        f'ROLLOUT_CAMERA_VIEWS_JSON={_shlex.quote(camera_views or camera_views_json())} '
+        f'ROLLOUT_HORIZON_STEPS="{horizon_steps}" '
+        f"ROLLOUT_CAMERA_VIEWS_JSON={_shlex.quote(camera_views or camera_views_json())} "
         f'ROLLOUT_CAPTURE_WIDTH="{capture["width"]}" '
         f'ROLLOUT_CAPTURE_HEIGHT="{capture["height"]}" '
         f'ROLLOUT_CAPTURE_STRIDE="{capture["rollout_stride"]}" '
         f'ROLLOUT_PNG_COMPRESS_LEVEL="{capture["png_compress_level"]}" '
         f'ROLLOUT_CAPTURE_FPS="{capture["fps"]}" '
-        f'ROLLOUT_CKPT_URI={_shlex.quote(checkpoint_uri)} '
+        f"ROLLOUT_CKPT_URI={_shlex.quote(checkpoint_uri)} "
         f'ROLLOUT_CKPT_LOCAL="{ckpt_local}" '
-        f'ROLLOUT_OUT_S3={_shlex.quote(out_s3_prefix)} '
-        'ROLLOUT_FRAMES_DIR=/tmp/rollwork/frames\n'
+        f"ROLLOUT_OUT_S3={_shlex.quote(out_s3_prefix)} "
+        "ROLLOUT_FRAMES_DIR=/tmp/rollwork/frames\n"
         + download
-        + 'cat > /tmp/rollwork/rollout.py <<\'PYEOF\'\n'
+        + scenario_block
+        + robot_block
+        + "cat > /tmp/rollwork/rollout.py <<'PYEOF'\n"
         f"{ISAAC_ROLLOUT_SCRIPT}\n"
         "PYEOF\n"
         '"$PY" /tmp/rollwork/rollout.py\n'
@@ -582,7 +817,9 @@ def build_isaac_rollout_job_manifest(
 # --------------------------------------------------------------------------- #
 def _kubectl(args: list[str], *, stdin: str | None = None, timeout: int = 300):
     cmd = [os.environ.get("NPA_KUBECTL_BIN") or "kubectl", *args]
-    return subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=timeout, check=False)
+    return subprocess.run(
+        cmd, input=stdin, capture_output=True, text=True, timeout=timeout, check=False
+    )
 
 
 def _env(name: str, default: str = "") -> str:
@@ -608,16 +845,44 @@ def materialize_rollout_dirs(
     is_trained = bool(meta.get("policy_trained"))
     note = str(meta.get("note") or "")
     if not note.startswith("rollout_ok"):
-        raise RuntimeError(f"real Isaac rollout failed closed: {note or 'missing status'}")
+        raise RuntimeError(
+            f"real Isaac rollout failed closed: {note or 'missing status'}"
+        )
     if checkpoint_uri and not is_trained:
         raise RuntimeError(
             "real Isaac rollout did not load the requested trained checkpoint"
         )
     checkpoint = dict(meta.get("policy_checkpoint") or {})
+    if checkpoint_uri and (
+        checkpoint.get("uri") != checkpoint_uri
+        or not checkpoint.get("sha256")
+        or int(checkpoint.get("size_bytes") or 0) <= 0
+    ):
+        raise RuntimeError(
+            "real Isaac rollout did not prove the exact requested checkpoint bytes"
+        )
     camera_meta = list(meta.get("camera_metadata") or [])
     capture = dict(meta.get("capture") or {})
+    applied = dict(meta.get("applied_scenarios") or {})
+    applied_digests = {
+        str(row.get("scenario_config_digest") or "")
+        for row in applied.get("records") or []
+        if int(row.get("applied_count") or 0) > 0
+    }
     dirs: list[str] = []
     for roll in meta.get("rollouts", []) or []:
+        action_rows = list(roll.get("actions") or [])
+        expected_points = int(capture.get("decision_points") or 0)
+        if expected_points and len(action_rows) != expected_points:
+            raise RuntimeError(
+                f"rollout temporal coverage mismatch: expected {expected_points}, "
+                f"found {len(action_rows)}"
+            )
+        if not action_rows or not all(
+            (row.get("simulator_ground_truth") or {}).get("scenario_config_digest")
+            for row in action_rows
+        ):
+            raise RuntimeError("rollout lacks per-decision simulator ground truth")
         rid = roll["rollout_id"]
         rdir = output_dir / rid
         rdir.mkdir(parents=True, exist_ok=True)
@@ -634,21 +899,42 @@ def materialize_rollout_dirs(
             try:
                 s3.download_file(u.netloc, f"{base}/{rid}/{name}", str(rdir / name))
             except Exception as exc:  # pragma: no cover - network
-                print(f"byo_isaac_policy_rollout: frame download failed {rid}/{name}: {exc!r}", flush=True)
+                print(
+                    f"byo_isaac_policy_rollout: frame download failed {rid}/{name}: {exc!r}",
+                    flush=True,
+                )
         manifest = build_rollout_manifest(
-            rollout_id=rid, frames=roll.get("frames", []), actions=roll.get("actions", []),
-            checkpoint_uri=checkpoint_uri, is_trained=is_trained,
+            rollout_id=rid,
+            frames=roll.get("frames", []),
+            actions=action_rows,
+            checkpoint_uri=checkpoint_uri,
+            is_trained=is_trained,
             camera_views=view_frames,
             camera_metadata_items=camera_meta,
             frame_metadata=dict(roll.get("camera_frame_metadata") or {}),
             capture=capture,
             checkpoint_sha256=str(checkpoint.get("sha256") or ""),
             checkpoint_size_bytes=int(checkpoint.get("size_bytes") or 0),
+            scenario=dict(roll.get("scenario") or {}),
         )
-        (rdir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (rdir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
         dirs.append(str(rdir))
     if not dirs:
         raise RuntimeError("real Isaac rollout returned no episodes")
+    reported_digests = {
+        str((roll.get("scenario") or {}).get("scenario_config_digest") or "")
+        for roll in meta.get("rollouts", []) or []
+    }
+    if (
+        not reported_digests
+        or "" in reported_digests
+        or reported_digests != applied_digests
+    ):
+        raise RuntimeError(
+            "rollout scenario labels do not exactly match Isaac runtime applied digests"
+        )
     return dirs
 
 
@@ -661,7 +947,11 @@ def run_isaac_rollout_job(
 ) -> list[str]:
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
-    bucket = _env("NPA_SIM2REAL_BUCKET") or _env("S3_BUCKET") or _env("NPA_SIM2REAL_S3_BUCKET")
+    bucket = (
+        _env("NPA_SIM2REAL_BUCKET")
+        or _env("S3_BUCKET")
+        or _env("NPA_SIM2REAL_S3_BUCKET")
+    )
     namespace = _env("NPA_SIM2REAL_K8S_NAMESPACE", "default")
     sa = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
@@ -680,23 +970,84 @@ def run_isaac_rollout_job(
 
     object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
 
-    checkpoint_uri = latest_checkpoint_uri(
-        bucket,
-        run_id,
-        s3_endpoint=endpoint,
-        s3_prefix=s3_prefix,
+    from npa.workflows.sim2real.byo_isaac_trainer import (
+        ROBOT_USD_CONTAINER_PATH,
+        _resolve_byo_robot_spec,
+        robot_spec_payload,
     )
+
+    robot_spec_dict: dict[str, Any] | None = None
+    robot_usd_uri = ""
+    if _env("NPA_BYO_ROBOT_TASK") == "1":
+        spec = _resolve_byo_robot_spec()
+        usd_dest = ""
+        if (
+            spec is not None
+            and str(getattr(spec, "robot_source", "")) != "stock_franka"
+        ):
+            source_uri = str(getattr(spec, "robot_uri", "") or "")
+            if source_uri.startswith("s3://"):
+                robot_usd_uri = source_uri
+                usd_dest = ROBOT_USD_CONTAINER_PATH
+            elif source_uri:
+                usd_dest = source_uri
+        robot_spec_dict = robot_spec_payload(spec, usd_container_path=usd_dest)
+    if robot_spec_dict is None:
+        robot_spec_dict = {"robot_source": "stock_franka", "name": "franka"}
+    task_config = None
+    raw_task_config = _env("NPA_BYO_TASK_CONFIG_JSON")
+    if raw_task_config:
+        parsed_task_config = json.loads(raw_task_config)
+        if not isinstance(parsed_task_config, dict):
+            raise RuntimeError("NPA_BYO_TASK_CONFIG_JSON must be an object")
+        task_config = parsed_task_config
+
+    checkpoint_uri = _env("NPA_SIM2REAL_POLICY_CHECKPOINT_URI")
+    if checkpoint_uri and not checkpoint_uri.startswith("s3://"):
+        raise RuntimeError("explicit rollout checkpoint must be an s3:// URI")
+    if not checkpoint_uri:
+        checkpoint_uri = latest_checkpoint_uri(
+            bucket,
+            run_id,
+            s3_endpoint=endpoint,
+            s3_prefix=s3_prefix,
+        )
     # Unique per (run, outer, inner) so second-pass component artifacts do not
     # overwrite first-pass rollouts.
-    job_suffix = artifact_tag(_env("NPA_SIM2REAL_ROLLOUT_TAG")) or artifact_tag_from_output_dir(output_dir)
+    job_suffix = artifact_tag(
+        _env("NPA_SIM2REAL_ROLLOUT_TAG")
+    ) or artifact_tag_from_output_dir(output_dir)
+    from npa.workflows.sim2real.byo_isaac_trainer import read_generated_train_envs
+
+    train_rows, _ = read_generated_train_envs(
+        _env("NPA_SIM2REAL_TRAIN_ENVS_DIR"),
+        envs_uri=_env("NPA_SIM2REAL_TRAIN_ENVS_URI"),
+    )
+    selected_scenarios = select_rollout_scenarios(
+        train_rows,
+        count=rollout_count,
+        selection_tag=f"{run_id}:{job_suffix}",
+    )
+    scenarios_jsonl = (
+        "\n".join(json.dumps(row, sort_keys=True) for row in selected_scenarios) + "\n"
+    )
     job_name = k8s_job_name("s2r-byo-isaac-roll", run_id, job_suffix)
     out_s3 = f"s3://{bucket}/{s3_prefix}/{run_id}/byo-rollouts/{job_suffix}"
 
     manifest = build_isaac_rollout_job_manifest(
-        job_name=job_name, run_id=run_id, image=image, task=task,
-        rollout_count=rollout_count, steps_per_rollout=steps_per_rollout,
-        checkpoint_uri=checkpoint_uri, out_s3_prefix=out_s3, s3_endpoint=endpoint,
-        namespace=namespace, service_account=sa, gpu_product=gpu_product,
+        job_name=job_name,
+        run_id=run_id,
+        image=image,
+        task=task,
+        rollout_count=rollout_count,
+        steps_per_rollout=steps_per_rollout,
+        horizon_steps=int(_env("NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS", "300") or 300),
+        checkpoint_uri=checkpoint_uri,
+        out_s3_prefix=out_s3,
+        s3_endpoint=endpoint,
+        namespace=namespace,
+        service_account=sa,
+        gpu_product=gpu_product,
         object_usd=object_usd,
         camera_views=json.dumps(
             camera_metadata(
@@ -707,6 +1058,10 @@ def run_isaac_rollout_job(
             separators=(",", ":"),
         ),
         capture=capture,
+        scenarios_jsonl=scenarios_jsonl,
+        robot_spec=robot_spec_dict,
+        robot_usd_uri=robot_usd_uri,
+        task_config=task_config,
     )
     from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 
@@ -718,9 +1073,7 @@ def run_isaac_rollout_job(
             .setdefault("template", {})
             .setdefault("spec", {})
         )
-        pod_spec["nodeSelector"] = {
-            "nvidia.com/gpu.product": product
-        }
+        pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
         return candidate
 
     def kubectl(args: list[str], **kwargs: Any):
@@ -752,10 +1105,13 @@ def run_isaac_rollout_job(
     s3 = boto3.client("s3", endpoint_url=endpoint or None)
     local_meta = output_dir / "rollouts.json"
     output_dir.mkdir(parents=True, exist_ok=True)
-    s3.download_file(u.netloc, f"{u.path.lstrip('/').rstrip('/')}/rollouts.json", str(local_meta))
+    s3.download_file(
+        u.netloc, f"{u.path.lstrip('/').rstrip('/')}/rollouts.json", str(local_meta)
+    )
     meta = json.loads(local_meta.read_text())
     return materialize_rollout_dirs(
-        output_dir, meta, out_s3, checkpoint_uri=checkpoint_uri, s3_endpoint=endpoint)
+        output_dir, meta, out_s3, checkpoint_uri=checkpoint_uri, s3_endpoint=endpoint
+    )
 
 
 def main() -> int:
@@ -763,7 +1119,10 @@ def main() -> int:
     _LAST_GPU_PROVENANCE = {}
     output_json = _env("NPA_SIM2REAL_OUTPUT_JSON")
     if not output_json:
-        print("byo_isaac_policy_rollout: NPA_SIM2REAL_OUTPUT_JSON not set", file=sys.stderr)
+        print(
+            "byo_isaac_policy_rollout: NPA_SIM2REAL_OUTPUT_JSON not set",
+            file=sys.stderr,
+        )
         return 2
     run_id = _env("NPA_SIM2REAL_RUN_ID") or _env("RUN_ID") or "byo-isaac"
     output_dir = Path(_env("NPA_SIM2REAL_OUTPUT_DIR") or str(Path(output_json).parent))
@@ -779,12 +1138,18 @@ def main() -> int:
             s3_prefix=_env("NPA_SIM2REAL_PREFIX", "sim2real-b"),
         )
         rollout_dirs = write_dryrun_rollouts(
-            output_dir, count=rollout_count, steps_per_rollout=steps_per_rollout,
-            checkpoint_uri=checkpoint_uri)
+            output_dir,
+            count=rollout_count,
+            steps_per_rollout=steps_per_rollout,
+            checkpoint_uri=checkpoint_uri,
+        )
     else:
         rollout_dirs = run_isaac_rollout_job(
-            output_dir, run_id=run_id, rollout_count=rollout_count,
-            steps_per_rollout=steps_per_rollout)
+            output_dir,
+            run_id=run_id,
+            rollout_count=rollout_count,
+            steps_per_rollout=steps_per_rollout,
+        )
 
     payload = {
         "schema": "npa.sim2real.policy_rollouts.v1",
@@ -799,7 +1164,10 @@ def main() -> int:
     }
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
     Path(output_json).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(f"byo_isaac_policy_rollout: wrote {output_json} rollout_dirs={len(rollout_dirs)}", flush=True)
+    print(
+        f"byo_isaac_policy_rollout: wrote {output_json} rollout_dirs={len(rollout_dirs)}",
+        flush=True,
+    )
     return 0
 
 

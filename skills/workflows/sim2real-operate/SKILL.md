@@ -28,8 +28,10 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
 
 1. **Configure once.** `~/.npa/config.yaml` (bucket, endpoint, registry,
    `k8s_context`) + `~/.npa/credentials.yaml` (S3 HMAC, HF/NGC tokens).
-2. **Seed the trigger** with a valid LeRobot prefix, then set
-   `storage.sim2real_stock_trigger_uri`.
+2. **Seed the trigger** with a task-aligned Isaac lift-cube/Franka trajectory
+   prefix containing `task-dataset-manifest.json` and its referenced actions and
+   camera observations, then set `storage.sim2real_stock_trigger_uri`. PushT is
+   incompatible and the real-required path fails closed on it.
 3. **Sync the cluster storage secret** so pods get the endpoint + keys:
    ensure `npa-storage-credentials` and `hf-ngc-tokens` exist in the namespace.
 4. **Preflight:** `npa workbench health sim2real --checks all` (accepts `all` or

@@ -599,7 +599,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.sim2real_envgen.split": ToolEntry(
         name="workbench.sim2real_envgen.split",
-        description="Split the generated env catalog into disjoint train and held-out sets.",
+        description=(
+            "Consume raw shards and create disjoint train, validation, and gold-heldout sets."
+        ),
         argv_template=[
             "python3",
             "-m",
@@ -613,6 +615,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.env_count}}",
             "--train-fraction",
             "{{config.train_fraction}}",
+            "--shard-count",
+            "{{config.shard_count}}",
             "--seed",
             "{{config.envgen_seed}}",
             "--augmented-frames-uri",
@@ -646,7 +650,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.sim2real.finalize": ToolEntry(
         name="workbench.sim2real.finalize",
         description="Finalize run artifacts (workflow stub).",
-        argv_template=["echo", "finalize run {{run.id}} -> {{config.finalize_report_uri}}"],
+        argv_template=[
+            "echo",
+            "finalize run {{run.id}} -> {{config.finalize_report_uri}}",
+        ],
         stub=True,
     ),
     "workbench.byof.repo": ToolEntry(
@@ -1122,7 +1129,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
                 "set -euo pipefail; "
                 "for udf in has_person has_rider person_bbox_area_pct dhash is_duplicate; do "
                 "npa workbench lancedb backfill "
-                "--udf \"$udf\" "
+                '--udf "$udf" '
                 "--table {{config.lance_table}} "
                 "--lance-uri {{config.lance_uri}} "
                 "--batch-size 512 "
@@ -1380,7 +1387,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.fiftyone.launch_app": ToolEntry(
         name="workbench.fiftyone.launch_app",
         description="Launch FiftyOne App for pipeline review (workflow stub).",
-        argv_template=["echo", "fiftyone review run {{run.id}} lance {{config.lance_uri}}"],
+        argv_template=[
+            "echo",
+            "fiftyone review run {{run.id}} lance {{config.lance_uri}}",
+        ],
         stub=True,
     ),
     "workbench.token_factory.caption": ToolEntry(

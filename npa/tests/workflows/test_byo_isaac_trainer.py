@@ -21,8 +21,12 @@ def _write_signal(tmp_path):
             {
                 "schema": "npa.sim2real.rl_signal.v1",
                 "signals": [
-                    {"per_step": [{"reward": 0.6, "advantage": 0.2},
-                                  {"reward": 0.4, "advantage": -0.1}]},
+                    {
+                        "per_step": [
+                            {"reward": 0.6, "advantage": 0.2},
+                            {"reward": 0.4, "advantage": -0.1},
+                        ]
+                    },
                     {"per_step": [{"reward": 0.8, "advantage": 0.3}]},
                 ],
             }
@@ -37,6 +41,8 @@ def test_read_signal_stats(tmp_path):
     assert stats["step_count"] == 3
     assert stats["mean_reward"] == pytest.approx((0.6 + 0.4 + 0.8) / 3)
     assert stats["mean_advantage"] == pytest.approx((0.2 - 0.1 + 0.3) / 3)
+    assert stats["mean_absolute_advantage"] == pytest.approx((0.2 + 0.1 + 0.3) / 3)
+    assert stats["advantage_variance"] > 0.0
 
 
 def test_read_signal_stats_missing_file_is_safe(tmp_path):
@@ -61,7 +67,10 @@ def test_build_update_result_satisfies_byo_contract(tmp_path):
     )
     # Required contract fields present + non-empty policy_output_after.
     assert result["reward_head_after"] != 0.0
-    assert isinstance(result["policy_output_after"], list) and result["policy_output_after"]
+    assert (
+        isinstance(result["policy_output_after"], list)
+        and result["policy_output_after"]
+    )
     assert result["policy_delta_l2"] > 0.0  # a real trainer produced a checkpoint
     assert result["backend"] == "isaac_rsl_rl_ppo"
     assert result["checkpoint_path"].endswith("model_latest.pt")
@@ -70,6 +79,7 @@ def test_build_update_result_satisfies_byo_contract(tmp_path):
     parsed = VlmSignalUpdateResult.from_dict(result)
     assert parsed.checkpoint_path == "s3://bucket/run/model_latest.pt"
     assert parsed.backend == "isaac_rsl_rl_ppo"
+    assert parsed.signal_statistics["nonzero_advantage_count"] == 3
 
 
 def test_build_update_result_no_checkpoint_zero_delta(tmp_path):
@@ -132,8 +142,12 @@ def test_dryrun_main_writes_contract_json(tmp_path, monkeypatch):
 
 def test_vlm_reward_overrides_targets_error_tag_term():
     # VLM says reaching is failing -> reaching_object weight boosted above default 1.0.
-    stats = {"mean_reward": 0.2, "mean_advantage": 0.0, "step_count": 5,
-             "error_tags": {"did_not_reach_object": 4, "minor": 1}}
+    stats = {
+        "mean_reward": 0.2,
+        "mean_advantage": 0.0,
+        "step_count": 5,
+        "error_tags": {"did_not_reach_object": 4, "minor": 1},
+    }
     ov = byo.vlm_reward_overrides(stats)
     assert ov["env.rewards.reaching_object.weight"] > 1.0
     # untouched term stays at its default weight
@@ -141,7 +155,12 @@ def test_vlm_reward_overrides_targets_error_tag_term():
 
 
 def test_vlm_reward_overrides_low_reward_broadly_boosts_and_is_bounded():
-    stats = {"mean_reward": -1.0, "mean_advantage": 0.0, "step_count": 3, "error_tags": {}}
+    stats = {
+        "mean_reward": -1.0,
+        "mean_advantage": 0.0,
+        "step_count": 3,
+        "error_tags": {},
+    }
     ov = byo.vlm_reward_overrides(stats)
     # broad boost applied (mult>1) but bounded to <= 2x default
     assert ov["env.rewards.lifting_object.weight"] > 15.0
@@ -150,13 +169,24 @@ def test_vlm_reward_overrides_low_reward_broadly_boosts_and_is_bounded():
 
 
 def test_manifest_embeds_reward_overrides():
-    ov = {"env.rewards.reaching_object.weight": 1.6, "env.rewards.lifting_object.weight": 15.0}
+    ov = {
+        "env.rewards.reaching_object.weight": 1.6,
+        "env.rewards.lifting_object.weight": 15.0,
+    }
     m = byo.build_isaac_job_manifest(
-        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
-        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
-        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
-        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-        reward_overrides=ov)
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=512,
+        iterations=30,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        reward_overrides=ov,
+    )
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert "env.rewards.reaching_object.weight=1.6" in args
 
@@ -166,23 +196,72 @@ def test_manifest_embeds_exploration_overrides():
     # command — the exploration fix that keeps the Lift policy from collapsing
     # into a reach-and-hover local optimum on an unlucky seed.
     m = byo.build_isaac_job_manifest(
-        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
-        task="Isaac-Lift-Cube-Franka-v0", num_envs=1024, iterations=600,
-        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
-        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-        entropy_coef="0.01", init_noise_std="1.2")
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=1024,
+        iterations=600,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        entropy_coef="0.01",
+        init_noise_std="1.2",
+    )
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert "agent.algorithm.entropy_coef=0.01" in args
     assert "agent.policy.init_noise_std=1.2" in args
 
 
+def test_scenario_wrapper_consumes_reward_and_native_ppo_contract() -> None:
+    args = byo.build_isaac_job_manifest(
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=1024,
+        iterations=500,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        reward_overrides={"env.rewards.lifting_object.weight": 21.0},
+        entropy_coef="0.01",
+        ppo_optimizer_learning_rate="0.001",
+        init_noise_std="1.2",
+        validation_interval=100,
+        object_usd="https://assets.example/cube.usd",
+        scenarios_jsonl='{"scenario_config_digest":"digest"}\n',
+        robot_spec={"robot_source": "stock_franka", "name": "franka"},
+    )["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "ROBOT_REWARD_OVERRIDES_JSON=" in args
+    assert "lifting_object.weight" in args
+    assert "ROBOT_PPO_LEARNING_RATE=0.001" in args
+    assert "ROBOT_INIT_NOISE_STD=1.2" in args
+    assert "ROBOT_VALIDATION_INTERVAL=100" in args
+    assert "ROBOT_OBJECT_USD=https://assets.example/cube.usd" in args
+    assert "ROBOT_REWARD_OVERRIDES_APPLIED" in args
+    assert "ROBOT_PPO_SETTINGS_APPLIED" in args
+
+
 def test_manifest_omits_exploration_overrides_when_unset():
     # Unset -> default Franka train command stays byte-for-byte unchanged.
     m = byo.build_isaac_job_manifest(
-        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
-        task="Isaac-Lift-Cube-Franka-v0", num_envs=1024, iterations=600,
-        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
-        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition")
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=1024,
+        iterations=600,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    )
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert "agent.algorithm.entropy_coef" not in args
     assert "agent.policy.init_noise_std" not in args
@@ -190,13 +269,24 @@ def test_manifest_omits_exploration_overrides_when_unset():
 
 def test_manifest_embeds_custom_object_usd():
     m = byo.build_isaac_job_manifest(
-        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
-        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
-        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
-        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-        object_usd="s3orhttp://assets/custom_sugar_box.usd", object_scale="(0.8, 0.8, 0.8)")
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=512,
+        iterations=30,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        object_usd="s3orhttp://assets/custom_sugar_box.usd",
+        object_scale="(0.8, 0.8, 0.8)",
+    )
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
-    assert "env.scene.object.spawn.usd_path=s3orhttp://assets/custom_sugar_box.usd" in args
+    assert (
+        "env.scene.object.spawn.usd_path=s3orhttp://assets/custom_sugar_box.usd" in args
+    )
     assert "env.scene.object.spawn.scale='(0.8, 0.8, 0.8)'" in args
 
 
@@ -246,11 +336,19 @@ def test_read_generated_train_env_absent(tmp_path):
 
 def test_manifest_embeds_generated_seed():
     m = byo.build_isaac_job_manifest(
-        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
-        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
-        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
-        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-        seed=516456434)
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=512,
+        iterations=30,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=516456434,
+    )
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     # generated env seed drives randomization via train.py --seed (NOT a hydra
     # env.seed= override, which the Lift cfg rejects as a type error).
@@ -260,22 +358,39 @@ def test_manifest_embeds_generated_seed():
 
 def test_manifest_no_seed_arg_when_zero():
     m = byo.build_isaac_job_manifest(
-        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
-        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
-        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
-        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-        seed=0)
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=512,
+        iterations=30,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=0,
+    )
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert "--seed" not in args
 
 
 def test_manifest_physics_path_ships_wrapper_and_skips_stock_train():
     m = byo.build_isaac_job_manifest(
-        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
-        task="Isaac-Lift-Cube-Franka-v0", num_envs=64, iterations=2,
-        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
-        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-        seed=736958930, physics={"friction": 0.7, "mass_scale": 0.95})
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=64,
+        iterations=2,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=736958930,
+        physics={"friction": 0.7, "mass_scale": 0.95},
+    )
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     # ships the module + wrapper, sets the generated physics, runs the wrapper
     assert "isaac_physics_task.py" in args and "runner.py" in args
@@ -290,16 +405,45 @@ def test_manifest_physics_path_ships_wrapper_and_skips_stock_train():
 
 def test_manifest_default_path_unchanged_without_physics():
     m = byo.build_isaac_job_manifest(
-        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
-        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
-        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
-        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-        seed=42)
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=512,
+        iterations=30,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=42,
+    )
     args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     # proven path: stock train.py, no physics wrapper
     assert byo.TRAIN_SCRIPT in args
     assert "isaac_physics_task.py" not in args
     assert "--seed 42" in args
+
+
+def test_byo_wrapper_saves_resumed_absolute_iteration() -> None:
+    script = byo.build_isaac_job_manifest(
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=64,
+        iterations=500,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        robot_spec={"robot_source": "stock_franka", "name": "Franka"},
+        scenarios_jsonl="s3://b/train/envs.jsonl",
+    )["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "current_learning_iteration" in script
+    assert "final_iteration" in script
+    assert "ROBOT_FINAL_CHECKPOINT" in script
 
 
 def test_read_generated_train_env_s3_fallback(tmp_path, monkeypatch):
@@ -308,8 +452,10 @@ def test_read_generated_train_env_s3_fallback(tmp_path, monkeypatch):
 
     class _FakeBody:
         def read(self_inner):
-            return (b'{"env_id": "env-00006", "seed": 99, '
-                    b'"physics": {"friction": 0.71, "mass_scale": 0.93}}\n')
+            return (
+                b'{"env_id": "env-00006", "seed": 99, '
+                b'"physics": {"friction": 0.71, "mass_scale": 0.93}}\n'
+            )
 
     class _FakeS3:
         def get_object(self_inner, Bucket, Key):
@@ -333,18 +479,33 @@ def test_read_generated_train_env_s3_fallback(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 # Outer-loop RESUME wiring (stage 11B "send back for more RL" must compound)
 # --------------------------------------------------------------------------- #
-def _resume_manifest(resume_uri="", physics=None, experiment_name=byo.DEFAULT_EXPERIMENT_NAME):
+def _resume_manifest(
+    resume_uri="", physics=None, experiment_name=byo.DEFAULT_EXPERIMENT_NAME
+):
     return byo.build_isaac_job_manifest(
-        job_name="j", run_id="r", image="reg/npa-isaac-lab:2.3.2.post1",
-        task="Isaac-Lift-Cube-Franka-v0", num_envs=512, iterations=30,
-        s3_output_uri="s3://b/o/", s3_endpoint="https://s3", namespace="default",
-        service_account="agent-sa", gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-        seed=42, resume_uri=resume_uri, physics=physics, experiment_name=experiment_name)
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=512,
+        iterations=30,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        seed=42,
+        resume_uri=resume_uri,
+        physics=physics,
+        experiment_name=experiment_name,
+    )
 
 
 def test_manifest_resume_downloads_prior_checkpoint_and_passes_flags():
     uri = "s3://b/sim2real-b/run/byo-trainer/job/outer-01-iter-01/model_latest.pt"
-    args = _resume_manifest(resume_uri=uri)["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    args = _resume_manifest(resume_uri=uri)["spec"]["template"]["spec"]["containers"][
+        0
+    ]["args"][0]
     # downloads the prior checkpoint into the rsl_rl log dir train.py searches
     assert f"RESUME_FROM: {uri}" in args
     assert f"logs/rsl_rl/{byo.DEFAULT_EXPERIMENT_NAME}/{byo.RESUME_RUN_DIR}" in args
@@ -356,7 +517,9 @@ def test_manifest_resume_downloads_prior_checkpoint_and_passes_flags():
 
 
 def test_manifest_no_resume_keeps_default_path_unchanged():
-    args = _resume_manifest(resume_uri="")["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    args = _resume_manifest(resume_uri="")["spec"]["template"]["spec"]["containers"][0][
+        "args"
+    ][0]
     assert "RESUME_FROM" not in args
     assert "agent.resume" not in args
     assert "s3.download_file" not in args  # only the upload tail uses boto3
@@ -425,13 +588,58 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
 
     monkeypatch.setattr(byo, "build_isaac_job_manifest", fake_build)
     monkeypatch.setattr(byo, "_kubectl", lambda *a, **k: _Proc())
-    monkeypatch.setattr(byo, "read_signal_stats", lambda *a, **k: {"mean_reward": 1.0, "step_count": 1})
-    monkeypatch.setattr(byo, "read_generated_train_env", lambda *a, **k: {})
+    monkeypatch.setattr(
+        byo,
+        "read_signal_stats",
+        lambda *a, **k: {
+            "mean_reward": 1.0,
+            "step_count": 2,
+            "nonzero_advantage_count": 2,
+        },
+    )
+    scenario_rows = [
+        {"difficulty": difficulty, "scenario_config_digest": f"cfg-{difficulty}"}
+        for difficulty in ("easy", "medium", "hard")
+    ]
+    monkeypatch.setattr(
+        byo,
+        "read_generated_train_envs",
+        lambda *a, **k: (scenario_rows, "{}\n"),
+    )
+    monkeypatch.setattr(
+        byo,
+        "_load_s3_json",
+        lambda *a, **k: {
+            "scenario_count": len(scenario_rows),
+            "coverage_rate": 1.0,
+        },
+    )
+    monkeypatch.setattr(
+        byo,
+        "_load_and_publish_ppo_telemetry",
+        lambda *a, **k: {
+            "telemetry_uri": "s3://bkt/ppo-telemetry.json",
+            "raw_log_uri": "s3://bkt/train_full.log",
+            "curves": [],
+        },
+    )
+    monkeypatch.setattr(
+        byo,
+        "enumerate_periodic_checkpoints",
+        lambda *a, **k: [
+            {
+                "training_iteration": 500,
+                "checkpoint_uri": "s3://bkt/run/checkpoints/model_500.pt",
+            }
+        ],
+    )
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_TRAINER_TAG", "outer-02-iter-01")
     monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
-    monkeypatch.setenv("NPA_SIM2REAL_RESUME_CHECKPOINT_URI", "s3://bkt/prior/model_latest.pt")
+    monkeypatch.setenv(
+        "NPA_SIM2REAL_RESUME_CHECKPOINT_URI", "s3://bkt/prior/model_latest.pt"
+    )
     monkeypatch.delenv("NPA_BYO_ISAAC_PHYSICS", raising=False)
 
     result = byo.run_isaac_training_job("myrun", signal_json="ignored")
@@ -442,3 +650,34 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     assert captured["resume_uri"] == "s3://bkt/prior/model_latest.pt"
     # returned checkpoint points at the tagged path
     assert result["checkpoint_path"].endswith("/outer-02-iter-01/model_latest.pt")
+
+
+def test_enumerate_periodic_checkpoints_uses_interval_and_keeps_final(
+    monkeypatch,
+) -> None:
+    import boto3
+
+    class Paginator:
+        def paginate(self, **kwargs):
+            assert kwargs["Prefix"].endswith("checkpoints/")
+            return [
+                {
+                    "Contents": [
+                        {"Key": f"run/checkpoints/model_{iteration}.pt"}
+                        for iteration in (0, 25, 100, 200, 250)
+                    ]
+                }
+            ]
+
+    class Client:
+        def get_paginator(self, name):
+            assert name == "list_objects_v2"
+            return Paginator()
+
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: Client())
+    checkpoints = byo.enumerate_periodic_checkpoints(
+        s3_output="s3://bucket/run/",
+        endpoint="https://storage.example",
+        validation_interval=100,
+    )
+    assert [item["training_iteration"] for item in checkpoints] == [100, 200, 250]

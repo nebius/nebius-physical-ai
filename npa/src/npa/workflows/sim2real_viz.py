@@ -170,13 +170,17 @@ def emit_sim2real_rerun(
 
     rr, rrb = _import_rerun()
     local_dir = Path(local_dir)
-    output_rrd = Path(output_rrd) if output_rrd is not None else local_dir / "reports" / "sim2real.rrd"
+    output_rrd = (
+        Path(output_rrd)
+        if output_rrd is not None
+        else local_dir / "reports" / "sim2real.rrd"
+    )
     if output_rrd.suffix.lower() != ".rrd":
         raise Sim2RealVizError(f"Rerun output path must end in .rrd, got: {output_rrd}")
     output_rrd.parent.mkdir(parents=True, exist_ok=True)
 
     heldout_episodes = _heldout_render_episodes(local_dir, heldout_report)
-    heldout_pointclouds = _heldout_pointcloud_frames(local_dir)
+    heldout_pointclouds = _heldout_pointcloud_frames(local_dir, heldout_report)
     has_heldout_cameras = bool(heldout_episodes)
     has_synthetic_data = _has_synthetic_visual_data(local_dir)
     blueprint = _build_blueprint(
@@ -219,7 +223,9 @@ def emit_sim2real_rerun(
         for rollout_dir in _rollout_dirs(actions_dir):
             camera_frames = _rollout_camera_frames(rollout_dir)
             primary_frames = camera_frames.get("primary", [])
-            if has_heldout_cameras and is_reference_stub_rollout(rollout_dir, primary_frames):
+            if has_heldout_cameras and is_reference_stub_rollout(
+                rollout_dir, primary_frames
+            ):
                 continue
             rollout_id = rollout_dir.name
             if multiple_outer_iterations:
@@ -345,8 +351,14 @@ def _log_rollout(
     critique_panel_rows: list[str],
 ) -> float:
     seconds = start_seconds
-    per_step_eval = {int(item.get("step", index)): item for index, item in enumerate(evaluation.get("per_step") or [])}
-    per_step_signal = {int(item.get("step", index)): item for index, item in enumerate(signal.get("per_step") or [])}
+    per_step_eval = {
+        int(item.get("step", index)): item
+        for index, item in enumerate(evaluation.get("per_step") or [])
+    }
+    per_step_signal = {
+        int(item.get("step", index)): item
+        for index, item in enumerate(signal.get("per_step") or [])
+    }
     per_step_actions = _actions_by_step(manifest.get("actions"))
     score = evaluation.get("score")
     summary = str(evaluation.get("summary") or "")
@@ -364,6 +376,11 @@ def _log_rollout(
             "capture",
             "camera_metadata",
             "camera_frame_metadata",
+            "task_contract_digest",
+            "scenario_config_digest",
+            "difficulty",
+            "source_augmentation",
+            "applied_scenario_proof",
         )
         if manifest.get(key) not in (None, "", [], {})
     }
@@ -397,7 +414,11 @@ def _log_rollout(
         critique = str(eval_step.get("critique_text") or summary or "")
         tags = eval_step.get("error_tags") or []
         if critique:
-            overlay = critique if not tags else f"{critique}\n\nerror_tags: {', '.join(str(tag) for tag in tags)}"
+            overlay = (
+                critique
+                if not tags
+                else f"{critique}\n\nerror_tags: {', '.join(str(tag) for tag in tags)}"
+            )
             rr.log(
                 f"{root}/critique",
                 rr.TextDocument(overlay, media_type="text/markdown"),
@@ -408,33 +429,62 @@ def _log_rollout(
         if score is not None:
             rr.log(f"{root}/score", _scalar(rr, float(score)), recording=recording)
             _bump(counts, f"{root}/score")
+        if eval_step.get("confidence") is not None:
+            rr.log(
+                "vlm/confidence",
+                _scalar(rr, float(eval_step["confidence"])),
+                recording=recording,
+            )
+            _bump(counts, "vlm/confidence")
+        rr.log(
+            "vlm/model_disagreement",
+            _scalar(rr, float(bool(eval_step.get("model_disagreement")))),
+            recording=recording,
+        )
+        _bump(counts, "vlm/model_disagreement")
 
         action_values = _as_float_list(eval_step.get("action"))
         if not action_values:
             action_values = per_step_actions.get(step, [])
         for dim, value in enumerate(action_values):
-            rr.log(f"{root}/actions/dim_{dim:02d}", _scalar(rr, float(value)), recording=recording)
+            rr.log(
+                f"{root}/actions/dim_{dim:02d}",
+                _scalar(rr, float(value)),
+                recording=recording,
+            )
             _bump(counts, f"{root}/actions/dim_{dim:02d}")
         if action_values:
             rr.log(
                 f"{root}/actions/l2_norm",
-                _scalar(rr, float(np.linalg.norm(np.asarray(action_values, dtype=float)))),
+                _scalar(
+                    rr, float(np.linalg.norm(np.asarray(action_values, dtype=float)))
+                ),
                 recording=recording,
             )
             _bump(counts, f"{root}/actions/l2_norm")
 
         signal_step = per_step_signal.get(step, {})
         if "reward" in signal_step:
-            rr.log("signal/reward", _scalar(rr, float(signal_step["reward"])), recording=recording)
+            rr.log(
+                "signal/reward",
+                _scalar(rr, float(signal_step["reward"])),
+                recording=recording,
+            )
             _bump(counts, "signal/reward")
         if signal_step.get("advantage") is not None:
-            rr.log("signal/advantage", _scalar(rr, float(signal_step["advantage"])), recording=recording)
+            rr.log(
+                "signal/advantage",
+                _scalar(rr, float(signal_step["advantage"])),
+                recording=recording,
+            )
             _bump(counts, "signal/advantage")
         seconds += ROLLOUT_FRAME_SECONDS
     critique_body = summary or last_critique
     if critique_body:
         score_value = f"{float(score):.3f}" if score is not None else "n/a"
-        critique_panel_rows.append(f"### `{root}`\n\nscore: `{score_value}`\n\n{critique_body}")
+        critique_panel_rows.append(
+            f"### `{root}`\n\nscore: `{score_value}`\n\n{critique_body}"
+        )
     return seconds
 
 
@@ -447,7 +497,9 @@ def _all_inner_iteration_records(
     seen: set[tuple[int, int, str]] = set()
     for path in sorted((Path(local_dir) / "inner_loop").glob("outer-*/evidence.json")):
         payload = _read_json(path)
-        outer = int(payload.get("outer_iteration") or path.parent.name.rsplit("-", 1)[-1])
+        outer = int(
+            payload.get("outer_iteration") or path.parent.name.rsplit("-", 1)[-1]
+        )
         reward_trend = list(payload.get("reward_trend") or [])
         for record_index, record in enumerate(payload.get("iterations") or []):
             if not isinstance(record, dict):
@@ -455,7 +507,11 @@ def _all_inner_iteration_records(
             record = dict(record)
             if record.get("mean_reward") is None and record_index < len(reward_trend):
                 record["mean_reward"] = reward_trend[record_index]
-            key = (outer, int(record.get("iteration") or 0), str(record.get("actions_dir") or ""))
+            key = (
+                outer,
+                int(record.get("iteration") or 0),
+                str(record.get("actions_dir") or ""),
+            )
             if key not in seen:
                 records.append((outer, record))
                 seen.add(key)
@@ -475,7 +531,9 @@ def _all_inner_iteration_records(
         if key not in seen:
             records.append((fallback_outer, record))
             seen.add(key)
-    return sorted(records, key=lambda item: (item[0], int(item[1].get("iteration") or 0)))
+    return sorted(
+        records, key=lambda item: (item[0], int(item[1].get("iteration") or 0))
+    )
 
 
 def _log_training_iteration_metrics(
@@ -488,6 +546,21 @@ def _log_training_iteration_metrics(
 ) -> None:
     """Expose reward, PPO loss, quality, and held-out success across the loop."""
 
+    ppo_fields = {
+        "episode_return": "training/ppo/episode_return",
+        "value_loss": "training/ppo/value_loss",
+        "surrogate_loss": "training/ppo/surrogate_loss",
+        "entropy": "training/ppo/entropy",
+        "action_noise_std": "training/ppo/action_noise_std",
+        "reach_reward": "training/ppo/reach_reward",
+        "lift_reward": "training/ppo/lift_reward",
+        "place_reward": "training/ppo/place_reward",
+        "place_fine_reward": "training/ppo/place_fine_reward",
+        "object_position_error": "training/ppo/object_position_error",
+        "timeout_rate": "training/ppo/timeout_rate",
+        "drop_rate": "training/ppo/drop_rate",
+        "total_timesteps": "training/ppo/total_timesteps",
+    }
     for timeline_index, (outer, record) in enumerate(iteration_records):
         _set_time(rr, recording, float(timeline_index))
         iteration = int(record.get("iteration") or timeline_index + 1)
@@ -498,8 +571,28 @@ def _log_training_iteration_metrics(
             "training/loss_before": (record.get("update") or {}).get("loss_before"),
             "training/loss_after": (record.get("update") or {}).get("loss_after"),
             "training/policy_delta_vs_control": record.get("policy_delta_vs_control"),
-            "evaluation/rollout_quality": record.get("next_rollout_quality"),
+            "signal/reward_variance": (record.get("signal_calibration") or {}).get(
+                "mean_reward_variance"
+            ),
+            "signal/nonzero_advantage_count": (
+                record.get("signal_calibration") or {}
+            ).get("nonzero_advantage_count"),
+            "vlm/model_disagreement_steps": (
+                record.get("signal_calibration") or {}
+            ).get("model_disagreement_steps"),
+            "vlm/rejected_or_downweighted_steps": (
+                record.get("signal_calibration") or {}
+            ).get("vlm_rejected_or_downweighted_steps"),
+            "evaluation/validation_strict_success": (
+                record.get("validation_report") or {}
+            ).get("success_rate"),
         }
+        decomposed = (record.get("validation_report") or {}).get(
+            "decomposed_metrics"
+        ) or {}
+        for phase in ("reach", "contact", "stable_grasp", "lift", "place"):
+            phase_metrics = decomposed.get(phase) or {}
+            metrics[f"evaluation/validation_{phase}_rate"] = phase_metrics.get("rate")
         for entity, value in metrics.items():
             if value is None:
                 continue
@@ -513,6 +606,48 @@ def _log_training_iteration_metrics(
                 recording=recording,
             )
             _bump(counts, "signal/reward_trend")
+        telemetry = (record.get("update") or {}).get("ppo_telemetry") or {}
+        checkpoint = str((record.get("update") or {}).get("checkpoint_path") or "")
+        validation = record.get("validation_report") or {}
+        if checkpoint:
+            entity = f"training/checkpoints/outer_{outer:02d}_inner_{iteration:02d}"
+            rr.log(
+                entity,
+                rr.TextDocument(
+                    "# Validation checkpoint\n\n```json\n"
+                    + json.dumps(
+                        {
+                            "checkpoint_uri": checkpoint,
+                            "checkpoint_sha256": validation.get(
+                                "policy_checkpoint_sha256"
+                            ),
+                            "strict_success_rate": validation.get("success_rate"),
+                            "decomposed_metrics": validation.get("decomposed_metrics"),
+                            "evaluation_split": validation.get("evaluation_split"),
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n```",
+                    media_type="text/markdown",
+                ),
+                recording=recording,
+            )
+            _bump(counts, entity)
+        curves = telemetry.get("curves") or []
+        for ppo_row in curves:
+            ppo_iteration = int(ppo_row.get("iteration") or 0)
+            _set_time(
+                rr,
+                recording,
+                float(timeline_index) + ppo_iteration / max(1, len(curves)),
+            )
+            for source, entity in ppo_fields.items():
+                value = ppo_row.get(source)
+                if value is None:
+                    continue
+                rr.log(entity, _scalar(rr, float(value)), recording=recording)
+                _bump(counts, entity)
 
     for index, entry in enumerate(outer_history):
         decision_value = entry.get("decision")
@@ -590,7 +725,11 @@ def _log_summary_documents(
     for entity, body in documents.items():
         if not body.strip():
             continue
-        rr.log(entity, rr.TextDocument(body, media_type="text/markdown"), recording=recording)
+        rr.log(
+            entity,
+            rr.TextDocument(body, media_type="text/markdown"),
+            recording=recording,
+        )
         _bump(counts, entity)
 
 
@@ -634,9 +773,7 @@ def _log_stage_progress(
         artifacts = dict(component.get("artifacts") or {})
         job_name = str(artifacts.get("job_name") or "record-only")
         gpu = artifacts.get("gpu_request")
-        gpu_product = (
-            str(gpu.get("product") or "") if isinstance(gpu, dict) else ""
-        )
+        gpu_product = str(gpu.get("product") or "") if isinstance(gpu, dict) else ""
         selected_product = artifacts.get("selected_gpu_product") or gpu_product
         selected_node = artifacts.get("selected_gpu_node") or ""
         candidate_order = artifacts.get("gpu_candidate_order") or []
@@ -650,7 +787,9 @@ def _log_stage_progress(
                 run_metadata.get("orchestrator_node_product") or ""
             )
         gpu_proof = str(selected_product) or (
-            f"none; orchestrator node={node_product}" if node_product else "none (record/seam)"
+            f"none; orchestrator node={node_product}"
+            if node_product
+            else "none (record/seam)"
         )
         artifact = _component_artifact_uri(artifacts)
         _set_time(rr, recording, float(stage - 1))
@@ -725,9 +864,7 @@ def _stage_progress_markdown(
         component = by_name.get(name, {})
         artifacts = dict(component.get("artifacts") or {})
         gpu = artifacts.get("gpu_request")
-        gpu_product = (
-            str(gpu.get("product") or "") if isinstance(gpu, dict) else ""
-        )
+        gpu_product = str(gpu.get("product") or "") if isinstance(gpu, dict) else ""
         selected_product = artifacts.get("selected_gpu_product") or gpu_product
         selected_node = artifacts.get("selected_gpu_node") or "none"
         image_digests = artifacts.get("image_digests") or []
@@ -739,7 +876,9 @@ def _stage_progress_markdown(
                 run_metadata.get("orchestrator_node_product") or ""
             )
         gpu_proof = str(selected_product) or (
-            f"none; orchestrator node={node_product}" if node_product else "none (record/seam)"
+            f"none; orchestrator node={node_product}"
+            if node_product
+            else "none (record/seam)"
         )
         rows.append(
             "| "
@@ -800,7 +939,9 @@ def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
             "## Runtime parameters",
             "",
             "```json",
-            json.dumps(run_metadata.get("runtime_parameters") or {}, indent=2, sort_keys=True),
+            json.dumps(
+                run_metadata.get("runtime_parameters") or {}, indent=2, sort_keys=True
+            ),
             "```",
         ]
     )
@@ -840,9 +981,14 @@ def _build_visual_index(
     split = _read_json(Path(local_dir) / "envs" / "manifest" / "split-manifest.json")
     if not split:
         split = _read_json(Path(local_dir) / "envs" / "split-manifest.json")
+    curation = _read_json(
+        Path(local_dir) / "envs" / "manifest" / "curation-manifest.json"
+    )
     full_heldout = dict(heldout_report or {})
     if not full_heldout:
-        full_heldout = dict((report.get("outer_loop") or {}).get("latest_heldout_report") or {})
+        full_heldout = dict(
+            (report.get("outer_loop") or {}).get("latest_heldout_report") or {}
+        )
 
     return {
         "schema": "npa.sim2real.visual_index.v1",
@@ -850,8 +996,12 @@ def _build_visual_index(
         "success": {
             "status": report.get("status") or "",
             "decision": decision.get("decision") or "",
-            "success_rate": _first_present(decision.get("success_rate"), full_heldout.get("success_rate")),
-            "threshold": _first_present(decision.get("threshold"), report.get("threshold")),
+            "success_rate": _first_present(
+                decision.get("success_rate"), full_heldout.get("success_rate")
+            ),
+            "threshold": _first_present(
+                decision.get("threshold"), report.get("threshold")
+            ),
             "checkpoint_uri": decision.get("checkpoint_uri") or "",
             "heldout_envs": [
                 {
@@ -868,7 +1018,9 @@ def _build_visual_index(
             "status": augment.get("status") or "",
             "mode": augment.get("mode") or "",
             "stage": augment.get("stage") or "",
-            "frame_count": _first_present(augment.get("frame_count"), augment_index.get("frame_count")),
+            "frame_count": _first_present(
+                augment.get("frame_count"), augment_index.get("frame_count")
+            ),
             "image": augment.get("image") or "",
             "input_uri": augment.get("input_uri") or "",
             "output_uri": augment.get("output_uri") or "",
@@ -876,12 +1028,33 @@ def _build_visual_index(
         },
         "dataset": {
             "raw_count": split.get("raw_count"),
-            "train_count": _first_present(split.get("train_count"), tokens.get("train_env_count")),
-            "heldout_count": _first_present(split.get("heldout_count"), tokens.get("heldout_env_count")),
+            "train_count": _first_present(
+                split.get("train_count"), tokens.get("train_env_count")
+            ),
+            "heldout_count": _first_present(
+                split.get("heldout_count"), tokens.get("heldout_env_count")
+            ),
+            "validation_count": split.get("validation_count"),
+            "gold_heldout_count": split.get("gold_heldout_count"),
             "disjoint": split.get("disjoint"),
+            "config_digest_leakage": split.get("config_digest_leakage"),
             "seed": split.get("seed"),
-            "train_samples": _jsonl_samples(Path(local_dir) / "envs" / "train" / "envs.jsonl"),
-            "heldout_samples": _jsonl_samples(Path(local_dir) / "envs" / "heldout" / "envs.jsonl"),
+            "curation": {
+                "input_count": curation.get("input_count"),
+                "accepted_count": curation.get("accepted_count"),
+                "rejected_count": curation.get("rejected_count"),
+                "rejection_reasons": curation.get("rejection_reasons"),
+                "coverage": curation.get("coverage"),
+                "augmentation_records_consumed": curation.get(
+                    "augmentation_records_consumed"
+                ),
+            },
+            "train_samples": _jsonl_samples(
+                Path(local_dir) / "envs" / "train" / "envs.jsonl"
+            ),
+            "heldout_samples": _jsonl_samples(
+                Path(local_dir) / "envs" / "heldout" / "envs.jsonl"
+            ),
         },
         "vlm": {
             "critique_count": len(critique_panel_rows),
@@ -933,6 +1106,7 @@ def _augmentation_markdown(index: dict[str, Any]) -> str:
     aug = index.get("augmentation") or {}
     dataset = index.get("dataset") or {}
     synthetic = index.get("synthetic") or {}
+    curation = dataset.get("curation") or {}
     lines = [
         "# Augmentation and dataset",
         "",
@@ -957,9 +1131,35 @@ def _augmentation_markdown(index: dict[str, Any]) -> str:
             [
                 ("Raw envs", _format_value(dataset.get("raw_count"))),
                 ("Train envs", _format_value(dataset.get("train_count"))),
+                ("Validation envs", _format_value(dataset.get("validation_count"))),
+                (
+                    "Gold held-out envs",
+                    _format_value(dataset.get("gold_heldout_count")),
+                ),
                 ("Held-out envs", _format_value(dataset.get("heldout_count"))),
                 ("Disjoint split", _format_value(dataset.get("disjoint"))),
+                (
+                    "Config-digest leakage",
+                    _format_value(dataset.get("config_digest_leakage")),
+                ),
                 ("Seed", _format_value(dataset.get("seed"))),
+            ],
+        ),
+        "",
+        "## Scenario curation and coverage",
+        "",
+        _markdown_table(
+            ["Field", "Value"],
+            [
+                ("Input", _format_value(curation.get("input_count"))),
+                ("Accepted", _format_value(curation.get("accepted_count"))),
+                ("Rejected", _format_value(curation.get("rejected_count"))),
+                ("Rejection reasons", _format_value(curation.get("rejection_reasons"))),
+                ("Coverage", _format_value(curation.get("coverage"))),
+                (
+                    "Stage-3 lineage consumed",
+                    _format_value(curation.get("augmentation_records_consumed")),
+                ),
             ],
         ),
         "",
@@ -969,12 +1169,32 @@ def _augmentation_markdown(index: dict[str, Any]) -> str:
             ["Field", "Value"],
             [
                 ("Synthetic viewport", synthetic.get("view_origin") or "synthetic"),
-                ("Dataset samples visualized", _format_value(synthetic.get("dataset_sample_count"))),
-                ("Actual dataset camera PNGs", _format_value(synthetic.get("dataset_camera_image_count"))),
-                ("Dataset descriptor previews", _format_value(synthetic.get("dataset_descriptor_preview_count"))),
-                ("Augmentation samples visualized", _format_value(synthetic.get("augmentation_sample_count"))),
-                ("Actual augmentation PNGs", _format_value(synthetic.get("augmentation_image_count"))),
-                ("Augmentation descriptor previews", _format_value(synthetic.get("augmentation_descriptor_preview_count"))),
+                (
+                    "Dataset samples visualized",
+                    _format_value(synthetic.get("dataset_sample_count")),
+                ),
+                (
+                    "Actual dataset camera PNGs",
+                    _format_value(synthetic.get("dataset_camera_image_count")),
+                ),
+                (
+                    "Dataset descriptor previews",
+                    _format_value(synthetic.get("dataset_descriptor_preview_count")),
+                ),
+                (
+                    "Augmentation samples visualized",
+                    _format_value(synthetic.get("augmentation_sample_count")),
+                ),
+                (
+                    "Actual augmentation PNGs",
+                    _format_value(synthetic.get("augmentation_image_count")),
+                ),
+                (
+                    "Augmentation descriptor previews",
+                    _format_value(
+                        synthetic.get("augmentation_descriptor_preview_count")
+                    ),
+                ),
             ],
         ),
     ]
@@ -985,10 +1205,19 @@ def _augmentation_markdown(index: dict[str, Any]) -> str:
             lines.append(
                 "- `{env_id}` `{asset}` friction `{friction}` lighting `{lighting}` augmented `{augmented}`".format(
                     env_id=sample.get("env_id", "env"),
-                    asset=((sample.get("scene") or {}).get("simready_asset") or "asset"),
-                    friction=_format_value((sample.get("physics") or {}).get("friction")),
-                    lighting=_format_value((sample.get("physics") or {}).get("lighting_lux")),
-                    augmented=((sample.get("scene") or {}).get("augmented_frame_uri") or "not recorded"),
+                    asset=(
+                        (sample.get("scene") or {}).get("simready_asset") or "asset"
+                    ),
+                    friction=_format_value(
+                        (sample.get("physics") or {}).get("friction")
+                    ),
+                    lighting=_format_value(
+                        (sample.get("physics") or {}).get("lighting_lux")
+                    ),
+                    augmented=(
+                        (sample.get("scene") or {}).get("augmented_frame_uri")
+                        or "not recorded"
+                    ),
                 )
             )
     return "\n".join(lines)
@@ -1003,7 +1232,10 @@ def _artifacts_markdown(index: dict[str, Any]) -> str:
         "",
         "## Counts",
         "",
-        _markdown_table(["Artifact group", "Count"], sorted((key, value) for key, value in counts.items())),
+        _markdown_table(
+            ["Artifact group", "Count"],
+            sorted((key, value) for key, value in counts.items()),
+        ),
         "",
         "## VLM signal",
         "",
@@ -1018,7 +1250,9 @@ def _artifacts_markdown(index: dict[str, Any]) -> str:
         "",
         "## Key artifacts",
         "",
-        _markdown_table(["Name", "Path"], sorted((key, value) for key, value in artifacts.items())),
+        _markdown_table(
+            ["Name", "Path"], sorted((key, value) for key, value in artifacts.items())
+        ),
     ]
     return "\n".join(lines)
 
@@ -1030,19 +1264,28 @@ def _synthetic_visual_index(local_dir: Path) -> dict[str, Any]:
     for _split, sample in dataset_samples:
         for camera_name in _sample_camera_names(sample):
             dataset_view_count += 1
-            if _local_camera_image_for_sample(local_dir, sample, camera_name) is not None:
+            if (
+                _local_camera_image_for_sample(local_dir, sample, camera_name)
+                is not None
+            ):
                 dataset_camera_count += 1
     augment_samples = _augmentation_visual_samples(local_dir)
-    augment_image_count = sum(1 for _frame_id, _payload, frame in augment_samples if frame is not None)
+    augment_image_count = sum(
+        1 for _frame_id, _payload, frame in augment_samples if frame is not None
+    )
     return {
         "view_origin": "synthetic",
         "dataset_sample_count": len(dataset_samples),
         "dataset_camera_view_count": dataset_view_count,
         "dataset_camera_image_count": dataset_camera_count,
-        "dataset_descriptor_preview_count": max(0, dataset_view_count - dataset_camera_count),
+        "dataset_descriptor_preview_count": max(
+            0, dataset_view_count - dataset_camera_count
+        ),
         "augmentation_sample_count": len(augment_samples),
         "augmentation_image_count": augment_image_count,
-        "augmentation_descriptor_preview_count": max(0, len(augment_samples) - augment_image_count),
+        "augmentation_descriptor_preview_count": max(
+            0, len(augment_samples) - augment_image_count
+        ),
     }
 
 
@@ -1082,7 +1325,9 @@ def _log_synthetic_data(
         for camera_index, camera_name in enumerate(cameras):
             frame = _local_camera_image_for_sample(Path(local_dir), sample, camera_name)
             if frame is None:
-                frame = _synthetic_env_preview(sample, split=split, camera_name=camera_name, index=sample_index)
+                frame = _synthetic_env_preview(
+                    sample, split=split, camera_name=camera_name, index=sample_index
+                )
             _set_time(rr, recording, seconds + camera_index * 0.01)
             image = _rerun_image(rr, frame)
             entity = f"synthetic/dataset/{split}/{env_id}/{camera_name}"
@@ -1093,7 +1338,9 @@ def _log_synthetic_data(
                 _bump(counts, "synthetic/preview")
             logged += 1
 
-    for frame_index, (frame_id, payload, frame) in enumerate(_augmentation_visual_samples(Path(local_dir))):
+    for frame_index, (frame_id, payload, frame) in enumerate(
+        _augmentation_visual_samples(Path(local_dir))
+    ):
         if frame is None:
             frame = _augmentation_preview(payload, index=frame_index)
         _set_time(rr, recording, frame_index * SYNTHETIC_STEP_SECONDS)
@@ -1108,10 +1355,14 @@ def _log_synthetic_data(
     return logged
 
 
-def _synthetic_dataset_samples(local_dir: Path, *, limit_per_split: int = SYNTHETIC_DATASET_SAMPLE_LIMIT) -> list[tuple[str, dict[str, Any]]]:
+def _synthetic_dataset_samples(
+    local_dir: Path, *, limit_per_split: int = SYNTHETIC_DATASET_SAMPLE_LIMIT
+) -> list[tuple[str, dict[str, Any]]]:
     samples: list[tuple[str, dict[str, Any]]] = []
     for split in ("train", "heldout"):
-        for sample in _jsonl_samples(Path(local_dir) / "envs" / split / "envs.jsonl", limit=limit_per_split):
+        for sample in _jsonl_samples(
+            Path(local_dir) / "envs" / split / "envs.jsonl", limit=limit_per_split
+        ):
             samples.append((split, sample))
     return samples
 
@@ -1126,7 +1377,9 @@ def _sample_camera_names(sample: dict[str, Any]) -> list[str]:
     return ordered or ["workspace"]
 
 
-def _local_camera_image_for_sample(local_dir: Path, sample: dict[str, Any], camera_name: str) -> np.ndarray | None:
+def _local_camera_image_for_sample(
+    local_dir: Path, sample: dict[str, Any], camera_name: str
+) -> np.ndarray | None:
     for section in ("camera_obs", "cameras"):
         cameras = sample.get(section)
         if not isinstance(cameras, dict):
@@ -1157,10 +1410,15 @@ def _augmentation_visual_samples(
     if isinstance(index.get("frames"), list):
         records = [item for item in index["frames"] if isinstance(item, dict)]
     if not records:
-        records = [{"frame_id": path.stem, "local": str(path)} for path in sorted(frames_dir.glob("frame-*.*"))]
+        records = [
+            {"frame_id": path.stem, "local": str(path)}
+            for path in sorted(frames_dir.glob("frame-*.*"))
+        ]
     if not records:
         frame_count = int(_safe_float(manifest.get("frame_count"), 0.0))
-        frames_uri = str(manifest.get("augmented_frames_uri") or manifest.get("output_uri") or "").rstrip("/")
+        frames_uri = str(
+            manifest.get("augmented_frames_uri") or manifest.get("output_uri") or ""
+        ).rstrip("/")
         perturbations = ["lighting", "texture", "background", "contrast"]
         records = [
             {
@@ -1180,12 +1438,19 @@ def _augmentation_visual_samples(
     for record in records:
         if len(samples) >= limit:
             break
-        frame_id = str(record.get("frame_id") or Path(str(record.get("local") or record.get("uri") or "")).stem)
+        frame_id = str(
+            record.get("frame_id")
+            or Path(str(record.get("local") or record.get("uri") or "")).stem
+        )
         if not frame_id or frame_id in seen:
             continue
         seen.add(frame_id)
         json_path = frames_dir / f"{frame_id}.json"
-        payload_path = json_path if json_path.is_file() else _local_artifact_path_from_uri(local_dir, str(record.get("uri") or ""))
+        payload_path = (
+            json_path
+            if json_path.is_file()
+            else _local_artifact_path_from_uri(local_dir, str(record.get("uri") or ""))
+        )
         # Real Cosmos Transfer indexes point directly at PNG frames. Treat an
         # indexed binary as the image source, never as descriptor JSON.
         payload = (
@@ -1195,9 +1460,11 @@ def _augmentation_visual_samples(
         )
         if not payload:
             payload = dict(record)
-        image_path = frames_dir / f"{frame_id}.png"
-        if not image_path.is_file():
-            image_path = _local_artifact_path_from_uri(local_dir, str(record.get("uri") or ""))
+        image_path: Path | None = frames_dir / f"{frame_id}.png"
+        if image_path is None or not image_path.is_file():
+            image_path = _local_artifact_path_from_uri(
+                local_dir, str(record.get("uri") or "")
+            )
         frame = _read_image(image_path) if image_path is not None else None
         samples.append((frame_id, payload, frame))
     return samples
@@ -1213,7 +1480,15 @@ def _local_artifact_path_from_uri(local_dir: Path, uri: str) -> Path | None:
     path = Path(ref)
     if not ref.startswith("s3://") and path.is_file():
         return path
-    markers = ("/envs/", "/augment/", "/eval/", "/actions/", "/vlm_eval/", "/training_signal/", "/reports/")
+    markers = (
+        "/envs/",
+        "/augment/",
+        "/eval/",
+        "/actions/",
+        "/vlm_eval/",
+        "/training_signal/",
+        "/reports/",
+    )
     for marker in markers:
         if marker in ref:
             rel = ref.split(marker, 1)[1]
@@ -1230,8 +1505,10 @@ def _synthetic_env_preview(
     camera_name: str,
     index: int,
 ) -> np.ndarray:
-    physics = sample.get("physics") if isinstance(sample.get("physics"), dict) else {}
-    scene = sample.get("scene") if isinstance(sample.get("scene"), dict) else {}
+    physics_value = sample.get("physics")
+    physics: dict[str, Any] = physics_value if isinstance(physics_value, dict) else {}
+    scene_value = sample.get("scene")
+    scene: dict[str, Any] = scene_value if isinstance(scene_value, dict) else {}
     env_id = str(sample.get("env_id") or f"{split}-{index:04d}")
     friction = _safe_float(physics.get("friction"), 0.8)
     lighting = _safe_float(physics.get("lighting_lux"), 650.0)
@@ -1247,14 +1524,25 @@ def _synthetic_env_preview(
         f"LIGHT {lighting:.0f} LUX",
         "AUGMENTED REF" if augmented else "NO AUGMENT REF",
     ]
-    image = _descriptor_preview_image(rows, accent=accent, seed_text=f"{env_id}:{asset}")
-    _draw_env_glyph(image, accent=accent, friction=friction, lighting=lighting, mass=mass, wrist=camera_name == "wrist")
+    image = _descriptor_preview_image(
+        rows, accent=accent, seed_text=f"{env_id}:{asset}"
+    )
+    _draw_env_glyph(
+        image,
+        accent=accent,
+        friction=friction,
+        lighting=lighting,
+        mass=mass,
+        wrist=camera_name == "wrist",
+    )
     return image
 
 
 def _augmentation_preview(payload: dict[str, Any], *, index: int) -> np.ndarray:
     frame_id = str(payload.get("frame_id") or f"frame-{index:05d}")
-    perturbation = str(payload.get("perturbation") or payload.get("mode") or "augmentation")
+    perturbation = str(
+        payload.get("perturbation") or payload.get("mode") or "augmentation"
+    )
     status = str(payload.get("status") or "recorded")
     source = str(payload.get("source_dataset_uri") or payload.get("input_uri") or "")
     accent = _color_from_text(f"{frame_id}:{perturbation}:{status}")
@@ -1265,8 +1553,12 @@ def _augmentation_preview(payload: dict[str, Any], *, index: int) -> np.ndarray:
         f"STATUS {status.upper()}",
         Path(source.rstrip("/")).name.upper() if source else "SOURCE RECORDED",
     ]
-    image = _descriptor_preview_image(rows, accent=accent, seed_text=f"{frame_id}:{perturbation}")
-    _draw_augmentation_glyph(image, accent=accent, seed_text=f"{frame_id}:{perturbation}")
+    image = _descriptor_preview_image(
+        rows, accent=accent, seed_text=f"{frame_id}:{perturbation}"
+    )
+    _draw_augmentation_glyph(
+        image, accent=accent, seed_text=f"{frame_id}:{perturbation}"
+    )
     return image
 
 
@@ -1285,7 +1577,9 @@ def _descriptor_preview_image(
     base = np.zeros((height, width, 3), dtype=np.uint8)
     base[:, :, 0] = np.clip(34 + 42 * xx + accent[0] * 0.18, 0, 255).astype(np.uint8)
     base[:, :, 1] = np.clip(38 + 52 * yy + accent[1] * 0.14, 0, 255).astype(np.uint8)
-    base[:, :, 2] = np.clip(46 + 28 * (1.0 - yy) + accent[2] * 0.18, 0, 255).astype(np.uint8)
+    base[:, :, 2] = np.clip(46 + 28 * (1.0 - yy) + accent[2] * 0.18, 0, 255).astype(
+        np.uint8
+    )
     for x in range(0, width, 32):
         base[:, x : x + 1] = np.maximum(base[:, x : x + 1], 96)
     for y in range(0, height, 32):
@@ -1343,20 +1637,30 @@ def _draw_env_glyph(
     by = int(height * 0.64)
     image[by : by + block_size, bx : bx + block_size] = np.array(accent, dtype=np.uint8)
     grip = int(10 + 20 * max(0.0, min(1.0, friction)))
-    image[cy + 34 : cy + 40, max(left, cx - grip) : min(right, cx + grip)] = np.array([30, 220, 140], dtype=np.uint8)
+    image[cy + 34 : cy + 40, max(left, cx - grip) : min(right, cx + grip)] = np.array(
+        [30, 220, 140], dtype=np.uint8
+    )
     light_width = int(max(8, min(width - 24, lighting / 1200.0 * (width - 24))))
-    image[height - 18 : height - 10, 12 : 12 + light_width] = np.array([250, 204, 21], dtype=np.uint8)
+    image[height - 18 : height - 10, 12 : 12 + light_width] = np.array(
+        [250, 204, 21], dtype=np.uint8
+    )
 
 
-def _draw_augmentation_glyph(image: np.ndarray, *, accent: tuple[int, int, int], seed_text: str) -> None:
+def _draw_augmentation_glyph(
+    image: np.ndarray, *, accent: tuple[int, int, int], seed_text: str
+) -> None:
     height, width = image.shape[:2]
     seed = int(hashlib.sha256(seed_text.encode("utf-8")).hexdigest()[:8], 16)
     rng = np.random.default_rng(seed)
     for index in range(5):
         x0 = int(width * 0.48) + index * 28
         y0 = 145 + int(rng.integers(-16, 16))
-        image[y0 : y0 + 40, x0 : x0 + 22] = np.array(_mix_color(accent, 40 + index * 18), dtype=np.uint8)
-        image[y0 + 40 : y0 + 46, x0 - 2 : x0 + 24] = np.array([18, 24, 38], dtype=np.uint8)
+        image[y0 : y0 + 40, x0 : x0 + 22] = np.array(
+            _mix_color(accent, 40 + index * 18), dtype=np.uint8
+        )
+        image[y0 + 40 : y0 + 46, x0 - 2 : x0 + 24] = np.array(
+            [18, 24, 38], dtype=np.uint8
+        )
     for _ in range(30):
         x = int(rng.integers(int(width * 0.45), width - 12))
         y = int(rng.integers(82, height - 24))
@@ -1369,7 +1673,11 @@ def _color_from_text(value: str) -> tuple[int, int, int]:
 
 
 def _mix_color(accent: tuple[int, int, int], amount: int) -> tuple[int, int, int]:
-    return tuple(int(max(0, min(255, channel + amount - 90))) for channel in accent)
+    return (
+        int(max(0, min(255, accent[0] + amount - 90))),
+        int(max(0, min(255, accent[1] + amount - 90))),
+        int(max(0, min(255, accent[2] + amount - 90))),
+    )
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -1380,10 +1688,17 @@ def _safe_float(value: Any, default: float) -> float:
 
 
 def _markdown_table(headers: list[str], rows: list[Any]) -> str:
-    table = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
+    table = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(["---"] * len(headers)) + " |",
+    ]
     for row in rows:
         values = list(row if isinstance(row, (list, tuple)) else [row])
-        table.append("| " + " | ".join(_escape_markdown(_format_value(value)) for value in values) + " |")
+        table.append(
+            "| "
+            + " | ".join(_escape_markdown(_format_value(value)) for value in values)
+            + " |"
+        )
     return "\n".join(table)
 
 
@@ -1406,7 +1721,9 @@ def _first_present(*values: Any) -> Any:
     return None
 
 
-def _first_sample_value(inner_evidence: dict[str, Any], sample_key: str, value_key: str) -> Any:
+def _first_sample_value(
+    inner_evidence: dict[str, Any], sample_key: str, value_key: str
+) -> Any:
     for record in inner_evidence.get("iterations") or []:
         if not isinstance(record, dict):
             continue
@@ -1438,7 +1755,7 @@ def _artifact_counts(local_dir: Path) -> dict[str, int]:
     roots = {
         "augment_frames": Path(local_dir) / "augment" / "frames",
         "raw_env_shards": Path(local_dir) / "envs" / "raw",
-        "heldout_renders": Path(local_dir) / "eval" / "heldout" / "renders",
+        "heldout_renders": Path(local_dir) / "eval" / "gold-heldout",
         "rollout_dirs": Path(local_dir) / "actions" / "train",
         "vlm_eval_json": Path(local_dir) / "vlm_eval" / "train",
         "training_signal_json": Path(local_dir) / "training_signal" / "train",
@@ -1465,11 +1782,18 @@ def _key_artifacts(local_dir: Path) -> dict[str, str]:
         "envs/raw/raw-shard-00-summary.json",
         "envs/manifest/split-manifest.json",
         "envs/train/envs.jsonl",
+        "envs/validation/envs.jsonl",
+        "envs/gold-heldout/envs.jsonl",
+        "envs/manifest/curation-manifest.json",
+        "envs/split-manifest.json",
         "envs/heldout/envs.jsonl",
         "tokens/manifest.json",
-        "eval/heldout/report.json",
     ]
-    return {rel: str(Path(local_dir) / rel) for rel in rels if (Path(local_dir) / rel).exists()}
+    return {
+        rel: str(Path(local_dir) / rel)
+        for rel in rels
+        if (Path(local_dir) / rel).exists()
+    }
 
 
 def _franka_joint_positions(joint_angles: tuple[float, ...]) -> list[list[float]]:
@@ -1484,7 +1808,10 @@ def _franka_joint_positions(joint_angles: tuple[float, ...]) -> list[list[float]
     ]
 
     def _matmul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:
-        return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
+        return [
+            [sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)]
+            for i in range(4)
+        ]
 
     transform = [
         [1.0, 0.0, 0.0, 0.0],
@@ -1535,8 +1862,16 @@ def _log_franka_scene_frame(
 ) -> None:
     positions = _franka_joint_positions(_scene_joint_angles(frame_index, frame_count))
     arm_points = positions[:8]
-    segments = [[left, right] for left, right in zip(arm_points, arm_points[1:]) if left != right]
-    gripper_segments = [[positions[7], positions[8]], [positions[8], positions[9]], [positions[8], positions[10]]]
+    segments = [
+        [left, right]
+        for left, right in zip(arm_points, arm_points[1:])
+        if left != right
+    ]
+    gripper_segments = [
+        [positions[7], positions[8]],
+        [positions[8], positions[9]],
+        [positions[8], positions[10]],
+    ]
     progress = frame_index / max(1.0, float(frame_count - 1))
     cube_y = 0.28 - 0.36 * progress
 
@@ -1551,18 +1886,30 @@ def _log_franka_scene_frame(
     )
     rr.log(
         "world/franka/joints",
-        rr.Points3D(arm_points, colors=[[234, 88, 12, 255]] * len(arm_points), radii=[0.028] * len(arm_points)),
+        rr.Points3D(
+            arm_points,
+            colors=[[234, 88, 12, 255]] * len(arm_points),
+            radii=[0.028] * len(arm_points),
+        ),
         recording=recording,
     )
     if segments:
         rr.log(
             "world/franka/links",
-            rr.LineStrips3D(segments, colors=[[234, 88, 12]] * len(segments), radii=[0.018] * len(segments)),
+            rr.LineStrips3D(
+                segments,
+                colors=[[234, 88, 12]] * len(segments),
+                radii=[0.018] * len(segments),
+            ),
             recording=recording,
         )
     rr.log(
         "world/franka/gripper",
-        rr.LineStrips3D(gripper_segments, colors=[[59, 130, 246]] * len(gripper_segments), radii=[0.012] * len(gripper_segments)),
+        rr.LineStrips3D(
+            gripper_segments,
+            colors=[[59, 130, 246]] * len(gripper_segments),
+            radii=[0.012] * len(gripper_segments),
+        ),
         recording=recording,
     )
     _bump(counts, "world/cube")
@@ -1594,14 +1941,23 @@ def _log_scene_overview(
         ),
         recording=recording,
     )
-    frame_count = max(12, sum(
-        len(_rollout_frames(rollout_dir))
-        for record in inner_evidence.get("iterations") or []
-        for rollout_dir in _rollout_dirs(_maybe_path(record.get("actions_dir")))
-    ))
+    frame_count = max(
+        12,
+        sum(
+            len(_rollout_frames(rollout_dir))
+            for record in inner_evidence.get("iterations") or []
+            for rollout_dir in _rollout_dirs(_maybe_path(record.get("actions_dir")))
+        ),
+    )
     for frame_index in range(frame_count):
         _set_time(rr, recording, frame_index * ROLLOUT_FRAME_SECONDS)
-        _log_franka_scene_frame(rr, recording, frame_index=frame_index, frame_count=frame_count, counts=counts)
+        _log_franka_scene_frame(
+            rr,
+            recording,
+            frame_index=frame_index,
+            frame_count=frame_count,
+            counts=counts,
+        )
     _bump(counts, "world/table")
     _bump(counts, "world/summary")
 
@@ -1712,7 +2068,11 @@ def _log_heldout(
     logged = 0
     if success_rate is not None:
         _set_time(rr, recording, 0.0)
-        rr.log("heldout/success_rate", _scalar(rr, float(success_rate)), recording=recording)
+        rr.log(
+            "heldout/success_rate",
+            _scalar(rr, float(success_rate)),
+            recording=recording,
+        )
         _bump(counts, "heldout/success_rate")
     for index, item in enumerate(per_env):
         if not isinstance(item, dict):
@@ -1724,6 +2084,45 @@ def _log_heldout(
         rr.log(f"heldout/per_env/{env_id}", _scalar(rr, score), recording=recording)
         _bump(counts, "heldout/scores")
         _bump(counts, f"heldout/per_env/{env_id}")
+        details = item.get("details") or {}
+        for metric in (
+            "object_goal_distance_m",
+            "closest_object_goal_distance_m",
+            "reach",
+            "contact",
+            "stable_grasp",
+            "lift",
+            "place",
+            "placement_stable",
+        ):
+            value = details.get(metric)
+            if value is None:
+                continue
+            entity = f"heldout/metrics/{metric}"
+            rr.log(entity, _scalar(rr, float(value)), recording=recording)
+            _bump(counts, entity)
+        rr.log(
+            f"heldout/provenance/{env_id}",
+            rr.TextDocument(
+                "# Applied gold scenario\n\n```json\n"
+                + json.dumps(
+                    {
+                        "env_id": env_id,
+                        "difficulty": details.get("difficulty"),
+                        "scenario_config_digest": details.get("scenario_config_digest"),
+                        "generated_env_seed": details.get("generated_env_seed"),
+                        "termination_reason": details.get("termination_reason"),
+                        "success": bool(item.get("success")),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n```",
+                media_type="text/markdown",
+            ),
+            recording=recording,
+        )
+        _bump(counts, f"heldout/provenance/{env_id}")
         seconds += HELDOUT_STEP_SECONDS
         logged += 1
     return logged
@@ -1732,7 +2131,7 @@ def _log_heldout(
 def _log_heldout_cameras(
     rr: Any,
     recording: Any,
-    episodes: list[tuple[str, dict[str, list[np.ndarray]] | list[np.ndarray]]],
+    episodes: list[tuple[str, dict[str, list[np.ndarray]]]],
     counts: dict[str, int],
     *,
     start_seconds: float,
@@ -1805,7 +2204,9 @@ def is_reference_stub_rollout(rollout_dir: Path, frames: list[np.ndarray]) -> bo
     observations = list(manifest.get("camera_observations") or [])
     if observations and not all(str(item).endswith(".ppm") for item in observations):
         return False
-    if frames and not all(frame.shape[:2] == REFERENCE_STUB_FRAME_SHAPE for frame in frames):
+    if frames and not all(
+        frame.shape[:2] == REFERENCE_STUB_FRAME_SHAPE for frame in frames
+    ):
         return False
     return "quality" in manifest
 
@@ -1814,7 +2215,12 @@ def _heldout_render_episodes(
     local_dir: Path,
     heldout_report: dict[str, Any] | None,
 ) -> list[tuple[str, dict[str, list[np.ndarray]]]]:
-    renders_root = local_dir / "eval" / "heldout" / "renders"
+    renders_value = str((heldout_report or {}).get("local_renders_dir") or "")
+    renders_root = (
+        Path(renders_value)
+        if renders_value
+        else local_dir / "eval" / "heldout" / "renders"
+    )
     manifest = (heldout_report or {}).get("render_manifest") or {}
     episodes: list[tuple[str, dict[str, list[np.ndarray]]]] = []
     for item in manifest.get("episodes") or []:
@@ -1872,13 +2278,15 @@ def _camera_paths_by_view(paths: list[Path]) -> dict[str, list[Path]]:
     views: dict[str, list[Path]] = {}
     for path in paths:
         parts = path.stem.split("-")
-        view_name = parts[1] if len(parts) >= 3 and not parts[1].isdigit() else "primary"
+        view_name = (
+            parts[1] if len(parts) >= 3 and not parts[1].isdigit() else "primary"
+        )
         views.setdefault(view_name, []).append(path)
     return views
 
 
 def _heldout_camera_view_names(
-    episodes: list[tuple[str, dict[str, list[np.ndarray]] | list[np.ndarray]]],
+    episodes: list[tuple[str, dict[str, list[np.ndarray]]]],
 ) -> list[str]:
     names: list[str] = []
     for _env_id, episode_views in episodes:
@@ -1893,7 +2301,9 @@ def _heldout_camera_view_names(
 POINTCLOUD_SUBDIR = "_pointcloud"
 
 
-def _heldout_pointcloud_frames(local_dir: Path) -> list[tuple[np.ndarray, np.ndarray]]:
+def _heldout_pointcloud_frames(
+    local_dir: Path, heldout_report: dict[str, Any] | None = None
+) -> list[tuple[np.ndarray, np.ndarray]]:
     """Load GPU-rendered held-out point clouds as ``(xyz[N,3], rgb[N,3])`` frames.
 
     Returns the primary env's per-frame clouds (time-aligned to the ``/camera``
@@ -1901,7 +2311,13 @@ def _heldout_pointcloud_frames(local_dir: Path) -> list[tuple[np.ndarray, np.nda
     reconstructed sim geometry. Empty when no point clouds were captured.
     """
 
-    root = local_dir / "eval" / "heldout" / "renders" / POINTCLOUD_SUBDIR
+    renders_value = str((heldout_report or {}).get("local_renders_dir") or "")
+    renders_root = (
+        Path(renders_value)
+        if renders_value
+        else local_dir / "eval" / "heldout" / "renders"
+    )
+    root = renders_root / POINTCLOUD_SUBDIR
     if not root.is_dir():
         return []
     env_dirs = sorted(path for path in root.iterdir() if path.is_dir())
@@ -1934,7 +2350,9 @@ def _read_pointcloud_npz(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
             xyz = np.asarray(data["xyz"], dtype=np.float32).reshape(-1, 3)
             rgb = np.asarray(data["rgb"], dtype=np.uint8).reshape(-1, 3)
     except (OSError, ValueError, KeyError):
-        logging.getLogger(__name__).debug("unreadable point cloud %s", path, exc_info=True)
+        logging.getLogger(__name__).debug(
+            "unreadable point cloud %s", path, exc_info=True
+        )
         return None
     count = min(xyz.shape[0], rgb.shape[0])
     if count == 0:
@@ -2025,8 +2443,12 @@ def _build_blueprint(
         row_shares=[1.2, 2.0],
     )
     signal_view = rrb.Vertical(
-        rrb.TimeSeriesView(origin="signal", contents="signal/**", name="VLM->RL signal"),
-        rrb.TimeSeriesView(origin="heldout", contents="heldout/**", name="Held-out scores"),
+        rrb.TimeSeriesView(
+            origin="signal", contents="signal/**", name="VLM->RL signal"
+        ),
+        rrb.TimeSeriesView(
+            origin="heldout", contents="heldout/**", name="Held-out scores"
+        ),
     )
     summary_view = rrb.Vertical(
         rrb.TextDocumentView(origin="summary/run_success", name="Success"),
@@ -2042,7 +2464,9 @@ def _build_blueprint(
         shares = []
         if has_3d_scene:
             columns.append(
-                rrb.Spatial3DView(origin="world", contents="world/**", name="Scene overview")
+                rrb.Spatial3DView(
+                    origin="world", contents="world/**", name="Scene overview"
+                )
             )
             shares.append(2.0)
         columns.append(left_column)
@@ -2055,7 +2479,9 @@ def _build_blueprint(
         layout = rrb.Horizontal(*columns, column_shares=shares)
     else:
         columns = [
-            rrb.Spatial3DView(origin="world", contents="world/**", name="Scene overview"),
+            rrb.Spatial3DView(
+                origin="world", contents="world/**", name="Scene overview"
+            ),
             left_column,
         ]
         shares = [2.0, 1.4]
@@ -2075,7 +2501,11 @@ def _build_blueprint(
 def _rollout_dirs(actions_dir: Path | None) -> list[Path]:
     if actions_dir is None or not actions_dir.exists():
         return []
-    return sorted(path for path in actions_dir.iterdir() if path.is_dir() and path.name.startswith("rollout-"))
+    return sorted(
+        path
+        for path in actions_dir.iterdir()
+        if path.is_dir() and path.name.startswith("rollout-")
+    )
 
 
 def _rollout_frames(rollout_dir: Path) -> list[np.ndarray]:
@@ -2086,11 +2516,7 @@ def _rollout_frames(rollout_dir: Path) -> list[np.ndarray]:
 
 def _rollout_camera_frames(rollout_dir: Path) -> dict[str, list[np.ndarray]]:
     return {
-        view_name: [
-            frame
-            for path in paths
-            if (frame := _read_image(path)) is not None
-        ]
+        view_name: [frame for path in paths if (frame := _read_image(path)) is not None]
         for view_name, paths in _rollout_camera_frame_paths(rollout_dir).items()
     }
 
@@ -2121,11 +2547,13 @@ def _rollout_camera_frame_paths(rollout_dir: Path) -> dict[str, list[Path]]:
     ppm = sorted(rollout_dir.glob("camera-*.ppm"))
     if ppm:
         return {"primary": ppm}
-    grouped = _camera_paths_by_view([
-        path
-        for path in sorted(rollout_dir.iterdir())
-        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
-    ])
+    grouped = _camera_paths_by_view(
+        [
+            path
+            for path in sorted(rollout_dir.iterdir())
+            if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+        ]
+    )
     return grouped or {"primary": []}
 
 
@@ -2265,6 +2693,7 @@ def _decode_png_bytes(data: bytes) -> np.ndarray | None:
         recon[row] = cur
         prev = cur
     pixels = recon.reshape(height, width, channels)
+    rgb: np.ndarray
     if channels == 3:
         rgb = pixels
     elif channels == 4:
@@ -2288,7 +2717,7 @@ def _read_ppm(path: Path) -> np.ndarray | None:
     while len(fields) < 3 and index < len(data):
         while index < len(data) and data[index] in b" \t\r\n":
             index += 1
-        if index < len(data) and data[index:index + 1] == b"#":
+        if index < len(data) and data[index : index + 1] == b"#":
             while index < len(data) and data[index] not in b"\r\n":
                 index += 1
             continue
@@ -2300,7 +2729,7 @@ def _read_ppm(path: Path) -> np.ndarray | None:
         return None
     width, height, _maxval = (int(field) for field in fields)
     index += 1
-    pixels = data[index:index + width * height * 3]
+    pixels = data[index : index + width * height * 3]
     if len(pixels) < width * height * 3:
         return None
     return np.frombuffer(pixels, dtype=np.uint8).reshape(height, width, 3).copy()
@@ -2352,7 +2781,12 @@ def _png_bytes(frame: np.ndarray) -> bytes:
         raw.extend(array[row].tobytes())
 
     def _chunk(tag: bytes, payload: bytes) -> bytes:
-        return struct.pack("!I", len(payload)) + tag + payload + struct.pack("!I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        return (
+            struct.pack("!I", len(payload))
+            + tag
+            + payload
+            + struct.pack("!I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
 
     header = struct.pack("!IIBBBBB", width, height, 8, 2, 0, 0, 0)
     png = b"\x89PNG\r\n\x1a\n"
@@ -2472,7 +2906,9 @@ class _McapEmitter:
     def _schema(self, name: str, schema: dict[str, Any]) -> int:
         if name not in self._schema_ids:
             self._schema_ids[name] = self._writer.register_schema(
-                name=name, encoding="jsonschema", data=json.dumps(schema).encode("utf-8")
+                name=name,
+                encoding="jsonschema",
+                data=json.dumps(schema).encode("utf-8"),
             )
         return self._schema_ids[name]
 
@@ -2484,7 +2920,9 @@ class _McapEmitter:
             )
         return self._channel_ids[topic]
 
-    def _add(self, topic: str, channel_id: int, message: dict[str, Any], stamp_ns: int) -> None:
+    def _add(
+        self, topic: str, channel_id: int, message: dict[str, Any], stamp_ns: int
+    ) -> None:
         self._writer.add_message(
             channel_id=channel_id,
             log_time=stamp_ns,
@@ -2493,33 +2931,47 @@ class _McapEmitter:
         )
         self.channel_counts[topic] = self.channel_counts.get(topic, 0) + 1
 
-    def log_image_bytes(self, topic: str, payload: bytes, fmt: str, stamp_ns: int) -> None:
+    def log_image_bytes(
+        self, topic: str, payload: bytes, fmt: str, stamp_ns: int
+    ) -> None:
         from npa.workbench.lichtblick import (
             _COMPRESSED_IMAGE_SCHEMA,
             compressed_image_message,
         )
 
-        channel_id = self._channel(topic, "foxglove.CompressedImage", _COMPRESSED_IMAGE_SCHEMA)
+        channel_id = self._channel(
+            topic, "foxglove.CompressedImage", _COMPRESSED_IMAGE_SCHEMA
+        )
         message = compressed_image_message(
             payload, fmt=fmt, stamp_ns=stamp_ns, frame_id=MCAP_FRAME_ID
         )
         self._add(topic, channel_id, message, stamp_ns)
         self.camera_message_count += 1
 
-    def log_scalar(self, topic: str, value: float, stamp_ns: int, *, label: str = "") -> None:
+    def log_scalar(
+        self, topic: str, value: float, stamp_ns: int, *, label: str = ""
+    ) -> None:
         channel_id = self._channel(topic, "npa.sim2real.Scalar", _SCALAR_SCHEMA)
         message = {
-            "timestamp": {"sec": stamp_ns // 1_000_000_000, "nsec": stamp_ns % 1_000_000_000},
+            "timestamp": {
+                "sec": stamp_ns // 1_000_000_000,
+                "nsec": stamp_ns % 1_000_000_000,
+            },
             "value": float(value),
             "label": label,
         }
         self._add(topic, channel_id, message, stamp_ns)
         self.scalar_message_count += 1
 
-    def log_text(self, topic: str, message_text: str, stamp_ns: int, *, name: str = "") -> None:
+    def log_text(
+        self, topic: str, message_text: str, stamp_ns: int, *, name: str = ""
+    ) -> None:
         channel_id = self._channel(topic, "foxglove.Log", _LOG_SCHEMA)
         message = {
-            "timestamp": {"sec": stamp_ns // 1_000_000_000, "nsec": stamp_ns % 1_000_000_000},
+            "timestamp": {
+                "sec": stamp_ns // 1_000_000_000,
+                "nsec": stamp_ns % 1_000_000_000,
+            },
             "level": _LOG_LEVEL_INFO,
             "message": message_text,
             "name": name,
@@ -2551,9 +3003,14 @@ class _McapEmitter:
     ) -> None:
         """Emit a static (identity) ``foxglove.FrameTransform`` so the frame exists."""
 
-        from npa.workbench.lichtblick import _FRAME_TRANSFORM_SCHEMA, frame_transform_message
+        from npa.workbench.lichtblick import (
+            _FRAME_TRANSFORM_SCHEMA,
+            frame_transform_message,
+        )
 
-        channel_id = self._channel(topic, "foxglove.FrameTransform", _FRAME_TRANSFORM_SCHEMA)
+        channel_id = self._channel(
+            topic, "foxglove.FrameTransform", _FRAME_TRANSFORM_SCHEMA
+        )
         message = frame_transform_message(
             parent_frame_id=parent_frame_id,
             child_frame_id=child_frame_id,
@@ -2587,10 +3044,14 @@ def emit_sim2real_mcap(
     writer_cls, compression_none = _import_mcap()
     local_dir = Path(local_dir)
     output_mcap = (
-        Path(output_mcap) if output_mcap is not None else local_dir / "reports" / "sim2real.mcap"
+        Path(output_mcap)
+        if output_mcap is not None
+        else local_dir / "reports" / "sim2real.mcap"
     )
     if output_mcap.suffix.lower() != ".mcap":
-        raise Sim2RealVizError(f"MCAP output path must end in .mcap, got: {output_mcap}")
+        raise Sim2RealVizError(
+            f"MCAP output path must end in .mcap, got: {output_mcap}"
+        )
     output_mcap.parent.mkdir(parents=True, exist_ok=True)
 
     frame_period_ns = int(ROLLOUT_FRAME_SECONDS * 1_000_000_000)
@@ -2627,13 +3088,18 @@ def emit_sim2real_mcap(
                 frame_paths_by_view = _rollout_camera_frame_paths(rollout_dir)
                 primary_paths = frame_paths_by_view.get("primary", [])
                 if has_heldout_cameras and is_reference_stub_rollout(
-                    rollout_dir, [f for p in primary_paths if (f := _read_image(p)) is not None]
+                    rollout_dir,
+                    [f for p in primary_paths if (f := _read_image(p)) is not None],
                 ):
                     continue
                 rollout_id = rollout_dir.name
                 root = f"/rollouts/iter_{iteration:02d}/{rollout_id}"
-                evaluation = _read_json(eval_dir / f"{rollout_id}.json") if eval_dir else {}
-                signal = _read_json(signal_dir / f"{rollout_id}.json") if signal_dir else {}
+                evaluation = (
+                    _read_json(eval_dir / f"{rollout_id}.json") if eval_dir else {}
+                )
+                signal = (
+                    _read_json(signal_dir / f"{rollout_id}.json") if signal_dir else {}
+                )
                 manifest = _read_json(rollout_dir / "manifest.json")
                 stamp_ns = _emit_mcap_rollout(
                     emitter,
@@ -2667,9 +3133,13 @@ def emit_sim2real_mcap(
             emitter, heldout_episodes, frame_period_ns=frame_period_ns
         )
         _emit_mcap_pointclouds(
-            emitter, _heldout_pointcloud_frames(local_dir), frame_period_ns=frame_period_ns
+            emitter,
+            _heldout_pointcloud_frames(local_dir, heldout_report),
+            frame_period_ns=frame_period_ns,
         )
-        _emit_mcap_heldout_scores(emitter, heldout_report, heldout_period_ns=heldout_period_ns)
+        _emit_mcap_heldout_scores(
+            emitter, heldout_report, heldout_period_ns=heldout_period_ns
+        )
         if heldout_report and any(
             heldout_report.get(key)
             for key in (
@@ -2822,23 +3292,36 @@ def _emit_mcap_rollout(
             else:
                 emitter.log_image_bytes(f"{root}/camera", payload, fmt, stamp_ns)
                 if mirror_primary_camera:
-                    emitter.log_image_bytes(MCAP_PRIMARY_CAMERA_TOPIC, payload, fmt, stamp_ns)
+                    emitter.log_image_bytes(
+                        MCAP_PRIMARY_CAMERA_TOPIC, payload, fmt, stamp_ns
+                    )
 
         eval_step = per_step_eval.get(step, {})
         critique = str(eval_step.get("critique_text") or summary or "")
         tags = eval_step.get("error_tags") or []
         if critique:
-            overlay = critique if not tags else f"{critique} [error_tags: {', '.join(str(t) for t in tags)}]"
-            emitter.log_text(f"{root}/critique", overlay, stamp_ns, name=root.strip("/"))
+            overlay = (
+                critique
+                if not tags
+                else f"{critique} [error_tags: {', '.join(str(t) for t in tags)}]"
+            )
+            emitter.log_text(
+                f"{root}/critique", overlay, stamp_ns, name=root.strip("/")
+            )
         if score is not None:
             emitter.log_scalar(f"{root}/score", float(score), stamp_ns, label="score")
 
         signal_step = per_step_signal.get(step, {})
         if "reward" in signal_step:
-            emitter.log_scalar("/signal/reward", float(signal_step["reward"]), stamp_ns, label="reward")
+            emitter.log_scalar(
+                "/signal/reward", float(signal_step["reward"]), stamp_ns, label="reward"
+            )
         if signal_step.get("advantage") is not None:
             emitter.log_scalar(
-                "/signal/advantage", float(signal_step["advantage"]), stamp_ns, label="advantage"
+                "/signal/advantage",
+                float(signal_step["advantage"]),
+                stamp_ns,
+                label="advantage",
             )
         stamp_ns += frame_period_ns
     if summary:
@@ -2854,7 +3337,7 @@ def _emit_mcap_rollout(
 
 def _emit_mcap_heldout_cameras(
     emitter: _McapEmitter,
-    episodes: list[tuple[str, dict[str, list[np.ndarray]] | list[np.ndarray]]],
+    episodes: list[tuple[str, dict[str, list[np.ndarray]]]],
     *,
     frame_period_ns: int,
 ) -> None:
@@ -2910,7 +3393,9 @@ def _emit_mcap_heldout_scores(
     report = heldout_report or {}
     success_rate = report.get("success_rate")
     if success_rate is not None:
-        emitter.log_scalar("/heldout/success_rate", float(success_rate), 0, label="success_rate")
+        emitter.log_scalar(
+            "/heldout/success_rate", float(success_rate), 0, label="success_rate"
+        )
     stamp_ns = 0
     for index, item in enumerate(report.get("per_env") or []):
         if not isinstance(item, dict):

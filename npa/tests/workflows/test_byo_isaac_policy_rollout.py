@@ -46,7 +46,12 @@ def test_build_rollout_manifest_keeps_primary_compatibility_and_named_views():
         is_trained=True,
         capture={"width": 640, "height": 480, "fps": 10.0},
         camera_metadata_items=[
-            {"name": "primary", "position": [-2.0, 0.0, 1.0], "width": 640, "height": 480}
+            {
+                "name": "primary",
+                "position": [-2.0, 0.0, 1.0],
+                "width": 640,
+                "height": 480,
+            }
         ],
         frame_metadata={
             "primary": [
@@ -78,7 +83,8 @@ def test_latest_checkpoint_uri_empty_inputs():
 
 def test_write_dryrun_rollouts_layout(tmp_path):
     dirs = pr.write_dryrun_rollouts(
-        tmp_path, count=3, steps_per_rollout=4, checkpoint_uri="")
+        tmp_path, count=3, steps_per_rollout=4, checkpoint_uri=""
+    )
     assert len(dirs) == 3
     for d in dirs:
         from pathlib import Path
@@ -120,12 +126,16 @@ def test_dryrun_main_writes_rollout_dirs_json(tmp_path, monkeypatch):
 
 def test_build_isaac_rollout_job_manifest_shape():
     m = pr.build_isaac_rollout_job_manifest(
-        job_name="s2r-byo-isaac-roll-run1-iter0", run_id="run1",
-        image="reg/npa-isaac-lab:2.3.2.post1", task="Isaac-Lift-Cube-Franka-v0",
-        rollout_count=4, steps_per_rollout=8,
+        job_name="s2r-byo-isaac-roll-run1-iter0",
+        run_id="run1",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        rollout_count=4,
+        steps_per_rollout=8,
         checkpoint_uri="s3://b/run1/byo-trainer/j/model_latest.pt",
         out_s3_prefix="s3://b/sim2real-b/run1/byo-rollouts/iter0",
-        s3_endpoint="https://s3.example", namespace="default",
+        s3_endpoint="https://s3.example",
+        namespace="default",
         service_account="agent-sa",
         gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
         object_usd="https://example/multi_color_cube_instanceable.usd",
@@ -140,24 +150,69 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert "ROLLOUT_CAMERA_VIEWS_JSON=" in script
     assert 'ROLLOUT_CAPTURE_WIDTH="640"' in script
     assert 'ROLLOUT_CAPTURE_HEIGHT="480"' in script
-    assert '\"name\":\"side\"' in script
-    assert '\"name\":\"overhead\"' in script
+    assert '"name":"side"' in script
+    assert '"name":"overhead"' in script
     assert "rollout.py" in script
     assert m["spec"]["backoffLimit"] == 0
 
 
 def test_untrained_job_manifest_skips_download():
     m = pr.build_isaac_rollout_job_manifest(
-        job_name="s2r-byo-isaac-roll-run1-iter0", run_id="run1",
-        image="reg/npa-isaac-lab:2.3.2.post1", task="Isaac-Lift-Cube-Franka-v0",
-        rollout_count=2, steps_per_rollout=4, checkpoint_uri="",
+        job_name="s2r-byo-isaac-roll-run1-iter0",
+        run_id="run1",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        rollout_count=2,
+        steps_per_rollout=4,
+        checkpoint_uri="",
         out_s3_prefix="s3://b/sim2real-b/run1/byo-rollouts/iter0",
-        s3_endpoint="", namespace="default", service_account="agent-sa",
+        s3_endpoint="",
+        namespace="default",
+        service_account="agent-sa",
         gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
     )
     script = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
     assert "DOWNLOADED_CKPT" not in script  # no checkpoint -> untrained policy
     assert 'ROLLOUT_CKPT_LOCAL=""' in script
+
+
+def test_rollout_manifest_embeds_scenario_and_byo_robot_contract():
+    scenario = {
+        "task_id": "Isaac-Lift-Cube-Franka-v0",
+        "task_contract_digest": "contract-123",
+        "scenario_config_digest": "scenario-456",
+    }
+    robot_spec = {
+        "name": "customer-arm",
+        "robot_source": "customer_usd",
+        "usd_path": "/tmp/npa-byo-robot/customer.usd",
+    }
+    manifest = pr.build_isaac_rollout_job_manifest(
+        job_name="s2r-byo-isaac-roll-custom",
+        run_id="run1",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        rollout_count=1,
+        steps_per_rollout=32,
+        checkpoint_uri="s3://bucket/model_500.pt",
+        out_s3_prefix="s3://bucket/run/rollouts",
+        s3_endpoint="https://storage.example",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        scenarios_jsonl=json.dumps(scenario) + "\n",
+        robot_spec=robot_spec,
+        robot_usd_uri="s3://bucket/assets/customer.usd",
+        task_config={"task_id": "Isaac-Lift-Cube-Franka-v0"},
+    )
+    script = manifest["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    assert "isaac_scenario_task.py" in script
+    assert "scenario-456" in script
+    assert "isaac_byo_robot_task.py" in script
+    assert "NPA_BYO_ROBOT_SPEC_JSON" in script
+    assert "NPA_BYO_TASK_CONFIG_JSON" in script
+    assert "NPA_EXPECTED_ROBOT_USD" in script
+    assert "STAGED_ROBOT_USD" in script
 
 
 def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monkeypatch):
@@ -184,8 +239,23 @@ def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monke
     monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3())
     monkeypatch.setattr(pr, "_kubectl", lambda *a, **k: _Proc())
     monkeypatch.setattr(pr, "build_isaac_rollout_job_manifest", fake_build)
-    monkeypatch.setattr(pr, "latest_checkpoint_uri", lambda *a, **k: "s3://b/run/model_latest.pt")
+    monkeypatch.setattr(
+        pr, "latest_checkpoint_uri", lambda *a, **k: "s3://b/run/model_latest.pt"
+    )
     monkeypatch.setattr(pr, "materialize_rollout_dirs", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.byo_isaac_trainer.read_generated_train_envs",
+        lambda *a, **k: (
+            [
+                {
+                    "difficulty": difficulty,
+                    "scenario_config_digest": f"cfg-{difficulty}",
+                }
+                for difficulty in ("easy", "medium", "hard")
+            ],
+            "",
+        ),
+    )
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
