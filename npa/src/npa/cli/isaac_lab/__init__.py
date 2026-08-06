@@ -136,6 +136,12 @@ class WorkbenchRuntime(str, Enum):
     serverless = "serverless"
 
 
+class IsaacLabEvalMetric(str, Enum):
+    auto = "auto"
+    goal_distance = "goal-distance"
+    survival = "survival"
+
+
 ISAAC_CONTAINER_NAME = "npa-isaac-lab"
 
 
@@ -615,9 +621,25 @@ def _prepare_remote_input_path(ssh: SSHClient, cfg, input_path: str) -> str:
             for path in local_dir.rglob("*")
             if path.is_file() and path.name.endswith((".json", ".pt", ".pth"))
         )
-        local_checkpoint = (
-            checkpoint_candidates[0] if checkpoint_candidates else local_dir
+        # A training output prefix contains both a portable stable checkpoint and
+        # a manifest whose paths point at the machine that produced it. Prefer
+        # the real weights so an eval on a different VM never resolves a stale
+        # absolute path from the manifest.
+        preferred_names = ("npa_isaac_lab_checkpoint.pt", "model.pt")
+        local_checkpoint = next(
+            (
+                path
+                for name in preferred_names
+                for path in checkpoint_candidates
+                if path.name == name
+            ),
+            None,
         )
+        if local_checkpoint is None:
+            local_checkpoint = next(
+                (path for path in checkpoint_candidates if path.suffix in {".pt", ".pth"}),
+                checkpoint_candidates[0] if checkpoint_candidates else local_dir,
+            )
         if local_checkpoint.is_dir():
             ssh.upload_directory(str(local_checkpoint), remote_dir)
             return remote_dir
@@ -1098,183 +1120,64 @@ fi
     return script.replace("{extra_cmd_lines.rstrip()}", extra_cmd_lines.rstrip())
 
 def _build_eval_script(
-    task: str, checkpoint: str, num_episodes: int, output_dir: str
+    task: str,
+    checkpoint: str,
+    num_episodes: int,
+    output_dir: str,
+    *,
+    success_metric: IsaacLabEvalMetric = IsaacLabEvalMetric.auto,
+    success_distance_m: float = 0.05,
+    min_success_rate: float = 0.0,
+    max_steps_per_episode: int = 200,
+    seed: int = 42,
 ) -> str:
-    return f"""\
-import json
-import time
-from pathlib import Path
-
-from isaaclab.app import AppLauncher
-
-app_launcher = AppLauncher(headless=True)
-simulation_app = app_launcher.app
-
-import gymnasium as gym
-import torch
-
-import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import parse_env_cfg
-
-task = {task!r}
-checkpoint_path = Path({checkpoint!r})
-num_episodes = {num_episodes}
-output_dir = Path({output_dir!r})
-max_steps_per_episode = 200
-success_dist_m = 0.05
-output_dir.mkdir(parents=True, exist_ok=True)
-device = "cuda:0" if torch.cuda.is_available() else "cpu"
-started = time.time()
-env = None
-
-
-def _resolve_ckpt(p):
-    # Accept a real rsl_rl model_*.pt OR an npa manifest json pointing at one.
-    try:
-        info = json.loads(Path(p).read_text())
-        for k in ("stable_checkpoint_path", "checkpoint_path"):
-            if info.get(k):
-                return info[k], info.get("format", "manifest")
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        pass
-    return str(p), "rsl_rl_checkpoint"
-
-
-try:
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"checkpoint not found: {{checkpoint_path}}")
-    ckpt_file, checkpoint_format = _resolve_ckpt(checkpoint_path)
-
-    print(
-        f"ISAAC_LAB_EVAL_START task={{task}} checkpoint={{ckpt_file}} "
-        f"episodes={{num_episodes}} device={{device}}",
-        flush=True,
+    runner_path = Path(__file__).with_name("eval_runner.py")
+    runner_source = runner_path.read_text(encoding="utf-8")
+    environment = {
+        "NPA_ISAAC_EVAL_TASK": task,
+        "NPA_ISAAC_EVAL_CHECKPOINT": checkpoint,
+        "NPA_ISAAC_EVAL_EPISODES": str(num_episodes),
+        "NPA_ISAAC_EVAL_OUTPUT_DIR": output_dir,
+        "NPA_ISAAC_EVAL_SUCCESS_METRIC": success_metric.value,
+        "NPA_ISAAC_EVAL_SUCCESS_DISTANCE_M": str(success_distance_m),
+        "NPA_ISAAC_EVAL_MIN_SUCCESS_RATE": str(min_success_rate),
+        "NPA_ISAAC_EVAL_MAX_STEPS": str(max_steps_per_episode),
+        "NPA_ISAAC_EVAL_SEED": str(seed),
+    }
+    prelude = "import os\n" + "".join(
+        f"os.environ[{name!r}] = {value!r}\n"
+        for name, value in environment.items()
     )
-    env_cfg = parse_env_cfg(task, device=device, num_envs=1)
-    print("ISAAC_LAB_ENV_CREATE_START", flush=True)
-    env = gym.make(task, cfg=env_cfg)
-    print("ISAAC_LAB_ENV_CREATE_COMPLETE", flush=True)
+    future_import = "from __future__ import annotations\n"
+    if runner_source.startswith(future_import):
+        return future_import + prelude + runner_source[len(future_import) :]
+    return prelude + runner_source
 
-    # Load the TRAINED rsl_rl policy (not random actions) so eval reflects the
-    # real checkpoint. Falls back to a random policy only if loading fails, and
-    # records policy_loaded=false so the result is never silently faked.
-    policy = None
-    policy_loaded = False
-    try:
-        try:
-            from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
-        except Exception:
-            from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
-        from rsl_rl.runners import OnPolicyRunner
-        wrapped = RslRlVecEnvWrapper(env)
-        agent_cfg = None
-        for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
-            try:
-                mod = __import__(loader, fromlist=["load_cfg_from_registry"])
-                agent_cfg = mod.load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
-                break
-            except Exception:
-                pass
-        acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
-        runner = OnPolicyRunner(wrapped, acfg, log_dir=None, device=device)
-        runner.load(ckpt_file)
-        policy = runner.get_inference_policy(device=device)
-        env = wrapped
-        policy_loaded = True
-        print("ISAAC_LAB_EVAL_POLICY_LOADED", flush=True)
-    except Exception as exc:
-        print(f"ISAAC_LAB_EVAL_POLICY_LOAD_FAILED {{exc!r}} -- random fallback", flush=True)
 
-    def _act(obs):
-        if policy_loaded and policy is not None and obs is not None:
-            with torch.inference_mode():
-                return policy(obs)
-        return torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
+def _build_eval_status_check(output_dir: str) -> str:
+    """Enforce eval status even when an Isaac bootstrap shim masks Python's exit."""
 
-    def _step_env(env, actions):
-        # Gymnasium envs return 5 values; the rsl_rl VecEnv wrapper installed
-        # when a trained policy loads returns 4: (obs, rewards, dones, extras).
-        out = env.step(actions)
-        if len(out) == 5:
-            s_obs, s_rew, terminated, truncated, s_info = out
-            s_done = bool(torch.as_tensor(terminated).any().item()) or bool(torch.as_tensor(truncated).any().item())
-        else:
-            s_obs, s_rew, dones, s_info = out
-            s_done = bool(torch.as_tensor(dones).any().item())
-        return s_obs, s_rew, s_done, s_info
+    summary_path = f"{output_dir.rstrip('/')}/npa_isaac_lab_eval_summary.json"
+    return f"""\
+python3 - {shlex.quote(summary_path)} <<'PYEVALSTATUS'
+import json
+from pathlib import Path
+import sys
 
-    def _goal_dist():
-        try:
-            u = env.unwrapped
-            cmd = u.command_manager.get_command("object_pose")
-            obj = u.scene["object"].data.root_pos_w[:, :3]
-            goal = cmd[:, :3] + u.scene.env_origins[:, :3]
-            return float(torch.linalg.norm(obj - goal, dim=1).min().item())
-        except Exception:
-            return None
-
-    episode_results = []
-    for episode in range(num_episodes):
-        reset_out = env.reset()
-        obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
-        episode_reward = 0.0
-        steps_ran = 0
-        min_dist = None
-        for step in range(max_steps_per_episode):
-            actions = _act(obs)
-            obs, rewards, done, _ = _step_env(env, actions)
-            episode_reward += float(torch.as_tensor(rewards).mean().item())
-            steps_ran = step + 1
-            d = _goal_dist()
-            if d is not None:
-                min_dist = d if min_dist is None else min(min_dist, d)
-            if done:
-                break
-
-        success = bool(min_dist is not None and min_dist < success_dist_m)
-        result = {{
-            "episode": episode + 1,
-            "steps": steps_ran,
-            "reward": episode_reward,
-            "min_object_goal_distance_m": min_dist,
-            "success": success,
-        }}
-        episode_results.append(result)
-        print(
-            f"ISAAC_LAB_EVAL_EPISODE episode={{episode + 1}}/{{num_episodes}} "
-            f"steps={{steps_ran}} reward={{episode_reward:.6f}} "
-            f"min_dist={{min_dist}} success={{success}}",
-            flush=True,
-        )
-
-    mean_reward = sum(item["reward"] for item in episode_results) / num_episodes
-    dists = [r["min_object_goal_distance_m"] for r in episode_results if r["min_object_goal_distance_m"] is not None]
-    success_rate = sum(1 for r in episode_results if r["success"]) / num_episodes
-    summary = {{
-        "status": "success",
-        "task": task,
-        "checkpoint": str(checkpoint_path),
-        "checkpoint_format": checkpoint_format,
-        "policy_loaded": policy_loaded,
-        "num_episodes": num_episodes,
-        "max_steps_per_episode": max_steps_per_episode,
-        "device": device,
-        "mean_reward": mean_reward,
-        "success_rate": success_rate,
-        "mean_min_object_goal_distance_m": (sum(dists) / len(dists)) if dists else None,
-        "success_dist_m": success_dist_m,
-        "episodes": episode_results,
-        "duration_seconds": round(time.time() - started, 3),
-    }}
-    summary_path = output_dir / "npa_isaac_lab_eval_summary.json"
-    summary["output_path"] = str(summary_path)
-    summary_path.write_text(json.dumps(summary, indent=2))
-    print("ISAAC_LAB_EVAL_COMPLETE")
-    print(json.dumps(summary, indent=2), flush=True)
-finally:
-    if env is not None:
-        env.close()
-    simulation_app.close()
+summary_path = Path(sys.argv[1])
+if not summary_path.is_file():
+    print(f"ISAAC_LAB_EVAL_STATUS_FAILED missing summary: {{summary_path}}", file=sys.stderr)
+    raise SystemExit(1)
+summary = json.loads(summary_path.read_text(encoding="utf-8"))
+if summary.get("status") != "success" or summary.get("policy_loaded") is not True:
+    print(
+        "ISAAC_LAB_EVAL_STATUS_FAILED "
+        f"status={{summary.get('status')}} policy_loaded={{summary.get('policy_loaded')}}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+print("ISAAC_LAB_EVAL_STATUS_VERIFIED", flush=True)
+PYEVALSTATUS
 """
 
 
@@ -2913,6 +2816,31 @@ def eval_cmd(
     num_episodes: int = typer.Option(
         10, "--num-episodes", help="Number of evaluation episodes."
     ),
+    max_steps_per_episode: int = typer.Option(
+        200,
+        "--max-steps-per-episode",
+        help="Maximum simulator steps in each evaluation episode.",
+    ),
+    seed: int = typer.Option(
+        42,
+        "--seed",
+        help="Base held-out seed for a repeatable rollout sequence.",
+    ),
+    success_metric: IsaacLabEvalMetric = typer.Option(
+        IsaacLabEvalMetric.auto,
+        "--success-metric",
+        help="Success predicate: auto, goal-distance, or survival.",
+    ),
+    success_distance_m: float = typer.Option(
+        0.05,
+        "--success-distance-m",
+        help="Goal-distance threshold in metres when that metric is selected.",
+    ),
+    min_success_rate: float = typer.Option(
+        0.0,
+        "--min-success-rate",
+        help="Aggregate success-rate threshold recorded in the pass/fail result.",
+    ),
     output_path: str = typer.Option(
         "",
         "--output-path",
@@ -2928,6 +2856,18 @@ def eval_cmd(
     """Run Isaac Lab evaluation on the VM via SSH."""
     if num_episodes <= 0:
         _fail(f"--num-episodes must be positive, got {num_episodes}")
+    if max_steps_per_episode <= 0:
+        _fail(
+            "--max-steps-per-episode must be positive, "
+            f"got {max_steps_per_episode}"
+        )
+    if success_distance_m <= 0:
+        _fail(f"--success-distance-m must be positive, got {success_distance_m}")
+    if not 0.0 <= min_success_rate <= 1.0:
+        _fail(
+            "--min-success-rate must be between 0 and 1, "
+            f"got {min_success_rate}"
+        )
 
     cfg = _get_ssh_config()
     try:
@@ -2969,7 +2909,20 @@ def eval_cmd(
         cfg,
         prefix
         + f"mkdir -p {shlex.quote(remote_output_dir)}\n"
-        + f"{python_bin} - <<'PY'\n{_build_eval_script(task, remote_checkpoint, num_episodes, remote_output_dir)}PY\n",
+        + f"{python_bin} - <<'PY'\n"
+        + _build_eval_script(
+            task,
+            remote_checkpoint,
+            num_episodes,
+            remote_output_dir,
+            success_metric=success_metric,
+            success_distance_m=success_distance_m,
+            min_success_rate=min_success_rate,
+            max_steps_per_episode=max_steps_per_episode,
+            seed=seed,
+        )
+        + "PY\n"
+        + _build_eval_status_check(remote_output_dir),
     )
     stream_logs = output_format != OutputFormat.json
 
@@ -2990,23 +2943,30 @@ def eval_cmd(
         "input_path": checkpoint_ref,
         "checkpoint": remote_checkpoint,
         "num_episodes": num_episodes,
+        "max_steps_per_episode": max_steps_per_episode,
+        "seed": seed,
+        "success_metric": success_metric.value,
+        "success_distance_m": success_distance_m,
+        "min_success_rate": min_success_rate,
         "output_path": target_output,
         "output_dir": remote_output_dir,
         "duration_seconds": round(time.time() - start, 1),
     }
+    if output_is_s3:
+        # The inline evaluator writes a structured failure summary before
+        # exiting, so upload the run directory on both success and failure.
+        try:
+            result["output_path"] = _upload_remote_directory_to_s3(
+                ssh, cfg, remote_output_dir, target_output
+            )
+        except Exception as exc:
+            result["status"] = "failed"
+            result["exit_code"] = 1
+            result["output_upload_error"] = str(exc)
+            exit_code = 1
     if exit_code != 0:
         result["stderr"] = stderr.strip()[-500:] if stderr else ""
     else:
-        if output_is_s3:
-            try:
-                result["output_path"] = _upload_remote_directory_to_s3(
-                    ssh, cfg, remote_output_dir, target_output
-                )
-            except Exception as exc:
-                result["status"] = "failed"
-                result["exit_code"] = 1
-                result["output_upload_error"] = str(exc)
-                exit_code = 1
         if output_format == OutputFormat.json and stdout.strip():
             result["stdout_tail"] = stdout.strip()[-1000:]
 

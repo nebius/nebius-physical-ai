@@ -60,8 +60,23 @@ npa workbench isaac-lab train \
 ```bash
 npa workbench isaac-lab eval \
   --task Isaac-Velocity-Flat-Anymal-C-v0 \
-  --help
+  --input-path s3://your-bucket-name/isaac-lab/anymal-flat/ \
+  --num-episodes 20 \
+  --max-steps-per-episode 1000 \
+  --success-metric survival \
+  --min-success-rate 0.90 \
+  --output-path s3://your-bucket-name/isaac-lab/anymal-flat-eval/
 ```
+
+The evaluator fails closed if the supplied RSL-RL checkpoint cannot be loaded;
+it never substitutes random actions. The output prefix receives
+`npa_isaac_lab_eval_summary.json` (`npa.isaac_lab.eval.v1`) with the resolved
+checkpoint, `policy_loaded`, held-out seed, per-episode reward/termination
+metrics, aggregate `success_rate`, and `passed` quality-gate result.
+
+For manipulation and reach tasks, use `--success-metric goal-distance` with
+`--success-distance-m`; `auto` prefers a simulator-native success signal, then
+goal distance, and otherwise uses survival.
 
 ## Go bigger
 

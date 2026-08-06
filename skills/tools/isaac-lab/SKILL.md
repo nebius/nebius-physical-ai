@@ -59,6 +59,28 @@ npa workbench isaac-lab system-info
 npa workbench isaac-lab list
 ```
 
+### Standalone checkpoint eval
+
+`npa workbench isaac-lab eval` runs the supplied RSL-RL policy headlessly; it
+does not invoke a VLM. Checkpoint loading is fail-closed: a load error produces
+a structured failure artifact and a non-zero command result, never a
+random-action substitute.
+
+Choose the success predicate to match the task:
+
+- `--success-metric survival` for locomotion, with termination as failure;
+- `--success-metric goal-distance --success-distance-m <metres>` for
+  manipulation or reach tasks;
+- `--success-metric auto` to prefer a simulator-native success signal, then a
+  measurable goal distance, and otherwise survival.
+
+Use `--seed`, `--num-episodes`, `--max-steps-per-episode`, and
+`--min-success-rate` for a repeatable held-out evaluation. The output is
+`npa_isaac_lab_eval_summary.json` with format `npa.isaac_lab.eval.v1`; it
+records checkpoint provenance, `policy_loaded`, per-episode metrics,
+`success_rate`, and `passed`. An S3 output prefix is uploaded on both runtime
+success and failure so failed evaluations remain diagnosable.
+
 ## Custom Forks
 
 Canonical onboarding starts at `docs/workbench/getting-started.md`; do not
