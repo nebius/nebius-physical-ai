@@ -73,7 +73,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026073001"
+AGENT_UI_VERSION = "2026080601"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -2354,22 +2354,26 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
                     snapshot[key] = ""
             snapshot["foxglove_ready"] = bool(payload.get("foxglove_ready"))
     else:
-        # Never let a sparse update erase richer artifact fields from load-run.
-        for key in (
-            "artifact_render",
-            "artifact_key",
-            "artifact_uri",
-            "artifact_preview_url",
-            "artifact_download_url",
-            "rrd_uri",
-            "rerun_iframe_url",
-            "visualization_note",
-            "preview_entity",
-            "foxglove_url",
-            "mcap_updated_at",
-        ):
-            if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
-                snapshot[key] = existing[key]
+        no_preview = str(payload.get("preview_status") or "").strip() == "no_previewable_recording"
+        # Never let a sparse update erase richer artifact fields from load-run,
+        # except when selecting a run explicitly establishes the honest
+        # no-preview-but-artifacts state (which must clear a stale artifact).
+        if not no_preview:
+            for key in (
+                "artifact_render",
+                "artifact_key",
+                "artifact_uri",
+                "artifact_preview_url",
+                "artifact_download_url",
+                "rrd_uri",
+                "rerun_iframe_url",
+                "visualization_note",
+                "preview_entity",
+                "foxglove_url",
+                "mcap_updated_at",
+            ):
+                if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
+                    snapshot[key] = existing[key]
         if not payload.get("foxglove_ready") and existing.get("foxglove_ready") and str(snapshot.get("foxglove_url") or "").strip():
             snapshot["foxglove_ready"] = True
     runs[run_id] = snapshot
@@ -7053,7 +7057,12 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
         if str(item.get("run_id") or "").strip()
     ]
     render = str(payload.get("artifact_render") or "").strip().lower()
-    if render and render != "rerun":
+    preview_status = str(payload.get("preview_status") or "").strip().lower()
+    if preview_status == "no_previewable_recording":
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        payload["rerun_iframe_url"] = ""
+    elif render and render != "rerun":
         payload["rrd_uri"] = ""
         payload["rerun_ready"] = False
         if not payload.get("rerun_iframe_url"):
@@ -7101,6 +7110,7 @@ def sim_viz_load_run(payload: dict | None = None):
             _save_state(state)
         return {{"ok": True, "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id)}}
 
+    artifact_error = ""
     try:
         s3, settings = _agent_s3_client()
         requested_prefix = str(body.get("prefix") or "")
@@ -7108,11 +7118,11 @@ def sim_viz_load_run(payload: dict | None = None):
         if requested_prefix:
             effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
             artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
-        # Generic fallback: find the run across all category folders under the run
-        # root so a mismatched/absent prefix does not hide a mountable .rrd.
+        # Generic S3-only fallback: locate and merge every exact run-id namespace
+        # across accessible buckets (completed outputs + clearly labelled inputs).
         if not artifacts:
-            artifacts = find_run_artifacts(
-                settings["bucket"],
+            _run_bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
                 run_id=validate_run_id(run_id),
                 s3=s3,
@@ -7141,10 +7151,47 @@ def sim_viz_load_run(payload: dict | None = None):
                 "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id),
                 "preferred": preferred.to_dict(),
             }}
-    except Exception:
-        # Fall back to the historical in-memory run selector below; callers still
-        # get a useful 404 if the run has never been seen.
-        pass
+        if artifacts:
+            # Training and other non-visual runs are still real selectable runs.
+            # Record an honest context without fabricating a Rerun recording; the
+            # UI lists/downloads artifacts independently from preview readiness.
+            role_counts = artifact_inventory_counts(artifacts)
+            state = _load_state()
+            sim_viz = dict(DEFAULT_SIM_VIZ)
+            sim_viz.update({{
+                "run_id": run_id,
+                "stage": "artifacts",
+                "camera": camera,
+                "rrd_uri": "",
+                "rerun_ready": False,
+                "rerun_iframe_url": "",
+                "artifact_key": "",
+                "artifact_uri": "",
+                "artifact_render": "",
+                "artifact_count": len(artifacts),
+                "output_artifact_count": role_counts["output"],
+                "input_artifact_count": role_counts["input"],
+                "metadata_artifact_count": role_counts["metadata"],
+                "preview_status": "no_previewable_recording",
+                "visualization_note": "No previewable recording; artifacts available.",
+                "rrd_updated_at": _now_iso(),
+            }})
+            state["active_run_id"] = run_id
+            state["sim_viz"] = sim_viz
+            _record_sim_viz_run(state, sim_viz)
+            _save_state(state)
+            return {{
+                "ok": True,
+                "artifacts_available": True,
+                "artifact_count": len(artifacts),
+                "output_artifact_count": role_counts["output"],
+                "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id),
+                "preferred": preferred.to_dict() if preferred else None,
+            }}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        artifact_error = str(exc)
 
     state = _load_state()
     runs = state.get("sim_viz_runs")
@@ -7155,6 +7202,8 @@ def sim_viz_load_run(payload: dict | None = None):
     # Never invent phantom run ids — require a known sim-viz or sim2real run.
     if not isinstance(selected, dict) or not selected:
         if run_id not in sim2real_runs:
+            if artifact_error:
+                raise HTTPException(status_code=502, detail=f"S3 artifact discovery failed: {{artifact_error}}")
             raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
         selected = {{"run_id": run_id}}
     else:
@@ -7281,6 +7330,7 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
             if not run_bucket:
                 run_bucket = settings["bucket"]
         preferred = select_preferred_artifact(artifacts)
+        role_counts = artifact_inventory_counts(artifacts)
         return {{
             "ok": True,
             "bucket": run_bucket,
@@ -7288,6 +7338,10 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
             "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
             "count": len(artifacts),
+            "output_artifact_count": role_counts["output"],
+            "input_artifact_count": role_counts["input"],
+            "metadata_artifact_count": role_counts["metadata"],
+            "namespaces": sorted({{item.namespace for item in artifacts if item.namespace}}),
             "artifacts": [item.to_dict() for item in artifacts],
             "preferred": preferred.to_dict() if preferred else None,
         }}

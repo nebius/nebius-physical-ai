@@ -17,12 +17,14 @@ config:
   base_model: nvidia/GR00T-N1.7-3B
   robot_embodiment: NEW_EMBODIMENT
 
-  # Override both with `workflow submit --var gpu_type=... --var gpu_count=N`.
+  # This validated example defaults to one 8-GPU node. Override both with
+  # `workflow submit --var gpu_type=... --var gpu_count=N` for any positive
+  # single-node world size, including gpu_count=1.
   # gpu_count must resolve to a positive integer. global_batch_size follows it
   # by default so every positive count satisfies GR00T's divisibility contract;
   # operators may override it with any positive multiple of gpu_count.
   gpu_type: H100
-  gpu_count: "1"
+  gpu_count: "8"
   global_batch_size: "{{config.gpu_count}}"
   # Keep NCCL's native transport selection by default. Use `socket` for a
   # single-node compatibility fallback that disables NCCL P2P and SHM.

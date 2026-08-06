@@ -1686,7 +1686,7 @@
         </section>
         <section class="panel stages-panel" id="stagesPanel" data-testid="stages-panel">
           <h3>Stages</h3>
-          <p class="hint">Pick a run (latest first) to load its pipeline timeline, result, and logs. Search filters the list by run name.</p>
+          <p class="hint">Pick a run to inspect its pipeline timeline, result, and logs. This Stages panel is status-only; run artifacts are loaded separately in Runs &amp; artifacts.</p>
           <div class="stages-run-picker field-row" data-testid="stages-run-picker">
             <div class="field" style="flex:1;">
               <label for="stagesRunSelect">Run</label>
@@ -1700,7 +1700,7 @@
               <p class="hint" id="stagesRunSearchHint" style="margin:4px 0 0;">Type to filter runs by name.</p>
             </div>
             <div class="btn-row" style="align-self:flex-end; margin-bottom:2px;">
-              <button id="stagesLoadRun" class="btn btn-primary" type="button">Load run</button>
+              <button id="stagesLoadRun" class="btn btn-primary" type="button">Show stages &amp; status</button>
             </div>
           </div>
           <div id="runDetails" class="run-details">
@@ -1745,6 +1745,15 @@
                     <option value="text">Text/logs</option>
                     <option value="image">Images</option>
                     <option value="download">Other/download</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="artifactRoleFilter">Artifact role</label>
+                  <select id="artifactRoleFilter">
+                    <option value="output" selected>Outputs</option>
+                    <option value="input">Inputs / dataset</option>
+                    <option value="metadata">Related metadata</option>
+                    <option value="">All roles</option>
                   </select>
                 </div>
                 <div class="field">
@@ -2349,7 +2358,6 @@
             if (!chosen) return;
             syncRunChooserFields(chosen);
             loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
@@ -2359,21 +2367,16 @@
             const chosen = String(stagesRunSelect.value || "").trim();
             if (!chosen) return;
             syncRunChooserFields(chosen);
-            loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
+            loadRunDetails(chosen)
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
         bindClick("stagesLoadRun", async () => {
-          const select = document.getElementById("stagesRunSelect");
-          const input = document.getElementById("stagesRunInput");
-          // Prefer pasted/search input over a stale dropdown selection (matches Enter-on-input).
-          const typed = String((input && input.value) || "").trim();
-          const selected = String((select && select.value) || "").trim();
-          const chosen = resolveStagesRunChoice(typed, selected);
-          await loadSelectedRun(chosen);
-          await loadArtifactsForSelectedRun().catch(() => false);
-        }, "Load run for stages");
+          const chosen = selectedStagesRunIdFromUi();
+          if (!chosen) throw new Error("Select or paste a run ID for workflow status");
+          syncRunChooserFields(chosen);
+          await loadRunDetails(chosen);
+        }, "Show workflow stages");
         const stagesRunInput = document.getElementById("stagesRunInput");
         if (stagesRunInput) {
           let stagesSearchTimer = null;
@@ -2399,8 +2402,7 @@
             const select = document.getElementById("stagesRunSelect");
             const selected = String((select && select.value) || "").trim();
             const chosen = resolveStagesRunChoice(typed, selected);
-            loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
+            loadRunDetails(chosen)
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
@@ -2411,15 +2413,14 @@
             event.preventDefault();
             const chosen = String(runIdInput.value || "").trim();
             loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
-        for (const id of ["artifactStageFilter", "artifactTypeFilter", "artifactSort"]) {
+        for (const id of ["artifactStageFilter", "artifactTypeFilter", "artifactRoleFilter", "artifactSort"]) {
           const node = document.getElementById(id);
           if (node) {
             node.addEventListener("change", async () => {
-              const selectedRun = selectedRunIdFromUi();
+              const selectedRun = selectedArtifactRunIdFromUi();
               if (!selectedRun) return;
               await loadArtifactsForSelectedRun();
             });
@@ -4079,6 +4080,11 @@
         }
         if (placeholder) {
           placeholder.hidden = false;
+          if (opts.state) {
+            placeholder.setAttribute("data-state", String(opts.state));
+          } else {
+            placeholder.removeAttribute("data-state");
+          }
           if (message) {
             const hint = placeholder.querySelector(".hint");
             if (hint) hint.textContent = String(message);
@@ -4094,7 +4100,10 @@
       function hideRerunPlaceholder() {
         const placeholder = document.getElementById("rerunPlaceholder");
         const iframe = document.getElementById("rerunFrame");
-        if (placeholder) placeholder.hidden = true;
+        if (placeholder) {
+          placeholder.hidden = true;
+          placeholder.removeAttribute("data-state");
+        }
         if (iframe) iframe.hidden = false;
       }
       function showMobileRerunNotice(runId) {
@@ -5302,6 +5311,10 @@
         const input = document.getElementById("artifactTypeFilter");
         return String((input && input.value) || "").trim();
       }
+      function artifactRoleFilterValue() {
+        const input = document.getElementById("artifactRoleFilter");
+        return String((input && input.value) || "").trim();
+      }
       function artifactSortValue() {
         const input = document.getElementById("artifactSort");
         return String((input && input.value) || "preferred").trim();
@@ -5388,6 +5401,7 @@
       }
       function sortAndFilterArtifacts(artifacts, preferred, runId) {
         const filter = artifactTypeFilterValue();
+        const roleFilter = artifactRoleFilterValue();
         const stageFilter = artifactStageFilterValue();
         const sortMode = artifactSortValue();
         const preferredKey = String((preferred && preferred.key) || "");
@@ -5395,6 +5409,7 @@
         const stageWrapper = runStageWrapper(artifacts, runId);
         const items = (Array.isArray(artifacts) ? artifacts : []).filter((item) => {
           if (filter && String(item.render || "download") !== filter) return false;
+          if (roleFilter && String(item.role || "output") !== roleFilter) return false;
           if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;
           return true;
         });
@@ -5430,29 +5445,19 @@
       // supports (q=) search for buckets larger than this, and the "Find run" /
       // Stages search boxes union those server matches on top.
       const ARTIFACT_RUN_LIST_LIMIT = 2000;
-      function selectedRunIdFromUi() {
+      function selectedArtifactRunIdFromUi() {
         const select = document.getElementById("runIdSelect");
-        const stages = document.getElementById("stagesRunSelect");
         const runInput = document.getElementById("runIdInput");
+        const typed = String((runInput && runInput.value) || "").trim();
+        const selected = String((select && select.value) || activeRunId || "").trim();
+        return typed ? resolveStagesRunChoice(typed, selected) : selected;
+      }
+      function selectedStagesRunIdFromUi() {
+        const stages = document.getElementById("stagesRunSelect");
         const stagesInput = document.getElementById("stagesRunInput");
-        // Prefer the input that currently has focus when both are filled; otherwise
-        // any non-empty typed/pasted value wins so "type id → click Load" works
-        // after focus moves to the button.
-        let typed = "";
-        if (document.activeElement === stagesInput) {
-          typed = String((stagesInput && stagesInput.value) || "").trim();
-        } else if (document.activeElement === runInput) {
-          typed = String((runInput && runInput.value) || "").trim();
-        } else {
-          typed = String((runInput && runInput.value) || (stagesInput && stagesInput.value) || "").trim();
-        }
-        const selected = String(
-          (select && select.value) || (stages && stages.value) || activeRunId || ""
-        ).trim();
-        if (typed) {
-          return resolveStagesRunChoice(typed, selected);
-        }
-        return selected;
+        const typed = String((stagesInput && stagesInput.value) || "").trim();
+        const selected = String((stages && stages.value) || activeRunId || "").trim();
+        return typed ? resolveStagesRunChoice(typed, selected) : selected;
       }
       function resolveStagesRunChoice(typed, selected) {
         const query = String(typed || "").trim();
@@ -5487,6 +5492,9 @@
             activity_at: "",
             has_viewable: false,
             artifact_count: 0,
+            output_artifact_count: 0,
+            input_artifact_count: 0,
+            metadata_artifact_count: 0,
             source: source,
           };
           // Run start: keep the EARLIEST across sources (submit time / earliest
@@ -5502,6 +5510,9 @@
           if (activityTs && activityTs > String(prev.activity_at || "")) prev.activity_at = activityTs;
           if (run && run.has_viewable) prev.has_viewable = true;
           if (run && run.artifact_count) prev.artifact_count = Number(run.artifact_count) || prev.artifact_count;
+          if (run && run.output_artifact_count) prev.output_artifact_count = Number(run.output_artifact_count) || prev.output_artifact_count;
+          if (run && run.input_artifact_count) prev.input_artifact_count = Number(run.input_artifact_count) || prev.input_artifact_count;
+          if (run && run.metadata_artifact_count) prev.metadata_artifact_count = Number(run.metadata_artifact_count) || prev.metadata_artifact_count;
           if (run && run.stage) prev.stage = String(run.stage || "");
           prev.source = prev.source === "both" || (prev.source && prev.source !== source) ? "both" : source;
           map.set(runId, prev);
@@ -5528,7 +5539,8 @@
           opt.value = runId;
           const bits = [runId];
           if (run && run.has_viewable) bits.push("viewable");
-          if (run && run.artifact_count) bits.push(String(run.artifact_count) + " artifacts");
+          if (run && run.output_artifact_count) bits.push(String(run.output_artifact_count) + " outputs");
+          if (run && run.artifact_count) bits.push(String(run.artifact_count) + " total artifacts");
           const shownTs = effectiveRunTs(run);
           if (shownTs) bits.push(shownTs.slice(0, 19));
           opt.textContent = bits.length > 1 ? (runId + " · " + bits.slice(1).join(" · ")) : runId;
@@ -5619,7 +5631,7 @@
         // click handlers (bindClick calls fn(event)).
         const runId = (typeof explicitRunId === "string" && explicitRunId.trim())
           ? explicitRunId.trim()
-          : selectedRunIdFromUi();
+          : selectedArtifactRunIdFromUi();
         if (!runId) throw new Error("Select a run or enter a run_id first");
         syncRunChooserFields(runId);
         // No path prefix: the server locates the run by id across the whole run root.
@@ -5643,8 +5655,8 @@
         const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred, runId);
         if (!displayArtifacts.length) {
           list.innerHTML =
-            "<p>No artifacts for <code>" + escapeHtml(runId) + "</code> at the selected Stage/Type.</p>" +
-            "<p>Clear the Stage and Type filters to show all " + String(artifacts.length) + " artifacts.</p>";
+            "<p>No artifacts for <code>" + escapeHtml(runId) + "</code> at the selected Role/Stage/Type.</p>" +
+            "<p>Clear the Role, Stage, and Type filters to show all " + String(artifacts.length) + " artifacts.</p>";
           return true;
         }
         const counts = artifacts.reduce((acc, item) => {
@@ -5653,24 +5665,34 @@
           return acc;
         }, {});
         const countText = Object.keys(counts).sort().map((key) => key + "=" + counts[key]).join(" · ");
+        const roleCounts = artifacts.reduce((acc, item) => {
+          const role = String(item.role || "output");
+          acc[role] = (acc[role] || 0) + 1;
+          return acc;
+        }, {});
+        const roleCountText = ["output", "input", "metadata"]
+          .filter((role) => roleCounts[role])
+          .map((role) => role + "=" + String(roleCounts[role]))
+          .join(" · ");
         const preferredKey = preferred ? String(preferred.key || "") : "";
         list.innerHTML =
           '<div style="font-size:12px;color:#475569;margin:0 0 8px;">Showing ' +
           String(displayArtifacts.length) + " of " + String(artifacts.length) +
-          " artifacts · " + escapeHtml(countText) + "</div>" +
+          " artifacts · " + escapeHtml(roleCountText) + " · " + escapeHtml(countText) + "</div>" +
           displayArtifacts.map((item) => {
           const key = String(item.key || "");
           const render = String(item.render || "download");
+          const role = String(item.role || "output");
           const s3uri = String(item.s3_uri || "");
           const basename = key.split("/").pop() || key;
           const isPreferred = preferredKey && preferredKey === key;
           const actionLabel = render === "rerun" ? "View in Rerun" : (render === "mcap" ? "View in Lichtblick" : (render === "video" ? "Play" : "Load"));
           const primary = (render === "rerun" || render === "mcap" || render === "video") ? " btn-primary" : "";
           return (
-            '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '">' +
+            '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '" data-role="' + escapeHtml(role) + '">' +
             '<div class="artifact-card-head"><strong>' + escapeHtml(basename) + '</strong>' +
             (isPreferred ? '<span class="badge badge-ok">recommended</span>' : "") +
-            '<span class="pill">' + escapeHtml(render) + '</span></div>' +
+            '<span class="pill">' + escapeHtml(role) + '</span><span class="pill">' + escapeHtml(render) + '</span></div>' +
             '<div class="artifact-card-meta">size=' + escapeHtml(String(item.size || 0)) +
             ' · updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
             '<div class="artifact-card-path"><code>' + escapeHtml(key) + '</code></div>' +
@@ -5931,6 +5953,12 @@
             " from run <code>" + escapeHtml(runId) + "</code><br>" +
             "<code>" + escapeHtml(key || uri) + "</code>" +
             (note ? "<br><span class='hint'>" + escapeHtml(note) + "</span>" : "");
+        } else if (String((simViz && simViz.preview_status) || "") === "no_previewable_recording") {
+          const outputCount = Number((simViz && simViz.output_artifact_count) || 0);
+          node.innerHTML =
+            "Run <code>" + escapeHtml(runId) + "</code> selected. " +
+            "<strong>No previewable recording; artifacts available.</strong>" +
+            (outputCount ? " " + String(outputCount) + " output artifacts are listed for download or inline viewing." : "");
         } else {
           node.textContent = "Rendering: no run artifact loaded yet.";
         }
@@ -6222,7 +6250,14 @@
             hideArtifactPreview();
           }
           if (!ready && (!activeArtifactRender || activeArtifactRender === "rerun")) {
-            showRerunPlaceholder("Load a run's artifacts (Runs & artifacts panel or the Stages tab) to view them here.");
+            if (String((simViz && simViz.preview_status) || "") === "no_previewable_recording") {
+              showRerunPlaceholder("No .rrd recording for this run yet. No previewable recording; artifacts available below.", {
+                force: true,
+                state: "no-preview-artifacts",
+              });
+            } else {
+              showRerunPlaceholder("Load a run's artifacts (Runs & artifacts panel or the Stages tab) to view them here.");
+            }
           } else if (!rerunIframeLoaded && !rerunBootInProgress && (!activeArtifactRender || activeArtifactRender === "rerun")) {
             showRerunPlaceholder("Select a run and load its artifacts to view them here.");
           }
@@ -6624,7 +6659,7 @@
         }
       }
       async function loadRunData() {
-        const runId = String(selectedRunIdFromUi() || "").trim();
+        const runId = String(selectedArtifactRunIdFromUi() || "").trim();
         if (!runId) {
           throw new Error("Enter or select a run_id first");
         }
@@ -6635,11 +6670,17 @@
         });
         activeRunId = runId;
         appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
+        // Artifact inventory is independent from Rerun readiness. Always render
+        // it for a selected run, including training runs with no .rrd recording.
+        await loadArtifactsForSelectedRun(runId);
         await loadRunDetails(runId);
         if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {
           await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), runId);
         } else {
-          showRerunPlaceholder("No .rrd recording for this run yet. See run stages and logs below.", { force: true });
+          showRerunPlaceholder("No .rrd recording for this run yet. No previewable recording; artifacts available below.", {
+            force: true,
+            state: "no-preview-artifacts",
+          });
         }
         await refresh();
       }

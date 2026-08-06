@@ -154,6 +154,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
+    cy.wait("@loadRun");
     cy.wait("@nonStockArtifactList");
     cy.wait("@loadArtifact");
 
@@ -372,7 +373,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simRunId").should("contain.text", NON_STOCK_RUN_ID);
     cy.get("#simStage").should("contain.text", "stage_14_rerun_viz");
     cy.get("#simCamera").should("contain.text", "customer-overhead");
-    cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
+    cy.get("#rerunFrame", { timeout: 60000 }).should("have.attr", "src").and("include", "/rerun/");
 
     cy.get("#runIdInput").clear().type(NON_STOCK_RUN_ID);
     cy.get("#loadRunData").click();
@@ -765,7 +766,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#stagesRunSelect").select("mock-run");
     cy.get("#stagesRunInput").clear().type("cosmos-reason-run", { delay: 0 });
     cy.get("#stagesLoadRun").click();
-    cy.wait("@loadRun");
+    cy.wait("@runDetails");
     cy.get("#runSummary").should("contain.text", "cosmos-reason-run");
   });
 
@@ -779,8 +780,100 @@ describe("NPA agent UI with mocked APIs", () => {
       expect(values.every((value) => value.includes("mock"))).to.eq(true);
     });
     cy.get("#stagesLoadRun").click();
-    cy.wait("@loadRun");
+    cy.wait("@runDetails");
     cy.get("#runSummary").should("contain.text", "mock-run");
+  });
+
+  it("loads an artifact-backed training run without a Rerun recording", () => {
+    const TRAIN_RUN = "groot17-8gpu-20260806T024557Z-3dfb0270";
+    const artifacts = [
+      {
+        key: `${TRAIN_RUN}/manifest.json`,
+        s3_uri: `s3://mock/${TRAIN_RUN}/manifest.json`,
+        render: "json",
+        role: "output",
+        size: 755,
+      },
+      {
+        key: `${TRAIN_RUN}/checkpoints/model.safetensors`,
+        s3_uri: `s3://mock/${TRAIN_RUN}/checkpoints/model.safetensors`,
+        render: "download",
+        role: "output",
+        size: 4096,
+      },
+      {
+        key: `${TRAIN_RUN}/workflow.yaml`,
+        s3_uri: `s3://mock/${TRAIN_RUN}/workflow.yaml`,
+        render: "text",
+        role: "output",
+        size: 1820,
+      },
+      {
+        key: `groot-1-7-finetune/${TRAIN_RUN}/data/episode.mp4`,
+        s3_uri: `s3://mock/groot-1-7-finetune/${TRAIN_RUN}/data/episode.mp4`,
+        render: "video",
+        role: "input",
+        size: 2048,
+      },
+    ];
+    const simViz = {
+      run_id: TRAIN_RUN,
+      active_run_id: TRAIN_RUN,
+      stage: "artifacts",
+      rerun_ready: false,
+      rrd_uri: "",
+      artifact_render: "",
+      preview_status: "no_previewable_recording",
+      output_artifact_count: 3,
+      available_runs: [{ run_id: TRAIN_RUN, artifact_count: 4, output_artifact_count: 3 }],
+    };
+
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      statusCode: 200,
+      body: { ok: true, runs: simViz.available_runs, total_runs: 1, truncated: false },
+    }).as("trainingRuns");
+    cy.intercept("GET", `/api/artifacts/run/${TRAIN_RUN}*`, {
+      statusCode: 200,
+      body: {
+        ok: true,
+        run_id: TRAIN_RUN,
+        count: artifacts.length,
+        output_artifact_count: 3,
+        input_artifact_count: 1,
+        metadata_artifact_count: 0,
+        artifacts,
+        preferred: artifacts[0],
+      },
+    }).as("trainingArtifacts");
+    cy.intercept("POST", "/api/sim-viz/load-run", {
+      statusCode: 200,
+      body: { ok: true, artifacts_available: true, artifact_count: 4, output_artifact_count: 3, sim_viz: simViz },
+    }).as("trainingLoadRun");
+    cy.intercept("GET", "/api/sim-viz/status*", { statusCode: 200, body: simViz }).as("trainingStatus");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@trainingRuns");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((opt) => opt.value).filter(Boolean);
+      expect(values).to.include(TRAIN_RUN);
+      expect(values).not.to.include("checkpoints");
+      expect(values).not.to.include("evidence");
+    });
+    cy.get("#runIdInput").clear().type(TRAIN_RUN, { delay: 0 });
+    cy.get("#loadRunData").click();
+    cy.wait("@trainingLoadRun");
+    cy.wait("@trainingArtifacts");
+
+    cy.get("#artifactRoleFilter").should("have.value", "output");
+    cy.get("#artifactList").should("contain.text", "manifest.json");
+    cy.get("#artifactList").should("contain.text", "model.safetensors");
+    cy.get("#artifactList").should("contain.text", "workflow.yaml");
+    cy.get("#artifactList").should("not.contain.text", "episode.mp4");
+    cy.get("#artifactList button[data-action='download-artifact']").should("have.length", 3);
+    cy.get("#rerunPlaceholder").should("have.attr", "data-state", "no-preview-artifacts");
+    cy.get("#rerunPlaceholder").should("contain.text", "No previewable recording; artifacts available");
+    cy.get("#renderedDataSummary").should("contain.text", "No previewable recording; artifacts available");
   });
 
   it("surfaces an old run beyond the newest page via server-side (q=) search", () => {

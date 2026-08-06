@@ -1040,6 +1040,20 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     assert "artifactPrefixValue" not in source
 
 
+def test_artifact_backed_training_run_loads_without_rerun_recording() -> None:
+    source = _agent_ui_bundle()
+    backend = Path(__file__).resolve().parents[2].joinpath("src/npa/cli/agent.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"output_artifact_count"' in backend
+    assert '"preview_status": "no_previewable_recording"' in backend
+    assert '"artifacts_available": True' in backend
+    assert 'state: "no-preview-artifacts"' in source
+    assert 'placeholder.setAttribute("data-state"' in source
+    assert "No previewable recording; artifacts available" in source
+
+
 def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     """The stages/artifact browser must let you choose a workflow-progress step.
 
@@ -1058,7 +1072,7 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     assert "function runStageWrapper(artifacts, runId)" in source
     # Stage participates in filtering and re-renders on change.
     assert "if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;" in source
-    assert '["artifactStageFilter", "artifactTypeFilter", "artifactSort"]' in source
+    assert '["artifactStageFilter", "artifactTypeFilter", "artifactRoleFilter", "artifactSort"]' in source
     # Timeline stage rows are tagged and clickable to drive the stage filter.
     assert "stage_key: stageKey," in source
     assert 'data-stage-key="' in source
