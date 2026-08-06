@@ -479,7 +479,11 @@ describe("NPA agent UI against live infra", () => {
           if (!mp4) {
             return findMp4(index + 1);
           }
-          return { runId, key: String(mp4.key) };
+          return {
+            runId,
+            key: String(mp4.key),
+            role: String(mp4.role || "output"),
+          };
         });
       };
 
@@ -489,7 +493,7 @@ describe("NPA agent UI against live infra", () => {
         cy.log("no mp4 artifact discoverable in live runs — skipping Video viewer assertions");
         return;
       }
-      const { runId, key } = found;
+      const { runId, key, role } = found;
       return liveAgentRequest("/api/sim-viz/load-artifact", {
         method: "POST",
         body: { run_id: runId, key },
@@ -515,6 +519,9 @@ describe("NPA agent UI against live infra", () => {
             cy.wrap($select).select(runId);
           }
         });
+        // Artifact inventory is role-separated. Follow the discovered artifact's
+        // role before applying the video render filter.
+        cy.get("#artifactRoleFilter").select(role);
         cy.get("#artifactTypeFilter").select("video");
         cy.get("#artifactList", { timeout: 30000 }).should("contain.text", ".mp4");
         cy.contains("#artifactList button", "Play").first().click();
