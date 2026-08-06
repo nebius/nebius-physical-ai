@@ -583,6 +583,18 @@ def _log_training_iteration_metrics(
             "vlm/rejected_or_downweighted_steps": (
                 record.get("signal_calibration") or {}
             ).get("vlm_rejected_or_downweighted_steps"),
+            "vlm/accepted_steps": (record.get("signal_calibration") or {}).get(
+                "vlm_accepted_steps"
+            ),
+            "vlm/missing_or_malformed_steps": (
+                record.get("signal_calibration") or {}
+            ).get("vlm_missing_or_malformed_steps"),
+            "vlm/low_confidence_steps": (record.get("signal_calibration") or {}).get(
+                "vlm_low_confidence_steps"
+            ),
+            "vlm/contradictory_steps": (record.get("signal_calibration") or {}).get(
+                "vlm_contradictory_steps"
+            ),
             "evaluation/validation_strict_success": (
                 record.get("validation_report") or {}
             ).get("success_rate"),

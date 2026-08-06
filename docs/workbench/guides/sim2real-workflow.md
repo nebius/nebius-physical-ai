@@ -199,6 +199,15 @@ require the exact runtime-applied digest set to match their reported rows.
 | `HELDOUT_ENV_COUNT` | `64` | integer ≥1 | untouched gold episodes requested from final Stage 10 |
 | `NPA_SIM2REAL_HELDOUT_EVAL_LIMIT` | `0` | integer ≥0 | cap on held-out input rows; `0` means uncapped |
 
+Stage 8 partitions every event label into `vlm_accepted_steps` or
+`vlm_rejected_or_downweighted_steps`. Acceptance requires a model-local,
+non-broadcast critique with confidence at least 0.5, no dual-model
+disagreement, and consistency with simulator truth. The calibration manifest
+also reports overlapping reason counts for missing/malformed, low-confidence,
+disagreeing, summary-broadcast, and simulator-contradicting labels. Rejected
+labels never override simulator-grounded reward; missing/malformed labels have
+zero VLM contribution.
+
 The two thresholds are intentionally different: a single Isaac episode succeeds
 when its final distance is below `NPA_BYO_ISAAC_SUCCESS_DIST_M` and the placement
 is stable; Stage 11 promotes

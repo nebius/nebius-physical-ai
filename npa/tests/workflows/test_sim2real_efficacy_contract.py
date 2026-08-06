@@ -278,7 +278,60 @@ def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
     assert len(set(rewards)) > 1
     assert signal["calibration"]["nonzero_advantage_count"] > 0
     assert signal["calibration"]["model_disagreement_steps"] == 1
+    assert signal["calibration"]["vlm_accepted_steps"] == 2
+    assert signal["calibration"]["vlm_rejected_or_downweighted_steps"] == 2
+    assert signal["calibration"]["vlm_disagreement_downweighted_steps"] == 1
+    assert signal["calibration"]["vlm_contradictory_steps"] == 1
     assert signal["per_step"][1]["confidence"] < signal["per_step"][0]["confidence"]
+
+
+def test_temporal_credit_calibration_rejects_untrustworthy_vlm_rows() -> None:
+    sources = (
+        ("model_missing", 0.95, False, ["minor_alignment"]),
+        ("model_malformed", 0.95, False, ["minor_alignment"]),
+        ("model_per_step", 0.2, False, ["minor_alignment"]),
+        ("model_per_step", 0.9, True, ["minor_alignment"]),
+        ("summary_broadcast", 0.9, False, ["minor_alignment"]),
+        ("model_per_step", 0.9, False, ["ok"]),
+        ("model_per_step", 0.9, False, ["minor_alignment"]),
+    )
+    evaluation = {
+        "rollout_id": "calibration-reasons",
+        "per_step": [
+            {
+                "step": index,
+                "action": [0.1],
+                "critique_source": source,
+                "confidence": confidence,
+                "model_disagreement": disagreement,
+                "error_tags": tags,
+                "simulator_ground_truth": {
+                    "object_goal_distance_m": 0.30 - index * 0.01,
+                    "end_effector_object_distance_m": 0.20,
+                    "contact": False,
+                    "stable_grasp": False,
+                    "object_lift_m": 0.0,
+                    "placement_stable": False,
+                    "scenario_config_digest": "cfg",
+                },
+            }
+            for index, (source, confidence, disagreement, tags) in enumerate(sources)
+        ],
+    }
+
+    signal = convert_evaluation(evaluation)
+    calibration = signal["calibration"]
+    assert calibration["step_count"] == 7
+    assert calibration["vlm_accepted_steps"] == 1
+    assert calibration["vlm_calibrated_steps"] == 1
+    assert calibration["vlm_rejected_or_downweighted_steps"] == 6
+    assert calibration["vlm_missing_or_malformed_steps"] == 2
+    assert calibration["vlm_low_confidence_steps"] == 3
+    assert calibration["vlm_disagreement_downweighted_steps"] == 1
+    assert calibration["vlm_summary_broadcast_steps"] == 1
+    assert calibration["vlm_contradictory_steps"] == 1
+    assert signal["per_step"][0]["confidence"] == 0.0
+    assert signal["per_step"][1]["confidence"] == 0.0
 
 
 def test_checkpoint_selection_uses_validation_and_prefers_earlier_exact_tie() -> None:

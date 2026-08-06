@@ -146,22 +146,40 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
     calibrated = 0
     rejected = 0
     disagreements = 0
+    missing_or_malformed = 0
+    low_confidence = 0
+    contradictory = 0
+    summary_broadcast = 0
     for raw in raw_steps:
         if not isinstance(raw, dict) or "step" not in raw:
             raise TemporalCreditError("per_step entries must be objects with step")
         tags = _tags(raw)
         truth = dict(raw.get("simulator_ground_truth") or {})
         confidence = _clip(float(raw.get("confidence", 0.65)), 0.0, 1.0)
-        if raw.get("critique_source") == "summary_broadcast":
+        source = str(raw.get("critique_source") or "model_per_step")
+        reasons: set[str] = set()
+        if source in {"model_missing", "model_malformed"}:
+            confidence = 0.0
+            missing_or_malformed += 1
+            reasons.add("missing_or_malformed")
+        if confidence < 0.5:
+            low_confidence += 1
+            reasons.add("low_confidence")
+        if source == "summary_broadcast":
             confidence = min(confidence, 0.10)
-            rejected += 1
+            summary_broadcast += 1
+            reasons.add("summary_broadcast")
         disagreement = bool(raw.get("model_disagreement"))
         if disagreement:
             confidence *= 0.25
             disagreements += 1
+            reasons.add("model_disagreement")
         agrees = _vlm_agrees(tags, truth)
         if not agrees:
             confidence *= 0.25
+            contradictory += 1
+            reasons.add("simulator_contradiction")
+        if reasons:
             rejected += 1
         else:
             calibrated += 1
@@ -229,7 +247,13 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
             bool(item["simulator_ground_truth"]) for item in items
         ),
         "vlm_calibrated_steps": calibrated,
+        "vlm_accepted_steps": calibrated,
         "vlm_rejected_or_downweighted_steps": rejected,
+        "vlm_missing_or_malformed_steps": missing_or_malformed,
+        "vlm_low_confidence_steps": low_confidence,
+        "vlm_contradictory_steps": contradictory,
+        "vlm_summary_broadcast_steps": summary_broadcast,
+        "vlm_disagreement_downweighted_steps": disagreements,
         "model_disagreement_steps": disagreements,
         "reward_variance": round(variance, 10),
         "nonzero_advantage_count": nonzero,

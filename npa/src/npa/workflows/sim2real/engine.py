@@ -1182,11 +1182,45 @@ def run_inner_loop(
                 int((signal.get("calibration") or {}).get("vlm_calibrated_steps") or 0)
                 for signal in signals
             ),
+            "vlm_accepted_steps": sum(
+                int((signal.get("calibration") or {}).get("vlm_accepted_steps") or 0)
+                for signal in signals
+            ),
             "vlm_rejected_or_downweighted_steps": sum(
                 int(
                     (signal.get("calibration") or {}).get(
                         "vlm_rejected_or_downweighted_steps"
                     )
+                    or 0
+                )
+                for signal in signals
+            ),
+            "vlm_missing_or_malformed_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get(
+                        "vlm_missing_or_malformed_steps"
+                    )
+                    or 0
+                )
+                for signal in signals
+            ),
+            "vlm_low_confidence_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get("vlm_low_confidence_steps")
+                    or 0
+                )
+                for signal in signals
+            ),
+            "vlm_contradictory_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get("vlm_contradictory_steps")
+                    or 0
+                )
+                for signal in signals
+            ),
+            "vlm_summary_broadcast_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get("vlm_summary_broadcast_steps")
                     or 0
                 )
                 for signal in signals
