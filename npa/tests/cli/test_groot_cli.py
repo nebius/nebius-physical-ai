@@ -1325,9 +1325,14 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     )
     script = shlex.split(cmd)[2]
 
-    assert "uv run torchrun --nproc_per_node=2" in cmd
+    assert "uv run --no-sync torchrun --nproc_per_node=2" in cmd
     assert "export NCCL_P2P_DISABLE=1" in cmd
     assert "export NCCL_SHM_DISABLE=1" in cmd
+    assert "export NCCL_IB_DISABLE=1" in cmd
+    assert "export NCCL_NET=Socket" in cmd
+    assert "export NCCL_CUMEM_ENABLE=0" in cmd
+    assert "export NCCL_CUMEM_HOST_ENABLE=0" in cmd
+    assert "nvidia-nccl-cu12==2.30.7" in cmd
     assert "NPA_GROOT_NCCL_TRANSPORT socket" in cmd
     assert "gr00t/experiment/launch_finetune.py" in cmd
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B --revision 2fc962b973bccdd5d8ce4f67cc63b264d6886495" in cmd
@@ -1464,7 +1469,7 @@ def test_groot_finetune_local_runtime_uses_real_two_gpu_launcher(mocker) -> None
     assert payload["groot_repo_ref"] == GROOT_REPO_REF
     command = local.call_args.args[0]
     script = shlex.split(command)[2]
-    assert "uv run torchrun --nproc_per_node=2" in command
+    assert "uv run --no-sync torchrun --nproc_per_node=2" in command
     assert "export NCCL_P2P_DISABLE=1" in command
     assert "export NCCL_SHM_DISABLE=1" in command
     assert "--num-gpus 2" in command
