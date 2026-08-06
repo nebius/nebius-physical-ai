@@ -37,9 +37,9 @@ def _option_value(argv: list[str], name: str) -> str:
     return argv[argv.index(name) + 1]
 
 
-def test_groot_workflow_defaults_to_real_single_gpu_n1_7_training() -> None:
+def test_groot_workflow_defaults_to_validated_real_eight_gpu_n1_7_training() -> None:
     spec = load_spec(SPEC_PATH)
-    plan = build_plan(spec, run_id="groot-single")
+    plan = build_plan(spec, run_id="groot-default-8gpu")
     step = plan.steps[0]
 
     assert spec.name == "groot-1-7-finetune"
@@ -48,23 +48,23 @@ def test_groot_workflow_defaults_to_real_single_gpu_n1_7_training() -> None:
     assert GROOT_RUNTIME_VERSION == "0.1.0"
     assert len(GROOT_REPO_REF) == 40
     assert step.tool_ref == "workbench.groot.finetune"
-    assert step.resources_profile["accelerators"] == "H100:1"
+    assert step.resources_profile["accelerators"] == "H100:8"
     assert _option_value(step.argv, "--runtime") == "local"
     assert _option_value(step.argv, "--base-model") == DEFAULT_MODEL
-    assert _option_value(step.argv, "--num-gpus") == "1"
+    assert _option_value(step.argv, "--num-gpus") == "8"
     assert _option_value(step.argv, "--nccl-transport") == "auto"
-    assert _option_value(step.argv, "--global-batch-size") == "1"
-    assert _option_value(step.argv, "--run-id") == "groot-single"
+    assert _option_value(step.argv, "--global-batch-size") == "8"
+    assert _option_value(step.argv, "--run-id") == "groot-default-8gpu"
     assert step.inputs == [
         {
-            "uri": "s3://example-bucket/groot-1-7-finetune/groot-single/data/",
+            "uri": "s3://example-bucket/groot-1-7-finetune/groot-default-8gpu/data/",
             "schema": "nvidia.groot.lerobot.v2",
         }
     ]
     assert step.outputs == [
         {
             "uri": (
-                "s3://example-bucket/groot-1-7-finetune/groot-single/"
+                "s3://example-bucket/groot-1-7-finetune/groot-default-8gpu/"
                 f"checkpoints/{GROOT_FINETUNE_MANIFEST}"
             ),
             "schema": "npa.groot.finetune.v1",
@@ -72,7 +72,7 @@ def test_groot_workflow_defaults_to_real_single_gpu_n1_7_training() -> None:
     ]
 
 
-@pytest.mark.parametrize("gpu_count", [2, 3, 4])
+@pytest.mark.parametrize("gpu_count", [1, 2, 3, 4, 8])
 def test_groot_workflow_gpu_count_reaches_plan_scheduler_and_render(
     gpu_count: int,
 ) -> None:

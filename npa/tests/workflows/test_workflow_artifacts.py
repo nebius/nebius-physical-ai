@@ -875,6 +875,55 @@ def test_find_run_artifacts_locates_root_level_run() -> None:
     ]
 
 
+def test_find_run_artifacts_merges_staging_inputs_with_authoritative_outputs() -> None:
+    """One run id may have staged inputs and a separate completed output root."""
+    run_id = "groot17-8gpu-20260806T024557Z-3dfb0270"
+    layout = [
+        (f"groot-1-7-finetune/{run_id}/source/runner.py", "2026-08-06T02:40:00+00:00"),
+        (f"groot-1-7-finetune/{run_id}/data/episode.mp4", "2026-08-06T02:41:00+00:00"),
+        (f"{run_id}/checkpoints/model.safetensors", "2026-08-06T03:01:00+00:00"),
+        (f"{run_id}/manifest.json", "2026-08-06T03:02:00+00:00"),
+    ]
+
+    artifacts = find_run_artifacts("bucket", base_prefix="", run_id=run_id, s3=_PrefixAwareS3(layout))
+
+    assert {item.key for item in artifacts} == {key for key, _timestamp in layout}
+    assert {item.role for item in artifacts if "/source/" in item.key or "/data/" in item.key} == {
+        "input"
+    }
+    outputs = [item for item in artifacts if item.role == "output"]
+    assert {item.key for item in outputs} == {
+        f"{run_id}/checkpoints/model.safetensors",
+        f"{run_id}/manifest.json",
+    }
+    checkpoint = next(item for item in outputs if item.key.endswith(".safetensors"))
+    assert checkpoint.render == "download"
+    assert checkpoint.inline is False
+
+
+def test_list_all_runs_groups_duplicate_run_namespaces_and_counts_outputs() -> None:
+    run_id = "groot17-8gpu-20260806T024557Z-3dfb0270"
+    layout = [
+        (f"groot-1-7-finetune/{run_id}/source/runner.py", "2026-08-06T02:40:00+00:00"),
+        (f"groot-1-7-finetune/{run_id}/data/episode.mp4", "2026-08-06T02:41:00+00:00"),
+        (f"{run_id}/checkpoints/model.safetensors", "2026-08-06T03:01:00+00:00"),
+        (f"{run_id}/manifest.json", "2026-08-06T03:02:00+00:00"),
+    ]
+
+    page = list_all_runs("bucket", base_prefix="", limit=50, contains=run_id, s3=_PrefixAwareS3(layout))
+
+    matching = [run for run in page.runs if run.run_id == run_id]
+    assert len(matching) == 1
+    assert matching[0].artifact_count == 4
+    assert matching[0].output_artifact_count == 2
+    assert matching[0].input_artifact_count == 2
+
+
+def test_yaml_artifact_is_renderable_text_and_downloadable() -> None:
+    assert render_hint_for_object(key="run/workflow.yaml") == "text"
+    assert artifact_media_type("workflow.yaml").startswith("text/plain")
+
+
 def test_list_runs_skips_bare_files_not_run_dirs() -> None:
     # A file sitting directly under a category is not a run directory.
     s3 = _PrefixAwareS3([

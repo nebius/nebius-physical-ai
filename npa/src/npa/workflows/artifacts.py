@@ -79,6 +79,15 @@ def is_model_artifact(name: str) -> bool:
 
 _JSON_EXTENSIONS = {".json"}
 _TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".yaml", ".yml", ".md"}
+_INPUT_ARTIFACT_ROOTS = {
+    "data",
+    "dataset",
+    "datasets",
+    "input",
+    "inputs",
+    "source",
+    "sources",
+}
 _RENDER_ORDER = {
     "rerun": 0,
     "mcap": 1,
@@ -153,6 +162,9 @@ class Artifact:
     last_modified: str
     render: str
     inline: bool
+    role: str = "output"
+    namespace: str = ""
+    relative_key: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         role = artifact_data_role(self.key, self.run_id)
@@ -167,6 +179,9 @@ class Artifact:
             "data_role": role["role"],
             "data_role_label": role["label"],
             "data_role_detail": role["detail"],
+            "role": self.role,
+            "namespace": self.namespace,
+            "relative_key": self.relative_key,
         }
 
 
@@ -202,6 +217,9 @@ class RunSummary:
     # Exact directory *above* run_id. This is part of source identity because
     # the same run id may legitimately exist under multiple prefixes/buckets.
     resolved_prefix: str = ""
+    output_artifact_count: int = 0
+    input_artifact_count: int = 0
+    metadata_artifact_count: int = 0
 
     @property
     def run_ref(self) -> str:
@@ -227,6 +245,9 @@ class RunSummary:
             "source_prefix": self.resolved_prefix,
             "run_ref": self.run_ref,
             "summary_complete": self.summary_complete,
+            "output_artifact_count": self.output_artifact_count,
+            "input_artifact_count": self.input_artifact_count,
+            "metadata_artifact_count": self.metadata_artifact_count,
             "source_type": "artifact_storage",
             "source_label": "S3 artifacts",
         }
@@ -450,6 +471,23 @@ def render_hint_for_object(*, key: str, content_type: str = "") -> str:
 
 def is_inline_render(render: str) -> bool:
     return render in {"rerun", "mcap", "video", "image", "json", "text"}
+
+
+def artifact_role_for_relative_key(relative_key: str) -> str:
+    """Classify an object relative to its run root without workflow allowlists."""
+    relative = str(relative_key or "").strip().lstrip("/")
+    first = relative.split("/", 1)[0].lower() if relative else ""
+    return "input" if first in _INPUT_ARTIFACT_ROOTS else "output"
+
+
+def artifact_inventory_counts(artifacts: "list[Artifact]") -> dict[str, int]:
+    counts = {"output": 0, "input": 0, "metadata": 0}
+    for item in artifacts:
+        role = str(item.role or "output").lower()
+        if role not in counts:
+            role = "metadata"
+        counts[role] += 1
+    return counts
 
 
 def artifact_media_type(filename: str) -> str:
@@ -1561,6 +1599,7 @@ def list_artifacts(
     normalized_prefix = _normalize_prefix(prefix)
     run_prefix = _normalize_prefix(_validate_run_basename(run_id))
     scope = f"{normalized_prefix}{run_prefix}"
+    namespace = normalized_prefix.rstrip("/") or "<bucket-root>"
     artifacts: list[Artifact] = []
     try:
         paginator = client.get_paginator("list_objects_v2")
@@ -1570,6 +1609,8 @@ def list_artifacts(
                 if not key:
                     continue
                 render = render_hint_for_object(key=key)
+                relative_key = key[len(scope):] if key.startswith(scope) else key
+                relative_key = relative_key.lstrip("/")
                 artifacts.append(
                     Artifact(
                         run_id=run_id,
@@ -1579,6 +1620,9 @@ def list_artifacts(
                         last_modified=_to_iso8601(item.get("LastModified")),
                         render=render,
                         inline=is_inline_render(render),
+                        role=artifact_role_for_relative_key(relative_key),
+                        namespace=namespace,
+                        relative_key=relative_key,
                     )
                 )
     except (ClientError, BotoCoreError) as exc:
@@ -1602,6 +1646,7 @@ def list_artifacts_page(
     normalized_prefix = _normalize_prefix(prefix)
     run_prefix = _normalize_prefix(validate_run_id(run_id))
     scope = f"{normalized_prefix}{run_prefix}"
+    namespace = normalized_prefix.rstrip("/") or "<bucket-root>"
     size = max(1, min(int(page_size), 1000))
     kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": scope, "MaxKeys": size}
     if str(cursor or "").strip():
@@ -1618,6 +1663,8 @@ def list_artifacts_page(
         if not key:
             continue
         render = render_hint_for_object(key=key)
+        relative_key = key[len(scope):] if key.startswith(scope) else key
+        relative_key = relative_key.lstrip("/")
         artifacts.append(
             Artifact(
                 run_id=run_id,
@@ -1627,6 +1674,9 @@ def list_artifacts_page(
                 last_modified=_to_iso8601(item.get("LastModified")),
                 render=render,
                 inline=is_inline_render(render),
+                role=artifact_role_for_relative_key(relative_key),
+                namespace=namespace,
+                relative_key=relative_key,
             )
         )
     artifacts.sort(key=lambda item: (item.last_modified, item.key), reverse=True)
@@ -1791,7 +1841,7 @@ def find_run_artifact_page_across_buckets(
 def select_preferred_artifact(artifacts: list[Artifact]) -> Artifact | None:
     if not artifacts:
         return None
-    def _score(item: Artifact) -> tuple[int, int, str, str]:
+    def _score(item: Artifact) -> tuple[int, int, int, str, str]:
         key = item.key.lower()
         if key.endswith("/reports/sim2real.rrd"):
             specificity = 0
@@ -1805,7 +1855,8 @@ def select_preferred_artifact(artifacts: list[Artifact]) -> Artifact | None:
             specificity = 20
         else:
             specificity = 10
-        return (_RENDER_ORDER.get(item.render, 99), specificity, item.last_modified, item.key)
+        role_rank = {"output": 0, "metadata": 1, "input": 2}.get(str(item.role or ""), 3)
+        return (role_rank, _RENDER_ORDER.get(item.render, 99), specificity, item.last_modified, item.key)
     return sorted(
         artifacts,
         key=_score,

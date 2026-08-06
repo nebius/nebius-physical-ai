@@ -1977,6 +1977,15 @@
                   </select>
                 </div>
                 <div class="field">
+                  <label for="artifactRoleFilter">Artifact role</label>
+                  <select id="artifactRoleFilter">
+                    <option value="output" selected>Outputs</option>
+                    <option value="input">Inputs / dataset</option>
+                    <option value="metadata">Related metadata</option>
+                    <option value="">All roles</option>
+                  </select>
+                </div>
+                <div class="field">
                   <label for="artifactSort">Artifact sort</label>
                   <select id="artifactSort">
                     <option value="preferred">Recommended first</option>
@@ -3197,7 +3206,7 @@
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
-        for (const id of ["artifactStageFilter", "artifactTypeFilter", "artifactSort"]) {
+        for (const id of ["artifactStageFilter", "artifactTypeFilter", "artifactRoleFilter", "artifactSort"]) {
           const node = document.getElementById(id);
           if (node) {
             node.addEventListener("change", async () => {
@@ -4983,6 +4992,8 @@
         }
         if (placeholder) {
           placeholder.hidden = false;
+          if (opts.state) placeholder.setAttribute("data-state", String(opts.state));
+          else placeholder.removeAttribute("data-state");
           if (message) {
             const hint = placeholder.querySelector(".hint");
             if (hint) hint.textContent = String(message);
@@ -4998,7 +5009,10 @@
       function hideRerunPlaceholder() {
         const placeholder = document.getElementById("rerunPlaceholder");
         const iframe = document.getElementById("rerunFrame");
-        if (placeholder) placeholder.hidden = true;
+        if (placeholder) {
+          placeholder.hidden = true;
+          placeholder.removeAttribute("data-state");
+        }
         if (iframe) iframe.hidden = false;
       }
       function showMobileRerunNotice(runId) {
@@ -5301,6 +5315,12 @@
           arts.find((a) => String((a && a.key) || "").toLowerCase().endsWith(".mcap"));
         if (mcap && mcap.key) {
           await loadArtifact({ run_id: rid, key: String(mcap.key), s3_uri: String(mcap.s3_uri || "") });
+        } else if (String((simViz && simViz.preview_status) || "") === "no_previewable_recording") {
+          const outputCount = Number((simViz && simViz.output_artifact_count) || 0);
+          node.innerHTML =
+            "Run <code>" + escapeHtml(runId) + "</code> selected. " +
+            "<strong>No previewable recording; artifacts available.</strong>" +
+            (outputCount ? " " + String(outputCount) + " output artifacts are listed for download or inline viewing." : "");
         } else {
           mountLichtblickIframe(currentLichtblickSimViz || {});
           setStatus("No sim2real.mcap artifact for " + rid + " (run the pipeline with NPA_SIM2REAL_MCAP on).");
@@ -6239,6 +6259,10 @@
         const input = document.getElementById("artifactTypeFilter");
         return String((input && input.value) || "").trim();
       }
+      function artifactRoleFilterValue() {
+        const input = document.getElementById("artifactRoleFilter");
+        return String((input && input.value) || "").trim();
+      }
       function artifactSortValue() {
         const input = document.getElementById("artifactSort");
         return String((input && input.value) || "preferred").trim();
@@ -6326,12 +6350,14 @@
       function sortAndFilterArtifacts(artifacts, preferred, runId) {
         const filter = artifactTypeFilterValue();
         const stageFilter = artifactStageFilterValue();
+        const roleFilter = artifactRoleFilterValue();
         const sortMode = artifactSortValue();
         const preferredKey = String((preferred && preferred.key) || "");
         const typeRank = { rerun: 0, video: 1, image: 2, json: 3, text: 4, download: 5 };
         const stageWrapper = runStageWrapper(artifacts, runId);
         const items = (Array.isArray(artifacts) ? artifacts : []).filter((item) => {
           if (filter && String(item.render || "download") !== filter) return false;
+          if (roleFilter && String(item.role || "output") !== roleFilter) return false;
           if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;
           return true;
         });
@@ -6912,8 +6938,8 @@
         const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred, runId);
         if (!displayArtifacts.length) {
           list.innerHTML =
-            "<p>No artifacts for <code>" + escapeHtml(runId) + "</code> at the selected Stage/Type.</p>" +
-            "<p>Clear the Stage and Type filters to show all " + String(artifacts.length) + " artifacts.</p>";
+            "<p>No artifacts for <code>" + escapeHtml(runId) + "</code> at the selected Role/Stage/Type.</p>" +
+            "<p>Clear the Role, Stage, and Type filters to show all " + String(artifacts.length) + " artifacts.</p>";
           await loadRunDetails(runId, detailOptions);
           return true;
         }
@@ -6923,6 +6949,15 @@
           return acc;
         }, {});
         const countText = Object.keys(counts).sort().map((key) => key + "=" + counts[key]).join(" · ");
+        const roleCounts = artifacts.reduce((acc, item) => {
+          const artifactRole = String(item.role || "output");
+          acc[role] = (acc[role] || 0) + 1;
+          return acc;
+        }, {});
+        const roleCountText = ["output", "input", "metadata"]
+          .filter((role) => roleCounts[role])
+          .map((role) => role + "=" + String(roleCounts[role]))
+          .join(" · ");
         const preferredKey = preferred ? String(preferred.key || "") : "";
         const nextPageHtml = data.truncated && data.next_cursor
           ? '<div style="margin-top:8px;"><button class="btn" type="button" data-action="load-more-artifacts">Load next artifact page</button></div>'
@@ -6930,22 +6965,24 @@
         list.innerHTML =
           '<div style="font-size:12px;color:#475569;margin:0 0 8px;">Showing ' +
           String(displayArtifacts.length) + " of " + String(artifacts.length) +
-          " artifacts · " + escapeHtml(countText) + "</div>" +
+          " artifacts · " + escapeHtml(roleCountText) + " · " + escapeHtml(countText) + "</div>" +
           displayArtifacts.map((item) => {
           const key = String(item.key || "");
           const render = String(item.render || "download");
+          const role = String(item.role || "output");
           const s3uri = String(item.s3_uri || "");
           const basename = key.split("/").pop() || key;
           const isPreferred = preferredKey && preferredKey === key;
-          const role = String(item.data_role || "pipeline_metadata");
+          const dataRole = String(item.data_role || "pipeline_metadata");
           const roleLabel = String(item.data_role_label || "Pipeline metadata / report");
           const actionLabel = render === "rerun" ? "View in Rerun" : (render === "mcap" ? "View in Lichtblick" : (render === "video" ? "Play" : "Load"));
           const primary = (render === "rerun" || render === "mcap" || render === "video") ? " btn-primary" : "";
           return (
-            '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '">' +
+            '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '" data-role="' + escapeHtml(artifactRole) + '">' +
             '<div class="artifact-card-head"><strong>' + escapeHtml(basename) + '</strong>' +
             (isPreferred ? '<span class="badge badge-ok">recommended</span>' : "") +
-            '<span class="pill" data-role="' + escapeHtml(role) + '"><strong>' + escapeHtml(roleLabel) + "</strong></span>" +
+            '<span class="pill" data-role="' + escapeHtml(dataRole) + '"><strong>' + escapeHtml(roleLabel) + "</strong></span>" +
+            '<span class="pill">' + escapeHtml(artifactRole) + '</span>' +
             '<span class="pill">' + escapeHtml(render) + '</span></div>' +
             '<div class="artifact-card-meta">size=' + escapeHtml(String(item.size || 0)) +
             ' · updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
@@ -7660,7 +7697,14 @@
             hideArtifactPreview();
           }
           if (!ready && (!activeArtifactRender || activeArtifactRender === "rerun")) {
-            showRerunPlaceholder("Load a run's artifacts (Runs & artifacts panel or the Stages tab) to view them here.");
+            if (String((simViz && simViz.preview_status) || "") === "no_previewable_recording") {
+              showRerunPlaceholder("No .rrd recording for this run yet. No previewable recording; artifacts available below.", {
+                force: true,
+                state: "no-preview-artifacts",
+              });
+            } else {
+              showRerunPlaceholder("Load a run's artifacts (Runs & artifacts panel or the Stages tab) to view them here.");
+            }
           } else if (!rerunIframeLoaded && !rerunBootInProgress && (!activeArtifactRender || activeArtifactRender === "rerun")) {
             showRerunPlaceholder("Select a run and load its artifacts to view them here.");
           }

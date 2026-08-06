@@ -37,19 +37,19 @@ npa workbench workflow validate-spec "$SPEC"
 npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID"
 ```
 
-Preview a four-GPU render without launching it:
+Preview the validated eight-GPU render without launching it:
 
 ```bash
 npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
-  --var gpu_count=4 \
+  --var gpu_count=8 \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
   --plan-only
 ```
 
-The plan must show both `accelerators: H100:4` and `--num-gpus 4`. Inside the
+The plan must show both `accelerators: H100:8` and `--num-gpus 8`. Inside the
 stage, the GR00T command converts counts above one to
-`torchrun --nproc_per_node=4` and still passes upstream `--num-gpus 4`.
+`torchrun --nproc_per_node=8` and still passes upstream `--num-gpus 8`.
 
 ## Submit training
 
@@ -71,14 +71,14 @@ npa workbench workflow submit "$SPEC" \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Multi-GPU uses the same command with any positive count:
+Multi-GPU uses the same command with any positive count (the checked-in example defaults to 8):
 
 ```bash
 npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
   --var bucket=<bucket> \
   --var data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
-  --var gpu_count=4 \
+  --var gpu_count=8 \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
   --secret-env HF_TOKEN \
   --secret-env AWS_ACCESS_KEY_ID \

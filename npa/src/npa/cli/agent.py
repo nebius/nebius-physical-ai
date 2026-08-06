@@ -1779,22 +1779,26 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
                     snapshot[key] = ""
             snapshot["foxglove_ready"] = bool(payload.get("foxglove_ready"))
     else:
-        # Never let a sparse update erase richer artifact fields from load-run.
-        for key in (
-            "artifact_render",
-            "artifact_key",
-            "artifact_uri",
-            "artifact_preview_url",
-            "artifact_download_url",
-            "rrd_uri",
-            "rerun_iframe_url",
-            "visualization_note",
-            "preview_entity",
-            "foxglove_url",
-            "mcap_updated_at",
-        ):
-            if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
-                snapshot[key] = existing[key]
+        no_preview = str(payload.get("preview_status") or "").strip() == "no_previewable_recording"
+        # Never let a sparse update erase richer artifact fields from load-run,
+        # except when an explicit run selection establishes an honest no-preview
+        # state and therefore must clear a stale artifact from the prior run.
+        if not no_preview:
+            for key in (
+                "artifact_render",
+                "artifact_key",
+                "artifact_uri",
+                "artifact_preview_url",
+                "artifact_download_url",
+                "rrd_uri",
+                "rerun_iframe_url",
+                "visualization_note",
+                "preview_entity",
+                "foxglove_url",
+                "mcap_updated_at",
+            ):
+                if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
+                    snapshot[key] = existing[key]
         if not payload.get("foxglove_ready") and existing.get("foxglove_ready") and str(snapshot.get("foxglove_url") or "").strip():
             snapshot["foxglove_ready"] = True
     runs[history_key] = snapshot
@@ -6154,7 +6158,12 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     ]
     payload["available_runs"] = build_available_sim_viz_runs(_sim_viz_runs(state))
     render = str(payload.get("artifact_render") or "").strip().lower()
-    if render and render != "rerun":
+    preview_status = str(payload.get("preview_status") or "").strip().lower()
+    if preview_status == "no_previewable_recording":
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        payload["rerun_iframe_url"] = ""
+    elif render and render != "rerun":
         payload["rrd_uri"] = ""
         payload["rerun_ready"] = False
         if not payload.get("rerun_iframe_url"):
@@ -6305,6 +6314,42 @@ def sim_viz_load_run(payload: dict | None = None):
             }}
         if requested_bucket:
             raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
+        if artifacts:
+            role_counts = artifact_inventory_counts(artifacts)
+            state = _load_state()
+            sim_viz = dict(DEFAULT_SIM_VIZ)
+            sim_viz.update({{
+                "run_id": resolved_run_id,
+                "artifact_run_ref": resolved_ref,
+                "stage": "artifacts",
+                "camera": camera,
+                "rrd_uri": "",
+                "rerun_ready": False,
+                "rerun_iframe_url": "",
+                "artifact_key": "",
+                "artifact_uri": "",
+                "artifact_render": "",
+                "artifact_count": len(artifacts),
+                "output_artifact_count": role_counts["output"],
+                "input_artifact_count": role_counts["input"],
+                "metadata_artifact_count": role_counts["metadata"],
+                "preview_status": "no_previewable_recording",
+                "visualization_note": "No previewable recording; artifacts available.",
+                "rrd_updated_at": _now_iso(),
+            }})
+            state["active_run_id"] = resolved_run_id
+            state["sim_viz"] = sim_viz
+            _record_sim_viz_run(state, sim_viz)
+            _save_state(state)
+            return {{
+                "ok": True,
+                "artifacts_available": True,
+                "artifact_count": len(artifacts),
+                "output_artifact_count": role_counts["output"],
+                "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=resolved_run_id),
+                "preferred": preferred.to_dict() if preferred else None,
+                "run_ref": resolved_ref,
+            }}
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
