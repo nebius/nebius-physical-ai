@@ -2693,8 +2693,8 @@ def test_parallel_vlm_eval_caps_sibling_job_concurrency(
         initial_quality=0.4,
     )
 
-    apply_calls = [call for call in calls if "apply" in call["cmd"]]
-    assert len(apply_calls) == 3
+    create_calls = [call for call in calls if "create" in call["cmd"]]
+    assert len(create_calls) == 3
     assert peak <= 2
     assert len(evidence["iterations"]) == 1
     assert evidence["iterations"][0]["sample_vlm_eval"]["schema"] == SCHEMA_VLM_EVAL

@@ -248,9 +248,7 @@ class _Scheduler:
         self.commands.append(args)
         if args[:2] == ["get", "nodes"]:
             return subprocess.CompletedProcess(args, 0, _nodes(RTX, L40S, H100), "")
-        if args and args[0] == "apply":
-            assert "--server-side=true" in args
-            assert "--field-manager=npa-sim2real" in args
+        if args[:2] == ["create", "-f"]:
             manifest = json.loads(stdin or "{}")
             self.current_product = manifest["spec"]["template"]["spec"]["nodeSelector"][
                 "nvidia.com/gpu.product"
@@ -371,14 +369,14 @@ def test_capacity_retry_order_and_provenance(monkeypatch: pytest.MonkeyPatch) ->
     first_apply_index = next(
         index
         for index, command in enumerate(scheduler.commands)
-        if command and command[0] == "apply"
+        if command[:2] == ["create", "-f"]
     )
     assert scheduler.commands.index(first_delete) < first_apply_index
     assert "--wait=true" in first_delete
     assert "--timeout=120s" in first_delete
 
 
-def test_large_embedded_job_uses_server_side_apply(
+def test_large_embedded_job_uses_annotation_free_create(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Large Isaac scripts must not become a last-applied annotation."""
@@ -404,11 +402,11 @@ def test_large_embedded_job_uses_server_side_apply(
         gpu_count=1,
         timeout_s=10,
     )
-    apply_command = next(
-        command for command in scheduler.commands if command[0] == "apply"
+    create_command = next(
+        command for command in scheduler.commands if command[:2] == ["create", "-f"]
     )
-    assert "--server-side=true" in apply_command
-    assert "--field-manager=npa-sim2real" in apply_command
+    assert create_command == ["create", "-f", "-"]
+    assert all(command[0] != "apply" for command in scheduler.commands)
 
 
 def test_zero_timeout_waits_without_imposing_job_deadline(
@@ -488,7 +486,7 @@ def test_taint_cordon_or_notready_never_switches_gpu_product(
     assert scheduler.applied_products == [RTX]
 
 
-def test_stuck_same_name_job_deletion_fails_before_apply(
+def test_stuck_same_name_job_deletion_fails_before_create(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
@@ -503,7 +501,7 @@ def test_stuck_same_name_job_deletion_fails_before_apply(
             )
         return scheduler(args, **kwargs)
 
-    with pytest.raises(GpuJobFailure, match="did not finish deleting before apply"):
+    with pytest.raises(GpuJobFailure, match="did not finish deleting before create"):
         run_gpu_job_with_fallback(
             kubectl=stuck_delete,
             manifest_factory=_manifest,

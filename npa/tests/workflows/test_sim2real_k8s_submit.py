@@ -113,7 +113,7 @@ def test_plan_only_materializes_qualified_real_images_without_external_writes(
     monkeypatch.setattr(
         k8s_submit,
         "_apply_manifest",
-        lambda *_args, **_kwargs: pytest.fail("plan-only must not apply a Job"),
+        lambda *_args, **_kwargs: pytest.fail("plan-only must not submit a Job"),
     )
 
     result = k8s_submit.submit_sim2real_staged_job(
@@ -181,9 +181,7 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
                     ]
                 }
             )
-        elif args and args[0] == "apply":
-            assert "--server-side=true" in args
-            assert "--field-manager=npa-sim2real" in args
+        elif args[:2] == ["create", "-f"]:
             applied.append(json.loads(kwargs["stdin"]))
             stdout = "job.batch/sim2real-unit-submit created"
         elif args[:2] == ["get", "pods"]:

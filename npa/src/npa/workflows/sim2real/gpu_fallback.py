@@ -466,7 +466,7 @@ def _delete_job_and_wait(
     namespace: str,
     provenance: dict[str, Any],
 ) -> None:
-    """Delete a same-name Job completely before another apply can race it."""
+    """Delete a same-name Job completely before another create can race it."""
 
     result = kubectl(
         [
@@ -485,7 +485,7 @@ def _delete_job_and_wait(
         return
     detail = " ".join(str(result.stderr or result.stdout or "").split())[:800]
     raise GpuJobFailure(
-        f"Kubernetes Job {job_name} did not finish deleting before apply: "
+        f"Kubernetes Job {job_name} did not finish deleting before create: "
         f"{detail or 'kubectl delete returned no API detail'}",
         provenance=provenance,
     )
@@ -567,20 +567,15 @@ def run_gpu_job_with_fallback(
             namespace=namespace,
             provenance=provenance,
         )
-        # Client-side ``kubectl apply`` copies the complete Job manifest into
-        # kubectl.kubernetes.io/last-applied-configuration.  Isaac jobs embed
+        # ``kubectl apply`` copies the complete Job manifest into
+        # kubectl.kubernetes.io/last-applied-configuration (client side) or
+        # requires the ``patch`` RBAC verb (server side). Isaac jobs embed
         # executable task/scenario source in ``args`` and can legitimately
-        # exceed Kubernetes' 256 KiB aggregate annotation limit.  We delete the
-        # same-name Job above, then use server-side apply so the API receives the
-        # identical payload without manufacturing that unbounded annotation.
-        apply = kubectl(
-            [
-                "apply",
-                "--server-side=true",
-                "--field-manager=npa-sim2real",
-                "-f",
-                "-",
-            ],
+        # exceed Kubernetes' 256 KiB aggregate annotation limit. We delete and
+        # wait for the same-name Job above, so a plain create is both sufficient
+        # and compatible with the deliberately create-only agent service account.
+        create = kubectl(
+            ["create", "-f", "-"],
             stdin=json.dumps(manifest),
             timeout_s=120,
         )
@@ -592,15 +587,15 @@ def run_gpu_job_with_fallback(
             "scheduling_reason": "",
         }
         attempts.append(attempt)
-        if apply.returncode != 0:
-            detail = " ".join(str(apply.stderr or apply.stdout or "").split())[:800]
+        if create.returncode != 0:
+            detail = " ".join(str(create.stderr or create.stdout or "").split())[:800]
             attempt.update(
-                status="apply_failed",
+                status="create_failed",
                 scheduling_reason=detail,
                 duration_s=round(time.monotonic() - attempt_started, 3),
             )
             raise GpuJobFailure(
-                f"Kubernetes apply failed for {job_name}: {detail or 'no API detail'}; "
+                f"Kubernetes create failed for {job_name}: {detail or 'no API detail'}; "
                 "refusing GPU product fallback",
                 provenance=provenance,
             )
