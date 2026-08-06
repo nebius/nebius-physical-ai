@@ -804,6 +804,11 @@ def test_isaac_lab_eval_builds_remote_command(mocker) -> None:
             "survival",
             "--min-success-rate",
             "0.75",
+            "--video",
+            "--video-length",
+            "120",
+            "--video-fps",
+            "15",
             "--output-dir",
             "/tmp/isaac-eval",
         ],
@@ -828,6 +833,11 @@ def test_isaac_lab_eval_builds_remote_command(mocker) -> None:
     assert "survival" in cmd
     assert "NPA_ISAAC_EVAL_MIN_SUCCESS_RATE" in cmd
     assert "0.75" in cmd
+    assert "NPA_ISAAC_EVAL_VIDEO" in cmd
+    assert "NPA_ISAAC_EVAL_VIDEO_LENGTH" in cmd
+    assert "120" in cmd
+    assert "NPA_ISAAC_EVAL_VIDEO_FPS" in cmd
+    assert "15" in cmd
     assert "/tmp/isaac-eval" in cmd
     assert "npa.isaac_lab.eval.v1" in cmd
     assert "ISAAC_LAB_EVAL_POLICY_LOAD_FAILED" not in cmd

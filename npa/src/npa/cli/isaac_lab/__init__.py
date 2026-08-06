@@ -1130,6 +1130,9 @@ def _build_eval_script(
     min_success_rate: float = 0.0,
     max_steps_per_episode: int = 200,
     seed: int = 42,
+    capture_video: bool = False,
+    video_length: int = 400,
+    video_fps: int = 30,
 ) -> str:
     runner_path = Path(__file__).with_name("eval_runner.py")
     runner_source = runner_path.read_text(encoding="utf-8")
@@ -1143,6 +1146,9 @@ def _build_eval_script(
         "NPA_ISAAC_EVAL_MIN_SUCCESS_RATE": str(min_success_rate),
         "NPA_ISAAC_EVAL_MAX_STEPS": str(max_steps_per_episode),
         "NPA_ISAAC_EVAL_SEED": str(seed),
+        "NPA_ISAAC_EVAL_VIDEO": "1" if capture_video else "0",
+        "NPA_ISAAC_EVAL_VIDEO_LENGTH": str(video_length),
+        "NPA_ISAAC_EVAL_VIDEO_FPS": str(video_fps),
     }
     prelude = "import os\n" + "".join(
         f"os.environ[{name!r}] = {value!r}\n"
@@ -2841,6 +2847,21 @@ def eval_cmd(
         "--min-success-rate",
         help="Aggregate success-rate threshold recorded in the pass/fail result.",
     ),
+    capture_video: bool = typer.Option(
+        False,
+        "--video",
+        help="Record the first evaluation episode as a run-specific MP4.",
+    ),
+    video_length: int = typer.Option(
+        400,
+        "--video-length",
+        help="Maximum simulator steps recorded when --video is enabled.",
+    ),
+    video_fps: int = typer.Option(
+        30,
+        "--video-fps",
+        help="Frame rate recorded in the MP4 when --video is enabled.",
+    ),
     output_path: str = typer.Option(
         "",
         "--output-path",
@@ -2868,6 +2889,10 @@ def eval_cmd(
             "--min-success-rate must be between 0 and 1, "
             f"got {min_success_rate}"
         )
+    if video_length <= 0:
+        _fail(f"--video-length must be positive, got {video_length}")
+    if video_fps <= 0:
+        _fail(f"--video-fps must be positive, got {video_fps}")
 
     cfg = _get_ssh_config()
     try:
@@ -2920,6 +2945,9 @@ def eval_cmd(
             min_success_rate=min_success_rate,
             max_steps_per_episode=max_steps_per_episode,
             seed=seed,
+            capture_video=capture_video,
+            video_length=video_length,
+            video_fps=video_fps,
         )
         + "PY\n"
         + _build_eval_status_check(remote_output_dir),

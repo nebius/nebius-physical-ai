@@ -32,10 +32,17 @@ class EvalConfig:
     min_success_rate: float = 0.0
     max_steps_per_episode: int = 200
     seed: int = 42
+    capture_video: bool = False
+    video_length: int = 400
+    video_fps: int = 30
 
     @property
     def summary_path(self) -> Path:
         return self.output_dir / "npa_isaac_lab_eval_summary.json"
+
+    @property
+    def video_dir(self) -> Path:
+        return self.output_dir / "video"
 
     @classmethod
     def from_environment(cls) -> "EvalConfig":
@@ -55,6 +62,9 @@ class EvalConfig:
                 os.environ.get("NPA_ISAAC_EVAL_MAX_STEPS", "200")
             ),
             seed=int(os.environ.get("NPA_ISAAC_EVAL_SEED", "42")),
+            capture_video=_env_flag("NPA_ISAAC_EVAL_VIDEO"),
+            video_length=int(os.environ.get("NPA_ISAAC_EVAL_VIDEO_LENGTH", "400")),
+            video_fps=int(os.environ.get("NPA_ISAAC_EVAL_VIDEO_FPS", "30")),
         )
 
     def validate(self) -> None:
@@ -73,6 +83,10 @@ class EvalConfig:
             raise ValueError("success_distance_m must be positive")
         if not 0.0 <= self.min_success_rate <= 1.0:
             raise ValueError("min_success_rate must be between 0 and 1")
+        if self.video_length <= 0:
+            raise ValueError("video_length must be positive")
+        if self.video_fps <= 0:
+            raise ValueError("video_fps must be positive")
 
 
 def _required_env(name: str) -> str:
@@ -80,6 +94,10 @@ def _required_env(name: str) -> str:
     if not value:
         raise ValueError(f"{name} is required")
     return value
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def resolve_checkpoint(path: Path) -> tuple[Path, str]:
@@ -286,7 +304,10 @@ def run_eval(config: EvalConfig) -> dict[str, Any]:
     try:
         from isaaclab.app import AppLauncher
 
-        simulation_app = AppLauncher(headless=True).app
+        simulation_app = AppLauncher(
+            headless=True,
+            enable_cameras=config.capture_video,
+        ).app
 
         import gymnasium as gym
         import torch
@@ -312,7 +333,25 @@ def run_eval(config: EvalConfig) -> dict[str, Any]:
 
         stage = "environment_create"
         print("ISAAC_LAB_ENV_CREATE_START", flush=True)
-        env = gym.make(config.task, cfg=env_config)
+        render_mode = "rgb_array" if config.capture_video else None
+        env = gym.make(config.task, cfg=env_config, render_mode=render_mode)
+        if config.capture_video:
+            config.video_dir.mkdir(parents=True, exist_ok=True)
+            env = gym.wrappers.RecordVideo(
+                env,
+                video_folder=str(config.video_dir),
+                episode_trigger=lambda episode_id: episode_id == 0,
+                video_length=config.video_length,
+                name_prefix="isaac-lab-eval",
+                fps=config.video_fps,
+                disable_logger=True,
+            )
+            print(
+                "ISAAC_LAB_EVAL_VIDEO_ENABLED "
+                f"directory={config.video_dir} length={config.video_length} "
+                f"fps={config.video_fps}",
+                flush=True,
+            )
         print("ISAAC_LAB_ENV_CREATE_COMPLETE", flush=True)
 
         stage = "policy_load"
@@ -423,6 +462,25 @@ def run_eval(config: EvalConfig) -> dict[str, Any]:
                 flush=True,
             )
 
+        captured_videos: list[str] = []
+        if config.capture_video:
+            stage = "video_finalize"
+            env.close()
+            env = None
+            captured_videos = [
+                str(path)
+                for path in sorted(config.video_dir.glob("*.mp4"))
+                if path.stat().st_size > 0
+            ]
+            if not captured_videos:
+                raise RuntimeError(
+                    f"video capture was requested but no MP4 was written under {config.video_dir}"
+                )
+            print(
+                "ISAAC_LAB_EVAL_VIDEO_COMPLETE " + " ".join(captured_videos),
+                flush=True,
+            )
+
         stage = "metric_resolution"
         success_metric = resolve_success_metric(config.success_metric, episode_results)
         apply_success_metric(
@@ -466,6 +524,12 @@ def run_eval(config: EvalConfig) -> dict[str, Any]:
             "mean_min_goal_distance_m": (
                 sum(distances) / len(distances) if distances else None
             ),
+            "video": {
+                "enabled": config.capture_video,
+                "fps": config.video_fps,
+                "length_steps": config.video_length,
+                "files": captured_videos,
+            },
             "episodes": episode_results,
             "duration_seconds": round(time.time() - started, 3),
             "output_path": str(config.summary_path),

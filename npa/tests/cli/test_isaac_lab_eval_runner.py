@@ -99,3 +99,19 @@ def test_eval_config_validates_quality_gate() -> None:
 
     with pytest.raises(ValueError, match="between 0 and 1"):
         config.validate()
+
+
+def test_eval_config_reads_video_environment(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("NPA_ISAAC_EVAL_TASK", "Isaac-Cartpole-v0")
+    monkeypatch.setenv("NPA_ISAAC_EVAL_CHECKPOINT", str(tmp_path / "model.pt"))
+    monkeypatch.setenv("NPA_ISAAC_EVAL_OUTPUT_DIR", str(tmp_path / "eval"))
+    monkeypatch.setenv("NPA_ISAAC_EVAL_VIDEO", "yes")
+    monkeypatch.setenv("NPA_ISAAC_EVAL_VIDEO_LENGTH", "123")
+    monkeypatch.setenv("NPA_ISAAC_EVAL_VIDEO_FPS", "24")
+
+    config = EvalConfig.from_environment()
+
+    assert config.capture_video is True
+    assert config.video_length == 123
+    assert config.video_fps == 24
+    assert config.video_dir == tmp_path / "eval" / "video"
