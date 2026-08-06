@@ -14,6 +14,8 @@ DEFAULT_REASON3_MODEL = "nvidia/Cosmos-Reason2-2B"
 DEFAULT_REASON1_CACHE = "/tmp/hf_home/cosmos-reason1"
 DEFAULT_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
 DEFAULT_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
+DEFAULT_REASON_EVENT_FRAMES = 32
+DEFAULT_REASON_MAX_NEW_TOKENS = 4096
 REFERENCE_VLM_ALIASES = frozenset(
     {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "reason3"}
 )
@@ -201,7 +203,11 @@ def merge_dual_reason_evaluations(
         )
         if disagreement:
             confidence *= 0.5
-        if "summary_broadcast" in source_values:
+        if "model_missing" in source_values or "model_malformed" in source_values:
+            confidence = 0.0
+        elif "summary_broadcast" in source_values:
+            # Backward-compatible rejection for artifacts produced before the
+            # per-step fail-closed contract. New inference never emits this.
             confidence = min(confidence, 0.10)
         critique_parts = [
             part.strip()
@@ -229,9 +235,17 @@ def merge_dual_reason_evaluations(
                 "model_disagreement": disagreement,
                 "confidence": round(max(0.0, min(1.0, confidence)), 6),
                 "critique_source": (
-                    "summary_broadcast"
-                    if "summary_broadcast" in source_values
-                    else "dual_model_per_step"
+                    "model_missing"
+                    if "model_missing" in source_values
+                    else (
+                        "model_malformed"
+                        if "model_malformed" in source_values
+                        else (
+                            "summary_broadcast"
+                            if "summary_broadcast" in source_values
+                            else "dual_model_per_step"
+                        )
+                    )
                 ),
             }
         )
@@ -295,7 +309,12 @@ def run_cosmos_reason_vlm(
         raise CosmosReasonError("Cosmos Reason inference requires a CUDA GPU")
 
     cache_dir = prepare_cosmos_reason_cache(model_id=resolved_model)
-    max_frames = int(os.environ.get("NPA_COSMOS_REASON_MAX_FRAMES", "8"))
+    # One primary frame is captured for every decision/event sample. The
+    # canonical task contract requires 32 such samples, so evaluating only the
+    # first eight makes late grasp/place failures invisible to the VLM.
+    max_frames = int(
+        os.environ.get("NPA_COSMOS_REASON_MAX_FRAMES", str(DEFAULT_REASON_EVENT_FRAMES))
+    )
     selected_paths = image_paths[: max(1, max_frames)]
     for path in selected_paths:
         with Image.open(path) as img:
@@ -352,7 +371,15 @@ def run_cosmos_reason_vlm(
     )
     first_device = next(model.parameters()).device
     inputs = inputs.to(first_device)
-    max_new_tokens = int(os.environ.get("NPA_COSMOS_REASON_MAX_NEW_TOKENS", "768"))
+    # A compact 32-entry JSON response does not reliably fit in the old 768-token
+    # budget. Truncation caused otherwise valid models to fall back to a single
+    # rollout summary. Keep this parameterized but make the real default large
+    # enough for the required event-local contract.
+    max_new_tokens = int(
+        os.environ.get(
+            "NPA_COSMOS_REASON_MAX_NEW_TOKENS", str(DEFAULT_REASON_MAX_NEW_TOKENS)
+        )
+    )
     with torch.inference_mode():
         generated = model.generate(
             **inputs,
@@ -413,7 +440,24 @@ def _cosmos_reason_prompt(
     actions: list[dict[str, Any]],
     frame_names: list[str],
 ) -> str:
-    action_excerpt = json.dumps(actions[:64], sort_keys=True)
+    # Simulator ground truth is deliberately excluded: Cosmos labels are
+    # calibrated *against* those measurements after inference and must not see
+    # the answer in their prompt. Only policy actions and temporal identifiers
+    # are model inputs.
+    action_excerpt = json.dumps(
+        [
+            {
+                "step": int(action.get("step", index)),
+                "sim_step": int(action.get("sim_step", action.get("step", index))),
+                "action": list(action.get("action") or []),
+            }
+            for index, action in enumerate(actions[:64])
+        ],
+        sort_keys=True,
+    )
+    expected_steps = [
+        int(action.get("step", index)) for index, action in enumerate(actions[:64])
+    ]
     label = {
         "reason1": "Cosmos-Reason1",
         "reason2": "Cosmos-Reason2",
@@ -424,10 +468,15 @@ def _cosmos_reason_prompt(
         f"Task description: {task_description}\n"
         f"Frame order: {frame_names}\n"
         f"Actions by step: {action_excerpt}\n"
+        f"Required per_step indices: {expected_steps}\n"
         "Return JSON only. The JSON must contain: success (boolean), "
         "score (number from 0 to 1), summary (natural-language critique), and "
         "per_step (array of objects with step, critique_text, error_tags, "
-        "camera_observation). Use only these error tags when applicable: "
+        "camera_observation, confidence). per_step MUST contain exactly one "
+        "compact, event-specific object for every required index; never copy or "
+        "broadcast the rollout summary into step entries. If a step cannot be "
+        "judged visually, use a step-specific 'insufficient visual evidence' "
+        "critique with confidence 0. Use only these error tags when applicable: "
         "collision, missed_target, unstable, late_grasp, minor_alignment, ok. "
         "Judge actual visual rollout behavior, not metadata or requested actions."
     )
@@ -450,20 +499,19 @@ def _parse_cosmos_reason_output(
     success = bool(payload.get("success", score >= threshold))
     raw_steps = payload.get("per_step") or payload.get("steps") or []
     if not raw_steps:
-        critique = str(
-            payload.get("summary")
-            or payload.get("critique")
-            or payload.get("critique_text")
-            or model_text
-        ).strip()
-        tags = payload.get("error_tags") or _tags_from_text(critique)
+        # Keep the real rollout-level model result in ``summary``, but never turn
+        # it into fake temporal credit. Every absent local label is an explicit
+        # zero-confidence rejection whose text identifies its own step.
         raw_steps = [
             {
                 "step": int(action.get("step", index)),
-                "critique_text": critique,
-                "error_tags": tags,
-                "critique_source": "summary_broadcast",
-                "confidence": 0.10,
+                "critique_text": (
+                    f"{family} returned no model-local critique for step "
+                    f"{int(action.get('step', index))}; simulator state only."
+                ),
+                "error_tags": ["ok"],
+                "critique_source": "model_missing",
+                "confidence": 0.0,
                 "camera_observation": f"camera-{int(action.get('step', index)):03d}.ppm",
             }
             for index, action in enumerate(actions)
@@ -473,19 +521,24 @@ def _parse_cosmos_reason_output(
         if not isinstance(raw, dict):
             raw = {"critique_text": str(raw)}
         step = int(raw.get("step", index))
-        tags = raw.get("error_tags") or raw.get("tags") or _tags_from_text(str(raw))
-        if isinstance(tags, str):
-            tags = [tags]
-        normalized_tags = _normalize_error_tags(tags)
         critique = str(
-            raw.get("critique_text")
-            or raw.get("critique")
-            or raw.get("text")
-            or payload.get("summary")
-            or ""
+            raw.get("critique_text") or raw.get("critique") or raw.get("text") or ""
         ).strip()
-        if not critique:
-            raise CosmosReasonError(f"{family} per_step output lacks critique text")
+        malformed = not critique
+        if malformed:
+            critique = (
+                f"{family} returned a malformed critique for step {step}; "
+                "simulator state only."
+            )
+            normalized_tags = ["ok"]
+        else:
+            tags = raw.get("error_tags") or raw.get("tags") or _tags_from_text(critique)
+            if isinstance(tags, str):
+                tags = [tags]
+            normalized_tags = _normalize_error_tags(tags)
+        critique_source = str(raw.get("critique_source") or "model_per_step")
+        if malformed:
+            critique_source = "model_malformed"
         per_step.append(
             {
                 "step": step,
@@ -497,13 +550,15 @@ def _parse_cosmos_reason_output(
                 "camera_observation": str(
                     raw.get("camera_observation") or f"camera-{step:03d}.ppm"
                 ),
-                "critique_source": str(raw.get("critique_source") or "model_per_step"),
+                "critique_source": critique_source,
                 "confidence": max(
                     0.0,
                     min(
                         1.0,
                         float(
-                            raw.get(
+                            0.0
+                            if malformed
+                            else raw.get(
                                 "confidence",
                                 0.10
                                 if raw.get("critique_source") == "summary_broadcast"

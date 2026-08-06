@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import os
+import json
+
+from npa.workbench.cosmos import reason as reason_module
 
 from npa.workbench.cosmos.reason import (
     DEFAULT_REASON2_CACHE,
     DEFAULT_REASON2_MODEL,
     DEFAULT_REASON3_CACHE,
     DEFAULT_REASON3_MODEL,
+    DEFAULT_REASON_EVENT_FRAMES,
+    DEFAULT_REASON_MAX_NEW_TOKENS,
     apply_cosmos_reason_kubernetes_env,
     cosmos_reason_k8s_shell_preamble,
     cosmos_reason_runtime_env,
@@ -22,10 +27,7 @@ from npa.workbench.cosmos.reason import (
 
 
 def test_resolve_cosmos_reason_alias_defaults_to_reason2() -> None:
-    assert (
-        resolve_cosmos_reason_model_id("npa-cosmos3-reason")
-        == DEFAULT_REASON2_MODEL
-    )
+    assert resolve_cosmos_reason_model_id("npa-cosmos3-reason") == DEFAULT_REASON2_MODEL
 
 
 def test_default_reason_cache_dir_uses_writable_tmp_hf_home(monkeypatch) -> None:
@@ -40,6 +42,11 @@ def test_cosmos_reason_runtime_env_defaults_to_writable_cache() -> None:
     runtime = cosmos_reason_runtime_env()
     assert runtime["HF_HOME"] == "/tmp/hf_home"
     assert runtime["NPA_COSMOS_REASON2_CACHE"] == DEFAULT_REASON2_CACHE
+
+
+def test_reason_defaults_cover_every_canonical_decision_event() -> None:
+    assert DEFAULT_REASON_EVENT_FRAMES == 32
+    assert DEFAULT_REASON_MAX_NEW_TOKENS >= 4096
 
 
 def test_apply_cosmos_reason_kubernetes_env_preserves_existing_values() -> None:
@@ -91,7 +98,9 @@ def test_task_description_from_manifest_prefers_task_description() -> None:
     assert task_description_from_manifest(manifest) == "Pick up the cube."
 
 
-def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success() -> None:
+def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success() -> (
+    None
+):
     reason2 = {
         "rollout_id": "rollout-0000",
         "model": DEFAULT_REASON2_MODEL,
@@ -134,3 +143,124 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
     assert merged["per_step"][0]["error_tags"] == ["ok", "late_grasp"]
     assert "reason2_critique" in merged["per_step"][0]
     assert "reason3_critique" in merged["per_step"][0]
+
+
+def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:
+    actions = [
+        {
+            "step": step,
+            "action": [float(step)],
+            "simulator_ground_truth": {"secret": step},
+        }
+        for step in range(4)
+    ]
+    payload = reason_module._parse_cosmos_reason_output(
+        json.dumps(
+            {
+                "success": False,
+                "score": 0.2,
+                "summary": "The rollout missed the target.",
+            }
+        ),
+        actions=actions,
+        rollout_id="rollout-0001",
+        threshold=0.5,
+        family="reason2",
+    )
+
+    assert payload["summary"] == "The rollout missed the target."
+    assert len(payload["per_step"]) == 4
+    assert {row["critique_source"] for row in payload["per_step"]} == {"model_missing"}
+    assert {row["confidence"] for row in payload["per_step"]} == {0.0}
+    assert len({row["critique_text"] for row in payload["per_step"]}) == 4
+    assert all(
+        "The rollout missed the target" not in row["critique_text"]
+        for row in payload["per_step"]
+    )
+
+
+def test_malformed_step_is_rejected_instead_of_copying_summary() -> None:
+    payload = reason_module._parse_cosmos_reason_output(
+        json.dumps(
+            {
+                "success": False,
+                "score": 0.1,
+                "summary": "rollout summary",
+                "per_step": [{"step": 0, "error_tags": ["missed_target"]}],
+            }
+        ),
+        actions=[{"step": 0, "action": [0.0]}],
+        rollout_id="rollout-0002",
+        threshold=0.5,
+        family="reason3",
+    )
+
+    step = payload["per_step"][0]
+    assert step["critique_source"] == "model_malformed"
+    assert step["confidence"] == 0.0
+    assert step["error_tags"] == ["ok"]
+    assert "rollout summary" not in step["critique_text"]
+
+
+def test_reason_prompt_requires_every_step_and_hides_simulator_truth() -> None:
+    prompt = reason_module._cosmos_reason_prompt(
+        family="reason2",
+        task_description="Lift the cube.",
+        actions=[
+            {
+                "step": step,
+                "sim_step": step * 10,
+                "action": [0.1, -0.2],
+                "simulator_ground_truth": {"do_not_leak": "ANSWER"},
+            }
+            for step in range(32)
+        ],
+        frame_names=[f"camera-{step:03d}.png" for step in range(32)],
+    )
+
+    assert "Required per_step indices: [0, 1, 2" in prompt
+    assert "exactly one" in prompt
+    assert "never copy or broadcast" in prompt
+    assert "simulator_ground_truth" not in prompt
+    assert "do_not_leak" not in prompt
+    assert "ANSWER" not in prompt
+
+
+def test_dual_reason_rejects_missing_local_model_label() -> None:
+    base = {
+        "rollout_id": "rollout-0003",
+        "success": False,
+        "score": 0.2,
+        "summary": "summary only",
+    }
+    reason2 = {
+        **base,
+        "model": DEFAULT_REASON2_MODEL,
+        "per_step": [
+            {
+                "step": 0,
+                "critique_text": "reason2 returned no local label for step 0",
+                "error_tags": ["ok"],
+                "critique_source": "model_missing",
+                "confidence": 0.0,
+            }
+        ],
+    }
+    reason3 = {
+        **base,
+        "model": DEFAULT_REASON3_MODEL,
+        "per_step": [
+            {
+                "step": 0,
+                "critique_text": "specific late grasp",
+                "error_tags": ["late_grasp"],
+                "critique_source": "model_per_step",
+                "confidence": 0.8,
+            }
+        ],
+    }
+
+    merged = merge_dual_reason_evaluations(reason2, reason3, threshold=0.5)
+
+    assert merged["per_step"][0]["critique_source"] == "model_missing"
+    assert merged["per_step"][0]["confidence"] == 0.0
