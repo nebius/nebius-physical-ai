@@ -469,7 +469,8 @@ def _cosmos_reason_prompt(
         f"Frame order: {frame_names}\n"
         f"Actions by step: {action_excerpt}\n"
         f"Required per_step indices: {expected_steps}\n"
-        "Return JSON only. The JSON must contain: success (boolean), "
+        "Return one JSON object only; never use a top-level array. The object "
+        "must contain: success (boolean), "
         "score (number from 0 to 1), summary (natural-language critique), and "
         "per_step (array of objects with step, critique_text, error_tags, "
         "camera_observation, confidence). per_step MUST contain exactly one "
@@ -586,7 +587,19 @@ def _json_object_from_text(text: str) -> dict[str, Any] | None:
         stripped = re.sub(r"```$", "", stripped).strip()
     try:
         payload = json.loads(stripped)
-        return payload if isinstance(payload, dict) else None
+        if isinstance(payload, dict):
+            return payload
+        # Cosmos commonly wraps its single requested evaluation object in a
+        # one-element JSON array even when the prompt asks for an object. Keep
+        # this narrow: a list of multiple candidate evaluations is ambiguous
+        # and must not be silently selected.
+        if (
+            isinstance(payload, list)
+            and len(payload) == 1
+            and isinstance(payload[0], dict)
+        ):
+            return payload[0]
+        return None
     except json.JSONDecodeError:
         pass
     match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)

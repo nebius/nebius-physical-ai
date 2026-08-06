@@ -274,7 +274,11 @@ The zero timeout is intentionally uncapped: Kubernetes
 `activeDeadlineSeconds` is omitted and the operator keeps polling. It is not an
 ignore-failures mode—failed Job counters, deleted Jobs, kubectl errors, image or
 runtime failures, and non-zero component exits still terminate the run. To opt
-into a four-hour deadline, pass
+avoid a transient final-slot race in an exact-size parallel batch, concrete
+compatible-GPU capacity failures are retained in provenance and the ordered
+products are rechecked without a retry limit. A positive timeout instead makes
+one ordered capacity pass and then fails closed. To opt into a four-hour
+deadline, pass
 `--var NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=14400` (and set
 `NPA_BYO_ISAAC_JOB_TIMEOUT_S` when the nested Isaac wait should have the same
 positive deadline).

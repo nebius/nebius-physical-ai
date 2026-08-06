@@ -81,9 +81,12 @@
 #
 # Timeout contract: NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=0 is intentionally uncapped
 # for full production loops. It omits Kubernetes activeDeadlineSeconds and keeps
-# polling, but failed Job counters, Job deletion, kubectl errors, image/runtime
-# failures, and non-zero component exits still terminate the run. To impose a
-# deadline, pass a positive number of seconds, for example
+# polling. Concrete compatible-GPU capacity failures are recorded and the
+# ordered products are rechecked without a retry limit, preventing exact-size
+# parallel batches from failing on a transient final-slot scheduling race.
+# Failed Job counters, Job deletion, kubectl errors, image/runtime failures, and
+# non-zero component exits still terminate the run. To impose a deadline, pass a
+# positive number of seconds, for example
 # `--var NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=14400`.
 name: sim2real-staged-loop
 resources:

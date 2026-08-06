@@ -179,6 +179,37 @@ def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:
     )
 
 
+def test_single_array_wrapped_evaluation_preserves_event_local_critiques() -> None:
+    payload = reason_module._parse_cosmos_reason_output(
+        """```json
+[{"success": false, "score": 0.27, "summary": "no stable grasp",
+  "per_step": [
+    {"step": 0, "critique_text": "hovering above cube", "error_tags": ["late_grasp"], "confidence": 0.91},
+    {"step": 1, "critique_text": "fingers remain open", "error_tags": ["unstable"], "confidence": 0.87}
+  ]}]
+```""",
+        actions=[
+            {"step": 0, "action": [0.1]},
+            {"step": 1, "action": [0.2]},
+        ],
+        rollout_id="rollout-array-wrapper",
+        threshold=0.5,
+        family="reason3",
+    )
+
+    assert payload["summary"] == "no stable grasp"
+    assert [row["step"] for row in payload["per_step"]] == [0, 1]
+    assert {row["critique_source"] for row in payload["per_step"]} == {"model_per_step"}
+    assert [row["confidence"] for row in payload["per_step"]] == [0.91, 0.87]
+    assert len({row["critique_text"] for row in payload["per_step"]}) == 2
+    assert (
+        reason_module._json_object_from_text(
+            '[{"success": false, "score": 0.2}, {"step": 31}]'
+        )
+        is None
+    )
+
+
 def test_malformed_step_is_rejected_instead_of_copying_summary() -> None:
     payload = reason_module._parse_cosmos_reason_output(
         json.dumps(
@@ -221,6 +252,7 @@ def test_reason_prompt_requires_every_step_and_hides_simulator_truth() -> None:
     assert "Required per_step indices: [0, 1, 2" in prompt
     assert "exactly one" in prompt
     assert "never copy or broadcast" in prompt
+    assert "never use a top-level array" in prompt
     assert "simulator_ground_truth" not in prompt
     assert "do_not_leak" not in prompt
     assert "ANSWER" not in prompt

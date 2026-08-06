@@ -431,6 +431,47 @@ def test_zero_timeout_waits_without_imposing_job_deadline(
     assert result["attempts"][-1]["status"] == "complete"
 
 
+def test_zero_timeout_rechecks_transient_same_product_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_CAPACITY_RECHECK_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "capacity", L40S: "capacity"})
+    create_count = 0
+
+    def transient_scheduler(
+        args: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal create_count
+        if args[:2] == ["create", "-f"]:
+            create_count += 1
+            if create_count == 3:
+                scheduler.outcomes[RTX] = "success"
+        return scheduler(args, **kwargs)
+
+    result = run_gpu_job_with_fallback(
+        kubectl=transient_scheduler,
+        manifest_factory=_manifest,
+        base_job_name="s2r-transient-capacity",
+        namespace="default",
+        image="registry/image@sha256:abc123",
+        preferred_product=RTX,
+        explicit_candidates=(),
+        workload="cosmos_reason",
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+        timeout_s=0,
+    )
+
+    assert scheduler.applied_products == [RTX, L40S, RTX]
+    assert [item["status"] for item in result["attempts"]] == [
+        "unschedulable",
+        "unschedulable",
+        "complete",
+    ]
+    assert result["selected_product"] == RTX
+
+
 def test_unrelated_runtime_failure_never_switches_product(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -557,7 +557,24 @@ def run_gpu_job_with_fallback(
     poll_s = max(
         1, int(os.environ.get("NPA_SIM2REAL_GPU_SCHEDULING_POLL_SECONDS", "2"))
     )
-    for index, product in enumerate(plan.products):
+    capacity_recheck_s = max(
+        0,
+        int(os.environ.get("NPA_SIM2REAL_GPU_CAPACITY_RECHECK_SECONDS", "5")),
+    )
+
+    def _candidate_attempts() -> Iterable[tuple[int, str]]:
+        while True:
+            yield from enumerate(plan.products)
+            if timeout_s > 0:
+                return
+            # An explicit zero timeout is the operator's unbounded contract.
+            # A parallel batch can consume the final compatible slot between
+            # Job creation and scheduler observation, so preserve the concrete
+            # capacity evidence and recheck instead of falsely exhausting a
+            # cluster that still has compatible products.
+            time.sleep(capacity_recheck_s)
+
+    for index, product in _candidate_attempts():
         attempt_started = time.monotonic()
         job_name = _attempt_job_name(base_job_name, index)
         manifest = manifest_factory(product, job_name)
