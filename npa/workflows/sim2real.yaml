@@ -143,6 +143,11 @@ envs:
   # Execute a task-length trajectory and sample 32 evenly spaced decision/event
   # points for temporal credit; this is not a 32-simulation-step micro-rollout.
   NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS: "300"
+  # Cosmos sees every sampled decision/event frame and has enough output budget
+  # for one compact, indexed critique per event. Real-tier validation rejects a
+  # smaller frame window or a token budget below 64 tokens per event.
+  NPA_COSMOS_REASON_MAX_FRAMES: "32"
+  NPA_COSMOS_REASON_MAX_NEW_TOKENS: "4096"
   VALIDATION_ENV_COUNT: "64"
   HELDOUT_ENV_COUNT: "64"
   # Per-episode Isaac metric in metres. This is intentionally separate from

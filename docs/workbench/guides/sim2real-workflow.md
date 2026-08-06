@@ -127,6 +127,8 @@ npa/.venv/bin/npa workbench workflow submit npa/workflows/sim2real.yaml \
   --var ROLLOUT_COUNT=64 \
   --var STEPS_PER_ROLLOUT=32 \
   --var NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS=300 \
+  --var NPA_COSMOS_REASON_MAX_FRAMES=32 \
+  --var NPA_COSMOS_REASON_MAX_NEW_TOKENS=4096 \
   --var VALIDATION_ENV_COUNT=64 \
   --var HELDOUT_ENV_COUNT=64 \
   --var NPA_SIM2REAL_HELDOUT_EVAL_LIMIT=0 \
@@ -187,6 +189,8 @@ the exact runtime-applied digest set to match their reported rows.
 | `ROLLOUT_COUNT` | `64` | integer ≥1 | distinct curated-scenario policy rollouts per inner pass |
 | `STEPS_PER_ROLLOUT` | `32` | integer ≥1 | simulator-grounded decision/event samples per rollout |
 | `NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS` | `300` | integer ≥ sampled points | task-length Isaac steps over which the decision/event samples are evenly taken |
+| `NPA_COSMOS_REASON_MAX_FRAMES` | `32` | integer ≥ `STEPS_PER_ROLLOUT` | exposes every sampled event frame to each Cosmos model; smaller real-tier windows fail before submit |
+| `NPA_COSMOS_REASON_MAX_NEW_TOKENS` | `4096` | integer ≥ 64 × sampled points | output budget for compact indexed per-event JSON; missing/malformed entries are rejected at zero confidence, never filled from the rollout summary |
 | `NPA_ENV_COUNT` | `10000` | integer ≥1 | generated environments before split |
 | `NPA_TRAIN_FRACTION` | `0.8` | 0..1 fraction | exact stratified train share; remainder is divided between validation and untouched gold-heldout |
 | `VALIDATION_ENV_COUNT` | `64` | integer ≥1 | fixed validation episodes used only for checkpoint ranking |

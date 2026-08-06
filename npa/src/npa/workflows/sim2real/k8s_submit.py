@@ -174,6 +174,19 @@ def _validate_real_runtime_env(values: dict[str, str]) -> None:
         raise ValueError(
             "NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS must be >= STEPS_PER_ROLLOUT"
         )
+    reason_frames = integer("NPA_COSMOS_REASON_MAX_FRAMES")
+    if reason_frames < sampled_points:
+        raise ValueError(
+            "NPA_COSMOS_REASON_MAX_FRAMES must be >= STEPS_PER_ROLLOUT so "
+            "every decision/event has visual evidence"
+        )
+    reason_tokens = integer("NPA_COSMOS_REASON_MAX_NEW_TOKENS")
+    minimum_reason_tokens = sampled_points * 64
+    if reason_tokens < minimum_reason_tokens:
+        raise ValueError(
+            "NPA_COSMOS_REASON_MAX_NEW_TOKENS must be >= 64 * "
+            f"STEPS_PER_ROLLOUT ({minimum_reason_tokens}), got {reason_tokens}"
+        )
 
     threshold = float(values.get("SUCCESS_THRESHOLD", "0.50"))
     if not 0.0 <= threshold <= 1.0:

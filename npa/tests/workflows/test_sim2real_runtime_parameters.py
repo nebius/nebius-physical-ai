@@ -22,6 +22,10 @@ from npa.workflows.sim2real.constants import (
 )
 from npa.workflows.sim2real.k8s_submit import _validate_real_runtime_env
 from npa.workflows.sim2real.k8s_components import _component_job_manifest
+from npa.workbench.cosmos.reason import (
+    DEFAULT_REASON_EVENT_FRAMES,
+    DEFAULT_REASON_MAX_NEW_TOKENS,
+)
 from npa.workflows.sim2real.materialize import default_runbook_path, materialize_k8s_job
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real import engine
@@ -47,6 +51,10 @@ def test_canonical_yaml_defaults_match_engine_and_real_components() -> None:
     assert envs["NPA_SIM2REAL_EARLY_EXIT"] == "0"
     assert envs["NPA_SIM2REAL_HELDOUT_EVAL_LIMIT"] == "0"
     assert envs["NPA_SIM2REAL_K8S_JOB_TIMEOUT_S"] == "0"
+    assert int(envs["NPA_COSMOS_REASON_MAX_FRAMES"]) == DEFAULT_REASON_EVENT_FRAMES
+    assert (
+        int(envs["NPA_COSMOS_REASON_MAX_NEW_TOKENS"]) == DEFAULT_REASON_MAX_NEW_TOKENS
+    )
     assert float(envs["LEARNING_RATE"]) == DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE
     config = Sim2RealLoopConfig(run_id="parameter-defaults")
     assert config.k8s_job_timeout_s == 0
@@ -118,6 +126,8 @@ def test_materialized_job_carries_capture_ppo_and_visualization_knobs() -> None:
         "NPA_BYO_ISAAC_VALIDATION_INTERVAL",
         "NPA_SIM2REAL_MCAP",
         "NPA_SIM2REAL_REQUIRE_VISUALIZATION",
+        "NPA_COSMOS_REASON_MAX_FRAMES",
+        "NPA_COSMOS_REASON_MAX_NEW_TOKENS",
         "NPA_SIM2REAL_K8S_JOB_TIMEOUT_S",
         "NPA_BYO_ISAAC_JOB_TIMEOUT_S",
     ):
@@ -134,6 +144,8 @@ def test_materialized_job_carries_capture_ppo_and_visualization_knobs() -> None:
             {"NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS": "31"},
             "ROLLOUT_HORIZON_STEPS",
         ),
+        ({"NPA_COSMOS_REASON_MAX_FRAMES": "31"}, "MAX_FRAMES"),
+        ({"NPA_COSMOS_REASON_MAX_NEW_TOKENS": "2047"}, "MAX_NEW_TOKENS"),
         ({"NPA_SIM2REAL_CAMERA_VIEWS": "rear"}, "camera view"),
         ({"SUCCESS_THRESHOLD": "1.1"}, "SUCCESS_THRESHOLD"),
         ({"NPA_BYO_ISAAC_SUCCESS_DIST_M": "0"}, "SUCCESS_DIST_M"),
