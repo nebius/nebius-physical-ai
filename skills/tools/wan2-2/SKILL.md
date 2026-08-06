@@ -9,6 +9,7 @@ Use this skill for the public Wan 2.2 registry candidate and the Bellboy-shaped
 episode/video workflow. Read these files before changing behavior:
 
 - `npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml`
+- `npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml`
 - `npa/workflows/workbench/npa-workflows/bellboy-wan2.2-e2e.yaml`
 - `npa/src/npa/workflows/bellboy_wan.py`
 - `docs/workbench/wan2.2-bellboy.md`
@@ -29,6 +30,11 @@ surfaces are involved.
 - The accepted-candidate hard gate is text-to-video plus decoded MP4
   validation. Run `byof-wan22-e2e-20260805T191659Z` satisfied it on a real RTX
   PRO 6000 Blackwell (`sm_120`).
+- The accepted distributed hard gate is a single shared generation through the
+  pinned official `torchrun generate.py` path, not replicas or a visibility
+  probe. Run `byof-wan22-multigpu-e2e-20260806T024353Z` satisfied it on one
+  node with four B200s (`sm_100`), world size 4, NCCL, T5 and DiT FULL_SHARD
+  FSDP, and Ulysses size 4.
 - I2V, A14B, speech-to-video, Animate, and training are separate capabilities.
   Do not infer acceptance from the T2V smoke.
 - Stock Wan does not predict robot actions. Bellboy's action head and
@@ -53,11 +59,31 @@ PyTorch SDPA fallback rather than FlashAttention. Record the observed device,
 compute capability, driver, CUDA, torch version, arch list, and a finite SDPA
 probe in both runtime evidence artifacts.
 
+Route the dedicated distributed spec through
+`byof-solution-smoke-wan22-b200-4gpu.yaml`, which requests `B200:4` in one pod.
+Use exactly four ranks: it is the smallest topology documented by the pinned
+official TI2V-5B efficiency path, and 24 attention heads divide evenly by four.
+Invoke `/opt/byof/.venv/bin/torchrun --standalone --nnodes=1
+--nproc_per_node=4 generate.py` with `--dit_fsdp --t5_fsdp --ulysses_size 4`.
+Fail closed unless every rank proves NCCL initialization/all-reduce, its unique
+local CUDA device, both FULL_SHARD wrappers, live Ulysses distributed-attention
+and all-to-all calls, the upstream final barrier, and `sm_100`/compute
+capability 10.0. Rank zero may save the MP4 only through the upstream path;
+every rank must finish before topology evidence is accepted.
+
 The smoke must call the real native `wan.WanTI2V` generator and write:
 
 - `wan2_2_ti2v_5b.mp4`
 - `wan2_2_ti2v_5b_text_to_video.json`
 - `wan2_2_runtime_inventory.json`
+
+The distributed smoke additionally writes:
+
+- `wan2_2_ti2v_5b_multigpu.mp4`
+- `wan2_2_ti2v_5b_multigpu.json`
+- `wan2_2_multigpu_topology.json`
+- `wan2_2_multigpu_runtime_inventory.json`
+- `wan2_2_multigpu_rank_0.json` through `wan2_2_multigpu_rank_3.json`
 
 It must decode every frame and fail on invalid dimensions/count/fps, a corrupt
 or empty container, an implausibly small file, or uniform/blank content. Keep
@@ -95,6 +121,9 @@ checkpoint URI, action-prediction artifact, and held-out real-episode evaluator.
 | --- | --- |
 | `wan2.2_ti2v_5b_text_to_video` | accepted; live validated on RTX PRO 6000 Blackwell by `byof-wan22-e2e-20260805T191659Z` |
 | `wan2.2_decoded_mp4_validation` | accepted; same run decoded 17 1280x704 frames at 24 fps and passed non-uniform-content gates |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted; `byof-wan22-multigpu-e2e-20260806T024353Z` used one node and 4×B200 (`sm_100`), world size 4, NCCL, T5/DiT FULL_SHARD FSDP, and Ulysses size 4 |
+| `wan2.2_distributed_rank_topology_validation` | accepted; same run recorded four unique GPU hashes, ranks 0–3, NCCL sum 10/10, 480 Ulysses attention calls, 1,920 all-to-all calls, and terminal barriers on every rank |
+| `wan2.2_decoded_mp4_validation` (distributed run) | accepted; same run decoded 17 H.264 1280x704 frames at 24 fps; 634,523 bytes, spatial stddev 46.9864, pixel range 255, temporal delta 0.731357, SHA-256 `ae77b119…09389` |
 | `wan2.2_ti2v_5b_image_to_video` | deferred |
 | A14B / S2V / Animate | deferred |
 | official TI2V fine-tuning | deferred; no pinned-source training entrypoint |
@@ -126,6 +155,10 @@ npa/.venv/bin/npa workbench workflow validate-spec \
 npa/.venv/bin/npa workbench workflow plan-spec \
   npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml --run-id wan22-plan
 npa/.venv/bin/npa workbench workflow validate-spec \
+  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
+npa/.venv/bin/npa workbench workflow plan-spec \
+  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml --run-id wan22-multigpu-plan
+npa/.venv/bin/npa workbench workflow validate-spec \
   npa/workflows/workbench/npa-workflows/bellboy-wan2.2-e2e.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
   npa/workflows/workbench/npa-workflows/bellboy-wan2.2-e2e.yaml --run-id bellboy-wan22-plan
@@ -135,7 +168,9 @@ npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
 npa/.venv/bin/python -m pytest npa/tests/smoke/test_all_workflow_yamls.py -q
 ```
 
-The live test is `npa/tests/e2e/test_byof_wan22_live_e2e.py`. Run it only through
-its explicit operator gate. The recorded acceptance run is
-`byof-wan22-e2e-20260805T191659Z`; future compatibility changes require fresh
-live evidence rather than inference from that run.
+The live tests are `npa/tests/e2e/test_byof_wan22_live_e2e.py` and
+`npa/tests/e2e/test_byof_wan22_multigpu_live_e2e.py`. Run them only through
+their explicit operator gates. The recorded acceptance runs are
+`byof-wan22-e2e-20260805T191659Z` and
+`byof-wan22-multigpu-e2e-20260806T024353Z`; future compatibility changes
+require fresh live evidence rather than inference from either run.

@@ -93,6 +93,17 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "wan2.2_decoded_mp4_validation",
         ],
     },
+    "wan2.2-multigpu": {
+        "capability_name": "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
+        "smoke_artifact_name": "wan2_2_ti2v_5b_multigpu.json",
+        "spec": "byof-wan2.2-multigpu.yaml",
+        "documented": True,
+        "must_exercise": [
+            "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
+            "wan2.2_distributed_rank_topology_validation",
+            "wan2.2_decoded_mp4_validation",
+        ],
+    },
 }
 
 
@@ -152,6 +163,8 @@ def test_registry_skill_is_solution_specific_not_taxonomy() -> None:
     assert "Capability Testing Built Into Onboarding" in text
     assert "Capability Families (required taxonomy)" not in text
     for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
+        if expected.get("documented", True) is False:
+            continue
         assert expected["capability_name"] in text or expected["spec"] in text, solution
         assert f"byof-{solution}.yaml" in text or expected["spec"] in text
 
@@ -161,6 +174,8 @@ def test_oss_catalog_lists_solution_specific_capabilities() -> None:
     assert "Native Capabilities Per Container" in text
     assert "shared taxonomy" in text.lower() or "solution-specific" in text.lower()
     for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
+        if expected.get("documented", True) is False:
+            continue
         assert expected["capability_name"] in text, solution
         assert expected["smoke_artifact_name"] in text, solution
 
@@ -221,3 +236,30 @@ def test_wan22_zero_wait_reaches_the_terminal_state_without_a_hidden_cap() -> No
     assert "str(args.wait_timeout)" in repo_runner
     assert "None if args.wait_timeout <= 0" in verify_runner
     assert "deadline is None or time.time() < deadline" in verify_runner
+
+
+def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
+    config = _load_config(WORKFLOW_DIR / "byof-wan2.2-multigpu.yaml")
+    smoke = str(config["smoke_command"])
+    payload = yaml.safe_load(
+        (WORKFLOW_DIR / "byof-wan2.2-multigpu.yaml").read_text(encoding="utf-8")
+    )
+
+    assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
+    assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-b200-4gpu"
+    assert config["wait_timeout"] == "0"
+    assert "--nproc_per_node=4" in smoke
+    assert "--dit_fsdp --t5_fsdp --ulysses_size 4" in smoke
+    assert "runpy.run_path(\"/opt/byof/generate.py\"" in smoke
+    assert "ShardingStrategy.FULL_SHARD" in smoke
+    assert "ulysses_all_to_all_calls" in smoke
+    assert "all_gather_object" in smoke
+    assert "observer_final_barrier" in smoke
+    assert "uuid_sha256" in smoke and '"uuid"' not in smoke.lower()
+    assert '"sm_100"' in smoke and "[10, 0]" in smoke
+    assert "ffprobe" in smoke and 'ffprobe != "h264"' in smoke
+    assert "wan2_2_multigpu_topology.json" in smoke
+    assert "snapshot_download" not in str(config["build_command"])
+    assert '"weights_baked": False' in smoke
+    assert payload["resources"]["gpu"]["accelerators"] == "B200:4"
+    assert payload["resources"]["gpu"]["memory"] == "256Gi"

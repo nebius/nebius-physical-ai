@@ -34,6 +34,10 @@ unrelated implementation.
 - `byof-wan2.2.yaml` is the standalone solution candidate. It builds the pinned
   source, fetches pinned model inputs at run time, generates and decodes an MP4,
   and uploads all smoke outputs through the existing BYOF S3 path.
+- `byof-wan2.2-multigpu.yaml` is the distributed solution candidate. It uses
+  the pinned official `torchrun generate.py` path on four B200s in one pod with
+  NCCL, T5 and DiT FULL_SHARD FSDP, and Ulysses size 4, then publishes sanitized
+  per-rank/topology evidence plus the decoded MP4.
 - `bellboy-wan2.2-e2e.yaml` composes the real dataset-of-record validator,
   Bellboy-specific reference validation, the same Wan BYOF workload, and a
   held-out evaluation-boundary report.
@@ -46,6 +50,12 @@ npa/.venv/bin/npa workbench workflow validate-spec \
 npa/.venv/bin/npa workbench workflow plan-spec \
   npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml \
   --run-id wan22-plan
+
+npa/.venv/bin/npa workbench workflow validate-spec \
+  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
+npa/.venv/bin/npa workbench workflow plan-spec \
+  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml \
+  --run-id wan22-multigpu-plan
 
 npa/.venv/bin/npa workbench workflow validate-spec \
   npa/workflows/workbench/npa-workflows/bellboy-wan2.2-e2e.yaml
@@ -93,6 +103,23 @@ device is scheduled. This is the explicit RTX PRO `sm_120` path:
 persistent mounted cache when repeat runs should avoid another checkpoint
 download. `HF_TOKEN` is optional for these public assets and is read only from
 the run environment when present.
+
+The separate distributed route requests `B200:4`, 32 CPU, 256 GiB host memory,
+and 200 GB scratch in one Kubernetes pod. Four ranks are the smallest topology
+documented by the pinned official TI2V-5B efficiency path, and the model's 24
+attention heads divide evenly by four. It uses:
+
+```text
+torchrun --standalone --nnodes=1 --nproc_per_node=4 generate.py \
+  --task ti2v-5B --dit_fsdp --t5_fsdp --ulysses_size 4 ...
+```
+
+The hard gate requires world/local world size 4, one unique B200 per local
+rank, one node, compute capability 10.0, `sm_100` in the PyTorch wheel, NCCL
+initialization and all-reduce across every rank, FULL_SHARD wrappers for both
+T5 and WanModel, active Ulysses distributed-attention/all-to-all calls, and the
+upstream final barrier before evidence collection. Independent replicas, GPU
+visibility probes, or a rank-zero-only generation cannot pass.
 
 ## Episode input contract
 
@@ -203,6 +230,18 @@ s3://<bucket>/oss-solutions/wan2.2/<run-id>/
   smoke.log
 ```
 
+The distributed workflow publishes under the separate
+`oss-solutions/wan2.2-multigpu/<run-id>/` prefix:
+
+```text
+npa_byof_summary.json
+wan2_2_ti2v_5b_multigpu.json
+wan2_2_multigpu_topology.json
+wan2_2_multigpu_runtime_inventory.json
+wan2_2_multigpu_rank_0.json ... wan2_2_multigpu_rank_3.json
+wan2_2_ti2v_5b_multigpu.mp4
+```
+
 The primary JSON records source/model/tokenizer refs, task, prompt and seed,
 requested and observed dimensions/frame count/fps, exact GPU topology, runtime
 versions, file size, content-variation statistics, exercised capabilities, and
@@ -238,6 +277,9 @@ produces real action/task metrics.
 | --- | --- | --- |
 | TI2V-5B text-to-video | accepted; live validated | `byof-wan22-e2e-20260805T191659Z`: real native generation at 1280x704 on one RTX PRO 6000 Blackwell (`sm_120`) |
 | decoded MP4 validation | accepted; live validated | same run: all 17 H.264 frames decoded at 24 fps; 900,289 bytes, spatial stddev 48.8142, pixel range 255, mean temporal delta 0.8481 |
+| TI2V-5B four-GPU FSDP + Ulysses generation | accepted; live validated | `byof-wan22-multigpu-e2e-20260806T024353Z`: one node, four B200s (`sm_100`), world size 4, NCCL, T5/DiT FULL_SHARD FSDP, Ulysses size 4 through official `torchrun generate.py` |
+| distributed rank/topology validation | accepted; live validated | same run: four unique GPU hashes, ranks/local ranks 0–3, NCCL sum 10/10, 480 Ulysses attention and 1,920 all-to-all calls per rank, three upstream barriers and observed final barrier |
+| decoded MP4 validation (distributed run) | accepted; live validated | same run: 634,523-byte H.264, 1280x704, 17 frames at 24 fps; spatial stddev 46.9864, pixel range 255, mean temporal delta 0.731357, SHA-256 `ae77b119…09389` |
 | TI2V-5B image-to-video | deferred | real optional S3-image code path exists, but has no separate live input/output evidence |
 | T2V-A14B / I2V-A14B | deferred | separate much larger models and GPU contracts; not exercised by the 5B image |
 | S2V-14B | deferred | separate speech/audio inputs and checkpoint; not exercised |
@@ -299,6 +341,10 @@ candidates do not belong in the first-class Workbench
 - A device other than one compute-capability 12.0 GPU, a PyTorch build without
   `sm_120`, a missing driver inventory, or a failed native SDPA probe stops the
   run before model acquisition.
+- The distributed route additionally fails on any world size other than four,
+  duplicate local devices, multiple nodes, non-B200/compute-capability-10.0
+  devices, missing `sm_100`, a failed NCCL all-reduce, inactive T5/DiT
+  FULL_SHARD wrappers, zero Ulysses collectives, or a missing final barrier.
 - Model/tokenizer revision lookup failure stops the run; mutable fallback refs
   are not used.
 - Missing S3 credentials or malformed `context_image_uri` stops I2V input
@@ -316,6 +362,7 @@ candidates do not belong in the first-class Workbench
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_bellboy_wan.py -q
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py -q
 npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_wan22_live_e2e.py -q
+npa/.venv/bin/python -m pytest npa/tests/e2e/test_byof_wan22_multigpu_live_e2e.py -q
 ```
 
 The E2E file always performs local spec/render checks. Its live RTX PRO test is
@@ -324,3 +371,11 @@ operator configuration, S3 credentials, and an explicitly supplied registry
 image/build destination. Run `byof-wan22-e2e-20260805T191659Z` passed that gate,
 including exact image/ref provenance in the S3 summary and an independent full
 MP4 decode on the operator host.
+
+The multi-GPU E2E is separately gated by
+`NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU=1`. Run
+`byof-wan22-multigpu-e2e-20260806T024353Z` passed on one four-B200 pod with
+PyTorch 2.7.1+cu128, CUDA 12.8, driver 580.159.04, and NCCL 2.26.2. It reused
+the already accepted immutable candidate image bytes (digest
+`sha256:2baaa063…cbb3`), proved `sm_100` at run time, verified 18 uploaded
+objects, and independently decoded the downloaded MP4 on the operator host.

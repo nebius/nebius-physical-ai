@@ -23,6 +23,7 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
+| Alibaba Wan 2.2 TI2V-5B (**4-GPU distributed**) | same pinned source/checkpoint | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | multi-GPU capability JSON + rank topology + runtime inventory + MP4 | `byof-wan2.2-multigpu.yaml` |
 
 ## Live capability results
 
@@ -52,6 +53,9 @@ unique and must be tested with its own upstream-named capabilities.
 | Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (21 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 10 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
 | Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **accepted** | `byof-wan22-e2e-20260805T191659Z`: pulled private candidate image; native TI2V-5B generation on RTX PRO 6000 Blackwell (`sm_120`) |
 | Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` | **accepted** | Same run: 900,289-byte H.264 MP4, 1280x704, 17 frames at 24 fps; full decode and non-uniform-content gates passed |
+| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | **accepted** | `byof-wan22-multigpu-e2e-20260806T024353Z`: one node, 4×B200 (`sm_100`), world size 4, NCCL + T5/DiT FULL_SHARD FSDP + Ulysses size 4 through the official `torchrun generate.py` path |
+| Wan 2.2 TI2V-5B | `wan2.2_distributed_rank_topology_validation` | **accepted** | Same run: four unique GPU hashes/ranks 0–3, NCCL sum 10/10 per rank, 480 distributed-attention and 1,920 all-to-all calls per rank, three upstream barriers plus the observed final barrier |
+| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` (distributed run) | **accepted** | Same run: 634,523-byte H.264 MP4, 1280x704, 17 frames at 24 fps; spatial stddev 46.9864, pixel range 255, temporal delta 0.731357, SHA-256 `ae77b119…09389` |
 
 ## Native Capabilities Per Container
 
@@ -134,15 +138,23 @@ Official Alibaba generative-video baseline, pinned to
 official `Wan-AI/Wan2.2-TI2V-5B` checkpoint pinned to
 `921dbaf3f1674a56f47e83fb80a34bac8a8f203e`. Checkpoint and tokenizer files are
 fetched at run time; they are not baked into the BYOF image. The checked-in
-profile targets one RTX PRO 6000 Blackwell (`sm_120`) and the upstream PyTorch
-SDPA fallback. The smoke fails unless the official CUDA 12.8 PyTorch wheel
-contains `sm_120`, the observed device is compute capability 12.0, and a native
-SDPA probe returns finite output.
+single-GPU profile targets one RTX PRO 6000 Blackwell (`sm_120`) and the
+upstream PyTorch SDPA fallback. The separate distributed profile requests four
+B200s in one pod. It invokes the pinned official `torchrun` entrypoint with
+`--dit_fsdp --t5_fsdp --ulysses_size 4`; the 24 attention heads divide evenly
+across the four Ulysses ranks. The distributed smoke fails unless the CUDA 12.8
+PyTorch wheel contains `sm_100`, every observed device is compute capability
+10.0, NCCL connects all four unique devices, both T5 and WanModel use
+FULL_SHARD FSDP, and Ulysses performs real distributed attention/all-to-all
+collectives during the shared generation.
 
 | Capability | Status | Upstream basis / NPA evidence |
 | --- | --- | --- |
 | `wan2.2_ti2v_5b_text_to_video` | accepted (live validated) | `byof-wan22-e2e-20260805T191659Z`: native `wan.WanTI2V.generate` at 1280x704 on RTX PRO 6000 Blackwell (`sm_120`) |
 | `wan2.2_decoded_mp4_validation` | accepted (live validated) | same run: all 17 frames decoded at 24 fps; 900,289 bytes, spatial stddev 48.8142, pixel range 255, mean temporal delta 0.8481 |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted (live validated) | `byof-wan22-multigpu-e2e-20260806T024353Z`: official four-rank `torchrun generate.py` path on one 4×B200 node; NCCL, T5/DiT FULL_SHARD FSDP, Ulysses size 4 |
+| `wan2.2_distributed_rank_topology_validation` | accepted (live validated) | same run: ranks/local ranks 0–3 mapped to four unique GPU hashes; each rank recorded NCCL sum 10/10, 480 Ulysses attention calls, 1,920 all-to-all calls, three upstream barriers, and the observed final barrier |
+| `wan2.2_decoded_mp4_validation` (distributed run) | accepted (live validated) | same run: all 17 H.264 frames decoded at 24 fps; 634,523 bytes, spatial stddev 46.9864, pixel range 255, mean temporal delta 0.731357, SHA-256 `ae77b119…09389` |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | official unified-model capability and a real optional S3-image code path exist, but no separate live input/output evidence |
 | `wan2.2_t2v_a14b` / `wan2.2_i2v_a14b` | deferred | separate MoE checkpoints and materially different GPU contract; not in this image gate |
 | `wan2.2_s2v_14b` | deferred | separate speech/audio inputs and checkpoint |
@@ -151,15 +163,16 @@ SDPA probe returns finite output.
 | `bellboy_private_action_prediction` as stock Wan | rejected | action prediction is not an upstream Wan 2.2 capability |
 | `bellboy_private_action_prediction` as customer BYOF | deferred | private repo/ref, entrypoint, checkpoint, action schema, data authorization, predictions artifact, and held-out evaluator are not supplied |
 
-The primary JSON is `wan2_2_ti2v_5b_text_to_video.json`; the accompanying
-`wan2_2_ti2v_5b.mp4` is uploaded by the generic BYOF S3 runner and renders in
-the NPA agent's existing video viewer. `wan2_2_runtime_inventory.json` records
-the package/license metadata and baked-checkpoint scan from inside the pulled
-image. Capability acceptance was established by the gated RTX PRO E2E, which
-selected the exact scanned private-registry image, ran the real generator,
-retrieved the named JSON and MP4 from S3, decoded the MP4 again, and verified
-the GPU topology. This live capability result does not by itself authorize
-public image publication.
+The single-GPU primary JSON is `wan2_2_ti2v_5b_text_to_video.json`. The
+distributed workflow emits `wan2_2_ti2v_5b_multigpu.json`,
+`wan2_2_multigpu_topology.json`, four per-rank JSON files,
+`wan2_2_multigpu_runtime_inventory.json`, and
+`wan2_2_ti2v_5b_multigpu.mp4`. The generic BYOF runner uploads every artifact,
+and the MP4 renders in the NPA agent's existing video viewer. The accepted
+distributed run used the same immutable private image bytes as the single-GPU
+run (digest `sha256:2baaa063…cbb3`) and independently proved its baked
+`sm_100` support at run time. These live capability results do not by
+themselves authorize public image publication.
 
 Bellboy's episode/action boundary is a separate, honest workflow composition in
 `bellboy-wan2.2-e2e.yaml`; stock Wan records episode lineage and accepts only a

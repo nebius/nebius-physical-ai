@@ -652,6 +652,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "byof-wan2.2-multigpu.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "Runnable four-B200 Wan 2.2 TI2V-5B torchrun stage. The dedicated "
+            "live E2E additionally verifies immutable-image reuse, all four NCCL "
+            "ranks, FULL_SHARD T5/DiT, Ulysses collectives, S3 topology JSON, and "
+            "the decoded H.264 MP4."
+        ),
+    ),
+    SubmitLiveCase(
         "bellboy-wan2.2-e2e.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
