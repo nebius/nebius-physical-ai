@@ -12,6 +12,7 @@ import json
 import os
 import re
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
 
@@ -19,6 +20,29 @@ from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
 
 Kubectl = Callable[..., Any]
+
+
+_SERVER_MANAGED_METADATA_FIELDS = frozenset(
+    {
+        "creationTimestamp",
+        "deletionGracePeriodSeconds",
+        "deletionTimestamp",
+        "generation",
+        "managedFields",
+        "resourceVersion",
+        "selfLink",
+        "uid",
+    }
+)
+_SERVER_MANAGED_JOB_LABELS = frozenset(
+    {
+        "batch.kubernetes.io/controller-uid",
+        "batch.kubernetes.io/job-name",
+        "controller-uid",
+        "job-name",
+    }
+)
+_LAST_APPLIED_ANNOTATION = "kubectl.kubernetes.io/last-applied-configuration"
 
 
 class GpuCapacityExhausted(RuntimeError):
@@ -491,6 +515,58 @@ def _delete_job_and_wait(
     )
 
 
+def _fresh_job_manifest(manifest: dict[str, Any], *, job_name: str) -> dict[str, Any]:
+    """Return a create-safe Job manifest without identity from an older object.
+
+    Unbounded capacity retries deliberately reuse a deterministic Job name after
+    deleting an unschedulable attempt.  A manifest obtained from or mutated by a
+    prior API object can contain the old Job's generated selector and controller
+    labels; Kubernetes then allocates a new UID and rejects that stale identity.
+    Strip only server-owned identity/defaulting fields, preserving all workload,
+    provenance, security, and operator-provided labels on a defensive copy.
+    """
+
+    fresh = deepcopy(manifest)
+    metadata = fresh.setdefault("metadata", {})
+    if not isinstance(metadata, dict):
+        raise TypeError("GPU Job manifest metadata must be an object")
+    metadata["name"] = job_name
+    for field in _SERVER_MANAGED_METADATA_FIELDS:
+        metadata.pop(field, None)
+    metadata_labels = metadata.get("labels")
+    if isinstance(metadata_labels, dict):
+        for label in _SERVER_MANAGED_JOB_LABELS:
+            metadata_labels.pop(label, None)
+    annotations = metadata.get("annotations")
+    if isinstance(annotations, dict):
+        annotations.pop(_LAST_APPLIED_ANNOTATION, None)
+
+    spec = fresh.setdefault("spec", {})
+    if not isinstance(spec, dict):
+        raise TypeError("GPU Job manifest spec must be an object")
+    if not bool(spec.get("manualSelector")):
+        # The Job API generates a selector bound to the new object's UID.
+        spec.pop("selector", None)
+        spec.pop("manualSelector", None)
+    template = spec.setdefault("template", {})
+    if not isinstance(template, dict):
+        raise TypeError("GPU Job manifest pod template must be an object")
+    template_metadata = template.setdefault("metadata", {})
+    if not isinstance(template_metadata, dict):
+        raise TypeError("GPU Job pod-template metadata must be an object")
+    for field in _SERVER_MANAGED_METADATA_FIELDS:
+        template_metadata.pop(field, None)
+    template_labels = template_metadata.get("labels")
+    if isinstance(template_labels, dict):
+        for label in _SERVER_MANAGED_JOB_LABELS:
+            template_labels.pop(label, None)
+    template_annotations = template_metadata.get("annotations")
+    if isinstance(template_annotations, dict):
+        template_annotations.pop(_LAST_APPLIED_ANNOTATION, None)
+    fresh.pop("status", None)
+    return fresh
+
+
 def run_gpu_job_with_fallback(
     *,
     kubectl: Kubectl,
@@ -563,8 +639,15 @@ def run_gpu_job_with_fallback(
     )
 
     def _candidate_attempts() -> Iterable[tuple[int, str]]:
+        attempt_index = 0
         while True:
-            yield from enumerate(plan.products)
+            for product in plan.products:
+                # Never recreate a just-deleted Job under the same API-object
+                # name. Some API-server retry/defaulting paths can retain the
+                # first object's generated controller UID in the pod template,
+                # then reject it against the replacement Job's new UID.
+                yield attempt_index, product
+                attempt_index += 1
             if timeout_s > 0:
                 return
             # An explicit zero timeout is the operator's unbounded contract.
@@ -577,7 +660,9 @@ def run_gpu_job_with_fallback(
     for index, product in _candidate_attempts():
         attempt_started = time.monotonic()
         job_name = _attempt_job_name(base_job_name, index)
-        manifest = manifest_factory(product, job_name)
+        manifest = _fresh_job_manifest(
+            manifest_factory(product, job_name), job_name=job_name
+        )
         _delete_job_and_wait(
             kubectl,
             job_name=job_name,

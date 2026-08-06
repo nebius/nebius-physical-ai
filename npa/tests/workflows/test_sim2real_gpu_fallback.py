@@ -235,6 +235,7 @@ class _Scheduler:
         self.current_product = ""
         self.current_job = ""
         self.applied_products: list[str] = []
+        self.created_jobs: list[str] = []
         self.commands: list[list[str]] = []
 
     def __call__(
@@ -255,6 +256,7 @@ class _Scheduler:
             ]
             self.current_job = manifest["metadata"]["name"]
             self.applied_products.append(self.current_product)
+            self.created_jobs.append(self.current_job)
             return subprocess.CompletedProcess(args, 0, "created", "")
         if args[:2] == ["get", "pods"]:
             outcome = self.outcomes.get(self.current_product, "success")
@@ -409,6 +411,91 @@ def test_large_embedded_job_uses_annotation_free_create(
     assert all(command[0] != "apply" for command in scheduler.commands)
 
 
+def test_create_strips_stale_server_managed_job_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-name retry must not submit the previous Job controller UID."""
+
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "success"})
+    submitted: dict[str, Any] = {}
+    old_uid = "fcbb8525-2181-4c32-bf33-4a2fff7ba520"
+
+    def stale_manifest(product: str, job_name: str) -> dict[str, Any]:
+        manifest = _manifest(product, job_name)
+        manifest["metadata"].update(
+            {
+                "uid": old_uid,
+                "resourceVersion": "12345",
+                "generation": 2,
+                "creationTimestamp": "2026-08-06T11:00:00Z",
+                "managedFields": [{"manager": "kube-controller-manager"}],
+                "labels": {
+                    "run-id": "preserved-run",
+                    "controller-uid": old_uid,
+                    "batch.kubernetes.io/job-name": job_name,
+                },
+                "annotations": {
+                    "operator.example/proof": "preserve-me",
+                    "kubectl.kubernetes.io/last-applied-configuration": "oversized",
+                },
+            }
+        )
+        manifest["spec"].update(
+            {
+                "selector": {"matchLabels": {"controller-uid": old_uid}},
+                "manualSelector": False,
+            }
+        )
+        manifest["spec"]["template"]["metadata"] = {
+            "labels": {
+                "app": "preserved-app",
+                "controller-uid": old_uid,
+                "batch.kubernetes.io/controller-uid": old_uid,
+                "job-name": job_name,
+                "batch.kubernetes.io/job-name": job_name,
+            }
+        }
+        manifest["status"] = {"failed": 1}
+        return manifest
+
+    def capture_create(
+        args: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["create", "-f"]:
+            submitted.update(json.loads(kwargs.get("stdin") or "{}"))
+        return scheduler(args, **kwargs)
+
+    run_gpu_job_with_fallback(
+        kubectl=capture_create,
+        manifest_factory=stale_manifest,
+        base_job_name="s2r-stale-controller-uid",
+        namespace="default",
+        image="registry/image@sha256:abc123",
+        preferred_product=RTX,
+        explicit_candidates=(),
+        workload="isaac",
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+        timeout_s=10,
+    )
+
+    assert submitted["metadata"]["name"] == "s2r-stale-controller-uid"
+    assert submitted["metadata"]["labels"] == {"run-id": "preserved-run"}
+    assert submitted["metadata"]["annotations"] == {
+        "operator.example/proof": "preserve-me"
+    }
+    assert "uid" not in submitted["metadata"]
+    assert "resourceVersion" not in submitted["metadata"]
+    assert "managedFields" not in submitted["metadata"]
+    assert "selector" not in submitted["spec"]
+    assert "manualSelector" not in submitted["spec"]
+    assert submitted["spec"]["template"]["metadata"]["labels"] == {
+        "app": "preserved-app"
+    }
+    assert "status" not in submitted
+
+
 def test_zero_timeout_waits_without_imposing_job_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -464,6 +551,12 @@ def test_zero_timeout_rechecks_transient_same_product_capacity(
     )
 
     assert scheduler.applied_products == [RTX, L40S, RTX]
+    assert scheduler.created_jobs == [
+        "s2r-transient-capacity",
+        "s2r-transient-capacity-gpu2",
+        "s2r-transient-capacity-gpu3",
+    ]
+    assert len(set(scheduler.created_jobs)) == len(scheduler.created_jobs)
     assert [item["status"] for item in result["attempts"]] == [
         "unschedulable",
         "unschedulable",
