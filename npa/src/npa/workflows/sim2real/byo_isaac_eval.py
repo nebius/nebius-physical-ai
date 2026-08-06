@@ -384,16 +384,13 @@ try:
             raise RuntimeError("could not apply task-contract object USD: %r" % (e,)) from e
     # Drive randomization from the GENERATED env seed so the trained policy is
     # tested on the envgen-produced env distribution, not stock defaults.
-    if SEED:
-        try:
-            env_cfg.seed = SEED
-        except Exception as e:
-            print("could not set env_cfg.seed:", repr(e), flush=True)
-        try:
-            torch.manual_seed(SEED); np.random.seed(SEED % (2**32))
-        except Exception:
-            pass
-        print("EVAL_SEED_APPLIED", SEED, flush=True)
+    # Zero is a valid and intentional fixed-validation seed.  Do not use a
+    # truthiness guard here: skipping seed 0 makes otherwise fixed checkpoint
+    # comparisons depend on Isaac's process-global RNG state.
+    env_cfg.seed = SEED
+    torch.manual_seed(SEED)
+    np.random.seed(SEED % (2**32))
+    print("EVAL_SEED_APPLIED", SEED, flush=True)
     # Capture synchronized primary, side, and overhead views. Isaac Lab's
     # ``world`` camera convention looks along +X; the orchestrator serializes
     # validated wxyz poses into CAMERA_VIEWS. ``heldout_cam`` remains the primary

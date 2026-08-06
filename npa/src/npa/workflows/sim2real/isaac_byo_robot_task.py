@@ -1282,12 +1282,12 @@ try:
                 raise RuntimeError("ROBOT_OBJECT_SCALE must contain exactly three values")
             spawn.scale = tuple(float(value) for value in scale)
         print("ROBOT_OBJECT_USD_APPLIED", object_usd, flush=True)
-    if SEED:
-        try:
-            env_cfg.seed = SEED
-        except Exception as e:
-            print("could not set env_cfg.seed:", repr(e), flush=True)
-        torch.manual_seed(SEED)
+    # Seed 0 is valid and is the canonical real-workflow default.  Applying it
+    # unconditionally keeps resumed PPO passes and checkpoint comparisons on a
+    # documented RNG stream instead of silently inheriting process state.
+    env_cfg.seed = SEED
+    torch.manual_seed(SEED)
+    print("ROBOT_SEED_APPLIED", SEED, flush=True)
     agent_cfg = load_cfg_from_registry(task, "rsl_rl_cfg_entry_point")
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     acfg["max_iterations"] = ITERS
@@ -1295,8 +1295,7 @@ try:
     # Guarantee a checkpoint even for a tiny probe run.
     validation_interval = max(1, int(os.environ.get("ROBOT_VALIDATION_INTERVAL", "100") or 100))
     acfg["save_interval"] = min(validation_interval, ITERS)
-    if SEED:
-        acfg["seed"] = SEED
+    acfg["seed"] = SEED
     # Keep PPO exploring through the grasp bottleneck (same fix as the Franka
     # default path): without this the action-noise std collapses early and the
     # swapped arm locks into a reach-and-hover local optimum (the flat-reward

@@ -199,6 +199,13 @@ require the exact runtime-applied digest set to match their reported rows.
 | `HELDOUT_ENV_COUNT` | `64` | integer ≥1 | untouched gold episodes requested from final Stage 10 |
 | `NPA_SIM2REAL_HELDOUT_EVAL_LIMIT` | `0` | integer ≥0 | cap on held-out input rows; `0` means uncapped |
 
+Isaac seed `0` is a valid reproducibility value, not an unset sentinel. The
+canonical trainer applies it to both the environment and the native RSL-RL
+agent; fixed-validation and gold-evaluation Jobs apply it to Isaac, Torch, and
+NumPy before environment creation. Runtime logs must therefore contain
+`ROBOT_SEED_APPLIED 0` or `EVAL_SEED_APPLIED 0`; `Environment seed: None` is a
+failed reproducibility check.
+
 Stage 8 partitions every event label into `vlm_accepted_steps` or
 `vlm_rejected_or_downweighted_steps`. Acceptance requires a model-local,
 non-broadcast critique with confidence at least 0.5, no dual-model

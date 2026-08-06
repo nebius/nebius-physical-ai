@@ -222,6 +222,17 @@ def test_eval_manifest_embeds_generated_seed():
     assert 'EVAL_SEED="1744247227"' in args
 
 
+def test_eval_script_applies_zero_seed_unconditionally():
+    seed_block = ev.ISAAC_EVAL_SCRIPT.split(
+        "# Drive randomization from the GENERATED env seed", 1
+    )[1].split("# Capture synchronized primary", 1)[0]
+    assert "if SEED:" not in seed_block
+    assert "env_cfg.seed = SEED" in seed_block
+    assert "torch.manual_seed(SEED)" in seed_block
+    assert "np.random.seed(SEED % (2**32))" in seed_block
+    assert 'print("EVAL_SEED_APPLIED", SEED' in seed_block
+
+
 def test_eval_script_uses_oblique_workspace_camera_for_renders():
     script = ev.ISAAC_EVAL_SCRIPT
     assert "for view in CAMERA_VIEWS" in script
