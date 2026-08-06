@@ -590,6 +590,13 @@ def _fresh_job_manifest(manifest: dict[str, Any], *, job_name: str) -> dict[str,
         )
         if isinstance(match_labels, dict):
             template_labels.update(match_labels)
+    # The Job controller omits its conventional job-name labels when an
+    # operator supplies a manual selector.  Our scheduler/capacity probes use
+    # this stable label to find the pod, so restore it client-side after stale
+    # identity has been stripped.  Unlike controller-uid, the value is known
+    # before create and remains valid across an internal POST retry.
+    template_labels["job-name"] = job_name
+    template_labels["batch.kubernetes.io/job-name"] = job_name
     template_annotations = template_metadata.get("annotations")
     if isinstance(template_annotations, dict):
         template_annotations.pop(_LAST_APPLIED_ANNOTATION, None)

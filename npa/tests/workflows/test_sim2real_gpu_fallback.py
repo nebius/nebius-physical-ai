@@ -497,6 +497,8 @@ def test_create_strips_stale_server_managed_job_identity(
     assert submitted["spec"]["selector"] == {"matchLabels": {attempt_label: attempt_id}}
     assert submitted["spec"]["template"]["metadata"]["labels"] == {
         "app": "preserved-app",
+        "job-name": "s2r-stale-controller-uid",
+        "batch.kubernetes.io/job-name": "s2r-stale-controller-uid",
         attempt_label: attempt_id,
     }
     assert "status" not in submitted
@@ -541,6 +543,16 @@ def test_each_create_gets_a_unique_client_owned_job_selector(
         assert manifest["spec"]["manualSelector"] is True
         assert manifest["spec"]["selector"] == {"matchLabels": {label: attempt_id}}
         assert manifest["spec"]["template"]["metadata"]["labels"][label] == attempt_id
+        assert (
+            manifest["spec"]["template"]["metadata"]["labels"]["job-name"]
+            == (manifest["metadata"]["name"])
+        )
+        assert (
+            manifest["spec"]["template"]["metadata"]["labels"][
+                "batch.kubernetes.io/job-name"
+            ]
+            == manifest["metadata"]["name"]
+        )
         assert all(
             generated not in manifest["spec"]["template"]["metadata"]["labels"]
             for generated in (
@@ -592,7 +604,9 @@ def test_explicit_manual_selector_is_preserved(
         "matchLabels": {"operator.example/attempt": "owned"}
     }
     assert submitted["spec"]["template"]["metadata"]["labels"] == {
-        "operator.example/attempt": "owned"
+        "batch.kubernetes.io/job-name": "s2r-operator-selector",
+        "job-name": "s2r-operator-selector",
+        "operator.example/attempt": "owned",
     }
     assert "npa.nebius.ai/job-attempt-id" not in submitted["metadata"].get("labels", {})
 
