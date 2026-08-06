@@ -409,15 +409,11 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
         ),
         k8s_gpu_candidates=tuple(
-            item.strip()
-            for item in str(
+            _split_csv(
                 overrides.get("k8s_gpu_candidates")
                 or os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES")
                 or ""
             )
-            .replace(";", ",")
-            .split(",")
-            if item.strip()
         ),
         k8s_kubeconfig=str(
             overrides.get("k8s_kubeconfig")

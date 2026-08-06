@@ -10,8 +10,15 @@ from urllib.parse import urlparse
 
 from npa.workflows.sim2real.models import Sim2RealLoopConfig, Sim2RealLoopError
 
-def _split_csv(value: str) -> list[str]:
-    return [part.strip() for part in str(value or "").split(",") if part.strip()]
+
+def _split_csv(value: Any) -> list[str]:
+    """Split scalar or already-parsed values without leaking container reprs."""
+
+    values = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
+    parts: list[str] = []
+    for item in values:
+        parts.extend(str(item or "").replace(";", ",").split(","))
+    return [part.strip() for part in parts if part.strip()]
 
 
 def _serviceaccount_namespace() -> str:
@@ -19,6 +26,8 @@ def _serviceaccount_namespace() -> str:
     if path.exists():
         return path.read_text(encoding="utf-8").strip()
     return ""
+
+
 def _artifact_root_uri(config: Sim2RealLoopConfig) -> str:
     parts = [part for part in (config.s3_prefix.strip("/"), config.run_id) if part]
     return f"s3://{config.s3_bucket}/{'/'.join(parts)}"

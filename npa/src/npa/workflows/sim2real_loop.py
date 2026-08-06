@@ -693,15 +693,11 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
         ),
         k8s_gpu_candidates=tuple(
-            item.strip()
-            for item in str(
+            _split_csv(
                 overrides.get("k8s_gpu_candidates")
                 or os.environ.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES")
                 or ""
             )
-            .replace(";", ",")
-            .split(",")
-            if item.strip()
         ),
         k8s_kubeconfig=str(
             overrides.get("k8s_kubeconfig")
@@ -2939,8 +2935,12 @@ def _safe_slug(value: str) -> str:
     return "-".join(part for part in "".join(chars).split("-") if part)
 
 
-def _split_csv(value: str) -> list[str]:
-    return [part.strip() for part in str(value or "").split(",") if part.strip()]
+def _split_csv(value: Any) -> list[str]:
+    values = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
+    parts: list[str] = []
+    for item in values:
+        parts.extend(str(item or "").replace(";", ",").split(","))
+    return [part.strip() for part in parts if part.strip()]
 
 
 def _serviceaccount_namespace() -> str:

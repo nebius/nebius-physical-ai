@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 import yaml
 
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_view_names
 from npa.workflows.sim2real.capture import capture_settings, ppo_settings
+from npa.workflows.sim2real.config import build_config_from_env
 from npa.workflows.sim2real.constants import (
     DEFAULT_ENV_COUNT,
     DEFAULT_HELDOUT_ENVS,
@@ -93,7 +95,10 @@ def test_capture_and_ppo_defaults_are_inspection_and_training_grade() -> None:
 
 
 def test_camera_metadata_has_three_named_views_pose_and_intrinsics() -> None:
-    metadata = camera_metadata("front,side,top", width=1280, height=720)
+    metadata = cast(
+        list[dict[str, Any]],
+        camera_metadata("front,side,top", width=1280, height=720),
+    )
     assert [item["name"] for item in metadata] == ["primary", "side", "overhead"]
     for item in metadata:
         assert item["pose_frame"] == "isaac_world"
@@ -132,6 +137,34 @@ def test_materialized_job_carries_capture_ppo_and_visualization_knobs() -> None:
         "NPA_BYO_ISAAC_JOB_TIMEOUT_S",
     ):
         assert container_env[name] == envs[name]
+
+
+@pytest.mark.parametrize(
+    "candidates",
+    [
+        "RTX PRO 6000,L40S",
+        "RTX PRO 6000;L40S",
+        ("RTX PRO 6000", "L40S"),
+        ["RTX PRO 6000", "L40S"],
+    ],
+)
+def test_gpu_candidate_config_round_trip_never_stringifies_sequences(
+    candidates: object,
+) -> None:
+    config = build_config_from_env(
+        run_id="gpu-candidate-round-trip",
+        k8s_gpu_candidates=candidates,
+    )
+    assert config.k8s_gpu_candidates == ("RTX PRO 6000", "L40S")
+    assert all("'" not in candidate for candidate in config.k8s_gpu_candidates)
+
+    from npa.workflows import sim2real_loop as compatibility_loop
+
+    compatibility_config = compatibility_loop.build_config_from_env(
+        run_id="gpu-candidate-compatibility-round-trip",
+        k8s_gpu_candidates=candidates,
+    )
+    assert compatibility_config.k8s_gpu_candidates == ("RTX PRO 6000", "L40S")
 
 
 @pytest.mark.parametrize(
