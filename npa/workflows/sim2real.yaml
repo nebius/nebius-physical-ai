@@ -148,9 +148,12 @@ envs:
   NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS: "300"
   # Cosmos sees every sampled decision/event frame and has enough output budget
   # for one compact, indexed critique per event. Real-tier validation rejects a
-  # smaller frame window or a token budget below 64 tokens per event.
+  # smaller frame window or a token budget below 64 tokens per event. The
+  # 8,192-token default also leaves room for verbose models; fully decoded
+  # event rows are retained if the model still truncates, and missing rows are
+  # rejected at zero confidence rather than synthesized from the summary.
   NPA_COSMOS_REASON_MAX_FRAMES: "32"
-  NPA_COSMOS_REASON_MAX_NEW_TOKENS: "4096"
+  NPA_COSMOS_REASON_MAX_NEW_TOKENS: "8192"
   VALIDATION_ENV_COUNT: "64"
   HELDOUT_ENV_COUNT: "64"
   # Per-episode Isaac metric in metres. This is intentionally separate from

@@ -15,7 +15,7 @@ DEFAULT_REASON1_CACHE = "/tmp/hf_home/cosmos-reason1"
 DEFAULT_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
 DEFAULT_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
 DEFAULT_REASON_EVENT_FRAMES = 32
-DEFAULT_REASON_MAX_NEW_TOKENS = 4096
+DEFAULT_REASON_MAX_NEW_TOKENS = 8192
 REFERENCE_VLM_ALIASES = frozenset(
     {"", "npa-cosmos3-reason", "cosmos3-reason", "cosmos-reason", "reason2", "reason3"}
 )
@@ -474,7 +474,9 @@ def _cosmos_reason_prompt(
         "score (number from 0 to 1), summary (natural-language critique), and "
         "per_step (array of objects with step, critique_text, error_tags, "
         "camera_observation, confidence). per_step MUST contain exactly one "
-        "compact, event-specific object for every required index; never copy or "
+        "compact, event-specific object for every required index; keep each "
+        "critique_text at 12 words or fewer, and set camera_observation to the "
+        "corresponding frame filename rather than another description; never copy or "
         "broadcast the rollout summary into step entries. If a step cannot be "
         "judged visually, use a step-specific 'insufficient visual evidence' "
         "critique with confidence 0. Use only these error tags when applicable: "
@@ -493,34 +495,52 @@ def _parse_cosmos_reason_output(
 ) -> dict[str, Any]:
     payload = _json_object_from_text(model_text)
     if payload is None:
+        payload = _recover_truncated_cosmos_payload(model_text)
+    if payload is None:
         payload = _parse_unstructured_vlm_output(model_text, threshold=threshold)
     if "score" not in payload:
         raise CosmosReasonError(f"{family} output did not include a numeric score")
     score = max(0.0, min(1.0, float(payload["score"])))
     success = bool(payload.get("success", score >= threshold))
     raw_steps = payload.get("per_step") or payload.get("steps") or []
-    if not raw_steps:
-        # Keep the real rollout-level model result in ``summary``, but never turn
-        # it into fake temporal credit. Every absent local label is an explicit
-        # zero-confidence rejection whose text identifies its own step.
-        raw_steps = [
+    expected_actions = {
+        int(action.get("step", index)): action for index, action in enumerate(actions)
+    }
+    model_steps: dict[int, dict[str, Any]] = {}
+    for index, raw in enumerate(raw_steps):
+        if not isinstance(raw, dict):
+            continue
+        try:
+            step = int(raw.get("step", index))
+        except (TypeError, ValueError):
+            continue
+        if step in expected_actions and step not in model_steps:
+            model_steps[step] = raw
+
+    # Keep the real rollout-level model result in ``summary``, but never turn it
+    # into fake temporal credit. Truncated or omitted local labels become
+    # explicit zero-confidence rejections whose text identifies their own step.
+    normalized_raw_steps: list[dict[str, Any]] = []
+    for step in expected_actions:
+        raw = model_steps.get(step)
+        if raw is not None:
+            normalized_raw_steps.append(raw)
+            continue
+        normalized_raw_steps.append(
             {
-                "step": int(action.get("step", index)),
+                "step": step,
                 "critique_text": (
-                    f"{family} returned no model-local critique for step "
-                    f"{int(action.get('step', index))}; simulator state only."
+                    f"{family} returned no model-local critique for step {step}; "
+                    "simulator state only."
                 ),
                 "error_tags": ["ok"],
                 "critique_source": "model_missing",
                 "confidence": 0.0,
-                "camera_observation": f"camera-{int(action.get('step', index)):03d}.ppm",
+                "camera_observation": f"camera-{step:03d}.ppm",
             }
-            for index, action in enumerate(actions)
-        ]
+        )
     per_step: list[dict[str, Any]] = []
-    for index, raw in enumerate(raw_steps):
-        if not isinstance(raw, dict):
-            raw = {"critique_text": str(raw)}
+    for index, raw in enumerate(normalized_raw_steps):
         step = int(raw.get("step", index))
         critique = str(
             raw.get("critique_text") or raw.get("critique") or raw.get("text") or ""
@@ -545,9 +565,7 @@ def _parse_cosmos_reason_output(
                 "step": step,
                 "critique_text": critique,
                 "error_tags": normalized_tags,
-                "action": actions[index].get("action", [])
-                if index < len(actions)
-                else [],
+                "action": expected_actions[step].get("action", []),
                 "camera_observation": str(
                     raw.get("camera_observation") or f"camera-{step:03d}.ppm"
                 ),
@@ -612,16 +630,77 @@ def _json_object_from_text(text: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _recover_truncated_cosmos_payload(text: str) -> dict[str, Any] | None:
+    """Recover complete fields and event rows from a token-truncated JSON answer.
+
+    Cosmos occasionally exhausts its generation budget after writing valid event
+    objects but before closing the surrounding array/object. We preserve only
+    fully decodable rows; the caller marks every missing event as rejected at
+    zero confidence. This is intentionally schema-specific rather than a general
+    permissive JSON parser.
+    """
+
+    success_match = re.search(
+        r'"success"\s*:\s*(true|false)', text, flags=re.IGNORECASE
+    )
+    score_match = re.search(
+        r'"score"\s*:\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)', text
+    )
+    if score_match is None:
+        return None
+    payload: dict[str, Any] = {"score": float(score_match.group(1))}
+    if success_match is not None:
+        payload["success"] = success_match.group(1).lower() == "true"
+
+    decoder = json.JSONDecoder()
+    summary_match = re.search(r'"summary"\s*:\s*', text)
+    if summary_match is not None:
+        try:
+            summary, _ = decoder.raw_decode(text, summary_match.end())
+        except json.JSONDecodeError:
+            summary = ""
+        if isinstance(summary, str):
+            payload["summary"] = summary
+
+    steps_match = re.search(r'"(?:per_step|steps)"\s*:\s*\[', text)
+    if steps_match is not None:
+        cursor = steps_match.end()
+        steps: list[dict[str, Any]] = []
+        while cursor < len(text):
+            while cursor < len(text) and (
+                text[cursor].isspace() or text[cursor] == ","
+            ):
+                cursor += 1
+            if cursor >= len(text) or text[cursor] == "]":
+                break
+            try:
+                item, cursor = decoder.raw_decode(text, cursor)
+            except json.JSONDecodeError:
+                break
+            if isinstance(item, dict):
+                steps.append(item)
+        if steps:
+            payload["per_step"] = steps
+    return payload
+
+
 def _parse_unstructured_vlm_output(text: str, *, threshold: float) -> dict[str, Any]:
     lowered = text.lower()
     score_match = re.search(r"(?:score|confidence|rating)\D+([01](?:\.\d+)?)", lowered)
     if not score_match:
         raise CosmosReasonError("Cosmos Reason output was not parseable JSON")
     score = float(score_match.group(1))
-    if "success" in lowered or "pass" in lowered:
-        success = True
+    explicit_success = re.search(
+        r'["\']?success["\']?\s*[:=]\s*(true|false)',
+        lowered,
+        flags=re.IGNORECASE,
+    )
+    if explicit_success is not None:
+        success = explicit_success.group(1).lower() == "true"
     elif "fail" in lowered or "unsuccess" in lowered:
         success = False
+    elif re.search(r"\b(success|pass(?:ed)?)\b", lowered):
+        success = True
     else:
         success = score >= threshold
     return {

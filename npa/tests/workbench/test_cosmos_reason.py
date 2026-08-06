@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import json
+import os
 
 from npa.workbench.cosmos import reason as reason_module
 
@@ -46,7 +46,7 @@ def test_cosmos_reason_runtime_env_defaults_to_writable_cache() -> None:
 
 def test_reason_defaults_cover_every_canonical_decision_event() -> None:
     assert DEFAULT_REASON_EVENT_FRAMES == 32
-    assert DEFAULT_REASON_MAX_NEW_TOKENS >= 4096
+    assert DEFAULT_REASON_MAX_NEW_TOKENS >= 8192
 
 
 def test_apply_cosmos_reason_kubernetes_env_preserves_existing_values() -> None:
@@ -208,6 +208,42 @@ def test_single_array_wrapped_evaluation_preserves_event_local_critiques() -> No
         )
         is None
     )
+
+
+def test_token_truncated_output_recovers_complete_rows_and_explicit_false() -> None:
+    payload = reason_module._parse_cosmos_reason_output(
+        """```json
+[{"success": false, "score": 0.17, "summary": "missed cube",
+  "per_step": [
+    {"step": 0, "critique_text": "hovered above cube", "error_tags": ["late_grasp"], "confidence": 0.9},
+    {"step": 1, "critique_text": "fingers remained open", "error_tags": ["unstable"], "confidence": 0.8},
+    {"step": 2, "critique_text": "unterminated""",
+        actions=[
+            {"step": 0, "action": [0.1]},
+            {"step": 1, "action": [0.2]},
+            {"step": 2, "action": [0.3]},
+        ],
+        rollout_id="rollout-truncated",
+        threshold=0.5,
+        family="reason2",
+    )
+
+    assert payload["success"] is False
+    assert payload["score"] == 0.17
+    assert [row["step"] for row in payload["per_step"]] == [0, 1, 2]
+    assert [row["critique_source"] for row in payload["per_step"]] == [
+        "model_per_step",
+        "model_per_step",
+        "model_missing",
+    ]
+    assert payload["per_step"][2]["confidence"] == 0.0
+
+
+def test_unstructured_explicit_false_is_not_misread_as_success() -> None:
+    payload = reason_module._parse_unstructured_vlm_output(
+        'result: {"success": false, "score": 0.1, unfinished', threshold=0.5
+    )
+    assert payload["success"] is False
 
 
 def test_malformed_step_is_rejected_instead_of_copying_summary() -> None:
