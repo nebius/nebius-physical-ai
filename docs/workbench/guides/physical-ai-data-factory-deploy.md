@@ -725,7 +725,7 @@ npa workflow cancel <run-id> --project "$PROJECT" --json
 npa agent destroy --project "$PROJECT" --name <agent-name> --yes
 
 # 3. Remove the shared jobs controller only after every NPA workflow is terminal.
-npa skypilot cleanup-controller --yes
+npa skypilot cleanup-controller --project "$PROJECT" --context <context> --yes
 
 # 4. Cluster. `down` owns everything the Terraform path created — cluster, VPC,
 #    subnet — and clears ~/.npa/clusters/<context>/. It reads
@@ -750,7 +750,7 @@ npa configure --forget-project "$PROJECT"
 
 # 8. Remove known shared-service credentials, caches, the SkyPilot venv/state,
 #    and empty ~/.npa residue. Non-empty/unrelated local data is preserved.
-npa cleanup --full --yes
+npa cleanup --full --yes --project "$PROJECT"
 ```
 
 Notes:
@@ -793,8 +793,28 @@ Notes:
   failures as preview-only. One inventory covers all nodes, pods, controllers,
   namespaces, and PDBs, so cilium, CoreDNS/autoscaler, metrics-server, and future
   selector matches are evaluated consistently. On a one-node CPU pool it names
-  the missing replacement capacity and expected retry/backoff. NPA never patches
-  PDBs or force-deletes protected pods.
+  the missing replacement capacity and expected retry/backoff, then requests a
+  normal eviction. Only this explicitly confirmed whole-cluster destroy, after
+  exact project/context/provider identity verification, may temporarily remove
+  the exact kube-system cilium/CoreDNS/autoscaler/metrics-server PDBs. Their
+  specs are snapshotted and restored if destroy aborts while the cluster remains.
+  Shared clusters, node-pool operations, unverified contexts, and all
+  user/application budgets are never weakened or force-deleted.
+- **Controller identity and transaction ordering.** Controller teardown has
+  shared blast radius and never inherits the current kube context or first
+  SkyPilot profile. It uses the explicit/selected NPA project and exact saved
+  context, cross-checks stable cluster/project identity, proves remote controller
+  absence, writes a durable checkpoint, and only then removes matching local
+  metadata. Any auth/RBAC/connectivity/identity uncertainty preserves local state.
+- **Retained audit evidence is not residue.** Managed jobs are audited and
+  receipted before SkyPilot state is removed. Versioned non-secret receipts under
+  `~/.npa/teardown-receipts/` survive project/config cleanup, so repeat cleanup
+  does not turn verified phases back into unknown. Use `npa cleanup
+  --list-receipts`; prune only terminal, aged receipts explicitly.
+- **NPA itself is separate.** `npa cleanup` never removes the invoking venv.
+  `npa uninstall` previews the exact supported repository-local environment;
+  actual deferred removal requires `--remove-environment --yes` and never
+  includes source, `.git`, credentials, or unrelated caches.
 
 ## 9. Where to go next
 

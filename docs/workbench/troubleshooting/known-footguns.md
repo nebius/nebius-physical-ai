@@ -135,9 +135,14 @@ Mitigation: NPA resolves the canonical run prefix, reads authoritative workflow
 and per-stage/runtime-wave state, and cancels every exact non-terminal managed
 job ID. A job becoming terminal or absent during cancellation is successful
 convergence; malformed/ambiguous/auth/partial failures remain errors. Once every
-workflow is terminal, run `npa skypilot
-cleanup-controller --yes`; it waits for the queue to drain and retries the
-specific controller refusal. Planned/staged runs that never launched report
+workflow is terminal, run `npa skypilot cleanup-controller --project <alias>
+--context <context> --yes`; it waits for the queue to drain and retries the
+specific controller refusal. The explicit/selected project and exact NPA-saved
+context are cross-checked against immutable provider identity. Remote deletion
+runs without changing real local SkyPilot state; NPA independently proves the
+controller absent, durably checkpoints that evidence, and only then converges
+matching local metadata. An ambient current context, first/stale profile, or
+auth/RBAC/connectivity uncertainty is never treated as proof. Planned/staged runs that never launched report
 `already_absent` and remain repeat-safe without calling SkyPilot.
 
 Category for follow-up: platform.
@@ -180,9 +185,14 @@ and NPA says explicitly that PDB safety was not verified. The successful preview
 uses one cluster-wide inventory of nodes, pods, their controllers, and every PDB,
 then applies selector, placement, health, `disruptionsAllowed`, and unhealthy-pod
 policy semantics. It reports which workload blocks which node and why the
-one-node pool cannot temporarily satisfy it. NPA does not patch/delete PDBs or
-force-delete protected pods; provider retry/backoff remains expected and
-best-effort cluster deletion continues toward convergence.
+one-node pool cannot temporarily satisfy it. NPA requests normal eviction first.
+For only an explicitly confirmed whole-cluster destroy with exact NPA project,
+context, cluster, and provider identity, it can then temporarily remove the
+exact kube-system PDBs for cilium-operator, CoreDNS, the CoreDNS autoscaler, and
+metrics-server. It snapshots each object and restores its exact spec if destroy
+aborts while the cluster remains. Shared clusters, node-pool operations,
+unverified contexts, and user/application budgets are never weakened or
+force-deleted.
 
 During node-group reconciliation, a `ComputeInstanceDeletionFailed` event whose
 detail confirms `NotFound` means the instance is already absent; NPA reports that
@@ -241,7 +251,20 @@ prunes empty `config.yaml`, `clusters/`, and `~/.npa`. It also removes only
 validated NPA Terraform scratch/legacy `deploy/cluster/.terraform` residue and
 performs a read-only storage-IAM verification; non-empty, unrelated, ambiguous,
 or symlinked paths are preserved. Cleanup already owns the isolated SkyPilot
-venv, so there is no dead `npa skypilot uninstall` step afterwards.
+venv, so there is no dead `npa skypilot uninstall` step afterwards. It
+intentionally does not own the repository-local environment containing the
+running `npa` command. Preview that separate scope with `npa uninstall`; actual
+removal requires both `--remove-environment --yes` and is deferred until the
+invoking process exits.
+
+Managed jobs are audited and written to a versioned, atomic, non-secret receipt
+before `~/.sky` or the isolated SkyPilot venv can be removed. Active jobs,
+provider uncertainty, or receipt-write failure preserves the operational state
+needed to cancel/verify them. Receipts remain under
+`~/.npa/teardown-receipts/` after config/resource removal and are audit evidence,
+not operational residue. `npa cleanup --list-receipts` lists them; only old
+receipts whose every phase is terminal can be explicitly pruned with
+`--prune-receipts --receipt-retention-days <days> --yes`.
 
 Cloud IAM stays explicit. Configure records provenance only when its create call
 made `lerobot-training`, before the next fallible provider/configuration step.

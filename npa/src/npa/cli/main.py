@@ -25,6 +25,7 @@ from npa.cli.provision import app as provision_app
 from npa.cli.rerun import app as rerun_app
 from npa.cli.skypilot import app as skypilot_app
 from npa.cli.cleanup import cleanup_cmd as _cleanup_cmd
+from npa.cli.uninstall import uninstall_cmd as _uninstall_cmd
 from npa.cli.storage import app as storage_app
 from npa.cli.soperator import app as soperator_app
 from npa.cli.viz import app as viz_app
@@ -65,6 +66,7 @@ app.add_typer(rerun_app, name="rerun", rich_help_panel="Platform utilities")
 app.add_typer(skypilot_app, name="skypilot", rich_help_panel="Platform utilities")
 app.add_typer(storage_app, name="storage", rich_help_panel="Platform utilities")
 app.command("cleanup", rich_help_panel="Platform utilities")(_cleanup_cmd)
+app.command("uninstall", rich_help_panel="Setup")(_uninstall_cmd)
 app.add_typer(soperator_app, name="soperator", rich_help_panel="Platform utilities")
 app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
 app.add_typer(workflow_shim_app, name="workflow", hidden=True)
@@ -1681,9 +1683,23 @@ def _configured_summary() -> str:
 
 def _forget_project(alias: str) -> None:
     """Remove a project stanza from ~/.npa/config.yaml (the configure inverse)."""
-    from npa.clients.config import ConfigError, forget_project
+    from npa.clients.config import ConfigError, forget_project, resolve_environment
+    from npa.teardown_receipts import record_teardown_event
 
     cleaned = alias.strip()
+    environment = resolve_environment(cleaned)
+    project_id = str(getattr(environment, "project_id", "") or "")
+    # The intent/evidence lands outside config before the destructive rewrite.
+    record_teardown_event(
+        phase="project_config",
+        resource=cleaned,
+        terminal_state="in_progress",
+        project_alias=cleaned,
+        project_id=project_id,
+        precheck={"configured_project_found": environment is not None},
+        action={"kind": "forget_project_configuration"},
+        verification={"config_removed": False},
+    )
     try:
         forgotten = forget_project(cleaned)
     except ConfigError as exc:
@@ -1696,6 +1712,18 @@ def _forget_project(alias: str) -> None:
         )
     else:
         typer.echo(f"No project '{cleaned}' in ~/.npa/config.yaml; nothing to remove.")
+    record_teardown_event(
+        phase="project_config",
+        resource=cleaned,
+        terminal_state="completed",
+        project_alias=cleaned,
+        project_id=project_id,
+        precheck={"configured_project_found": bool(forgotten)},
+        action={"kind": "forget_project_configuration"},
+        verification={"config_removed": True},
+    )
+
+
 def _store_src_s3_uri(uri: str) -> None:
     from npa.clients.config import default_project_name, write_config
 

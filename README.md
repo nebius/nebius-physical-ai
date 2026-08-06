@@ -465,7 +465,7 @@ Do not treat exit 2 as success. The complete NPA-only sequence is:
 ```bash
 npa workflow cancel <run-id> --project <alias> --json
 npa agent destroy --project <alias> --name <name> --yes
-npa skypilot cleanup-controller --yes
+npa skypilot cleanup-controller --project <alias> --context <context> --yes
 npa cluster down --project <alias> --force
 npa storage bucket delete --project <alias> --yes --wait
 npa storage service-account delete --project <alias> --dry-run
@@ -476,8 +476,26 @@ npa storage service-account reconcile --project <alias> --id <exact-id> \
 npa storage service-account delete --project <alias> --dry-run
 npa storage service-account delete --project <alias> --yes
 npa configure --forget-project <alias>
-npa cleanup --full --yes
+npa cleanup --full --yes --project <alias>
 ```
+
+Every destructive phase writes a versioned, atomic, non-secret receipt under
+`~/.npa/teardown-receipts/` before deleting the local evidence needed to audit
+it. Managed jobs are checked and receipted before SkyPilot state is removed;
+active or uncertain jobs preserve that state. Receipts survive project/config
+removal, are not operational residue, and keep completed phases from reverting
+to `unknown` on an idempotent retry. List them with `npa cleanup
+--list-receipts`; prune only old, fully terminal receipts explicitly with `npa
+cleanup --prune-receipts --receipt-retention-days <days> --yes`.
+
+Controller cleanup has shared blast radius. It accepts only an explicit or
+unambiguously selected NPA project plus that project's exact saved context,
+cross-checks immutable project/cluster identity, deletes remotely through the
+SkyPilot abstraction, independently proves the controller pods absent, writes
+the remote-absence checkpoint, and only then converges local SkyPilot metadata.
+Authentication, RBAC, connectivity, stale, mismatched, or ambiguous identity
+preserves local state for an exact retry; an unrelated current context or stale
+SkyPilot profile is never a fallback.
 
 Reconciliation verifies the immutable ID, expected name, project, tenant, and
 selected CLI profile, then records a non-secret operator/when/reason attestation.
@@ -494,8 +512,19 @@ deletion it takes one cluster-wide inventory of nodes, pods, controllers, and
 PDBs with eviction-relevant selector/placement semantics. This catches system
 workloads such as `cilium-operator`, CoreDNS, the CoreDNS autoscaler, and
 `metrics-server`, including the common one-CPU-node-pool case where a replacement
-cannot be scheduled. NPA explains expected provider retry/backoff and never
-patches a PDB or force-deletes a protected pod.
+cannot be scheduled. NPA first requests normal eviction. Only for an explicitly
+confirmed full destroy whose exact NPA project/context/cluster identity is
+verified may it temporarily remove those exact four `kube-system` PDBs; it
+snapshots their specs and restores them if destroy aborts while the cluster
+remains. Shared clusters, node-pool operations, unverified contexts, and every
+user/application PDB are never weakened or force-deleted.
+
+Ordinary cleanup deliberately leaves the invoking NPA environment alone. To
+remove only a supported repository-local `.venv`, preview `npa uninstall`; the
+actual deferred removal requires both `--remove-environment --yes`. A one-time
+helper waits for NPA to exit and revalidates the exact path, inode, marker, and
+receipt nonce before deleting it. Source, `.git`, credentials, user data, and
+unrelated caches remain outside the plan.
 
 When no cluster state/inventory and no NPA kubeconfig exist, `cluster down` is a
 true no-op: it does not authenticate, initialize Terraform, download providers,

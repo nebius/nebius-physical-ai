@@ -50,6 +50,7 @@ class CleanupPhase:
             "safety_status": self.safety_status,
             "ownership_status": self.ownership_status,
             "operator_action_required": self.operator_action_required,
+            "operator_action_remains": self.operator_action_required,
         }
 
 
@@ -472,6 +473,7 @@ def cleanup_phase_model(
     iam_state: str,
     iam_ownership_state: str,
     local_state: str,
+    receipt_phases: dict[str, dict[str, object]] | None = None,
 ) -> list[CleanupPhase]:
     """Derive every text/JSON recommendation from one deterministic model."""
 
@@ -516,54 +518,85 @@ def cleanup_phase_model(
         else iam_ownership_state
     )
     local_clean = local_state in {"fully_clean", "fully_cleaned"}
+    receipt_phases = dict(receipt_phases or {})
+
+    def completed(phase: str) -> bool:
+        from npa.teardown_receipts import TERMINAL_STATES
+
+        state = str((receipt_phases.get(phase) or {}).get("terminal_state") or "")
+        return state in TERMINAL_STATES
+
+    def observed(phase: str, fallback: str) -> str:
+        event = receipt_phases.get(phase) or {}
+        state = str(event.get("terminal_state") or "")
+        recorded = str(event.get("recorded_at") or "")
+        return f"receipt:{state}@{recorded}" if state else fallback
+
+    workflow_receipt_complete = completed("workflow_audit") or completed("workflow")
+    if not jobs and workflow_receipt_complete:
+        workflow_action = False
+        workflow_safety = "durable_terminal_or_absent_evidence"
+    workflow_complete = not workflow_action
+    agent_complete = completed("agent")
+    cluster_complete = completed("cluster")
+    # Deleting the exact whole cluster is also conclusive absence for any
+    # Kubernetes-hosted shared controller workload. Local cache removal remains
+    # represented independently by the local_cleanup phase.
+    controller_complete = completed("controller") or cluster_complete
+    bucket_complete = completed("bucket")
+    project_complete = completed("project_config")
+    local_complete = completed("local_cleanup") or local_clean
 
     return [
         CleanupPhase(
             1,
             "workflow runs",
-            workflow_state,
+            observed("workflow_audit", workflow_state),
             "npa workflow cancel <run-id> --project <alias> --json",
             workflow_safety,
             "not_applicable",
-            workflow_action,
+            workflow_action or not workflow_complete,
         ),
         CleanupPhase(
             2,
             "agent VM",
-            "not_checked_by_local_cleanup",
+            observed("agent", "not_checked_by_local_cleanup"),
             "npa agent destroy --project <alias> --name <name> --yes",
             "repeat_safe_provider_verification",
             "npa_managed_identity_required",
-            True,
+            not agent_complete,
         ),
         CleanupPhase(
             3,
             "SkyPilot controller",
-            "ready_after_workflows_terminal"
-            if not workflow_action
-            else "workflow_gate_pending",
+            observed(
+                "controller",
+                "ready_after_workflows_terminal"
+                if not workflow_action
+                else "workflow_gate_pending",
+            ),
             "npa skypilot cleanup-controller --yes",
             "requires_no_nonterminal_managed_jobs",
             "not_applicable",
-            True,
+            not controller_complete,
         ),
         CleanupPhase(
             4,
             "Kubernetes cluster",
-            "not_checked_by_local_cleanup",
+            observed("cluster", "not_checked_by_local_cleanup"),
             "npa cluster down --force",
             "pdb_aware_best_effort_convergence",
             "npa_managed_cluster_required",
-            True,
+            not cluster_complete,
         ),
         CleanupPhase(
             5,
             "object-storage bucket",
-            "not_checked_by_local_cleanup",
+            observed("bucket", "not_checked_by_local_cleanup"),
             "npa storage bucket delete --project <alias> --yes --wait",
             "preserves_non_secret_iam_tombstone",
             "bucket_identity_verified_by_npa",
-            True,
+            not bucket_complete,
         ),
         CleanupPhase(
             6,
@@ -586,11 +619,14 @@ def cleanup_phase_model(
         CleanupPhase(
             8,
             "project configuration",
-            "blocked_by_iam" if iam_unresolved else "eligible_after_cloud_cleanup",
+            observed(
+                "project_config",
+                "blocked_by_iam" if iam_unresolved else "eligible_after_cloud_cleanup",
+            ),
             "npa configure --forget-project <alias>",
             "refuses_unresolved_storage_iam",
             iam_ownership,
-            True,
+            not project_complete,
         ),
         CleanupPhase(
             9,
@@ -599,7 +635,7 @@ def cleanup_phase_model(
             "npa cleanup --full --yes",
             "local_only_preserves_unrelated_state",
             iam_ownership,
-            not local_clean,
+            not local_complete,
         ),
     ]
 
@@ -743,6 +779,25 @@ def cleanup_cmd(
     output_json: bool = typer.Option(
         False, "--json", help="Emit a machine-readable final cleanup result."
     ),
+    list_receipts: bool = typer.Option(
+        False,
+        "--list-receipts",
+        help="List retained non-secret teardown audit receipts and exit.",
+    ),
+    prune_receipts: bool = typer.Option(
+        False,
+        "--prune-receipts",
+        help=(
+            "Explicitly prune only terminal teardown receipts older than "
+            "--receipt-retention-days; requires --yes."
+        ),
+    ),
+    receipt_retention_days: int = typer.Option(
+        90,
+        "--receipt-retention-days",
+        min=0,
+        help="Minimum age for explicit terminal-receipt pruning (default: 90 days).",
+    ),
 ) -> None:
     """Report (or with --yes remove) local NPA/SkyPilot residue left after teardown.
 
@@ -760,18 +815,77 @@ def cleanup_cmd(
         remove_terraform_residue,
     )
     from npa.clients.config import clear_skypilot_bin
+    from npa.teardown_receipts import (
+        latest_phase_states,
+        list_teardown_receipts,
+        prune_teardown_receipts,
+        record_teardown_event,
+    )
+
+    if list_receipts or prune_receipts:
+        if list_receipts and prune_receipts:
+            raise typer.BadParameter(
+                "Use either --list-receipts or --prune-receipts, not both."
+            )
+        if prune_receipts:
+            if not yes:
+                raise typer.BadParameter("--prune-receipts requires --yes")
+            removed, retained = prune_teardown_receipts(
+                older_than_days=receipt_retention_days
+            )
+            payload = {
+                "result": "receipts_pruned",
+                "removed": [str(path) for path in removed],
+                "retained": retained,
+                "retention_days": receipt_retention_days,
+            }
+        else:
+            receipts = list_teardown_receipts()
+            payload = {
+                "result": "receipts_listed",
+                "retention": (
+                    "retained indefinitely until explicit `npa cleanup "
+                    "--prune-receipts --receipt-retention-days <days> --yes`"
+                ),
+                "receipts": receipts,
+            }
+        if output_json:
+            typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            typer.echo(str(payload["result"]).replace("_", " ").capitalize() + ":")
+            if list_receipts:
+                receipts = payload["receipts"]
+                if not receipts:
+                    typer.echo("  none")
+                for receipt in receipts:
+                    typer.echo(
+                        f"  {receipt.get('receipt_id')}: "
+                        f"{len(receipt.get('events') or [])} event(s), "
+                        f"updated {receipt.get('updated_at')}"
+                    )
+                typer.echo(f"Retention: {payload['retention']}")
+            else:
+                for path in payload["removed"]:
+                    typer.echo(f"  removed {path}")
+                for note in payload["retained"]:
+                    typer.echo(f"  retained {note}")
+        return
 
     def emit(message: str = "", *, err: bool = False) -> None:
         if not output_json:
             typer.echo(message, err=err)
 
-    def emit_json(result: str, local_state: str, *, cleanup_failed: bool = False) -> None:
+    def emit_json(
+        result: str, local_state: str, *, cleanup_failed: bool = False
+    ) -> None:
+        receipt_phases = latest_phase_states(project_alias=project)
         phases = cleanup_phase_model(
             jobs=job_ids,
             jobs_note=job_note,
             iam_state=iam_status,
             iam_ownership_state=iam_ownership_state,
             local_state=local_state,
+            receipt_phases=receipt_phases,
         )
         typer.echo(
             json.dumps(
@@ -785,6 +899,8 @@ def cleanup_cmd(
                     "removed_bytes": total if yes else 0,
                     "iam_detail": iam_message,
                     "phases": [item.to_dict() for item in phases],
+                    "retained_audit_receipts": len(list_teardown_receipts()),
+                    "audit_receipts_are_operational_residue": False,
                 },
                 indent=2,
                 sort_keys=True,
@@ -811,11 +927,65 @@ def cleanup_cmd(
             iam_ownership_state,
         ) = _storage_iam_full_check(project, prune_verified_absence=yes)
 
+    prior_phases = latest_phase_states(project_alias=project)
+    prior_workflow = prior_phases.get("workflow_audit") or prior_phases.get("workflow")
+    prior_workflow_state = str((prior_workflow or {}).get("terminal_state") or "")
+    prior_workflow_terminal = prior_workflow_state in {
+        "already_absent",
+        "cancelled",
+        "completed",
+        "deleted",
+        "terminal",
+        "verified_absent",
+        "verified_deleted",
+    }
+    sky_operational_state_present = any(
+        item.label in {"SkyPilot venv", "SkyPilot state (~/.sky)"} for item in residue
+    )
     if skip_jobs:
         job_ids: list[str] = []
         job_note = "managed-job verification was explicitly skipped"
     else:
         job_ids, job_note = _nonterminal_jobs(sky_bin)
+    if (
+        not job_ids
+        and job_note
+        and prior_workflow_terminal
+        and not sky_operational_state_present
+    ):
+        job_note = ""
+        if not output_json:
+            typer.echo(
+                "Managed jobs: using retained terminal/absent audit evidence because "
+                "SkyPilot operational state was already removed."
+            )
+    try:
+        environment = None
+        if project:
+            from npa.clients.config import resolve_environment
+
+            environment = resolve_environment(project)
+        record_teardown_event(
+            phase="workflow_audit",
+            resource="all-managed-jobs",
+            terminal_state=(
+                "verified_absent"
+                if not job_ids and not job_note
+                else "active"
+                if job_ids
+                else "verification_failed"
+            ),
+            project_alias=project,
+            project_id=str(getattr(environment, "project_id", "") or ""),
+            precheck={"skip_requested": skip_jobs},
+            action={"kind": "read_only_managed_job_audit"},
+            verification={"nonterminal_job_ids": job_ids, "detail": job_note},
+            errors=[job_note] if job_note else [],
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        job_note = (
+            (job_note + "; ") if job_note else ""
+        ) + f"durable managed-job audit receipt failed: {exc}"
     if not output_json:
         _report_managed_jobs(job_ids, job_note)
 
@@ -843,8 +1013,15 @@ def cleanup_cmd(
                     iam_state=iam_status,
                     iam_ownership_state=iam_ownership_state,
                     local_state="fully_clean",
+                    receipt_phases=latest_phase_states(project_alias=project),
                 )
             )
+            receipts = list_teardown_receipts()
+            if receipts:
+                typer.echo(
+                    f"Retained audit receipts: {len(receipts)} non-secret file(s); "
+                    "these are audit evidence, not operational residue."
+                )
         if iam_partial:
             emit(
                 "Full cleanup is partial because storage IAM was not verified absent/deleted.",
@@ -891,6 +1068,7 @@ def cleanup_cmd(
                     iam_state=iam_status,
                     iam_ownership_state=iam_ownership_state,
                     local_state="residue_present",
+                    receipt_phases=latest_phase_states(project_alias=project),
                 )
             )
         if iam_partial:
@@ -899,7 +1077,44 @@ def cleanup_cmd(
 
     removed_bin = False
     cleanup_failed = False
+    sky_audit_safe = not job_ids and not job_note
+    try:
+        record_teardown_event(
+            phase="local_cleanup",
+            resource="npa-local-state",
+            terminal_state="in_progress",
+            project_alias=project,
+            precheck={"managed_jobs_verified_terminal_or_absent": sky_audit_safe},
+            action={
+                "kind": "local_cleanup",
+                "full": full,
+                "include_sky": include_sky,
+            },
+            verification={"local_state_removal": "pending"},
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        cleanup_failed = True
+        emit(
+            "Preserved local state because the durable cleanup transaction "
+            f"could not be started: {exc}",
+            err=True,
+        )
+        if output_json:
+            emit_json("partial_cleanup", "residue_present", cleanup_failed=True)
+        raise typer.Exit(code=1) from exc
     for item in residue:
+        if (
+            item.label in {"SkyPilot venv", "SkyPilot state (~/.sky)"}
+            and not sky_audit_safe
+        ):
+            cleanup_failed = True
+            emit(
+                f"Preserved {item.label} at {item.path}: managed jobs are active or "
+                "their terminal state could not be durably verified before local "
+                "SkyPilot state removal.",
+                err=True,
+            )
+            continue
         try:
             shutil.rmtree(item.path)
         except OSError as exc:
@@ -960,6 +1175,28 @@ def cleanup_cmd(
                 emit(f"Removed empty NPA home: {path}")
             else:
                 emit(f"Removed {label}: {path}")
+    local_terminal = not cleanup_failed and not iam_partial
+    try:
+        record_teardown_event(
+            phase="local_cleanup",
+            resource="npa-local-state",
+            terminal_state="completed" if local_terminal else "partial",
+            project_alias=project,
+            precheck={"managed_jobs_verified_terminal_or_absent": sky_audit_safe},
+            action={
+                "kind": "local_cleanup",
+                "full": full,
+                "include_sky": include_sky,
+            },
+            verification={
+                "remaining_terraform_count": len(collect_terraform_residue()),
+                "sky_state_preserved": not sky_audit_safe,
+            },
+            errors=(["local cleanup incomplete"] if cleanup_failed else []),
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        cleanup_failed = True
+        emit(f"Warning: local cleanup receipt could not be written: {exc}", err=True)
     remaining_terraform = collect_terraform_residue()
     if remaining_terraform:
         cleanup_failed = True
@@ -1005,8 +1242,15 @@ def cleanup_cmd(
                 local_state=(
                     "partial_local_cleanup" if cleanup_failed else "fully_cleaned"
                 ),
+                receipt_phases=latest_phase_states(project_alias=project),
             )
         )
+        receipts = list_teardown_receipts()
+        if receipts:
+            typer.echo(
+                f"Retained audit receipts: {len(receipts)} non-secret file(s); "
+                "these are audit evidence, not operational residue."
+            )
     if iam_partial:
         emit(
             "Full cleanup is partial because storage IAM was not verified absent/deleted.",

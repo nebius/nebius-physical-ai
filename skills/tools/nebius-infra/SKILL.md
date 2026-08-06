@@ -49,7 +49,7 @@ explicit full local scope:
 ```bash
 npa workflow cancel <run-id> --project <alias> --json
 npa agent destroy --project <alias> --name <name> --yes
-npa skypilot cleanup-controller --yes
+npa skypilot cleanup-controller --project <alias> --context <context> --yes
 npa cluster down --project <alias> --force
 npa storage bucket delete --project <alias> --yes --wait
 npa storage service-account delete --project <alias> --dry-run
@@ -60,7 +60,7 @@ npa storage service-account reconcile --project <alias> --id <exact-id> \
 npa storage service-account delete --project <alias> --dry-run
 npa storage service-account delete --project <alias> --yes
 npa configure --forget-project <alias>
-npa cleanup --full --yes
+npa cleanup --full --yes --project <alias>
 ```
 
 The storage service-account command is ownership-gated: it only deletes the
@@ -124,8 +124,23 @@ or provider/auth verification failure is partial cleanup and exits 2.
   cluster-wide node/pod/controller/PDB inventory and the same eviction selector
   and placement semantics for every namespace. It reports cilium/CoreDNS/
   autoscaler/metrics-server and future matching blockers, including the one-node
-  CPU-pool shape. NPA never patches PDBs or force-deletes protected pods; normal
-  teardown retry/backoff remains best-effort and convergent.
+  CPU-pool shape. It requests normal eviction first. Only an explicitly
+  confirmed whole-cluster destroy with an exact provider-verified NPA
+  project/context may temporarily remove the exact kube-system
+  cilium-operator/CoreDNS/CoreDNS-autoscaler/metrics-server blockers. It records
+  each decision and restores the exact specs if destroy aborts while the cluster
+  remains. Shared clusters, node-pool operations, unverified contexts, and
+  user/application PDBs are never weakened or force-deleted.
+- Shared-controller cleanup requires the selected NPA project and its exact
+  saved context (explicit flags take precedence), verifies stable provider and
+  local identities, proves remote absence, durably checkpoints it, and only then
+  removes matching local metadata. Never use an ambient kube current-context,
+  the first SkyPilot profile, or a stale unrelated row.
+- Teardown receipts live under `~/.npa/teardown-receipts/`, contain no secrets,
+  and survive removal of project config/caches. Managed jobs must be audited and
+  receipted before SkyPilot operational state is removed. List receipts with
+  `npa cleanup --list-receipts`; prune only terminal aged receipts with the
+  explicit `--prune-receipts --receipt-retention-days <days> --yes` path.
 - With no cluster state/inventory and no NPA kubeconfig, `npa cluster down` is a
   no-op before binary lookup, authentication, Terraform init/provider download,
   or Kubernetes/RBAC calls. Real apply/destroy uses marked ephemeral

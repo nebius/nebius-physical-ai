@@ -47,6 +47,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa storage](storage.md)
 - [npa workbench token-factory](token-factory.md)
 - [npa workbench workflow trigger](trigger.md)
+- [npa uninstall](uninstall.md)
 - [npa viz](viz.md)
 - [npa workbench vlm-eval](vlm-eval.md)
 - [npa workbench](workbench.md)

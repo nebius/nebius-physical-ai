@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 from typer.testing import CliRunner
 
+from npa.cli import cleanup as cleanup_cli
 from npa.cli.main import app
 
 runner = CliRunner()
@@ -75,6 +76,7 @@ def test_cleanup_yes_removes_local_caches_but_keeps_tokens(monkeypatch) -> None:
     credentials_module.CREDENTIALS_PATH.write_text(
         yaml.safe_dump({"tokens": {"HF_TOKEN": "hf_keep"}})
     )
+    monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda sky_bin: ([], ""))
 
     result = runner.invoke(app, ["cleanup", "--yes"])
 
@@ -91,6 +93,7 @@ def test_cleanup_yes_removes_local_caches_but_keeps_tokens(monkeypatch) -> None:
 
 def test_cleanup_keep_sky_leaves_dot_sky(monkeypatch) -> None:
     sky_venv, _tf, sky_home, _empty = _seed_residue()
+    monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda sky_bin: ([], ""))
 
     result = runner.invoke(app, ["cleanup", "--yes", "--keep-sky"])
 
@@ -223,8 +226,9 @@ def test_cleanup_full_yes_removes_only_empty_npa_owned_tree() -> None:
     assert result.exit_code == 0, result.output
     assert not config_module.CONFIG_PATH.exists()
     assert not credentials_module.CREDENTIALS_PATH.exists()
-    assert not npa_dir.exists()
-    assert "Removed empty NPA home" in result.output
+    assert npa_dir.is_dir()
+    assert {path.name for path in npa_dir.iterdir()} == {"teardown-receipts"}
+    assert "Retained audit receipts" in result.output
 
 
 def test_cleanup_full_preserves_nonempty_config_and_cluster_data() -> None:

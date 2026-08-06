@@ -1,10 +1,13 @@
-"""Preview a managed-cluster drain without weakening workload safety.
+"""Inventory and safely converge a managed-cluster drain.
 
 Destroying a managed Kubernetes cluster drains every schedulable pod, and every
 eviction respects its PodDisruptionBudget (PDB).  The preview therefore takes one
 shared inventory of nodes, pods, controllers, and PDBs and applies the same
-eviction-relevant selector/placement rules to every namespace.  It never patches
-a PDB or force-deletes a protected pod.
+eviction-relevant selector/placement rules to every namespace.  Ordinary and
+node-pool teardown never mutate a PDB.  An explicitly confirmed, identity-verified
+full-cluster destroy may temporarily remove only a small allowlist of cluster-
+system PDBs after a normal eviction attempt; exact specs are restored if destroy
+aborts while the cluster remains.
 
 The preview is best-effort and deliberately non-interactive. A temporary copy
 of the selected kubeconfig marks exec plugins non-interactive and adds Nebius'
@@ -56,6 +59,11 @@ class DisruptionBlocker:
     nodes: tuple[str, ...] = ()
     one_node_pool: bool = False
     reason: str = ""
+    uid: str = ""
+    resource_version: str = ""
+    labels: tuple[tuple[str, str], ...] = ()
+    annotations: tuple[tuple[str, str], ...] = ()
+    spec: dict[str, Any] | None = None
 
     def render(self) -> str:
         return (
@@ -85,6 +93,30 @@ class DrainInventory:
     pod_count: int
     pdb_count: int
     blockers: tuple[DisruptionBlocker, ...]
+
+
+@dataclass
+class PdbRelaxationReport:
+    """Audit evidence for the narrowly scoped full-destroy PDB policy."""
+
+    eligible: list[str]
+    user_or_unverified: list[str]
+    eviction_attempts: list[str]
+    removed: list[str]
+    restored: list[str]
+    errors: list[str]
+
+
+class PdbRestoreError(RuntimeError):
+    """A failed full destroy could not restore every temporarily removed PDB."""
+
+
+_FULL_DESTROY_SYSTEM_PDBS = {
+    ("kube-system", "cilium-operator"): "cilium-operator",
+    ("kube-system", "coredns"): "coredns",
+    ("kube-system", "coredns-autoscaler"): "coredns-autoscaler",
+    ("kube-system", "metrics-server"): "metrics-server",
+}
 
 
 def classify_drain_preview_failure(message: str) -> DrainPreviewIssue:
@@ -388,6 +420,13 @@ def drain_inventory(
                 nodes=blocker_nodes,
                 one_node_pool=one_node_pool,
                 reason=reason,
+                uid=str(metadata.get("uid") or ""),
+                resource_version=str(metadata.get("resourceVersion") or ""),
+                labels=tuple(sorted(_string_dict(metadata.get("labels")).items())),
+                annotations=tuple(
+                    sorted(_string_dict(metadata.get("annotations")).items())
+                ),
+                spec=dict(spec),
             )
         )
     blockers.sort(key=lambda blocker: (blocker.namespace, blocker.name))
@@ -597,7 +636,285 @@ def describe_drain_expectation(blockers: list[DisruptionBlocker]) -> str:
     return (
         f"{len(blockers)} PodDisruptionBudget(s) will deny at least one eviction: "
         + " ".join(details)
-        + " NPA will not patch budgets or force-delete protected pods. The provider "
-        "drain will retry/wait and cluster deletion can still safely continue; expected "
-        "PDB backoff can look stalled until controller/node-group teardown converges."
+        + " Shared clusters, node-pool operations, unverified contexts, and user/application "
+        "budgets are never weakened: NPA will not patch budgets or force-delete pods for "
+        "those workloads. The initial drain may look stalled while Kubernetes performs its "
+        "expected retry/wait behavior. During an explicitly confirmed full destroy of this "
+        "exact NPA-owned cluster, NPA first requests normal eviction and may then temporarily "
+        "remove only verified kube-system cilium/CoreDNS/autoscaler/metrics-server budgets; "
+        "their exact specs are restored if destroy aborts while the cluster remains."
     )
+
+
+def _system_pdb_is_eligible(blocker: DisruptionBlocker) -> bool:
+    expected_workload = _FULL_DESTROY_SYSTEM_PDBS.get((blocker.namespace, blocker.name))
+    if not expected_workload:
+        return False
+    if not blocker.matching_pods or not blocker.workloads or blocker.spec is None:
+        return False
+    if not blocker.uid:
+        return False
+    for workload in blocker.workloads:
+        namespace, separator, remainder = workload.partition("/")
+        kind, separator_two, name = remainder.partition("/")
+        if (
+            namespace != "kube-system"
+            or not separator
+            or not separator_two
+            or kind not in {"Deployment", "ReplicaSet"}
+            or not (
+                name == expected_workload or name.startswith(expected_workload + "-")
+            )
+        ):
+            return False
+    return True
+
+
+def _run_kubectl_mutation(
+    cmd: list[str],
+    *,
+    kubeconfig: str,
+    input_text: str,
+    runner: Runner | None,
+) -> subprocess.CompletedProcess[str]:
+    execute = runner or subprocess.run
+    with _noninteractive_kubeconfig_env(kubeconfig) as (env, issue):
+        if issue is not None:
+            return subprocess.CompletedProcess(cmd, 2, stdout="", stderr=issue.summary)
+        try:
+            return execute(
+                cmd,
+                input=input_text,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=None,
+                text=True,
+                timeout=DEFAULT_TIMEOUT_SECONDS,
+                check=False,
+                env=env,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return subprocess.CompletedProcess(
+                cmd, 2, stdout="", stderr=f"{type(exc).__name__}: {exc}"
+            )
+
+
+def _mutation_detail(result: subprocess.CompletedProcess[str]) -> str:
+    return str(result.stderr or result.stdout or f"exit {result.returncode}").strip()
+
+
+def _absence_result(result: subprocess.CompletedProcess[str]) -> bool:
+    detail = _mutation_detail(result).lower()
+    if any(
+        marker in detail
+        for marker in ("forbidden", "unauthorized", "timeout", "connection refused")
+    ):
+        return False
+    return "notfound" in detail or "not found" in detail
+
+
+def _pdb_manifest(blocker: DisruptionBlocker) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "name": blocker.name,
+        "namespace": blocker.namespace,
+    }
+    if blocker.labels:
+        metadata["labels"] = dict(blocker.labels)
+    if blocker.annotations:
+        metadata["annotations"] = dict(blocker.annotations)
+    return {
+        "apiVersion": "policy/v1",
+        "kind": "PodDisruptionBudget",
+        "metadata": metadata,
+        "spec": dict(blocker.spec or {}),
+    }
+
+
+def _request_normal_eviction(
+    blocker: DisruptionBlocker,
+    *,
+    context: str,
+    kubeconfig: str,
+    runner: Runner | None,
+) -> list[str]:
+    attempts: list[str] = []
+    for namespaced_name in blocker.matching_pods:
+        namespace, separator, pod = namespaced_name.partition("/")
+        if not separator or not namespace or not pod:
+            continue
+        path = f"/api/v1/namespaces/{namespace}/pods/{pod}/eviction"
+        cmd = ["kubectl", "--context", context, "create", "--raw", path, "-f", "-"]
+        payload = json.dumps(
+            {
+                "apiVersion": "policy/v1",
+                "kind": "Eviction",
+                "metadata": {"name": pod, "namespace": namespace},
+            }
+        )
+        result = _run_kubectl_mutation(
+            cmd, kubeconfig=kubeconfig, input_text=payload, runner=runner
+        )
+        outcome = (
+            "accepted"
+            if result.returncode == 0
+            else "already-gone"
+            if _absence_result(result)
+            else "pdb-blocked"
+            if "disruption budget" in _mutation_detail(result).lower()
+            or "too many requests" in _mutation_detail(result).lower()
+            else "failed"
+        )
+        attempts.append(f"{namespaced_name}:{outcome}")
+    return attempts
+
+
+def _delete_exact_pdb(
+    blocker: DisruptionBlocker,
+    *,
+    context: str,
+    kubeconfig: str,
+    runner: Runner | None,
+) -> subprocess.CompletedProcess[str]:
+    path = (
+        f"/apis/policy/v1/namespaces/{blocker.namespace}/"
+        f"poddisruptionbudgets/{blocker.name}"
+    )
+    cmd = ["kubectl", "--context", context, "delete", "--raw", path, "-f", "-"]
+    payload = json.dumps(
+        {
+            "apiVersion": "v1",
+            "kind": "DeleteOptions",
+            "preconditions": {
+                "uid": blocker.uid,
+                **(
+                    {"resourceVersion": blocker.resource_version}
+                    if blocker.resource_version
+                    else {}
+                ),
+            },
+        }
+    )
+    return _run_kubectl_mutation(
+        cmd, kubeconfig=kubeconfig, input_text=payload, runner=runner
+    )
+
+
+def _restore_pdb(
+    blocker: DisruptionBlocker,
+    *,
+    context: str,
+    kubeconfig: str,
+    runner: Runner | None,
+) -> subprocess.CompletedProcess[str]:
+    cmd = [
+        "kubectl",
+        "--context",
+        context,
+        "apply",
+        "--server-side=false",
+        "-f",
+        "-",
+    ]
+    return _run_kubectl_mutation(
+        cmd,
+        kubeconfig=kubeconfig,
+        input_text=yaml.safe_dump(_pdb_manifest(blocker), sort_keys=False),
+        runner=runner,
+    )
+
+
+@contextmanager
+def relax_system_pdbs_for_full_destroy(
+    inventory: DrainInventory | None,
+    *,
+    context: str,
+    kubeconfig: str,
+    confirmed_full_destroy: bool,
+    identity_verified: bool,
+    runner: Runner | None = None,
+) -> Iterator[PdbRelaxationReport]:
+    """Temporarily remove only exact system PDB blockers for full destruction.
+
+    The caller must already have cross-checked immutable NPA/provider identity.
+    Any other operation receives a report but performs no mutation.
+    """
+
+    blockers = list(inventory.blockers if inventory is not None else ())
+    eligible = [item for item in blockers if _system_pdb_is_eligible(item)]
+    other = [item for item in blockers if item not in eligible]
+    report = PdbRelaxationReport(
+        eligible=[f"{item.namespace}/{item.name}" for item in eligible],
+        user_or_unverified=[f"{item.namespace}/{item.name}" for item in other],
+        eviction_attempts=[],
+        removed=[],
+        restored=[],
+        errors=[],
+    )
+    if not confirmed_full_destroy or not identity_verified or not eligible:
+        yield report
+        return
+
+    removed: list[DisruptionBlocker] = []
+    for blocker in eligible:
+        label = f"{blocker.namespace}/{blocker.name}"
+        attempts = _request_normal_eviction(
+            blocker,
+            context=context,
+            kubeconfig=kubeconfig,
+            runner=runner,
+        )
+        report.eviction_attempts.extend(attempts)
+        outcomes = {item.rsplit(":", 1)[-1] for item in attempts}
+        if "failed" in outcomes:
+            report.errors.append(
+                f"{label}: normal eviction could not be verified; PDB preserved"
+            )
+            continue
+        if outcomes and "pdb-blocked" not in outcomes:
+            # Kubernetes accepted every eviction (or the pods converged absent),
+            # so there is no reason to weaken even an allowlisted system budget.
+            continue
+        result = _delete_exact_pdb(
+            blocker,
+            context=context,
+            kubeconfig=kubeconfig,
+            runner=runner,
+        )
+        if result.returncode == 0 or _absence_result(result):
+            if result.returncode == 0:
+                removed.append(blocker)
+                report.removed.append(label)
+        else:
+            report.errors.append(f"{label}: {_mutation_detail(result)}")
+
+    primary: BaseException | None = None
+    try:
+        yield report
+    except BaseException as exc:
+        primary = exc
+        raise
+    finally:
+        if primary is not None:
+            restore_errors: list[str] = []
+            for blocker in reversed(removed):
+                result = _restore_pdb(
+                    blocker,
+                    context=context,
+                    kubeconfig=kubeconfig,
+                    runner=runner,
+                )
+                label = f"{blocker.namespace}/{blocker.name}"
+                if result.returncode == 0:
+                    report.restored.append(label)
+                elif _absence_result(result):
+                    # The whole cluster disappeared despite the caller's later
+                    # failure; there is no surviving object on which to restore.
+                    report.restored.append(f"{label}:cluster-absent")
+                else:
+                    restore_errors.append(f"{label}: {_mutation_detail(result)}")
+            if restore_errors:
+                report.errors.extend(restore_errors)
+                raise PdbRestoreError(
+                    "full-cluster destroy failed and exact system PDB restoration "
+                    "was incomplete: " + "; ".join(restore_errors)
+                ) from primary

@@ -265,14 +265,36 @@ def cleanup_controller_cmd(
     sky_bin: str = typer.Option(
         "", "--sky-bin", help="Pinned NPA SkyPilot executable override."
     ),
-    output_json: bool = typer.Option(False, "--json", help="Emit a machine-readable result."),
+    project: str = typer.Option(
+        "",
+        "--project",
+        "-p",
+        help=(
+            "Exact NPA project alias. Defaults only to an unambiguous selected "
+            "NPA project; never to a SkyPilot/Nebius profile."
+        ),
+    ),
+    context: str = typer.Option(
+        "",
+        "--context",
+        help=(
+            "Exact NPA cluster context. Defaults only when the selected project "
+            "has exactly one NPA-owned cluster record."
+        ),
+    ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit a machine-readable result."
+    ),
 ) -> None:
     """Tear down NPA's shared jobs controller after its managed jobs drain."""
 
     if not yes:
         message = (
-            "Plan only: verify all NPA workflows are terminal, then re-run `npa "
-            "skypilot cleanup-controller --yes`. No controller state was changed."
+            "Plan only: this shared managed-jobs controller may serve every SkyPilot "
+            "workflow on its cluster. Verify all workflows are terminal, then re-run "
+            "`npa skypilot cleanup-controller --project <alias> --context "
+            "<exact-context> --yes`. NPA will verify immutable project/cluster identity "
+            "and remote absence before removing local metadata. No state was changed."
         )
         if output_json:
             typer.echo(
@@ -289,7 +311,11 @@ def cleanup_controller_cmd(
     from npa.orchestration.skypilot.cleanup import cleanup_jobs_controller
 
     try:
-        result = cleanup_jobs_controller(sky_bin=sky_bin or None)
+        result = cleanup_jobs_controller(
+            project=project,
+            context=context,
+            sky_bin=sky_bin or None,
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         payload = {
             "outcome": "verification_failed",

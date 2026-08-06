@@ -2145,59 +2145,123 @@ def _durable_workflow_status(
         from npa.orchestration.npa_workflow.run_state import (
             RunManifest,
             build_actionable_run_status,
+            reconstruct_stage_job_attribution,
             reconcile_submitted_manifest,
         )
 
         run_manifest = RunManifest.from_dict(manifest)
-        if not run_manifest.sky_job_id and resolution.job_id:
+        runtime_waves = [
+            dict(item)
+            for item in resolution.runtime_state.get("waves") or []
+            if isinstance(item, dict)
+        ]
+        # A runtime ledger proves one job per wave.  Its latest discovered ID must
+        # never be promoted to the root and broadcast across every logical stage.
+        if not run_manifest.sky_job_id and resolution.job_id and not runtime_waves:
             run_manifest.sky_job_id = resolution.job_id
         live_status = ""
         task_rows: list[dict[str, object]] = []
+        job_observations: dict[str, dict[str, object]] = {}
         controller_output = ""
         diagnostics: list[str] = []
-        if run_manifest.sky_job_id:
+        attribution = reconstruct_stage_job_attribution(
+            run_manifest, runtime_waves=runtime_waves
+        )
+        job_ids = sorted(
+            {
+                str(item.get("managed_job_id") or "")
+                for item in attribution.values()
+                if str(item.get("managed_job_id") or "")
+            },
+            key=lambda item: (0, int(item)) if item.isdigit() else (1, item),
+        )
+        if (
+            run_manifest.sky_job_id
+            and not runtime_waves
+            and run_manifest.sky_job_id not in job_ids
+        ):
+            job_ids.append(run_manifest.sky_job_id)
+        for managed_job_id in job_ids:
             try:
-                live = workflow_status(
-                    run_manifest.sky_job_id, sky_bin=sky_bin or None
-                )
+                live = workflow_status(managed_job_id, sky_bin=sky_bin or None)
                 if live.error:
                     diagnostics.append(
-                        "SkyPilot controller status is unavailable; showing the last "
-                        f"persisted manifest state ({live.error})."
+                        f"SkyPilot status for managed job {managed_job_id} is "
+                        f"unavailable; using durable stage evidence ({live.error})."
                     )
+                    observed_status = ""
                 else:
-                    live_status = live.status
-                task_rows = workflow_task_statuses(
-                    run_manifest.sky_job_id, sky_bin=sky_bin or None
+                    observed_status = live.status
+                observed_rows = workflow_task_statuses(
+                    managed_job_id, sky_bin=sky_bin or None
                 )
-                if str(live_status or run_manifest.status).upper() not in {
+                job_observations[managed_job_id] = {
+                    "status": observed_status,
+                    "task_rows": observed_rows,
+                    "error": live.error,
+                }
+                if managed_job_id == run_manifest.sky_job_id and not runtime_waves:
+                    task_rows = observed_rows
+                if str(observed_status or run_manifest.status).upper() not in {
                     "SUCCEEDED",
                     "CANCELLED",
-                } and not str(live_status or run_manifest.status).upper().startswith("FAILED"):
+                } and not str(
+                    observed_status or run_manifest.status
+                ).upper().startswith("FAILED"):
                     controller_logs = workflow_controller_logs(
-                        run_manifest.sky_job_id,
+                        managed_job_id,
                         sky_bin=sky_bin or None,
                     )
-                    controller_output = "\n".join(
-                        item for item in (controller_logs.stdout, controller_logs.stderr) if item
+                    output = "\n".join(
+                        item
+                        for item in (controller_logs.stdout, controller_logs.stderr)
+                        if item
                     )
+                    if output:
+                        controller_output += (
+                            "\n" if controller_output else ""
+                        ) + output
                     if controller_logs.returncode != 0:
                         diagnostics.append(
                             "SkyPilot controller logs are unavailable; startup failure "
-                            f"classification is incomplete ({controller_output.strip() or 'no detail'})."
+                            f"classification is incomplete for job {managed_job_id} "
+                            f"({output.strip() or 'no detail'})."
                         )
             except Exception as exc:  # noqa: BLE001 - persisted status remains useful
                 diagnostics.append(
-                    "SkyPilot controller status is unavailable; showing the last "
-                    f"persisted manifest state. Diagnostic: {exc}"
+                    f"SkyPilot status for managed job {managed_job_id} is unavailable; "
+                    f"showing durable stage evidence. Diagnostic: {exc}"
                 )
-        reconcile_submitted_manifest(
-            run_manifest, live_status=live_status, task_rows=task_rows
-        )
+        observed_states = [
+            str(item.get("status") or "").upper()
+            for item in job_observations.values()
+            if str(item.get("status") or "").strip()
+        ]
+        if any(item.startswith("FAILED") for item in observed_states):
+            live_status = "FAILED"
+        elif any(item == "CANCELLED" for item in observed_states):
+            live_status = "CANCELLED"
+        elif observed_states and all(item == "SUCCEEDED" for item in observed_states):
+            live_status = "SUCCEEDED"
+        else:
+            live_status = next(
+                (
+                    item
+                    for item in reversed(observed_states)
+                    if item in {"RUNNING", "STARTING", "PENDING", "RECOVERING"}
+                ),
+                "",
+            )
+        if not runtime_waves:
+            reconcile_submitted_manifest(
+                run_manifest, live_status=live_status, task_rows=task_rows
+            )
         run_payload = build_actionable_run_status(
             run_manifest,
             live_status=live_status,
             task_rows=task_rows,
+            runtime_waves=runtime_waves,
+            job_observations=job_observations,
             controller_output=controller_output,
             project=project or state.project,
             failure_threshold=startup_failure_threshold,
@@ -2217,9 +2281,15 @@ def _durable_workflow_status(
         )
         if diagnostics:
             run_payload["diagnostics"] = diagnostics
-        blockers = _stalled_job_blockers(
-            run_manifest.sky_job_id, live_status, sky_bin=sky_bin
-        )
+        blockers = [
+            blocker
+            for managed_job_id, observation in job_observations.items()
+            for blocker in _stalled_job_blockers(
+                managed_job_id,
+                str(observation.get("status") or ""),
+                sky_bin=sky_bin,
+            )
+        ]
         if blockers:
             run_payload["blockers"] = blockers
         return run_payload
@@ -2316,15 +2386,35 @@ def _manifest_pending_status(
                     {
                         "state": str(state_name),
                         "status": step_status,
+                        "job_id": str(wave.get("job_id") or ""),
+                        "job_name": str(wave.get("job_name") or ""),
+                        "attempt": int(wave.get("attempt") or 1),
+                        "wave_key": str(wave.get("key") or ""),
+                        "sky_status": str(wave.get("sky_status") or ""),
                         "resources_profile": {},
                     }
                 )
-    job_id = resolution.job_id
+    runtime_job_ids = {
+        str(wave.get("job_id") or wave.get("sky_job_id") or "").strip()
+        for wave in runtime_waves
+        if str(wave.get("job_id") or wave.get("sky_job_id") or "").strip()
+    }
+    job_id = str(resolution.job_id or "").strip()
+    if runtime_waves and job_id not in runtime_job_ids:
+        # A resolver's legacy/latest root ID is not stage evidence. Prefer only
+        # the exact active wave identity; if it is missing, keep status unknown.
+        job_id = str(
+            active_wave.get("job_id") or active_wave.get("sky_job_id") or ""
+        ).strip()
     live_status = ""
     task_rows: list[dict[str, object]] = []
     controller_output = ""
     diagnostics = resolution_diagnostics(resolution)
-    if resolution.managed_job is not None and resolution.managed_job.outcome == "found":
+    if (
+        resolution.managed_job is not None
+        and resolution.managed_job.outcome == "found"
+        and str(resolution.job_id or "").strip() == job_id
+    ):
         live_status = resolution.managed_job.status
         task_rows = [dict(item) for item in resolution.managed_job.task_rows]
     elif job_id:
@@ -2371,7 +2461,7 @@ def _manifest_pending_status(
         api_version=str(workflow_record.get("api_version") or "npa.workflow/v0.0.1"),
         run_prefix_uri=resolution.run_prefix_uri,
         status="submitted",
-        sky_job_id=job_id,
+        sky_job_id=(job_id if not runtime_waves else ""),
         steps=steps,
         updated_at=str(resolution.receipt.get("updated_at") or ""),
     )
@@ -2393,13 +2483,26 @@ def _manifest_pending_status(
                 )
         except Exception as exc:  # noqa: BLE001
             diagnostics.append(f"SkyPilot controller logs are unavailable: {exc}")
-    reconcile_submitted_manifest(
-        pending_manifest, live_status=live_status, task_rows=task_rows
-    )
+    if not runtime_waves:
+        reconcile_submitted_manifest(
+            pending_manifest, live_status=live_status, task_rows=task_rows
+        )
     payload = build_actionable_run_status(
         pending_manifest,
         live_status=live_status,
         task_rows=task_rows,
+        runtime_waves=runtime_waves,
+        job_observations=(
+            {
+                job_id: {
+                    "status": live_status,
+                    "task_rows": task_rows,
+                    "error": "",
+                }
+            }
+            if job_id
+            else {}
+        ),
         controller_output=controller_output,
         project=project,
         failure_threshold=startup_failure_threshold,
@@ -3398,6 +3501,45 @@ def cancel_cmd(
             "cloud_calls": False,
             "message": f"{type(exc).__name__}: {exc}",
         }
+    try:
+        from npa.clients.config import resolve_environment
+        from npa.teardown_receipts import record_teardown_event
+
+        environment = resolve_environment(project or None)
+        receipt_state = {
+            "already_absent": "verified_absent",
+            "cancelled": "cancelled",
+            "terminal": "terminal",
+            "no_cancellation_needed": "terminal",
+        }.get(str(result.get("outcome") or ""), "verification_failed")
+        record_teardown_event(
+            phase="workflow",
+            resource=resolved_run_id or str(run_id),
+            terminal_state=receipt_state,
+            project_alias=project,
+            project_id=str(getattr(environment, "project_id", "") or ""),
+            precheck={
+                "detected_state": result.get("detected_state", ""),
+                "resolution_checks": result.get("resolution_checks", []),
+                "job_ids": result.get("sky_job_ids", []),
+            },
+            action={
+                "kind": "managed_job_cancel" if result.get("cloud_calls") else "none",
+                "cancelled_job_ids": result.get("cancelled_job_ids", []),
+            },
+            verification={"outcome": result.get("outcome", "")},
+            errors=[str(item) for item in result.get("errors", [])],
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        if result.get("cloud_calls"):
+            result.setdefault("errors", []).append(
+                f"durable teardown receipt could not be written: {exc}"
+            )
+            result["outcome"] = "partial_cancellation"
+        else:
+            result.setdefault("diagnostics", []).append(
+                f"teardown receipt unavailable: {exc}"
+            )
     if json_output:
         typer.echo(json.dumps(result, indent=2, sort_keys=True))
     else:

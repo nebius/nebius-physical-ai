@@ -51,7 +51,11 @@ from npa.cli.agent_network import (
     _agent_ssh_egress_result,
     destroy_with_default_security_group_recovery,
 )
-from npa.cli.agent_terraform import _agent_terraform_state_exists, _resolve_destroy_tf_vars
+from npa.cli.agent_terraform import (
+    _agent_terraform_state_exists,
+    _record_agent_destroy_event,
+    _resolve_destroy_tf_vars,
+)
 from npa.clients.config import (
     ConfigError,
     resolve_environment,
@@ -9351,10 +9355,26 @@ def destroy_cmd(
         ):
             typer.echo("Aborted.")
             raise typer.Exit(code=1)
+    _record_agent_destroy_event(
+        project,
+        name,
+        terminal_state="in_progress",
+        record_present=bool(record),
+        terraform_state_present=_agent_terraform_state_exists(project, name),
+        purge_iam=purge_iam,
+    )
     try:
         _destroy_agent_terraform(project, name, record=record or None)
     except ProvisionerError as exc:
+        try:
+            _record_agent_destroy_event(
+                project, name, terminal_state="failed", error=str(exc)
+            )
+        except (OSError, RuntimeError, ValueError):
+            pass
         _fail(f"Terraform destroy failed: {exc}")
+    # Persist remote convergence before removing the only local deployment record.
+    _record_agent_destroy_event(project, name, terminal_state="verified_deleted")
     if record:
         _remove_agent_record(project, name)
     # Drop the local auth secret + agent state dir (stale credentials otherwise

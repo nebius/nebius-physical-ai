@@ -623,6 +623,32 @@ def _observation_dict(observation: _StorageIamObservation) -> dict[str, object]:
     }
 
 
+def _record_storage_iam_teardown(
+    observation: _StorageIamObservation,
+    *,
+    terminal_state: str,
+    action: str,
+    errors: tuple[str, ...] = (),
+) -> None:
+    from npa.teardown_receipts import record_teardown_event
+
+    record_teardown_event(
+        phase="storage_iam",
+        resource=observation.account_id or observation.account_name or "storage-iam",
+        terminal_state=terminal_state,
+        project_alias=observation.context.alias,
+        project_id=observation.context.project_id,
+        precheck={
+            "provider_outcome": observation.outcome,
+            "ownership": observation.ownership,
+            "account_id": observation.account_id,
+        },
+        action={"kind": action},
+        verification={"provider_outcome": observation.outcome},
+        errors=errors,
+    )
+
+
 def _partial_cleanup(message: str) -> None:
     """Report an operator-actionable partial cleanup with stable exit semantics."""
 
@@ -903,6 +929,12 @@ def delete_service_account_cmd(
         _partial_cleanup(str(exc))
     payload = _observation_dict(observation)
     if observation.outcome == "verification_failed":
+        _record_storage_iam_teardown(
+            observation,
+            terminal_state="verification_failed",
+            action="none",
+            errors=(observation.detail,),
+        )
         payload["result"] = "partial_verification_failure"
         if output_json:
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -912,6 +944,11 @@ def delete_service_account_cmd(
         )
     if observation.verified_absent:
         payload["result"] = "already_absent"
+        _record_storage_iam_teardown(
+            observation,
+            terminal_state="verified_absent",
+            action="none",
+        )
         if not dry_run and observation.account_id:
             record, _note = _storage_service_account_record()
             if record is not None and record.account_id == observation.account_id:
@@ -982,7 +1019,14 @@ def delete_service_account_cmd(
                 f"Verified absence: NPA-owned service account {record.name} "
                 f"({record.account_id}) is already absent."
             )
-            if not dry_run and not _remove_storage_service_account_record(record.account_id):
+            _record_storage_iam_teardown(
+                recheck,
+                terminal_state="verified_absent",
+                action="none",
+            )
+            if not dry_run and not _remove_storage_service_account_record(
+                record.account_id
+            ):
                 _partial_cleanup(
                     "the account is verified absent, but its stale local ownership "
                     "record could not be removed; fix file permissions and retry."
@@ -1079,6 +1123,19 @@ def delete_service_account_cmd(
         typer.echo(
             f"Verified deletion: NPA-owned service account {record.name} "
             f"({record.account_id}) was deleted."
+        )
+        deleted_observation = _StorageIamObservation(
+            outcome="verified_absent",
+            context=context,
+            account_id=record.account_id,
+            account_name=record.name,
+            ownership="npa",
+            detail="provider delete completed",
+        )
+        _record_storage_iam_teardown(
+            deleted_observation,
+            terminal_state="verified_deleted",
+            action="delete_npa_owned_service_account",
         )
         if not _remove_storage_service_account_record(record.account_id):
             failed = True
@@ -1397,6 +1454,18 @@ def delete_bucket_cmd(
             iam_alias, iam_marker = _begin_bucket_iam_cleanup_tombstone(
                 project, resolved_project, bucket_name
             )
+            from npa.teardown_receipts import record_teardown_event
+
+            record_teardown_event(
+                phase="bucket",
+                resource=bucket_name,
+                terminal_state="verified_absent",
+                project_alias=project,
+                project_id=resolved_project,
+                precheck={"provider_lookup": "absent"},
+                action={"kind": "none"},
+                verification={"bucket_absent": True},
+            )
             if prune_config:
                 _prune_local_state(bucket_name)
             _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
@@ -1429,8 +1498,23 @@ def delete_bucket_cmd(
         pending = _scheduled_deletion_state(resolved_project, bucket_name)
         if "nosuchbucket" in message.replace(" ", "").lower() and pending:
             typer.echo(f"Bucket {target} is already {pending}.")
+            verified_gone = False
             if wait:
-                _wait_for_bucket_gone(resolved_project, bucket_name, target, wait_timeout)
+                verified_gone = _wait_for_bucket_gone(
+                    resolved_project, bucket_name, target, wait_timeout
+                )
+            from npa.teardown_receipts import record_teardown_event
+
+            record_teardown_event(
+                phase="bucket",
+                resource=bucket_name or resolved_id,
+                terminal_state=("verified_deleted" if verified_gone else "in_progress"),
+                project_alias=project,
+                project_id=resolved_project,
+                precheck={"provider_state": pending},
+                action={"kind": "scheduled_bucket_purge"},
+                verification={"bucket_absent": verified_gone},
+            )
             if prune_config and bucket_name:
                 _prune_local_state(bucket_name)
             _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
@@ -1441,14 +1525,34 @@ def delete_bucket_cmd(
         typer.echo(f"Bucket {target} scheduled for purge in {ttl}.")
     else:
         typer.echo(f"Bucket {target} deleted.")
+    verified_gone = not str(ttl or "").strip()
     if wait:
-        _wait_for_bucket_gone(resolved_project, bucket_name, target, wait_timeout)
+        verified_gone = _wait_for_bucket_gone(
+            resolved_project, bucket_name, target, wait_timeout
+        )
+    from npa.teardown_receipts import record_teardown_event
+
+    record_teardown_event(
+        phase="bucket",
+        resource=bucket_name or resolved_id,
+        terminal_state="verified_deleted" if verified_gone else "in_progress",
+        project_alias=project,
+        project_id=resolved_project,
+        precheck={"bucket_id": resolved_id},
+        action={
+            "kind": "bucket_delete",
+            "scheduled": bool(str(ttl or "").strip()),
+        },
+        verification={"bucket_absent": verified_gone},
+    )
     if prune_config and bucket_name:
         _prune_local_state(bucket_name)
     _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
 
 
-def _wait_for_bucket_gone(project_id: str, bucket_name: str, target: str, timeout: int) -> None:
+def _wait_for_bucket_gone(
+    project_id: str, bucket_name: str, target: str, timeout: int
+) -> bool:
     """Poll until *bucket_name* no longer exists (a scheduled purge is async).
 
     `storage bucket delete --ttl` returns while the bucket is still
@@ -1461,7 +1565,7 @@ def _wait_for_bucket_gone(project_id: str, bucket_name: str, target: str, timeou
 
     if not project_id or not bucket_name:
         typer.echo("--wait skipped: no project/bucket name to poll.")
-        return
+        return False
     deadline = time.monotonic() + max(1, int(timeout))
     typer.echo(f"Waiting up to {timeout}s for {bucket_name} to be purged...")
     while time.monotonic() < deadline:
@@ -1472,7 +1576,7 @@ def _wait_for_bucket_gone(project_id: str, bucket_name: str, target: str, timeou
             item = {"metadata": {"name": bucket_name}}
         if item is None:
             typer.echo(f"Bucket {target} is gone.")
-            return
+            return True
         time.sleep(5)
     state = _scheduled_deletion_state(project_id, bucket_name) or "still present"
     overdue = _purge_is_overdue(project_id, bucket_name)
@@ -1485,12 +1589,13 @@ def _wait_for_bucket_gone(project_id: str, bucket_name: str, target: str, timeou
             "wait. The name stays reserved until Nebius clears it; raise it with Nebius "
             "support if it does not resolve."
         )
-        return
+        return False
     typer.echo(
         f"Bucket {bucket_name} is {state} after {timeout}s "
         "(a scheduled purge can take longer than the wait); it will be removed by "
         "Nebius. Re-run with a larger --wait-timeout to keep watching."
     )
+    return False
 
 
 def _bucket_item(project_id: str, bucket_name: str) -> dict | None:

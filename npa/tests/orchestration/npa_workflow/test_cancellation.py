@@ -148,6 +148,96 @@ def test_active_stage_outweighs_a_stale_terminal_root_state() -> None:
     assert [job.job_id for job in assessment.active_jobs] == ["251"]
 
 
+def test_runtime_wave_identity_ignores_a_bogus_discovered_root_job_eight() -> None:
+    resolution = _resolution(
+        {
+            "status": "running",
+            "waves": [
+                {
+                    "key": "001|serial|:annotate:-",
+                    "states": ["annotate"],
+                    "job_id": "601",
+                    "job_name": "paidf-runtime-annotate",
+                    "status": "running",
+                },
+                {
+                    "key": "002|serial|:curate:-",
+                    "states": ["curate"],
+                    "job_id": "602",
+                    "job_name": "paidf-runtime-curate",
+                    "status": "succeeded",
+                },
+            ],
+        },
+        manifest={
+            "schema_version": "npa.workflow.run.v1",
+            "run_id": "paidf-runtime",
+            "sky_job_id": "8",
+            "status": "running",
+            "steps": [
+                {"state": "annotate", "status": "running"},
+                {"state": "curate", "status": "succeeded"},
+            ],
+            # The historical bug copied the latest discovered root ID into every
+            # stage. Runtime waves are the durable attempt identities and must win.
+            "stages": {
+                "annotate": {"status": "running", "sky_job_id": "8"},
+                "curate": {"status": "succeeded", "sky_job_id": "8"},
+            },
+        },
+    )
+    resolution.job_id = "8"
+    resolution.job_name = "bogus-latest-discovery"
+    looked_up: list[str] = []
+
+    def lookup(job_name: str, *, job_id: str, **_kwargs) -> ManagedJobEvidence:
+        looked_up.append(job_id)
+        return ManagedJobEvidence("found", job_id=job_id, status="RUNNING")
+
+    assessment = assess_run_cancellation(resolution, lookup=lookup)
+
+    assert [job.job_id for job in assessment.jobs] == ["601", "602"]
+    assert [job.job_id for job in assessment.active_jobs] == ["601"]
+    assert looked_up == ["601"]
+
+
+def test_partial_runtime_ledger_keeps_a_distinct_explicit_stage_job() -> None:
+    resolution = _resolution(
+        {
+            "status": "running",
+            "waves": [
+                {
+                    "key": "001|serial|:annotate:-",
+                    "states": ["annotate"],
+                    "job_id": "701",
+                    "status": "succeeded",
+                }
+            ],
+        },
+        manifest={
+            "schema_version": "npa.workflow.run.v1",
+            "run_id": "paidf-partial-ledger",
+            "sky_job_id": "8",
+            "status": "running",
+            "steps": [
+                {"state": "annotate", "status": "succeeded", "job_id": "8"},
+                {"state": "augment", "status": "running", "job_id": "702"},
+            ],
+        },
+    )
+    looked_up: list[str] = []
+
+    def lookup(job_name: str, *, job_id: str, **_kwargs) -> ManagedJobEvidence:
+        looked_up.append(job_id)
+        return ManagedJobEvidence("found", job_id=job_id, status="RUNNING")
+
+    assessment = assess_run_cancellation(resolution, lookup=lookup)
+
+    assert [job.job_id for job in assessment.jobs] == ["701", "702"]
+    assert [job.job_id for job in assessment.active_jobs] == ["702"]
+    assert looked_up == ["702"]
+
+
 def test_terminal_not_found_cancel_race_is_successful_convergence(monkeypatch) -> None:
     monkeypatch.setattr(
         cleanup_module,

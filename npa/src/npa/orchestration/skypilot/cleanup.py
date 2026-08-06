@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -89,26 +90,112 @@ def sky_down(
 
 def cleanup_jobs_controller(
     *,
+    project: str = "",
+    context: str = "",
     isolated_config_dir: Path | None = None,
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     job_drain_timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
 ) -> CleanupResult:
-    """Tear down the managed-jobs controller in the active SkyPilot state.
+    """Transactionally remove the controller for one verified NPA cluster.
 
-    ``sky down`` refuses while any managed job is non-terminal, and a job that was
-    only just cancelled still counts, so wait for the queue to drain first.
+    Identity comes only from explicit project/context arguments or the selected
+    NPA project and its exact saved cluster record.  Remote deletion runs against
+    a clone of SkyPilot state; the real local metadata is changed only after an
+    independent Kubernetes absence check succeeds.
     """
 
     cleanup = CleanupResult()
+    from npa.cluster.identity import (
+        ClusterIdentityError,
+        resolve_verified_cluster_identity,
+    )
+    from npa.teardown_receipts import record_teardown_event
+
+    try:
+        identity = resolve_verified_cluster_identity(project=project, context=context)
+    except ClusterIdentityError as exc:
+        cleanup.errors.append(str(exc))
+        try:
+            record_teardown_event(
+                phase="controller",
+                resource=context or "unresolved-controller",
+                terminal_state="verification_failed",
+                project_alias=project,
+                context=context,
+                precheck={"identity_verified": False},
+                action={"kind": "none"},
+                verification={"remote_state": "not_inspected"},
+                errors=[str(exc)],
+            )
+        except (OSError, RuntimeError, ValueError):
+            pass
+        return cleanup
+
+    identity_fields = identity.receipt_identity()
+    try:
+        record_teardown_event(
+            phase="controller",
+            resource=identity.context,
+            terminal_state="in_progress",
+            project_alias=identity.project_alias,
+            project_id=identity.project_id,
+            context=identity.context,
+            precheck={"identity_verified": True, **identity_fields},
+            action={"kind": "inspect_remote_controller"},
+            verification={"remote_state": "pending"},
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        cleanup.errors.append(
+            f"controller transaction receipt could not be started; no remote or "
+            f"local mutation was attempted: {exc}"
+        )
+        return cleanup
+
+    remote_pods: list[tuple[str, str, str]] = []
+    if not identity.cluster_absent:
+        remote_pods, remote_error = _kubernetes_controller_pods(
+            kubeconfig=identity.kubeconfig,
+            context=identity.context,
+        )
+        if remote_error:
+            cleanup.errors.append(
+                "exact-context controller inspection failed; local SkyPilot state "
+                f"was preserved: {remote_error}"
+            )
+            _record_controller_result(identity, cleanup, "verification_failed")
+            return cleanup
+
     controller_clusters, status_error = _jobs_controller_clusters(
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
         sky_bin=sky_bin,
+        refresh=False,
+        env_extra={"KUBECONFIG": str(identity.kubeconfig)},
     )
     if status_error:
         cleanup.errors.append(status_error)
+        _record_controller_result(identity, cleanup, "verification_failed")
         return cleanup
+    remote_names = {item[2] for item in remote_pods if item[2]}
+    context_clusters = [
+        item
+        for item in controller_clusters
+        if _controller_belongs_to_context(item, identity.context)
+        or _cluster_name(item) in remote_names
+    ]
+    if remote_names and not context_clusters:
+        cleanup.errors.append(
+            "The verified context contains controller pod(s) "
+            + ", ".join(sorted(remote_names))
+            + ", but SkyPilot has no matching exact-context metadata. Local state "
+            "was preserved. Restore the selected project's SkyPilot state and retry."
+        )
+        _record_controller_result(identity, cleanup, "verification_failed")
+        return cleanup
+    controller_clusters = context_clusters
+    # Unrelated controller rows are deliberately ignored; they are neither
+    # targets nor cleanup results for this exact project/context transaction.
     if controller_clusters:
         pending = _nonterminal_job_ids(
             isolated_config_dir=isolated_config_dir,
@@ -123,21 +210,202 @@ def cleanup_jobs_controller(
                 sky_bin=sky_bin,
                 timeout=job_drain_timeout,
             )
-    for controller_cluster in controller_clusters:
-        controller_name = _cluster_name(controller_cluster)
-        down_result = _down_jobs_controller(
-            controller_name,
+    if not remote_pods:
+        # The exact context (or the provider itself) proves remote absence.  It is
+        # now safe to converge matching local metadata.
+        if not _record_remote_controller_absence(identity, cleanup):
+            return cleanup
+        for controller_cluster in controller_clusters:
+            cleanup.extend(
+                _down_jobs_controller(
+                    _cluster_name(controller_cluster),
+                    isolated_config_dir=isolated_config_dir,
+                    config_path=config_path,
+                    sky_bin=sky_bin,
+                    job_drain_timeout=job_drain_timeout,
+                    env_extra={"KUBECONFIG": str(identity.kubeconfig)},
+                )
+            )
+        _verify_local_controller_metadata_removed(
+            identity,
+            controller_clusters,
+            cleanup,
             isolated_config_dir=isolated_config_dir,
             config_path=config_path,
             sky_bin=sky_bin,
-            job_drain_timeout=job_drain_timeout,
         )
-        cleanup.extend(down_result)
-        if down_result.ok and _is_kubernetes_controller(controller_cluster):
-            cleanup.extend(
-                _cleanup_lingering_kubernetes_controller_pods(controller_name)
+        _record_controller_result(
+            identity,
+            cleanup,
+            "verified_absent" if cleanup.ok else "verification_failed",
+            remote_pods=[],
+        )
+        return cleanup
+
+    with _cloned_skypilot_state(isolated_config_dir) as remote_state:
+        for controller_cluster in controller_clusters:
+            controller_name = _cluster_name(controller_cluster)
+            remote_result = _down_jobs_controller(
+                controller_name,
+                isolated_config_dir=remote_state,
+                config_path=config_path,
+                sky_bin=sky_bin,
+                job_drain_timeout=job_drain_timeout,
+                env_extra={"KUBECONFIG": str(identity.kubeconfig)},
             )
+            cleanup.commands.extend(remote_result.commands)
+            if remote_result.errors:
+                cleanup.errors.extend(remote_result.errors)
+                _record_controller_result(
+                    identity, cleanup, "verification_failed", remote_pods=remote_pods
+                )
+                return cleanup
+
+    remaining, verify_error = _wait_for_controller_pods_absent(
+        remote_names,
+        kubeconfig=identity.kubeconfig,
+        context=identity.context,
+    )
+    if verify_error or remaining:
+        detail = verify_error or ", ".join(
+            f"{namespace}/{pod}" for namespace, pod, _name in remaining
+        )
+        cleanup.errors.append(
+            "remote controller absence was not proven; real local SkyPilot state "
+            f"was preserved: {detail}"
+        )
+        _record_controller_result(
+            identity, cleanup, "verification_failed", remote_pods=remaining
+        )
+        return cleanup
+
+    # Only this post-verification call is allowed to mutate the real SkyPilot
+    # cache/metadata.  Its remote target is already authoritatively absent.
+    if not _record_remote_controller_absence(identity, cleanup):
+        return cleanup
+    for controller_cluster in controller_clusters:
+        cleanup.extend(
+            _down_jobs_controller(
+                _cluster_name(controller_cluster),
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin,
+                job_drain_timeout=job_drain_timeout,
+                env_extra={"KUBECONFIG": str(identity.kubeconfig)},
+            )
+        )
+    _verify_local_controller_metadata_removed(
+        identity,
+        controller_clusters,
+        cleanup,
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+        sky_bin=sky_bin,
+    )
+    _record_controller_result(
+        identity,
+        cleanup,
+        "verified_deleted" if cleanup.ok else "verification_failed",
+        remote_pods=[],
+    )
     return cleanup
+
+
+def _record_remote_controller_absence(identity: Any, cleanup: CleanupResult) -> bool:
+    """Durably checkpoint remote absence before real local state may change."""
+
+    from npa.teardown_receipts import record_teardown_event
+
+    try:
+        record_teardown_event(
+            phase="controller",
+            resource=identity.context,
+            terminal_state="remote_absent_local_pending",
+            project_alias=identity.project_alias,
+            project_id=identity.project_id,
+            context=identity.context,
+            precheck={"identity_verified": True, **identity.receipt_identity()},
+            action={"kind": "checkpoint_before_local_state_removal"},
+            verification={"remote_controller_pods": [], "remote_absence": True},
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        cleanup.errors.append(
+            "remote controller absence was proven, but its durable checkpoint "
+            f"failed; real local SkyPilot state was preserved: {exc}"
+        )
+        return False
+    return True
+
+
+def _verify_local_controller_metadata_removed(
+    identity: Any,
+    targets: Sequence[dict[str, Any]],
+    cleanup: CleanupResult,
+    *,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    sky_bin: SkyBin,
+) -> None:
+    """Verify that the post-remote local convergence removed only target rows."""
+
+    target_names = {_cluster_name(item) for item in targets}
+    if not target_names or cleanup.errors:
+        return
+    rows, error = _jobs_controller_clusters(
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+        sky_bin=sky_bin,
+        refresh=False,
+        env_extra={"KUBECONFIG": str(identity.kubeconfig)},
+    )
+    if error:
+        cleanup.errors.append(
+            "remote absence was proven, but local controller metadata could not be "
+            f"verified after convergence: {error}"
+        )
+        return
+    remaining = sorted(target_names & {_cluster_name(item) for item in rows})
+    if remaining:
+        cleanup.errors.append(
+            "remote absence was proven, but local SkyPilot metadata still lists: "
+            + ", ".join(remaining)
+            + ". Retry the same exact project/context transaction."
+        )
+
+
+def _record_controller_result(
+    identity: Any,
+    cleanup: CleanupResult,
+    state: str,
+    *,
+    remote_pods: Sequence[tuple[str, str, str]] = (),
+) -> None:
+    from npa.teardown_receipts import record_teardown_event
+
+    try:
+        record_teardown_event(
+            phase="controller",
+            resource=identity.context,
+            terminal_state=state,
+            project_alias=identity.project_alias,
+            project_id=identity.project_id,
+            context=identity.context,
+            precheck={"identity_verified": True, **identity.receipt_identity()},
+            action={"commands": cleanup.commands},
+            verification={
+                "remote_controller_pods": [
+                    f"{namespace}/{pod}" for namespace, pod, _name in remote_pods
+                ],
+                "local_state_removed_after_remote_absence": (
+                    state in {"verified_absent", "verified_deleted"}
+                ),
+            },
+            errors=cleanup.errors,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        cleanup.errors.append(
+            f"controller teardown receipt could not be written: {exc}"
+        )
 
 
 def cleanup_workflow(
@@ -710,18 +978,24 @@ def _jobs_controller_clusters(
     isolated_config_dir: Path | None,
     config_path: Path | None,
     sky_bin: SkyBin,
+    refresh: bool = True,
+    env_extra: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     runtime_config = resolve_config(
         sky_bin=sky_bin,
         global_config_path=config_path,
         isolated_config_dir=isolated_config_dir,
     )
-    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "status", "--refresh", "--output", "json"]
+    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "status"]
+    if refresh:
+        cmd.append("--refresh")
+    cmd.extend(["--output", "json"])
     result = _run(
         cmd,
         isolated_config_dir=runtime_config.isolated_config_dir,
         config_path=runtime_config.global_config_path,
         timeout=300,
+        env_extra=env_extra,
     )
     if result.returncode != 0:
         return [], _format_command_error(cmd, result)
@@ -754,6 +1028,7 @@ def _down_jobs_controller(
     config_path: Path | None,
     sky_bin: SkyBin,
     job_drain_timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
+    env_extra: dict[str, str] | None = None,
 ) -> CleanupResult:
     runtime_config = resolve_config(
         sky_bin=sky_bin,
@@ -768,6 +1043,7 @@ def _down_jobs_controller(
         config_path=runtime_config.global_config_path,
         timeout=900,
         input_text="delete\n",
+        env_extra=env_extra,
     )
     if result.returncode != 0 and looks_like_in_progress_jobs_error(
         _combined_output(result)
@@ -795,6 +1071,7 @@ def _down_jobs_controller(
                 config_path=runtime_config.global_config_path,
                 timeout=900,
                 input_text="delete\n",
+                env_extra=env_extra,
             )
         elif still_running:
             cleanup.errors.append(
@@ -807,6 +1084,8 @@ def _down_jobs_controller(
             return cleanup
     if result.returncode == 0:
         cleanup.resources_removed.append(controller_name)
+    elif _is_conclusive_absence_error(_command_detail(result)):
+        cleanup.resources_removed.append(f"{controller_name}:already-absent")
     else:
         cleanup.errors.append(_format_command_error(cmd, result))
     return cleanup
@@ -816,76 +1095,142 @@ def _is_kubernetes_controller(cluster: dict[str, Any]) -> bool:
     return "kubernetes" in json.dumps(cluster, sort_keys=True).lower()
 
 
-def _cleanup_lingering_kubernetes_controller_pods(controller_name: str) -> CleanupResult:
-    cleanup = CleanupResult()
-    pods, error = _matching_kubernetes_controller_pods(controller_name)
-    if error:
-        cleanup.errors.append(f"NOVEL_ISSUE: unable to verify Kubernetes controller pod cleanup: {error}")
-        return cleanup
-    for namespace, pod_name in pods:
-        cmd = ["kubectl", "delete", "pod", "-n", namespace, pod_name, "--ignore-not-found=true"]
-        result = subprocess.run(
-            cmd,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=180,
-            check=False,
-        )
-        cleanup.commands.append(cmd)
-        if result.returncode == 0:
-            cleanup.resources_removed.append(f"k8s-pod:{namespace}/{pod_name}")
-        else:
-            cleanup.errors.append(
-                "NOVEL_ISSUE: lingering Kubernetes controller pod deletion failed: "
-                + _format_command_error(cmd, result)
+def _controller_belongs_to_context(cluster: dict[str, Any], context: str) -> bool:
+    """Require exact context evidence; a generic Kubernetes row is ambiguous."""
+
+    expected = str(context or "").strip().lower()
+    if not expected:
+        return False
+
+    def scalar_values(value: object) -> Iterator[str]:
+        if isinstance(value, dict):
+            for item in value.values():
+                yield from scalar_values(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                yield from scalar_values(item)
+        elif isinstance(value, str):
+            yield value.strip().lower()
+
+    exact_values = {
+        expected,
+        f"k8s/{expected}",
+        f"kubernetes/{expected}",
+    }
+    return any(value in exact_values for value in scalar_values(cluster))
+
+
+@contextmanager
+def _cloned_skypilot_state(source_root: Path | None) -> Iterator[Path]:
+    """Yield an isolated clone so remote deletion cannot erase real metadata."""
+
+    source_env = sky_environment(source_root)
+    source_home = Path(source_env.get("HOME") or Path.home())
+    with tempfile.TemporaryDirectory(prefix="npa-controller-transaction-") as raw:
+        clone_root = Path(raw)
+        clone_home = clone_root / "home"
+        clone_home.mkdir(parents=True, exist_ok=True)
+        source_sky = source_home / ".sky"
+        if source_sky.is_dir() and not source_sky.is_symlink():
+            shutil.copytree(source_sky, clone_home / ".sky", symlinks=True)
+        yield clone_root
+
+
+def _controller_name_from_pod(item: dict[str, Any]) -> str:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    labels = metadata.get("labels") if isinstance(metadata.get("labels"), dict) else {}
+    searchable = [
+        str(labels.get("skypilot-cluster") or ""),
+        str(labels.get("ray.io/cluster") or ""),
+        str(labels.get("app.kubernetes.io/instance") or ""),
+        str(metadata.get("name") or ""),
+    ]
+    for value in searchable:
+        match = re.search(r"(sky-jobs-controller-[a-zA-Z0-9-]+)", value)
+        if match:
+            return match.group(1).removesuffix("-ray-head")
+    return ""
+
+
+def _kubernetes_controller_pods(
+    *,
+    kubeconfig: Path,
+    context: str,
+) -> tuple[list[tuple[str, str, str]], str]:
+    from npa.cluster.drain import _noninteractive_kubeconfig_env
+
+    cmd = [
+        "kubectl",
+        "--context",
+        context,
+        "get",
+        "pods",
+        "--all-namespaces",
+        "-o",
+        "json",
+    ]
+    with _noninteractive_kubeconfig_env(str(kubeconfig)) as (env, issue):
+        if issue is not None:
+            return [], issue.summary
+        try:
+            result = subprocess.run(
+                cmd,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=180,
+                check=False,
             )
-    return cleanup
-
-
-def _matching_kubernetes_controller_pods(controller_name: str) -> tuple[list[tuple[str, str]], str]:
-    if shutil.which("kubectl") is None:
-        return [], "kubectl not found"
-    cmd = ["kubectl", "get", "pods", "--all-namespaces", "-o", "json"]
-    try:
-        result = subprocess.run(
-            cmd,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=180,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return [], "kubectl get pods timed out"
+        except (OSError, subprocess.SubprocessError) as exc:
+            return [], f"{type(exc).__name__}: {exc}"
     if result.returncode != 0:
         return [], _format_command_error(cmd, result)
     try:
         payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
         return [], "kubectl get pods returned non-json output"
-    matches: list[tuple[str, str]] = []
+    matches: list[tuple[str, str, str]] = []
     for item in payload.get("items", []):
         if not isinstance(item, dict):
             continue
-        metadata = item.get("metadata") or {}
-        if not isinstance(metadata, dict):
+        controller = _controller_name_from_pod(item)
+        if not controller:
             continue
-        namespace = str(metadata.get("namespace") or "default")
-        pod_name = str(metadata.get("name") or "")
-        labels = metadata.get("labels") if isinstance(metadata.get("labels"), dict) else {}
-        searchable = " ".join(
-            [
-                pod_name,
-                str(labels.get("skypilot-cluster", "")),
-                str(labels.get("ray.io/cluster", "")),
-                str(labels.get("app.kubernetes.io/name", "")),
-                str(labels.get("component", "")),
-            ]
+        metadata = (
+            item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
         )
-        if controller_name in searchable:
-            matches.append((namespace, pod_name))
+        matches.append(
+            (
+                str(metadata.get("namespace") or "default"),
+                str(metadata.get("name") or ""),
+                controller,
+            )
+        )
     return matches, ""
+
+
+def _wait_for_controller_pods_absent(
+    controller_names: set[str],
+    *,
+    kubeconfig: Path,
+    context: str,
+    timeout: int = 900,
+    interval: float = 5.0,
+) -> tuple[list[tuple[str, str, str]], str]:
+    deadline = time.monotonic() + timeout
+    while True:
+        pods, error = _kubernetes_controller_pods(
+            kubeconfig=kubeconfig, context=context
+        )
+        if error:
+            return [], error
+        relevant = [item for item in pods if item[2] in controller_names]
+        if not relevant:
+            return [], ""
+        if time.monotonic() >= deadline:
+            return relevant, f"controller pods remained after {timeout}s"
+        time.sleep(interval)
 
 
 def _run(
@@ -895,14 +1240,22 @@ def _run(
     config_path: Path | None,
     timeout: int,
     input_text: str | None = None,
+    env_extra: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     effective_cmd = list(cmd)
     if config_path is not None and "--config" not in effective_cmd:
-        command_name_index = 2 if len(effective_cmd) > 1 and effective_cmd[1] == "jobs" else 1
-        effective_cmd[command_name_index + 1:command_name_index + 1] = ["--config", str(config_path)]
+        command_name_index = (
+            2 if len(effective_cmd) > 1 and effective_cmd[1] == "jobs" else 1
+        )
+        effective_cmd[command_name_index + 1 : command_name_index + 1] = [
+            "--config",
+            str(config_path),
+        ]
+    env = sky_environment(isolated_config_dir)
+    env.update(env_extra or {})
     return subprocess.run(
         effective_cmd,
-        env=sky_environment(isolated_config_dir),
+        env=env,
         text=True,
         input=input_text,
         stdout=subprocess.PIPE,

@@ -164,11 +164,182 @@ class RuntimeRunState:
 
     def record_wave(self, record: Mapping[str, Any]) -> None:
         key = str(record.get("key") or "")
+        attempt = int(record.get("attempt") or 1)
         for index, existing in enumerate(self.waves):
-            if existing.get("key") == key:
+            if (
+                existing.get("key") == key
+                and int(existing.get("attempt") or 1) == attempt
+            ):
                 self.waves[index] = dict(record)
                 return
         self.waves.append(dict(record))
+
+
+def _normalized_stage_state(value: object) -> str:
+    state = str(value or "").strip().upper().replace("-", "_")
+    if state in {"OK", "SUCCESS", "COMPLETED", "SUCCEEDED"}:
+        return "SUCCEEDED"
+    if state in {"CANCELED", "CANCELLED", "ABORTED"}:
+        return "CANCELLED"
+    if state in {"FAILED_STARTUP", "FAILED_SETUP"}:
+        return state
+    if state.startswith("FAILED") or state in {"FAILURE", "ERROR", "BLOCKED"}:
+        return "FAILED"
+    return state or "UNKNOWN"
+
+
+def _wave_members(wave: Mapping[str, Any]) -> list[tuple[str, int | None]]:
+    key = str(wave.get("key") or "")
+    members: list[tuple[str, int | None]] = []
+    if key.count("|") >= 2:
+        encoded = key.split("|", 2)[2]
+        for item in encoded.split(","):
+            parts = item.rsplit(":", 2)
+            if len(parts) != 3:
+                continue
+            _loop, state, raw_iteration = parts
+            iteration = int(raw_iteration) if raw_iteration.isdigit() else None
+            members.append((state, iteration))
+    if members:
+        return members
+    return [(str(item), None) for item in wave.get("states") or []]
+
+
+def reconstruct_stage_job_attribution(
+    manifest: RunManifest,
+    *,
+    runtime_waves: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, dict[str, Any]]:
+    """Map each logical stage to only its own durable wave/attempt identities.
+
+    A root job ID is inherited only for the legacy single-managed-job contract
+    (no runtime waves).  Conflicts and missing historical evidence remain
+    explicit instead of broadcasting the latest discovered job across stages.
+    """
+
+    stages: dict[str, dict[str, Any]] = {}
+    by_member: dict[tuple[str, int | None], list[dict[str, Any]]] = {}
+    for order, wave in enumerate(runtime_waves):
+        if not isinstance(wave, Mapping):
+            continue
+        record = {
+            "attempt": int(wave.get("attempt") or 1),
+            "job_id": str(wave.get("job_id") or wave.get("sky_job_id") or ""),
+            "job_name": str(wave.get("job_name") or ""),
+            "wave_key": str(wave.get("key") or ""),
+            "wave_kind": str(wave.get("kind") or ""),
+            "group": str(wave.get("group") or ""),
+            "state": _normalized_stage_state(
+                wave.get("sky_status") or wave.get("status")
+            ),
+            "started_at": str(wave.get("started_at") or ""),
+            "ended_at": str(wave.get("ended_at") or ""),
+            "provenance": "runtime_wave",
+            "_order": order,
+        }
+        for member in _wave_members(wave):
+            by_member.setdefault(member, []).append(dict(record))
+
+    for index, step in enumerate(manifest.steps):
+        name = str(step.get("state") or f"step-{index}")
+        raw_iteration = step.get("iteration")
+        try:
+            iteration = int(raw_iteration) if raw_iteration is not None else None
+        except (TypeError, ValueError):
+            iteration = None
+        key = f"{name}#{iteration}" if iteration is not None else name
+        if key in stages:
+            key = f"{key}@{index}"
+        attempts = list(by_member.get((name, iteration), ()))
+        if not attempts and iteration is None:
+            # Legacy runtime ledgers did not encode iteration in their key.
+            candidates = [
+                record
+                for (member_name, _member_iteration), records in by_member.items()
+                if member_name == name
+                for record in records
+            ]
+            if len({item.get("wave_key") for item in candidates}) == 1:
+                attempts = candidates
+        step_job = str(step.get("job_id") or step.get("sky_job_id") or "").strip()
+        step_job_is_unproven_root = (
+            bool(runtime_waves)
+            and step_job == manifest.sky_job_id
+            and not any(item.get("job_id") == step_job for item in attempts)
+        )
+        if (
+            step_job
+            and not step_job_is_unproven_root
+            and not any(item.get("job_id") == step_job for item in attempts)
+        ):
+            attempts.append(
+                {
+                    "attempt": int(step.get("attempt") or 1),
+                    "job_id": step_job,
+                    "job_name": str(step.get("job_name") or ""),
+                    "wave_key": str(step.get("wave_key") or ""),
+                    "wave_kind": "",
+                    "group": str(step.get("group") or ""),
+                    "state": _normalized_stage_state(
+                        step.get("sky_status") or step.get("status")
+                    ),
+                    "started_at": str(step.get("start_at") or ""),
+                    "ended_at": str(step.get("end_at") or ""),
+                    "provenance": "manifest_step",
+                    "_order": len(runtime_waves) + index,
+                }
+            )
+        legacy_single = bool(manifest.sky_job_id) and not runtime_waves
+        if not attempts and legacy_single:
+            attempts.append(
+                {
+                    "attempt": 1,
+                    "job_id": manifest.sky_job_id,
+                    "job_name": "",
+                    "wave_key": "",
+                    "wave_kind": "legacy_single_managed_job",
+                    "group": "",
+                    "state": _normalized_stage_state(step.get("status")),
+                    "started_at": "",
+                    "ended_at": "",
+                    "provenance": "legacy_single_managed_job",
+                    "_order": index,
+                }
+            )
+        attempts.sort(
+            key=lambda item: (
+                int(item.get("attempt") or 1),
+                int(item.get("_order") or 0),
+            )
+        )
+        final = attempts[-1] if attempts else {}
+        final_attempt = int(final.get("attempt") or 0)
+        final_ids = {
+            str(item.get("job_id") or "")
+            for item in attempts
+            if int(item.get("attempt") or 0) == final_attempt
+            and str(item.get("job_id") or "")
+        }
+        ambiguous = len(final_ids) > 1
+        public_attempts = [
+            {field: value for field, value in item.items() if field != "_order"}
+            for item in attempts
+        ]
+        stages[key] = {
+            "workflow_state": name,
+            "iteration": iteration,
+            "managed_job_id": "" if ambiguous else next(iter(final_ids), ""),
+            "job_name": str(final.get("job_name") or ""),
+            "attempts": public_attempts,
+            "active_attempt": final_attempt or None,
+            "attribution": (
+                "ambiguous" if ambiguous else str(final.get("provenance") or "unknown")
+            ),
+            "attribution_provenance": sorted(
+                {str(item.get("provenance") or "unknown") for item in attempts}
+            ),
+        }
+    return stages
 
 
 def manifest_key(prefix: str) -> str:
@@ -445,6 +616,8 @@ def build_actionable_run_status(
     *,
     live_status: str = "",
     task_rows: Sequence[Mapping[str, Any]] = (),
+    runtime_waves: Sequence[Mapping[str, Any]] = (),
+    job_observations: Mapping[str, Mapping[str, Any]] | None = None,
     controller_output: str = "",
     project: str = "",
     failure_threshold: int = 3,
@@ -467,6 +640,10 @@ def build_actionable_run_status(
         for row in task_rows
         if str(row.get("task_id", "")).isdigit()
     }
+    attributions = reconstruct_stage_job_attribution(
+        manifest, runtime_waves=runtime_waves
+    )
+    observations = dict(job_observations or {})
     normalized_failure, failure_evidence = normalize_startup_failure(controller_output)
     stages: dict[str, dict[str, Any]] = {}
     active_key = ""
@@ -478,11 +655,76 @@ def build_actionable_run_status(
         key = f"{name}#{iteration}" if iteration is not None else name
         if key in stages:
             key = f"{key}@{index}"
-        row = rows.get(index, {})
-        raw_scheduler = str(row.get("status") or step.get("sky_status") or "").upper()
-        state = str(step.get("status") or "SUBMITTED").upper()
-        if raw_scheduler:
-            state = _TASK_STATUS_MAP.get(raw_scheduler, raw_scheduler)
+        attribution = attributions.get(key, {})
+        managed_job_id = str(attribution.get("managed_job_id") or "")
+        observation = observations.get(managed_job_id, {})
+        observed_rows = [
+            item
+            for item in observation.get("task_rows") or []
+            if isinstance(item, Mapping)
+        ]
+        named_rows = [
+            item for item in observed_rows if str(item.get("task_name") or "") == name
+        ]
+        row = (
+            named_rows[-1]
+            if named_rows
+            else observed_rows[-1]
+            if len(observed_rows) == 1
+            else rows.get(index, {})
+            if not observations
+            else {}
+        )
+        scheduler_job_state = str(observation.get("status") or "").upper()
+        raw_scheduler = str(
+            row.get("status") or scheduler_job_state or step.get("sky_status") or ""
+        ).upper()
+        step_state = _normalized_stage_state(step.get("status") or "SUBMITTED")
+        final_attempt = next(
+            (
+                item
+                for item in reversed(list(attribution.get("attempts") or []))
+                if isinstance(item, Mapping)
+            ),
+            {},
+        )
+        attempt_state = _normalized_stage_state(final_attempt.get("state"))
+        scheduler_state = _normalized_stage_state(raw_scheduler)
+        step_terminal = step_state in TERMINAL_STEP_STATES | {
+            "SUCCEEDED",
+            "FAILED",
+        }
+        attempt_terminal = attempt_state in TERMINAL_STEP_STATES | {
+            "SUCCEEDED",
+            "FAILED",
+        }
+        scheduler_terminal = scheduler_state in TERMINAL_STEP_STATES | {
+            "SUCCEEDED",
+            "FAILED",
+        }
+        outcome_conflict = scheduler_terminal and (
+            (step_terminal and step_state != scheduler_state)
+            or (
+                not step_terminal
+                and attempt_terminal
+                and attempt_state != scheduler_state
+            )
+        )
+        if outcome_conflict:
+            state = "UNKNOWN"
+            outcome_provenance = "conflicting_durable_and_scheduler_evidence"
+        elif step_terminal:
+            state = step_state
+            outcome_provenance = "authoritative_stage_record"
+        elif raw_scheduler:
+            state = _TASK_STATUS_MAP.get(scheduler_state, scheduler_state)
+            outcome_provenance = "scheduler_final_attempt"
+        elif attempt_state != "UNKNOWN":
+            state = attempt_state
+            outcome_provenance = "durable_runtime_attempt"
+        else:
+            state = step_state
+            outcome_provenance = "durable_stage_record"
         retry_count = 0
         for field_name in ("retry_count", "recovery_count", "num_restarts", "attempt"):
             raw = row.get(field_name, step.get(field_name))
@@ -490,6 +732,17 @@ def build_actionable_run_status(
                 retry_count = max(retry_count, int(raw or 0))
             except (TypeError, ValueError):
                 continue
+        retry_count = max(
+            retry_count,
+            max(
+                (
+                    int(item.get("attempt") or 1) - 1
+                    for item in attribution.get("attempts") or []
+                    if isinstance(item, Mapping)
+                ),
+                default=0,
+            ),
+        )
         timestamps = [
             value
             for value in (
@@ -498,6 +751,8 @@ def build_actionable_run_status(
                 _timestamp(row.get("end_at", step.get("end_at"))),
                 _timestamp(row.get("start_at", step.get("start_at"))),
                 _timestamp(row.get("submitted_at", step.get("submitted_at"))),
+                _timestamp(final_attempt.get("ended_at")),
+                _timestamp(final_attempt.get("started_at")),
                 _timestamp(manifest.updated_at),
             )
             if value is not None
@@ -505,10 +760,16 @@ def build_actionable_run_status(
         last_progress = max(timestamps) if timestamps else None
         if last_progress and (newest_progress is None or last_progress > newest_progress):
             newest_progress = last_progress
-        start = _timestamp(row.get("start_at", step.get("start_at"))) or _timestamp(
-            row.get("submitted_at", step.get("submitted_at"))
+        start = (
+            _timestamp(row.get("start_at", step.get("start_at")))
+            or _timestamp(row.get("submitted_at", step.get("submitted_at")))
+            or _timestamp(final_attempt.get("started_at"))
         )
-        end = _timestamp(row.get("end_at", step.get("end_at"))) or current
+        end = (
+            _timestamp(row.get("end_at", step.get("end_at")))
+            or _timestamp(final_attempt.get("ended_at"))
+            or current
+        )
         log_command = (
             f"npa workbench workflow logs {manifest.run_id} --stage {name}"
             + (f" --project {project}" if project else "")
@@ -518,13 +779,23 @@ def build_actionable_run_status(
             "index": index + 1,
             "state": state,
             "workflow_state": name,
-            "managed_job_id": manifest.sky_job_id,
+            "managed_job_id": managed_job_id,
+            "managed_job_attempts": list(attribution.get("attempts") or []),
+            "active_attempt": attribution.get("active_attempt"),
+            "job_attribution": attribution.get("attribution", "unknown"),
+            "job_attribution_provenance": list(
+                attribution.get("attribution_provenance") or []
+            ),
             "task_id": row.get("task_id", index),
             "scheduler_state": raw_scheduler or state,
             "raw_scheduler_state": raw_scheduler,
+            "outcome_provenance": outcome_provenance,
+            "outcome_conflict": outcome_conflict,
             "retry_count": retry_count,
             "last_progress_at": _iso(last_progress),
-            "elapsed_seconds": max(0, int((end - start).total_seconds())) if start else None,
+            "elapsed_seconds": max(0, int((end - start).total_seconds()))
+            if start
+            else None,
             "staleness_seconds": (
                 max(0, int((current - last_progress).total_seconds()))
                 if last_progress
@@ -536,7 +807,9 @@ def build_actionable_run_status(
             "startup_failure_evidence": int(step.get("startup_failure_evidence") or 0),
             "log_command": log_command,
             "requested_accelerators": (
-                str(profile.get("accelerators") or "") if isinstance(profile, dict) else ""
+                str(profile.get("accelerators") or "")
+                if isinstance(profile, dict)
+                else ""
             ),
             "resources_profile": profile,
         }
@@ -565,13 +838,31 @@ def build_actionable_run_status(
         active = stages.get(active_key, {})
         scheduler = str(active.get("scheduler_state") or "").upper()
         retries = int(active.get("retry_count") or 0)
-        if scheduler in {"PENDING", "STARTING"}:
+        stage_states = [str(item.get("state") or "UNKNOWN") for item in stages.values()]
+        all_terminal = bool(stage_states) and all(
+            state in TERMINAL_STEP_STATES or state == "UNKNOWN"
+            for state in stage_states
+        )
+        if all_terminal and "UNKNOWN" in stage_states:
+            status = "UNKNOWN"
+        elif all_terminal and any(state.startswith("FAILED") for state in stage_states):
+            status = "FAILED"
+        elif all_terminal and "CANCELLED" in stage_states:
+            status = "CANCELLED"
+        elif all_terminal and all(state == "SUCCEEDED" for state in stage_states):
+            status = "SUCCEEDED"
+        elif scheduler in {"PENDING", "STARTING"}:
             status = "RETRYING" if retries else scheduler
         elif live:
             status = live
-        elif stages and all(str(item.get("state")) == "SUCCEEDED" for item in stages.values()):
-            status = "SUCCEEDED"
     manifest.status = status
+    stage_job_ids = sorted(
+        {
+            str(item.get("managed_job_id") or "")
+            for item in stages.values()
+            if str(item.get("managed_job_id") or "")
+        }
+    )
     return {
         "run_id": manifest.run_id,
         "workflow_name": manifest.workflow,
@@ -579,7 +870,10 @@ def build_actionable_run_status(
         "live_status": live,
         "raw_controller_state": live,
         "sky_job_id": manifest.sky_job_id,
-        "active_stage_name": str(stages.get(active_key, {}).get("workflow_state") or ""),
+        "sky_job_ids": stage_job_ids,
+        "active_stage_name": str(
+            stages.get(active_key, {}).get("workflow_state") or ""
+        ),
         "active_stage_index": active_index,
         "last_heartbeat_at": _iso(newest_progress),
         "stages": stages,

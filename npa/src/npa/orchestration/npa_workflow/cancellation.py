@@ -119,6 +119,12 @@ def assess_run_cancellation(
         )
     terminal_candidates: list[str] = []
     nonterminal_records_without_id: list[str] = []
+    runtime = resolution.runtime_state
+    raw_runtime_waves = list(runtime.get("waves") or [])
+    for index, wave in enumerate(raw_runtime_waves):
+        if not isinstance(wave, dict):
+            errors.append(f"runtime wave {index} is malformed")
+    runtime_waves = [item for item in raw_runtime_waves if isinstance(item, dict)]
 
     def add_job(
         job_id: object,
@@ -130,9 +136,11 @@ def assess_run_cancellation(
         cleaned_id = str(job_id or "").strip()
         cleaned_state = normalize_workflow_state(state)
         if not cleaned_id:
-            child_uses_root_job = source.startswith(
-                ("manifest step ", "stage ")
-            ) and bool(str(manifest.get("sky_job_id") or "").strip())
+            child_uses_root_job = (
+                source.startswith(("manifest step ", "stage "))
+                and bool(str(manifest.get("sky_job_id") or "").strip())
+                and not runtime_waves
+            )
             if (
                 cleaned_state in _NONTERMINAL
                 and source != "root manifest"
@@ -154,14 +162,21 @@ def assess_run_cancellation(
 
     manifest = resolution.manifest if isinstance(resolution.manifest, dict) else {}
     manifest_state = normalize_workflow_state(manifest.get("status"))
+    root_job_id = str(manifest.get("sky_job_id") or "").strip()
+    runtime_job_ids = {
+        str(wave.get("job_id") or wave.get("sky_job_id") or "").strip()
+        for wave in runtime_waves
+        if isinstance(wave, dict)
+    }
     if is_terminal_workflow_state(manifest_state):
         terminal_candidates.append(manifest_state)
-    add_job(
-        manifest.get("sky_job_id"),
-        job_name=manifest.get("job_name") or resolution.run_id,
-        state=manifest_state,
-        source="root manifest",
-    )
+    if not runtime_waves:
+        add_job(
+            manifest.get("sky_job_id"),
+            job_name=manifest.get("job_name") or resolution.run_id,
+            state=manifest_state,
+            source="root manifest",
+        )
 
     for index, step in enumerate(manifest.get("steps") or []):
         if not isinstance(step, dict):
@@ -169,12 +184,17 @@ def assess_run_cancellation(
         step_state = normalize_workflow_state(
             step.get("sky_status") or step.get("status") or step.get("state")
         )
-        add_job(
-            step.get("job_id") or step.get("sky_job_id"),
-            job_name=step.get("job_name"),
-            state=step_state,
-            source=f"manifest step {step.get('state') or index}",
-        )
+        step_job_id = str(step.get("job_id") or step.get("sky_job_id") or "").strip()
+        if not runtime_waves or (
+            step_job_id
+            and (step_job_id != root_job_id or step_job_id in runtime_job_ids)
+        ):
+            add_job(
+                step_job_id,
+                job_name=step.get("job_name"),
+                state=step_state,
+                source=f"manifest step {step.get('state') or index}",
+            )
 
     legacy_stages = manifest.get("stages")
     if isinstance(legacy_stages, dict):
@@ -197,28 +217,31 @@ def assess_run_cancellation(
             )
             if stage_state:
                 stage_states.append(stage_state)
-            add_job(
-                info.get("sky_job_id") or info.get("job_id"),
-                job_name=info.get("job_name"),
-                state=stage_state,
-                source=f"stage {stage_name}",
-            )
+            stage_job_id = str(
+                info.get("sky_job_id") or info.get("job_id") or ""
+            ).strip()
+            if not runtime_waves or (
+                stage_job_id
+                and (stage_job_id != root_job_id or stage_job_id in runtime_job_ids)
+            ):
+                add_job(
+                    stage_job_id,
+                    job_name=info.get("job_name"),
+                    state=stage_state,
+                    source=f"stage {stage_name}",
+                )
         if stage_states and all(
             is_terminal_workflow_state(item) for item in stage_states
         ):
             terminal_candidates.append(_aggregate_terminal_states(stage_states))
 
-    runtime = resolution.runtime_state
     runtime_state = normalize_workflow_state(runtime.get("status"))
     if is_terminal_workflow_state(runtime_state):
         terminal_candidates.append(runtime_state)
-    waves = runtime.get("waves") or []
+    waves = runtime_waves
     if isinstance(waves, list):
         wave_states: list[str] = []
         for index, wave in enumerate(waves):
-            if not isinstance(wave, dict):
-                errors.append(f"runtime wave {index} is malformed")
-                continue
             wave_state = normalize_workflow_state(
                 wave.get("sky_status") or wave.get("status")
             )
@@ -236,24 +259,26 @@ def assess_run_cancellation(
             terminal_candidates.append(_aggregate_terminal_states(wave_states))
 
     launch = resolution.receipt.get("launch")
-    if isinstance(launch, dict):
+    if isinstance(launch, dict) and not runtime_waves:
         add_job(
             launch.get("sky_job_id") or launch.get("job_id"),
             job_name=launch.get("job_name") or resolution.run_id,
             state=launch.get("status"),
             source="submission receipt",
         )
-    add_job(
-        resolution.job_id,
-        job_name=resolution.job_name or resolution.run_id,
-        state=(
-            resolution.managed_job.status
-            if resolution.managed_job is not None
-            and resolution.managed_job.outcome == "found"
-            else ""
-        ),
-        source=f"run resolution ({resolution.source or 'exact sources'})",
-    )
+    resolved_job_id = str(resolution.job_id or "").strip()
+    if not runtime_waves or resolved_job_id in runtime_job_ids:
+        add_job(
+            resolved_job_id,
+            job_name=resolution.job_name or resolution.run_id,
+            state=(
+                resolution.managed_job.status
+                if resolution.managed_job is not None
+                and resolution.managed_job.outcome == "found"
+                else ""
+            ),
+            source=f"run resolution ({resolution.source or 'exact sources'})",
+        )
 
     # A terminal authoritative run state is sufficient when it carries no job
     # identity. If identities do exist, verify any record not itself terminal so

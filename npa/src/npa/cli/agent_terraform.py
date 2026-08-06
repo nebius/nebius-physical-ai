@@ -1,7 +1,7 @@
 """Terraform working-dir and variable helpers for ``npa agent``.
 
 Extracted from the ``npa.cli.agent`` monolith (kept under a size ratchet) so the
-Terraform plumbing for destroy/reclaim lives in one small module. Both helpers are
+Terraform plumbing for destroy/reclaim lives in one small module. These helpers are
 re-exported from ``npa.cli.agent`` for the existing call sites and tests.
 """
 
@@ -16,6 +16,50 @@ from npa.deploy import provisioner
 def _agent_terraform_state_exists(project: str, name: str) -> bool:
     tf_dir = provisioner.working_dir_path(project, name)
     return (tf_dir / ".terraform").is_dir()
+
+
+def _record_agent_destroy_event(
+    project: str,
+    name: str,
+    *,
+    terminal_state: str,
+    record_present: bool | None = None,
+    terraform_state_present: bool | None = None,
+    purge_iam: bool | None = None,
+    error: str = "",
+) -> None:
+    """Persist agent destroy evidence outside the removable project record."""
+
+    from npa.teardown_receipts import record_teardown_event
+
+    environment = resolve_environment(project)
+    precheck: dict[str, object] = {
+        "identity_resolved": bool(getattr(environment, "project_id", ""))
+    }
+    if record_present is not None:
+        precheck["local_record_present"] = record_present
+    if terraform_state_present is not None:
+        precheck["terraform_state_present"] = terraform_state_present
+    action: dict[str, object] = {"kind": "terraform_agent_destroy"}
+    if purge_iam is not None:
+        action["purge_iam"] = purge_iam
+    record_teardown_event(
+        phase="agent",
+        resource=name,
+        terminal_state=terminal_state,
+        project_alias=project,
+        project_id=str(getattr(environment, "project_id", "") or ""),
+        precheck=precheck,
+        action=action,
+        verification={
+            "remote_destroy": {
+                "in_progress": "pending",
+                "failed": "failed",
+                "verified_deleted": "completed",
+            }.get(terminal_state, terminal_state)
+        },
+        errors=[error] if error else [],
+    )
 
 
 def _resolve_destroy_tf_vars(

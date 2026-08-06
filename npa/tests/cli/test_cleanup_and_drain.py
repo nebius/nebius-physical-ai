@@ -59,26 +59,32 @@ def test_cleanup_reports_local_leftovers_without_removing_them(npa_home: Path) -
     assert (npa_home / ".npa" / "skypilot-venv").exists()
 
 
-def test_cleanup_yes_removes_only_local_caches(npa_home: Path) -> None:
+def test_cleanup_yes_removes_only_local_caches(
+    monkeypatch: pytest.MonkeyPatch, npa_home: Path
+) -> None:
     venv = npa_home / ".npa" / "skypilot-venv"
     venv.mkdir()
     sky = npa_home / ".sky"
     sky.mkdir()
 
-    result = runner.invoke(app, ["cleanup", "--skip-jobs", "--yes"])
+    monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda sky_bin: ([], ""))
+    result = runner.invoke(app, ["cleanup", "--yes"])
 
     assert result.exit_code == 0, result.output
     assert not venv.exists()
     assert not sky.exists()
 
 
-def test_cleanup_keep_sky_leaves_skypilot_state(npa_home: Path) -> None:
+def test_cleanup_keep_sky_leaves_skypilot_state(
+    monkeypatch: pytest.MonkeyPatch, npa_home: Path
+) -> None:
     venv = npa_home / ".npa" / "skypilot-venv"
     venv.mkdir()
     sky = npa_home / ".sky"
     sky.mkdir()
 
-    result = runner.invoke(app, ["cleanup", "--skip-jobs", "--yes", "--keep-sky"])
+    monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda sky_bin: ([], ""))
+    result = runner.invoke(app, ["cleanup", "--yes", "--keep-sky"])
 
     assert result.exit_code == 0, result.output
     assert not venv.exists()

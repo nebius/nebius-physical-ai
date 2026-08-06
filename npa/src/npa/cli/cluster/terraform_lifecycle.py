@@ -330,6 +330,7 @@ def down_cmd(
     _preflight_provider_lock(tf_dir)
     if not force and not typer.confirm(f"Destroy Terraform-managed cluster in {tf_dir}?"):
         raise typer.Exit(1)
+    confirmed_full_destroy = True
     _preflight_terraform_version(terraform_bin)
     # Prefer the kubeconfig NPA saved for this exact cluster/context instead of
     # an unrelated ambient current-context. The preview rewrites only a temporary
@@ -354,6 +355,23 @@ def down_cmd(
                     "kubeconfig",
                     "NPA's saved kubeconfig reference or cluster state could not be loaded",
                 )
+        verified_identity = None
+        identity_error = ""
+        try:
+            from npa.cluster.identity import resolve_verified_cluster_identity
+
+            verified_identity = resolve_verified_cluster_identity(
+                project=project,
+                context=preview_context,
+                kubeconfig=preview_kubeconfig,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            identity_error = str(exc)
+            typer.echo(
+                "drain-policy: system PDB relaxation is disabled because the exact "
+                f"NPA project/context identity was not verified: {identity_error}",
+                err=True,
+            )
         # The node-group watcher below shows that the drain is progressing; this names
         # *why* it is slow and safely relaxes only exact managed system add-ons.
         if preview_state_issue is not None:
@@ -364,31 +382,149 @@ def down_cmd(
                 err=True,
             )
         else:
-            _report_drain_blockers(preview_kubeconfig, context=preview_context)
+            preview_inventory = _report_drain_blockers(
+                preview_kubeconfig, context=preview_context
+            )
+        if preview_state_issue is not None:
+            preview_inventory = None
         _terraform_init(terraform_bin, tf_dir, env)
         # `Still destroying...` every 10s with no detail made a ~6-minute node-group
         # drain look like a hang. Report node-group state while it happens.
         watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
         watcher.start()
+        pdb_report = None
         try:
-            _run_stream(
-                [
-                    terraform_bin,
-                    "destroy",
-                    "-auto-approve",
-                    # Variable validation runs on destroy too, so the key has to resolve
-                    # here as well — but a teardown must not be blocked by a machine that
-                    # has no SSH key, since the value cannot affect what is destroyed.
-                    *_ssh_public_key_var_args(
-                        tfvars, env, allow_placeholder=True
+            from npa.cluster.drain import relax_system_pdbs_for_full_destroy
+
+            with relax_system_pdbs_for_full_destroy(
+                preview_inventory,
+                context=preview_context,
+                kubeconfig=(
+                    str(verified_identity.kubeconfig)
+                    if verified_identity is not None
+                    else str(preview_kubeconfig or "")
+                ),
+                confirmed_full_destroy=confirmed_full_destroy,
+                identity_verified=(
+                    verified_identity is not None
+                    and not verified_identity.cluster_absent
+                ),
+            ) as pdb_report:
+                if pdb_report.eligible:
+                    typer.echo(
+                        "drain-policy: normal eviction was attempted for verified "
+                        "cluster-system blockers; temporary full-destroy relaxation: "
+                        + ", ".join(pdb_report.eligible),
+                        err=True,
+                    )
+                if pdb_report.user_or_unverified:
+                    typer.echo(
+                        "drain-policy: preserved user/unverified PDB blockers: "
+                        + ", ".join(pdb_report.user_or_unverified),
+                        err=True,
+                    )
+                for error in pdb_report.errors:
+                    typer.echo(
+                        f"drain-policy: PDB relaxation failed safely: {error}",
+                        err=True,
+                    )
+                _run_stream(
+                    [
+                        terraform_bin,
+                        "destroy",
+                        "-auto-approve",
+                        # Variable validation runs on destroy too, so the key has to resolve
+                        # here as well — but a teardown must not be blocked by a machine that
+                        # has no SSH key, since the value cannot affect what is destroyed.
+                        *_ssh_public_key_var_args(tfvars, env, allow_placeholder=True),
+                    ],
+                    cwd=tf_dir,
+                    env=env,
+                    timeout=timeout * 60,
+                )
+        except BaseException as exc:
+            try:
+                from npa.teardown_receipts import record_teardown_event
+
+                record_teardown_event(
+                    phase="cluster",
+                    resource=preview_context,
+                    terminal_state="failed",
+                    project_alias=(
+                        verified_identity.project_alias
+                        if verified_identity is not None
+                        else project
                     ),
-                ],
-                cwd=tf_dir,
-                env=env,
-                timeout=timeout * 60,
-            )
+                    project_id=(
+                        verified_identity.project_id
+                        if verified_identity is not None
+                        else str(tfvars.get("parent_id") or "")
+                    ),
+                    context=preview_context,
+                    precheck={
+                        "identity_verified": verified_identity is not None,
+                        "identity_error": identity_error,
+                    },
+                    action={
+                        "kind": "terraform_full_cluster_destroy",
+                        "system_pdbs_temporarily_removed": list(
+                            getattr(pdb_report, "removed", []) or []
+                        ),
+                        "system_pdbs_restored": list(
+                            getattr(pdb_report, "restored", []) or []
+                        ),
+                    },
+                    verification={"terraform_destroy": "failed"},
+                    errors=[f"{type(exc).__name__}: {exc}"],
+                )
+            except (OSError, RuntimeError, ValueError) as receipt_exc:
+                typer.echo(
+                    f"Warning: cluster failure receipt could not be written: {receipt_exc}",
+                    err=True,
+                )
+            raise
         finally:
             watcher.stop()
+        from npa.teardown_receipts import record_teardown_event
+
+        record_teardown_event(
+            phase="cluster",
+            resource=preview_context,
+            terminal_state="verified_deleted",
+            project_alias=(
+                verified_identity.project_alias
+                if verified_identity is not None
+                else project
+            ),
+            project_id=(
+                verified_identity.project_id
+                if verified_identity is not None
+                else str(tfvars.get("parent_id") or "")
+            ),
+            context=preview_context,
+            precheck={
+                "identity_verified": verified_identity is not None,
+                "cluster_id": (
+                    verified_identity.cluster_id
+                    if verified_identity is not None
+                    else ""
+                ),
+                "full_destroy_confirmed": confirmed_full_destroy,
+            },
+            action={
+                "kind": "terraform_full_cluster_destroy",
+                "normal_eviction_attempts": list(
+                    getattr(pdb_report, "eviction_attempts", []) or []
+                ),
+                "system_pdbs_temporarily_removed": list(
+                    getattr(pdb_report, "removed", []) or []
+                ),
+                "user_pdbs_preserved": list(
+                    getattr(pdb_report, "user_or_unverified", []) or []
+                ),
+            },
+            verification={"terraform_destroy": "completed"},
+        )
         if not keep_local_state:
             _clear_local_cluster_state(preview_context)
 
@@ -504,7 +640,7 @@ def kubeconfig_cmd(
     )
 
 
-def _report_drain_blockers(kubeconfig: Path | None, *, context: str = "") -> None:
+def _report_drain_blockers(kubeconfig: Path | None, *, context: str = ""):
     """Inspect the same cluster-wide inventory the full node drain will affect.
 
     This is best-effort and preview-only. Authentication, RBAC, kubeconfig and
@@ -525,7 +661,7 @@ def _report_drain_blockers(kubeconfig: Path | None, *, context: str = "") -> Non
     )
     if issue is not None:
         typer.echo(f"drain-preview: {describe_preview_unavailable(issue)}", err=True)
-        return
+        return None
     blockers = list(inventory.blockers) if inventory is not None else []
     if not blockers:
         typer.echo(
@@ -534,11 +670,12 @@ def _report_drain_blockers(kubeconfig: Path | None, *, context: str = "") -> Non
             "deny an eviction in the observed drain.",
             err=True,
         )
-        return
+        return inventory
 
     guidance = describe_drain_expectation(blockers)
     if guidance:
         typer.echo(f"drain-preview: {guidance}", err=True)
+    return inventory
 
 
 def terraform_status(terraform_dir: Path | None = None) -> dict[str, Any] | None:

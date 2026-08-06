@@ -15,7 +15,6 @@ from npa.orchestration.skypilot.cleanup import (
     InvalidRunIdError,
     cleanup_all_for_run,
     cleanup_launched_workflow,
-    cleanup_jobs_controller,
     cluster_name_patterns_for_run,
     run_tag,
     sky_down,
@@ -392,7 +391,7 @@ def test_concurrent_cleanup_safety(monkeypatch: pytest.MonkeyPatch) -> None:
     assert down_calls
 
 
-def test_cleanup_jobs_controller_discovers_exact_name_and_confirms_delete(
+def test_jobs_controller_inventory_discovers_exact_name_without_refresh(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     sky_bin = _fake_sky(tmp_path)
@@ -407,75 +406,87 @@ def test_cleanup_jobs_controller_discovers_exact_name_and_confirms_delete(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    result = cleanup_jobs_controller(isolated_config_dir=tmp_path, sky_bin=sky_bin)
+    clusters, error = cleanup_module._jobs_controller_clusters(
+        isolated_config_dir=tmp_path,
+        config_path=None,
+        sky_bin=sky_bin,
+        refresh=False,
+    )
 
-    assert calls[0][0] == [str(sky_bin), "status", "--refresh", "--output", "json"]
+    assert calls[0][0] == [str(sky_bin), "status", "--output", "json"]
     assert calls[0][1] is None
-    # The managed-job queue is checked before teardown, because `sky down` refuses
-    # while any managed job is still non-terminal.
-    assert calls[1][0] == [str(sky_bin), "jobs", "queue", "--all", "--output", "json"]
-    assert calls[2] == ([str(sky_bin), "down", "--yes", "sky-jobs-controller-abc123"], "delete\n")
-    assert result.resources_removed == ["sky-jobs-controller-abc123"]
-    assert result.errors == []
+    assert [item["name"] for item in clusters] == ["sky-jobs-controller-abc123"]
+    assert error == ""
 
 
-def test_cleanup_jobs_controller_verifies_kubernetes_controller_pod_removed(
+def test_exact_context_controller_pod_inventory_can_prove_absence(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    sky_bin = _fake_sky(tmp_path)
     calls: list[list[str]] = []
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}\n", encoding="utf-8")
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        if cmd[0] == str(sky_bin) and cmd[1] == "status":
-            stdout = '[{"name": "sky-jobs-controller-k8s", "status": "UP", "infra": "Kubernetes"}]'
-            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
-        if cmd[0] == str(sky_bin):
-            return subprocess.CompletedProcess(cmd, 0, stdout="down\n", stderr="")
-        if cmd[:4] == ["kubectl", "get", "pods", "--all-namespaces"]:
+        if cmd[:5] == ["kubectl", "--context", "verified", "get", "pods"]:
             return subprocess.CompletedProcess(cmd, 0, stdout='{"items": []}', stderr="")
         raise AssertionError(cmd)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(cleanup_module.shutil, "which", lambda name: "/usr/bin/kubectl" if name == "kubectl" else None)
 
-    result = cleanup_jobs_controller(isolated_config_dir=tmp_path, sky_bin=sky_bin)
+    pods, error = cleanup_module._kubernetes_controller_pods(
+        kubeconfig=kubeconfig, context="verified"
+    )
 
-    assert ["kubectl", "get", "pods", "--all-namespaces", "-o", "json"] in calls
-    assert result.resources_removed == ["sky-jobs-controller-k8s"]
-    assert result.errors == []
+    assert calls == [
+        [
+            "kubectl",
+            "--context",
+            "verified",
+            "get",
+            "pods",
+            "--all-namespaces",
+            "-o",
+            "json",
+        ]
+    ]
+    assert pods == []
+    assert error == ""
 
 
-def test_cleanup_jobs_controller_deletes_lingering_kubernetes_controller_pod(
+def test_controller_pod_inventory_never_directly_deletes_a_lingering_pod(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    sky_bin = _fake_sky(tmp_path)
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("{}\n", encoding="utf-8")
+    calls: list[list[str]] = []
 
     def fake_run(cmd, **kwargs):
-        if cmd[0] == str(sky_bin) and cmd[1] == "status":
-            stdout = '[{"name": "sky-jobs-controller-k8s", "status": "UP", "infra": "Kubernetes"}]'
-            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
-        if cmd[0] == str(sky_bin):
-            return subprocess.CompletedProcess(cmd, 0, stdout="down\n", stderr="")
-        if cmd[:4] == ["kubectl", "get", "pods", "--all-namespaces"]:
+        calls.append(cmd)
+        if cmd[:5] == ["kubectl", "--context", "verified", "get", "pods"]:
             stdout = (
                 '{"items": [{"metadata": {"namespace": "default", '
                 '"name": "sky-jobs-controller-k8s-ray-head", '
                 '"labels": {"ray.io/cluster": "sky-jobs-controller-k8s"}}}]}'
             )
             return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
-        if cmd[:4] == ["kubectl", "delete", "pod", "-n"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="deleted\n", stderr="")
         raise AssertionError(cmd)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(cleanup_module.shutil, "which", lambda name: "/usr/bin/kubectl" if name == "kubectl" else None)
 
-    result = cleanup_jobs_controller(isolated_config_dir=tmp_path, sky_bin=sky_bin)
+    pods, error = cleanup_module._kubernetes_controller_pods(
+        kubeconfig=kubeconfig, context="verified"
+    )
 
-    assert "sky-jobs-controller-k8s" in result.resources_removed
-    assert "k8s-pod:default/sky-jobs-controller-k8s-ray-head" in result.resources_removed
-    assert result.errors == []
+    assert pods == [
+        (
+            "default",
+            "sky-jobs-controller-k8s-ray-head",
+            "sky-jobs-controller-k8s",
+        )
+    ]
+    assert error == ""
+    assert not any("delete" in call for call in calls)
 
 
 def test_no_code_path_sets_autostop_down_true() -> None:
@@ -597,7 +608,12 @@ def test_controller_teardown_retries_after_the_in_progress_guard(
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(cleanup_module.time, "sleep", lambda _seconds: None)
 
-    result = cleanup_jobs_controller(isolated_config_dir=tmp_path, sky_bin=sky_bin)
+    result = cleanup_module._down_jobs_controller(
+        "sky-jobs-controller-abc123",
+        isolated_config_dir=tmp_path,
+        config_path=None,
+        sky_bin=sky_bin,
+    )
 
     assert downs["n"] == 2
     assert result.resources_removed == ["sky-jobs-controller-abc123"]
@@ -625,8 +641,12 @@ def test_controller_teardown_explains_a_job_that_will_not_drain(
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(cleanup_module.time, "sleep", lambda _seconds: None)
 
-    result = cleanup_jobs_controller(
-        isolated_config_dir=tmp_path, sky_bin=sky_bin, job_drain_timeout=0
+    result = cleanup_module._down_jobs_controller(
+        "sky-jobs-controller-abc123",
+        isolated_config_dir=tmp_path,
+        config_path=None,
+        sky_bin=sky_bin,
+        job_drain_timeout=0,
     )
 
     assert result.resources_removed == []

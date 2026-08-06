@@ -305,6 +305,15 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
 
 ## Key Operational Notes
 
+- **Managed-job identity is per stage/wave attempt.** Runtime state records each
+  wave key, encoded stage members, attempt number, job ID/name, timestamps, and
+  outcome. Status and cancellation reconcile those records independently; they
+  never copy one discovered job ID (for example `8`) onto every stage. Parallel
+  JobGroup members share an ID only because the durable wave proves that
+  membership. Retries retain all attempts and select the final attempt
+  deterministically; missing/conflicting evidence is `unknown`/ambiguous rather
+  than an invented mapping. Legacy root-ID fan-out remains only for the proven
+  single-managed-job manifest contract.
 - **Neither NVIDIA component fetches code at run time.** The evaluator looks for
   a checkout at `NPA_COSMOS_EVALUATOR_SRC` / `/opt/cosmos-evaluator` and falls
   back to the in-repo port; the curator requires `NPA_COSMOS_CURATE_SRC` /
