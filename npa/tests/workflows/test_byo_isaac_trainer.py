@@ -7,7 +7,9 @@ enforces, and the live path builds a correct Isaac training Job manifest.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import subprocess
 
 import pytest
 
@@ -256,6 +258,64 @@ def test_scenario_wrapper_consumes_reward_and_native_ppo_contract() -> None:
     assert "ROBOT_PPO_SETTINGS_APPLIED" in args
 
 
+def test_manifest_downloads_sha_pinned_scenario_distribution_without_embedding() -> (
+    None
+):
+    marker = "large-scenario-record-" + ("x" * 400_000)
+    digest = hashlib.sha256(marker.encode()).hexdigest()
+    manifest = byo.build_isaac_job_manifest(
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=1024,
+        iterations=500,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        robot_spec={"robot_source": "stock_franka", "name": "franka"},
+        scenarios_jsonl=marker,
+        scenarios_uri="s3://b/run/envs/train/envs.jsonl",
+        scenarios_sha256=digest,
+    )
+    script = _manifest_script(manifest)
+
+    assert marker not in script
+    assert "s3://b/run/envs/train/envs.jsonl" in script
+    assert digest in script
+    assert "SCENARIO_DISTRIBUTION_DOWNLOADED" in script
+    assert "SCENARIO_DISTRIBUTION_SHA_MISMATCH" in script
+    assert "SCENARIO_DISTRIBUTION_FETCH_FAILED" in script
+    assert (
+        subprocess.run(
+            ["bash", "-n"], input=script, text=True, capture_output=True, check=False
+        ).returncode
+        == 0
+    )
+    assert len(json.dumps(manifest).encode()) < 300_000
+
+
+def test_manifest_rejects_large_embedded_scenario_distribution() -> None:
+    with pytest.raises(ValueError, match="scenarios_uri"):
+        byo.build_isaac_job_manifest(
+            job_name="j",
+            run_id="r",
+            image="reg/npa-isaac-lab:2.3.2.post1",
+            task="Isaac-Lift-Cube-Franka-v0",
+            num_envs=1024,
+            iterations=500,
+            s3_output_uri="s3://b/o/",
+            s3_endpoint="https://s3",
+            namespace="default",
+            service_account="agent-sa",
+            gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            robot_spec={"robot_source": "stock_franka", "name": "franka"},
+            scenarios_jsonl="x" * 300_000,
+        )
+
+
 def test_manifest_omits_exploration_overrides_when_unset():
     # Unset -> default Franka train command stays byte-for-byte unchanged.
     m = byo.build_isaac_job_manifest(
@@ -449,7 +509,8 @@ def test_byo_wrapper_saves_resumed_absolute_iteration() -> None:
             service_account="agent-sa",
             gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
             robot_spec={"robot_source": "stock_franka", "name": "Franka"},
-            scenarios_jsonl="s3://b/train/envs.jsonl",
+            scenarios_uri="s3://b/train/envs.jsonl",
+            scenarios_sha256="a" * 64,
         )
     )
     assert "current_learning_iteration" in script
@@ -588,6 +649,9 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     def fake_build(*args, **kwargs):
         captured["s3_output_uri"] = kwargs["s3_output_uri"]
         captured["resume_uri"] = kwargs.get("resume_uri", "")
+        captured["scenarios_uri"] = kwargs.get("scenarios_uri", "")
+        captured["scenarios_jsonl"] = kwargs.get("scenarios_jsonl", "")
+        captured["scenarios_sha256"] = kwargs.get("scenarios_sha256", "")
         return {"manifest": True}
 
     class _Proc:
@@ -645,6 +709,9 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_TRAINER_TAG", "outer-02-iter-01")
+    monkeypatch.setenv(
+        "NPA_SIM2REAL_TRAIN_ENVS_URI", "s3://bkt/myrun/envs/train/envs.jsonl"
+    )
     monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
     monkeypatch.setenv(
         "NPA_SIM2REAL_RESUME_CHECKPOINT_URI", "s3://bkt/prior/model_latest.pt"
@@ -657,6 +724,18 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     assert "byo-trainer" in captured["s3_output_uri"]
     # resume uri threaded through to the manifest builder
     assert captured["resume_uri"] == "s3://bkt/prior/model_latest.pt"
+    assert captured["scenarios_uri"] == "s3://bkt/myrun/envs/train/envs.jsonl"
+    assert captured["scenarios_jsonl"] == ""
+    assert captured["scenarios_sha256"] == hashlib.sha256(b"{}\n").hexdigest()
+    assert result["scenario_distribution"]["source_uri"] == (
+        "s3://bkt/myrun/envs/train/envs.jsonl"
+    )
+    assert (
+        result["scenario_distribution"]["source_sha256"]
+        == hashlib.sha256(b"{}\n").hexdigest()
+    )
+    assert result["scenario_distribution"]["source_bytes"] == 3
+    assert result["scenario_distribution"]["transport"] == "s3_sha256"
     # returned checkpoint points at the tagged path
     assert result["checkpoint_path"].endswith("/outer-02-iter-01/model_latest.pt")
 

@@ -83,6 +83,7 @@ DEFAULT_ISAAC_NUCLEUS_DIR = "https://omniverse-content-production.s3-us-west-2.a
 DEFAULT_OBJECT_USD_REL = "Props/Blocks/MultiColorCube/multi_color_cube_instanceable.usd"
 # Sentinels that opt back out of the USD default to the built-in primitive cube.
 _STOCK_OBJECT_USD_SENTINELS = frozenset({"stock", "none", "primitive", "builtin"})
+_MAX_EMBEDDED_SCENARIOS_BYTES = 256_000
 
 
 def default_isaac_object_usd() -> str:
@@ -595,6 +596,8 @@ def build_isaac_job_manifest(
     robot_usd_uri: str = "",
     task_config: dict[str, Any] | None = None,
     scenarios_jsonl: str = "",
+    scenarios_uri: str = "",
+    scenarios_sha256: str = "",
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -602,13 +605,31 @@ def build_isaac_job_manifest(
     are VLM-derived ``env.rewards.<term>.weight`` hydra args; ``object_usd``
     overrides the manipuland (``env.scene.object.spawn.usd_path``) so the policy
     is trained on a CUSTOM asset physically simulated in Isaac, not the stock cube.
-    ``scenarios_jsonl`` is the authoritative curated training distribution.  The
-    shipped Isaac task wrapper applies object/goal pose and physics per vector
-    environment and rotates records between reset epochs; ``seed`` only controls
-    reproducibility and never substitutes for scenario application.  ``physics``
-    remains a legacy single-configuration compatibility path and is not used by
-    the canonical real-required scenario-distribution workflow.
+    ``scenarios_jsonl`` or the SHA-pinned ``scenarios_uri`` is the authoritative
+    curated training distribution. The canonical path downloads the existing S3
+    split inside the Isaac pod instead of embedding thousands of records in the
+    Kubernetes object; the shipped task wrapper then applies object/goal pose and
+    physics per vector environment and rotates records between reset epochs.
+    ``seed`` only controls reproducibility and never substitutes for scenario
+    application. ``physics`` remains a legacy single-configuration compatibility
+    path and is not used by the canonical real-required distribution workflow.
     """
+
+    scenarios_uri = scenarios_uri.strip()
+    scenarios_sha256 = scenarios_sha256.strip().lower()
+    if scenarios_uri and not scenarios_uri.startswith("s3://"):
+        raise ValueError("scenarios_uri must be an s3:// URI")
+    if scenarios_uri and not re.fullmatch(r"[0-9a-f]{64}", scenarios_sha256):
+        raise ValueError("scenarios_uri requires its exact SHA-256 digest")
+    if (
+        scenarios_jsonl
+        and not scenarios_uri
+        and len(scenarios_jsonl.encode("utf-8")) > _MAX_EMBEDDED_SCENARIOS_BYTES
+    ):
+        raise ValueError(
+            "large curated scenario distributions require scenarios_uri; "
+            "refusing an oversized Kubernetes Job manifest"
+        )
 
     overrides: dict[str, Any] = dict(reward_overrides or {})
     if object_usd:
@@ -661,22 +682,53 @@ def build_isaac_job_manifest(
         from npa.workflows.sim2real import isaac_byo_robot_task as _robotmod
 
         module_src = _robotmod.module_source()
-        scenario_block = ""
-        if scenarios_jsonl:
+        scenario_module_block = ""
+        scenario_data_block = ""
+        if scenarios_jsonl or scenarios_uri:
             from npa.workflows.sim2real import isaac_scenario_task as _scenarios
 
-            scenario_block = (
+            scenario_module_block = (
                 "cat > /tmp/npa_robot/isaac_scenario_task.py <<'SCENARIOPYEOF'\n"
                 + _scenarios.module_source()
                 + "\nSCENARIOPYEOF\n"
-                "cat > /tmp/npa_robot/scenarios.jsonl <<'SCENARIOJSONEOF'\n"
-                + scenarios_jsonl.rstrip()
-                + "\nSCENARIOJSONEOF\n"
                 "export NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/npa_robot/scenarios.jsonl\n"
                 "export NPA_SIM2REAL_TASK_CONTRACT_DIGEST="
                 + shlex.quote(_env("NPA_SIM2REAL_TASK_CONTRACT_DIGEST"))
                 + "\n"
                 "export NPA_SIM2REAL_SCENARIO_ROTATE_ON_RESET=1\n"
+            )
+        if scenarios_uri:
+            scenario_data_block = (
+                "if ! SCENARIOS_URI="
+                + shlex.quote(scenarios_uri)
+                + " SCENARIOS_SHA256="
+                + shlex.quote(scenarios_sha256)
+                + " SCENARIOS_DST=/tmp/npa_robot/scenarios.jsonl "
+                "\"$PY\" - <<'SCENARIODLEOF'\n"
+                "import hashlib, os, boto3\n"
+                "from urllib.parse import urlparse\n"
+                "uri = os.environ['SCENARIOS_URI']\n"
+                "parsed = urlparse(uri)\n"
+                "dst = os.environ['SCENARIOS_DST']\n"
+                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
+                "s3.download_file(parsed.netloc, parsed.path.lstrip('/'), dst)\n"
+                "with open(dst, 'rb') as handle:\n"
+                "    digest = hashlib.sha256(handle.read()).hexdigest()\n"
+                "expected = os.environ['SCENARIOS_SHA256']\n"
+                "if digest != expected:\n"
+                "    raise SystemExit(f'SCENARIO_DISTRIBUTION_SHA_MISMATCH expected={expected} actual={digest}')\n"
+                "print(f'SCENARIO_DISTRIBUTION_DOWNLOADED uri={uri} sha256={digest} bytes={os.path.getsize(dst)}')\n"
+                "SCENARIODLEOF\n"
+                "then\n"
+                "  echo SCENARIO_DISTRIBUTION_FETCH_FAILED\n"
+                "  exit 1\n"
+                "fi\n"
+            )
+        elif scenarios_jsonl:
+            scenario_data_block = (
+                "cat > /tmp/npa_robot/scenarios.jsonl <<'SCENARIOJSONEOF'\n"
+                + scenarios_jsonl.rstrip()
+                + "\nSCENARIOJSONEOF\n"
             )
         wrapper_src = _robotmod.TRAIN_WRAPPER_SCRIPT
         spec_json = json.dumps(robot_spec, sort_keys=True)
@@ -742,8 +794,9 @@ def build_isaac_job_manifest(
             "cat > /tmp/npa_robot/runner.py <<'ROBOTRUNEOF'\n"
             + wrapper_src
             + "\nROBOTRUNEOF\n"
-            + scenario_block
+            + scenario_module_block
             + '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
+            + scenario_data_block
             + resume_block
             + stage_block
             + f'echo "ROBOT_INJECTION: {robot_spec.get("robot_source")} '
@@ -1230,9 +1283,10 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             "byo_isaac_trainer: stock primitive cube (object USD opted out)", flush=True
         )
 
+    train_envs_uri = _env("NPA_SIM2REAL_TRAIN_ENVS_URI")
     train_envs, scenarios_jsonl = read_generated_train_envs(
         _env("NPA_SIM2REAL_TRAIN_ENVS_DIR"),
-        envs_uri=_env("NPA_SIM2REAL_TRAIN_ENVS_URI"),
+        envs_uri=train_envs_uri,
     )
     if not train_envs:
         raise RuntimeError(
@@ -1242,6 +1296,16 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
 
     gen_seed = int(_env("NPA_SIM2REAL_SEED", "0") or 0)
     scenario_summary = scenario_contract_summary(train_envs)
+    scenarios_bytes = scenarios_jsonl.encode("utf-8")
+    scenarios_sha256 = hashlib.sha256(scenarios_bytes).hexdigest()
+    scenario_summary.update(
+        {
+            "source_uri": train_envs_uri or "embedded",
+            "source_sha256": scenarios_sha256,
+            "source_bytes": len(scenarios_bytes),
+            "transport": "s3_sha256" if train_envs_uri else "embedded",
+        }
+    )
     print(
         "byo_isaac_trainer: curated scenario distribution -> "
         + json.dumps(scenario_summary, sort_keys=True),
@@ -1384,7 +1448,9 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         robot_spec=robot_spec_dict,
         robot_usd_uri=robot_usd_uri,
         task_config=task_config,
-        scenarios_jsonl=scenarios_jsonl,
+        scenarios_jsonl="" if train_envs_uri else scenarios_jsonl,
+        scenarios_uri=train_envs_uri,
+        scenarios_sha256=scenarios_sha256,
     )
     from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 

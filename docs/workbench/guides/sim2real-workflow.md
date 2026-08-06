@@ -171,8 +171,10 @@ Environment generation rejects schema/digest mismatches, unreachable or
 intersecting placements, missing assets/cameras, unusable physics, and duplicate
 config digests. It balances difficulty strata and emits count/reason/coverage and
 leakage evidence. Training rotates the full curated train distribution across
-parallel environments and reset episodes; validation and gold inference require
-the exact runtime-applied digest set to match their reported rows.
+parallel environments and reset episodes. The trainer transports that large split
+by its existing S3 URI plus an exact SHA-256, verifies the bytes inside the Isaac
+pod, and refuses an oversized embedded fallback; validation and gold inference
+require the exact runtime-applied digest set to match their reported rows.
 
 ## Parameter contract
 
