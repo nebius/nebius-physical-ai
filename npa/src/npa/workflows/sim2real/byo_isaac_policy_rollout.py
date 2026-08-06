@@ -43,6 +43,7 @@ from typing import Any
 
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
+from npa.workflows.sim2real.isaac_job_payload import compressed_bash_launch
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
@@ -751,6 +752,7 @@ def build_isaac_rollout_job_manifest(
         '"$PY" /tmp/rollwork/rollout.py\n'
         'echo "BYO_ROLLOUT_EXIT"\n'
     )
+    command, args = compressed_bash_launch(script)
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -801,8 +803,8 @@ def build_isaac_rollout_job_manifest(
                             ],
                             "env": [{"name": "AWS_ENDPOINT_URL", "value": s3_endpoint}]
                             + _isaac_eula_env_entries(),
-                            "command": ["/bin/bash", "-lc"],
-                            "args": [script],
+                            "command": command,
+                            "args": args,
                         }
                     ],
                     "nodeSelector": {f"{gpu_resource}.product": gpu_product},

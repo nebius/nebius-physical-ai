@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.workflows.sim2real import byo_isaac_trainer as trainer
+from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
 
 runner = CliRunner()
 
@@ -52,7 +53,14 @@ def test_onboard_kinova_example_validates_and_derives() -> None:
 def test_onboard_json_output_is_machine_readable() -> None:
     result = runner.invoke(
         app,
-        ["workbench", "sim2real", "onboard-robot", "--spec", str(KINOVA_YAML), "--json"],
+        [
+            "workbench",
+            "sim2real",
+            "onboard-robot",
+            "--spec",
+            str(KINOVA_YAML),
+            "--json",
+        ],
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -98,7 +106,10 @@ task:
     # at spec validation; either way it must never print a green "compatible").
     assert result.exit_code == 1
     assert "gripper" in result.output.lower()
-    assert "compatible" not in result.output.lower() or "incompatible" in result.output.lower()
+    assert (
+        "compatible" not in result.output.lower()
+        or "incompatible" in result.output.lower()
+    )
 
 
 def test_onboard_smoke_iterations_validated() -> None:
@@ -124,7 +135,14 @@ def test_onboard_smoke_requires_image(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
     result = runner.invoke(
         app,
-        ["workbench", "sim2real", "onboard-robot", "--spec", str(KINOVA_YAML), "--smoke"],
+        [
+            "workbench",
+            "sim2real",
+            "onboard-robot",
+            "--spec",
+            str(KINOVA_YAML),
+            "--smoke",
+        ],
     )
     assert result.exit_code == 1
     assert "isaac_image" in result.output.lower()
@@ -153,7 +171,14 @@ def test_onboard_smoke_submits_job(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(trainer, "_kubectl", _fake_kubectl)
     result = runner.invoke(
         app,
-        ["workbench", "sim2real", "onboard-robot", "--spec", str(KINOVA_YAML), "--smoke"],
+        [
+            "workbench",
+            "sim2real",
+            "onboard-robot",
+            "--spec",
+            str(KINOVA_YAML),
+            "--smoke",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert "submitted" in result.output.lower()
@@ -163,13 +188,16 @@ def test_onboard_smoke_submits_job(monkeypatch: pytest.MonkeyPatch) -> None:
     # The BYO-robot routing + B2-derived task config are baked into the container
     # command (the wrapper exports them in-container), not pod env. Confirm both
     # reach the job, plus the customer robot name, so the smoke job trains THIS arm.
-    blob = json.dumps(manifest)
-    assert "NPA_BYO_ROBOT_SPEC_JSON" in blob
-    assert "NPA_BYO_TASK_CONFIG_JSON" in blob
-    assert "kinova_j2n7s300" in blob
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
+    script = decode_compressed_bash_args(container["args"])
+    assert "NPA_BYO_ROBOT_SPEC_JSON" in script
+    assert "NPA_BYO_TASK_CONFIG_JSON" in script
+    assert "kinova_j2n7s300" in script
 
 
-def test_onboard_smoke_apply_failure_is_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_onboard_smoke_apply_failure_is_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A failed kubectl apply must exit non-zero, never print a false success."""
     _smoke_env(monkeypatch)
 
@@ -180,7 +208,14 @@ def test_onboard_smoke_apply_failure_is_nonzero(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(trainer, "_kubectl", lambda *a, **k: _Fail())
     result = runner.invoke(
         app,
-        ["workbench", "sim2real", "onboard-robot", "--spec", str(KINOVA_YAML), "--smoke"],
+        [
+            "workbench",
+            "sim2real",
+            "onboard-robot",
+            "--spec",
+            str(KINOVA_YAML),
+            "--smoke",
+        ],
     )
     assert result.exit_code == 1
     assert "submitted" not in result.output.lower()

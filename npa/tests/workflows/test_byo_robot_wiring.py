@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 from npa.workflows.sim2real import byo_isaac_trainer as tr
 from npa.workflows.sim2real import byo_isaac_eval as ev
+from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
 
 
 def _byo_spec():
@@ -38,11 +39,16 @@ def test_payload_none_when_spec_none():
 
 def test_payload_stock_franka_is_minimal():
     spec = SimpleNamespace(robot_source="stock_franka", name="franka_panda")
-    assert tr.robot_spec_payload(spec) == {"robot_source": "stock_franka", "name": "franka_panda"}
+    assert tr.robot_spec_payload(spec) == {
+        "robot_source": "stock_franka",
+        "name": "franka_panda",
+    }
 
 
 def test_payload_byo_carries_fields_and_usd():
-    p = tr.robot_spec_payload(_byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd")
+    p = tr.robot_spec_payload(
+        _byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd"
+    )
     assert p["robot_source"] == "byo_usd"
     assert p["ee_link"] == "tool0"
     assert p["joint_names"] == ["j1", "j2"]
@@ -100,7 +106,10 @@ def test_payload_franka_preset_resolves_to_stock():
     from npa.genesis import robot_assets
 
     spec = robot_assets.robot_spec_from_preset("franka")
-    assert tr.robot_spec_payload(spec) == {"robot_source": "stock_franka", "name": spec.name}
+    assert tr.robot_spec_payload(spec) == {
+        "robot_source": "stock_franka",
+        "name": spec.name,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -108,13 +117,22 @@ def test_payload_franka_preset_resolves_to_stock():
 # --------------------------------------------------------------------------- #
 def _train_script(**over):
     kwargs = dict(
-        job_name="s2r-byo-isaac-train-x", run_id="x", image="img", task="Isaac-Lift-Cube-Franka-v0",
-        num_envs=256, iterations=30, s3_output_uri="s3://b/out/", s3_endpoint="https://s3",
-        namespace="default", service_account="agent-sa", gpu_product="GPU",
+        job_name="s2r-byo-isaac-train-x",
+        run_id="x",
+        image="img",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=256,
+        iterations=30,
+        s3_output_uri="s3://b/out/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="GPU",
     )
     kwargs.update(over)
     m = tr.build_isaac_job_manifest(**kwargs)
-    return m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"]
+    return decode_compressed_bash_args(args)
 
 
 def test_train_manifest_default_is_stock_unchanged():
@@ -125,7 +143,9 @@ def test_train_manifest_default_is_stock_unchanged():
 
 
 def test_train_manifest_embeds_wrapper_when_robot_spec_set():
-    spec = tr.robot_spec_payload(_byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd")
+    spec = tr.robot_spec_payload(
+        _byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd"
+    )
     s = _train_script(robot_spec=spec, robot_usd_uri="s3://bucket/robots/acme_arm.usd")
     # ships the module + post-boot wrapper and passes the spec
     assert "isaac_byo_robot_task.py" in s
@@ -139,7 +159,9 @@ def test_train_manifest_embeds_wrapper_when_robot_spec_set():
 
 
 def test_train_manifest_robot_takes_precedence_over_physics():
-    spec = tr.robot_spec_payload(_byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd")
+    spec = tr.robot_spec_payload(
+        _byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd"
+    )
     s = _train_script(robot_spec=spec, physics={"friction": 0.7, "mass_scale": 1.0})
     assert "cat > /tmp/npa_robot/isaac_byo_robot_task.py" in s
     # physics variant must NOT be shipped when the robot path wins
@@ -157,13 +179,22 @@ def test_train_manifest_physics_only_unaffected():
 # --------------------------------------------------------------------------- #
 def _eval_script(**over):
     kwargs = dict(
-        job_name="s2r-byo-isaac-eval-x", run_id="x", image="img", task="Isaac-Lift-Cube-Franka-v0",
-        num_envs=4, checkpoint_uri="s3://b/ckpt.pt", per_env_s3_uri="s3://b/d.json",
-        s3_endpoint="https://s3", namespace="default", service_account="agent-sa", gpu_product="GPU",
+        job_name="s2r-byo-isaac-eval-x",
+        run_id="x",
+        image="img",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=4,
+        checkpoint_uri="s3://b/ckpt.pt",
+        per_env_s3_uri="s3://b/d.json",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="GPU",
     )
     kwargs.update(over)
     m = ev.build_isaac_eval_job_manifest(**kwargs)
-    return m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    args = m["spec"]["template"]["spec"]["containers"][0]["args"]
+    return decode_compressed_bash_args(args)
 
 
 def test_eval_manifest_default_is_stock_unchanged():
@@ -176,7 +207,9 @@ def test_eval_manifest_default_is_stock_unchanged():
 
 
 def test_eval_manifest_embeds_module_when_robot_spec_set():
-    spec = tr.robot_spec_payload(_byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd")
+    spec = tr.robot_spec_payload(
+        _byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd"
+    )
     s = _eval_script(robot_spec=spec, robot_usd_uri="s3://bucket/robots/acme_arm.usd")
     assert "isaac_byo_robot_task.py" in s
     assert "NPA_BYO_ROBOT_SPEC_JSON" in s
@@ -196,5 +229,7 @@ def test_eval_rollout_registration_block_is_guarded():
 
 def test_payload_round_trips_through_json():
     # The payload is shipped as JSON; ensure it survives a round trip.
-    spec = tr.robot_spec_payload(_byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd")
+    spec = tr.robot_spec_payload(
+        _byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd"
+    )
     assert json.loads(json.dumps(spec)) == spec

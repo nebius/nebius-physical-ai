@@ -7,6 +7,12 @@ import sys
 from pathlib import Path
 
 from npa.workflows.sim2real import byo_isaac_policy_rollout as pr
+from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
+
+
+def _manifest_script(manifest):
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
+    return decode_compressed_bash_args(container["args"])
 
 
 def test_build_rollout_manifest_matches_action_rollout_schema():
@@ -143,7 +149,8 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert m["kind"] == "Job"
     c = m["spec"]["template"]["spec"]["containers"][0]
     assert c["image"] == "reg/npa-isaac-lab:2.3.2.post1"
-    script = c["args"][0]
+    script = decode_compressed_bash_args(c["args"])
+    assert max(map(len, c["args"])) < 128 * 1024
     # downloads the checkpoint, applies the custom object, runs the rollout script.
     assert "DOWNLOADED_CKPT" in script
     assert "ROLLOUT_OBJECT_USD" in script
@@ -171,7 +178,7 @@ def test_untrained_job_manifest_skips_download():
         service_account="agent-sa",
         gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
     )
-    script = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    script = _manifest_script(m)
     assert "DOWNLOADED_CKPT" not in script  # no checkpoint -> untrained policy
     assert 'ROLLOUT_CKPT_LOCAL=""' in script
 
@@ -205,7 +212,7 @@ def test_rollout_manifest_embeds_scenario_and_byo_robot_contract():
         robot_usd_uri="s3://bucket/assets/customer.usd",
         task_config={"task_id": "Isaac-Lift-Cube-Franka-v0"},
     )
-    script = manifest["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    script = _manifest_script(manifest)
     assert "isaac_scenario_task.py" in script
     assert "scenario-456" in script
     assert "isaac_byo_robot_task.py" in script

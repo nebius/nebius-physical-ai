@@ -5,6 +5,12 @@ from __future__ import annotations
 import json
 
 from npa.workflows.sim2real import byo_isaac_eval as ev
+from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
+
+
+def _manifest_script(manifest):
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
+    return decode_compressed_bash_args(container["args"])
 
 
 def test_extract_checkpoint_uri_from_inner_evidence():
@@ -47,7 +53,8 @@ def test_build_isaac_eval_job_manifest_shape():
     c = m["spec"]["template"]["spec"]["containers"][0]
     assert c["image"].endswith("npa-isaac-lab:2.3.2.post1")
     assert c["resources"]["limits"]["nvidia.com/gpu"] == "1"
-    args = c["args"][0]
+    args = decode_compressed_bash_args(c["args"])
+    assert max(map(len, c["args"])) < 128 * 1024
     assert "Isaac-Lift-Cube-Franka-v0" in args
     assert "s3://b/run1/model_latest.pt" in args  # downloads the checkpoint
     assert "eval_rollout.py" in args  # runs the policy rollout
@@ -211,7 +218,7 @@ def test_eval_manifest_embeds_generated_seed():
         gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
         seed=1744247227,
     )
-    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    args = _manifest_script(m)
     assert 'EVAL_SEED="1744247227"' in args
 
 
@@ -241,7 +248,7 @@ def test_eval_manifest_enables_default_multi_camera_views():
         service_account="agent-sa",
         gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
     )
-    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    args = _manifest_script(m)
     assert "EVAL_CAMERA_VIEWS_JSON=" in args
     assert '"name":"primary"' in args
     assert '"name":"side"' in args
@@ -263,7 +270,7 @@ def test_eval_manifest_embeds_custom_object_usd():
         gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
         object_usd="http://assets/custom.usd",
     )
-    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    args = _manifest_script(m)
     assert 'EVAL_OBJECT_USD="http://assets/custom.usd"' in args
 
 
@@ -287,7 +294,7 @@ def _byo_manifest_args(**kw):
         },
         **kw,
     )
-    return m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    return _manifest_script(m)
 
 
 def test_eval_manifest_forwards_task_config_object_scale():
@@ -321,7 +328,7 @@ def test_eval_manifest_no_task_config_no_injection():
         gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
         task_config={"object_scale": 0.2},
     )  # no robot_spec -> Franka path
-    args = m["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    args = _manifest_script(m)
     assert "export NPA_BYO_TASK_CONFIG_JSON=" not in args
 
 
