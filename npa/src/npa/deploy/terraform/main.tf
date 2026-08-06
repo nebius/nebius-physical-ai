@@ -162,10 +162,13 @@ resource "nebius_compute_v1_instance" "workbench" {
 
   service_account_id = trimspace(var.service_account_id) != "" ? trimspace(var.service_account_id) : null
 
-  labels = {
-    environment = "ml-workbench"
-    workload    = "physical-ai"
-  }
+  labels = merge(
+    {
+      environment = "ml-workbench"
+      workload    = "physical-ai"
+    },
+    trimspace(var.operation_id) != "" ? { "npa-operation-id" = var.operation_id } : {}
+  )
 
   lifecycle {
     # Cloud-init is bootstrap-only here. Updating user_data on a running instance

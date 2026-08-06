@@ -277,6 +277,36 @@ def test_preexisting_resources_are_never_rolled_back(
     delete_sa.assert_not_called()
 
 
+def test_preexisting_bucket_is_recorded_as_adopted_and_never_a_rollback_candidate(
+    credentials_path, monkeypatch, mocker, tmp_path
+) -> None:
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(nebius, "bootstrap_environment", lambda *_a, **_k: _result())
+    monkeypatch.setattr(storage_setup, "probe_storage_write", lambda **_kwargs: OK)
+    delete_bucket = mocker.patch.object(nebius, "delete_bucket")
+
+    storage_setup.provision_storage(
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-north1",
+        bucket_name="bucket-a",
+        project_alias="demo",
+    )
+
+    record = storage_setup.storage_setup_record("project-a")
+    assert record["resources"]["bucket"]["created_by"] == "pre_existing"
+    journals = list((tmp_path / "operations").glob("*/journal.json"))
+    assert len(journals) == 1
+    journal = json.loads(journals[0].read_text(encoding="utf-8"))
+    bucket = next(
+        resource
+        for resource in journal["resources"]
+        if resource["resource_type"] == "storage_bucket"
+    )
+    assert bucket["ownership"] == "adopted"
+    delete_bucket.assert_not_called()
+
+
 def test_malformed_owner_state_is_preserved_and_blocks_provider_changes(
     credentials_path, monkeypatch
 ) -> None:

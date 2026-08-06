@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import functools
+import inspect
 import json
 import os
 import secrets
@@ -49,12 +51,16 @@ from npa.cli.agent_preflight import (
 )
 from npa.cli.agent_network import (
     _agent_ssh_egress_result,
-    destroy_with_default_security_group_recovery,
 )
 from npa.cli.agent_terraform import (
     _agent_terraform_state_exists,
+    _apply_agent_terraform,
+    _cleanup_orphan_agent_instances,  # noqa: F401 - recovery hook re-export
+    _destroy_agent_terraform,
+    _ensure_terraform_state_bucket,
+    _persist_agent_project_config,
     _record_agent_destroy_event,
-    _resolve_destroy_tf_vars,
+    _resolve_destroy_tf_vars,  # noqa: F401 - recovery hook re-export
 )
 from npa.clients.config import (
     ConfigError,
@@ -77,6 +83,13 @@ from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
 from npa.deploy.provisioner import ProvisionerError
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.provisioning_journal import (
+    ProvisioningOperation,
+    current_operation,
+    emit_recovery_summary,
+    list_operations,
+    operation_context,
+)
 from npa.workbench.foxglove import (
     DEFAULT_FOXGLOVE_EMBED_SRC,
     FOXGLOVE_EMBED_SDK_INTEGRITY,
@@ -515,116 +528,6 @@ def _looks_like_compute_permission_denied(message: str) -> bool:
     return "permissiondenied" in lowered and "service compute" in lowered
 
 
-def _ensure_terraform_state_bucket(
-    *,
-    project_id: str,
-    bucket_name: str,
-) -> None:
-    """Ensure the Terraform backend bucket exists before terraform init.
-
-    Fresh deploys may receive reused credentials that point at a bucket deleted
-    out-of-band. In that case, recreate the bucket to keep fresh-setup
-    provisioning self-healing.
-    """
-    project = str(project_id or "").strip()
-    bucket = str(bucket_name or "").strip()
-    if not project or not bucket:
-        return
-    from npa.clients.nebius import (
-        NebiusError,
-        bucket_exists,
-        ensure_bucket,
-    )
-
-    try:
-        exists = bucket_exists(project, bucket)
-    except NebiusError:
-        # Let terraform init surface detailed auth/endpoint errors.
-        return
-    if exists:
-        return
-    typer.echo(f"  Terraform state bucket {bucket!r} missing; creating it ...")
-    ensure_bucket(project, bucket)
-
-
-def _persist_agent_project_config(
-    *,
-    project: str,
-    project_id: str,
-    tenant_id: str,
-    region: str,
-    merged_vars: dict[str, str],
-) -> None:
-    write_config(
-        {
-            "projects": {
-                project: {
-                    "project_id": project_id,
-                    "tenant_id": tenant_id,
-                    "region": region,
-                    "terraform_state": {
-                        "bucket": merged_vars.get("s3_bucket", ""),
-                        "endpoint": merged_vars.get("s3_endpoint", ""),
-                        "access_key": merged_vars.get("nebius_api_key", ""),
-                        "secret_key": merged_vars.get("nebius_secret_key", ""),
-                    },
-                }
-            }
-        }
-    )
-
-
-def _apply_agent_terraform(
-    *,
-    project: str,
-    name: str,
-    merged_vars: dict[str, str],
-    env_region: str,
-) -> dict[str, Any]:
-    """Apply agent Terraform, retrying without VM SA attachment on compute IAM denial."""
-    tf_dir = provisioner.prepare_working_dir(
-        project,
-        name,
-        bucket=merged_vars.get("s3_bucket", ""),
-        region=env_region,
-        endpoint=merged_vars.get("s3_endpoint", ""),
-    )
-    provisioner.init(
-        tf_dir=tf_dir,
-        backend_config={
-            "access_key": merged_vars.get("nebius_api_key", ""),
-            "secret_key": merged_vars.get("nebius_secret_key", ""),
-        },
-    )
-    tf_vars = {key: value for key, value in merged_vars.items() if key not in _AGENT_TERRAFORM_RUNTIME_ONLY_VARS}
-    try:
-        return provisioner.apply(tf_dir=tf_dir, tf_vars=tf_vars)
-    except ProvisionerError as exc:
-        sa_id = str(merged_vars.get("service_account_id", "")).strip()
-        if sa_id and _looks_like_compute_permission_denied(str(exc)):
-            typer.echo(
-                "  WARNING: compute create was denied WITH the VM service-account "
-                "attachment, so it is being retried WITHOUT it.",
-                err=True,
-            )
-            typer.echo(
-                "  WARNING: without an attached service account the agent VM "
-                "CANNOT self-mint Nebius IAM tokens (no metadata/token-file "
-                "source), so IAM-dependent actions (provisioning clusters, "
-                "buckets, access keys, registries) will fail until you provide an "
-                "alternative token source. Grant the deploying identity "
-                "'compute.admin' (or equivalent) on the project so the SA can be "
-                "attached, or inject a token on the VM via NEBIUS_IAM_TOKEN / a "
-                "token file. Re-run `npa agent setup` once the permission is "
-                "granted.",
-                err=True,
-            )
-            retry_vars = dict(tf_vars)
-            retry_vars["service_account_id"] = ""
-            return provisioner.apply(tf_dir=tf_dir, tf_vars=retry_vars)
-        raise
-
-
 def _resolve_project_alias(project: str) -> str:
     """Resolve an agent ``--project``: explicit value, else the configured
     ``default_project``, else the only configured project, else the static
@@ -674,31 +577,32 @@ def _store_agent_record(project_alias: str, name: str, payload: dict[str, Any]) 
 
 
 def _remove_agent_record(project_alias: str, name: str) -> None:
-    from npa.clients.config import CONFIG_PATH, _load_yaml
-    import yaml
+    from copy import deepcopy
 
-    data = _load_yaml()
-    projects = data.get("projects", {})
-    if not isinstance(projects, dict):
-        return
-    project = projects.get(project_alias, {})
-    if not isinstance(project, dict):
-        return
-    agents = project.get("agents", {})
-    if not isinstance(agents, dict) or name not in agents:
-        return
-    del agents[name]
-    # Drop the empty map rather than leaving an `agents: {}` stub behind.
-    if agents:
-        project["agents"] = agents
-    else:
-        project.pop("agents", None)
-    projects[project_alias] = project
-    data["projects"] = projects
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
-    CONFIG_PATH.chmod(0o600)
+    from npa.clients.config import CONFIG_PATH
+    from npa.clients.credentials import update_private_yaml
+
+    def remove(current: dict[str, Any]) -> dict[str, Any]:
+        data = deepcopy(current)
+        projects = data.get("projects", {})
+        if not isinstance(projects, dict):
+            return data
+        project = projects.get(project_alias, {})
+        if not isinstance(project, dict):
+            return data
+        agents = project.get("agents", {})
+        if not isinstance(agents, dict) or name not in agents:
+            return data
+        del agents[name]
+        if agents:
+            project["agents"] = agents
+        else:
+            project.pop("agents", None)
+        projects[project_alias] = project
+        data["projects"] = projects
+        return data
+
+    update_private_yaml(CONFIG_PATH, remove)
 
 
 def _agent_extra_ingress_ports(
@@ -725,108 +629,6 @@ def _cleanup_agent_ingress(instance_id: str) -> None:
         typer.echo(f"  Warning: could not remove npa ingress rules: {exc}", err=True)
 
 
-
-
-def _cleanup_orphan_agent_instances(project_id: str, instance_name: str) -> None:
-    """Delete cloud VM instances matching the agent name but missing from TF state."""
-    project_id = str(project_id or "").strip()
-    instance_name = str(instance_name or "").strip()
-    if not project_id or not instance_name:
-        return
-    from npa.clients.nebius import NebiusError, _run, _run_json
-
-    try:
-        # --all paginates: the API returns a next_page_token at 10 items, so a
-        # single page can miss agent VMs (and their public IPs) to reclaim.
-        payload = _run_json(
-            ["compute", "instance", "list", "--parent-id", project_id, "--all"]
-        )
-    except NebiusError:
-        return
-    items = payload.get("items", [])
-    if not isinstance(items, list):
-        return
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        meta = item.get("metadata", {})
-        if not isinstance(meta, dict):
-            continue
-        if str(meta.get("name", "")).strip() != instance_name:
-            continue
-        instance_id = str(meta.get("id", "")).strip()
-        if not instance_id:
-            continue
-        try:
-            _run(["compute", "instance", "delete", instance_id], check=False)
-            typer.echo(f"  Deleted orphan agent instance {instance_id}")
-        except NebiusError:
-            continue
-
-
-def _destroy_agent_terraform(
-    project: str,
-    name: str,
-    *,
-    record: dict[str, Any] | None = None,
-) -> None:
-    """Destroy the agent Terraform stack and optional npa-managed ingress rules.
-
-    Works for *orphan* agents too — ones created elsewhere with no local record
-    or Terraform state (e.g. a fresh laptop). By-name instance cleanup reclaims
-    the public IP regardless, and when the project's S3 remote backend is
-    configured the remote state is pulled and destroyed to remove the VPC stack.
-    """
-    tf_vars = _resolve_destroy_tf_vars(project, name, record)
-    region = tf_vars["nebius_region"]
-    instance_id = str((record or {}).get("instance_id", "")).strip()
-    instance_name = tf_vars["instance_name"]
-    project_id = tf_vars["nebius_project_id"]
-    _cleanup_agent_ingress(instance_id)
-
-    state = resolve_terraform_state(project)
-    have_local_state = _agent_terraform_state_exists(project, name)
-    have_remote_backend = bool(state.bucket and state.access_key and state.secret_key)
-    if not have_local_state and not have_remote_backend:
-        # No Terraform state to act on — by-name reclaim is the only option for a
-        # true orphan (created elsewhere, no local record/state). This releases
-        # the public IP; VPC/subnet without state cannot be reconciled here.
-        _cleanup_orphan_agent_instances(project_id, instance_name)
-        return
-    if not have_remote_backend:
-        _fail(
-            f"Terraform state backend is not configured for project {project!r}. "
-            "Run `npa configure` or redeploy once to persist terraform_state."
-        )
-    tf_dir = provisioner.prepare_working_dir(
-        project,
-        name,
-        bucket=state.bucket,
-        region=region,
-        endpoint=state.endpoint,
-    )
-    provisioner.init(
-        tf_dir=tf_dir,
-        backend_config={"access_key": state.access_key, "secret_key": state.secret_key},
-    )
-
-    def _run_destroy() -> None:
-        provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
-
-    destroy_with_default_security_group_recovery(
-        run_destroy=_run_destroy,
-        cleanup_ingress=lambda: _cleanup_agent_ingress(instance_id),
-        tf_dir=tf_dir,
-        tf_vars=tf_vars,
-        cleanup_action=f"`npa agent destroy --project {project} --name {name} --yes`",
-        on_status=lambda message: typer.echo(f"  {message}", err=True),
-    )
-    # Terraform owns the managed instance and destroyed it above. Sweep for a
-    # by-name leftover ONLY as a safety net: after a successful destroy the
-    # managed VM is already gone, so this catches only a genuine orphan/duplicate
-    # not tracked in state (and no longer logs a misleading "orphan" delete of
-    # the real agent on every teardown).
-    _cleanup_orphan_agent_instances(project_id, instance_name)
 
 
 def _auth_secret_path(project_alias: str, name: str) -> Path:
@@ -1250,6 +1052,17 @@ def _write_agent_llm_env(
 
 def _store_project_environment(*, project: str, project_id: str, tenant_id: str, region: str) -> None:
     """Persist a project-scoped Nebius environment like a fresh configure step."""
+    operation = current_operation()
+    if operation is not None:
+        operation.record_config_mutation(
+            store="config.yaml",
+            fields=[
+                "default_project",
+                f"projects.{project}.project_id",
+                f"projects.{project}.tenant_id",
+                f"projects.{project}.region",
+            ],
+        )
     write_config(
         {
             "default_project": project,
@@ -8449,8 +8262,84 @@ def _coerce_cli_list(value: Any) -> list[str]:
         return []
 
 
+def _transactional_agent_command(command: str):
+    """Run nested agent entrypoints in one durable operation context."""
+
+    def decorate(function):
+        signature = inspect.signature(function)
+
+        @functools.wraps(function)
+        def wrapped(*args, **kwargs):
+            parent = current_operation()
+            if parent is not None:
+                return function(*args, **kwargs)
+            bound = signature.bind_partial(*args, **kwargs)
+            bound.apply_defaults()
+            project = _resolve_project_alias(str(bound.arguments.get("project") or ""))
+            name = str(bound.arguments.get("name") or DEFAULT_AGENT_NAME).strip()
+            project_id = str(bound.arguments.get("project_id") or "").strip()
+            tenant_id = str(bound.arguments.get("tenant_id") or "").strip()
+            region = str(bound.arguments.get("region") or "").strip()
+            try:
+                saved = resolve_environment(project)
+            except ConfigError:
+                saved = None
+            if saved is not None:
+                project_id = project_id or saved.project_id
+                tenant_id = tenant_id or saved.tenant_id
+                region = saved.region or region
+            resume = f"{command} --project {project} --name {name}"
+            if project_id:
+                resume += f" --project-id {project_id}"
+            if tenant_id:
+                resume += f" --tenant-id {tenant_id}"
+            if region:
+                resume += f" --region {region}"
+            operation = ProvisioningOperation.prepare(
+                command=command,
+                project_alias=project,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                region=region,
+                resource_type="agent",
+                requested_name=name,
+                ownership_source="agent-cli",
+                resume_command=resume,
+                destroy_command=(
+                    f"npa agent destroy --project {project} --name {name} --yes"
+                ),
+            )
+            with operation_context(operation):
+                try:
+                    operation.transition("mutating")
+                    result = function(*args, **kwargs)
+                except BaseException as exc:
+                    tf_dir = provisioner.working_dir_path(project, name)
+                    for candidate in (
+                        tf_dir / "errored.tfstate",
+                        tf_dir / "terraform.tfstate",
+                    ):
+                        if candidate.is_file():
+                            operation.preserve_state_file(candidate, name=candidate.stem)
+                    phase = str(operation.read().get("phase") or "")
+                    if phase not in {"recovery-required", "rollback-incomplete", "rolled-back"}:
+                        operation.transition("recovery-required", error=str(exc))
+                    typer.echo(emit_recovery_summary(operation), err=True)
+                    raise
+                phase = str(operation.read().get("phase") or "")
+                if phase == "resource-created":
+                    operation.transition("state-durable", details={"verified": True})
+                operation.commit()
+                return result
+
+        return wrapped
+
+    return decorate
+
+
 @app.command("deploy")
 @resolve_typer_defaults
+@_transactional_agent_command("npa agent deploy")
 def deploy_cmd(
     project: str = typer.Option("", "--project", help="NPA project alias to store config under (default: configured default_project)."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
@@ -8557,6 +8446,24 @@ def deploy_cmd(
         )
         env_region = real_region
 
+    operation = current_operation()
+    if operation is not None:
+        operation.update_identity(
+            project_alias=project,
+            project_id=env_project_id,
+            tenant_id=env_tenant_id,
+            region=env_region,
+            allow_region_correction=True,
+        )
+        from npa.clients.config import CONFIG_PATH
+        from npa.clients.credentials import (
+            CREDENTIALS_PATH,
+            preflight_private_yaml_store,
+        )
+
+        preflight_private_yaml_store(CONFIG_PATH)
+        preflight_private_yaml_store(CREDENTIALS_PATH)
+
     # Fail before IAM/Terraform. Storage writes and removes one isolated probe;
     # missing binaries, SSH, or writable storage otherwise surface after cloud
     # changes. Surface the Token Factory warning before the VM exists too.
@@ -8593,11 +8500,42 @@ def deploy_cmd(
             region=env_region,
             project_alias=project,
         )
+        if operation is not None:
+            operation.update_identity(
+                backend={
+                    "bucket": str(configured_storage.get("s3_bucket", "")),
+                    "endpoint": str(configured_storage.get("s3_endpoint", "")),
+                    "region": env_region,
+                }
+            )
+            operation.record_resource(
+                resource_type="storage_bucket",
+                requested_name=str(configured_storage.get("s3_bucket", "")),
+                ownership="adopted",
+                ownership_source="configured-project-storage-write-probe",
+                project_id=env_project_id,
+            )
+
+        def _record_created_agent_resource(
+            kind: str, metadata: dict[str, str]
+        ) -> None:
+            if operation is None:
+                return
+            operation.record_resource(
+                resource_type=f"agent_{kind}",
+                requested_name=str(metadata.get("name") or metadata.get("id") or kind),
+                provider_id=str(metadata.get("id") or ""),
+                ownership="created_by_this_operation",
+                ownership_source="agent-bootstrap-create-callback",
+                project_id=env_project_id,
+            )
+
         creds = bootstrap_agent_environment(
             env_project_id,
             env_tenant_id,
             env_region,
             on_status=lambda msg: typer.echo(f"  {msg}"),
+            on_resource_created=_record_created_agent_resource,
             reuse_storage_credentials=configured_storage,
         )
         iam_token = get_iam_token()
@@ -8636,6 +8574,21 @@ def deploy_cmd(
         "enable_preemptible": "false",
         "wait_for_ssh": "true" if wait_ssh else "false",
     }
+    operation = current_operation()
+    if operation is not None:
+        operation.update_identity(
+            project_alias=project,
+            project_id=env_project_id,
+            tenant_id=env_tenant_id,
+            region=env_region,
+            backend={
+                "bucket": str(creds.get("s3_bucket", "")),
+                "endpoint": str(creds.get("s3_endpoint", "")),
+                "region": env_region,
+            },
+            allow_region_correction=True,
+        )
+        merged_vars["operation_id"] = operation.operation_id
     for item in tf_var:
         if "=" not in item:
             _fail(f"Invalid --tf-var value {item!r}; expected key=value")
@@ -8645,6 +8598,10 @@ def deploy_cmd(
         _ensure_terraform_state_bucket(
             project_id=env_project_id,
             bucket_name=str(merged_vars.get("s3_bucket", "")),
+            endpoint=str(merged_vars.get("s3_endpoint", "")),
+            access_key=str(merged_vars.get("nebius_api_key", "")),
+            secret_key=str(merged_vars.get("nebius_secret_key", "")),
+            region=env_region,
         )
     except NebiusError as exc:
         _fail(f"Unable to provision Terraform state bucket: {exc}")
@@ -8669,15 +8626,18 @@ def deploy_cmd(
         )
     except ProvisionerError as exc:
         hint = _agent_deploy_failure_hint(str(exc))
-        try:
-            _destroy_agent_terraform(project, name)
-        except ProvisionerError as cleanup_exc:
-            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         if hint:
             # Print the concise diagnosis last (the raw Terraform output already
             # streamed above), so it is the final thing the operator sees.
             _fail(hint)
         _fail(f"Terraform deploy failed: {exc}")
+
+    operation = current_operation()
+    if operation is not None and operation.read().get("phase") == "mutating":
+        # Mocked/embedded provisioners may return already-verified outputs without
+        # calling the Terraform wrapper that normally records this transition.
+        operation.transition("resource-created", details={"terraform": "completed"})
+        operation.transition("state-durable", details={"state": "provider-verified"})
 
     typer.echo("  Phase 2/4: Terraform complete; resolving the new VM endpoint.")
 
@@ -8690,6 +8650,7 @@ def deploy_cmd(
                 project,
                 name,
                 record={"instance_id": instance_id, "project_id": env_project_id, "region": env_region},
+                rollback_operation=True,
             )
         except ProvisionerError as cleanup_exc:
             typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
@@ -8757,7 +8718,12 @@ def deploy_cmd(
         )
     except (ConfigError, SSHError, ValueError) as exc:
         try:
-            _destroy_agent_terraform(project, name, record=rollback_record)
+            _destroy_agent_terraform(
+                project,
+                name,
+                record=rollback_record,
+                rollback_operation=True,
+            )
         except ProvisionerError as cleanup_exc:
             typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"VM bootstrap failed: {exc}")
@@ -8773,7 +8739,12 @@ def deploy_cmd(
         ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
     except NetworkIngressError as exc:
         try:
-            _destroy_agent_terraform(project, name, record=rollback_record)
+            _destroy_agent_terraform(
+                project,
+                name,
+                record=rollback_record,
+                rollback_operation=True,
+            )
         except ProvisionerError as cleanup_exc:
             typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"npa network ensure-ingress failed: {exc}")
@@ -8835,6 +8806,7 @@ def deploy_cmd(
 
 @app.command("fresh-setup")
 @resolve_typer_defaults
+@_transactional_agent_command("npa agent fresh-setup")
 def fresh_setup_cmd(
     project: str = typer.Option("", "--project", help="NPA project alias for this fresh environment (default: configured default_project)."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
@@ -9332,7 +9304,12 @@ def destroy_cmd(
     """
     project = _resolve_project_alias(project)
     record = _agent_record(project, name)
-    if not record and not _agent_terraform_state_exists(project, name):
+    recovery_operations = list_operations(
+        project_alias=project,
+        resource_type="agent",
+        requested_name=name,
+    )
+    if not record and not _agent_terraform_state_exists(project, name) and not recovery_operations:
         saved_env = resolve_environment(project)
         if not (saved_env and saved_env.project_id):
             _fail(
@@ -9344,6 +9321,13 @@ def destroy_cmd(
         typer.echo(
             f"No local record for {project}/{name}; attempting orphan reclaim by "
             f"instance name agent-{project}-{name} and S3 remote state.",
+            err=True,
+        )
+    elif not record and recovery_operations:
+        recovery = recovery_operations[0].recovery_summary()
+        typer.echo(
+            "No local agent record/config state is required: using exact operation "
+            f"{recovery['operation_id']} at {recovery['journal']} for recovery.",
             err=True,
         )
     # Guard against tearing down the wrong agent interactively. Automation

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import functools
+import inspect
 import os
 import re
 import shutil
@@ -17,6 +19,13 @@ import typer
 
 from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.cluster.state import ClusterState, kubeconfig_file, save_cluster_state, utc_now_iso
+from npa.provisioning_journal import (
+    ProvisioningOperation,
+    current_operation,
+    emit_recovery_summary,
+    list_operations,
+    operation_context,
+)
 
 _DEFAULT_TERRAFORM_SUBDIR = Path("deploy") / "cluster"
 _DEFAULT_SKYPILOT_BIN = Path.home() / ".npa" / "skypilot-venv" / "bin" / "sky"
@@ -31,7 +40,74 @@ _GIB = 1024**3
 _MIN_TERRAFORM_VERSION = (1, 12, 0)
 
 
+def _transactional_cluster_up(function):
+    signature = inspect.signature(function)
+
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        if current_operation() is not None:
+            return function(*args, **kwargs)
+        bound = signature.bind_partial(*args, **kwargs)
+        bound.apply_defaults()
+        tf_dir = _resolve_terraform_dir(bound.arguments.get("terraform_dir"))
+        tfvars = _read_tfvars(tf_dir)
+        context_arg = str(bound.arguments.get("context_name") or "").strip()
+        context = context_arg or str(tfvars.get("cluster_name") or "npa-cluster")
+        project = str(bound.arguments.get("project") or "").strip()
+        project_id = str(tfvars.get("parent_id") or "")
+        tenant_id = str(tfvars.get("tenant_id") or "")
+        region = str(tfvars.get("region") or "")
+        if not project_id:
+            from npa.clients.config import resolve_environment
+
+            saved = resolve_environment(project or None)
+            if saved is not None:
+                project_id = saved.project_id
+                tenant_id = tenant_id or saved.tenant_id
+                region = region or saved.region
+        operation = ProvisioningOperation.prepare(
+            command="npa cluster up",
+            project_alias=project,
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+            backend={"kind": "local-state", "terraform_dir": str(tf_dir)},
+            resource_type="cluster",
+            requested_name=context,
+            ownership_source="cluster-terraform",
+            resume_command=(
+                f"npa cluster up --project {project} --context {context} "
+                f"--terraform-dir {tf_dir}"
+            ),
+            destroy_command=(
+                f"npa cluster down --project {project} --context {context} "
+                f"--terraform-dir {tf_dir} --force"
+            ),
+        )
+        with operation_context(operation):
+            operation.transition("mutating")
+            try:
+                result = function(*args, **kwargs)
+            except BaseException as exc:
+                for candidate in (tf_dir / "errored.tfstate", tf_dir / "terraform.tfstate"):
+                    if candidate.is_file():
+                        operation.preserve_state_file(candidate, name=candidate.stem)
+                operation.transition("recovery-required", error=str(exc))
+                typer.echo(emit_recovery_summary(operation), err=True)
+                raise
+            state_path = tf_dir / "terraform.tfstate"
+            if state_path.is_file():
+                operation.preserve_state_file(state_path, name="verified-local")
+            if operation.read().get("phase") == "resource-created":
+                operation.transition("state-durable")
+            operation.commit()
+            return result
+
+    return wrapped
+
+
 @resolve_typer_defaults
+@_transactional_cluster_up
 def up_cmd(
     terraform_dir: Path | None = typer.Option(
         None,
@@ -231,6 +307,59 @@ def up_cmd(
         if not cluster_id:
             raise typer.BadParameter("Terraform output kube_cluster.id is empty")
 
+        operation = current_operation()
+        if operation is not None:
+            operation.transition("resource-created")
+            operation.record_resource(
+                resource_type="managed_kubernetes_cluster",
+                requested_name=cluster_name,
+                provider_id=cluster_id,
+                ownership="created_by_this_operation",
+                ownership_source="terraform-output-and-state",
+                project_id=str(tfvars.get("parent_id") or env.get("TF_VAR_parent_id") or ""),
+            )
+            for resource_type, requested_name in (
+                ("network", f"{cluster_name}-network"),
+                ("subnet", f"{cluster_name}-subnet"),
+                (
+                    "service_account",
+                    f"{cluster_name}-k8s-node-group-sa",
+                ),
+            ):
+                operation.record_resource(
+                    resource_type=resource_type,
+                    requested_name=requested_name,
+                    ownership="created_by_this_operation",
+                    ownership_source="terraform-state",
+                    project_id=str(
+                        tfvars.get("parent_id") or env.get("TF_VAR_parent_id") or ""
+                    ),
+                )
+            cpu_count = int(_tfvar_value(tfvars, env, "cpu_nodes_count", 0) or 0)
+            gpu_count = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 0) or 0)
+            node_groups = (
+                ([f"{cluster_name}-ng-cpu"] if cpu_count else [])
+                + [f"{cluster_name}-ng-gpu-{index}" for index in range(gpu_count)]
+            )
+            for requested_name in node_groups:
+                operation.record_resource(
+                    resource_type="managed_kubernetes_node_group",
+                    requested_name=requested_name,
+                    ownership="created_by_this_operation",
+                    ownership_source="terraform-state",
+                    project_id=str(
+                        tfvars.get("parent_id") or env.get("TF_VAR_parent_id") or ""
+                    ),
+                )
+            local_state = tf_dir / "terraform.tfstate"
+            if not local_state.is_file():
+                raise typer.BadParameter(
+                    "Terraform apply returned cluster outputs but no durable local "
+                    "state exists; the operation journal was kept for recovery."
+                )
+            operation.preserve_state_file(local_state, name="verified-local")
+            operation.transition("state-durable")
+
         kubeconfig_path = kubeconfig or kubeconfig_file(context)
         _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
         _save_terraform_cluster_state(tfvars, cluster, context, kubeconfig_path)
@@ -312,11 +441,60 @@ def down_cmd(
     preview_context = context_name.strip() or str(
         tfvars.get("cluster_name") or "npa-cluster"
     )
-    if not has_destroy_evidence(
+    recovery_operations = list_operations(
+        project_alias=project,
+        resource_type="cluster",
+        requested_name=preview_context,
+    )
+    recovery_operation = recovery_operations[0] if len(recovery_operations) == 1 else None
+    has_evidence = has_destroy_evidence(
         tf_dir,
         preview_context,
         kubeconfig=kubeconfig,
-    ):
+    )
+    if not has_evidence and len(recovery_operations) > 1:
+        identities = sorted(
+            {
+                str(operation.read().get("project_id") or "(missing)")
+                for operation in recovery_operations
+            }
+        )
+        raise typer.BadParameter(
+            "Cluster recovery is ambiguous across operation journals for context "
+            f"{preview_context!r}: {', '.join(identities)}. Pass the exact --project; "
+            "no resources were changed."
+        )
+    if not has_evidence and recovery_operation is not None:
+        payload = recovery_operation.read()
+        journal_project_id = str(payload.get("project_id") or "")
+        if project:
+            from npa.clients.config import resolve_environment
+
+            saved = resolve_environment(project)
+            saved_project_id = str(getattr(saved, "project_id", "") or "")
+            if saved_project_id and journal_project_id != saved_project_id:
+                raise typer.BadParameter(
+                    "Cluster recovery project mismatch between config and operation "
+                    "journal; no resources were changed."
+                )
+        copies = recovery_operation.state_copies()
+        if copies:
+            shutil.copy2(copies[0], tf_dir / "terraform.tfstate")
+            (tf_dir / "terraform.tfstate").chmod(0o600)
+            has_evidence = True
+            typer.echo(
+                "Recovered exact Terraform state from operation "
+                f"{recovery_operation.operation_id}: {copies[0]}",
+                err=True,
+            )
+        else:
+            raise typer.BadParameter(
+                "The exact cluster operation journal exists but contains no durable "
+                "Terraform state. NPA refused a broad name-based dependency sweep; "
+                "resume the recorded operation to reconcile state, then retry destroy: "
+                + str(payload.get("recovery_commands", {}).get("resume", ""))
+            )
+    if not has_evidence:
         typer.echo(
             f"No Terraform-managed cluster is recorded for {preview_context!r}: "
             "no Terraform resource state/inventory or NPA kubeconfig was found. "
@@ -527,6 +705,10 @@ def down_cmd(
         )
         if not keep_local_state:
             _clear_local_cluster_state(preview_context)
+        if recovery_operation is not None:
+            phase = str(recovery_operation.read().get("phase") or "")
+            if phase not in {"committed", "destroyed"}:
+                recovery_operation.transition("destroyed")
 
 
 def _clear_local_cluster_state(context: str) -> None:

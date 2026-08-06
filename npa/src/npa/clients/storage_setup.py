@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,11 @@ from uuid import uuid4
 import yaml
 
 from npa.clients.storage_validation import StorageProbeResult, probe_storage_write
+from npa.provisioning_journal import (
+    ProvisioningOperation,
+    current_operation,
+    operation_context,
+)
 
 StatusFn = Callable[[str], None]
 
@@ -64,9 +70,18 @@ def _load_document(path: Path) -> dict[str, Any]:
 
 
 def _write_document(path: Path, data: Mapping[str, Any]) -> None:
-    from npa.clients.credentials import write_private_yaml
+    from npa.clients.credentials import update_private_yaml
 
-    write_private_yaml(path, data)
+    update_private_yaml(path, lambda _current: data)
+
+
+def _update_document(
+    path: Path,
+    updater: Callable[[dict[str, Any]], Mapping[str, Any]],
+) -> None:
+    from npa.clients.credentials import update_private_yaml
+
+    update_private_yaml(path, updater)
 
 
 def storage_setup_record(
@@ -89,6 +104,7 @@ class StorageSetupTransaction:
     bucket_name: str
     project_alias: str = ""
     path: Path | None = None
+    operation: ProvisioningOperation | None = None
     attempt_id: str = field(default_factory=lambda: uuid4().hex)
     _created_this_attempt: list[tuple[str, dict[str, str]]] = field(
         default_factory=list, init=False, repr=False
@@ -136,6 +152,10 @@ class StorageSetupTransaction:
                 "updated_at": _now(),
             }
         )
+        if self.operation is not None:
+            phase = str(self.operation.read().get("phase") or "")
+            if phase != "mutating":
+                self.operation.transition("mutating")
 
     def record_created(self, kind: str, metadata: dict[str, str]) -> None:
         """Persist ownership before allowing the next fallible provider step."""
@@ -166,6 +186,21 @@ class StorageSetupTransaction:
                 f"created storage {kind} record is missing its {required}"
             )
         self._created_this_attempt.append((kind, clean))
+        if self.operation is not None:
+            resource_type = {
+                "bucket": "storage_bucket",
+                "service_account": "storage_service_account",
+                "access_key": "storage_access_key",
+            }[kind]
+            self.operation.record_resource(
+                resource_type=resource_type,
+                requested_name=str(clean.get("name") or clean.get("id") or kind),
+                provider_id=str(clean.get("id") or ""),
+                ownership="created_by_this_operation",
+                ownership_source="storage-provider-create-callback",
+                project_id=self.project_id,
+                creation_window_end=str(clean.get("created_at") or ""),
+            )
         record = storage_setup_record(self.project_id, path=self.credentials_path)
         resources = record.get("resources")
         resources = deepcopy(resources) if isinstance(resources, dict) else {}
@@ -227,7 +262,35 @@ class StorageSetupTransaction:
             )
 
         path = self.credentials_path
-        document = _load_document(path)
+        saved_record = storage_setup_record(self.project_id, path=path)
+        saved_resources = saved_record.get("resources")
+        saved_resources = (
+            deepcopy(saved_resources) if isinstance(saved_resources, dict) else {}
+        )
+        bucket_record = saved_resources.get("bucket")
+        if not isinstance(bucket_record, dict):
+            bucket_record = {
+                "name": bucket.strip().removeprefix("s3://").strip("/"),
+                "created_by": "pre_existing",
+                "project_id": self.project_id,
+                "attempt_id": self.attempt_id,
+                "adopted_at": _now(),
+            }
+            saved_resources["bucket"] = bucket_record
+        if self.operation is not None:
+            self.operation.record_resource(
+                resource_type="storage_bucket",
+                requested_name=str(bucket_record.get("name") or self.bucket_name),
+                provider_id=str(bucket_record.get("id") or ""),
+                ownership=(
+                    "created_by_this_operation"
+                    if bucket_record.get("created_by") == "npa"
+                    and bucket_record.get("attempt_id") == self.attempt_id
+                    else "adopted"
+                ),
+                ownership_source="storage-write-probe",
+                project_id=self.project_id,
+            )
         payload: dict[str, Any] = {
             "storage": {
                 "aws_access_key_id": access,
@@ -240,6 +303,7 @@ class StorageSetupTransaction:
                 "projects": {
                     self.project_id: {
                         **storage_setup_record(self.project_id, path=path),
+                        "resources": saved_resources,
                         "status": "complete",
                         "phase": "credentials_committed",
                         "last_error": "",
@@ -255,7 +319,7 @@ class StorageSetupTransaction:
             payload["nebius"] = {"service_account_id": account_id}
         if ownership:
             payload["storage_iam"] = ownership
-        _write_document(path, _deep_merge(document, payload))
+        _update_document(path, lambda current: _deep_merge(current, payload))
 
     def fail_and_rollback(self, exc: BaseException) -> list[str]:
         """Roll back only this attempt's exact creations; preserve failures."""
@@ -322,36 +386,42 @@ class StorageSetupTransaction:
         # resurrect the exact entries just removed. Replace this field in the
         # persisted project record while retaining every unrelated project.
         path = self.credentials_path
-        document = _load_document(path)
-        setup = document.get("storage_setup")
-        setup = deepcopy(setup) if isinstance(setup, dict) else {"version": 1}
-        projects = setup.get("projects")
-        projects = deepcopy(projects) if isinstance(projects, dict) else {}
-        project_record = projects.get(self.project_id)
-        project_record = (
-            deepcopy(project_record) if isinstance(project_record, dict) else {}
-        )
-        project_record["resources"] = resources
-        project_record["updated_at"] = _now()
-        projects[self.project_id] = project_record
-        setup["projects"] = projects
-        document["storage_setup"] = setup
-        _write_document(path, document)
+        def remove_from(current: dict[str, Any]) -> dict[str, Any]:
+            document = deepcopy(current)
+            setup = document.get("storage_setup")
+            setup = deepcopy(setup) if isinstance(setup, dict) else {"version": 1}
+            projects = setup.get("projects")
+            projects = deepcopy(projects) if isinstance(projects, dict) else {}
+            project_record = projects.get(self.project_id)
+            project_record = (
+                deepcopy(project_record) if isinstance(project_record, dict) else {}
+            )
+            project_record["resources"] = resources
+            project_record["updated_at"] = _now()
+            projects[self.project_id] = project_record
+            setup["projects"] = projects
+            document["storage_setup"] = setup
+            return document
+
+        _update_document(path, remove_from)
 
     def _update_record(self, patch: Mapping[str, Any]) -> None:
         path = self.credentials_path
-        document = _load_document(path)
-        setup = document.get("storage_setup")
-        setup = deepcopy(setup) if isinstance(setup, dict) else {"version": 1}
-        projects = setup.get("projects")
-        projects = deepcopy(projects) if isinstance(projects, dict) else {}
-        existing = projects.get(self.project_id)
-        existing = existing if isinstance(existing, dict) else {}
-        projects[self.project_id] = _deep_merge(existing, patch)
-        setup["version"] = 1
-        setup["projects"] = projects
-        document["storage_setup"] = setup
-        _write_document(path, document)
+        def update(current: dict[str, Any]) -> dict[str, Any]:
+            document = deepcopy(current)
+            setup = document.get("storage_setup")
+            setup = deepcopy(setup) if isinstance(setup, dict) else {"version": 1}
+            projects = setup.get("projects")
+            projects = deepcopy(projects) if isinstance(projects, dict) else {}
+            existing = projects.get(self.project_id)
+            existing = existing if isinstance(existing, dict) else {}
+            projects[self.project_id] = _deep_merge(existing, patch)
+            setup["version"] = 1
+            setup["projects"] = projects
+            document["storage_setup"] = setup
+            return document
+
+        _update_document(path, update)
 
 
 def provision_storage(
@@ -369,44 +439,84 @@ def provision_storage(
 
     from npa.clients import nebius
 
+    parent_operation = current_operation()
+    owns_operation = parent_operation is None
+    operation = parent_operation or ProvisioningOperation.prepare(
+        command="npa provision-if-absent",
+        project_alias=project_alias,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        region=region,
+        backend={"bucket": bucket_name, "region": region},
+        resource_type="storage",
+        requested_name=bucket_name,
+        ownership_source="storage-setup",
+        resume_command=(
+            "npa provision-if-absent"
+            + (f" --project {project_alias}" if project_alias else "")
+            + " --skip-k8s"
+        ),
+    )
+    operation.update_identity(
+        project_alias=project_alias,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        region=region,
+        backend={"bucket": bucket_name, "region": region},
+    )
     transaction = StorageSetupTransaction(
         project_id=project_id,
         tenant_id=tenant_id,
         region=region,
         bucket_name=bucket_name,
         project_alias=project_alias,
+        operation=operation,
     )
-    transaction.begin()
-    try:
-        credentials = nebius.bootstrap_environment(
-            project_id,
-            tenant_id,
-            region,
-            bucket_name=transaction.bucket_name,
-            bucket_max_size_bytes=bucket_max_size_bytes,
-            bucket_storage_class=bucket_storage_class,
-            on_status=on_status,
-            on_resource_created=transaction.record_created,
-        )
-        probe = probe_storage_write(
-            bucket=credentials.get("s3_bucket", ""),
-            endpoint_url=credentials.get("s3_endpoint", ""),
-            access_key_id=credentials.get("nebius_api_key", ""),
-            secret_access_key=credentials.get("nebius_secret_key", ""),
-            region=region,
-        )
-        if not probe.ok:
-            raise nebius.NebiusError(probe.summary)
-        transaction.commit(credentials, probe)
-        return credentials, probe
-    except BaseException as exc:
-        rollback_errors = transaction.fail_and_rollback(exc)
-        if rollback_errors and on_status:
-            on_status(
-                "Storage rollback was incomplete; exact NPA ownership was preserved in "
-                f"{transaction.credentials_path}. Resume with `{transaction.next_command}`."
+    context = operation_context(operation) if owns_operation else nullcontext(operation)
+    with context:
+        transaction.begin()
+        try:
+            credentials = nebius.bootstrap_environment(
+                project_id,
+                tenant_id,
+                region,
+                bucket_name=transaction.bucket_name,
+                bucket_max_size_bytes=bucket_max_size_bytes,
+                bucket_storage_class=bucket_storage_class,
+                on_status=on_status,
+                on_resource_created=transaction.record_created,
             )
-        if not isinstance(exc, Exception):
-            raise
-        safe_error = nebius.redact_nebius_output(str(exc))
-        raise nebius.NebiusError(f"Storage provisioning failed: {safe_error}") from None
+            probe = probe_storage_write(
+                bucket=credentials.get("s3_bucket", ""),
+                endpoint_url=credentials.get("s3_endpoint", ""),
+                access_key_id=credentials.get("nebius_api_key", ""),
+                secret_access_key=credentials.get("nebius_secret_key", ""),
+                region=region,
+            )
+            if not probe.ok:
+                raise nebius.NebiusError(probe.summary)
+            transaction.commit(credentials, probe)
+            if owns_operation:
+                operation.transition(
+                    "state-durable", details={"storage_probe": "passed"}
+                )
+                operation.commit()
+            return credentials, probe
+        except BaseException as exc:
+            rollback_errors = transaction.fail_and_rollback(exc)
+            phase = "rollback-incomplete" if rollback_errors else "rolled-back"
+            if owns_operation:
+                operation.transition(phase, error=str(exc))
+            if rollback_errors and on_status:
+                on_status(
+                    "Storage rollback was incomplete; exact NPA ownership was preserved in "
+                    f"{transaction.credentials_path}. Resume with `{transaction.next_command}`."
+                )
+            if not isinstance(exc, Exception):
+                raise
+            safe_error = nebius.redact_nebius_output(str(exc))
+            raise nebius.NebiusError(
+                f"Storage provisioning failed: {safe_error}. Operation "
+                f"{operation.operation_id}: {operation.path}. Resume: "
+                f"{transaction.next_command}"
+            ) from None

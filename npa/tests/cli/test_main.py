@@ -75,6 +75,22 @@ def test_help_smoke(args: list[str], expected: str) -> None:
     assert expected in result.output
 
 
+def test_configure_help_exposes_no_secret_value_flags() -> None:
+    result = runner.invoke(app, ["configure", "--help"])
+
+    assert result.exit_code == 0
+    assert "--save-env-credentials" in result.output
+    for forbidden in (
+        "--hf-token",
+        "--ngc-api-key",
+        "--token-factory-key",
+        "--aws-access-key-id",
+        "--aws-secret-access-key",
+        "--secret",
+    ):
+        assert forbidden not in result.output
+
+
 def test_no_args_shows_top_level_help() -> None:
     result = runner.invoke(app, [])
 
@@ -1387,6 +1403,15 @@ def _prepopulate_config(monkeypatch, tmp_path):
                     "endpoint_url": "https://storage.eu-north1.nebius.cloud",
                     "bucket": "s3://npa-bucket-existing/",
                 },
+                "storage_setup": {
+                    "version": 1,
+                    "projects": {
+                        "project-existing": {
+                            "status": "complete",
+                            "bucket_name": "npa-bucket-existing",
+                        }
+                    },
+                },
             }
         )
     )
@@ -1447,15 +1472,14 @@ def test_configure_rerun_updates_selected_values(monkeypatch, tmp_path) -> None:
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("should keep storage")),
     )
 
-    # Update project id and HF token; keep everything else (incl. storage).
+    # Update the HF token; keep project identity and verified storage.
     answers = (
         "\n".join(
             [
                 "",  # tenant id (keep)
-                "project-new",  # project id (update)
+                "",  # project id (keep)
                 "",  # region (keep)
                 "",  # registry (keep)
-                "n",  # profile now points elsewhere -> don't rebind it
                 "",  # keep existing storage? -> Y
                 "hf_new",  # HF token (update)
                 "",  # token factory (keep)
@@ -1473,7 +1497,7 @@ def test_configure_rerun_updates_selected_values(monkeypatch, tmp_path) -> None:
     # Updated stanza lives under the preserved alias.
     prod = cfg["projects"]["prod"]
     assert cfg["default_project"] == "prod"
-    assert prod["project_id"] == "project-new"
+    assert prod["project_id"] == "project-existing"
     assert prod["tenant_id"] == "tenant-existing"
 
     creds = yaml.safe_load(creds_path.read_text())
@@ -1511,8 +1535,8 @@ def test_configure_rerun_can_reprovision_storage_when_declined(
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    # Decline keep-existing storage -> provision; bucket name Enter reuses the
-    # existing bucket name default (bucket_exists=True -> no size prompts).
+    # Decline keep-existing storage -> provision; the editable bucket prompt
+    # defaults to a fresh project-scoped proposal, never the declined name.
     answers = (
         "\n".join(
             [
@@ -1521,7 +1545,7 @@ def test_configure_rerun_can_reprovision_storage_when_declined(
                 "",  # region (keep)
                 "",  # registry (keep)
                 "n",  # keep existing storage? -> no
-                "",  # bucket name (default = npa-bucket-existing)
+                "",  # bucket name (fresh project-scoped default)
                 "",  # HF (keep)
                 "",  # token factory (keep)
                 "",  # NGC (keep)
@@ -1534,7 +1558,10 @@ def test_configure_rerun_can_reprovision_storage_when_declined(
 
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert calls[0]["bucket_name"] == "npa-bucket-existing"
+    assert calls[0]["bucket_name"] == nebius_module.bucket_name_for(
+        "tenant-existing", "project-existing"
+    )
+    assert calls[0]["bucket_name"] != "npa-bucket-existing"
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AK_new"
 
@@ -1861,7 +1888,7 @@ def test_configure_typed_existing_bucket_is_reused_without_create_prompts(
     assert calls[0]["bucket_max_size_bytes"] == 0
 
 
-def test_configure_bucket_search_failure_skips_create_prompts(
+def test_configure_bucket_search_failure_fails_closed_before_create(
     monkeypatch, tmp_path
 ) -> None:
     """When existence can't be verified, npa skips create prompts and get-or-creates."""
@@ -1893,6 +1920,7 @@ def test_configure_bucket_search_failure_skips_create_prompts(
                 "",
                 "",
                 "maybe-existing",
+                "",  # skip object storage after the verification failure
                 "hf_tok",
                 "",
                 "",
@@ -1906,11 +1934,50 @@ def test_configure_bucket_search_failure_skips_create_prompts(
 
     assert result.exit_code == 0, result.output
     assert "Could not verify whether 'maybe-existing' already exists" in result.output
+    assert "will not create or adopt it" in result.output
     assert "New bucket storage class" not in result.output
-    # Provisioning still runs; ensure_bucket get-or-creates only if absent.
-    assert calls and calls[0]["bucket_name"] == "maybe-existing"
-    assert calls[0]["bucket_max_size_bytes"] == 0
-    assert calls[0]["bucket_storage_class"] == "standard"
+    assert calls == []
+
+
+def test_noninteractive_bucket_collision_uses_a_different_deterministic_name(
+    monkeypatch,
+) -> None:
+    import npa.clients.nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: False)
+    requested: list[str] = []
+
+    def bootstrap(*_args, bucket_name, **_kwargs):
+        requested.append(bucket_name)
+        if len(requested) == 1:
+            raise nebius_module.NebiusError(
+                f"Object-storage bucket name '{bucket_name}' is already taken"
+            )
+        return {
+            "nebius_api_key": "access",
+            "nebius_secret_key": "secret",
+            "s3_bucket": bucket_name,
+            "s3_endpoint": "https://storage.example",
+        }
+
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", bootstrap)
+
+    result = cli_main._provision_object_storage(
+        nebius_module,
+        lambda _label, *, default="", **_kwargs: default,
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-north1",
+        existing_bucket="npa-bucket-collision",
+        interactive=False,
+    )
+
+    assert result is not None
+    assert requested[0] == "npa-bucket-collision"
+    assert requested[1] == cli_main._collision_bucket_name(
+        requested[0], tenant_id="tenant-a", project_id="project-a"
+    )
+    assert requested[1] != requested[0]
 
 
 def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None:

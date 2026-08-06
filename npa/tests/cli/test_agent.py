@@ -126,8 +126,11 @@ def test_build_agent_urls_http_legacy() -> None:
     assert urls["cameras_api_url"] == "http://203.0.113.50:8088/assets/api/sim-assets/cameras"
 
 
-def test_ensure_terraform_state_bucket_creates_missing_bucket(monkeypatch) -> None:
+def test_ensure_terraform_state_bucket_preserves_missing_configuration(
+    monkeypatch,
+) -> None:
     from npa.cli.agent import _ensure_terraform_state_bucket
+    from npa.clients import nebius
 
     calls: list[tuple[str, str]] = []
 
@@ -137,9 +140,12 @@ def test_ensure_terraform_state_bucket_creates_missing_bucket(monkeypatch) -> No
         lambda project, bucket: calls.append((project, bucket)),
     )
 
-    _ensure_terraform_state_bucket(project_id="project-1", bucket_name="bucket-1")
+    with pytest.raises(nebius.NebiusError, match="missing.*preserved configuration"):
+        _ensure_terraform_state_bucket(
+            project_id="project-1", bucket_name="bucket-1"
+        )
 
-    assert calls == [("project-1", "bucket-1")]
+    assert calls == []
 
 
 def test_ensure_terraform_state_bucket_skips_existing_bucket(monkeypatch) -> None:
@@ -235,6 +241,125 @@ def test_apply_agent_terraform_retries_without_sa_and_warns(monkeypatch, tmp_pat
     err = capsys.readouterr().err
     assert "WARNING" in err
     assert "self-mint" in err
+
+
+def test_apply_failure_preserves_errored_state_and_exact_recovery(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli.agent import _apply_agent_terraform
+    from npa.deploy.provisioner import BackendBucketMissingError
+    from npa.provisioning_journal import ProvisioningOperation, operation_context
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    tf_dir = tmp_path / "terraform"
+    tf_dir.mkdir()
+    (tf_dir / "errored.tfstate").write_text('{"version":4,"resources":[]}')
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.prepare_working_dir",
+        lambda *_args, **_kwargs: tf_dir,
+    )
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.apply",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            BackendBucketMissingError("NoSuchBucket during state upload")
+        ),
+    )
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-north1",
+        resource_type="agent",
+        requested_name="agent",
+        ownership_source="test",
+        resume_command="npa agent deploy --project demo --name agent",
+        destroy_command="npa agent destroy --project demo --name agent --yes",
+    )
+
+    with operation_context(operation), pytest.raises(BackendBucketMissingError):
+        operation.transition("mutating")
+        _apply_agent_terraform(
+            project="demo",
+            name="agent",
+            env_region="eu-north1",
+            merged_vars={
+                "s3_bucket": "state-bucket",
+                "s3_endpoint": "https://storage.example",
+                "nebius_api_key": "access",
+                "nebius_secret_key": "secret",
+                "nebius_project_id": "project-a",
+                "instance_name": "agent-demo-agent",
+            },
+        )
+
+    summary = operation.recovery_summary()
+    assert summary["phase"] == "recovery-required"
+    assert len(summary["local_state"]) == 1
+    assert Path(summary["local_state"][0]).is_file()
+    assert summary["resume_command"] == "npa agent deploy --project demo --name agent"
+
+
+def test_retry_restores_preserved_state_before_apply(monkeypatch, tmp_path) -> None:
+    from npa.cli.agent import _apply_agent_terraform
+    from npa.provisioning_journal import ProvisioningOperation, operation_context
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    tf_dir = tmp_path / "terraform"
+    tf_dir.mkdir()
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.prepare_working_dir",
+        lambda *_args, **_kwargs: tf_dir,
+    )
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
+    monkeypatch.setattr("npa.cli.agent.provisioner.state_list", lambda _path: [])
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.state_push",
+        lambda _state, _path: calls.append("state-push"),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.apply",
+        lambda **_kwargs: calls.append("apply") or {"instance_id": "instance-a"},
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.state_pull",
+        lambda _path: b'{"version":4,"resources":[]}',
+    )
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-north1",
+        resource_type="agent",
+        requested_name="agent",
+        ownership_source="test",
+        resume_command="npa agent deploy --project demo --name agent",
+    )
+    operation.preserve_state_bytes(
+        b'{"version":4,"resources":[]}', name="errored"
+    )
+    operation.transition("recovery-required")
+
+    with operation_context(operation):
+        _apply_agent_terraform(
+            project="demo",
+            name="agent",
+            env_region="eu-north1",
+            merged_vars={
+                "s3_bucket": "state-bucket",
+                "s3_endpoint": "https://storage.example",
+                "nebius_api_key": "access",
+                "nebius_secret_key": "secret",
+                "nebius_project_id": "project-a",
+                "instance_name": "agent-demo-agent",
+            },
+        )
+
+    assert calls == ["state-push", "apply"]
+    assert operation.read()["phase"] == "state-durable"
 
 
 def test_write_agent_nebius_env_omits_operator_iam_token(monkeypatch) -> None:
@@ -3199,9 +3324,10 @@ def test_destroy_terraform_orphan_sweep_runs_after_tf_destroy(monkeypatch, tmp_p
     assert calls == ["ingress", "tf_destroy", "orphan"]
 
 
-def test_destroy_terraform_no_state_uses_orphan_reclaim(monkeypatch) -> None:
+def test_destroy_terraform_no_state_refuses_unguarded_name_reclaim(monkeypatch) -> None:
     from types import SimpleNamespace
     from npa.cli import agent as agent_module
+    from npa.deploy.provisioner import ProvisionerError
 
     calls: list[str] = []
     monkeypatch.setattr(
@@ -3227,9 +3353,10 @@ def test_destroy_terraform_no_state_uses_orphan_reclaim(monkeypatch) -> None:
 
     monkeypatch.setattr(agent_module.provisioner, "destroy", _boom)
 
-    agent_module._destroy_agent_terraform("p", "n", record=None)
+    with pytest.raises(ProvisionerError, match="refusing an unguarded name-based"):
+        agent_module._destroy_agent_terraform("p", "n", record=None)
 
-    assert calls == ["ingress", "orphan"]
+    assert calls == ["ingress"]
 
 
 def _stub_owned_agent_destroy(monkeypatch, tmp_path):

@@ -14,6 +14,7 @@ from npa.clients.credentials import (
     CredentialsConfig,
     load_credentials,
     persist_supported_env_credentials,
+    preflight_private_yaml_store,
     set_token_factory_api_key,
     shared_credential_env,
     warn_if_hf_token_missing,
@@ -293,6 +294,23 @@ def test_persist_env_credentials_refuses_symlink_destination(tmp_path: Path) -> 
         )
 
     assert not (tmp_path / "elsewhere.yaml").exists()
+
+
+def test_private_store_preflight_does_not_create_an_absent_store(tmp_path: Path) -> None:
+    destination = tmp_path / "protected" / "credentials.yaml"
+
+    assert preflight_private_yaml_store(destination) == destination
+
+    assert not destination.exists()
+    assert stat.S_IMODE(destination.parent.stat().st_mode) == 0o700
+
+
+def test_private_store_preflight_refuses_a_symlink(tmp_path: Path) -> None:
+    destination = tmp_path / "credentials.yaml"
+    destination.symlink_to(tmp_path / "elsewhere.yaml")
+
+    with pytest.raises(OSError, match="symlink"):
+        preflight_private_yaml_store(destination)
 
 
 def test_atomic_credential_replace_failure_preserves_previous_file(

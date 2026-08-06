@@ -379,9 +379,8 @@ def test_terraform_command_wrappers_delegate_to_run(tmp_path: Path, mocker) -> N
         "-input=false",
         "-lockfile=readonly",
         "-reconfigure",
-        "-backend-config",
-        "access_key=key",
     ]
+    assert run.call_args.kwargs["env_overrides"] == {"AWS_ACCESS_KEY_ID": "key"}
 
     assert provisioner.plan(tmp_path, {"gpu": "h100"}) == "planned"
     assert "-var" in run.call_args.args[0]
@@ -391,6 +390,105 @@ def test_terraform_command_wrappers_delegate_to_run(tmp_path: Path, mocker) -> N
 
     provisioner.destroy(tmp_path, {"gpu": "h100"})
     assert run.call_args.args[0][0] == "destroy"
+
+
+def test_backend_rotation_forces_reconfigure_without_secret_argv(
+    tmp_path: Path, mocker
+) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    run = mocker.patch(
+        "npa.deploy.provisioner._run",
+        return_value=subprocess.CompletedProcess(
+            args=["terraform"], returncode=0, stdout="", stderr=""
+        ),
+    )
+
+    provisioner.init(
+        tmp_path,
+        backend_config={"access_key": "fresh-access", "secret_key": "fresh-secret"},
+    )
+
+    argv = run.call_args.args[0]
+    assert "-reconfigure" in argv
+    assert "fresh-access" not in " ".join(argv)
+    assert "fresh-secret" not in " ".join(argv)
+    assert run.call_args.kwargs["env_overrides"] == {
+        "AWS_ACCESS_KEY_ID": "fresh-access",
+        "AWS_SECRET_ACCESS_KEY": "fresh-secret",
+    }
+
+
+def test_changed_backend_target_can_force_reconfigure_without_credentials(
+    tmp_path: Path, mocker
+) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    run = mocker.patch(
+        "npa.deploy.provisioner._run",
+        return_value=subprocess.CompletedProcess(
+            args=["terraform"], returncode=0, stdout="", stderr=""
+        ),
+    )
+
+    provisioner.init(tmp_path, force_reconfigure=True)
+
+    assert "-reconfigure" in run.call_args.args[0]
+    assert "env_overrides" not in run.call_args.kwargs
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        ("NoSuchBucket: backend is gone", provisioner.BackendBucketMissingError),
+        ("403 Forbidden", provisioner.BackendAuthenticationError),
+        ("dial tcp: no such host", provisioner.BackendEndpointError),
+        ("Error acquiring the state lock", provisioner.BackendLockError),
+    ],
+)
+def test_backend_init_failures_are_typed(
+    tmp_path: Path, mocker, detail: str, expected: type[Exception]
+) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    mocker.patch(
+        "npa.deploy.provisioner._run",
+        side_effect=ProvisionerError(f"terraform init failed: {detail}"),
+    )
+
+    with pytest.raises(expected):
+        provisioner.init(
+            tmp_path,
+            backend_config={"access_key": "access", "secret_key": "secret"},
+            retries=1,
+        )
+
+
+def test_state_push_failure_preserves_cause_and_type(tmp_path: Path, mocker) -> None:
+    state = tmp_path / "errored.tfstate"
+    state.write_text('{"version":4}')
+    mocker.patch(
+        "npa.deploy.provisioner._run",
+        side_effect=ProvisionerError("NoSuchBucket while uploading state"),
+    )
+
+    with pytest.raises(provisioner.BackendBucketMissingError) as caught:
+        provisioner.state_push(state, tmp_path)
+
+    assert isinstance(caught.value.__cause__, ProvisionerError)
+    assert state.is_file()
+
+
+def test_state_pull_failure_preserves_cause_and_type(tmp_path: Path, mocker) -> None:
+    mocker.patch(
+        "npa.deploy.provisioner._run",
+        side_effect=ProvisionerError("403 Forbidden while downloading state"),
+    )
+
+    with pytest.raises(provisioner.BackendAuthenticationError) as caught:
+        provisioner.state_pull(tmp_path)
+
+    assert isinstance(caught.value.__cause__, ProvisionerError)
 
 
 def test_run_sets_terraform_plugin_cache_dir(tmp_path: Path, monkeypatch, mocker) -> None:

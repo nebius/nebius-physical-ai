@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import functools
+import inspect
+import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -12,6 +15,12 @@ from urllib.parse import urlparse
 from npa.clients import config as config_module
 from npa.clients.config import ConfigError, EnvironmentConfig, StorageConfig
 from npa.cluster.state import kubeconfig_file, load_cluster_state
+from npa.provisioning_journal import (
+    ProvisioningOperation,
+    current_operation,
+    emit_recovery_summary,
+    operation_context,
+)
 
 
 @dataclass
@@ -25,6 +34,9 @@ class ProvisionIfAbsentResult:
     storage_endpoint: str = ""
     registry: str = ""
     gpu_readiness: str = "not-requested"
+    operation_id: str = ""
+    operation_journal: str = ""
+    recovery_command: str = ""
     actions: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -32,6 +44,78 @@ class ProvisionIfAbsentResult:
         return asdict(self)
 
 
+def _transactional_provision(function):
+    signature = inspect.signature(function)
+
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        if current_operation() is not None:
+            return function(*args, **kwargs)
+        bound = signature.bind_partial(*args, **kwargs)
+        bound.apply_defaults()
+        if bool(bound.arguments.get("dry_run")):
+            return function(*args, **kwargs)
+        requested_project = bound.arguments.get("project")
+        alias, environment, storage, _registry = _resolve_project_runtime(requested_project)
+        cluster_name = str(bound.arguments.get("cluster_name") or "npa-cluster")
+        skip_k8s = bool(bound.arguments.get("skip_k8s"))
+        resource_type = "storage" if skip_k8s else "cluster"
+        requested_name = _bucket_name(storage.checkpoint_bucket) if skip_k8s else cluster_name
+        resume = "npa provision-if-absent"
+        if alias:
+            resume += f" --project {alias}"
+        if skip_k8s:
+            resume += " --skip-k8s"
+        operation = ProvisioningOperation.prepare(
+            command="npa provision-if-absent",
+            project_alias=alias,
+            project_id=str(getattr(environment, "project_id", "") or ""),
+            tenant_id=str(getattr(environment, "tenant_id", "") or ""),
+            region=str(getattr(environment, "region", "") or ""),
+            backend={
+                "bucket": _bucket_name(storage.checkpoint_bucket),
+                "endpoint": storage.endpoint_url,
+                "region": str(getattr(environment, "region", "") or ""),
+            },
+            resource_type=resource_type,
+            requested_name=requested_name or resource_type,
+            ownership_source="provision-if-absent",
+            resume_command=resume,
+            destroy_command=(
+                f"npa cluster down --project {alias} --context {cluster_name} --force"
+                if not skip_k8s
+                else ""
+            ),
+        )
+        with operation_context(operation):
+            operation.transition("mutating")
+            try:
+                result = function(*args, **kwargs)
+            except BaseException as exc:
+                if operation.read().get("phase") != "recovery-required":
+                    operation.transition("recovery-required", error=str(exc))
+                sys.stderr.write(emit_recovery_summary(operation) + "\n")
+                raise
+            if result.status == "partial":
+                operation.transition(
+                    "recovery-required",
+                    error="; ".join(result.warnings),
+                )
+            else:
+                phase = str(operation.read().get("phase") or "")
+                if phase in {"mutating", "resource-created"}:
+                    operation.transition("state-durable")
+                operation.commit()
+            summary = operation.recovery_summary()
+            result.operation_id = operation.operation_id
+            result.operation_journal = str(operation.path)
+            result.recovery_command = str(summary.get("resume_command") or "")
+            return result
+
+    return wrapped
+
+
+@_transactional_provision
 def provision_if_absent(
     *,
     project: str | None = None,

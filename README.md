@@ -87,6 +87,37 @@ NPA is tested with Nebius CLI `0.12.254` (recommended) and `0.12.227`
 (compatible with a warning). Other versions are blocked before provider calls
 and the error prints the exact tested-version install command.
 
+Creating a project is a privileged action outside NPA. A tenant administrator
+(or another principal with permission to create projects under the tenant) can
+use the pinned CLI's official `iam v2 project` surface instead of the console:
+
+```bash
+TENANT_ID="tenant-id"
+PROJECT_NAME="project-name"
+REGION=eu-north1
+
+# Creates the external project. Review the tenant/name/region before running it.
+nebius iam v2 project create --parent-id "$TENANT_ID" \
+  --name "$PROJECT_NAME" --region "$REGION" --format json
+
+# Read-only discovery/verification; copy the new project's immutable ID.
+nebius iam v2 project list --parent-id "$TENANT_ID" --all --format table
+PROJECT_ID="project-id-from-the-list"
+nebius iam v2 project get --id "$PROJECT_ID" --format json
+
+# Bind the active CLI profile, then continue with NPA under a local alias.
+nebius config set tenant-id "$TENANT_ID"
+nebius config set parent-id "$PROJECT_ID"
+PROJECT_ALIAS="local-npa-alias"
+npa configure --no-interactive --tenant-id "$TENANT_ID" \
+  --project-id "$PROJECT_ID" --region "$REGION" \
+  --project-alias "$PROJECT_ALIAS"
+```
+
+Project creation requires tenant-level administrative permission; the list/get
+commands are read-only and are safe verification steps. The web-console path
+linked above remains equivalent.
+
 `npa configure` prompts for optional model/inference tokens and links each
 one's setup guide inline. Create them step by step:
 [Hugging Face](docs/workbench/huggingface-token.md) ·
@@ -110,9 +141,13 @@ one's setup guide inline. Create them step by step:
 >   --region "$REGION" --project-alias "$PROJECT_ALIAS"
 > ```
 >
-> This command takes no secret flags. It reuses health-verified configured S3
-> credentials without listing/rotating access keys, or provisions the default
-> bucket through the active profile when storage is absent.
+> No secret-value flags are accepted or shown by `npa configure --help`.
+> Automation supplies values through protected environment variables and adds
+> the boolean `--save-env-credentials`; NPA atomically persists only supported
+> variables in its owner-only credential store. The command reuses S3 only when
+> project provenance and a write/read/delete probe both verify it; otherwise it
+> proposes a fresh project-scoped bucket without listing or rotating unrelated
+> access keys.
 
 Full account/credential detail: [docs/quickstart.md](docs/quickstart.md).
 
@@ -132,10 +167,10 @@ to go from a public dataset to a trained-and-evaluated policy on Nebius GPUs.
 
 ### The whole path, in order
 
-Running PAIDF on Nebius needs writable storage, the optional browser agent, a
-cluster, an orchestrator, and a copy of `npa` the workers can install. This
-restart-safe shell path uses only existing commands, stops at the first failed
-prerequisite, and defaults to on-demand capacity:
+Running PAIDF on Nebius needs writable storage, a cluster, an orchestrator, and
+a copy of `npa` the workers can install. The browser agent is optional and is
+not part of this core `set -e` path. This restart-safe shell sequence stops at
+the first failed core prerequisite and defaults to on-demand capacity:
 
 ```bash
 set -eu
@@ -152,41 +187,71 @@ PROJECT="$NPA_PROJECT_ALIAS"
 # project registry.
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 REGISTRY="$NPA_REGISTRY"
+npa workbench health preflight
 npa provision-if-absent --project "$PROJECT" --skip-k8s
-npa agent preflight --project "$PROJECT"
-npa agent status --project "$PROJECT" --name agent --json >/dev/null 2>&1 \
-  || npa agent setup --project "$PROJECT" --name agent
+eval "$(npa configure --show --env)"
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+REGISTRY="$NPA_REGISTRY"
+BUCKET="$NPA_BUCKET"
 npa skypilot bootstrap
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
+npa workbench workflow validate-spec "$SPEC" --json
+npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
+  --assume-decision promote_checkpoint --var bucket="$BUCKET" \
+  --var n_augmentations=1 --json
 npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
   --gpu-preset 1gpu-24vcpu-218gb --on-demand \
   --accelerator RTXPRO6000:1 --gpu-readiness-timeout 900
-BUCKET="$NPA_BUCKET"
 npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
 
-RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --registry "$REGISTRY" \
-  --run-id "$RUN_ID" --runtime --auto-load --var bucket="$BUCKET" \
+  --run-id "$RUN_ID" --runtime --var bucket="$BUCKET" \
   --var n_augmentations=1 \
   --assume-decision promote_checkpoint --infra "k8s/$CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
 
 printf '%s\n' "Provisioned resources: writable S3 at $BUCKET (write/delete verified)."
-npa agent status --project "$PROJECT" --name agent
 npa cluster status --project "$PROJECT"
 npa workbench workflow status "$RUN_ID" --project "$PROJECT"
 printf '%s\n' \
-  "Running/cost-bearing when status says running: agent VM; 1 cpu-d3/8vcpu-32gb node; 1 gpu-rtx6000/1gpu-24vcpu-218gb node; active PAIDF jobs." \
-  "Absent: no resources beyond the storage, agent, cluster, and PAIDF state reported above were requested; absent resources remain absent." \
+  "Running/cost-bearing when status says running: 1 cpu-d3/8vcpu-32gb node; 1 gpu-rtx6000/1gpu-24vcpu-218gb node; active PAIDF jobs." \
+  "Absent: no agent VM was requested; no resources beyond the storage, cluster, and PAIDF state reported above were requested." \
   "This script performs no teardown. Exact teardown commands:" \
   "Teardown (not run): npa workflow cancel $RUN_ID --project $PROJECT" \
-  "Teardown (not run): npa agent destroy --project $PROJECT --name agent --yes" \
   "Teardown (not run): npa cluster down --project $PROJECT --context $CONTEXT --force" \
   "Teardown (not run): npa storage bucket delete --project $PROJECT --yes" \
   "Teardown (not run, after bucket): npa storage service-account delete --project $PROJECT --yes"
+```
+
+Here “restart-safe” means provisioning resumes the same secret-free operation
+journal under `~/.npa/operations/`, preserves configured credentials/storage and
+durable Terraform state, and prints one deterministic resume command. Source
+staging and submission are content-addressed/idempotent for the explicit
+`RUN_ID`. A stale or ambiguous run is never selected silently: resume it with
+`--resume-run "$RUN_ID"`, or use `prepare-run` to create a distinct run.
+
+The browser agent can be deployed independently after the core submit. Its
+failure does not cancel or block PAIDF:
+
+```bash
+PROJECT="configured-alias"
+RUN_ID="existing-paidf-run-id"
+
+if ! npa agent status --project "$PROJECT" --name agent --json >/dev/null 2>&1; then
+  npa agent preflight --project "$PROJECT" \
+    && npa agent setup --project "$PROJECT" --name agent
+fi
+if npa agent status --project "$PROJECT" --name agent --json >/dev/null 2>&1; then
+  npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT"
+else
+  printf '%s\n' \
+    "Optional agent is not healthy; PAIDF remains submitted." \
+    "Later, after agent recovery: npa workbench workflow load-artifact $RUN_ID --project $PROJECT"
+fi
 ```
 
 `provision-if-absent` now reconciles and write-probes S3 before it considers
@@ -235,7 +300,7 @@ For the shortest agent-driven setup, [copy the exact PAIDF agent
 prompt](docs/workbench/guides/physical-ai-data-factory-deploy.md#run-paidf-with-a-coding-agent).
 
 For an already configured project and provisioned cluster, this is the complete
-PAIDF submit, monitor, and agent-load path. `status` resolves the exact run from
+PAIDF submit and monitor path. `status` resolves the exact run from
 the selected project's receipt, canonical PAIDF prefix, or pinned managed-job
 identity even while the final manifest is pending; `logs` uses the same resolver.
 
@@ -251,7 +316,7 @@ KUBE_CONTEXT="$NPA_KUBE_CONTEXT"
 RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
-  --registry "$REGISTRY" --run-id "$RUN_ID" --runtime --auto-load \
+  --registry "$REGISTRY" --run-id "$RUN_ID" --runtime \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 --assume-decision promote_checkpoint \
   --infra "k8s/$KUBE_CONTEXT" \
@@ -266,13 +331,12 @@ npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch
 npa workbench workflow status "$RUN_ID" --project "$PROJECT" \
   --workflow-s3-uri "${MANIFEST_URI%/manifest.json}"
 npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage finalize
-# `submit --runtime --auto-load` already posts and verifies the exact final URI.
-# Retry only that idempotent handoff, without relaunching stages, if it was partial:
-npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT"
+# Loading is optional and requires the independently deployed healthy agent.
+# Use the guarded load command in the optional-agent section above.
 
 # After DNS/controller recovery, resume only by naming the existing ID explicitly:
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
-  --registry "$REGISTRY" --resume-run "$RUN_ID" --runtime --auto-load \
+  --registry "$REGISTRY" --resume-run "$RUN_ID" --runtime \
   --var bucket="$BUCKET" --var n_augmentations=1 \
   --assume-decision promote_checkpoint --infra "k8s/$KUBE_CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \

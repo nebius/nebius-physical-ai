@@ -6,6 +6,8 @@ import os
 import re
 import stat
 import tempfile
+import fcntl
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -61,6 +63,8 @@ class CredentialsConfig:
     s3_secret_access_key: str = ""
     s3_endpoint: str = ""
     s3_bucket: str = ""
+    s3_project_id: str = ""
+    s3_ownership: str = ""
 
     @property
     def hf_token(self) -> str:
@@ -211,6 +215,35 @@ def _read_file_storage(path: Path) -> dict[str, str]:
     )
     if not isinstance(storage, dict):
         storage = {}
+    ownership = data.get("storage_iam", {})
+    if not isinstance(ownership, dict):
+        ownership = {}
+
+    recorded_project_id = _first_nonempty(
+        ownership,
+        "service_account_project_id",
+        "project_id",
+    )
+    recorded_ownership = _first_nonempty(
+        ownership,
+        "service_account_managed_by",
+        "managed_by",
+    )
+    if not recorded_project_id:
+        setup = data.get("storage_setup", {})
+        projects = setup.get("projects", {}) if isinstance(setup, dict) else {}
+        bucket_name = _first_nonempty(storage, "bucket", "s3_bucket")
+        matching_projects = [
+            str(candidate_project)
+            for candidate_project, record in projects.items()
+            if isinstance(record, dict)
+            and record.get("status") == "complete"
+            and _first_nonempty(record, "bucket_name").strip()
+            == bucket_name.removeprefix("s3://").strip("/")
+        ] if isinstance(projects, dict) else []
+        if len(matching_projects) == 1:
+            recorded_project_id = matching_projects[0]
+            recorded_ownership = "storage-setup-record"
 
     merged: dict[str, Any] = {**tokens, **storage, **data}
     return {
@@ -246,6 +279,8 @@ def _read_file_storage(path: Path) -> dict[str, str]:
             "checkpoint_bucket",
             "s3_bucket",
         ),
+        "project_id": recorded_project_id,
+        "ownership": recorded_ownership,
     }
 
 
@@ -317,6 +352,8 @@ def load_credentials(
         s3_bucket=env.get("NPA_CHECKPOINT_BUCKET")
         or env.get("NEBIUS_S3_BUCKET")
         or file_storage.get("bucket", ""),
+        s3_project_id=file_storage.get("project_id", ""),
+        s3_ownership=file_storage.get("ownership", ""),
     )
 
 
@@ -424,17 +461,13 @@ def write_credentials_file(
     """
 
     credentials_path = path or CREDENTIALS_PATH
-    _validate_private_destination(credentials_path)
-    existing: dict[str, Any] = {}
-    if credentials_path.exists():
-        with credentials_path.open() as handle:
-            loaded = yaml.safe_load(handle)
-        if isinstance(loaded, dict):
-            existing = loaded
     incoming = _prune_empty(dict(data))
-    _separate_legacy_storage_ownership(existing, incoming)
-    merged = _deep_merge(existing, incoming)
-    write_private_yaml(credentials_path, merged)
+
+    def merge(existing: dict[str, Any]) -> dict[str, Any]:
+        _separate_legacy_storage_ownership(existing, incoming)
+        return _deep_merge(existing, incoming)
+
+    update_private_yaml(credentials_path, merge)
     return credentials_path
 
 
@@ -542,6 +575,77 @@ def _validate_private_destination(path: Path) -> None:
             )
 
 
+@contextmanager
+def _private_store_lock(path: Path):
+    """Serialize read/modify/replace updates to one protected YAML store."""
+
+    _validate_private_destination(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
+    lock_path = path.with_name(f"{path.name}.lock")
+    if lock_path.is_symlink():
+        raise OSError(f"refusing credential lock symlink: {lock_path}")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        os.fchmod(lock.fileno(), 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        _validate_private_destination(path)
+        yield
+
+
+def update_private_yaml(
+    path: Path,
+    updater: Callable[[dict[str, Any]], Mapping[str, Any]],
+) -> Path:
+    """Lock and atomically update a protected YAML mapping.
+
+    The updater receives the latest document after the lock is acquired. This
+    prevents concurrent configure/agent commands from replacing one another's
+    successful fields with an older snapshot.
+    """
+
+    with _private_store_lock(path):
+        existing: dict[str, Any] = {}
+        if path.exists():
+            with path.open(encoding="utf-8") as handle:
+                loaded = yaml.safe_load(handle)
+            if isinstance(loaded, dict):
+                existing = loaded
+        updated = updater(existing)
+        return write_private_yaml(path, updated)
+
+
+def preflight_private_yaml_store(path: Path) -> Path:
+    """Prove an owner-only store can be locked and durably replaced unchanged."""
+
+    if path.exists():
+        return update_private_yaml(path, lambda existing: existing)
+    with _private_store_lock(path):
+        descriptor, raw_path = tempfile.mkstemp(
+            prefix=f".{path.name}.preflight.", dir=path.parent
+        )
+        candidate = Path(raw_path)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            candidate.unlink()
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except BaseException:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            candidate.unlink(missing_ok=True)
+            raise
+    return path
+
+
 def write_private_yaml(path: Path, data: Mapping[str, Any]) -> Path:
     """Atomically write private YAML with owner-only file/directory modes.
 
@@ -569,6 +673,11 @@ def write_private_yaml(path: Path, data: Mapping[str, Any]) -> Path:
             os.fsync(handle.fileno())
         os.replace(tmp_path, path)
         path.chmod(0o600)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     except BaseException:
         try:
             os.close(fd)

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import functools
+import hashlib
+import inspect
 import logging
 import os
 import shutil
@@ -31,6 +34,12 @@ from npa.cli.soperator import app as soperator_app
 from npa.cli.viz import app as viz_app
 from npa.cli.workflow_shim import workflow_shim_app
 from npa.clients.serverless import ServerlessClientError
+from npa.provisioning_journal import (
+    ProvisioningOperation,
+    current_operation,
+    emit_recovery_summary,
+    operation_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -408,6 +417,26 @@ def _bucket_name_from_uri(bucket: str) -> str:
     return value.strip("/").split("/", 1)[0]
 
 
+def _collision_bucket_name(
+    bucket_name: str, *, tenant_id: str, project_id: str
+) -> str:
+    suffix = hashlib.sha256(
+        f"{tenant_id}\0{project_id}\0{bucket_name}\0collision".encode("utf-8")
+    ).hexdigest()[:8]
+    return f"{bucket_name[:54].rstrip('-')}-{suffix}"
+
+
+def _storage_relationship_verified(credentials: Any, project_id: str) -> bool:
+    """Return whether saved storage has durable provenance for this project."""
+
+    return bool(
+        str(project_id or "").strip()
+        and str(getattr(credentials, "s3_project_id", "") or "").strip()
+        == str(project_id or "").strip()
+        and str(getattr(credentials, "s3_ownership", "") or "").strip()
+    )
+
+
 def _provision_object_storage(
     nebius_client,
     ask: Callable[..., str],
@@ -454,8 +483,10 @@ def _provision_object_storage(
         exists = None
         typer.echo(
             f"  Could not verify whether '{bucket_name}' already exists ({exc}); "
-            "npa will reuse it if present or create it otherwise."
+            "npa will not create or adopt it until project ownership and access "
+            "can be verified."
         )
+        return None
 
     bucket_max_size_bytes = 0
     bucket_storage_class = DEFAULT_BUCKET_STORAGE_CLASS
@@ -487,6 +518,25 @@ def _provision_object_storage(
             on_status=lambda msg: typer.echo(f"  - {msg}"),
         )
     except nebius_client.NebiusError as exc:
+        if "already taken" in str(exc).lower():
+            alternate = _collision_bucket_name(
+                bucket_name,
+                tenant_id=tenant_id,
+                project_id=project_id,
+            )
+            typer.echo(
+                f"  Bucket name collision: preserving the unrelated bucket and "
+                f"proposing '{alternate}' instead."
+            )
+            return _provision_object_storage(
+                nebius_client,
+                ask,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                region=region,
+                existing_bucket=alternate,
+                interactive=interactive,
+            )
         if nebius_client.is_permission_denied(str(exc)):
             typer.echo(
                 "  Could not auto-provision object storage: the Nebius storage "
@@ -1125,6 +1175,15 @@ def _run_interactive_configure(
         # not warn when the chosen region differs from the registry's region.
         registry = ask("Container registry", default=registry_default)
 
+    operation = current_operation()
+    if operation is not None:
+        operation.update_identity(
+            project_alias=discovered_default_alias,
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+        )
+
     # Keep the Nebius CLI profile and the npa project in sync. npa shells out to
     # the CLI with the operator's active profile, so a profile whose parent-id /
     # tenant-id are empty (or point at a different project) silently disables
@@ -1162,44 +1221,59 @@ def _run_interactive_configure(
         and existing_credentials.s3_secret_access_key
         and existing_credentials.s3_bucket
     )
+    existing_relationship_verified = _storage_relationship_verified(
+        existing_credentials, project_id
+    )
+    declined_existing_bucket = False
     provisioning_failed = False
     if provision and project_id and tenant_id:
-        if existing_has_storage:
-            # Reuse already-provisioned storage by default so a re-run does not
-            # mint a fresh S3 access key each time.
-            keep = ask(
-                f"Keep existing object storage ({existing_credentials.s3_bucket})? [Y/n]",
-                default="Y",
+        if existing_has_storage and not existing_relationship_verified:
+            typer.echo(
+                "  Saved object storage was not offered as a default because no "
+                "durable record proves it belongs to the selected project. A fresh "
+                "project-scoped name will be proposed."
             )
-            if keep.lower() in ("", "y", "yes"):
-                candidate = {
-                    "aws_access_key_id": existing_credentials.s3_access_key_id,
-                    "aws_secret_access_key": existing_credentials.s3_secret_access_key,
-                    "endpoint_url": existing_credentials.s3_endpoint
-                    or _endpoint_for_region(region),
-                    "bucket": existing_credentials.s3_bucket,
-                }
-                from npa.clients.storage_validation import probe_storage_write
+        if existing_has_storage and existing_relationship_verified:
+            candidate = {
+                "aws_access_key_id": existing_credentials.s3_access_key_id,
+                "aws_secret_access_key": existing_credentials.s3_secret_access_key,
+                "endpoint_url": existing_credentials.s3_endpoint
+                or _endpoint_for_region(region),
+                "bucket": existing_credentials.s3_bucket,
+            }
+            from npa.clients.storage_validation import probe_storage_write
 
-                probe = probe_storage_write(
-                    bucket=candidate["bucket"],
-                    endpoint_url=candidate["endpoint_url"],
-                    access_key_id=candidate["aws_access_key_id"],
-                    secret_access_key=candidate["aws_secret_access_key"],
-                    region=region,
+            probe = probe_storage_write(
+                bucket=candidate["bucket"],
+                endpoint_url=candidate["endpoint_url"],
+                access_key_id=candidate["aws_access_key_id"],
+                secret_access_key=candidate["aws_secret_access_key"],
+                region=region,
+            )
+            if probe.ok:
+                keep = ask(
+                    "Keep access-verified object storage "
+                    f"({existing_credentials.s3_bucket}, project {project_id}, "
+                    f"provenance: {existing_credentials.s3_ownership})? [Y/n]",
+                    default="Y",
                 )
-                if probe.ok:
+                if keep.lower() in ("", "y", "yes"):
                     candidate["_validated"] = "true"
                     storage = candidate
                     typer.echo(
-                        "  Keeping existing object-storage credentials; "
-                        + probe.summary
+                        "  Adopting the verified pre-existing bucket; rollback will "
+                        "never delete it. " + probe.summary
                     )
                 else:
+                    declined_existing_bucket = True
                     typer.echo(
-                        "  Existing object storage is not usable: "
-                        f"{probe.summary} NPA will reconcile it now."
+                        "  Existing bucket declined; enter a new/editable name below."
                     )
+            else:
+                typer.echo(
+                    "  Project-matched object storage is not usable: "
+                    f"{probe.summary} NPA will reconcile it now."
+                )
         if storage is None:
             storage = _provision_object_storage(
                 nebius_client,
@@ -1207,7 +1281,11 @@ def _run_interactive_configure(
                 project_id=project_id,
                 tenant_id=tenant_id,
                 region=region,
-                existing_bucket=_bucket_name_from_uri(existing_credentials.s3_bucket),
+                existing_bucket=(
+                    ""
+                    if declined_existing_bucket or not existing_relationship_verified
+                    else _bucket_name_from_uri(existing_credentials.s3_bucket)
+                ),
             )
             provisioning_failed = storage is None
 
@@ -1827,7 +1905,10 @@ def _run_known_project_configure(
         and existing.s3_secret_access_key
         and existing.s3_bucket
     )
-    if existing_complete:
+    existing_relationship_verified = _storage_relationship_verified(
+        existing, values["--project-id"]
+    )
+    if existing_complete and existing_relationship_verified:
         from npa.clients.storage_validation import probe_storage_write
 
         probe = probe_storage_write(
@@ -1856,6 +1937,12 @@ def _run_known_project_configure(
                 f"Existing object-storage credentials are not writable: {probe.summary}"
             )
 
+    elif existing_complete:
+        typer.echo(
+            "Ignoring saved object storage for this non-interactive configure: "
+            "its durable ownership record does not match the selected project."
+        )
+
     if provision and not storage:
         # Supply documented defaults programmatically; no prompt or secret argv
         # is involved. The provisioner retains its safe parser, health probe,
@@ -1869,7 +1956,11 @@ def _run_known_project_configure(
             project_id=values["--project-id"],
             tenant_id=values["--tenant-id"],
             region=values["--region"],
-            existing_bucket=_bucket_name_from_uri(existing.s3_bucket),
+            existing_bucket=(
+                _bucket_name_from_uri(existing.s3_bucket)
+                if existing_relationship_verified
+                else ""
+            ),
             interactive=False,
         )
         if provisioned is None or provisioned.get("_validated") != "true":
@@ -2065,11 +2156,104 @@ def _configure_impl(
         raise typer.Exit(code=1)
 
 
+def _transactional_configure(function):
+    """Journal configure mutations without ever copying credential values."""
+
+    signature = inspect.signature(function)
+
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        if current_operation() is not None:
+            return function(*args, **kwargs)
+        bound = signature.bind_partial(*args, **kwargs)
+        bound.apply_defaults()
+        if (
+            bool(bound.arguments.get("show"))
+            or bool(bound.arguments.get("env_output"))
+        ) and not bool(bound.arguments.get("save_env_credentials")):
+            return function(*args, **kwargs)
+        if str(bound.arguments.get("forget_project") or "").strip():
+            return function(*args, **kwargs)
+        alias = str(bound.arguments.get("project_alias") or "").strip()
+        project_id = str(bound.arguments.get("project_id") or "").strip()
+        tenant_id = str(bound.arguments.get("tenant_id") or "").strip()
+        region = str(bound.arguments.get("region") or "").strip()
+        requested_name = alias or project_id or "interactive"
+        resume = "npa configure"
+        if all((tenant_id, project_id, region, alias)):
+            resume += (
+                f" --no-interactive --tenant-id {tenant_id} --project-id {project_id}"
+                f" --region {region} --project-alias {alias}"
+            )
+        operation = ProvisioningOperation.prepare(
+            command="npa configure",
+            project_alias=alias,
+            project_id=project_id,
+            tenant_id=tenant_id,
+            region=region,
+            resource_type="configure",
+            requested_name=requested_name,
+            ownership_source="configure-cli",
+            resume_command=resume,
+        )
+        from npa.clients.credentials import SUPPORTED_ENV_CREDENTIALS
+
+        detected = [name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)]
+        operation.record_config_mutation(
+            store="credentials.yaml",
+            fields=detected,
+            secret_fields=detected,
+        )
+        operation.record_config_mutation(
+            store="config.yaml",
+            fields=(
+                ["default_project", f"projects.{alias}"]
+                if alias
+                else ["interactive-selected-project"]
+            ),
+        )
+        with operation_context(operation):
+            from npa.clients.config import CONFIG_PATH
+            from npa.clients.credentials import (
+                CREDENTIALS_PATH,
+                preflight_private_yaml_store,
+            )
+
+            # Configuration durability is a prerequisite, not a cleanup task:
+            # prove both protected stores can be atomically replaced before any
+            # profile, storage, or other provider mutation is attempted.
+            preflight_private_yaml_store(CONFIG_PATH)
+            preflight_private_yaml_store(CREDENTIALS_PATH)
+            operation.transition("mutating")
+            try:
+                result = function(*args, **kwargs)
+            except BaseException as exc:
+                phase = str(operation.read().get("phase") or "")
+                if phase not in {
+                    "recovery-required",
+                    "rolled-back",
+                    "rollback-incomplete",
+                }:
+                    operation.transition("recovery-required", error=str(exc))
+                typer.echo(emit_recovery_summary(operation), err=True)
+                raise
+            phase = str(operation.read().get("phase") or "")
+            if phase in {"mutating", "resource-created"}:
+                operation.transition(
+                    "state-durable", details={"private_stores": "fsynced"}
+                )
+            operation.commit()
+            return result
+
+    return wrapped
+
+
 @app.command(
     "configure",
     help="Interactive credential and config setup guidance.",
     rich_help_panel="Setup",
 )
+@_transactional_configure
 def configure(
     show: bool = typer.Option(
         False,
@@ -2175,6 +2359,7 @@ def configure(
     help="Interactive credential and config setup guidance.",
     rich_help_panel="Setup",
 )
+@_transactional_configure
 def init(
     show: bool = typer.Option(
         False,

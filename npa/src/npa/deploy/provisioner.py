@@ -28,6 +28,38 @@ class ProvisionerError(Exception):
     pass
 
 
+class TerraformBackendError(ProvisionerError):
+    """A typed, recoverable Terraform backend failure."""
+
+
+class BackendBucketMissingError(TerraformBackendError):
+    pass
+
+
+class BackendAuthenticationError(TerraformBackendError):
+    pass
+
+
+class BackendEndpointError(TerraformBackendError):
+    pass
+
+
+class BackendLockError(TerraformBackendError):
+    pass
+
+
+class BackendInitError(TerraformBackendError):
+    pass
+
+
+class StatePushError(TerraformBackendError):
+    pass
+
+
+class StatePullError(TerraformBackendError):
+    pass
+
+
 _BUNDLED_TF_DIR = Path(__file__).parent / "terraform"
 _WORKBENCH_BASE = Path.home() / ".npa" / "workbenches"
 # Shared Terraform plugin cache so every fresh per-deploy work dir reuses
@@ -119,13 +151,16 @@ def _run(
     cwd: str | Path,
     capture: bool = False,
     stream: bool = False,
+    env_overrides: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     tf = _require_terraform()
     cmd = [tf] + args
+    environment = _tf_env(cwd)
+    environment.update(env_overrides or {})
     kwargs: dict[str, Any] = {
         "cwd": str(cwd),
         "text": True,
-        "env": _tf_env(cwd),
+        "env": environment,
     }
 
     if stream and args and args[0] == "destroy":
@@ -398,6 +433,30 @@ def _looks_transient_init_failure(message: str) -> bool:
     return any(marker in lowered for marker in _TRANSIENT_INIT_MARKERS)
 
 
+def _classify_backend_error(message: str, *, action: str) -> TerraformBackendError:
+    """Map backend failures to stable exception types without echoing credentials."""
+
+    lowered = str(message or "").lower()
+    if "nosuchbucket" in lowered or "no such bucket" in lowered:
+        kind: type[TerraformBackendError] = BackendBucketMissingError
+    elif any(item in lowered for item in ("accessdenied", "forbidden", "403", "signature")):
+        kind = BackendAuthenticationError
+    elif any(
+        item in lowered
+        for item in ("no such host", "name resolution", "dial tcp", "dns", "endpoint")
+    ):
+        kind = BackendEndpointError
+    elif any(item in lowered for item in ("state lock", "acquiring the state lock", "lock id")):
+        kind = BackendLockError
+    elif action == "state-push":
+        kind = StatePushError
+    elif action == "state-pull":
+        kind = StatePullError
+    else:
+        kind = BackendInitError
+    return kind(f"Terraform backend {action} failed: {message}")
+
+
 def init(
     tf_dir: str | Path | None = None,
     backend_config: dict[str, str] | None = None,
@@ -405,12 +464,15 @@ def init(
     retries: int = 3,
     backoff_seconds: float = 4.0,
     sleep: Any = time.sleep,
+    force_reconfigure: bool = False,
+    disable_backend: bool = False,
 ) -> None:
     """Run terraform init.
 
-    If *backend_config* is provided, each key/value pair is passed as a
-    ``-backend-config`` flag.  Typically only ``access_key`` and
-    ``secret_key`` are passed here — the rest is embedded in ``backend.tf``.
+    If *backend_config* is provided, credentials are supplied only through the
+    Terraform subprocess environment. They never enter argv. ``-reconfigure``
+    is always used so a rotated credential generation or changed backend target
+    cannot be shadowed by cached ``.terraform`` metadata.
 
     Provider installation from registry.terraform.io can fail transiently
     (timeouts, DNS blips); those are retried with exponential backoff so a fresh
@@ -427,14 +489,25 @@ def init(
     lock_file = tf_dir / ".terraform.lock.hcl"
     lock_before = lock_file.read_bytes()
     args = ["init", "-input=false", "-lockfile=readonly"]
-    if backend_config:
+    backend_env: dict[str, str] = {}
+    if disable_backend:
+        args.append("-backend=false")
+    elif backend_config or force_reconfigure:
         args.append("-reconfigure")
-        for key, value in backend_config.items():
-            args.extend(["-backend-config", f"{key}={value}"])
+        resolved_backend = backend_config or {}
+        access_key = str(resolved_backend.get("access_key", "") or "")
+        secret_key = str(resolved_backend.get("secret_key", "") or "")
+        if access_key:
+            backend_env["AWS_ACCESS_KEY_ID"] = access_key
+        if secret_key:
+            backend_env["AWS_SECRET_ACCESS_KEY"] = secret_key
     delay = backoff_seconds
     for attempt in range(1, max(1, retries) + 1):
         try:
-            _run(args, cwd=tf_dir, capture=True)
+            if backend_config:
+                _run(args, cwd=tf_dir, capture=True, env_overrides=backend_env)
+            else:
+                _run(args, cwd=tf_dir, capture=True)
             lock_after = lock_file.read_bytes()
             if lock_after != lock_before:
                 raise ProvisionerError(
@@ -469,7 +542,7 @@ def init(
                     "in a clean reviewed checkout and inspect the exact diff."
                 ) from exc
             if attempt >= retries or not _looks_transient_init_failure(str(exc)):
-                raise
+                raise _classify_backend_error(str(exc), action="init/reconfigure") from exc
             sys.stderr.write(
                 f"  terraform init attempt {attempt}/{retries} hit a transient "
                 f"registry/network error; retrying in {delay:.0f}s...\n"
@@ -535,6 +608,31 @@ def state_list(tf_dir: str | Path | None = None) -> list[str]:
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
     result = _run(["state", "list"], cwd=tf_dir, capture=True)
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def state_pull(tf_dir: str | Path | None = None) -> bytes:
+    """Pull the current state so callers can preserve and independently verify it."""
+
+    tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
+    try:
+        result = _run(["state", "pull"], cwd=tf_dir, capture=True)
+    except ProvisionerError as exc:
+        raise _classify_backend_error(str(exc), action="state-pull") from exc
+    data = (result.stdout or "").encode("utf-8")
+    if not data.strip():
+        raise StatePullError("Terraform state pull returned an empty document")
+    return data
+
+
+def state_push(state_path: str | Path, tf_dir: str | Path | None = None) -> None:
+    """Push a preserved state copy, classifying backend failures for recovery."""
+
+    tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
+    path = Path(state_path)
+    try:
+        _run(["state", "push", "-force", str(path)], cwd=tf_dir, capture=True)
+    except ProvisionerError as exc:
+        raise _classify_backend_error(str(exc), action="state-push") from exc
 
 
 def state_resource_id(address: str, tf_dir: str | Path | None = None) -> str:

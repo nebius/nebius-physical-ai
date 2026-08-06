@@ -166,7 +166,12 @@ def test_readme_whole_path_stages_source_once_and_orders_registry_override() -> 
     assert "--stage-src" not in submit
     assert "--runtime" in submit
     assert "--resume" not in submit
-    assert "--auto-load" in submit
+    assert "--auto-load" not in submit
+    assert "npa agent setup" not in section
+    assert "npa agent preflight" not in section
+    optional = text.split("The browser agent can be deployed independently", 1)[1]
+    assert "npa agent status" in optional
+    assert "npa workbench workflow load-artifact" in optional
     configure_eval = section.index('eval "$(npa configure --show --env)"')
     public_override = section.index(
         "export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai"

@@ -68,7 +68,16 @@ def test_known_project_configure_is_non_interactive_and_reuses_storage(
                 "aws_secret_access_key": "existing-secret",
                 "endpoint_url": "https://storage.eu-north1.nebius.cloud",
                 "bucket": "s3://existing-bucket/",
-            }
+            },
+            "storage_setup": {
+                "version": 1,
+                "projects": {
+                    "project-known": {
+                        "status": "complete",
+                        "bucket_name": "existing-bucket",
+                    }
+                },
+            },
         }
     )
     monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")

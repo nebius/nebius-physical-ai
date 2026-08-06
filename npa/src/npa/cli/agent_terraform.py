@@ -7,15 +7,246 @@ re-exported from ``npa.cli.agent`` for the existing call sites and tests.
 
 from __future__ import annotations
 
+import shutil
 from typing import Any
 
-from npa.clients.config import resolve_environment, resolve_terraform_state
+import typer
+
+from npa.clients.config import (
+    ConfigError,
+    resolve_environment,
+    resolve_terraform_state,
+)
 from npa.deploy import provisioner
+from npa.deploy.provisioner import ProvisionerError
+from npa.provisioning_journal import current_operation, list_operations
+
+
+def _ensure_terraform_state_bucket(
+    *,
+    project_id: str,
+    bucket_name: str,
+    endpoint: str = "",
+    access_key: str = "",
+    secret_key: str = "",
+    region: str = "",
+) -> None:
+    """Verify the configured backend immediately before Terraform mutation."""
+
+    project = str(project_id or "").strip()
+    bucket = str(bucket_name or "").strip()
+    if not project or not bucket:
+        return
+    from npa.clients.nebius import NebiusError, bucket_exists
+
+    try:
+        exists = bucket_exists(project, bucket)
+    except NebiusError as exc:
+        raise NebiusError(
+            f"Terraform backend inventory check failed before apply: {exc}"
+        ) from exc
+    if not exists:
+        raise NebiusError(
+            f"Terraform backend bucket {bucket!r} is missing from project {project}. "
+            "NPA preserved configuration and will not silently recreate or adopt it."
+        )
+    if all((endpoint, access_key, secret_key)):
+        from npa.clients.storage_validation import probe_storage_write
+
+        probe = probe_storage_write(
+            bucket=bucket,
+            endpoint_url=endpoint,
+            access_key_id=access_key,
+            secret_access_key=secret_key,
+            region=region,
+        )
+        if not probe.ok:
+            raise NebiusError(
+                "Terraform backend write/read/delete probe failed immediately before "
+                f"apply: {probe.summary}"
+            )
+
+
+def _persist_agent_project_config(
+    *,
+    project: str,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    merged_vars: dict[str, str],
+) -> None:
+    from npa.cli import agent as agent_module
+
+    operation = current_operation()
+    if operation is not None:
+        operation.record_config_mutation(
+            store="config.yaml",
+            fields=[
+                f"projects.{project}.project_id",
+                f"projects.{project}.tenant_id",
+                f"projects.{project}.region",
+                f"projects.{project}.terraform_state",
+            ],
+            secret_fields=[
+                f"projects.{project}.terraform_state.access_key",
+                f"projects.{project}.terraform_state.secret_key",
+            ],
+        )
+    agent_module.write_config(
+        {
+            "projects": {
+                project: {
+                    "project_id": project_id,
+                    "tenant_id": tenant_id,
+                    "region": region,
+                    "terraform_state": {
+                        "bucket": merged_vars.get("s3_bucket", ""),
+                        "endpoint": merged_vars.get("s3_endpoint", ""),
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                }
+            }
+        }
+    )
+
+
+def _preserve_available_state(operation, tf_dir) -> None:
+    for candidate in (tf_dir / "errored.tfstate", tf_dir / "terraform.tfstate"):
+        if candidate.is_file():
+            operation.preserve_state_file(candidate, name=candidate.stem)
+
+
+def _apply_agent_terraform(
+    *,
+    project: str,
+    name: str,
+    merged_vars: dict[str, str],
+    env_region: str,
+) -> dict[str, Any]:
+    """Apply agent Terraform and durably verify its remote state."""
+
+    from npa.cli.agent import (
+        _AGENT_TERRAFORM_RUNTIME_ONLY_VARS,
+        _looks_like_compute_permission_denied,
+    )
+
+    tf_dir = provisioner.prepare_working_dir(
+        project,
+        name,
+        bucket=merged_vars.get("s3_bucket", ""),
+        region=env_region,
+        endpoint=merged_vars.get("s3_endpoint", ""),
+    )
+    provisioner.init(
+        tf_dir=tf_dir,
+        backend_config={
+            "access_key": merged_vars.get("nebius_api_key", ""),
+            "secret_key": merged_vars.get("nebius_secret_key", ""),
+        },
+    )
+    tf_vars = {
+        key: value
+        for key, value in merged_vars.items()
+        if key not in _AGENT_TERRAFORM_RUNTIME_ONLY_VARS
+    }
+    operation = current_operation()
+    if operation is not None:
+        preserved = operation.state_copies()
+        if preserved and not provisioner.state_list(tf_dir):
+            provisioner.state_push(preserved[0], tf_dir)
+    try:
+        try:
+            result = provisioner.apply(tf_dir=tf_dir, tf_vars=tf_vars)
+        except ProvisionerError as exc:
+            sa_id = str(merged_vars.get("service_account_id", "")).strip()
+            if not (sa_id and _looks_like_compute_permission_denied(str(exc))):
+                raise
+            typer.echo(
+                "  WARNING: compute create was denied WITH the VM service-account "
+                "attachment, so it is being retried WITHOUT it.",
+                err=True,
+            )
+            typer.echo(
+                "  WARNING: without an attached service account the agent VM "
+                "CANNOT self-mint Nebius IAM tokens (no metadata/token-file "
+                "source), so IAM-dependent actions (provisioning clusters, "
+                "buckets, access keys, registries) will fail until you provide an "
+                "alternative token source. Grant the deploying identity "
+                "'compute.admin' (or equivalent) on the project so the SA can be "
+                "attached, or inject a token on the VM via NEBIUS_IAM_TOKEN / a "
+                "token file. Re-run `npa agent setup` once the permission is "
+                "granted.",
+                err=True,
+            )
+            retry_vars = dict(tf_vars)
+            retry_vars["service_account_id"] = ""
+            result = provisioner.apply(tf_dir=tf_dir, tf_vars=retry_vars)
+    except ProvisionerError as exc:
+        if operation is not None:
+            _preserve_available_state(operation, tf_dir)
+            operation.transition("recovery-required", error=str(exc))
+        raise
+    if operation is not None:
+        operation.transition("resource-created")
+        instance_id = str(result.get("instance_id", "") or "")
+        instance_name = str(merged_vars.get("instance_name", name))
+        operation.record_resource(
+            resource_type="compute_instance",
+            requested_name=instance_name,
+            provider_id=instance_id,
+            ownership="created_by_this_operation",
+            ownership_source="terraform-output-and-operation-label",
+            project_id=str(merged_vars.get("nebius_project_id", "")),
+            labels={"npa-operation-id": operation.operation_id},
+        )
+        for resource_type, requested_name in (
+            ("boot_disk", f"{instance_name}-boot"),
+            ("network", f"{instance_name}-network"),
+            ("subnet", f"{instance_name}-subnet"),
+            ("security_group", f"{instance_name}-sg"),
+            ("public_ip", f"{instance_name}:eth0"),
+        ):
+            operation.record_resource(
+                resource_type=resource_type,
+                requested_name=requested_name,
+                ownership="created_by_this_operation",
+                ownership_source="terraform-state-and-operation-instance-label",
+                project_id=str(merged_vars.get("nebius_project_id", "")),
+                labels={"npa-operation-id": operation.operation_id},
+            )
+        try:
+            state = provisioner.state_pull(tf_dir)
+            operation.preserve_state_bytes(state, name="verified-remote")
+        except ProvisionerError as exc:
+            _preserve_available_state(operation, tf_dir)
+            operation.transition("recovery-required", error=str(exc))
+            raise
+        operation.transition("state-durable")
+    return result
 
 
 def _agent_terraform_state_exists(project: str, name: str) -> bool:
     tf_dir = provisioner.working_dir_path(project, name)
-    return (tf_dir / ".terraform").is_dir()
+    if any(
+        candidate.exists()
+        for candidate in (
+            tf_dir / ".terraform",
+            tf_dir / "terraform.tfstate",
+            tf_dir / "errored.tfstate",
+        )
+    ):
+        return True
+    from npa.provisioning_journal import list_operations
+
+    return any(
+        operation.state_copies()
+        for operation in list_operations(
+            project_alias=project,
+            resource_type="agent",
+            requested_name=name,
+        )
+    )
 
 
 def _record_agent_destroy_event(
@@ -66,6 +297,8 @@ def _resolve_destroy_tf_vars(
     project: str,
     name: str,
     record: dict[str, Any] | None,
+    *,
+    backend_override: dict[str, str] | None = None,
 ) -> dict[str, str]:
     # Imported lazily: npa.cli.agent imports this module.
     from npa.cli.agent import (
@@ -75,10 +308,20 @@ def _resolve_destroy_tf_vars(
     )
     from npa.clients.nebius import get_iam_token
 
-    state = resolve_terraform_state(project)
+    try:
+        state = resolve_terraform_state(project)
+    except ConfigError:  # exact journal-backed recovery may lack config
+        state = None
     saved_env = resolve_environment(project)
-    region = str((record or {}).get("region", "") or (saved_env.region if saved_env else "") or "eu-north1")
-    project_id = str((record or {}).get("project_id", "") or (saved_env.project_id if saved_env else ""))
+    region = str(
+        (record or {}).get("region", "")
+        or (saved_env.region if saved_env else "")
+        or "eu-north1"
+    )
+    project_id = str(
+        (record or {}).get("project_id", "")
+        or (saved_env.project_id if saved_env else "")
+    )
     service_account_id = str((record or {}).get("service_account_id", "")).strip()
     if not service_account_id:
         creds = (record or {}).get("credentials", {})
@@ -100,9 +343,262 @@ def _resolve_destroy_tf_vars(
         "gpu_preset": "8vcpu-32gb",
         "image_family": DEFAULT_AGENT_IMAGE_FAMILY,
         "enable_preemptible": "false",
-        "nebius_api_key": state.access_key,
-        "nebius_secret_key": state.secret_key,
-        "s3_bucket": state.bucket,
-        "s3_endpoint": state.endpoint,
+        "nebius_api_key": str(
+            (backend_override or {}).get("access_key")
+            or getattr(state, "access_key", "")
+            or ""
+        ),
+        "nebius_secret_key": str(
+            (backend_override or {}).get("secret_key")
+            or getattr(state, "secret_key", "")
+            or ""
+        ),
+        "s3_bucket": str(
+            (backend_override or {}).get("bucket") or getattr(state, "bucket", "") or ""
+        ),
+        "s3_endpoint": str(
+            (backend_override or {}).get("endpoint")
+            or getattr(state, "endpoint", "")
+            or ""
+        ),
         "extra_ingress_ports": "[]",
     }
+
+
+def _cleanup_orphan_agent_instances(
+    project_id: str,
+    instance_name: str,
+    *,
+    operation_id: str = "",
+) -> None:
+    """Delete only an exact-name orphan carrying this operation's ownership label."""
+
+    project_id = str(project_id or "").strip()
+    instance_name = str(instance_name or "").strip()
+    if not project_id or not instance_name or not operation_id:
+        return
+    from npa.clients.nebius import NebiusError, _run, _run_json
+
+    try:
+        payload = _run_json(
+            ["compute", "instance", "list", "--parent-id", project_id, "--all"]
+        )
+    except NebiusError:
+        return
+    items = payload.get("items", [])
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        meta = item.get("metadata", {})
+        if not isinstance(meta, dict):
+            continue
+        if str(meta.get("name", "")).strip() != instance_name:
+            continue
+        labels = meta.get("labels", {})
+        if (
+            not isinstance(labels, dict)
+            or str(labels.get("npa-operation-id", "")).strip() != operation_id
+        ):
+            typer.echo(
+                f"  Preserved same-name instance {instance_name!r}: it lacks exact "
+                f"ownership label npa-operation-id={operation_id}.",
+                err=True,
+            )
+            continue
+        instance_id = str(meta.get("id", "")).strip()
+        if not instance_id:
+            continue
+        try:
+            _run(["compute", "instance", "delete", instance_id], check=False)
+            typer.echo(f"  Deleted orphan agent instance {instance_id}")
+        except NebiusError:
+            continue
+
+
+def _destroy_agent_terraform(
+    project: str,
+    name: str,
+    *,
+    record: dict[str, Any] | None = None,
+    rollback_operation: bool = False,
+) -> None:
+    """Destroy one exact state/journal-owned agent dependency graph."""
+
+    from npa.cli import agent as agent_module
+    from npa.cli.agent_network import destroy_with_default_security_group_recovery
+
+    operations = list_operations(
+        project_alias=project,
+        resource_type="agent",
+        requested_name=name,
+    )
+    nonterminal_operations = [
+        candidate
+        for candidate in operations
+        if candidate.read().get("phase")
+        not in {"committed", "destroyed", "rolled-back"}
+    ]
+    candidate_operations = nonterminal_operations or operations
+    candidate_project_ids = {
+        str(candidate.read().get("project_id") or "")
+        for candidate in candidate_operations
+        if str(candidate.read().get("project_id") or "")
+    }
+    if len(candidate_project_ids) > 1:
+        raise ProvisionerError(
+            "Agent recovery is ambiguous across operation journals for different "
+            "Nebius projects. Pass the exact recorded project alias; no resources "
+            "were changed."
+        )
+    operation = candidate_operations[0] if candidate_operations else None
+    operation_payload = operation.read() if operation is not None else {}
+    backend = operation_payload.get("backend")
+    backend = dict(backend) if isinstance(backend, dict) else {}
+    journal_project_id = str(operation_payload.get("project_id", "") or "")
+    record_project_id = str((record or {}).get("project_id", "") or "")
+    if (
+        journal_project_id
+        and record_project_id
+        and journal_project_id != record_project_id
+    ):
+        raise ProvisionerError(
+            "Agent recovery identity mismatch: the local record and operation journal "
+            "name different Nebius projects. No resources were changed."
+        )
+    if operation is not None:
+        from npa.clients.credentials import load_credentials
+
+        credentials = load_credentials(environ={})
+        journal_bucket = str(backend.get("bucket", "") or "")
+        if (
+            journal_bucket
+            and credentials.s3_project_id == journal_project_id
+            and credentials.s3_bucket.removeprefix("s3://").strip("/")
+            == journal_bucket.removeprefix("s3://").strip("/")
+        ):
+            backend.update(
+                {
+                    "access_key": credentials.s3_access_key_id,
+                    "secret_key": credentials.s3_secret_access_key,
+                    "endpoint": backend.get("endpoint") or credentials.s3_endpoint,
+                }
+            )
+    recovery_record = dict(record or {})
+    if journal_project_id:
+        recovery_record.setdefault("project_id", journal_project_id)
+    recovery_record.setdefault(
+        "tenant_id", str(operation_payload.get("tenant_id", "") or "")
+    )
+    recovery_record.setdefault("region", str(operation_payload.get("region", "") or ""))
+    if backend:
+        tf_vars = agent_module._resolve_destroy_tf_vars(
+            project,
+            name,
+            recovery_record,
+            backend_override={key: str(value or "") for key, value in backend.items()},
+        )
+    else:
+        tf_vars = agent_module._resolve_destroy_tf_vars(project, name, recovery_record)
+    region = tf_vars["nebius_region"]
+    instance_id = str((record or {}).get("instance_id", "")).strip()
+    instance_name = tf_vars["instance_name"]
+    project_id = tf_vars["nebius_project_id"]
+    agent_module._cleanup_agent_ingress(instance_id)
+
+    try:
+        state = agent_module.resolve_terraform_state(project)
+    except ConfigError:
+        state = None
+    have_local_state = agent_module._agent_terraform_state_exists(project, name)
+    backend_bucket = str(backend.get("bucket") or getattr(state, "bucket", "") or "")
+    backend_endpoint = str(
+        backend.get("endpoint") or getattr(state, "endpoint", "") or ""
+    )
+    backend_access = str(
+        backend.get("access_key") or getattr(state, "access_key", "") or ""
+    )
+    backend_secret = str(
+        backend.get("secret_key") or getattr(state, "secret_key", "") or ""
+    )
+    have_remote_backend = bool(backend_bucket and backend_access and backend_secret)
+    if not have_local_state and not have_remote_backend:
+        if operation is None:
+            raise ProvisionerError(
+                "No Terraform state or exact operation ownership record is available; "
+                "refusing an unguarded name-based orphan deletion."
+            )
+        raise ProvisionerError(
+            "The exact operation journal is present, but no Terraform state copy "
+            "or authenticated remote backend is available to recover the complete "
+            "dependency graph. NPA preserved all resources and refused a VM-only "
+            "name sweep. Restore project-matched backend credentials and retry: "
+            + str(operation_payload.get("recovery_commands", {}).get("destroy", ""))
+        )
+    tf_dir = provisioner.prepare_working_dir(
+        project,
+        name,
+        bucket=backend_bucket,
+        region=region,
+        endpoint=backend_endpoint,
+    )
+    copies = operation.state_copies() if operation is not None else []
+    if have_remote_backend:
+        provisioner.init(
+            tf_dir=tf_dir,
+            backend_config={"access_key": backend_access, "secret_key": backend_secret},
+        )
+        if copies and not provisioner.state_list(tf_dir):
+            provisioner.state_push(copies[0], tf_dir)
+    elif copies:
+        (tf_dir / "backend.tf").unlink(missing_ok=True)
+        shutil.rmtree(tf_dir / ".terraform", ignore_errors=True)
+        shutil.copy2(copies[0], tf_dir / "terraform.tfstate")
+        (tf_dir / "terraform.tfstate").chmod(0o600)
+        provisioner.init(tf_dir=tf_dir, disable_backend=True)
+    else:
+        raise ProvisionerError(
+            f"Terraform backend credentials are absent for project {project!r} and "
+            "the exact operation journal has no preserved state. No name-based "
+            "deletion was attempted. Restore project-matched credentials or use "
+            + str(
+                operation_payload.get("recovery_commands", {}).get(
+                    "resume", "the resume command"
+                )
+            )
+        )
+
+    def _run_destroy() -> None:
+        provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
+
+    destroy_with_default_security_group_recovery(
+        run_destroy=_run_destroy,
+        cleanup_ingress=lambda: agent_module._cleanup_agent_ingress(instance_id),
+        tf_dir=tf_dir,
+        tf_vars=tf_vars,
+        cleanup_action=f"`npa agent destroy --project {project} --name {name} --yes`",
+        on_status=lambda message: typer.echo(f"  {message}", err=True),
+    )
+    agent_module._cleanup_orphan_agent_instances(
+        project_id,
+        instance_name,
+        operation_id=operation.operation_id if operation is not None else "",
+    )
+    active_operation = current_operation()
+    if operation is not None and operation.read().get("phase") not in {
+        "committed",
+        "destroyed",
+        "rolled-back",
+    }:
+        if (
+            rollback_operation
+            and active_operation is not None
+            and active_operation.operation_id == operation.operation_id
+        ):
+            operation.transition("rolled-back")
+        elif (
+            active_operation is None
+            or active_operation.operation_id != operation.operation_id
+        ):
+            operation.transition("destroyed")

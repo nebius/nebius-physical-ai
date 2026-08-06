@@ -36,6 +36,12 @@ variable "instance_name" {
   default     = "npa-workbench"
 }
 
+variable "operation_id" {
+  description = "Secret-free NPA provisioning operation ID used for exact recovery ownership"
+  type        = string
+  default     = ""
+}
+
 variable "gpu_platform" {
   description = "Compute platform (e.g. gpu-h100-sxm, gpu-h200-sxm, cpu-d3)"
   type        = string

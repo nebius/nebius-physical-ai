@@ -118,6 +118,10 @@ def provision_if_absent_cmd(
         typer.echo(f"kubeconfig: {result.kubeconfig_path}")
         typer.echo(f"storage: {result.storage_bucket}")
         typer.echo(f"gpu_readiness: {result.gpu_readiness}")
+        if result.operation_id:
+            typer.echo(f"operation_id: {result.operation_id}")
+            typer.echo(f"operation_journal: {result.operation_journal}")
+            typer.echo(f"recovery_command: {result.recovery_command}")
         for action in result.actions:
             typer.echo(f"action: {action}")
         for warning in result.warnings:

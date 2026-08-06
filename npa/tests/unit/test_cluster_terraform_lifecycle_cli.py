@@ -48,6 +48,20 @@ def _find_call(stream_calls: list[list[str]], *prefix: str) -> list[str] | None:
     return None
 
 
+def _successful_stream(tf_dir: Path, calls: list[list[str]]):
+    """Mock Terraform and materialize the state a successful apply guarantees."""
+
+    def run(args, **_kwargs):
+        calls.append(args)
+        if args[:2] == ["terraform", "apply"]:
+            (tf_dir / "terraform.tfstate").write_text(
+                json.dumps({"version": 4, "resources": []})
+            )
+        return _completed()
+
+    return run
+
+
 def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path: Path) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
@@ -75,6 +89,10 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
     def fake_stream(args, **kwargs):
         stream_calls.append(args)
         stream_envs.append(kwargs.get("env", {}))
+        if args[:2] == ["terraform", "apply"]:
+            (tf_dir / "terraform.tfstate").write_text(
+                json.dumps({"version": 4, "resources": []})
+            )
         return _completed()
 
     def fake_capture(args, **kwargs):
@@ -294,7 +312,7 @@ def test_up_allows_duplicate_managed_by_terraform_state(
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
 
@@ -339,7 +357,7 @@ def test_up_stops_when_filestore_quota_is_too_small(monkeypatch, tmp_path: Path)
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
 
     result = runner.invoke(
@@ -398,7 +416,7 @@ def test_up_skips_filestore_quota_when_disabled_by_default(monkeypatch, tmp_path
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
 
@@ -497,7 +515,7 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(monkeypa
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
 
@@ -746,7 +764,7 @@ def test_up_rejects_terraform_older_than_the_vendored_modules(monkeypatch, tmp_p
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
 
     result = runner.invoke(
@@ -777,7 +795,7 @@ def test_up_rejects_an_iam_token_pinned_in_tfvars(monkeypatch, tmp_path: Path) -
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
 
     result = runner.invoke(
@@ -851,7 +869,7 @@ def test_up_stops_before_apply_when_the_gpu_quota_is_zero(monkeypatch, tmp_path:
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
 
     result = runner.invoke(
@@ -901,7 +919,7 @@ def test_up_skips_the_gpu_quota_gate_for_preemptible_nodes(monkeypatch, tmp_path
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
 
@@ -976,7 +994,11 @@ def test_kubeconfig_cmd_adopts_a_running_cluster(monkeypatch, tmp_path: Path) ->
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_stream",
+        lambda args, **kwargs: stream_calls.append(args) or _completed(),
+    )
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: saved.append(state))
 
@@ -1314,7 +1336,7 @@ def test_up_warns_when_the_gpu_quota_cannot_be_read(monkeypatch, tmp_path: Path)
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
 
@@ -1369,7 +1391,7 @@ def test_up_pins_an_existing_ssh_public_key(monkeypatch, tmp_path: Path) -> None
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
 
@@ -1406,7 +1428,7 @@ def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(monkeypatch, tmp_path: 
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
     monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
 
@@ -1439,7 +1461,7 @@ def test_up_explains_a_missing_ssh_public_key(monkeypatch, tmp_path: Path) -> No
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_stream", lambda args, **kwargs: stream_calls.append(args) or _completed())
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
 
     result = runner.invoke(
