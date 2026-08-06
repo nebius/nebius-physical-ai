@@ -140,6 +140,7 @@ _workbench_name: str = ""
 GROOT_RELEASE = "0.1.0"
 GROOT_RUNTIME_VERSION = "0.1.0"
 GROOT_MODEL_VERSION = "1.7"
+GROOT_NCCL_RUNTIME_VERSION = "2.30.7"
 GROOT_PYPI_PACKAGE = f"nvidia-gr00t-sdk=={GROOT_RUNTIME_VERSION}"
 GROOT_REPO_URL = "https://github.com/NVIDIA/Isaac-GR00T.git"
 GROOT_REPO_REF = "3df8b3825d67f755e69141446f4315f281b9b7e6"
@@ -1668,14 +1669,19 @@ def _build_finetune_command(
     )
     tag = _normalize_embodiment_tag(robot_embodiment)
     if num_gpus > 1:
-        launcher = f"uv run torchrun --nproc_per_node={num_gpus} --master_port=29500 gr00t/experiment/launch_finetune.py"
+        launcher = f"uv run --no-sync torchrun --nproc_per_node={num_gpus} --master_port=29500 gr00t/experiment/launch_finetune.py"
     else:
         launcher = "uv run python gr00t/experiment/launch_finetune.py"
     nccl_env = ""
     if num_gpus > 1 and nccl_transport == NcclTransport.socket.value:
-        nccl_env = """\
+        nccl_env = f"""\
 export NCCL_P2P_DISABLE=1
 export NCCL_SHM_DISABLE=1
+export NCCL_IB_DISABLE=1
+export NCCL_NET=Socket
+export NCCL_CUMEM_ENABLE=0
+export NCCL_CUMEM_HOST_ENABLE=0
+uv pip install --quiet --python {GROOT_VENV}/bin/python nvidia-nccl-cu12=={GROOT_NCCL_RUNTIME_VERSION}
 echo NPA_GROOT_NCCL_TRANSPORT socket
 """
     train_args = ""
@@ -1712,7 +1718,7 @@ if [ "$actual_groot_ref" != {shlex.quote(GROOT_REPO_REF)} ]; then
   echo "ERROR: expected Isaac-GR00T ref {GROOT_REPO_REF}, got $actual_groot_ref" >&2
   exit 1
 fi
-{nccl_env}{dataset_setup}{base_setup}{config_setup}modality_config_path={shlex.quote(resolved_config)}
+{dataset_setup}{base_setup}{config_setup}{nccl_env}modality_config_path={shlex.quote(resolved_config)}
 if [ -z "$modality_config_path" ] && [ -f {shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py ]; then
   modality_config_path={shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py
 fi
@@ -1737,6 +1743,7 @@ manifest = {{
     "run_id": {run_id!r},
     "groot_model_version": {GROOT_MODEL_VERSION!r},
     "groot_runtime_version": {GROOT_RUNTIME_VERSION!r},
+    "nccl_runtime_version": {GROOT_NCCL_RUNTIME_VERSION!r},
     "groot_repo_ref": {GROOT_REPO_REF!r},
     "base_model": {base_model!r},
     "base_model_revision": {model_revision!r},
