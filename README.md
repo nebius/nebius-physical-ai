@@ -144,6 +144,8 @@ CONTEXT=npa-cluster
 SPEC=npa/workflows/physical-ai-data-factory.yaml
 
 npa configure
+# For prompt-free setup, export supported credential variables first and use:
+# npa configure --no-interactive --save-env-credentials ...known project flags...
 eval "$(npa configure --show --env)"
 PROJECT="$NPA_PROJECT_ALIAS"
 # Keep this public override after configure --env; eval may restore the saved
@@ -163,16 +165,10 @@ npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
 BUCKET="$NPA_BUCKET"
 npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
 
-RUN_STATE="$HOME/.npa/paidf-first-run-id"
-if [ ! -s "$RUN_STATE" ]; then
-  mkdir -p "$(dirname "$RUN_STATE")"
-  date -u +paidf-first-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]' >"$RUN_STATE.tmp"
-  chmod 600 "$RUN_STATE.tmp" && mv "$RUN_STATE.tmp" "$RUN_STATE"
-fi
-RUN_ID="$(tr -d '\r\n' <"$RUN_STATE")"
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --registry "$REGISTRY" \
-  --run-id "$RUN_ID" --runtime --resume --auto-load --var bucket="$BUCKET" \
+  --run-id "$RUN_ID" --runtime --auto-load --var bucket="$BUCKET" \
   --var n_augmentations=1 \
   --assume-decision promote_checkpoint --infra "k8s/$CONTEXT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
@@ -252,10 +248,10 @@ PROJECT="$NPA_PROJECT_ALIAS"
 BUCKET="$NPA_BUCKET"
 REGISTRY="$NPA_REGISTRY"
 KUBE_CONTEXT="$NPA_KUBE_CONTEXT"
-RUN_ID="$(date -u +paidf-readme-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]')"
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
-  --registry "$REGISTRY" --run-id "$RUN_ID" --runtime --resume --auto-load \
+  --registry "$REGISTRY" --run-id "$RUN_ID" --runtime --auto-load \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 --assume-decision promote_checkpoint \
   --infra "k8s/$KUBE_CONTEXT" \
@@ -273,6 +269,14 @@ npa workbench workflow logs "$MANIFEST_URI" --project "$PROJECT" --stage finaliz
 # `submit --runtime --auto-load` already posts and verifies the exact final URI.
 # Retry only that idempotent handoff, without relaunching stages, if it was partial:
 npa workbench workflow load-artifact "$RUN_ID" --project "$PROJECT"
+
+# After DNS/controller recovery, resume only by naming the existing ID explicitly:
+npa workbench workflow submit "$SPEC" --project "$PROJECT" \
+  --registry "$REGISTRY" --resume-run "$RUN_ID" --runtime --auto-load \
+  --var bucket="$BUCKET" --var n_augmentations=1 \
+  --assume-decision promote_checkpoint --infra "k8s/$KUBE_CONTEXT" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
+  --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
 With no input flag, that command fetches the pinned **RoboPro Aloha-Agilex
@@ -294,18 +298,18 @@ mutually exclusive and an explicit source always beats the default:
 ```bash
 # Local H.264 MP4
 npa workbench workflow submit "$SPEC" --project "$PROJECT" --run-id "$RUN_ID" \
-  --runtime --resume --var bucket="$BUCKET" --input-video ./my-capture.mp4 \
+  --runtime --var bucket="$BUCKET" --input-video ./my-capture.mp4 \
   --assume-decision promote_checkpoint --infra "k8s/$KUBE_CONTEXT"
 
 # One S3 object (not a prefix)
 npa workbench workflow submit "$SPEC" --project "$PROJECT" --run-id "$RUN_ID" \
-  --runtime --resume --var bucket="$BUCKET" \
+  --runtime --var bucket="$BUCKET" \
   --input-uri s3://my-source-bucket/captures/run-42.mp4 \
   --assume-decision promote_checkpoint --infra "k8s/$KUBE_CONTEXT"
 
 # Developers/tests only: explicitly synthetic geometric frames
 npa workbench workflow submit "$SPEC" --project "$PROJECT" --run-id "$RUN_ID" \
-  --runtime --resume --var bucket="$BUCKET" --seed-fixture \
+  --runtime --var bucket="$BUCKET" --seed-fixture \
   --assume-decision promote_checkpoint --infra "k8s/$KUBE_CONTEXT"
 ```
 
@@ -330,6 +334,13 @@ runs. The owner-only local receipt at
 `~/.npa/workflow-submissions/<project>/<run>.json` contains location, plan, and
 job identity only—never credentials—and removes any dependency on
 `NPA_SRC_S3_URI` in later shells.
+
+Fresh submits never inherit the historical global
+`~/.npa/paidf-first-run-id`. `prepare-run` writes an atomic, locked state record
+scoped by stable project identity and workflow identity; an ambiguous legacy
+file is warned about but never reused or deleted. Non-interactive recovery must
+use `--resume-run <id>`. `--cached` is the explicit offline status/log mode and
+is labeled `CACHED`; its state is not live-verified or automation-trustworthy.
 
 The dataset view groups **Original/input** separately from
 **Synthetic/augmented**, shows the source URI/kind and per-item provenance, and

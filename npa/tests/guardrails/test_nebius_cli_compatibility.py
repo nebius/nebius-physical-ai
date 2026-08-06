@@ -44,5 +44,6 @@ def test_documented_cluster_shape_uses_real_cli_flags() -> None:
     for flag in required:
         assert flag in readme
         assert flag in paidf
-    assert "--runtime --resume" in readme
+    assert "--runtime --auto-load" in readme
+    assert "--resume-run" in readme
     assert 'npa provision-if-absent --project "$PROJECT" --skip-k8s' in readme

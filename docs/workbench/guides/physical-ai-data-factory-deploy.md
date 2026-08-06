@@ -86,7 +86,7 @@ SPEC=npa/workflows/physical-ai-data-factory.yaml
 PROJECT="$NPA_PROJECT_ALIAS"
 BUCKET="$NPA_BUCKET"
 REGISTRY="$NPA_REGISTRY"
-RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%S%NZ | tr '[:upper:]' '[:lower:]')"
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 
 npa workbench health preflight
 npa provision-if-absent --project "$PROJECT" \
@@ -119,7 +119,7 @@ npa workbench workflow preflight-images "$SPEC" \
 # selected project's NPA credentials; a missing value fails before setup.
 npa workbench workflow submit "$SPEC" \
   --project "$PROJECT" --registry "$REGISTRY" \
-  --run-id "$RUN_ID" --runtime --resume --auto-load \
+  --run-id "$RUN_ID" --runtime --auto-load \
   --var bucket="$BUCKET" \
   --var n_augmentations=1 \
   --assume-decision promote_checkpoint \
@@ -143,6 +143,7 @@ prompt-free equivalent is:
 
 ```bash
 npa configure --no-interactive \
+  --save-env-credentials \
   --tenant-id "$TENANT_ID" --project-id "$PROJECT_ID" \
   --region "$REGION" --project-alias "$PROJECT_ALIAS"
 ```
@@ -159,14 +160,41 @@ The quick start requests one real augmentation variant for a decisive first run;
 omit `--var n_augmentations=1` to use the spec's default two-variant multiply, or
 raise it together with the requested GPU count for a larger batch.
 
-Typical warm-stage times are tens of seconds for config generation, 1–3 minutes
-for each Token Factory caption pass, 10–25 minutes for one Cosmos Transfer
-augmentation, and 1–5 minutes for evaluation/curation/finalization. First image
-pulls, checkpoint downloads, node scheduling, and jobs-controller startup can add
-several quiet minutes. The commands do not impose a workflow deadline; during a
-quiet period use `npa skypilot status`, the status command above (which shows the
-requested accelerator), and `npa workbench workflow logs "$MANIFEST_URI"
---stage augment --follow` in another terminal.
+Observed planning ranges—not SLAs—are 8–25 minutes for first cluster
+provisioning/readiness when capacity is available, tens of seconds for config
+generation, 1–3 minutes for each Token Factory caption pass, 10–25 minutes for
+one warm Cosmos Transfer inference (initial checkpoint/image preparation can add
+10–30 minutes), 3–12 minutes for Cosmos Curator plus FiftyOne startup/curation,
+and 1–5 minutes for evaluation/visualization/finalization. Controller retries
+normally back off for roughly 30 seconds to several minutes. A warm end-to-end
+one-variant run is commonly 25–60 minutes; a cold or capacity-constrained run can
+take 60–120+ minutes. These ranges vary with input size, image/cache warmth,
+capacity, quota, and retry count. The commands do not impose a workflow deadline.
+
+Normal progress is a new exact stage/attempt in the runtime ledger, then a
+scheduler observation and (only when the task reports progress) a heartbeat.
+Inspect it with `npa workbench workflow status "$RUN_ID" --project "$PROJECT"
+--json`; pending reason codes identify accelerator/capacity, image-pull, storage,
+init/crash, or controller backoff. `manifest_state: available` means only that
+the manifest was read; `stage_ledger_state`, cached log state, and live log state
+are separate. During a quiet period use the NPA status command and `npa workbench
+workflow logs "$MANIFEST_URI" --stage augment --follow` in another terminal.
+
+`VERIFICATION_UNAVAILABLE` is a failed current observation, not a terminal
+workflow outcome: it retains the labeled last-known state and unchanged/stale
+heartbeat, advances the verification-attempt time, and exits nonzero. After DNS,
+RBAC, authentication, or controller recovery, rerun status; resume work only with
+`npa workbench workflow submit "$SPEC" --project "$PROJECT" --resume-run
+"$RUN_ID" --runtime ...`. `--cached` is an explicit offline inspection and is
+never automation-trustworthy.
+
+The four similarly named identities are distinct: the Nebius CLI profile supplies
+provider authentication; the NPA project alias selects a saved project ID and
+credentials; the Kubernetes context selects the exact cluster; and the SkyPilot
+jobs controller executes managed jobs. In Kubernetes-controller mode, failure to
+create an optional SkyPilot Nebius provider profile is reported as a warning only
+when the selected Kubernetes path is valid. It remains fatal when no valid
+execution path exists.
 
 SkyPilot may temporarily render not-yet-submitted downstream DAG rows with the
 first task's CPU summary. Its human-readable queue can also show misleading
@@ -222,7 +250,7 @@ and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `staged source verification failed: ...` | a supplied or persisted source URI is missing, inaccessible, or incomplete | Read the preserved provider error, then safely restage with `npa workbench workflow stage-src --bucket <b>` and retry the same submit/run ID. The command persists the replacement URI; it never stores S3 secrets. |
+| `staged source verification failed: ...` | a supplied or persisted source URI is missing, inaccessible, or incomplete | Read the preserved provider error, then safely restage with `npa workbench workflow stage-src --bucket <b>` and explicitly retry with `--resume-run <id>`. The command persists the replacement URI; it never stores S3 secrets. |
 | `missing prerequisites: ... SkyPilot CLI is not usable` | SkyPilot never bootstrapped, or only exported in a previous shell | `npa skypilot bootstrap` (persists `skypilot.sky_bin`) |
 | `missing prerequisites: ... config.bucket is the spec placeholder` | submitting against `example-bucket` | `--var bucket=<your-bucket>` |
 | `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | inspect with `npa skypilot status`, then (after all workflows are terminal) run `npa skypilot cleanup-controller --yes`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
@@ -230,13 +258,15 @@ and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
 | A cluster is RUNNING in the console but npa has no kubeconfig for it (interrupted provision) | `up` writes the kubeconfig only after apply finishes | `npa cluster kubeconfig --cluster-name <name> --project <alias>` adopts it (writes the kubeconfig + cluster state), or `npa cluster up` again to resume, or `npa cluster down --force` to remove it |
 | `GPU quota is insufficient ...` before apply | the tenant's `compute.instance.gpu.<model>` allowance cannot cover the node group | raise the quota, or use the preemptible pool the message reports (`gpu_nodes_preemptible = true`), or pick a smaller preset/another platform |
 | `Nebius refused node group ...` mid-apply | the platform rejected the node group (quota/capacity) after apply began; npa cancels rather than retrying to the Terraform timeout | fix the quota/capacity as above, then `npa cluster up` again to resume, or `npa cluster down --force` to remove the half-created cluster |
-| `npa cluster status` shows a cluster RUNNING but lists a node group as `not RUNNING` | the control plane is up while that node group was never provisioned | the same quota/capacity fix; the cluster bills while it exists, so tear it down (`npa cluster down --force`) if you cannot get the nodes |
+| `npa cluster status` reports `DEGRADED` with `provider_state: RUNNING` and a non-ready node group | the control plane is up while that node group was never provisioned | the same quota/capacity fix; the cluster bills while it exists, so tear it down (`npa cluster down --force`) if you cannot get the nodes |
+| `npa cluster status` reports `VERIFICATION_UNAVAILABLE` and a DNS/RBAC/auth code | the configured cluster's current provider/API state could not be verified | run the printed NPA retry command after fixing the typed cause; `npa cluster status --cached` is an explicit last-known-only view, not evidence the cluster is healthy |
 | `Context <name> not found ... Available contexts: []` (from SkyPilot) | an older npa left `KUBECONFIG` unset for a cluster it had provisioned | upgrade npa: `submit --infra k8s/<context>` now prepends `~/.npa/clusters/<context>/kubeconfig` itself. For `kubectl`/bare `sky`, `export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig` |
 | `provision-if-absent` failed on `~/.ssh/id_rsa.pub` | old default node-group key path | upgrade npa: `cluster up` now pins the first key that exists (`NPA_SSH_PUBLIC_KEY`, `id_ed25519.pub`, `id_rsa.pub`, `id_ecdsa.pub`) |
 | `offline PAIDF cache miss` | `NPA_PAIDF_OFFLINE=1` forbids the starter fetch and the pinned asset is not cached | unset offline mode for one verified fetch, or populate the printed cache path with the exact pinned bytes |
 | `SHA-256 mismatch` | cached/downloaded/staged bytes do not match the committed source | do not bypass integrity; remove a corrupt cache entry or use a new run ID after fixing the source |
 | `unsupported video container/codec` | replacement media is not a decodable H.264 MP4 | transcode as the message shows before submitting; validation occurs before automatic provisioning |
 | `manifest_state: pending` with `resolution_source: durable_submission_receipt`, `canonical_paidf_s3_prefix`, or `managed_job` | the exact run exists, but artifact publication has not produced its final workflow manifest yet | keep using the NPA status/log/artifact commands; do not resubmit merely to make the manifest appear |
+| A stage remains `PENDING` | the exact scheduler/pod/event reason may be accelerator/capacity, image pull, storage, init/crash, or backoff | run `npa workbench workflow status <run> --project <alias> --json`, then its stage `log_command`; if diagnostics are unavailable, fix the reported DNS/RBAC/controller cause rather than guessing |
 | `status: VERIFICATION_UNAVAILABLE` | an S3/provider/auth/SkyPilot check failed, so absence cannot be established | fix the reported source; if project storage selection is the problem, retry with `--workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run>/npa-workflow` |
 | `status: NOT_FOUND` with every applicable source listed as checked/absent | no receipt, exact canonical PAIDF object, exact managed job, or ordinary workflow manifest exists for that ID | verify the project alias/run ID; cancellation remains an idempotent no-op for this conclusively absent run |
 | provider package does not match lock checksums | the tracked lock lacks/cannot verify this operator package or a registry mirror/cache is inconsistent | upgrade NPA first. Maintainers regenerate with `terraform providers lock` for the recorded Linux/macOS platforms and review the lock diff; never delete the lock or bypass checksums |
@@ -529,14 +559,14 @@ npa workbench workflow plan-spec   "$SPEC" \
 
 ### 5a. Select the starter input
 
-Pick one `RUN_ID` and reuse it on retries. With no input selector, submit fetches
+Prepare one project/workflow-scoped fresh `RUN_ID`. With no input selector, submit fetches
 the pinned RoboPro Aloha-Agilex physical capture, verifies its SHA-256, caches it,
 and stages `source.mp4`, the exact 93-frame `conditioning.mp4`, eight derived
 caption frames, and `provenance.json` under the canonical input prefix.
 
 ```bash
 BUCKET=<your-artifact-bucket>
-RUN_ID="$(date -u +paidf-%Y%m%dt%H%M%sz)"
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
 INPUT="s3://$BUCKET/physical-ai-data-factory/$RUN_ID/input"
 ```
 
@@ -568,7 +598,7 @@ npa workbench workflow submit "$SPEC" \
   --project "$PROJECT" \
   --run-id "$RUN_ID" \
   --var bucket="$BUCKET" \
-  --runtime --resume --auto-load \
+  --runtime --auto-load \
   --registry "$REGISTRY" \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
@@ -577,6 +607,11 @@ npa workbench workflow submit "$SPEC" \
   --secret-env HF_TOKEN \
   --output-format json
 ```
+
+That command creates a fresh run. After an interruption or controller recovery,
+reuse it only by replacing `--run-id "$RUN_ID"` with the explicit
+`--resume-run "$RUN_ID"`; non-interactive operation never infers a resume from a
+legacy or aged state file.
 
 For a plan-only preflight without launching a GPU job, add `--plan-only`, and read
 back the `image_id` lines to confirm the three images are pinned:

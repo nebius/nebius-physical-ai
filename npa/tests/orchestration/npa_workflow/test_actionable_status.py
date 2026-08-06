@@ -54,7 +54,11 @@ def test_pending_stage_is_not_collapsed_to_running() -> None:
     assert result["active_stage_index"] == 2
     curate = result["stages"]["curate"]
     assert curate["scheduler_state"] == "PENDING"
-    assert curate["staleness_seconds"] == 300
+    # A scheduler poll is an observation, not a workload heartbeat.  With no
+    # real progress event there is deliberately no heartbeat age to fabricate.
+    assert curate["last_observed_at"] == "2026-08-05T11:55:00Z"
+    assert curate["last_heartbeat_at"] == ""
+    assert curate["staleness_seconds"] is None
     assert curate["log_command"].endswith("--stage curate --project demo")
 
 

@@ -20,13 +20,25 @@ KNOWN_TOKEN_KEYS = (
     TOKEN_FACTORY_ENV_KEY,
     *NGC_ENV_KEYS,
 )
+SUPPORTED_ENV_CREDENTIALS = (
+    "NEBIUS_TOKEN_FACTORY_KEY",
+    "HF_TOKEN",
+    "NGC_API_KEY",
+    "NGC_ORG",
+    "NGC_TEAM",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ENDPOINT_URL",
+    "NEBIUS_S3_ENDPOINT",
+    "NPA_STORAGE_ENDPOINT",
+    "NEBIUS_S3_BUCKET",
+    "NPA_CHECKPOINT_BUCKET",
+)
 HF_TOKEN_MISSING_WARNING = (
     "Warning: HF_TOKEN not found in ~/.npa/credentials.yaml. "
     "Gated model downloads will fail."
 )
-PERMISSIONS_WARNING = (
-    "credentials.yaml is readable by other users. Run chmod 600 ~/.npa/credentials.yaml."
-)
+PERMISSIONS_WARNING = "credentials.yaml is readable by other users. Run chmod 600 ~/.npa/credentials.yaml."
 _TOKEN_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 UK_SOUTH1_STORAGE_ENDPOINT = "storage.uk-south1.nebius.cloud"
 EU_NORTH1_STORAGE_ENDPOINT = "storage.eu-north1.nebius.cloud"
@@ -131,7 +143,11 @@ def _read_file_tokens(path: Path) -> dict[str, str]:
             TOKEN_FACTORY_ENV_KEY,
             ("api_key", "apikey", "key", "token", TOKEN_FACTORY_ENV_KEY),
         ),
-        ("huggingface", "HF_TOKEN", ("token", "hf_token", "api_key", "key", "HF_TOKEN")),
+        (
+            "huggingface",
+            "HF_TOKEN",
+            ("token", "hf_token", "api_key", "key", "HF_TOKEN"),
+        ),
     ):
         if cleaned.get(env_key):
             continue
@@ -189,7 +205,10 @@ def _read_file_storage(path: Path) -> dict[str, str]:
     tokens = data.get("tokens", {})
     if not isinstance(tokens, dict):
         tokens = {}
-    storage = data.get("storage", data.get("s3", data.get("object-storage", data.get("object_storage", {}))))
+    storage = data.get(
+        "storage",
+        data.get("s3", data.get("object-storage", data.get("object_storage", {}))),
+    )
     if not isinstance(storage, dict):
         storage = {}
 
@@ -276,18 +295,28 @@ def load_credentials(
     return CredentialsConfig(
         tokens=tokens,
         warnings=warnings,
-        ssh_host=env.get("NPA_BYOVM_HOST") or env.get("NPA_SSH_HOST") or file_ssh.get("host", ""),
-        ssh_user=env.get("NPA_BYOVM_SSH_USER") or env.get("NPA_SSH_USER") or file_ssh.get("user", ""),
-        ssh_key_path=env.get("NPA_BYOVM_SSH_KEY") or env.get("NPA_SSH_KEY") or file_ssh.get("key_path", ""),
-        s3_access_key_id=env.get("AWS_ACCESS_KEY_ID") or file_storage.get("access_key_id", ""),
-        s3_secret_access_key=env.get("AWS_SECRET_ACCESS_KEY") or file_storage.get("secret_access_key", ""),
+        ssh_host=env.get("NPA_BYOVM_HOST")
+        or env.get("NPA_SSH_HOST")
+        or file_ssh.get("host", ""),
+        ssh_user=env.get("NPA_BYOVM_SSH_USER")
+        or env.get("NPA_SSH_USER")
+        or file_ssh.get("user", ""),
+        ssh_key_path=env.get("NPA_BYOVM_SSH_KEY")
+        or env.get("NPA_SSH_KEY")
+        or file_ssh.get("key_path", ""),
+        s3_access_key_id=env.get("AWS_ACCESS_KEY_ID")
+        or file_storage.get("access_key_id", ""),
+        s3_secret_access_key=env.get("AWS_SECRET_ACCESS_KEY")
+        or file_storage.get("secret_access_key", ""),
         s3_endpoint=(
             env.get("AWS_ENDPOINT_URL")
             or env.get("NEBIUS_S3_ENDPOINT")
             or env.get("NPA_STORAGE_ENDPOINT")
             or file_storage.get("endpoint", "")
         ),
-        s3_bucket=env.get("NPA_CHECKPOINT_BUCKET") or env.get("NEBIUS_S3_BUCKET") or file_storage.get("bucket", ""),
+        s3_bucket=env.get("NPA_CHECKPOINT_BUCKET")
+        or env.get("NEBIUS_S3_BUCKET")
+        or file_storage.get("bucket", ""),
     )
 
 
@@ -346,9 +375,10 @@ def _separate_legacy_storage_ownership(
         if isinstance(incoming_nebius, dict)
         else ""
     )
-    has_complete_owned_legacy_proof = (
-        str(saved_nebius.get("service_account_managed_by", "") or "") == "npa"
-        and all(str(saved_nebius.get(key, "") or "").strip() for key in _STORAGE_IAM_PROOF_KEYS)
+    has_complete_owned_legacy_proof = str(
+        saved_nebius.get("service_account_managed_by", "") or ""
+    ) == "npa" and all(
+        str(saved_nebius.get(key, "") or "").strip() for key in _STORAGE_IAM_PROOF_KEYS
     )
     dedicated_exists = isinstance(existing.get("storage_iam"), dict) or isinstance(
         incoming.get("storage_iam"), dict
@@ -394,6 +424,7 @@ def write_credentials_file(
     """
 
     credentials_path = path or CREDENTIALS_PATH
+    _validate_private_destination(credentials_path)
     existing: dict[str, Any] = {}
     if credentials_path.exists():
         with credentials_path.open() as handle:
@@ -407,6 +438,110 @@ def write_credentials_file(
     return credentials_path
 
 
+def persist_supported_env_credentials(
+    *,
+    path: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Persist supported environment credentials without accepting secret argv.
+
+    Returned metadata contains names and sources only. Values are never included,
+    making it safe for human output, JSON, logs, and telemetry.
+    """
+
+    env = environ if environ is not None else os.environ
+    detected = [name for name in SUPPORTED_ENV_CREDENTIALS if str(env.get(name) or "")]
+    payload: dict[str, Any] = {}
+    tokens = {
+        name: str(env[name])
+        for name in ("HF_TOKEN", TOKEN_FACTORY_ENV_KEY)
+        if str(env.get(name) or "")
+    }
+    if tokens:
+        payload["tokens"] = tokens
+    ngc = {
+        field: str(env[name])
+        for name, field in (
+            ("NGC_API_KEY", "api_key"),
+            ("NGC_ORG", "org"),
+            ("NGC_TEAM", "team"),
+        )
+        if str(env.get(name) or "")
+    }
+    if ngc:
+        payload["ngc"] = ngc
+    storage: dict[str, str] = {}
+    if env.get("AWS_ACCESS_KEY_ID"):
+        storage["aws_access_key_id"] = str(env["AWS_ACCESS_KEY_ID"])
+    if env.get("AWS_SECRET_ACCESS_KEY"):
+        storage["aws_secret_access_key"] = str(env["AWS_SECRET_ACCESS_KEY"])
+    endpoint = next(
+        (
+            str(env[name])
+            for name in (
+                "AWS_ENDPOINT_URL",
+                "NEBIUS_S3_ENDPOINT",
+                "NPA_STORAGE_ENDPOINT",
+            )
+            if str(env.get(name) or "")
+        ),
+        "",
+    )
+    bucket = next(
+        (
+            str(env[name])
+            for name in ("NEBIUS_S3_BUCKET", "NPA_CHECKPOINT_BUCKET")
+            if str(env.get(name) or "")
+        ),
+        "",
+    )
+    if endpoint:
+        storage["endpoint_url"] = endpoint
+    if bucket:
+        storage["bucket"] = bucket
+    if storage:
+        payload["storage"] = storage
+    warnings: list[str] = []
+    has_access = bool(env.get("AWS_ACCESS_KEY_ID"))
+    has_secret = bool(env.get("AWS_SECRET_ACCESS_KEY"))
+    if has_access != has_secret:
+        warnings.append(
+            "incomplete S3 credential pair detected; the available field was persisted, "
+            "but storage health will fail until both AWS_ACCESS_KEY_ID and "
+            "AWS_SECRET_ACCESS_KEY are supplied"
+        )
+    credentials_path = path or CREDENTIALS_PATH
+    persisted: list[str] = []
+    if payload:
+        write_credentials_file(payload, path=credentials_path)
+        persisted = list(detected)
+    return {
+        "detected": detected,
+        "persisted": persisted,
+        "sources": {name: "environment" for name in detected},
+        "warnings": warnings,
+        "path": str(credentials_path),
+    }
+
+
+def _validate_private_destination(path: Path) -> None:
+    """Refuse symlink/non-owner destinations before reading or replacing secrets."""
+
+    parent = path.parent
+    if parent.is_symlink():
+        raise OSError(f"refusing credential directory symlink: {parent}")
+    if path.is_symlink():
+        raise OSError(f"refusing credential file symlink: {path}")
+    if path.exists():
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError(f"credential destination is not a regular file: {path}")
+        if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
+            raise PermissionError(
+                f"credential file is not owned by the current user: {path}"
+            )
+
+
 def write_private_yaml(path: Path, data: Mapping[str, Any]) -> Path:
     """Atomically write private YAML with owner-only file/directory modes.
 
@@ -416,6 +551,7 @@ def write_private_yaml(path: Path, data: Mapping[str, Any]) -> Path:
     file. The temporary file starts at 0600 and is removed on every failure.
     """
 
+    _validate_private_destination(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         path.parent.chmod(0o700)

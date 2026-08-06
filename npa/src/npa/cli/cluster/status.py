@@ -14,7 +14,11 @@ import typer
 from npa.cli.cluster.terraform_lifecycle import _read_tfvars, terraform_status
 from npa.cluster.api import ClusterInfo, MK8sClient
 from npa.cluster.config import DEFAULT_REGION, resolve_project_id
-from npa.cluster.exceptions import ClusterConfigError, ClusterError, ClusterNotFoundError
+from npa.cluster.exceptions import (
+    ClusterConfigError,
+    ClusterError,
+    ClusterNotFoundError,
+)
 from npa.cluster.state import (
     ClusterState,
     kubeconfig_file,
@@ -27,16 +31,33 @@ logger = logging.getLogger(__name__)
 
 
 def status_cmd(
-    name: str = typer.Option("", "--name", help="NPA cluster target name. Lists all known targets when omitted."),
-    output_format: str = typer.Option("table", "--format", help="Output format: table or json."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from local state or NPA config."),
+    name: str = typer.Option(
+        "",
+        "--name",
+        help="NPA cluster target name. Lists all known targets when omitted.",
+    ),
+    output_format: str = typer.Option(
+        "table", "--format", help="Output format: table or json."
+    ),
+    project_id: str = typer.Option(
+        "",
+        "--project-id",
+        help="Nebius project ID. Defaults from local state or NPA config.",
+    ),
     project: str = typer.Option(
-        "", "--project", help="NPA project alias whose saved project_id to use (like `npa cluster up`)."
+        "",
+        "--project",
+        help="NPA project alias whose saved project_id to use (like `npa cluster up`).",
     ),
     terraform_dir: Path | None = typer.Option(
         None,
         "--terraform-dir",
         help="Terraform cluster directory to include outputs from.",
+    ),
+    cached: bool = typer.Option(
+        False,
+        "--cached",
+        help="Show explicitly marked last-known local state without live provider verification.",
     ),
 ) -> None:
     """Show NPA cluster target state from Nebius and the local cache."""
@@ -47,19 +68,35 @@ def status_cmd(
         project_id=project_id,
         project=project,
         terraform_dir=terraform_dir,
+        cached=cached,
     )
 
 
 def list_cmd(
-    output_format: str = typer.Option("table", "--format", help="Output format: table or json."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID. Defaults from NPA config."),
+    output_format: str = typer.Option(
+        "table", "--format", help="Output format: table or json."
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID. Defaults from NPA config."
+    ),
     project: str = typer.Option(
-        "", "--project", help="NPA project alias whose saved project_id to use (like `npa cluster up`)."
+        "",
+        "--project",
+        help="NPA project alias whose saved project_id to use (like `npa cluster up`).",
+    ),
+    cached: bool = typer.Option(
+        False, "--cached", help="Show last-known local state only."
     ),
 ) -> None:
     """List NPA Workbench cluster targets known locally or in the configured project."""
 
-    _emit_status(name="", output_format=output_format, project_id=project_id, project=project)
+    _emit_status(
+        name="",
+        output_format=output_format,
+        project_id=project_id,
+        project=project,
+        cached=cached,
+    )
 
 
 def _emit_status(
@@ -69,6 +106,7 @@ def _emit_status(
     project_id: str,
     project: str = "",
     terraform_dir: Path | None = None,
+    cached: bool = False,
 ) -> None:
     fmt = output_format.lower()
     if fmt not in {"table", "json"}:
@@ -82,17 +120,25 @@ def _emit_status(
             project_id=resolved_project_id,
             configured_region=configured_region,
             terraform_dir=terraform_dir,
+            cached=cached,
         )
         if fmt == "json":
             typer.echo(json.dumps(rows, indent=2, sort_keys=True))
         else:
             typer.echo(_format_table(rows))
+        if any(
+            str(row.get("verification_status") or "") == "VERIFICATION_UNAVAILABLE"
+            for row in rows
+        ):
+            raise typer.Exit(2)
     except ClusterError as exc:
         typer.echo(f"Cluster status failed: {exc}", err=True)
         raise typer.Exit(1) from exc
 
 
-def _resolve_project_for_status(explicit_project_id: str, project_alias: str = "") -> str:
+def _resolve_project_for_status(
+    explicit_project_id: str, project_alias: str = ""
+) -> str:
     return _resolve_environment_for_status(explicit_project_id, project_alias)[0]
 
 
@@ -107,7 +153,10 @@ def _resolve_environment_for_status(
             saved = resolve_environment(project_alias or None)
             configured_region = str(getattr(saved, "region", "") or "")
         except Exception:  # noqa: BLE001 - explicit project id is sufficient
-            logger.debug("Could not resolve configured region for explicit project id", exc_info=True)
+            logger.debug(
+                "Could not resolve configured region for explicit project id",
+                exc_info=True,
+            )
         return explicit_project_id.strip(), configured_region
     alias = (project_alias or "").strip()
     if alias:
@@ -117,8 +166,10 @@ def _resolve_environment_for_status(
 
         try:
             saved = resolve_environment(alias)
-        except Exception:  # noqa: BLE001 - a bad alias falls through to the config default
-            saved = None
+        except Exception as exc:  # noqa: BLE001 - never inherit an unrelated default profile
+            raise ClusterConfigError(
+                f"configured project alias {alias!r} could not be resolved: {exc}"
+            ) from exc
         resolved = str(getattr(saved, "project_id", "") or "")
         configured_region = str(getattr(saved, "region", "") or "")
         if resolved:
@@ -143,18 +194,23 @@ def _collect_rows(
     project_id: str,
     configured_region: str = "",
     terraform_dir: Path | None = None,
+    cached: bool = False,
 ) -> list[dict[str, Any]]:
     client = MK8sClient(timeout=120, poll_interval=30.0)
     local_by_name = {state.name: state for state in list_local_clusters()}
     remote_by_name: dict[str, ClusterInfo] = {}
+    verification_errors: dict[str, str] = {}
+    verified_absent: set[str] = set()
     terraform_row = _terraform_row(terraform_dir)
 
     if name:
         local_state = load_cluster_state(name)
         if local_state is not None:
             local_by_name[name] = local_state
-        lookup_project_id = (local_state.project_id if local_state else "") or project_id
-        if lookup_project_id:
+        lookup_project_id = (
+            local_state.project_id if local_state else ""
+        ) or project_id
+        if lookup_project_id and not cached:
             try:
                 remote = client.get_cluster(
                     local_state.cluster_id if local_state else name,
@@ -162,31 +218,60 @@ def _collect_rows(
                 )
                 remote_by_name[remote.name or name] = remote
             except ClusterNotFoundError:
-                pass
+                verified_absent.add(name)
+            except Exception as exc:  # noqa: BLE001 - preserve exact local evidence
+                verification_errors[name] = f"{type(exc).__name__}: {exc}"
         target_names = [name]
         if terraform_row and terraform_row["name"] == name:
             local_by_name.setdefault(name, _state_from_terraform_row(terraform_row))
     else:
-        if project_id:
-            for remote in client.list_clusters(project_id):
-                remote_by_name[remote.name] = remote
-        target_names = sorted(set(local_by_name) | set(remote_by_name) | ({terraform_row["name"]} if terraform_row else set()))
+        if project_id and not cached:
+            try:
+                for remote in client.list_clusters(project_id):
+                    remote_by_name[remote.name] = remote
+            except Exception as exc:  # noqa: BLE001
+                for local_name in local_by_name or {"<configured-project>": None}:
+                    verification_errors[str(local_name)] = (
+                        f"{type(exc).__name__}: {exc}"
+                    )
+        target_names = sorted(
+            set(local_by_name)
+            | set(remote_by_name)
+            | ({terraform_row["name"]} if terraform_row else set())
+        )
+        if not target_names and not project_id and terraform_row is None:
+            target_names = ["<not-configured>"]
+        if not target_names and verification_errors:
+            target_names = sorted(verification_errors)
 
     rows: list[dict[str, Any]] = []
     for target_name in target_names:
         local_state = local_by_name.get(target_name)
         remote = remote_by_name.get(target_name)
-        if remote is None and local_state is not None:
+        if (
+            remote is None
+            and local_state is not None
+            and not cached
+            and target_name not in verified_absent
+        ):
             try:
-                remote = client.get_cluster(local_state.cluster_id, project_id=local_state.project_id or project_id)
+                remote = client.get_cluster(
+                    local_state.cluster_id,
+                    project_id=local_state.project_id or project_id,
+                )
             except ClusterNotFoundError:
-                pass
+                verified_absent.add(target_name)
+            except Exception as exc:  # noqa: BLE001
+                verification_errors[target_name] = f"{type(exc).__name__}: {exc}"
         row = _row_for_cluster(
             client,
             target_name,
             local_state,
             remote,
             configured_region=configured_region,
+            verification_error=verification_errors.get(target_name, ""),
+            cached=cached,
+            verified_absent=target_name in verified_absent,
         )
         if terraform_row is not None and terraform_row["name"] == target_name:
             row = _merge_terraform_row(row, terraform_row)
@@ -203,9 +288,13 @@ def _terraform_row(terraform_dir: Path | None) -> dict[str, Any] | None:
     cluster = outputs.get("kube_cluster", {}).get("value") or {}
     if not isinstance(cluster, dict) or not cluster.get("name"):
         return None
-    endpoints = cluster.get("endpoints") if isinstance(cluster.get("endpoints"), dict) else {}
+    endpoints = (
+        cluster.get("endpoints") if isinstance(cluster.get("endpoints"), dict) else {}
+    )
     filesystem = outputs.get("shared_filesystem", {}).get("value") or {}
-    shared_filesystem_id = str(filesystem.get("id") or "") if isinstance(filesystem, dict) else ""
+    shared_filesystem_id = (
+        str(filesystem.get("id") or "") if isinstance(filesystem, dict) else ""
+    )
     filesystem_csi = outputs.get("filesystem_csi", {}).get("value") or {}
     if not shared_filesystem_id:
         filesystem_csi = {}
@@ -221,9 +310,13 @@ def _terraform_row(terraform_dir: Path | None) -> dict[str, Any] | None:
         "k8s_training_ref": str(outputs.get("k8s_training_ref", {}).get("value") or ""),
         "shared_filesystem_id": shared_filesystem_id,
         "filesystem_csi_storage_class": (
-            str(filesystem_csi.get("storage_class_name") or "") if isinstance(filesystem_csi, dict) else ""
+            str(filesystem_csi.get("storage_class_name") or "")
+            if isinstance(filesystem_csi, dict)
+            else ""
         ),
-        "filesystem_csi_status": str(filesystem_csi.get("status") or "") if isinstance(filesystem_csi, dict) else "",
+        "filesystem_csi_status": str(filesystem_csi.get("status") or "")
+        if isinstance(filesystem_csi, dict)
+        else "",
     }
 
 
@@ -244,7 +337,9 @@ def _state_from_terraform_row(row: dict[str, Any]) -> ClusterState:
     )
 
 
-def _merge_terraform_row(row: dict[str, Any], terraform_row: dict[str, Any]) -> dict[str, Any]:
+def _merge_terraform_row(
+    row: dict[str, Any], terraform_row: dict[str, Any]
+) -> dict[str, Any]:
     merged = dict(row)
     for key, value in terraform_row.items():
         if key in {"name", "cluster_id", "endpoint", "kubeconfig_path"}:
@@ -261,12 +356,20 @@ def _row_for_cluster(
     remote: ClusterInfo | None,
     *,
     configured_region: str = "",
+    verification_error: str = "",
+    cached: bool = False,
+    verified_absent: bool = False,
 ) -> dict[str, Any]:
     node_count = local_state.node_count if local_state else 0
     node_group_id = local_state.node_group_id if local_state else ""
     node_groups: list[dict[str, Any]] = []
+    provider_state = remote.status if remote is not None else ""
     if remote is not None and remote.id:
-        groups = client.list_node_groups(remote.id)
+        try:
+            groups = client.list_node_groups(remote.id)
+        except Exception as exc:  # noqa: BLE001 - partial provider reads are unverified
+            groups = []
+            verification_error = verification_error or f"{type(exc).__name__}: {exc}"
         if groups:
             node_count = sum(group.node_count for group in groups)
             node_group_id = groups[0].id
@@ -284,12 +387,34 @@ def _row_for_cluster(
                 }
                 for group in groups
             ]
-    state = remote.status if remote is not None else "UNKNOWN"
-    endpoint = (remote.endpoint if remote is not None else "") or (local_state.endpoint if local_state else "")
-    created_at = (remote.created_at if remote is not None else "") or (local_state.created_at if local_state else "")
+    state = (
+        provider_state
+        if remote is not None
+        else "ABSENT"
+        if verified_absent
+        else local_state.last_seen_state
+        if local_state is not None
+        else "NOT_CONFIGURED"
+    )
+    if (
+        state.upper() in {"READY", "RUNNING"}
+        and node_groups
+        and any(
+            str(group.get("state") or "").upper() not in {"READY", "RUNNING"}
+            for group in node_groups
+        )
+    ):
+        state = "DEGRADED"
+    endpoint = (remote.endpoint if remote is not None else "") or (
+        local_state.endpoint if local_state else ""
+    )
+    created_at = (remote.created_at if remote is not None else "") or (
+        local_state.created_at if local_state else ""
+    )
     row = {
         "name": (remote.name if remote is not None and remote.name else name),
-        "cluster_id": (remote.id if remote is not None else "") or (local_state.cluster_id if local_state else ""),
+        "cluster_id": (remote.id if remote is not None else "")
+        or (local_state.cluster_id if local_state else ""),
         "state": state,
         "region": _remote_region(remote)
         or (local_state.region if local_state else "")
@@ -301,20 +426,65 @@ def _row_for_cluster(
         "kubeconfig_path": local_state.kubeconfig_path if local_state else "",
         "age": _age(created_at),
         "created_at": created_at,
-        "project_id": (remote.project_id if remote is not None else "") or (local_state.project_id if local_state else ""),
+        "project_id": (remote.project_id if remote is not None else "")
+        or (local_state.project_id if local_state else ""),
         "node_groups": node_groups,
+        "provider_state": provider_state,
     }
     if local_state is not None and remote is not None:
         save_cluster_state(
             replace(
                 local_state,
                 last_seen_state=state,
+                last_seen_at=datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z"),
                 node_group_id=node_group_id or local_state.node_group_id,
                 node_count=node_count or local_state.node_count,
                 endpoint=endpoint,
             )
         )
-    return row
+    from npa.verification import (
+        CACHED,
+        VERIFIED,
+        VERIFICATION_UNAVAILABLE,
+        apply_verification,
+    )
+
+    retry = f"npa cluster status --name {name}"
+    if local_state and local_state.project_id:
+        retry += f" --project-id {local_state.project_id}"
+    verification_status = (
+        CACHED
+        if cached
+        else VERIFICATION_UNAVAILABLE
+        if verification_error
+        else VERIFIED
+    )
+    return apply_verification(
+        row,
+        status=verification_status,
+        target=(local_state.cluster_id if local_state else name),
+        last_known_state=state,
+        last_known_at=(local_state.last_seen_at if local_state else created_at),
+        last_known_source=(
+            "provider_api"
+            if remote is not None or verified_absent
+            else "local_cluster_state"
+            if local_state is not None
+            else "configuration"
+        ),
+        reason=(
+            verification_error
+            if verification_error
+            else "live provider query intentionally skipped (--cached)"
+            if cached
+            else ""
+        ),
+        retry_command=retry,
+        state_key="state",
+    )
 
 
 def _remote_region(remote: ClusterInfo | None) -> str:
@@ -339,13 +509,42 @@ def _remote_region(remote: ClusterInfo | None) -> str:
         if isinstance(raw.get("spec"), dict)
         else "",
     ]
-    return next((str(value).strip() for value in candidates if str(value or "").strip()), "")
+    return next(
+        (str(value).strip() for value in candidates if str(value or "").strip()), ""
+    )
 
 
 def _format_table(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "No clusters found."
-    headers = ["NAME", "CLUSTER_ID", "STATE", "REGION", "NODES", "ENDPOINT", "KUBECONFIG", "AGE"]
+    preamble: list[str] = []
+    for row in rows:
+        if row.get("verification_status") not in {"VERIFICATION_UNAVAILABLE", "CACHED"}:
+            continue
+        verification = row.get("live_verification") or {}
+        last_known = row.get("last_known") or {}
+        preamble.append(str(row.get("verification_status")))
+        preamble.append(
+            f"last-known state: {last_known.get('state', 'UNKNOWN')} "
+            f"(observed_at={last_known.get('observed_at') or 'unknown'}, "
+            f"source={last_known.get('source') or 'unknown'})"
+        )
+        if verification.get("reason"):
+            preamble.append(
+                f"cause [{verification.get('error_code') or 'CACHED'}]: {verification.get('reason')}"
+            )
+        if verification.get("retry_command"):
+            preamble.append(f"retry: {verification.get('retry_command')}")
+    headers = [
+        "NAME",
+        "CLUSTER_ID",
+        "STATE",
+        "REGION",
+        "NODES",
+        "ENDPOINT",
+        "KUBECONFIG",
+        "AGE",
+    ]
     values = [
         [
             str(row["name"]),
@@ -363,11 +562,16 @@ def _format_table(rows: list[dict[str, Any]]) -> str:
         max(len(headers[index]), *(len(value[index]) for value in values))
         for index in range(len(headers))
     ]
-    lines = ["  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))]
+    lines = [
+        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
+    ]
     lines.append("  ".join("-" * width for width in widths))
-    lines.extend("  ".join(value[index].ljust(widths[index]) for index in range(len(headers))) for value in values)
+    lines.extend(
+        "  ".join(value[index].ljust(widths[index]) for index in range(len(headers)))
+        for value in values
+    )
     lines.extend(_node_group_lines(rows))
-    return "\n".join(lines)
+    return "\n".join([*preamble, *([""] if preamble else []), *lines])
 
 
 def _node_group_lines(rows: list[dict[str, Any]]) -> list[str]:
@@ -379,7 +583,9 @@ def _node_group_lines(rows: list[dict[str, Any]]) -> list[str]:
     lines: list[str] = []
     for row in rows:
         groups = row.get("node_groups") or []
-        if not groups or all(str(group.get("state", "")).upper() == "RUNNING" for group in groups):
+        if not groups or all(
+            str(group.get("state", "")).upper() == "RUNNING" for group in groups
+        ):
             continue
         lines.append("")
         lines.append(f"Node groups for {row.get('name', '')} that are not RUNNING:")
@@ -388,7 +594,12 @@ def _node_group_lines(rows: list[dict[str, Any]]) -> list[str]:
             if state.upper() == "RUNNING":
                 continue
             shape = " ".join(
-                part for part in (str(group.get("platform", "")), str(group.get("preset", ""))) if part
+                part
+                for part in (
+                    str(group.get("platform", "")),
+                    str(group.get("preset", "")),
+                )
+                if part
             )
             lines.append(
                 f"  {group.get('name', '')}: {state} ({group.get('nodes', 0)} node(s))"

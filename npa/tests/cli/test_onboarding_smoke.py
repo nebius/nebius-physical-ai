@@ -85,7 +85,9 @@ def test_known_project_configure_is_non_interactive_and_reuses_storage(
     )
 
     def _must_not_run(*_args, **_kwargs):
-        raise AssertionError("known-project configure must not discover, prompt, or provision")
+        raise AssertionError(
+            "known-project configure must not discover, prompt, or provision"
+        )
 
     monkeypatch.setattr("npa.cli.main._provision_object_storage", _must_not_run)
     monkeypatch.setattr("npa.clients.nebius.list_tenants", _must_not_run)
@@ -111,7 +113,10 @@ def test_known_project_configure_is_non_interactive_and_reuses_storage(
 
     assert result.exit_code == 0, result.output
     assert "Reusing health-verified" in result.output
-    assert "Setup complete" in result.output
+    assert (
+        "Project and writable object storage configuration is health-verified."
+        in result.output
+    )
     saved = yaml.safe_load(config_path.read_text())
     project = saved["projects"]["paidf-prod"]
     assert saved["default_project"] == "paidf-prod"
@@ -225,7 +230,9 @@ def test_npa_version_emits_no_syntax_warning(tmp_path) -> None:
         if ("SyntaxWarning" in line or "invalid escape sequence" in line)
         and re.search(r"[\\/]src[\\/]npa[\\/]", line)
     ]
-    assert not package_warnings, "npa emitted invalid-escape warning(s):\n" + "\n".join(package_warnings)
+    assert not package_warnings, "npa emitted invalid-escape warning(s):\n" + "\n".join(
+        package_warnings
+    )
     assert "invalid escape sequence" not in combined, combined
     assert proc.returncode == 0, combined
     assert "npa" in proc.stdout

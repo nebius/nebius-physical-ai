@@ -73,10 +73,16 @@ def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[CheckResult]:
     pub_path = Path(ssh_public_key_path).expanduser()
     if pub_path.is_file():
         results.append(
-            CheckResult(name="ssh_public_key", status=PASS, summary=f"SSH public key present ({pub_path}).")
+            CheckResult(
+                name="ssh_public_key",
+                status=PASS,
+                summary=f"SSH public key present ({pub_path}).",
+            )
         )
     else:
-        priv_hint = str(pub_path)[:-4] if str(pub_path).endswith(".pub") else str(pub_path)
+        priv_hint = (
+            str(pub_path)[:-4] if str(pub_path).endswith(".pub") else str(pub_path)
+        )
         results.append(
             CheckResult(
                 name="ssh_public_key",
@@ -97,7 +103,11 @@ def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[CheckResult]:
     priv_path = Path(priv_str)
     if priv_path.is_file():
         results.append(
-            CheckResult(name="ssh_private_key", status=PASS, summary=f"SSH private key present ({priv_path}).")
+            CheckResult(
+                name="ssh_private_key",
+                status=PASS,
+                summary=f"SSH private key present ({priv_path}).",
+            )
         )
     else:
         results.append(
@@ -130,7 +140,9 @@ def _agent_nebius_auth_result() -> CheckResult:
         )
     if token:
         return CheckResult(
-            name="nebius_profile", status=PASS, summary="Nebius CLI profile is authenticated."
+            name="nebius_profile",
+            status=PASS,
+            summary="Nebius CLI profile is authenticated.",
         )
     return CheckResult(
         name="nebius_profile",
@@ -153,7 +165,9 @@ def _agent_token_factory_result(tf_key: str | None = None) -> CheckResult:
         tf_key, _ = _resolve_deploy_llm_credentials()
     if tf_key:
         return CheckResult(
-            name="token_factory", status=PASS, summary="Token Factory API key is configured."
+            name="token_factory",
+            status=PASS,
+            summary="Token Factory API key is configured.",
         )
     return CheckResult(
         name="token_factory",
@@ -161,7 +175,8 @@ def _agent_token_factory_result(tf_key: str | None = None) -> CheckResult:
         summary="Token Factory API key not found; agent chat will return 503 until it is set.",
         remedy=(
             "Get a key (starts with 'v1.') at https://tokenfactory.nebius.com/ and run "
-            "`npa configure --token-factory-key <key>`, then re-run `npa agent bootstrap`."
+            "export NEBIUS_TOKEN_FACTORY_KEY, run `npa configure --no-interactive "
+            "--save-env-credentials`, then re-run `npa agent bootstrap`."
         ),
     )
 
@@ -178,7 +193,9 @@ def _agent_storage_result(project: str = "", region: str = "") -> CheckResult:
 
     try:
         environment = resolve_environment(project or None)
-        resolved_region = str(region or getattr(environment, "region", "") or "").strip()
+        resolved_region = str(
+            region or getattr(environment, "region", "") or ""
+        ).strip()
         credentials = _resolve_deploy_storage_credentials(
             region=resolved_region,
             project_alias=project,

@@ -61,6 +61,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 )
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, StateSpec
 from npa.orchestration.npa_workflow.waves import split_into_batches
+from npa.verification import sanitize_reason
 
 TERMINAL_OK = frozenset({"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"})
 TERMINAL_FAIL = frozenset(
@@ -173,7 +174,9 @@ class WaveAttempt:
         }
 
 
-def plan_fingerprint(spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str = "") -> str:
+def plan_fingerprint(
+    spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str = ""
+) -> str:
     """Fingerprint the plan a ledger belongs to.
 
     Wave keys carry a monotonic sequence number, so replaying them is only sound when
@@ -343,7 +346,9 @@ class SkyPilotWaveExecutor:
 
     # ----------------------------------------------------------------- private
 
-    def _run_wave(self, steps: Sequence[PlanStep], *, kind: str, group: str) -> WaveAttempt:
+    def _run_wave(
+        self, steps: Sequence[PlanStep], *, kind: str, group: str
+    ) -> WaveAttempt:
         self._sequence += 1
         key = wave_key(steps, group=group, sequence_number=self._sequence)
 
@@ -460,20 +465,25 @@ class SkyPilotWaveExecutor:
         self.attempts.append(attempt)
 
         try:
-            status = str(getattr(self._status(job_id), "status", "") or "UNKNOWN").upper()
+            status = str(
+                getattr(self._status(job_id), "status", "") or "UNKNOWN"
+            ).upper()
         except Exception as exc:  # noqa: BLE001 - cannot reconcile blind
+            safe_error = sanitize_reason(exc)
             self._abort_wave(
                 attempt,
                 NpaWorkflowError(
                     f"wave {key}: cannot determine the state of in-flight job {job_id} "
-                    f"recorded by a previous run ({exc}); refusing to submit a second "
+                    f"recorded by a previous run ({safe_error}); refusing to submit a second "
                     "copy. Cancel it manually or drop --resume."
                 ),
             )
             return attempt
 
         if is_terminal_ok(status):
-            self._log(f"wave {key}: in-flight job {job_id} already succeeded; adopting it")
+            self._log(
+                f"wave {key}: in-flight job {job_id} already succeeded; adopting it"
+            )
             attempt.status = "succeeded"
             attempt.sky_status = status
             attempt.ended_at = utc_now()
@@ -520,9 +530,9 @@ class SkyPilotWaveExecutor:
 
         attempt.status = "failed"
         if isinstance(exc, NpaWorkflowError):
-            attempt.error = str(exc)
+            attempt.error = sanitize_reason(exc)
         else:
-            attempt.error = f"{type(exc).__name__}: {exc}"
+            attempt.error = sanitize_reason(f"{type(exc).__name__}: {exc}")
         attempt.ended_at = utc_now()
         # Cancel whenever something may still be running. With a job id we cancel the
         # managed job; with only a name (e.g. the submit reported no id) the canceller
@@ -589,7 +599,9 @@ class SkyPilotWaveExecutor:
                 f"(job_id={job_id}, name={job_name})"
             )
 
-    def _poll(self, job_id: str, attempt: WaveAttempt, *, observe_tasks: bool = False) -> str:
+    def _poll(
+        self, job_id: str, attempt: WaveAttempt, *, observe_tasks: bool = False
+    ) -> str:
         deadline = self._clock() + max(1, self.options.max_wait_seconds)
         last = "UNKNOWN"
         consecutive_status_errors = 0
@@ -601,15 +613,19 @@ class SkyPilotWaveExecutor:
                 # job itself is unaffected, so keep polling (bounded) instead of
                 # bubbling out of the retry logic and orphaning a running GPU job.
                 consecutive_status_errors += 1
-                attempt.status_errors.append(f"{type(exc).__name__}: {exc}"[:200])
+                safe_error = sanitize_reason(f"{type(exc).__name__}: {exc}", limit=200)
+                attempt.status_errors.append(safe_error)
+                # Persist the failed verification attempt without touching any
+                # heartbeat/progress field.
+                self.ledger.record(attempt)
                 if consecutive_status_errors > MAX_CONSECUTIVE_STATUS_ERRORS:
                     raise NpaWorkflowError(
                         f"wave {attempt.key}: {consecutive_status_errors} consecutive "
-                        f"status queries failed for job {job_id}; last error: {exc}"
+                        f"status queries failed for job {job_id}; last error: {safe_error}"
                     ) from exc
                 self._log(
                     f"wave {attempt.key}: status query {consecutive_status_errors} failed "
-                    f"({exc}); job {job_id} still running, retrying"
+                    f"({safe_error}); job {job_id} still running, retrying"
                 )
                 if self._clock() >= deadline:
                     if self.options.cancel_on_timeout:
@@ -622,8 +638,15 @@ class SkyPilotWaveExecutor:
                 continue
             consecutive_status_errors = 0
             last = str(getattr(current, "status", "") or "UNKNOWN").upper()
-            if observe_tasks:
-                self._observe_concurrency(job_id, attempt)
+            self._observe_concurrency(
+                job_id,
+                attempt,
+                scheduler_state=last,
+                report_concurrency=observe_tasks,
+            )
+            # Every successful scheduler observation is durable before the next
+            # sleep, so a driver crash cannot erase the last-known transition.
+            self.ledger.record(attempt)
             if is_terminal(last):
                 return last
             if self._clock() >= deadline:
@@ -677,15 +700,24 @@ class SkyPilotWaveExecutor:
         try:
             return [str(item) for item in lookup(job_name)]
         except Exception as exc:  # noqa: BLE001 - fall back to the parsed id
-            self._log(f"job-id lookup by name failed for {job_name}: {exc}")
+            self._log(
+                f"job-id lookup by name failed for {job_name}: {sanitize_reason(exc)}"
+            )
             return []
 
-    def _observe_concurrency(self, job_id: str, attempt: WaveAttempt) -> None:
-        """Record how many member tasks are RUNNING at this instant."""
+    def _observe_concurrency(
+        self,
+        job_id: str,
+        attempt: WaveAttempt,
+        *,
+        scheduler_state: str = "",
+        report_concurrency: bool = True,
+    ) -> None:
+        """Record one real scheduler observation and exact member-task timeline."""
 
         tasks = self._timeline(job_id)
-        if not tasks:
-            return
+        if tasks:
+            attempt.tasks = tasks
         running = [
             str(task.get("task_name") or task.get("task_id"))
             for task in tasks
@@ -693,6 +725,7 @@ class SkyPilotWaveExecutor:
         ]
         observation = {
             "observed_at": utc_now(),
+            "scheduler_state": scheduler_state or "UNKNOWN",
             "running": sorted(running),
             "running_count": len(running),
             "statuses": {
@@ -701,14 +734,18 @@ class SkyPilotWaveExecutor:
             },
         }
         attempt.observations.append(observation)
-        attempt.max_concurrent_observed = max(attempt.max_concurrent_observed, len(running))
-        if len(running) > 1:
+        attempt.max_concurrent_observed = max(
+            attempt.max_concurrent_observed, len(running)
+        )
+        if report_concurrency and len(running) > 1:
             self._log(
                 f"wave {attempt.key}: {len(running)} tasks running concurrently "
                 f"({', '.join(sorted(running))})"
             )
 
-    def _job_name(self, steps: Sequence[PlanStep], *, group: str, attempt: WaveAttempt) -> str:
+    def _job_name(
+        self, steps: Sequence[PlanStep], *, group: str, attempt: WaveAttempt
+    ) -> str:
         label = group or steps[0].state
         suffix = f"-a{attempt.attempt}" if attempt.attempt > 1 else ""
         iteration = steps[0].iteration
@@ -750,7 +787,7 @@ class SkyPilotWaveExecutor:
         try:
             return list(timeline_fn(job_id))
         except Exception as exc:  # noqa: BLE001 - evidence collection is best-effort
-            self._log(f"timeline unavailable for job {job_id}: {exc}")
+            self._log(f"timeline unavailable for job {job_id}: {sanitize_reason(exc)}")
             return []
 
     def _cancel(self, job_id: str, job_name: str) -> None:
@@ -758,7 +795,9 @@ class SkyPilotWaveExecutor:
         if canceller is None:
             try:
                 from npa.orchestration.skypilot._bin import resolve_config
-                from npa.orchestration.skypilot.workflow_state import cancel_workflow_job
+                from npa.orchestration.skypilot.workflow_state import (
+                    cancel_workflow_job,
+                )
             except Exception:  # noqa: BLE001
                 return
 
@@ -770,7 +809,7 @@ class SkyPilotWaveExecutor:
             canceller(job_id=str(job_id), run_id=job_name, cluster=job_name)
             self._log(f"cancelled job {job_id} ({job_name}) after timeout")
         except Exception as exc:  # noqa: BLE001 - never mask the timeout error
-            self._log(f"cancel failed for job {job_id}: {exc}")
+            self._log(f"cancel failed for job {job_id}: {sanitize_reason(exc)}")
 
 
 def _sanitize_job_name(name: str) -> str:
@@ -798,7 +837,9 @@ class RuntimeLedger:
         resume: bool = False,
     ) -> None:
         self.store = store
-        self.state = RuntimeRunState(workflow=workflow, run_id=run_id, api_version=api_version)
+        self.state = RuntimeRunState(
+            workflow=workflow, run_id=run_id, api_version=api_version
+        )
         if store is not None and resume:
             existing = store.read_runtime_state()
             if existing is not None and existing.run_id == run_id:
@@ -988,7 +1029,9 @@ def s3_trigger_waiter(
                 }
                 if ledger is not None:
                     ledger.record_watermark(state.name, watermark)
-                log(f"trigger {state.name}: {len(keys)} object(s) at {uri} after {polls} poll(s)")
+                log(
+                    f"trigger {state.name}: {len(keys)} object(s) at {uri} after {polls} poll(s)"
+                )
                 return watermark
             if trigger.max_polls and polls >= trigger.max_polls:
                 raise NpaWorkflowError(
@@ -1047,7 +1090,8 @@ def run_workflow_runtime(
     state_store: RunStateStore | None = None,
     decision_reader: Callable[[str, str], str] | None = None,
     executor: SkyPilotWaveExecutor | None = None,
-    trigger_waiter: Callable[[StateSpec, str, RunContext], dict[str, Any]] | None = None,
+    trigger_waiter: Callable[[StateSpec, str, RunContext], dict[str, Any]]
+    | None = None,
     logger: Callable[[str], None] | None = None,
 ) -> RuntimeReport:
     """Drive a spec to completion through the runtime tier.
@@ -1140,12 +1184,12 @@ def run_workflow_runtime(
         steps = list(report.get("steps") or [])
     except NpaWorkflowError as exc:
         status = "failed"
-        error = str(exc)
+        error = sanitize_reason(exc)
     except Exception as exc:  # noqa: BLE001 - a long-running driver must always
         # reach a terminal ledger status; the error type is kept in the report so
         # an unexpected crash is not mistaken for a workflow-level failure.
         status = "failed"
-        error = f"{type(exc).__name__}: {exc}"
+        error = sanitize_reason(f"{type(exc).__name__}: {exc}")
         log(f"runtime driver crashed: {error}")
     ledger.set_status(status)
 
@@ -1176,7 +1220,9 @@ def _resolved_config(spec: NpaWorkflowSpec, run_id: str) -> dict[str, Any]:
     return dict(ctx.config)
 
 
-def plan_preview(spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str = "") -> ExecutionPlan:
+def plan_preview(
+    spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str = ""
+) -> ExecutionPlan:
     """Convenience for callers that want the flattened plan next to a runtime run."""
 
     return build_plan(spec, run_id=run_id, assume_decision=assume_decision)
@@ -1189,7 +1235,11 @@ def secret_env_names(
 
     names: list[str] = []
     for name in [*extra, "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]:
-        if name and name not in names and (os.environ.get(name) or (values or {}).get(name)):
+        if (
+            name
+            and name not in names
+            and (os.environ.get(name) or (values or {}).get(name))
+        ):
             names.append(name)
     return tuple(names)
 

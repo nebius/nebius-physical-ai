@@ -59,7 +59,8 @@ npa configure
 You can also store just this key non-interactively:
 
 ```bash
-npa configure --token-factory-key v1.XXXXXXXXXXXXXXXXXXXX
+export NEBIUS_TOKEN_FACTORY_KEY='v1.XXXXXXXXXXXXXXXXXXXX'
+npa configure --no-interactive --save-env-credentials
 ```
 
 **Or by hand** in `~/.npa/credentials.yaml`:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.cluster import app
@@ -26,6 +27,7 @@ def _state() -> ClusterState:
         subnet_id="vpcsubnet-a",
         created_at="2026-05-14T21:46:00Z",
         last_seen_state="PROVISIONING",
+        last_seen_at="2026-05-14T21:50:00Z",
     )
 
 
@@ -45,7 +47,15 @@ def test_status_for_named_local_cluster(monkeypatch) -> None:
             )
 
         def list_node_groups(self, cluster_id):
-            return [NodeGroupInfo(id="mk8snodegroup-a", name="cluster-a-cpu", cluster_id=cluster_id, status="READY", node_count=1)]
+            return [
+                NodeGroupInfo(
+                    id="mk8snodegroup-a",
+                    name="cluster-a-cpu",
+                    cluster_id=cluster_id,
+                    status="READY",
+                    node_count=1,
+                )
+            ]
 
     saved: list[ClusterState] = []
     monkeypatch.setattr(status_mod, "MK8sClient", FakeClient)
@@ -81,7 +91,15 @@ def test_list_json_merges_remote_and_local(monkeypatch) -> None:
             return self.list_clusters(project_id)[0]
 
         def list_node_groups(self, cluster_id):
-            return [NodeGroupInfo(id="mk8snodegroup-a", name="cluster-a-cpu", cluster_id=cluster_id, status="READY", node_count=1)]
+            return [
+                NodeGroupInfo(
+                    id="mk8snodegroup-a",
+                    name="cluster-a-cpu",
+                    cluster_id=cluster_id,
+                    status="READY",
+                    node_count=1,
+                )
+            ]
 
     monkeypatch.setenv("NPA_CLUSTER_PROJECT_ID", "project-a")
     monkeypatch.setattr(status_mod, "MK8sClient", FakeClient)
@@ -98,7 +116,9 @@ def test_list_json_merges_remote_and_local(monkeypatch) -> None:
     assert payload[0]["region"] == "eu-north1"
 
 
-def test_remote_only_cluster_uses_inventory_region_then_explicit_unknown(monkeypatch) -> None:
+def test_remote_only_cluster_uses_inventory_region_then_explicit_unknown(
+    monkeypatch,
+) -> None:
     remote = ClusterInfo(
         id="mk8scluster-remote",
         name="remote",
@@ -164,7 +184,9 @@ def test_list_resolves_project_alias_like_up_and_down(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     assert seen["project_id"] == "project-from-alias"
     # And `status --project` parses the same option (no "No such option").
-    status_result = runner.invoke(app, ["status", "--project", "test-rtx", "--format", "json"])
+    status_result = runner.invoke(
+        app, ["status", "--project", "test-rtx", "--format", "json"]
+    )
     assert status_result.exit_code == 0, status_result.output
 
 
@@ -291,7 +313,10 @@ def test_status_stays_quiet_when_every_node_group_is_running(monkeypatch) -> Non
 
         def get_cluster(self, name, *, project_id=""):
             return ClusterInfo(
-                id="mk8scluster-a", name="cluster-a", project_id=project_id, status="RUNNING"
+                id="mk8scluster-a",
+                name="cluster-a",
+                project_id=project_id,
+                status="RUNNING",
             )
 
         def list_node_groups(self, cluster_id):
@@ -314,3 +339,150 @@ def test_status_stays_quiet_when_every_node_group_is_running(monkeypatch) -> Non
 
     assert result.exit_code == 0, result.output
     assert "not RUNNING" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "category"),
+    [
+        (
+            "dial tcp: lookup api.synthetic.invalid: no such host",
+            "DNS_RESOLUTION_FAILED",
+            "DNS",
+        ),
+        ("clusters is forbidden by RBAC", "LIVE_QUERY_FORBIDDEN", "RBAC"),
+        ("401 Unauthorized", "LIVE_QUERY_AUTHENTICATION_FAILED", "AUTHENTICATION"),
+    ],
+)
+def test_status_live_failures_are_unavailable_nonzero_with_last_known(
+    monkeypatch, error: str, code: str, category: str
+) -> None:
+    class FailingClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            raise RuntimeError(error)
+
+    monkeypatch.setattr(status_mod, "MK8sClient", FailingClient)
+    monkeypatch.setattr(status_mod, "load_cluster_state", lambda name: _state())
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [_state()])
+
+    result = runner.invoke(app, ["status", "--name", "cluster-a", "--format", "json"])
+
+    assert result.exit_code == 2, result.output
+    row = json.loads(result.output)[0]
+    assert row["state"] == "VERIFICATION_UNAVAILABLE"
+    assert row["live_verified"] is False
+    assert row["automation_may_trust_state"] is False
+    assert row["last_known"]["state"] == "PROVISIONING"
+    assert row["last_known"]["observed_at"] == "2026-05-14T21:50:00Z"
+    assert row["live_verification"]["error_code"] == code
+    assert row["live_verification"]["category"] == category
+    assert row["live_verification"]["retry_command"].startswith("npa cluster status")
+
+    human = runner.invoke(app, ["status", "--name", "cluster-a"])
+    assert human.exit_code == 2
+    assert human.output.startswith("VERIFICATION_UNAVAILABLE")
+    assert "last-known state: PROVISIONING" in human.output
+
+
+def test_cached_cluster_status_is_explicit_untrusted_and_does_not_query(
+    monkeypatch,
+) -> None:
+    class NoQueryClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, *args, **kwargs):
+            raise AssertionError("--cached must not query the provider")
+
+    monkeypatch.setattr(status_mod, "MK8sClient", NoQueryClient)
+    monkeypatch.setattr(status_mod, "load_cluster_state", lambda name: _state())
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [_state()])
+
+    result = runner.invoke(
+        app,
+        ["status", "--name", "cluster-a", "--cached", "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    row = json.loads(result.output)[0]
+    assert row["state"] == "CACHED"
+    assert row["verification_status"] == "CACHED"
+    assert row["last_known"]["state"] == "PROVISIONING"
+    assert row["live_verified"] is False
+
+
+def test_authoritative_absence_and_no_configuration_are_distinct(monkeypatch) -> None:
+    class AbsentClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, *args, **kwargs):
+            raise status_mod.ClusterNotFoundError("not found")
+
+    monkeypatch.setattr(status_mod, "MK8sClient", AbsentClient)
+    monkeypatch.setattr(status_mod, "load_cluster_state", lambda name: _state())
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [_state()])
+    absent = runner.invoke(app, ["status", "--name", "cluster-a", "--format", "json"])
+    assert absent.exit_code == 0
+    absent_row = json.loads(absent.output)[0]
+    assert absent_row["state"] == "ABSENT"
+    assert absent_row["live_verified"] is True
+
+    monkeypatch.setattr(status_mod, "load_cluster_state", lambda name: None)
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [])
+    monkeypatch.setattr(
+        status_mod, "_resolve_environment_for_status", lambda *args: ("", "")
+    )
+    unconfigured = runner.invoke(
+        app, ["status", "--name", "never-configured", "--format", "json"]
+    )
+    assert unconfigured.exit_code == 0
+    unconfigured_row = json.loads(unconfigured.output)[0]
+    assert unconfigured_row["state"] == "NOT_CONFIGURED"
+    assert unconfigured_row["last_known"]["source"] == "configuration"
+
+    unconfigured_list = runner.invoke(app, ["list", "--format", "json"])
+    assert unconfigured_list.exit_code == 0
+    list_row = json.loads(unconfigured_list.output)[0]
+    assert list_row["name"] == "<not-configured>"
+    assert list_row["state"] == "NOT_CONFIGURED"
+
+
+def test_partial_node_group_provisioning_is_verified_degraded(monkeypatch) -> None:
+    class DegradedClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return ClusterInfo(
+                id="mk8scluster-a",
+                name="cluster-a",
+                project_id=project_id,
+                status="RUNNING",
+            )
+
+        def list_node_groups(self, cluster_id):
+            return [
+                NodeGroupInfo(
+                    id="gpu-a",
+                    name="cluster-a-gpu",
+                    cluster_id=cluster_id,
+                    status="PROVISIONING",
+                    node_count=0,
+                )
+            ]
+
+    monkeypatch.setattr(status_mod, "MK8sClient", DegradedClient)
+    monkeypatch.setattr(status_mod, "load_cluster_state", lambda name: _state())
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [_state()])
+    monkeypatch.setattr(status_mod, "save_cluster_state", lambda state: None)
+
+    result = runner.invoke(app, ["status", "--name", "cluster-a", "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    row = json.loads(result.output)[0]
+    assert row["state"] == "DEGRADED"
+    assert row["provider_state"] == "RUNNING"
+    assert row["live_verified"] is True

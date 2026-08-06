@@ -10,6 +10,7 @@ Multi-stage training workflow orchestration.
 Options
 --help  Show this message and exit.
 Commands
+prepare-run  Prepare a project/workflow-scoped fresh or explicit-resume run ID.
 submit  Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller.
 run  Run a named workflow end-to-end.
 status  Check the status of a workflow run.
@@ -39,6 +40,7 @@ trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 
 | Command | Description |
 | --- | --- |
+| `prepare-run` | Prepare a project/workflow-scoped fresh or explicit-resume run ID. |
 | `submit` | Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller. |
 | `run` | Run a named workflow end-to-end. |
 | `status` | Check the status of a workflow run. |
@@ -61,7 +63,7 @@ trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 
 ```bash
 npa workbench workflow --help
-npa workbench workflow submit --help
+npa workbench workflow prepare-run --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `workflow`.

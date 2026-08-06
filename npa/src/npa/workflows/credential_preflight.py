@@ -51,7 +51,14 @@ def _looks_like_auth_failure(text: str) -> bool:
     lowered = (text or "").lower()
     return any(
         marker in lowered
-        for marker in ("401", "403", "unauthorized", "forbidden", "invalid api key", "authentication")
+        for marker in (
+            "401",
+            "403",
+            "unauthorized",
+            "forbidden",
+            "invalid api key",
+            "authentication",
+        )
     )
 
 
@@ -206,7 +213,8 @@ def check_token_factory(credentials: Any, probes: CredentialProbes) -> CheckResu
             remedy=(
                 "Required for `npa agent` chat and zero-GPU token-factory tools. Get a "
                 "key (starts with 'v1.') at https://tokenfactory.nebius.com/ and run "
-                "`npa configure --token-factory-key <key>`."
+                "export NEBIUS_TOKEN_FACTORY_KEY, then run `npa configure "
+                "--no-interactive --save-env-credentials`."
             ),
         )
     if probes.token_factory_verifier is None:

@@ -350,8 +350,9 @@ model you have not yet unlocked):
 
 ```bash
 npa workbench health access
-# or pass keys explicitly / persist them:
-npa workbench health access --hf-token hf_xxx --ngc-key nvapi-xxx --set-credentials
+# or export keys and persist them without putting secret values in argv:
+export HF_TOKEN='<your-token>' NGC_API_KEY='<your-key>'
+npa workbench health access --save-env-credentials
 # scope to one capability, or run offline (presence-only):
 npa workbench health access --capability groot
 ```

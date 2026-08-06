@@ -25,6 +25,79 @@ GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
 RUNNER = CliRunner()
 
 
+def test_prepare_run_is_fresh_by_default_and_resume_is_explicit(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow import first_run_state
+
+    monkeypatch.setattr(first_run_state, "DEFAULT_ROOT", tmp_path / "scoped")
+    monkeypatch.setattr(first_run_state, "LEGACY_PATH", tmp_path / "missing-legacy")
+    monkeypatch.setattr(
+        first_run_state,
+        "resolve_project_identity",
+        lambda project: (
+            "project-stable",
+            project or "default",
+            "configured_project_id",
+        ),
+    )
+
+    first = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "prepare-run",
+            str(FANOUT),
+            "--project",
+            "synthetic",
+            "--json",
+        ],
+    )
+    assert first.exit_code == 0, first.output
+    first_payload = json.loads(first.output)
+    assert first_payload["generated_new"] is True
+    assert first_payload["resume_explicit"] is False
+
+    second = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "prepare-run",
+            str(FANOUT),
+            "--project",
+            "synthetic",
+            "--json",
+        ],
+    )
+    assert second.exit_code == 0, second.output
+    second_payload = json.loads(second.output)
+    assert second_payload["run_id"] != first_payload["run_id"]
+    assert second_payload["previous_run"]["run_id"] == first_payload["run_id"]
+    assert second_payload["previous_run"]["age_seconds"] is not None
+
+    resumed = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "prepare-run",
+            str(FANOUT),
+            "--project",
+            "synthetic",
+            "--resume-run",
+            first_payload["run_id"],
+            "--json",
+        ],
+    )
+    assert resumed.exit_code == 0, resumed.output
+    resumed_payload = json.loads(resumed.output)
+    assert resumed_payload["run_id"] == first_payload["run_id"]
+    assert resumed_payload["generated_new"] is False
+    assert resumed_payload["resume_explicit"] is True
+
+
 @pytest.fixture()
 def satisfied_preflight(mocker, monkeypatch):
     """Meet `submit`'s prerequisites so these tests exercise the runtime wiring.
@@ -82,7 +155,9 @@ def fake_runtime(mocker, satisfied_preflight):
                     "status": "succeeded",
                 },
             ],
-            decisions=[{"decision": "promote_checkpoint", "uri": "s3://b/gate/decision.json"}],
+            decisions=[
+                {"decision": "promote_checkpoint", "uri": "s3://b/gate/decision.json"}
+            ],
             run_prefix_uri="s3://b/prefix",
             runtime_state_uri="s3://b/prefix/npa-workflow/runtime.json",
         )
@@ -132,7 +207,8 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
     assert options.retries == 2
     assert options.max_concurrency == 2
     assert options.cancel_on_timeout is False
-    assert options.resume is True
+    # A run without an explicit --resume-run is always fresh.
+    assert options.resume is False
     # --var reaches the spec's config, not just the renderer.
     assert fake_runtime["spec"].config["max_images"] == "1"
     assert fake_runtime["render_options"].registry == "cr.example.invalid/reg"
@@ -227,8 +303,15 @@ def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> N
     result = RUNNER.invoke(
         app,
         [
-            "workbench", "workflow", "submit", str(FANOUT),
-            "--run-id", "rt-cli-2", "--runtime", "--var", "bucket=rt-bucket",
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-cli-2",
+            "--runtime",
+            "--var",
+            "bucket=rt-bucket",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -270,7 +353,9 @@ def test_submit_runtime_failure_exits_non_zero(mocker, satisfied_preflight) -> N
     assert "terminal status FAILED" in payload["error"]
 
 
-def test_submit_without_runtime_uses_the_one_shot_path(mocker, monkeypatch, satisfied_preflight) -> None:
+def test_submit_without_runtime_uses_the_one_shot_path(
+    mocker, monkeypatch, satisfied_preflight
+) -> None:
     """Backwards compatibility: the default submit path never calls the driver."""
 
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
@@ -359,7 +444,15 @@ def test_plan_only_wins_over_runtime(mocker, monkeypatch, satisfied_preflight) -
 def test_plan_spec_waves_text_and_json() -> None:
     text_result = RUNNER.invoke(
         app,
-        ["workbench", "workflow", "plan-spec", str(FANOUT), "--run-id", "w1", "--waves"],
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(FANOUT),
+            "--run-id",
+            "w1",
+            "--waves",
+        ],
     )
     assert text_result.exit_code == 0, text_result.output
     assert "waves: 2" in text_result.output

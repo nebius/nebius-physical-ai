@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import stat
 from types import SimpleNamespace
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -11,6 +13,7 @@ from npa.clients.config import SSHConfig
 from npa.clients.credentials import (
     CredentialsConfig,
     load_credentials,
+    persist_supported_env_credentials,
     set_token_factory_api_key,
     shared_credential_env,
     warn_if_hf_token_missing,
@@ -217,6 +220,105 @@ def test_set_token_factory_api_key_merges_into_existing_credentials(
     assert stored["storage"]["aws_access_key_id"] == "AKIAEXISTING"
 
 
+def test_persist_env_credentials_is_atomic_private_redacted_and_preserves_unrelated(
+    tmp_path: Path,
+) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {"UNRELATED_TOKEN": "keep-me"},
+                "ssh": {"host": "example.invalid"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    environment = {
+        "HF_TOKEN": "hf_super_secret_value",
+        "NEBIUS_TOKEN_FACTORY_KEY": "tf_super_secret_value",
+        "NGC_API_KEY": "nvapi-super-secret",
+        "AWS_ACCESS_KEY_ID": "synthetic-access",
+        "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
+        "NPA_STORAGE_ENDPOINT": "https://storage.example.invalid",
+        "NPA_CHECKPOINT_BUCKET": "s3://synthetic-bucket/checkpoints/",
+    }
+
+    report = persist_supported_env_credentials(
+        path=credentials_path, environ=environment
+    )
+    # Repeating the same update is safe and does not duplicate or discard fields.
+    second = persist_supported_env_credentials(
+        path=credentials_path, environ=environment
+    )
+
+    stored = yaml.safe_load(credentials_path.read_text(encoding="utf-8"))
+    assert stored["tokens"]["UNRELATED_TOKEN"] == "keep-me"
+    assert stored["tokens"]["HF_TOKEN"] == environment["HF_TOKEN"]
+    assert (
+        stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"]
+        == environment["NEBIUS_TOKEN_FACTORY_KEY"]
+    )
+    assert stored["ngc"]["api_key"] == environment["NGC_API_KEY"]
+    assert stored["ssh"]["host"] == "example.invalid"
+    assert stat.S_IMODE(credentials_path.stat().st_mode) == 0o600
+    assert report == second
+    serialized_report = repr(report)
+    assert all(secret not in serialized_report for secret in environment.values())
+    assert set(report["persisted"]) == set(environment)
+
+
+def test_persist_partial_s3_credentials_reports_names_not_values(
+    tmp_path: Path,
+) -> None:
+    secret = "synthetic-partial-secret"
+
+    report = persist_supported_env_credentials(
+        path=tmp_path / "credentials.yaml",
+        environ={"AWS_SECRET_ACCESS_KEY": secret},
+    )
+
+    assert report["detected"] == ["AWS_SECRET_ACCESS_KEY"]
+    assert report["persisted"] == ["AWS_SECRET_ACCESS_KEY"]
+    assert "incomplete S3 credential pair" in report["warnings"][0]
+    assert secret not in repr(report)
+
+
+def test_persist_env_credentials_refuses_symlink_destination(tmp_path: Path) -> None:
+    destination = tmp_path / "credentials.yaml"
+    destination.symlink_to(tmp_path / "elsewhere.yaml")
+
+    with pytest.raises(OSError, match="symlink"):
+        persist_supported_env_credentials(
+            path=destination, environ={"HF_TOKEN": "hf_not_written"}
+        )
+
+    assert not (tmp_path / "elsewhere.yaml").exists()
+
+
+def test_atomic_credential_replace_failure_preserves_previous_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.clients import credentials as credentials_module
+
+    destination = tmp_path / "credentials.yaml"
+    destination.write_text("tokens:\n  HF_TOKEN: hf_old\n", encoding="utf-8")
+    monkeypatch.setattr(
+        credentials_module.os,
+        "replace",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            OSError("synthetic replace failure")
+        ),
+    )
+
+    with pytest.raises(OSError, match="synthetic replace failure"):
+        persist_supported_env_credentials(
+            path=destination, environ={"HF_TOKEN": "hf_new"}
+        )
+
+    assert destination.read_text(encoding="utf-8") == "tokens:\n  HF_TOKEN: hf_old\n"
+    assert list(tmp_path.glob(".credentials.yaml.*")) == []
+
+
 def test_write_credentials_file_does_not_normalize_legacy_token_factory_key(
     tmp_path: Path,
 ) -> None:
@@ -409,7 +511,9 @@ def test_load_credentials_warns_when_readable_by_other_users(tmp_path: Path) -> 
     ]
 
 
-def test_cosmos_deploy_dry_run_fails_when_hf_token_missing(tmp_path: Path, mocker) -> None:
+def test_cosmos_deploy_dry_run_fails_when_hf_token_missing(
+    tmp_path: Path, mocker
+) -> None:
     mocker.patch("npa.cli.workbench.load_credentials", return_value=CredentialsConfig())
     mocker.patch("npa.cli.cosmos.resolve_credentials", return_value=CredentialsConfig())
     apply = mocker.patch("npa.cli.cosmos.provisioner.apply")
@@ -442,7 +546,9 @@ def test_cosmos_deploy_dry_run_fails_when_hf_token_missing(tmp_path: Path, mocke
     apply.assert_not_called()
 
 
-def test_cosmos_deploy_dry_run_prints_redacted_shared_credentials(tmp_path: Path, mocker) -> None:
+def test_cosmos_deploy_dry_run_prints_redacted_shared_credentials(
+    tmp_path: Path, mocker
+) -> None:
     credentials = CredentialsConfig(
         tokens={"HF_TOKEN": "hf_123456789"},
         s3_access_key_id="AKIA123456",
@@ -504,7 +610,9 @@ def test_ssh_forwards_tokens_into_remote_environment(mocker) -> None:
     paramiko_client.get_transport.return_value = transport
     paramiko_client.open_sftp.return_value = sftp
     mocker.patch("paramiko.SSHClient", return_value=paramiko_client)
-    mocker.patch("npa.clients.ssh.uuid.uuid4", return_value=SimpleNamespace(hex="abc123"))
+    mocker.patch(
+        "npa.clients.ssh.uuid.uuid4", return_value=SimpleNamespace(hex="abc123")
+    )
 
     client = SSHClient(
         SSHConfig(

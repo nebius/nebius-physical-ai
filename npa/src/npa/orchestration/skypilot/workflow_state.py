@@ -260,9 +260,16 @@ def build_manifest(
                 "name": stage,
                 "sky_job_id": str(job_id or ""),
                 "sky_task_id": "",
-                "log_uri": _join_s3_uri(state.bucket, state.prefix, "logs", stage, "run.log"),
-                "status_uri": _join_s3_uri(state.bucket, state.prefix, "logs", stage, "status.json"),
-                "artifact_uri": _join_s3_uri(state.bucket, state.prefix, "artifacts", stage) + "/",
+                "log_uri": _join_s3_uri(
+                    state.bucket, state.prefix, "logs", stage, "run.log"
+                ),
+                "status_uri": _join_s3_uri(
+                    state.bucket, state.prefix, "logs", stage, "status.json"
+                ),
+                "artifact_uri": _join_s3_uri(
+                    state.bucket, state.prefix, "artifacts", stage
+                )
+                + "/",
             }
             for stage in stages
         },
@@ -308,7 +315,9 @@ def read_stage_log(state: WorkflowS3Config, stage: str) -> str:
 
 
 def list_artifacts(state: WorkflowS3Config, stage: str | None = None) -> list[str]:
-    prefix = "/".join(part for part in (state.prefix, "artifacts", stage or "") if part).strip("/")
+    prefix = "/".join(
+        part for part in (state.prefix, "artifacts", stage or "") if part
+    ).strip("/")
     if prefix and not prefix.endswith("/"):
         prefix += "/"
     objects: list[str] = []
@@ -359,14 +368,17 @@ def list_runs(
             runs.append(
                 {
                     "run_id": manifest.get("run_id", run_prefix.rsplit("/", 1)[-1]),
-                    "workflow_name": manifest.get("workflow_name") or manifest.get("workflow", ""),
+                    "workflow_name": manifest.get("workflow_name")
+                    or manifest.get("workflow", ""),
                     "run_prefix_uri": run_state.uri,
                     "updated_at": manifest.get("updated_at", ""),
                     "sky_job_id": manifest.get("sky_job_id", ""),
                 }
             )
             if len(runs) >= limit:
-                return sorted(runs, key=lambda item: str(item.get("updated_at", "")), reverse=True)
+                return sorted(
+                    runs, key=lambda item: str(item.get("updated_at", "")), reverse=True
+                )
     return sorted(runs, key=lambda item: str(item.get("updated_at", "")), reverse=True)
 
 
@@ -440,7 +452,9 @@ def discover_workflow_run_state(
                 continue
             # Prefer the newest declaration if a retried/migrated run left more
             # than one durable copy.  Prefix is the deterministic tie-breaker.
-            candidates.append((str(manifest.get("updated_at") or ""), run_prefix, state))
+            candidates.append(
+                (str(manifest.get("updated_at") or ""), run_prefix, state)
+            )
     if not candidates:
         return None
     candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
@@ -462,7 +476,9 @@ def get_json(state: WorkflowS3Config, *parts: str) -> dict[str, Any]:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise WorkflowStateError(f"Invalid JSON at {_join_s3_uri(state.bucket, _key(state.prefix, *parts))}") from exc
+        raise WorkflowStateError(
+            f"Invalid JSON at {_join_s3_uri(state.bucket, _key(state.prefix, *parts))}"
+        ) from exc
     if not isinstance(payload, dict):
         raise WorkflowStateError("Workflow state JSON must be an object")
     return payload
@@ -473,7 +489,9 @@ def get_text(state: WorkflowS3Config, *parts: str) -> str:
     try:
         response = state.client().get_object(Bucket=state.bucket, Key=key)
     except Exception as exc:  # boto3 exposes provider-specific ClientError payloads.
-        raise WorkflowStateError(f"S3 object not found or unreadable: {_join_s3_uri(state.bucket, key)}") from exc
+        raise WorkflowStateError(
+            f"S3 object not found or unreadable: {_join_s3_uri(state.bucket, key)}"
+        ) from exc
     return response["Body"].read().decode("utf-8", errors="replace")
 
 
@@ -667,7 +685,7 @@ def _instrument_stage_doc(
 
 
 def _instrumented_run_script(original_run: str) -> str:
-    prelude = r'''set -euo pipefail
+    prelude = r"""set -euo pipefail
 npa_workflow_python="$(command -v python3 || command -v python || true)"
 npa_workflow_mount_root="${NPA_WORKFLOW_MOUNT_ROOT:-/mnt/npa-workflow-state}"
 npa_workflow_prefix="${NPA_WORKFLOW_S3_PREFIX:?NPA_WORKFLOW_S3_PREFIX is required}"
@@ -691,7 +709,7 @@ npa_workflow_redact_stream() {
 npa_workflow_write_manifest() {
   [ -n "${npa_workflow_python}" ] || return 0
   "${npa_workflow_python}" -c '
-import json, os
+import json, os, tempfile
 from pathlib import Path
 raw = os.environ.get("NPA_WORKFLOW_MANIFEST_JSON", "")
 if not raw:
@@ -721,7 +739,21 @@ for info in stages.values():
         info["sky_job_id"] = str(job_id)
 if stage in stages and isinstance(stages[stage], dict):
     stages[stage]["sky_task_id"] = str(task_id or "")
-target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+fd, raw_tmp = tempfile.mkstemp(prefix=".manifest.", dir=target.parent)
+tmp = Path(raw_tmp)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, target)
+except BaseException:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    tmp.unlink(missing_ok=True)
+    raise
 '
 }
 npa_workflow_write_status() {
@@ -735,7 +767,7 @@ npa_workflow_write_status() {
   NPA_WORKFLOW_STATUS_ERROR="${error_summary}" \
   NPA_WORKFLOW_STATUS_END="${end_time}" \
   "${npa_workflow_python}" -c '
-import json, os
+import json, os, tempfile
 from pathlib import Path
 mount = Path(os.environ["NPA_WORKFLOW_MOUNT_ROOT_RESOLVED"])
 prefix = os.environ["NPA_WORKFLOW_S3_PREFIX_RESOLVED"]
@@ -766,7 +798,21 @@ payload = {
     "error_summary": os.environ.get("NPA_WORKFLOW_STATUS_ERROR", ""),
 }
 target = mount / prefix / "logs" / stage / "status.json"
-target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+fd, raw_tmp = tempfile.mkstemp(prefix=".status.", dir=target.parent)
+tmp = Path(raw_tmp)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, target)
+except BaseException:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    tmp.unlink(missing_ok=True)
+    raise
 '
 }
 npa_workflow_finalize() {
@@ -786,21 +832,25 @@ npa_workflow_write_manifest
 npa_workflow_write_status "RUNNING" "SEAM" "" ""
 exec > >(npa_workflow_redact_stream | tee -a "${npa_workflow_log_dir}/run.log") 2>&1
 trap npa_workflow_finalize EXIT
-'''
+"""
     if original_run.strip():
         return prelude + "\n" + original_run.rstrip() + "\n"
     return prelude + "\n"
 
 
 def _join_s3_uri(bucket: str, *parts: str) -> str:
-    key = "/".join(part.strip("/") for part in parts if part is not None and part.strip("/") != "")
+    key = "/".join(
+        part.strip("/") for part in parts if part is not None and part.strip("/") != ""
+    )
     if parts and str(parts[-1]).endswith("/"):
         key = key.rstrip("/") + "/"
     return f"s3://{bucket}/{key}" if key else f"s3://{bucket}/"
 
 
 def _key(prefix: str, *parts: str) -> str:
-    return "/".join(part.strip("/") for part in (prefix, *parts) if part and part.strip("/"))
+    return "/".join(
+        part.strip("/") for part in (prefix, *parts) if part and part.strip("/")
+    )
 
 
 def _is_nebius_endpoint(endpoint_url: str) -> bool:

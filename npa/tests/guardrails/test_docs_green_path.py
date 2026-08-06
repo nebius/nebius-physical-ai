@@ -90,7 +90,8 @@ def test_documented_submits_use_restart_safe_automatic_source_staging(
     assert "content-addressed" in text
     assert "persist" in text.lower()
     primary = next(block for block in blocks if "--runtime" in block)
-    assert "--resume" in primary
+    assert "prepare-run" in text
+    assert "--resume" not in primary
     assert "--stage-src" not in primary
     assert "NPA_SRC_S3_URI=" not in primary
 
@@ -148,7 +149,8 @@ def test_readme_documents_the_ordered_green_path() -> None:
         assert index != -1, f"README no longer mentions `{command}`"
         positions.append(index)
     assert positions == sorted(positions), (
-        "the README green-path commands are no longer in runnable order: " + str(ordered)
+        "the README green-path commands are no longer in runnable order: "
+        + str(ordered)
     )
 
 
@@ -157,10 +159,13 @@ def test_readme_whole_path_stages_source_once_and_orders_registry_override() -> 
     section = text.split("### The whole path, in order", 1)[1].split("```", 2)[1]
 
     assert "npa workbench workflow stage-src" not in section
-    submit = section.split("npa workbench workflow submit", 1)[1]
+    assert "npa workbench workflow prepare-run" in section
+    submit = section.split("npa workbench workflow submit", 1)[1].split(
+        "npa workbench workflow status", 1
+    )[0]
     assert "--stage-src" not in submit
     assert "--runtime" in submit
-    assert "--resume" in submit
+    assert "--resume" not in submit
     assert "--auto-load" in submit
     configure_eval = section.index('eval "$(npa configure --show --env)"')
     public_override = section.index(

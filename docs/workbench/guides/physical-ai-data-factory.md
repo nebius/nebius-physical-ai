@@ -113,24 +113,30 @@ synthetic geometry path. User input is labeled “User-supplied input”—NPA d
 invent an authenticity or license claim for it.
 
 ```bash
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"
+
 # Default: verified upstream real sample
-npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime --resume \
+npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime \
   --var bucket="$BUCKET" --assume-decision promote_checkpoint
 
 # Replace with local media
-npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime --resume \
+npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime \
   --var bucket="$BUCKET" --input-video ./capture.mp4 \
   --assume-decision promote_checkpoint
 
 # Replace with one S3 object
-npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime --resume \
+npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime \
   --var bucket="$BUCKET" --input-uri s3://source-bucket/path/capture.mp4 \
   --assume-decision promote_checkpoint
 
 # Developers/tests only — explicitly synthetic
-npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime --resume \
+npa workbench workflow submit "$SPEC" --run-id "$RUN_ID" --runtime \
   --var bucket="$BUCKET" --seed-fixture --assume-decision promote_checkpoint
 ```
+
+Those are alternatives: run one with the prepared fresh ID. A previous run is
+resumed only with an explicit `--resume-run "$RUN_ID"`; an unattended command
+never reads or silently reuses the legacy global `~/.npa/paidf-first-run-id`.
 
 The default cache is `~/.cache/npa/physical-ai-data-factory/`; set
 `NPA_PAIDF_CACHE_DIR` to move it. Every hit is rechecked. Set
@@ -229,10 +235,11 @@ NPA_SRC_S3_URI=s3://<your-bucket>/npa-src/npa/ \
 ## Submit (real run)
 
 ```bash
+RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project <alias>)"
 npa workbench workflow submit "$SPEC" \
-  --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \
+  --project <alias> --run-id "$RUN_ID" \
   --var bucket=<your-bucket> \
-  --runtime --resume --auto-load \
+  --runtime --auto-load \
   --assume-decision promote_checkpoint \
   --infra k8s/<your-kube-context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
@@ -260,6 +267,14 @@ npa workbench workflow status <run-id> --project <alias>
 # Explicit fallback; the final manifest itself may still be pending:
 npa workbench workflow status <run-id> --project <alias> \
   --workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run-id>/npa-workflow
+
+# Intentional offline inspection (exit 0 but never live-verified):
+npa workbench workflow status <run-id> --project <alias> --cached
+
+# After DNS/controller recovery, explicitly resume the same run:
+npa workbench workflow submit "$SPEC" --project <alias> \
+  --resume-run <run-id> --var bucket=<your-bucket> --runtime \
+  --assume-decision promote_checkpoint --infra k8s/<your-kube-context>
 ```
 
 Status, logs, artifacts, and cancel share the same precedence: explicit URI,
@@ -270,6 +285,20 @@ Text and JSON show each checked source. A provider/auth error is
 absence from every applicable source. Runs found before their final manifest
 remain actionable with `manifest_state: pending` plus scheduler, active-stage,
 retry, heartbeat, failure, and log-command fields.
+
+For a persisted run, `manifest_state: available` says only that the manifest was
+read. The same runtime ledger supplies exact stage/attempt/job attribution to
+status, logs, cancel, receipts, and the agent; cached/object-storage logs and live
+scheduler logs are reported separately. `last_observed_at` advances on a poll,
+while `last_heartbeat_at` advances only on real task progress. A DNS, RBAC, auth,
+timeout, context, controller, or parse failure therefore leads with
+`VERIFICATION_UNAVAILABLE`, exits nonzero, preserves a labeled last-known state,
+and shows the unchanged heartbeat as stale plus an NPA retry command. It is not
+itself a terminal workflow failure.
+
+Provisioning, inference, and curation durations are capacity/workload dependent,
+not guarantees. For practical warm/cold ranges and recovery guidance, see
+[the deploy runbook](physical-ai-data-factory-deploy.md#5-submit-the-physical-ai-data-factory-workflow).
 
 > **Input is prepared before GPU work.** With no selector, submit verifies and
 > stages the pinned real RoboPro starter. `--input-video` and `--input-uri`

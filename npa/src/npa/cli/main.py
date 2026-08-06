@@ -192,7 +192,9 @@ def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> 
     return getattr(result, "returncode", 1) == 0
 
 
-def _list_nebius_profiles(*, runner: Callable[..., object] = subprocess.run) -> list[str]:
+def _list_nebius_profiles(
+    *, runner: Callable[..., object] = subprocess.run
+) -> list[str]:
     """Return local Nebius CLI profile names, or [] when listing is unavailable."""
 
     if not shutil.which("nebius"):
@@ -336,7 +338,7 @@ def _normalize_pasted_secret(value: str) -> str:
     # Drop a leading auth scheme (Bearer/Token), case-insensitively.
     for scheme in ("bearer ", "token "):
         if text.lower().startswith(scheme):
-            text = text[len(scheme):].strip()
+            text = text[len(scheme) :].strip()
             break
     # Unwrap again in case the scheme was inside the quotes.
     if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
@@ -460,7 +462,9 @@ def _provision_object_storage(
     if exists is True:
         typer.echo(f"Reusing existing object-storage bucket '{bucket_name}'.")
     elif exists is False:
-        typer.echo(f"No existing bucket named '{bucket_name}' found; npa will create it.")
+        typer.echo(
+            f"No existing bucket named '{bucket_name}' found; npa will create it."
+        )
         bucket_storage_class, bucket_max_size_bytes = _prompt_new_bucket_settings(
             ask,
             bucket_name=bucket_name,
@@ -545,12 +549,11 @@ def _prompt_setup_tokens(
 ) -> tuple[str, str, str]:
     """Prompt for the optional HF / Token Factory / NGC keys. Returns the trio.
 
-    A token env-key in ``skip`` was already stored via a flag (``--hf-token``
-    etc.); keep the existing value instead of re-prompting, since an empty piped
-    Enter at the prompt would otherwise wipe the key that was just saved.
+    A token env-key in ``skip`` was already persisted from the environment; keep
+    the existing value instead of re-prompting.
     """
     if "HF_TOKEN" in skip:
-        typer.echo("\nHugging Face token: kept from --hf-token (not re-prompted).")
+        typer.echo("\nHugging Face token: kept from the credential store.")
         hf_token = existing_credentials.hf_token
     else:
         typer.echo(
@@ -567,7 +570,7 @@ def _prompt_setup_tokens(
             )
         )
     if "NEBIUS_TOKEN_FACTORY_KEY" in skip:
-        typer.echo("Nebius Token Factory API key: kept from --token-factory-key (not re-prompted).")
+        typer.echo("Nebius Token Factory API key: kept from the credential store.")
         token_factory_api_key = existing_credentials.token_factory_api_key
     else:
         typer.echo(
@@ -592,7 +595,7 @@ def _prompt_setup_tokens(
             "docs/workbench/token-factory-key.md."
         )
     if "NGC_API_KEY" in skip:
-        typer.echo("NVIDIA NGC API key: kept from --ngc-api-key (not re-prompted).")
+        typer.echo("NVIDIA NGC API key: kept from the credential store.")
         ngc_api_key = existing_credentials.ngc_api_key
     else:
         typer.echo(
@@ -671,7 +674,9 @@ def _unclaimed_alias(
     """
     alias = candidate
     suffix = 2
-    while alias in used or _alias_holds_other_project(existing_projects, alias, project_id):
+    while alias in used or _alias_holds_other_project(
+        existing_projects, alias, project_id
+    ):
         alias = f"{candidate}-{suffix}"
         suffix += 1
     return alias
@@ -682,13 +687,13 @@ def _alias_holds_other_project(
     alias: str,
     project_id: str,
 ) -> bool:
-    existing_id = str(((existing_projects or {}).get(alias) or {}).get("project_id", "") or "")
+    existing_id = str(
+        ((existing_projects or {}).get(alias) or {}).get("project_id", "") or ""
+    )
     return bool(existing_id) and existing_id != project_id
 
 
-def _warn_repointed_alias(
-    alias: str, stanza: dict[str, Any], project_id: str
-) -> None:
+def _warn_repointed_alias(alias: str, stanza: dict[str, Any], project_id: str) -> None:
     """Warn when an alias is repointed at a new project but keeps per-project state.
 
     Config is deep-merged, so ``terraform_state`` (the old project's remote-state
@@ -698,7 +703,9 @@ def _warn_repointed_alias(
     previous = str((stanza or {}).get("project_id", "") or "")
     if not previous or previous == project_id:
         return
-    stale = [key for key in ("terraform_state", "workbenches") if (stanza or {}).get(key)]
+    stale = [
+        key for key in ("terraform_state", "workbenches") if (stanza or {}).get(key)
+    ]
     typer.echo(
         f"\nWarning: project alias '{alias}' pointed at {previous} and now points at "
         f"{project_id}."
@@ -778,7 +785,9 @@ def _select_discovered_projects(
         "\nSelect project(s) to configure (comma-separated numbers, or 'all')",
         default=default_pick,
     )
-    chosen = _parse_selection(raw, len(shown)) or _parse_selection(default_pick, len(shown))
+    chosen = _parse_selection(raw, len(shown)) or _parse_selection(
+        default_pick, len(shown)
+    )
 
     selected: list[tuple[str, dict[str, str]]] = []
     used_aliases: set[str] = set()
@@ -864,9 +873,7 @@ def _resolve_discovery_tenant(
             )
             return only, ""
     if len(tenants) > 1:
-        typer.echo(
-            "\nNebius profile has no tenant-id. Tenants you can see:\n"
-        )
+        typer.echo("\nNebius profile has no tenant-id. Tenants you can see:\n")
         for index, tenant_entry in enumerate(tenants, start=1):
             label = str(tenant_entry.get("name", "") or "").strip()
             suffix = f"  ({label})" if label else ""
@@ -921,9 +928,7 @@ def _offer_profile_binding(
         "npa runs the Nebius CLI with that profile, so leaving them out of sync "
         "disables project discovery on the next run."
     )
-    answer = ask(
-        f"Point the active Nebius profile at {project_id}? [Y/n]", default="Y"
-    )
+    answer = ask(f"Point the active Nebius profile at {project_id}? [Y/n]", default="Y")
     if answer.lower() not in ("", "y", "yes"):
         typer.echo(
             "  Leaving the Nebius profile unchanged. Set it later with "
@@ -942,12 +947,15 @@ def _offer_profile_binding(
 
 
 def _run_interactive_configure(
-    *, provision: bool = True, already_written: str = "", preset_tokens: set[str] | None = None
+    *,
+    provision: bool = True,
+    already_written: str = "",
+    preset_tokens: set[str] | None = None,
 ) -> None:
     """Prompt for credentials/config and write the NPA dotfiles.
 
     ``already_written`` names what a caller persisted before this flow started
-    (currently ``--token-factory-key``), so the bail-out paths below never claim
+    (currently ``--save-env-credentials``), so the bail-out paths below never claim
     that nothing was saved. ``preset_tokens`` names token env-keys already stored
     via a flag (``HF_TOKEN`` / ``NEBIUS_TOKEN_FACTORY_KEY`` / ``NGC_API_KEY``) so
     the interactive flow keeps them instead of re-prompting (and risking a wipe).
@@ -985,7 +993,9 @@ def _run_interactive_configure(
         )
         if already_written:
             # The requested write succeeded; only the rest of setup is pending.
-            typer.echo(f"{already_written} was saved; nothing else was written under ~/.npa.")
+            typer.echo(
+                f"{already_written} was saved; nothing else was written under ~/.npa."
+            )
             raise typer.Exit(code=0)
         typer.echo("Nothing was written under ~/.npa.")
         raise typer.Exit(code=1)
@@ -1006,7 +1016,7 @@ def _run_interactive_configure(
             typer.echo(
                 "\nNote: stdin is not a terminal, so secret values will be "
                 "visible as you enter them. For automation prefer environment "
-                "variables or `npa configure --token-factory-key ...`."
+                "variables or `npa configure --no-interactive --save-env-credentials`."
             )
         return str(
             typer.prompt(
@@ -1086,8 +1096,12 @@ def _run_interactive_configure(
         registry = str(default_stanza.get("container_registry", ""))
     else:
         # Tenant is the parent of the project, so ask for it first.
-        tenant_id = ask("Nebius tenant id", default=str(existing_stanza.get("tenant_id", "")))
-        project_id = ask("Nebius project id", default=str(existing_stanza.get("project_id", "")))
+        tenant_id = ask(
+            "Nebius tenant id", default=str(existing_stanza.get("tenant_id", ""))
+        )
+        project_id = ask(
+            "Nebius project id", default=str(existing_stanza.get("project_id", ""))
+        )
         existing_registry = str(existing_stanza.get("container_registry", ""))
         # The main NPA registry (workbench images) is in eu-north1, and registries
         # are readable cross-region, so default to eu-north1: keep a saved registry,
@@ -1214,9 +1228,7 @@ def _run_interactive_configure(
                 "be written; re-run `npa configure` once storage access is granted."
             )
         else:
-            typer.echo(
-                "Enter existing S3 credentials (or press Enter to leave blank)."
-            )
+            typer.echo("Enter existing S3 credentials (or press Enter to leave blank).")
     if storage is None:
         storage = {
             "aws_access_key_id": ask(
@@ -1231,7 +1243,8 @@ def _run_interactive_configure(
             ),
             "endpoint_url": ask(
                 "S3 endpoint URL",
-                default=existing_credentials.s3_endpoint or _endpoint_for_region(region),
+                default=existing_credentials.s3_endpoint
+                or _endpoint_for_region(region),
             ),
             "bucket": ask(
                 "S3 bucket URI (e.g. s3://<your-bucket>/)",
@@ -1320,9 +1333,7 @@ def _run_interactive_configure(
             for sel_alias, stanza in discovered_selection
         }
         alias = discovered_default_alias
-        write_config(
-            {"projects": projects_payload, "default_project": alias}
-        )
+        write_config({"projects": projects_payload, "default_project": alias})
         wrote_config = True
         if len(discovered_selection) > 1:
             typer.echo(
@@ -1359,9 +1370,7 @@ def _run_interactive_configure(
             # is an explicit request to repoint this alias, so keep the alias — but
             # say which of its saved values still describe the previous project.
             alias = existing_default_alias
-            _warn_repointed_alias(
-                alias, existing_projects.get(alias) or {}, project_id
-            )
+            _warn_repointed_alias(alias, existing_projects.get(alias) or {}, project_id)
         if not alias:
             project_name = ""
             try:
@@ -1573,7 +1582,9 @@ def _configured_env_lines() -> str:
         bucket_uri = str(credentials.s3_bucket or "")
         if bucket_uri:
             lines.append(f"NPA_BUCKET_URI={bucket_uri}")
-            lines.append(f"NPA_BUCKET={bucket_uri.removeprefix('s3://').strip('/').split('/', 1)[0]}")
+            lines.append(
+                f"NPA_BUCKET={bucket_uri.removeprefix('s3://').strip('/').split('/', 1)[0]}"
+            )
         if credentials.s3_endpoint:
             lines.append(f"NPA_S3_ENDPOINT={credentials.s3_endpoint}")
     context = _saved_kube_context()
@@ -1600,7 +1611,8 @@ def _saved_kube_context() -> str:
     scoped = [
         state
         for state in clusters
-        if configured_pid and str(getattr(state, "project_id", "") or "") == configured_pid
+        if configured_pid
+        and str(getattr(state, "project_id", "") or "") == configured_pid
     ]
     for state in reversed(scoped or clusters):
         # `cluster up` names the kubeconfig context after the cluster by default.
@@ -1653,7 +1665,9 @@ def _configured_summary() -> str:
     lines.append(f"  config file:        {CONFIG_PATH}")
     lines.append(f"  project alias:      {resolved_alias}  (use with -p)")
     if len(projects) > 1:
-        lines.append(f"  other aliases:      {', '.join(a for a in projects if a != resolved_alias)}")
+        lines.append(
+            f"  other aliases:      {', '.join(a for a in projects if a != resolved_alias)}"
+        )
     for label, key in (
         ("project id", "project_id"),
         ("tenant id", "tenant_id"),
@@ -1771,8 +1785,7 @@ def _run_known_project_configure(
     if missing:
         raise typer.BadParameter(
             "Known-project non-interactive configure requires all of --tenant-id, "
-            "--project-id, --region, and --project-alias; missing "
-            + ", ".join(missing)
+            "--project-id, --region, and --project-alias; missing " + ", ".join(missing)
         )
     alias = values["--project-alias"]
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", alias):
@@ -1795,7 +1808,9 @@ def _run_known_project_configure(
         ) from exc
 
     existing_projects = list_projects()
-    _warn_repointed_alias(alias, existing_projects.get(alias) or {}, values["--project-id"])
+    _warn_repointed_alias(
+        alias, existing_projects.get(alias) or {}, values["--project-id"]
+    )
     registry = str(container_registry or "").strip()
     if not registry:
         from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
@@ -1817,7 +1832,8 @@ def _run_known_project_configure(
 
         probe = probe_storage_write(
             bucket=existing.s3_bucket,
-            endpoint_url=existing.s3_endpoint or _endpoint_for_region(values["--region"]),
+            endpoint_url=existing.s3_endpoint
+            or _endpoint_for_region(values["--region"]),
             access_key_id=existing.s3_access_key_id,
             secret_access_key=existing.s3_secret_access_key,
             region=values["--region"],
@@ -1916,7 +1932,9 @@ def _run_known_project_configure(
         )
     typer.echo(f"Wrote {CONFIG_PATH} (project alias: {alias}, non-interactive).")
     if storage:
-        typer.echo("Setup complete; writable object storage is health-verified.")
+        typer.echo(
+            "Project and writable object storage configuration is health-verified."
+        )
     else:
         typer.echo(
             "Project setup complete without object storage (--no-provision). "
@@ -1929,9 +1947,7 @@ def _configure_impl(
     show: bool,
     interactive: Optional[bool],
     provision: bool = True,
-    token_factory_key: str = "",
-    hf_token: str = "",
-    ngc_api_key: str = "",
+    save_env_credentials: bool = False,
     env_output: bool = False,
     forget_project: str = "",
     src_s3_uri: str = "",
@@ -1950,15 +1966,37 @@ def _configure_impl(
         # remote-state keys are handled by `npa storage bucket delete`.
         _forget_project(forget_project.strip())
         return
-    stored: list[str] = []
-    if token_factory_key.strip():
-        # Store the key, then continue with the rest of configure. Returning here
-        # left users thinking configure finished when no project/S3/HF/NGC/config
-        # had been written.
-        _store_token_factory_key(token_factory_key.strip())
-        stored.append("The Nebius Token Factory API key")
-    stored.extend(_store_tokens(hf_token.strip(), ngc_api_key.strip()))
-    already_written = " and ".join(stored)
+    from npa.clients.credentials import (
+        CREDENTIALS_PATH,
+        SUPPORTED_ENV_CREDENTIALS,
+        persist_supported_env_credentials,
+    )
+
+    detected = [name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)]
+    persisted: list[str] = []
+    if save_env_credentials:
+        report = persist_supported_env_credentials()
+        persisted = list(report["persisted"])
+        typer.echo(
+            "Credential environment sources detected: "
+            + (", ".join(report["detected"]) if report["detected"] else "none")
+        )
+        typer.echo(
+            "Credential fields persisted (values redacted): "
+            + (", ".join(persisted) if persisted else "none")
+            + f"; store={CREDENTIALS_PATH}"
+        )
+        for warning in report["warnings"]:
+            typer.echo(f"Credential warning: {warning}", err=True)
+    elif detected and interactive is not True:
+        typer.echo(f"Credential environment sources detected: {', '.join(detected)}")
+        typer.echo(
+            "Credential persistence: skipped. These values remain process-only; "
+            "use --save-env-credentials to make later agent/workflow commands durable."
+        )
+    elif interactive is False:
+        typer.echo("Credential environment sources detected: none; persistence: none.")
+    already_written = "Environment credentials (values redacted)" if persisted else ""
     if env_output:
         # Machine-readable form first: runbooks eval this instead of asking the
         # operator to hand-substitute the alias, bucket and kube context.
@@ -1987,15 +2025,7 @@ def _configure_impl(
             provision=provision,
         )
         return
-    # Token flags that were persisted above must not be re-prompted (an empty
-    # piped Enter would otherwise wipe them); skip those in the interactive flow.
     preset_tokens: set[str] = set()
-    if token_factory_key.strip():
-        preset_tokens.add("NEBIUS_TOKEN_FACTORY_KEY")
-    if hf_token.strip():
-        preset_tokens.add("HF_TOKEN")
-    if ngc_api_key.strip():
-        preset_tokens.add("NGC_API_KEY")
 
     should_prompt = interactive if interactive is not None else sys.stdin.isatty()
     if not should_prompt:
@@ -2003,8 +2033,6 @@ def _configure_impl(
             # We DID persist the token flags; dumping the whole setup template as
             # if nothing happened made scripted `--token-* --no-interactive` runs
             # look like they failed. Confirm what landed and how to finish the rest.
-            from npa.clients.credentials import CREDENTIALS_PATH
-
             typer.echo(f"{already_written} saved to {CREDENTIALS_PATH}.")
             typer.echo(
                 "Run `npa configure` in a terminal (or `npa configure --show` for "
@@ -2015,7 +2043,9 @@ def _configure_impl(
         return
     try:
         _run_interactive_configure(
-            provision=provision, already_written=already_written, preset_tokens=preset_tokens
+            provision=provision,
+            already_written=already_written,
+            preset_tokens=preset_tokens,
         )
     except (EOFError, typer.Abort):
         # Cancelling mid-flow (Ctrl-C / Ctrl-D / no more input) previously exited
@@ -2061,28 +2091,12 @@ def configure(
             "Use --no-provision to enter existing S3 credentials."
         ),
     ),
-    token_factory_key: str = typer.Option(
-        "",
-        "--token-factory-key",
+    save_env_credentials: bool = typer.Option(
+        False,
+        "--save-env-credentials",
         help=(
-            "Store a Nebius Token Factory API key in ~/.npa/credentials.yaml "
-            "under tokens.NEBIUS_TOKEN_FACTORY_KEY, then continue the rest of setup."
-        ),
-    ),
-    hf_token: str = typer.Option(
-        "",
-        "--hf-token",
-        help=(
-            "Store a Hugging Face token in ~/.npa/credentials.yaml under "
-            "tokens.HF_TOKEN without prompting (for scripted setup)."
-        ),
-    ),
-    ngc_api_key: str = typer.Option(
-        "",
-        "--ngc-api-key",
-        help=(
-            "Store an NVIDIA NGC API key in ~/.npa/credentials.yaml under "
-            "ngc.api_key without prompting (for scripted setup)."
+            "Persist supported credentials already present in environment variables "
+            "to ~/.npa/credentials.yaml using an atomic 0600 write; values are never printed."
         ),
     ),
     env_output: bool = typer.Option(
@@ -2091,7 +2105,7 @@ def configure(
         help=(
             "Print the saved project/bucket/kube-context values as NPA_* shell "
             "assignments (no secrets) instead of prompting: "
-            "eval \"$(npa configure --show --env)\"."
+            'eval "$(npa configure --show --env)".'
         ),
     ),
     forget_project: str = typer.Option(
@@ -2144,9 +2158,7 @@ def configure(
         show=show,
         interactive=interactive,
         provision=provision,
-        token_factory_key=token_factory_key,
-        hf_token=hf_token,
-        ngc_api_key=ngc_api_key,
+        save_env_credentials=save_env_credentials,
         env_output=env_output,
         forget_project=forget_project,
         src_s3_uri=src_s3_uri,
@@ -2184,29 +2196,10 @@ def init(
             "Use --no-provision to enter existing S3 credentials."
         ),
     ),
-    token_factory_key: str = typer.Option(
-        "",
-        "--token-factory-key",
-        help=(
-            "Store a Nebius Token Factory API key in ~/.npa/credentials.yaml "
-            "under tokens.NEBIUS_TOKEN_FACTORY_KEY, then continue the rest of setup."
-        ),
-    ),
-    hf_token: str = typer.Option(
-        "",
-        "--hf-token",
-        help=(
-            "Store a Hugging Face token in ~/.npa/credentials.yaml under "
-            "tokens.HF_TOKEN without prompting (for scripted setup)."
-        ),
-    ),
-    ngc_api_key: str = typer.Option(
-        "",
-        "--ngc-api-key",
-        help=(
-            "Store an NVIDIA NGC API key in ~/.npa/credentials.yaml under "
-            "ngc.api_key without prompting (for scripted setup)."
-        ),
+    save_env_credentials: bool = typer.Option(
+        False,
+        "--save-env-credentials",
+        help="Persist supported environment credentials atomically with mode 0600.",
     ),
     env_output: bool = typer.Option(
         False,
@@ -2214,7 +2207,7 @@ def init(
         help=(
             "Print the saved project/bucket/kube-context values as NPA_* shell "
             "assignments (no secrets) instead of prompting: "
-            "eval \"$(npa configure --show --env)\"."
+            'eval "$(npa configure --show --env)".'
         ),
     ),
     src_s3_uri: str = typer.Option(
@@ -2247,9 +2240,7 @@ def init(
         show=show,
         interactive=interactive,
         provision=provision,
-        token_factory_key=token_factory_key,
-        hf_token=hf_token,
-        ngc_api_key=ngc_api_key,
+        save_env_credentials=save_env_credentials,
         env_output=env_output,
         src_s3_uri=src_s3_uri,
         tenant_id=tenant_id,
@@ -2266,10 +2257,16 @@ def app_entry() -> None:
     except KeyboardInterrupt:
         sys.exit(130)
     except ServerlessClientError as exc:
-        print(format_error_for_user(exc, output_format=_detect_error_format()), file=sys.stderr)
+        print(
+            format_error_for_user(exc, output_format=_detect_error_format()),
+            file=sys.stderr,
+        )
         sys.exit(1)
     except Exception as exc:
-        print(format_error_for_user(exc, output_format=_detect_error_format()), file=sys.stderr)
+        print(
+            format_error_for_user(exc, output_format=_detect_error_format()),
+            file=sys.stderr,
+        )
         if os.environ.get("NPA_DEBUG"):
             traceback.print_exc()
         else:
@@ -2283,7 +2280,9 @@ def _detect_error_format() -> str:
         return env_format
     args = sys.argv[1:]
     for index, value in enumerate(args):
-        if value in {"--output", "--output-format", "--format"} and index + 1 < len(args):
+        if value in {"--output", "--output-format", "--format"} and index + 1 < len(
+            args
+        ):
             if args[index + 1].lower() == "json":
                 return "json"
         if value in {"--output=json", "--output-format=json", "--format=json"}:

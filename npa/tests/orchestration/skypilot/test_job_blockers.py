@@ -14,6 +14,7 @@ import pytest
 
 from npa.orchestration.skypilot.job_blockers import (
     CLUSTER_LABEL,
+    classify_pending_reason,
     inspect_job_blockers,
 )
 
@@ -48,8 +49,12 @@ def _runner(stdout: str, *, returncode: int = 0, stderr: str = ""):
         calls.append(list(cmd))
         seen["cmd"] = list(cmd)
         if "nodes" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout='{"items": []}', stderr="")
-        return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"items": []}', stderr=""
+            )
+        return subprocess.CompletedProcess(
+            cmd, returncode, stdout=stdout, stderr=stderr
+        )
 
     run.seen = seen  # type: ignore[attr-defined]
     run.calls = calls  # type: ignore[attr-defined]
@@ -118,7 +123,9 @@ def test_an_unschedulable_pod_points_at_the_accelerator_request() -> None:
 
 def test_a_running_pod_is_not_a_blocker() -> None:
     runner = _runner(
-        _pods({"metadata": {"name": "sky-abc-worker-0"}, "status": {"phase": "Running"}})
+        _pods(
+            {"metadata": {"name": "sky-abc-worker-0"}, "status": {"phase": "Running"}}
+        )
     )
 
     report = inspect_job_blockers(cluster_name="sky-abc", runner=runner)
@@ -163,7 +170,13 @@ def test_missing_kubectl_is_reported() -> None:
 
 
 @pytest.mark.parametrize(
-    "reason", ["ErrImagePull", "InvalidImageName", "CreateContainerConfigError", "CrashLoopBackOff"]
+    "reason",
+    [
+        "ErrImagePull",
+        "InvalidImageName",
+        "CreateContainerConfigError",
+        "CrashLoopBackOff",
+    ],
 )
 def test_every_retry_forever_reason_carries_a_remedy(reason: str) -> None:
     runner = _runner(_pods(_waiting_pod("sky-abc-worker-0", reason)))
@@ -259,14 +272,18 @@ def test_an_explicit_namespace_is_honored() -> None:
 def _node(name: str, ready: str, reason: str = "") -> dict:
     return {
         "metadata": {"name": name},
-        "status": {"conditions": [{"type": "Ready", "status": ready, "reason": reason}]},
+        "status": {
+            "conditions": [{"type": "Ready", "status": ready, "reason": reason}]
+        },
     }
 
 
 def _pods_then_nodes(nodes: dict):
     def run(cmd, **kwargs):  # noqa: ANN001 - test stub
         if "nodes" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(nodes), stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps(nodes), stderr=""
+            )
         return subprocess.CompletedProcess(cmd, 0, stdout=_pods(), stderr="")
 
     return run
@@ -292,7 +309,10 @@ def test_a_pending_job_whose_nodes_were_reclaimed_says_so() -> None:
     report = inspect_job_blockers(job_id="1", cluster_name="sky-abc", runner=runner)
 
     assert report.blocked is True
-    assert report.unready_nodes == ["gpu-0 (NodeStatusUnknown)", "gpu-1 (NodeStatusUnknown)"]
+    assert report.unready_nodes == [
+        "gpu-0 (NodeStatusUnknown)",
+        "gpu-1 (NodeStatusUnknown)",
+    ]
     assert "reclaimed without warning" in report.remedy()
     assert "--on-demand" in report.remedy()
     rendered = report.render()
@@ -300,7 +320,9 @@ def test_a_pending_job_whose_nodes_were_reclaimed_says_so() -> None:
 
 
 def test_healthy_nodes_and_no_blocked_pods_stays_quiet() -> None:
-    runner = _pods_then_nodes({"items": [_node("cpu-0", "True"), _node("gpu-0", "True")]})
+    runner = _pods_then_nodes(
+        {"items": [_node("cpu-0", "True"), _node("gpu-0", "True")]}
+    )
 
     report = inspect_job_blockers(job_id="1", cluster_name="sky-abc", runner=runner)
 
@@ -316,3 +338,60 @@ def test_a_pod_level_reason_still_wins_over_the_node_check() -> None:
 
     assert report.unready_nodes == []
     assert "retries this forever" in report.remedy()
+
+
+@pytest.mark.parametrize(
+    ("reason", "message", "source", "code"),
+    [
+        (
+            "Unschedulable",
+            "0/3 nodes: insufficient nvidia.com/gpu",
+            "scheduler",
+            "ACCELERATOR_MISMATCH",
+        ),
+        (
+            "Unschedulable",
+            "cloud capacity quota exhausted",
+            "scheduler",
+            "CAPACITY_OR_QUOTA",
+        ),
+        ("Unschedulable", "node selector did not match", "scheduler", "UNSCHEDULABLE"),
+        ("ImagePullBackOff", "401 unauthorized", "container", "IMAGE_PULL_AUTH"),
+        ("ErrImagePull", "manifest unknown: not found", "container", "IMAGE_NOT_FOUND"),
+        ("CrashLoopBackOff", "init setup failed", "init", "INIT_CONTAINER_FAILED"),
+        ("CrashLoopBackOff", "worker exited", "container", "CONTAINER_CRASH"),
+        ("BackOff", "controller retry backoff", "event", "CONTROLLER_BACKOFF"),
+        ("FailedMount", "persistentvolumeclaim is pending", "event", "STORAGE_PENDING"),
+    ],
+)
+def test_pending_reason_codes_are_stable(
+    reason: str, message: str, source: str, code: str
+) -> None:
+    assert classify_pending_reason(reason, message, source=source) == code
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (
+            "dial tcp: lookup kubernetes.example.invalid: no such host",
+            "KUBERNETES_DNS",
+        ),
+        ("pods is forbidden: RBAC denied", "KUBERNETES_RBAC"),
+        ("401 Unauthorized", "KUBERNETES_AUTHENTICATION"),
+    ],
+)
+def test_kubernetes_diagnostic_failures_are_typed_and_sanitized(
+    error: str, code: str
+) -> None:
+    runner = _runner(
+        "",
+        returncode=1,
+        stderr=f"{error}; authorization=synthetic-secret",
+    )
+
+    report = inspect_job_blockers(cluster_name="sky-synthetic", runner=runner)
+
+    assert report.error_code == code
+    assert "synthetic-secret" not in report.error
+    assert report.observed_at

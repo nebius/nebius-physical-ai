@@ -32,7 +32,12 @@ def is_paidf_run_id(run_id: str) -> bool:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 @dataclass
@@ -71,7 +76,11 @@ class RunManifest:
             run_prefix_uri=str(payload.get("run_prefix_uri") or ""),
             status=str(payload.get("status") or "planned"),
             sky_job_id=str(payload.get("sky_job_id") or ""),
-            steps=[dict(item) for item in payload.get("steps") or [] if isinstance(item, dict)],
+            steps=[
+                dict(item)
+                for item in payload.get("steps") or []
+                if isinstance(item, dict)
+            ],
             input_source=dict(payload.get("input_source") or {}),
             updated_at=str(payload.get("updated_at") or utc_now()),
             schema_version=str(payload.get("schema_version") or RUN_SCHEMA_VERSION),
@@ -98,6 +107,9 @@ class RuntimeRunState:
     #: whose spec/config changed must not silently reuse them.
     plan_fingerprint: str = ""
     waves: list[dict[str, Any]] = field(default_factory=list)
+    # Additive, per-stage projection of the wave ledger.  This is deliberately
+    # kept in runtime.json so status/logs/cancel all consume one state store.
+    stages: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
     watermarks: dict[str, Any] = field(default_factory=dict)
     updated_at: str = field(default_factory=utc_now)
@@ -114,6 +126,7 @@ class RuntimeRunState:
             "plan_fingerprint": self.plan_fingerprint,
             "updated_at": self.updated_at,
             "waves": list(self.waves),
+            "stages": list(self.stages),
             "decisions": list(self.decisions),
             "watermarks": dict(self.watermarks),
         }
@@ -127,9 +140,20 @@ class RuntimeRunState:
             status=str(payload.get("status") or "running"),
             run_prefix_uri=str(payload.get("run_prefix_uri") or ""),
             plan_fingerprint=str(payload.get("plan_fingerprint") or ""),
-            waves=[dict(item) for item in payload.get("waves") or [] if isinstance(item, dict)],
+            waves=[
+                dict(item)
+                for item in payload.get("waves") or []
+                if isinstance(item, dict)
+            ],
+            stages=[
+                dict(item)
+                for item in payload.get("stages") or []
+                if isinstance(item, dict)
+            ],
             decisions=[
-                dict(item) for item in payload.get("decisions") or [] if isinstance(item, dict)
+                dict(item)
+                for item in payload.get("decisions") or []
+                if isinstance(item, dict)
             ],
             watermarks=dict(payload.get("watermarks") or {}),
             updated_at=str(payload.get("updated_at") or utc_now()),
@@ -171,8 +195,95 @@ class RuntimeRunState:
                 and int(existing.get("attempt") or 1) == attempt
             ):
                 self.waves[index] = dict(record)
+                self._record_stage_attempts(record)
                 return
         self.waves.append(dict(record))
+        self._record_stage_attempts(record)
+
+    def _record_stage_attempts(self, record: Mapping[str, Any]) -> None:
+        """Idempotently project one exact wave attempt into stage records."""
+
+        members = _wave_members(record)
+        tasks = [
+            item for item in record.get("tasks") or [] if isinstance(item, Mapping)
+        ]
+        observations = [
+            item
+            for item in record.get("observations") or []
+            if isinstance(item, Mapping)
+        ]
+        attempt = int(record.get("attempt") or 1)
+        wave_status = str(record.get("status") or "unknown")
+        terminal = wave_status.lower() in {"succeeded", "failed", "cancelled"}
+        for state_name, iteration in members:
+            key = f"{state_name}#{iteration}" if iteration is not None else state_name
+            matching_tasks = [
+                item for item in tasks if str(item.get("task_name") or "") == state_name
+            ]
+            task = matching_tasks[-1] if matching_tasks else {}
+            progress_times = [
+                str(item.get("last_progress_at") or "")
+                for item in matching_tasks
+                if str(item.get("last_progress_at") or "")
+            ]
+            observed_times = [
+                str(item.get("observed_at") or "")
+                for item in observations
+                if str(item.get("observed_at") or "")
+            ]
+            scheduler_state = str(
+                task.get("status") or record.get("sky_status") or "UNKNOWN"
+            )
+            stage_record = {
+                "key": key,
+                "stage": state_name,
+                "iteration": iteration,
+                "logical_state": _normalized_stage_state(
+                    task.get("status") or record.get("sky_status") or wave_status
+                ),
+                "attempt": attempt,
+                "managed_job_id": str(
+                    record.get("job_id") or record.get("sky_job_id") or ""
+                ),
+                "job_group_id": str(
+                    record.get("group") or record.get("job_name") or ""
+                ),
+                "job_name": str(record.get("job_name") or ""),
+                "wave_key": str(record.get("key") or ""),
+                "submitted_at": str(record.get("started_at") or ""),
+                "started_at": str(task.get("start_at") or ""),
+                "finished_at": str(task.get("end_at") or record.get("ended_at") or ""),
+                "last_observed_at": max(observed_times, default=""),
+                "last_scheduler_state": scheduler_state,
+                # Heartbeats are real task progress only. Submission, polling,
+                # manifest writes, and transitions must not fabricate liveness.
+                "last_heartbeat_at": max(progress_times, default=""),
+                "heartbeat_source": "scheduler_task_progress" if progress_times else "",
+                "pending_reason": dict(record.get("pending_reason") or {}),
+                "log_location": str(task.get("log_path") or task.get("log_uri") or ""),
+                "artifact_locations": list(record.get("outputs") or []),
+                "terminal_outcome": wave_status if terminal else "",
+                "provenance": "runtime_wave_projection",
+                "attribution_ambiguous": len(matching_tasks) > 1,
+            }
+            for index, existing in enumerate(self.stages):
+                if (
+                    str(existing.get("key") or "") == key
+                    and int(existing.get("attempt") or 1) == attempt
+                ):
+                    # Preserve the last real heartbeat if a later status poll has
+                    # no progress timestamp.
+                    if not stage_record["last_heartbeat_at"]:
+                        stage_record["last_heartbeat_at"] = str(
+                            existing.get("last_heartbeat_at") or ""
+                        )
+                        stage_record["heartbeat_source"] = str(
+                            existing.get("heartbeat_source") or ""
+                        )
+                    self.stages[index] = stage_record
+                    break
+            else:
+                self.stages.append(stage_record)
 
 
 def _normalized_stage_state(value: object) -> str:
@@ -432,7 +543,9 @@ class RunStateStore:
         self._write(runtime_key(self.prefix), payload)
         return payload
 
-    def append_step(self, manifest: RunManifest, step_record: Mapping[str, Any]) -> dict[str, Any]:
+    def append_step(
+        self, manifest: RunManifest, step_record: Mapping[str, Any]
+    ) -> dict[str, Any]:
         manifest.steps.append(dict(step_record))
         return self.write_manifest(manifest)
 
@@ -488,11 +601,16 @@ TERMINAL_STEP_STATES = frozenset(
     {"SUCCEEDED", "CANCELLED", "FAILED", "FAILED_SETUP", "FAILED_STARTUP", "BLOCKED"}
 )
 _DETERMINISTIC_STARTUP_PATTERNS = (
-    re.compile(r"container\s+not found.*ray-node|ray-node.*container\s+not found", re.IGNORECASE),
+    re.compile(
+        r"container\s+not found.*ray-node|ray-node.*container\s+not found",
+        re.IGNORECASE,
+    ),
     re.compile(r"ray-node.*(?:deleted|not found)", re.IGNORECASE),
     re.compile(r"cannot exec in a deleted state", re.IGNORECASE),
 )
-NORMALIZED_DELETED_RAY_NODE = "ray-node container deleted before SkyPilot initialization"
+NORMALIZED_DELETED_RAY_NODE = (
+    "ray-node container deleted before SkyPilot initialization"
+)
 
 
 def reconcile_submitted_manifest(
@@ -567,7 +685,9 @@ def reconcile_submitted_manifest(
         manifest.status = live
     elif reconciled:
         statuses = [str(step.get("status") or "").upper() for step in reconciled]
-        if any(status.startswith("FAILED") or status == "CANCELLED" for status in statuses):
+        if any(
+            status.startswith("FAILED") or status == "CANCELLED" for status in statuses
+        ):
             manifest.status = "FAILED"
         elif all(status == "SUCCEEDED" for status in statuses):
             manifest.status = "SUCCEEDED"
@@ -589,7 +709,9 @@ def _timestamp(value: object) -> datetime | None:
     try:
         if text.replace(".", "", 1).isdigit():
             return datetime.fromtimestamp(float(text), tz=timezone.utc)
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
     except (OverflowError, OSError, ValueError):
         return None
 
@@ -648,7 +770,8 @@ def build_actionable_run_status(
     stages: dict[str, dict[str, Any]] = {}
     active_key = ""
     active_index: int | None = None
-    newest_progress: datetime | None = _timestamp(manifest.updated_at)
+    newest_progress: datetime | None = None
+    newest_observed: datetime | None = _timestamp(manifest.updated_at)
     for index, step in enumerate(manifest.steps):
         name = str(step.get("state") or f"step-{index}")
         iteration = step.get("iteration")
@@ -743,10 +866,21 @@ def build_actionable_run_status(
                 default=0,
             ),
         )
-        timestamps = [
+        heartbeat_timestamps = [
             value
             for value in (
-                _timestamp(row.get("last_progress_at", step.get("last_progress_at"))),
+                _timestamp(row.get("last_progress_at")),
+                _timestamp(row.get("last_heartbeat_at")),
+                _timestamp(step.get("last_progress_at")),
+                _timestamp(step.get("last_heartbeat_at")),
+            )
+            if value is not None
+        ]
+        last_progress = max(heartbeat_timestamps) if heartbeat_timestamps else None
+        observed_timestamps = [
+            value
+            for value in (
+                _timestamp(observation.get("observed_at")),
                 _timestamp(row.get("last_updated_at", step.get("last_updated_at"))),
                 _timestamp(row.get("end_at", step.get("end_at"))),
                 _timestamp(row.get("start_at", step.get("start_at"))),
@@ -757,9 +891,15 @@ def build_actionable_run_status(
             )
             if value is not None
         ]
-        last_progress = max(timestamps) if timestamps else None
-        if last_progress and (newest_progress is None or last_progress > newest_progress):
+        last_observed = max(observed_timestamps) if observed_timestamps else None
+        if last_progress and (
+            newest_progress is None or last_progress > newest_progress
+        ):
             newest_progress = last_progress
+        if last_observed and (
+            newest_observed is None or last_observed > newest_observed
+        ):
+            newest_observed = last_observed
         start = (
             _timestamp(row.get("start_at", step.get("start_at")))
             or _timestamp(row.get("submitted_at", step.get("submitted_at")))
@@ -793,6 +933,9 @@ def build_actionable_run_status(
             "outcome_conflict": outcome_conflict,
             "retry_count": retry_count,
             "last_progress_at": _iso(last_progress),
+            "last_heartbeat_at": _iso(last_progress),
+            "heartbeat_source": "scheduler_task_progress" if last_progress else "",
+            "last_observed_at": _iso(last_observed),
             "elapsed_seconds": max(0, int((end - start).total_seconds()))
             if start
             else None,
@@ -822,7 +965,9 @@ def build_actionable_run_status(
             if normalized_failure:
                 stage_payload["last_normalized_startup_failure"] = normalized_failure
                 stage_payload["startup_failure_evidence"] = failure_evidence
-                stage_payload["retry_count"] = max(retry_count, max(0, failure_evidence - 1))
+                stage_payload["retry_count"] = max(
+                    retry_count, max(0, failure_evidence - 1)
+                )
                 if failure_evidence >= failure_threshold:
                     state = "FAILED_STARTUP"
                     stage_payload["state"] = state
@@ -876,6 +1021,16 @@ def build_actionable_run_status(
         ),
         "active_stage_index": active_index,
         "last_heartbeat_at": _iso(newest_progress),
+        "last_observed_at": _iso(newest_observed),
+        "heartbeat_age_seconds": (
+            max(0, int((current - newest_progress).total_seconds()))
+            if newest_progress
+            else None
+        ),
+        "heartbeat_stale": (
+            newest_progress is None
+            or max(0, int((current - newest_progress).total_seconds())) > 300
+        ),
         "stages": stages,
     }
 
