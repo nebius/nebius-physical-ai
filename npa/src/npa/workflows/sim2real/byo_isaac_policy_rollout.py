@@ -310,6 +310,10 @@ try:
     app = AppLauncher(headless=True, enable_cameras=True).app
     import gymnasium as gym, torch
     import isaaclab_tasks  # noqa: F401
+    _scenarios = None
+    if os.environ.get("NPA_SIM2REAL_SCENARIOS_JSONL"):
+        sys.path.insert(0, "/tmp/rollwork")
+        import isaac_scenario_task as _scenarios
     if os.environ.get("NPA_BYO_ROBOT_SPEC_JSON"):
         sys.path.insert(0, "/tmp/rollwork")
         import isaac_byo_robot_task as _robotmod
@@ -574,7 +578,7 @@ try:
                  "scenario": scenario_rows[int(scenario_cpu[i])] if scenario_rows else {},
                  "actions": actions_log[i]}
                 for i in range(N)]
-    applied = _scenarios.runtime_audit(uenv)
+    applied = _scenarios.runtime_audit(uenv) if _scenarios is not None else {}
     upload_and_exit(
         rollouts,
         "rollout_ok" if trained else "rollout_ok_untrained",

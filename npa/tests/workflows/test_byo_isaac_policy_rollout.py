@@ -215,6 +215,10 @@ def test_rollout_manifest_embeds_scenario_and_byo_robot_contract():
     script = _manifest_script(manifest)
     assert "isaac_scenario_task.py" in script
     assert "scenario-456" in script
+    assert "import isaac_scenario_task as _scenarios" in script
+    assert script.index("import isaac_scenario_task as _scenarios") < script.index(
+        "applied = _scenarios.runtime_audit"
+    )
     assert "isaac_byo_robot_task.py" in script
     assert "NPA_BYO_ROBOT_SPEC_JSON" in script
     assert "NPA_BYO_TASK_CONFIG_JSON" in script
