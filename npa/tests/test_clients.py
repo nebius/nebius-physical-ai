@@ -169,6 +169,30 @@ def test_storage_client_downloads_object_via_head_object_when_list_is_empty(
     )
 
 
+def test_storage_client_downloads_exact_object_without_list_or_head(
+    tmp_path: Path, mock_s3
+) -> None:
+    body = mock_s3.get_object.return_value["Body"]
+    body.iter_chunks.return_value = [b"checkpoint", b"-bytes"]
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+    local = tmp_path / "model.pt"
+
+    downloaded = client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+
+    assert downloaded == str(local)
+    mock_s3.get_object.assert_called_once_with(
+        Bucket="bucket", Key="checkpoints/model.pt"
+    )
+    assert local.read_bytes() == b"checkpoint-bytes"
+    body.close.assert_called_once_with()
+    mock_s3.head_object.assert_not_called()
+    mock_s3.get_paginator.assert_not_called()
+
+
 def test_storage_client_uploads_and_downloads_files(
     tmp_path: Path, mock_s3
 ) -> None:

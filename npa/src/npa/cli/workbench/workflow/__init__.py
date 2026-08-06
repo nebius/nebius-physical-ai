@@ -10,6 +10,7 @@ import tempfile
 import time
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -344,7 +345,7 @@ def submit_cmd(
     ),
 ) -> None:
     """Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller."""
-    from npa.orchestration.npa_workflow.detect import is_npa_workflow_spec
+    from npa.orchestration.npa_workflow.detect import detect_submit_format
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
@@ -365,45 +366,50 @@ def submit_cmd(
     resolved_run_id = run_id or _default_submit_run_id(yaml_path)
 
     from npa.workflows.sim2real.k8s_submit import (
-        is_sim2real_runbook,
         status_monitor_command,
         submit_sim2real_from_workflow_vars,
     )
 
-    if is_sim2real_runbook(yaml_path):
+    submit_format = detect_submit_format(yaml_path)
+    if submit_format == "sim2real_runbook":
         try:
-            result = submit_sim2real_from_workflow_vars(
+            sim2real_result = submit_sim2real_from_workflow_vars(
                 run_id=resolved_run_id,
                 substitutions=substitutions,
                 s3_bucket=s3_bucket,
                 s3_prefix=s3_prefix or "sim2real-b",
                 s3_endpoint=s3_endpoint,
+                registry=registry,
+                orchestrator_image=image,
+                plan_only=plan_only,
             )
         except (RuntimeError, ValueError, FileNotFoundError) as exc:
             _fail(str(exc))
             return
         payload = {
-            "status": result.status,
-            "run_id": result.run_id,
-            "job_id": result.job_name,
-            "k8s_context": result.k8s_context,
-            "run_prefix_uri": result.run_prefix_uri,
-            "log_path": result.log_path,
-            "manifest_path": result.manifest_path,
+            "status": sim2real_result.status,
+            "run_id": sim2real_result.run_id,
+            "job_id": sim2real_result.job_name,
+            "k8s_context": sim2real_result.k8s_context,
+            "run_prefix_uri": sim2real_result.run_prefix_uri,
+            "log_path": sim2real_result.log_path,
+            "manifest_sha256": sim2real_result.manifest_sha256,
         }
         if output_format == OutputFormat.json:
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         else:
-            typer.echo(f"status: {result.status}")
-            typer.echo(f"run_id: {result.run_id}")
-            typer.echo(f"job_id: {result.job_name}")
-            typer.echo(f"k8s_context: {result.k8s_context}")
-            typer.echo(f"run_prefix_uri: {result.run_prefix_uri}")
-            typer.echo(f"monitor: {status_monitor_command(result.run_id)}")
+            typer.echo(f"status: {sim2real_result.status}")
+            typer.echo(f"run_id: {sim2real_result.run_id}")
+            typer.echo(f"job_id: {sim2real_result.job_name}")
+            typer.echo(f"k8s_context: {sim2real_result.k8s_context}")
+            typer.echo(f"run_prefix_uri: {sim2real_result.run_prefix_uri}")
+            typer.echo(f"manifest_sha256: {sim2real_result.manifest_sha256}")
+            if sim2real_result.status == "submitted":
+                typer.echo(f"monitor: {status_monitor_command(sim2real_result.run_id)}")
         return
 
     prepared_npa = None
-    if is_npa_workflow_spec(yaml_path):
+    if submit_format == "npa.workflow":
         if deploy_if_absent:
             from npa.orchestration.npa_workflow.deploy import (
                 ensure_infra_present,
@@ -483,7 +489,7 @@ def submit_cmd(
 
         if plan_only:
             rendered = prepared_npa.skypilot_yaml_path.read_text(encoding="utf-8")
-            payload = {
+            planned_payload: dict[str, Any] = {
                 "status": "PLANNED",
                 "run_id": resolved_run_id,
                 "workflow": prepared_npa.spec.name,
@@ -492,7 +498,7 @@ def submit_cmd(
                 "skypilot_yaml": rendered,
             }
             if output_format == OutputFormat.json:
-                typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+                typer.echo(json.dumps(planned_payload, indent=2, sort_keys=True))
             else:
                 typer.echo("status: PLANNED")
                 typer.echo(f"run_id: {resolved_run_id}")
@@ -539,6 +545,7 @@ def submit_cmd(
     try:
         source_yaml_path = yaml_path
         if substitutions:
+            assert submitted_yaml_context is not None
             substituted = _substitute_workflow_vars(yaml_path, substitutions)
             source_yaml_path = Path(submitted_yaml_context.name) / f"substituted-{yaml_path.name}"
             source_yaml_path.write_text(substituted, encoding="utf-8")

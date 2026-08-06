@@ -15,6 +15,8 @@ import yaml
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
 from npa.workflows.sim2real.constants import DEFAULT_PREFIX, DEFAULT_S3_ENDPOINT
+from npa.workflows.sim2real.materialize import materialized_job_name
+
 
 @dataclass(frozen=True)
 class _ArtifactRule:
@@ -74,7 +76,7 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
             _ArtifactRule(("envs/raw/raw-shard-00-of-01-summary.json",), "file"),
             _ArtifactRule(("envs/manifest/scene-spec.json",), "file"),
         ),
-        component_names=("stage_04_06_env_gen_split_tokens",),
+        component_names=("stage_04_envs_raw", "stage_04_06_env_gen_split_tokens"),
         stage_numbers=(4,),
     ),
     _StageMonitorSpec(
@@ -84,7 +86,7 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
             _ArtifactRule(("envs/train/",), "prefix"),
             _ArtifactRule(("envs/train/manifest.json",), "file"),
         ),
-        component_names=("stage_04_06_env_gen_split_tokens",),
+        component_names=("stage_05_envs_train", "stage_04_06_env_gen_split_tokens"),
         stage_numbers=(5,),
     ),
     _StageMonitorSpec(
@@ -92,11 +94,14 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
         (
             _ArtifactRule(("envs/train/envs.jsonl",), "file"),
             _ArtifactRule(("envs/heldout/envs.jsonl",), "file"),
+            _ArtifactRule(("envs/validation/envs.jsonl",), "file"),
+            _ArtifactRule(("envs/gold-heldout/envs.jsonl",), "file"),
             _ArtifactRule(("tokens/manifest.json",), "file"),
             _ArtifactRule(("envs/manifest/split-manifest.json",), "file"),
+            _ArtifactRule(("envs/manifest/curation-manifest.json",), "file"),
             _ArtifactRule(("envs/split-manifest.json",), "file"),
         ),
-        component_names=("stage_04_06_env_gen_split_tokens",),
+        component_names=("stage_06_tokens", "stage_04_06_env_gen_split_tokens"),
         stage_numbers=(6,),
     ),
     _StageMonitorSpec(
@@ -119,7 +124,10 @@ _STAGE_SPECS: tuple[_StageMonitorSpec, ...] = (
     ),
     _StageMonitorSpec(
         "stage_10_eval_heldout",
-        (_ArtifactRule(("eval/heldout/report.json",), "file"),),
+        (
+            _ArtifactRule(("eval/gold-heldout/",), "prefix"),
+            _ArtifactRule(("eval/heldout/report.json",), "file"),
+        ),
         component_names=("stage_10_eval_heldout",),
         stage_numbers=(10,),
     ),
@@ -192,6 +200,8 @@ class OperatorConfig:
 def load_operator_config() -> OperatorConfig:
     """Read non-secret operator settings from ``~/.npa/config.yaml``."""
 
+    from npa.deploy.images import registry_from_env
+
     path = Path.home() / ".npa" / "config.yaml"
     if not path.exists():
         raise ValueError("missing ~/.npa/config.yaml — run: npa configure")
@@ -199,7 +209,16 @@ def load_operator_config() -> OperatorConfig:
     storage = cfg.get("storage") or {}
     bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/", 1)[0]
     endpoint = str(storage.get("endpoint_url") or DEFAULT_S3_ENDPOINT)
-    registry = str(storage.get("registry", cfg.get("registry", ""))).rstrip("/")
+    # ``container_registry`` / NPA_REGISTRY is the repository-wide canonical
+    # image source. ``storage.registry`` is a legacy operator-pack field and can
+    # legitimately point at a retired region; only use it as a compatibility
+    # fallback after the canonical settings.
+    registry = str(
+        registry_from_env()
+        or cfg.get("container_registry")
+        or storage.get("registry")
+        or cfg.get("registry", "")
+    ).rstrip("/")
     k8s_context = str(storage.get("k8s_context") or "")
     if not k8s_context:
         for proj in (cfg.get("projects") or {}).values():
@@ -229,8 +248,7 @@ def resolve_kubeconfig(context: str) -> Path:
     if resolved.is_file():
         return resolved
     raise ValueError(
-        f"kubeconfig not found for context {context!r} "
-        f"(expected {path} or KUBECONFIG)"
+        f"kubeconfig not found for context {context!r} (expected {path} or KUBECONFIG)"
     )
 
 
@@ -259,33 +277,10 @@ def normalize_staged_run_id(run_id: str) -> str:
     return first
 
 
-def parse_submit_run_id(output: str) -> str:
-    """Parse ``run_id=`` lines from operator submit script output."""
-
-    parsed = ""
-    for line in output.splitlines():
-        if line.startswith("run_id=") or line.startswith("run_id:"):
-            raw = line.split("=", 1)[-1].split(":", 1)[-1].strip()
-            parsed = normalize_staged_run_id(raw)
-    if not parsed:
-        raise ValueError("submit script did not return run_id")
-    return parsed
-
-
-def parse_submit_job(output: str, run_id: str = "") -> str:
-    """Parse orchestrator job name from submit script output."""
-
-    job = ""
-    for line in output.splitlines():
-        if line.startswith("job=") or line.startswith("job_id:"):
-            job = line.split("=", 1)[-1].split(":", 1)[-1].strip().split()[0]
-    if not job and run_id:
-        return orchestrator_job_name(run_id)
-    return job
-
-
 def orchestrator_job_name(run_id: str) -> str:
-    return f"sim2real-{normalize_staged_run_id(run_id)}"
+    """Return the exact Job name emitted by canonical materialization."""
+
+    return materialized_job_name(normalize_staged_run_id(run_id))
 
 
 def run_prefix_uri(*, bucket: str, prefix: str, run_id: str, endpoint: str) -> str:
@@ -310,7 +305,9 @@ def _s3_prefix_nonempty(client: StorageClient, bucket: str, prefix: str) -> bool
     return int(response.get("KeyCount") or 0) > 0
 
 
-def _load_s3_json(client: StorageClient, bucket: str, key: str) -> dict[str, Any] | None:
+def _load_s3_json(
+    client: StorageClient, bucket: str, key: str
+) -> dict[str, Any] | None:
     if not _s3_object_exists(client, bucket, key):
         return None
     try:
@@ -326,7 +323,9 @@ def _load_workflow_state(
     bucket: str,
     run_prefix: str,
 ) -> dict[str, Any] | None:
-    return _load_s3_json(client, bucket, f"{run_prefix.rstrip('/')}/state/workflow_state.json")
+    return _load_s3_json(
+        client, bucket, f"{run_prefix.rstrip('/')}/state/workflow_state.json"
+    )
 
 
 def _extract_eval_metrics(
@@ -351,9 +350,15 @@ def _extract_eval_metrics(
     if isinstance(final_decision, dict):
         if final_decision.get("decision"):
             metrics["decision"] = final_decision["decision"]
-        if metrics.get("threshold") is None and final_decision.get("threshold") is not None:
+        if (
+            metrics.get("threshold") is None
+            and final_decision.get("threshold") is not None
+        ):
             metrics["threshold"] = final_decision["threshold"]
-        if metrics.get("success_rate") is None and final_decision.get("success_rate") is not None:
+        if (
+            metrics.get("success_rate") is None
+            and final_decision.get("success_rate") is not None
+        ):
             metrics["success_rate"] = final_decision["success_rate"]
 
     prefix = run_prefix.rstrip("/")
@@ -458,17 +463,21 @@ def _workflow_completion_index(
         stage_number = payload.get("stage")
         if not isinstance(stage_number, int):
             continue
-        name = _STAGE_NUMBER_TO_NAME.get(stage_number)
-        if not name or name in index:
+        stage_name = _STAGE_NUMBER_TO_NAME.get(stage_number)
+        if not stage_name or stage_name in index:
             continue
-        index[name] = {
+        index[stage_name] = {
             "source": "stage_record",
             "tier": "",
             "record": record,
         }
     env_split = index.get(_ENV_SPLIT_COMPONENT)
     if env_split:
-        for stage_name in ("stage_04_envs_raw", "stage_05_envs_train", "stage_06_tokens"):
+        for stage_name in (
+            "stage_04_envs_raw",
+            "stage_05_envs_train",
+            "stage_06_tokens",
+        ):
             if stage_name not in index:
                 index[stage_name] = env_split
     return index
@@ -519,7 +528,10 @@ def _workflow_stage_succeeded(
             "tier": "",
             "completed_at": updated_at,
         }
-    if stage_name == "stage_04_envs_raw" and int(workflow_state.get("env_count") or 0) > 0:
+    if (
+        stage_name == "stage_04_envs_raw"
+        and int(workflow_state.get("env_count") or 0) > 0
+    ):
         return {
             "state": "SUCCEEDED",
             "source": "workflow_state_env_count",
@@ -777,18 +789,29 @@ def _aggregate_status(
     stages: dict[str, dict[str, Any]],
     k8s: dict[str, Any],
 ) -> str:
-    if k8s.get("phase") == "SUCCEEDED" or stages.get("report", {}).get("state") == "SUCCEEDED":
+    if (
+        k8s.get("phase") == "SUCCEEDED"
+        or stages.get("report", {}).get("state") == "SUCCEEDED"
+    ):
         return "SUCCEEDED"
     if k8s.get("phase") == "FAILED" or int(k8s.get("failed") or 0) > 0:
         return "FAILED"
-    if k8s.get("pod_reason") in {"ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff"}:
+    if k8s.get("pod_reason") in {
+        "ImagePullBackOff",
+        "ErrImagePull",
+        "CrashLoopBackOff",
+    }:
         return "FAILED"
     if k8s.get("phase") == "RUNNING":
         return "RUNNING"
     if any(info.get("state") == "SUCCEEDED" for info in stages.values()):
         return "RUNNING"
     if not k8s.get("found"):
-        return "FAILED" if not any(info.get("state") == "SUCCEEDED" for info in stages.values()) else "UNKNOWN"
+        return (
+            "FAILED"
+            if not any(info.get("state") == "SUCCEEDED" for info in stages.values())
+            else "UNKNOWN"
+        )
     return "UNKNOWN"
 
 
@@ -836,7 +859,9 @@ def emit_sim2real_status(result: dict[str, Any], *, json_output: bool = False) -
     stages = result.get("stages", {})
     if isinstance(stages, dict):
         for stage, info in stages.items():
-            state = info.get("state", "UNKNOWN") if isinstance(info, dict) else "UNKNOWN"
+            state = (
+                info.get("state", "UNKNOWN") if isinstance(info, dict) else "UNKNOWN"
+            )
             tier = info.get("tier", "") if isinstance(info, dict) else ""
             suffix = f" ({tier})" if tier else ""
             print(f"{stage}: {state}{suffix}")
@@ -896,7 +921,9 @@ def sim2real_run_exists(
     except ValueError:
         operator = None
     bucket = s3_bucket or (operator.bucket if operator else "")
-    endpoint = s3_endpoint or (operator.endpoint_url if operator else DEFAULT_S3_ENDPOINT)
+    endpoint = s3_endpoint or (
+        operator.endpoint_url if operator else DEFAULT_S3_ENDPOINT
+    )
     context = k8s_context or (operator.k8s_context if operator else "")
     if context:
         kcfg = Path(kubeconfig) if kubeconfig else resolve_kubeconfig(context)

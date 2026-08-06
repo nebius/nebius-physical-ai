@@ -181,6 +181,25 @@ class StorageClient:
 
         return local_dir
 
+    def download_file(self, bucket_uri: str, local_path: str) -> str:
+        """Download one exact S3 object without requiring ListBucket or HEAD."""
+
+        bucket, key = _parse_bucket_uri(bucket_uri)
+        if not key or key.endswith("/"):
+            raise StorageError(f"Expected an exact S3 object URI, got: {bucket_uri}")
+        target = Path(local_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        response = self._s3.get_object(Bucket=bucket, Key=key)
+        body = response["Body"]
+        try:
+            with target.open("wb") as stream:
+                for chunk in body.iter_chunks(chunk_size=8 * 1024 * 1024):
+                    if chunk:
+                        stream.write(chunk)
+        finally:
+            body.close()
+        return str(target)
+
     def download_path(self, bucket_uri: str, local_path: str) -> str:
         """Download an S3 object or prefix to a local path. Returns local path."""
         bucket, prefix = _parse_bucket_uri(bucket_uri)

@@ -46,3 +46,4 @@ def test_shown_catalog_has_npa_workflow_specs() -> None:
     specs = iter_npa_workflow_specs()
     assert specs, "expected npa.workflow specs under the shown catalog"
     assert all(detect_submit_format(path) == "npa.workflow" for path in specs)
+    assert "sim2real.yaml" not in {path.name for path in specs}

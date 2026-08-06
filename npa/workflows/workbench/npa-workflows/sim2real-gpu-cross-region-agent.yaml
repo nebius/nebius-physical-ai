@@ -1,10 +1,11 @@
+# DEMO ONLY — cross-region agent fixture, not the canonical 14-stage engine.
 apiVersion: npa.workflow/v0.0.1-beta
 kind: Workflow
 metadata:
   name: sim2real-gpu-cross-region
   description: >-
-    Tenant-scoped GPU workflow that runs stages across primary and secondary project/region targets
-    with containerized glue transforms.
+    DEMO ONLY: tenant-scoped cross-region agent fixture with containerized glue;
+    it does not run the canonical 14-stage Sim2Real engine.
 config:
   bucket: example-bucket
   prefix: sim2real-cross-region/{{run.id}}

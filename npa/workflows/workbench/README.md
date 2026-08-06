@@ -47,15 +47,16 @@ Submit the staged VLM-to-RL loop:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml \
-  --run-id <run-id> --var bucket=<your-bucket> \
-  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+  npa/workflows/sim2real.yaml \
+  --run-id <run-id> \
+  --var NPA_SIM2REAL_BUCKET=<your-bucket> \
+  --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-bucket>/<trigger-prefix>/
 ```
 
 The legacy `sim_to_real` H100 quickstart and its template are retired: that path ran
 `npa.workflows.sim_to_real real-loop`, which raises a `DeprecationWarning` pointing at the
-staged engine. The runbook that reads without npa in the loop is
-[`sim2real/runbook.yaml`](sim2real/runbook.yaml); the deeper reference is
+staged engine. The single canonical staged-engine YAML is
+[`../sim2real.yaml`](../sim2real.yaml); the deeper reference is
 [`docs/workbench/guides/sim2real-workflow.md`](../../../docs/workbench/guides/sim2real-workflow.md).
 
 ## Submission Pattern

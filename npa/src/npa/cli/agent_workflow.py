@@ -175,8 +175,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
         "two-step": {
             "name": "sim2real-two-step",
             "description": (
-                "Two-step Sim2Real pipeline: Cosmos Transfer augment, then raw env "
-                "generation."
+                "DEMO ONLY: agent-generated Cosmos Transfer and raw-env fixture; "
+                "it does not run the canonical 14-stage Sim2Real engine."
             ),
             "config_runtime": OrderedDict(
                 {

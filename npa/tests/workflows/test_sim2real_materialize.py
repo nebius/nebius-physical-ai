@@ -27,7 +27,9 @@ def _materialize(**kwargs):
 
 def test_default_runbook_path_is_the_committed_runbook() -> None:
     assert RUNBOOK.is_file()
-    assert RUNBOOK.name == "runbook.yaml"
+    assert RUNBOOK.name == "sim2real.yaml"
+    assert RUNBOOK.parent.name == "workflows"
+    assert (RUNBOOK.parent / "physical-ai-data-factory.yaml").is_file()
 
 
 def test_placeholder_image_is_rejected_with_actionable_error() -> None:
@@ -46,23 +48,42 @@ def test_manifest_is_a_runnable_job() -> None:
     assert container["image"] == IMAGE
     assert container["command"][0] == "/bin/bash"
     # setup + run travel together so the pod bootstraps npa before the loop.
-    assert "pip install -e ./npa" in container["command"][2]
+    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" in container["command"][2]
+    assert "pip install --quiet --target /tmp/npa-bootstrap-uv" in container["command"][2]
+    assert 'pip install --user "uv' not in container["command"][2]
+    assert "pip install -e './npa[viz]'" in container["command"][2]
     assert "npa.workflows.sim2real run" in container["command"][2]
     assert pod["restartPolicy"] == "Never"
     assert manifest["spec"]["backoffLimit"] == 0
 
 
-def test_runbook_resources_map_to_k8s_limits_and_node_selector() -> None:
+def test_runbook_driver_is_cpu_only_and_preserves_sibling_gpu_config() -> None:
     job = _materialize()
     pod = job.manifest["spec"]["template"]["spec"]
     limits = pod["containers"][0]["resources"]["limits"]
-    assert limits["nvidia.com/gpu"] == 1
+    assert "nvidia.com/gpu" not in limits
     assert limits["cpu"] == "16"
     assert limits["memory"] == "64Gi"
-    assert pod["nodeSelector"]["nvidia.com/gpu.product"]
+    assert "nodeSelector" not in pod
+    env = {item["name"]: item["value"] for item in pod["containers"][0]["env"]}
+    assert env["NPA_SIM2REAL_K8S_GPU_PRODUCT"].startswith("NVIDIA-RTX-PRO")
     assert pod["serviceAccountName"]
     assert {entry["name"] for entry in pod["imagePullSecrets"]}
-    assert job.manifest["spec"]["activeDeadlineSeconds"] > 0
+    assert "activeDeadlineSeconds" not in job.manifest["spec"]
+    labels = job.manifest["metadata"]["labels"]
+    assert labels["sim2real.local/run-id"] == "sim2real-unit-run"
+    assert job.manifest["spec"]["template"]["metadata"]["labels"] == labels
+
+
+def test_explicit_positive_timeout_adds_job_deadline() -> None:
+    job = _materialize(env_overrides={"NPA_SIM2REAL_K8S_JOB_TIMEOUT_S": "3600"})
+    assert job.manifest["spec"]["activeDeadlineSeconds"] == 3600
+    container = job.manifest["spec"]["template"]["spec"]["containers"][0]
+    env = {item["name"]: item["value"] for item in container["env"]}
+    assert env["NPA_SIM2REAL_K8S_JOB_TIMEOUT_S"] == "3600"
+    assert '--k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-0}"' in container[
+        "command"
+    ][2]
 
 
 def test_envs_carry_no_unexpanded_variables_and_overrides_win() -> None:
@@ -81,7 +102,7 @@ def test_envs_carry_no_unexpanded_variables_and_overrides_win() -> None:
 def test_skip_setup_omits_bootstrap() -> None:
     job = _materialize(include_setup=False)
     script = job.manifest["spec"]["template"]["spec"]["containers"][0]["command"][2]
-    assert "pip install -e ./npa" not in script
+    assert "pip install -e './npa[viz]'" not in script
     assert "npa.workflows.sim2real run" in script
 
 

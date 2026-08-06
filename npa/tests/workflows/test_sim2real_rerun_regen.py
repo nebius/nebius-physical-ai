@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
+    _ensure_policy_access_metadata,
     regen_sim2real_rrd,
     resolve_local_rrd_path,
     sync_heldout_renders,
@@ -183,6 +185,93 @@ def test_regen_mcap_failure_never_breaks_the_rrd_regen(
     assert result.mcap_status == "skipped"
     assert result.local_mcap_path == ""
     assert result.mcap_upload_uri == ""
+
+
+def test_policy_access_metadata_hashes_real_checkpoint_without_secrets(
+    tmp_path: Path,
+) -> None:
+    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    checkpoint_uri = "s3://demo-bucket/run/model_latest.pt"
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_checkpoint_uri": checkpoint_uri,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            assert uri == checkpoint_uri
+            Path(destination).write_bytes(b"real-policy-bytes")
+
+    access = _ensure_policy_access_metadata(
+        _config(), tmp_path, storage=FakeStorage(), report={}
+    )
+
+    assert access["deployable_policy"] is True
+    assert access["identity"] == "model_latest.pt"
+    assert len(access["sha256"]) == 64
+    assert access["size_bytes"] == len(b"real-policy-bytes")
+    assert checkpoint_uri in access["authenticated_download_command"]
+    assert "$AWS_ENDPOINT_URL" in access["authenticated_download_command"]
+    assert access["viewer_executes_policy"] is False
+    assert "secret" not in json.dumps(access).lower()
+
+
+def test_progress_metrics_embed_all_outer_reward_loss_and_success(tmp_path: Path) -> None:
+    history = []
+    for outer, success in ((1, 0.5), (2, 1.0)):
+        evidence_path = tmp_path / "inner_loop" / f"outer-{outer:02d}" / "evidence.json"
+        evidence_path.parent.mkdir(parents=True)
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "reward_trend": [0.1 * outer, 0.2 * outer],
+                    "final_quality": 0.7 + outer / 10,
+                    "iterations": [
+                        {
+                            "iteration": 1,
+                            "mean_reward": 0.1 * outer,
+                            "quality_after": 0.7,
+                            "update": {
+                                "loss_before": 0.8,
+                                "loss_after": 0.4,
+                                "checkpoint_path": f"s3://run/model_{outer}.pt",
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        history.append(
+            {
+                "outer_iteration": outer,
+                "inner_loop": str(evidence_path),
+                "checkpoint_uri": f"s3://run/model_{outer}.pt",
+                "decision": {
+                    "success_rate": success,
+                    "threshold": 0.8,
+                    "decision": "promote_checkpoint" if success >= 0.8 else "loop_back",
+                },
+            }
+        )
+
+    metrics = build_progress_metrics(tmp_path, history)
+    assert metrics["outer_iteration_count"] == 2
+    assert [item["evaluation_success_rate"] for item in metrics["outer_iterations"]] == [
+        0.5,
+        1.0,
+    ]
+    assert metrics["outer_iterations"][0]["loss_trend"] == [
+        {"before": 0.8, "after": 0.4}
+    ]
+    assert metrics["outer_iterations"][1]["reward_trend"] == [0.2, 0.4]
+    assert metrics["stage_12_external_stub"]["tier"] == "SEAM"
 
 
 def test_sync_heldout_renders_falls_back_to_byo_eval_tree(tmp_path: Path) -> None:

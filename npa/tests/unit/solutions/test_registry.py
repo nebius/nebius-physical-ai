@@ -22,7 +22,7 @@ CONFIGURED_SOLUTIONS = [
         # skypilot/sim-to-real-loop.yaml was only the VLM-eval loop stage of it; that
         # capability now lives in `npa workbench vlm-eval loop` and vlm-eval-loop.yaml.
         "cli_command": (
-            "npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml"
+            "npa workbench workflow submit npa/workflows/sim2real.yaml"
         ),
     },
     {

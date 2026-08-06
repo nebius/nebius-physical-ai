@@ -50,9 +50,7 @@ def test_sim2real_runbook_fallback_matches_supported_tool_version(
     runbook = (
         Path(__file__).resolve().parents[2]
         / "workflows"
-        / "workbench"
-        / "sim2real"
-        / "runbook.yaml"
+        / "sim2real.yaml"
     ).read_text(encoding="utf-8")
     expected = (
         f"${{{environment_variable}:-npa-{tool}:{supported_tool_version(tool)}}}"

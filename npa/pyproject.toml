@@ -173,6 +173,7 @@ packages = ["src/npa"]
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
 "src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
+"workflows/sim2real.yaml" = "npa/workflows/sim2real.yaml"
 "src/npa/cli/agent_ui.html" = "npa/cli/agent_ui.html"
 
 [tool.ruff]

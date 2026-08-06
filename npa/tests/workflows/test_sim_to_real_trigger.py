@@ -181,7 +181,7 @@ def test_the_watcher_launches_the_spec_not_the_retired_pipeline_template() -> No
     That module raises a `DeprecationWarning` pointing at the staged sim2real engine, so the
     template was retired rather than ported — wrapping a deprecated path in a new spec would
     make the new surface its home. Watching a bucket is NOT deprecated, so the watcher stays
-    and now submits the staged loop's own spec.
+    and now submits the staged loop's one canonical runbook.
     """
 
     from npa.workflows.sim_to_real_trigger import _pipeline_command
@@ -198,16 +198,16 @@ def test_the_watcher_launches_the_spec_not_the_retired_pipeline_template() -> No
     command = _pipeline_command(config, run_id="trigger-001")
 
     assert command[:4] == ["npa", "workbench", "workflow", "submit"]
-    assert command[4].endswith("npa-workflows/sim2real-vlm-rl.yaml")
+    assert command[4].endswith("workflows/sim2real.yaml")
     assert "run_sim_to_real_pipeline" not in " ".join(command)
     # The trigger prefix the watch fired on is what the spec's first stage reads.
-    assert "trigger_uri=s3://example-bucket/datasets/lerobot-pusht/" in command
-    assert "bucket=example-bucket" in command
-    assert "prefix=sim-to-real/trigger-001" in command
+    assert "NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://example-bucket/datasets/lerobot-pusht/" in command
+    assert "NPA_SIM2REAL_BUCKET=example-bucket" in command
+    assert "NPA_SIM2REAL_PREFIX=sim-to-real/trigger-001" in command
 
 
-def test_render_only_validates_instead_of_submitting() -> None:
-    """A dry run must not reach a cluster, and must not carry submit-only options."""
+def test_render_only_materializes_without_submitting() -> None:
+    """A dry run stays on canonical submit routing but must not reach a cluster."""
 
     from npa.workflows.sim_to_real_trigger import _pipeline_command
 
@@ -221,10 +221,8 @@ def test_render_only_validates_instead_of_submitting() -> None:
 
     command = _pipeline_command(config, run_id="trigger-002")
 
-    assert command[:4] == ["npa", "workbench", "workflow", "validate-spec"]
-    assert "--submit-timeout" not in command
-    assert "--controller-backend" not in command
-    assert "--sky-bin" not in command
+    assert command[:4] == ["npa", "workbench", "workflow", "submit"]
+    assert "--plan-only" in command
 
 
 def test_the_retired_templates_are_gone() -> None:

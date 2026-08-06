@@ -13,6 +13,10 @@ viewer** and give actionable feedback — not a generic caption.
 - UI **Describe this** button (stays on the Rerun/viewer tab; chat opens as a drawer)
 - Chat turns containing `[npa-visual-feedback]` or “describe this viewer/visual”
 - Interpreting held-out Rerun frames, Isaac/GR00T-style sim views, rollout video, images, or Data-pane JSON
+- For Sim2Real recordings, inspect `summary/stage_progress` and
+  `summary/policy_access` alongside `rollouts/outer_*/iter_*`: camera and action
+  entities share the same frame timeline; policy access is a link/download
+  action and must never be described as policy execution inside Rerun.
 - Metadata-only feedback when a frame cannot be captured
 
 ## Model

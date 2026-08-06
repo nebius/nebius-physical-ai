@@ -14,7 +14,6 @@ from npa.workflows.sim2real.monitor import (
     get_sim2real_workflow_status,
     normalize_staged_run_id,
     orchestrator_job_name,
-    parse_submit_run_id,
 )
 
 
@@ -202,16 +201,17 @@ def test_stage_states_infers_trigger_from_later_stage_artifacts(
 
 def test_orchestrator_job_name() -> None:
     assert orchestrator_job_name("demo-run") == "sim2real-demo-run"
+    assert (
+        orchestrator_job_name(
+            "sim2real-pr258-final-gpu-20260805t180511z-2900ceae"
+        )
+        == "sim2real-pr258-final-gpu-20260805t180511z-2900ceae"
+    )
 
 
 def test_normalize_staged_run_id_strips_polluted_submit_line() -> None:
     polluted = "sim2real-staged-20260615t120000z job=sim2real-staged-20260615t120000z"
     assert normalize_staged_run_id(polluted) == "sim2real-staged-20260615t120000z"
-
-
-def test_parse_submit_run_id_from_combined_line() -> None:
-    output = "run_id=sim2real-staged-20260615t120000z job=sim2real-staged-20260615t120000z"
-    assert parse_submit_run_id(output) == "sim2real-staged-20260615t120000z"
 
 
 def test_sim2real_workflow_status_includes_eval_metrics_from_workflow_state(
@@ -435,6 +435,6 @@ def test_is_sim2real_runbook() -> None:
     from npa.workflows.sim2real.k8s_submit import is_sim2real_runbook
 
     root = Path(__file__).resolve().parents[2]
-    runbook = root / "workflows" / "workbench" / "sim2real" / "runbook.yaml"
+    runbook = root / "workflows" / "sim2real.yaml"
     assert is_sim2real_runbook(runbook)
     assert not is_sim2real_runbook(root / "src" / "npa" / "workflows" / "skypilot" / "vlm-eval.yaml")

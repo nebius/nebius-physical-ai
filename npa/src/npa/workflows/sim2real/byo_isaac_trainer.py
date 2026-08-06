@@ -26,18 +26,31 @@ without a GPU.
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import os
-import subprocess
+import re
 import shlex
+import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
+from npa.workflows.sim2real.capture import (
+    DEFAULT_PPO_ITERATIONS,
+    DEFAULT_PPO_NUM_ENVS,
+    DEFAULT_PPO_STEPS_PER_ENV,
+    ppo_settings,
+)
+from npa.workflows.sim2real.constants import DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE
+from npa.workflows.sim2real.isaac_job_payload import compressed_bash_launch
+
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
-DEFAULT_NUM_ENVS = 1024
-DEFAULT_ITERATIONS = 150
+DEFAULT_NUM_ENVS = DEFAULT_PPO_NUM_ENVS
+DEFAULT_ITERATIONS = DEFAULT_PPO_ITERATIONS
+DEFAULT_STEPS_PER_ENV = DEFAULT_PPO_STEPS_PER_ENV
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 # Default PPO entropy coefficient for the Franka Lift run. The stock Isaac Lift
 # cfg uses ~0.006, which lets the action-noise std collapse by ~iter 400-600;
@@ -47,6 +60,7 @@ DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 # bottleneck so learning is reliable across seeds. Override via
 # NPA_BYO_ISAAC_ENTROPY_COEF (set to "" or "stock" to keep the task default).
 DEFAULT_ENTROPY_COEF = "0.01"
+DEFAULT_PPO_OPTIMIZER_LEARNING_RATE = "0.001"
 _STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
 # rsl_rl experiment_name for the Franka Lift task (logs/rsl_rl/<experiment_name>/).
@@ -62,20 +76,21 @@ RESUME_CKPT_NAME = "model_0.pt"
 
 # Root of the public Omniverse Isaac asset CDN (no tenant/private IDs). Override
 # with NPA_ISAAC_NUCLEUS_DIR to point at an internal Nucleus mirror.
-DEFAULT_ISAAC_NUCLEUS_DIR = (
-    "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac"
-)
+DEFAULT_ISAAC_NUCLEUS_DIR = "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac"
 # Rigid-ready (RigidBodyAPI: collision + mass) instanceable manipuland. Defaulting
 # to it means the Franka loop trains/evals on a real physically simulated USD sim
 # asset instead of the stock primitive cube. A raw visual mesh would fail to spawn.
 DEFAULT_OBJECT_USD_REL = "Props/Blocks/MultiColorCube/multi_color_cube_instanceable.usd"
 # Sentinels that opt back out of the USD default to the built-in primitive cube.
 _STOCK_OBJECT_USD_SENTINELS = frozenset({"stock", "none", "primitive", "builtin"})
+_MAX_EMBEDDED_SCENARIOS_BYTES = 256_000
 
 
 def default_isaac_object_usd() -> str:
     """Resolved default manipuland USD (Nucleus root + rigid-ready instanceable)."""
-    nuc = (os.environ.get("NPA_ISAAC_NUCLEUS_DIR", "") or DEFAULT_ISAAC_NUCLEUS_DIR).strip()
+    nuc = (
+        os.environ.get("NPA_ISAAC_NUCLEUS_DIR", "") or DEFAULT_ISAAC_NUCLEUS_DIR
+    ).strip()
     return f"{nuc.rstrip('/')}/{DEFAULT_OBJECT_USD_REL}"
 
 
@@ -96,7 +111,9 @@ def resolve_object_usd(raw: str) -> str:
 ROBOT_USD_CONTAINER_PATH = "/tmp/npa_robot/robot.usd"
 
 
-def robot_spec_payload(spec: Any, *, usd_container_path: str = "") -> dict[str, Any] | None:
+def robot_spec_payload(
+    spec: Any, *, usd_container_path: str = ""
+) -> dict[str, Any] | None:
     """Serialize a resolved RobotSpec into the ``NPA_BYO_ROBOT_SPEC_JSON`` contract.
 
     Returns ``None`` when ``spec`` is ``None`` (no BYO-robot routing). For a
@@ -185,9 +202,11 @@ def _resolve_byo_robot_spec() -> Any:
         spec = resolve_robot_spec_from_consumed_doc(
             doc, robot_preset=preset, robot_source=source
         )
-        print(f"byo_isaac_trainer: resolved robot_spec from {spec_uri} -> "
-              f"{getattr(spec, 'name', None)!r} ({getattr(spec, 'robot_source', None)})",
-              flush=True)
+        print(
+            f"byo_isaac_trainer: resolved robot_spec from {spec_uri} -> "
+            f"{getattr(spec, 'name', None)!r} ({getattr(spec, 'robot_source', None)})",
+            flush=True,
+        )
         return spec
 
     return robot_assets.robot_spec_from_inputs(
@@ -199,7 +218,7 @@ def _resolve_byo_robot_spec() -> Any:
 # --------------------------------------------------------------------------- #
 # Pure helpers (unit-tested without a cluster)
 # --------------------------------------------------------------------------- #
-def read_signal_stats(signal_json_path: str) -> dict[str, float]:
+def read_signal_stats(signal_json_path: str) -> dict[str, Any]:
     """Summarize the VLM signal batch: mean reward/advantage and step count.
 
     Best-effort and dependency-light: reads the JSON directly rather than
@@ -230,62 +249,245 @@ def read_signal_stats(signal_json_path: str) -> dict[str, float]:
         step_count = len(rewards)
     if advantages:
         mean_advantage = sum(advantages) / len(advantages)
+    absolute_advantage_mean = (
+        sum(abs(advantage) for advantage in advantages) / len(advantages)
+        if advantages
+        else 0.0
+    )
+    advantage_variance = (
+        sum((advantage - mean_advantage) ** 2 for advantage in advantages)
+        / len(advantages)
+        if advantages
+        else 0.0
+    )
+    reward_mean = sum(rewards) / len(rewards) if rewards else 0.0
+    reward_variance = (
+        sum((reward - reward_mean) ** 2 for reward in rewards) / len(rewards)
+        if rewards
+        else 0.0
+    )
     return {
         "mean_reward": mean_reward,
         "mean_advantage": mean_advantage,
         "step_count": step_count,
         "error_tags": error_tags,
+        "reward_variance": reward_variance,
+        "mean_absolute_advantage": absolute_advantage_mean,
+        "advantage_variance": advantage_variance,
+        "nonzero_advantage_count": sum(
+            abs(advantage) > 1.0e-8 for advantage in advantages
+        ),
     }
 
 
-def _first_env_record(text: str) -> dict[str, Any]:
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+_PPO_ITERATION_RE = re.compile(r"Learning iteration\s+(\d+)/(\d+)")
+_PPO_METRIC_RE = re.compile(r"^\s*([^:]+):\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*$")
+_PPO_FIELDS = {
+    "Mean action noise std": "action_noise_std",
+    "Mean value_function loss": "value_loss",
+    "Mean surrogate loss": "surrogate_loss",
+    "Mean entropy loss": "entropy",
+    "Mean reward": "episode_return",
+    "Mean episode length": "episode_length",
+    "Episode_Reward/reaching_object": "reach_reward",
+    "Episode_Reward/lifting_object": "lift_reward",
+    "Episode_Reward/object_goal_tracking": "place_reward",
+    "Episode_Reward/object_goal_tracking_fine_grained": "place_fine_reward",
+    "Metrics/object_pose/position_error": "object_position_error",
+    "Metrics/object_pose/orientation_error": "object_orientation_error",
+    "Episode_Termination/time_out": "timeout_rate",
+    "Episode_Termination/object_dropping": "drop_rate",
+    "Total timesteps": "total_timesteps",
+}
+
+
+def parse_ppo_training_log(text: str) -> dict[str, Any]:
+    """Parse RSL-RL's iteration table into durable manipulation telemetry."""
+
+    iterations: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    configured_iterations = 0
+    for raw_line in text.splitlines():
+        line = _ANSI_ESCAPE_RE.sub("", raw_line)
+        iteration_match = _PPO_ITERATION_RE.search(line)
+        if iteration_match:
+            current = {"iteration": int(iteration_match.group(1))}
+            configured_iterations = max(
+                configured_iterations, int(iteration_match.group(2))
+            )
+            iterations.append(current)
             continue
-        try:
-            rec = json.loads(line)
-        except Exception:
+        if current is None:
             continue
-        return {
-            "env_id": str(rec.get("env_id") or "env-00000"),
-            "seed": int(rec.get("seed") or 0),
-            "physics": rec.get("physics") or {},
+        metric_match = _PPO_METRIC_RE.match(line)
+        if not metric_match:
+            continue
+        key = _PPO_FIELDS.get(metric_match.group(1).strip())
+        if not key:
+            continue
+        value = float(metric_match.group(2))
+        current[key] = int(value) if key == "total_timesteps" else value
+
+    if not iterations:
+        raise ValueError("RSL-RL log contains no Learning iteration records")
+    required = {"episode_return", "value_loss", "surrogate_loss", "total_timesteps"}
+    complete = [item for item in iterations if required.issubset(item)]
+    if not complete:
+        raise ValueError("RSL-RL log contains no complete PPO telemetry iteration")
+    final = complete[-1]
+    return {
+        "schema": "npa.sim2real.ppo_telemetry.v1",
+        "backend": "isaac_rsl_rl_ppo",
+        "configured_iterations": configured_iterations,
+        "observed_iterations": len(complete),
+        "first_iteration": complete[0],
+        "final_iteration": final,
+        "best_episode_return": max(
+            complete, key=lambda item: (item["episode_return"], item["iteration"])
+        ),
+        "minimum_object_position_error": min(
+            (
+                item
+                for item in complete
+                if item.get("object_position_error") is not None
+            ),
+            key=lambda item: (item["object_position_error"], item["iteration"]),
+            default={},
+        ),
+        "curves": complete,
+    }
+
+
+def _load_and_publish_ppo_telemetry(
+    *, bucket: str, s3_output: str, endpoint: str
+) -> dict[str, Any]:
+    """Fetch the exact job log, parse it, and publish machine-readable telemetry."""
+
+    import boto3
+    from urllib.parse import urlparse
+
+    parsed = urlparse(s3_output)
+    if parsed.scheme != "s3" or parsed.netloc != bucket:
+        raise RuntimeError(f"invalid PPO output URI: {s3_output}")
+    prefix = parsed.path.lstrip("/")
+    s3 = boto3.client("s3", endpoint_url=endpoint or None)
+    log_key = prefix + "train_full.log"
+    body = s3.get_object(Bucket=bucket, Key=log_key)["Body"].read()
+    telemetry = parse_ppo_training_log(body.decode("utf-8", errors="replace"))
+    telemetry_key = prefix + "ppo-telemetry.json"
+    s3.put_object(
+        Bucket=bucket,
+        Key=telemetry_key,
+        Body=json.dumps(telemetry, indent=2, sort_keys=True).encode("utf-8"),
+        ContentType="application/json",
+    )
+    telemetry["raw_log_uri"] = f"s3://{bucket}/{log_key}"
+    telemetry["telemetry_uri"] = f"s3://{bucket}/{telemetry_key}"
+    return telemetry
+
+
+def _load_s3_json(uri: str, *, endpoint: str) -> dict[str, Any]:
+    import boto3
+    from urllib.parse import urlparse
+
+    parsed = urlparse(uri)
+    body = (
+        boto3.client("s3", endpoint_url=endpoint or None)
+        .get_object(Bucket=parsed.netloc, Key=parsed.path.lstrip("/"))["Body"]
+        .read()
+    )
+    payload = json.loads(body)
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"expected JSON object at {uri}")
+    return payload
+
+
+def enumerate_periodic_checkpoints(
+    *, s3_output: str, endpoint: str, validation_interval: int
+) -> list[dict[str, Any]]:
+    """Enumerate durable RSL checkpoints selected for fixed-validation sweeps."""
+
+    if validation_interval <= 0:
+        raise ValueError("validation checkpoint interval must be positive")
+    import boto3
+    from urllib.parse import urlparse
+
+    parsed = urlparse(s3_output)
+    prefix = parsed.path.lstrip("/") + "checkpoints/"
+    paginator = boto3.client("s3", endpoint_url=endpoint or None).get_paginator(
+        "list_objects_v2"
+    )
+    discovered: dict[int, str] = {}
+    for page in paginator.paginate(Bucket=parsed.netloc, Prefix=prefix):
+        for item in page.get("Contents", []) or []:
+            key = str(item.get("Key") or "")
+            match = re.search(r"/model_(\d+)\.pt$", f"/{key}")
+            if match:
+                discovered[int(match.group(1))] = key
+    if not discovered:
+        raise RuntimeError("trainer published no numbered RSL checkpoints")
+    highest = max(discovered)
+    selected = [
+        iteration
+        for iteration in sorted(discovered)
+        if iteration > 0
+        and (iteration % validation_interval == 0 or iteration == highest)
+    ]
+    if highest not in selected:
+        selected.append(highest)
+    return [
+        {
+            "training_iteration": iteration,
+            "checkpoint_uri": f"s3://{parsed.netloc}/{discovered[iteration]}",
         }
-    return {}
+        for iteration in sorted(set(selected))
+    ]
 
 
-def read_generated_train_env(envs_dir: str, *, envs_uri: str = "") -> dict[str, Any]:
-    """Read a representative GENERATED train-env spec (seed + physics).
+def read_generated_train_envs(
+    envs_dir: str, *, envs_uri: str = ""
+) -> tuple[list[dict[str, Any]], str]:
+    """Read the complete curated train split and preserve its exact JSONL.
 
-    The envgen stage writes one record per generated env with a per-env ``seed``
-    and concrete ``physics`` (friction, mass_scale, lighting_lux). We surface the
-    first record so the trainer can train on the generated env distribution (its
-    seed + friction/mass) rather than stock defaults.
-
-    Prefers the local ``envs_dir/envs.jsonl``; falls back to downloading
-    ``envs_uri`` (the S3 ``.../envs/train/envs.jsonl``) when the orchestrator
-    didn't sync the train envs locally (it only localizes the held-out split).
-    Returns ``{}`` when neither source is available (stock run / envgen off).
+    Returning one representative record was the efficacy defect: every vector
+    environment trained on one global seed/config.  The sibling task consumes
+    every row from the returned JSONL and records exact runtime assignments.
     """
 
     from pathlib import Path as _Path
 
     path = _Path(envs_dir) / "envs.jsonl" if envs_dir else None
     if path and path.is_file():
-        return _first_env_record(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+        rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+        return rows, text
     if envs_uri.startswith("s3://"):
         try:
             import boto3
             from urllib.parse import urlparse
 
             u = urlparse(envs_uri)
-            s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
+            s3 = boto3.client(
+                "s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None
+            )
             obj = s3.get_object(Bucket=u.netloc, Key=u.path.lstrip("/"))
-            return _first_env_record(obj["Body"].read().decode("utf-8"))
+            text = obj["Body"].read().decode("utf-8")
+            rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+            return rows, text
         except Exception as exc:  # pragma: no cover - network/credentials
-            print(f"byo_isaac_trainer: train-env S3 read failed ({envs_uri}): {exc!r}", flush=True)
-    return {}
+            print(
+                f"byo_isaac_trainer: train-env S3 read failed ({envs_uri}): {exc!r}",
+                flush=True,
+            )
+    return [], ""
+
+
+def read_generated_train_env(envs_dir: str, *, envs_uri: str = "") -> dict[str, Any]:
+    """Compatibility helper returning the first row; live code uses all rows."""
+
+    rows, _ = read_generated_train_envs(envs_dir, envs_uri=envs_uri)
+    return rows[0] if rows else {}
 
 
 # Canonical Isaac-Lift-Cube-Franka-v0 reward-term weights (manager-based Lift env)
@@ -372,6 +574,7 @@ def build_isaac_job_manifest(
     task: str,
     num_envs: int,
     iterations: int,
+    steps_per_env: int = DEFAULT_STEPS_PER_ENV,
     s3_output_uri: str,
     s3_endpoint: str,
     namespace: str,
@@ -384,12 +587,17 @@ def build_isaac_job_manifest(
     seed: int = 0,
     physics: dict[str, float] | None = None,
     entropy_coef: str = "",
+    ppo_optimizer_learning_rate: str = "",
     init_noise_std: str = "",
+    validation_interval: int = 100,
     resume_uri: str = "",
     experiment_name: str = DEFAULT_EXPERIMENT_NAME,
     robot_spec: dict[str, Any] | None = None,
     robot_usd_uri: str = "",
     task_config: dict[str, Any] | None = None,
+    scenarios_jsonl: str = "",
+    scenarios_uri: str = "",
+    scenarios_sha256: str = "",
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -397,20 +605,33 @@ def build_isaac_job_manifest(
     are VLM-derived ``env.rewards.<term>.weight`` hydra args; ``object_usd``
     overrides the manipuland (``env.scene.object.spawn.usd_path``) so the policy
     is trained on a CUSTOM asset physically simulated in Isaac, not the stock cube.
-    ``seed`` (from a GENERATED train-env spec) drives env + agent randomization so
-    training runs on the envgen-produced env distribution.
-
-    ``physics`` (generated ``{friction, mass_scale}``) selects a different code
-    path: a task VARIANT that adds friction/mass startup events (registered
-    post-boot via the shipped ``isaac_physics_task`` wrapper), because the stock
-    Lift task has no friction/mass field a hydra override could touch. This path
-    is opt-in (the caller gates it on ``NPA_BYO_ISAAC_PHYSICS``) and currently
-    trains the variant's stock cube with default reward weights + the generated
-    seed; it does not also apply VLM reward overrides / custom object (the proven
-    default path below keeps those).
+    ``scenarios_jsonl`` or the SHA-pinned ``scenarios_uri`` is the authoritative
+    curated training distribution. The canonical path downloads the existing S3
+    split inside the Isaac pod instead of embedding thousands of records in the
+    Kubernetes object; the shipped task wrapper then applies object/goal pose and
+    physics per vector environment and rotates records between reset epochs.
+    ``seed`` only controls reproducibility and never substitutes for scenario
+    application. ``physics`` remains a legacy single-configuration compatibility
+    path and is not used by the canonical real-required distribution workflow.
     """
 
-    overrides = dict(reward_overrides or {})
+    scenarios_uri = scenarios_uri.strip()
+    scenarios_sha256 = scenarios_sha256.strip().lower()
+    if scenarios_uri and not scenarios_uri.startswith("s3://"):
+        raise ValueError("scenarios_uri must be an s3:// URI")
+    if scenarios_uri and not re.fullmatch(r"[0-9a-f]{64}", scenarios_sha256):
+        raise ValueError("scenarios_uri requires its exact SHA-256 digest")
+    if (
+        scenarios_jsonl
+        and not scenarios_uri
+        and len(scenarios_jsonl.encode("utf-8")) > _MAX_EMBEDDED_SCENARIOS_BYTES
+    ):
+        raise ValueError(
+            "large curated scenario distributions require scenarios_uri; "
+            "refusing an oversized Kubernetes Job manifest"
+        )
+
+    overrides: dict[str, Any] = dict(reward_overrides or {})
     if object_usd:
         overrides["env.scene.object.spawn.usd_path"] = object_usd
         if object_scale:
@@ -423,6 +644,8 @@ def build_isaac_job_manifest(
     # bottleneck, making learning robust to the seed. See run_isaac_training_job.
     if entropy_coef:
         overrides["agent.algorithm.entropy_coef"] = entropy_coef
+    if ppo_optimizer_learning_rate:
+        overrides["agent.algorithm.learning_rate"] = ppo_optimizer_learning_rate
     if init_noise_std:
         overrides["agent.policy.init_noise_std"] = init_noise_std
     # OUTER-LOOP RESUME (default path only): continue the SAME policy from the prior
@@ -459,6 +682,54 @@ def build_isaac_job_manifest(
         from npa.workflows.sim2real import isaac_byo_robot_task as _robotmod
 
         module_src = _robotmod.module_source()
+        scenario_module_block = ""
+        scenario_data_block = ""
+        if scenarios_jsonl or scenarios_uri:
+            from npa.workflows.sim2real import isaac_scenario_task as _scenarios
+
+            scenario_module_block = (
+                "cat > /tmp/npa_robot/isaac_scenario_task.py <<'SCENARIOPYEOF'\n"
+                + _scenarios.module_source()
+                + "\nSCENARIOPYEOF\n"
+                "export NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/npa_robot/scenarios.jsonl\n"
+                "export NPA_SIM2REAL_TASK_CONTRACT_DIGEST="
+                + shlex.quote(_env("NPA_SIM2REAL_TASK_CONTRACT_DIGEST"))
+                + "\n"
+                "export NPA_SIM2REAL_SCENARIO_ROTATE_ON_RESET=1\n"
+            )
+        if scenarios_uri:
+            scenario_data_block = (
+                "if ! SCENARIOS_URI="
+                + shlex.quote(scenarios_uri)
+                + " SCENARIOS_SHA256="
+                + shlex.quote(scenarios_sha256)
+                + " SCENARIOS_DST=/tmp/npa_robot/scenarios.jsonl "
+                "\"$PY\" - <<'SCENARIODLEOF'\n"
+                "import hashlib, os, boto3\n"
+                "from urllib.parse import urlparse\n"
+                "uri = os.environ['SCENARIOS_URI']\n"
+                "parsed = urlparse(uri)\n"
+                "dst = os.environ['SCENARIOS_DST']\n"
+                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
+                "s3.download_file(parsed.netloc, parsed.path.lstrip('/'), dst)\n"
+                "with open(dst, 'rb') as handle:\n"
+                "    digest = hashlib.sha256(handle.read()).hexdigest()\n"
+                "expected = os.environ['SCENARIOS_SHA256']\n"
+                "if digest != expected:\n"
+                "    raise SystemExit(f'SCENARIO_DISTRIBUTION_SHA_MISMATCH expected={expected} actual={digest}')\n"
+                "print(f'SCENARIO_DISTRIBUTION_DOWNLOADED uri={uri} sha256={digest} bytes={os.path.getsize(dst)}')\n"
+                "SCENARIODLEOF\n"
+                "then\n"
+                "  echo SCENARIO_DISTRIBUTION_FETCH_FAILED\n"
+                "  exit 1\n"
+                "fi\n"
+            )
+        elif scenarios_jsonl:
+            scenario_data_block = (
+                "cat > /tmp/npa_robot/scenarios.jsonl <<'SCENARIOJSONEOF'\n"
+                + scenarios_jsonl.rstrip()
+                + "\nSCENARIOJSONEOF\n"
+            )
         wrapper_src = _robotmod.TRAIN_WRAPPER_SCRIPT
         spec_json = json.dumps(robot_spec, sort_keys=True)
         # B2-derived robot-aware task config (action scale / placement / reward
@@ -467,12 +738,16 @@ def build_isaac_job_manifest(
         task_cfg_block = ""
         if task_config:
             task_cfg_json = json.dumps(task_config, sort_keys=True)
-            task_cfg_block = "export NPA_BYO_TASK_CONFIG_JSON=" + shlex.quote(task_cfg_json) + "\n"
+            task_cfg_block = (
+                "export NPA_BYO_TASK_CONFIG_JSON=" + shlex.quote(task_cfg_json) + "\n"
+            )
         # Keep PPO exploring (same fix as the Franka default path); the wrapper
         # applies it to the rsl_rl agent cfg. Empty -> wrapper keeps task default.
         ent_block = ""
         if entropy_coef:
-            ent_block = "export ROBOT_ENTROPY_COEF=" + shlex.quote(str(entropy_coef)) + "\n"
+            ent_block = (
+                "export ROBOT_ENTROPY_COEF=" + shlex.quote(str(entropy_coef)) + "\n"
+            )
         usd_dest = str(robot_spec.get("usd_path") or "").strip()
         stage_block = ""
         if robot_usd_uri and usd_dest:
@@ -480,8 +755,11 @@ def build_isaac_job_manifest(
             # payload references, before the wrapper registers the variant.
             stage_block = (
                 f'echo "STAGING_ROBOT_USD: {robot_usd_uri} -> {usd_dest}"\n'
-                "ROBOT_USD_URI=" + shlex.quote(robot_usd_uri)
-                + " ROBOT_USD_DEST=" + shlex.quote(usd_dest) + ' "$PY" - <<\'ROBOTDLEOF\'\n'
+                "ROBOT_USD_URI="
+                + shlex.quote(robot_usd_uri)
+                + " ROBOT_USD_DEST="
+                + shlex.quote(usd_dest)
+                + " \"$PY\" - <<'ROBOTDLEOF'\n"
                 "import os, boto3\n"
                 "from urllib.parse import urlparse\n"
                 "u = urlparse(os.environ['ROBOT_USD_URI'])\n"
@@ -511,20 +789,47 @@ def build_isaac_job_manifest(
         train_block = (
             "mkdir -p /tmp/npa_robot\n"
             "cat > /tmp/npa_robot/isaac_byo_robot_task.py <<'ROBOTEOF'\n"
-            + module_src + "\nROBOTEOF\n"
+            + module_src
+            + "\nROBOTEOF\n"
             "cat > /tmp/npa_robot/runner.py <<'ROBOTRUNEOF'\n"
-            + wrapper_src + "\nROBOTRUNEOF\n"
-            '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
+            + wrapper_src
+            + "\nROBOTRUNEOF\n"
+            + scenario_module_block
+            + '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
+            + scenario_data_block
             + resume_block
             + stage_block
             + f'echo "ROBOT_INJECTION: {robot_spec.get("robot_source")} '
             f'{robot_spec.get("name")} seed={int(seed)}"\n'
             f'export NPA_ROBOT_MODULE_DIR=/tmp/npa_robot ROBOT_OUT_DIR="$OUT" '
-            f'ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} ROBOT_SEED={int(seed)}\n'
-            + "export ROBOT_RESUME_CKPT_LOCAL=" + shlex.quote(resume_local) + "\n"
-            "export NPA_BYO_ROBOT_SPEC_JSON=" + shlex.quote(spec_json) + "\n"
+            f"ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} "
+            f"ROBOT_STEPS_PER_ENV={steps_per_env} ROBOT_SEED={int(seed)}\n"
+            + "export ROBOT_RESUME_CKPT_LOCAL="
+            + shlex.quote(resume_local)
+            + "\n"
+            "export NPA_BYO_ROBOT_SPEC_JSON="
+            + shlex.quote(spec_json)
+            + "\n"
             + task_cfg_block
             + ent_block
+            + "export ROBOT_REWARD_OVERRIDES_JSON="
+            + shlex.quote(json.dumps(reward_overrides or {}, sort_keys=True))
+            + "\n"
+            + "export ROBOT_PPO_LEARNING_RATE="
+            + shlex.quote(str(ppo_optimizer_learning_rate or ""))
+            + "\n"
+            + "export ROBOT_INIT_NOISE_STD="
+            + shlex.quote(str(init_noise_std or ""))
+            + "\n"
+            + "export ROBOT_VALIDATION_INTERVAL="
+            + shlex.quote(str(max(1, int(validation_interval))))
+            + "\n"
+            + "export ROBOT_OBJECT_USD="
+            + shlex.quote(str(object_usd or ""))
+            + "\n"
+            + "export ROBOT_OBJECT_SCALE="
+            + shlex.quote(str(object_scale or ""))
+            + "\n"
             # tee the FULL wrapper output to /tmp/train_full.log before tailing: the
             # retarget plan + the honest task/robot compatibility verdict are printed
             # right after AppLauncher boot, so `| tail -120` alone discards them
@@ -547,13 +852,14 @@ def build_isaac_job_manifest(
         train_block = (
             "mkdir -p /tmp/npa_phys\n"
             "cat > /tmp/npa_phys/isaac_physics_task.py <<'PHYSEOF'\n"
-            + module_src + "\nPHYSEOF\n"
-            "cat > /tmp/npa_phys/runner.py <<'RUNEOF'\n"
-            + wrapper_src + "\nRUNEOF\n"
+            + module_src
+            + "\nPHYSEOF\n"
+            "cat > /tmp/npa_phys/runner.py <<'RUNEOF'\n" + wrapper_src + "\nRUNEOF\n"
             f'echo "PHYSICS_INJECTION: friction={fr} mass_scale={ms} seed={int(seed)}"\n'
             f'export NPA_PHYS_MODULE_DIR=/tmp/npa_phys PHYS_OUT_DIR="$OUT" '
-            f'PHYS_NUM_ENVS={num_envs} PHYS_ITERS={iterations} PHYS_SEED={int(seed)} '
-            f'NPA_GEN_FRICTION={fr} NPA_GEN_MASS_SCALE={ms}\n'
+            f"PHYS_NUM_ENVS={num_envs} PHYS_ITERS={iterations} "
+            f"PHYS_STEPS_PER_ENV={steps_per_env} PHYS_SEED={int(seed)} "
+            f"NPA_GEN_FRICTION={fr} NPA_GEN_MASS_SCALE={ms}\n"
             '"$PY" /tmp/npa_phys/runner.py 2>&1 | tail -120\n'
         )
     else:
@@ -580,36 +886,37 @@ def build_isaac_job_manifest(
             )
         train_line = (
             f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
-            f'--max_iterations {iterations} --headless{seed_arg} agent.save_interval=25 {override_str}'
+            f"--max_iterations {iterations} --headless{seed_arg} "
+            f"agent.num_steps_per_env={steps_per_env} agent.save_interval=25 {override_str}"
         )
         train_block = (
-            f'{resume_block}'
+            f"{resume_block}"
             f'echo "VLM_REWARD_OVERRIDES: {override_str}"\n'
             # tee the FULL training output to a file (the per-iteration Mean reward
             # curve) before tailing to stdout — `| tail -120` alone discards the
             # early reward history, making the learning curve unrecoverable.
-            f'{train_line} 2>&1 | tee /tmp/train_full.log | tail -120\n'
+            f"{train_line} 2>&1 | tee /tmp/train_full.log | tail -120\n"
         )
 
     script = (
         "set -uo pipefail\n"
-        'exec > >(tee -a /tmp/byo-train.log) 2>&1\n'
-        'if [ -x /isaac-sim/python.sh ]; then\n'
-        '  PY=/isaac-sim/python.sh\n'
-        'elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n'
-        '  cat > /tmp/isaac-python <<\'ISPYEOF\'\n'
-        '#!/usr/bin/env bash\n'
+        "exec > >(tee -a /tmp/byo-train.log) 2>&1\n"
+        "if [ -x /isaac-sim/python.sh ]; then\n"
+        "  PY=/isaac-sim/python.sh\n"
+        "elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n"
+        "  cat > /tmp/isaac-python <<'ISPYEOF'\n"
+        "#!/usr/bin/env bash\n"
         'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
-        'ISPYEOF\n'
-        '  chmod +x /tmp/isaac-python\n'
-        '  PY=/tmp/isaac-python\n'
-        'else\n'
+        "ISPYEOF\n"
+        "  chmod +x /tmp/isaac-python\n"
+        "  PY=/tmp/isaac-python\n"
+        "else\n"
         '  PY="$(command -v python3 || command -v python || true)"\n'
-        'fi\n'
+        "fi\n"
         '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
         f'OUT=/workspace/isaaclab/npa-runs/{run_id}; mkdir -p "$OUT"; cd "$OUT"\n'
         "set +e\n"
-        f'{train_block}'
+        f"{train_block}"
         "rc=${PIPESTATUS[0]}; set -e\n"
         'echo "TRAIN_RC=$rc"\n'
         # Re-dump the BYO-robot markers (retarget plan + compatibility verdict +
@@ -617,11 +924,13 @@ def build_isaac_job_manifest(
         # and are present even when an incompatible robot fails at env build.
         'if [ -f /tmp/train_full.log ]; then echo "=== ROBOT_MARKERS (untruncated) ==="; '
         'grep -aE "^(ROBOT_|STAGED_ROBOT_USD)" /tmp/train_full.log || true; fi\n'
-        'CKPT=$(find "$OUT" -name \'model_*.pt\' 2>/dev/null | sort -V | tail -1)\n'
+        "CKPT=$(find \"$OUT\" -name 'model_*.pt' 2>/dev/null | sort -V | tail -1)\n"
         'echo "LATEST_CKPT=$CKPT"\n'
         '[ -z "$CKPT" ] && { echo "NO_CHECKPOINT"; exit ${rc:-3}; }\n'
         '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
-        'CKPT_PATH="$CKPT" OUT_DIR="$OUT" OUT_URI="' + s3_output_uri + '" "$PY" - <<\'PYEOF\'\n'
+        'CKPT_PATH="$CKPT" OUT_DIR="$OUT" OUT_URI="'
+        + s3_output_uri
+        + '" "$PY" - <<\'PYEOF\'\n'
         "import os, glob, boto3\n"
         "from urllib.parse import urlparse\n"
         "u = urlparse(os.environ['OUT_URI'])\n"
@@ -639,10 +948,15 @@ def build_isaac_job_manifest(
         "if _op.isfile('/tmp/train_full.log'):\n"
         "    s3.upload_file('/tmp/train_full.log', u.netloc, base + 'train_full.log')\n"
         "    print('UPLOADED_TRAIN_LOG s3://%s/%s' % (u.netloc, base + 'train_full.log'))\n"
+        "if _op.isfile(_op.join(os.environ['OUT_DIR'], 'applied-scenarios.json')):\n"
+        "    p = _op.join(os.environ['OUT_DIR'], 'applied-scenarios.json')\n"
+        "    s3.upload_file(p, u.netloc, base + 'applied-scenarios.json')\n"
+        "    print('UPLOADED_SCENARIO_AUDIT s3://%s/%s' % (u.netloc, base + 'applied-scenarios.json'))\n"
         "PYEOF\n"
         'echo "BYO_TRAIN_DONE rc=$rc"\n'
         "exit $rc\n"
     )
+    command, args = compressed_bash_launch(script)
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -700,8 +1014,8 @@ def build_isaac_job_manifest(
                                 {"name": "AWS_ENDPOINT_URL", "value": s3_endpoint},
                                 *_isaac_eula_env_entries(),
                             ],
-                            "command": ["/bin/bash", "-lc"],
-                            "args": [script],
+                            "command": command,
+                            "args": args,
                         }
                     ],
                     "nodeSelector": {f"{gpu_resource}.product": gpu_product},
@@ -720,6 +1034,9 @@ def build_update_result(
     status: str,
     duration_ms: float,
     reward_overrides: dict[str, float] | None = None,
+    num_envs: int = DEFAULT_NUM_ENVS,
+    steps_per_env: int = DEFAULT_STEPS_PER_ENV,
+    learning_rate: float = DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE,
 ) -> dict[str, Any]:
     """Build a VlmSignalUpdateResult-shaped dict from a real training run.
 
@@ -732,16 +1049,28 @@ def build_update_result(
     mean_reward = float(stats.get("mean_reward", 0.0))
     mean_advantage = float(stats.get("mean_advantage", 0.0))
     reward_target = max(0.0, min(1.0, (mean_reward + 1.0) / 2.0))
+    if learning_rate <= 0:
+        raise ValueError(f"learning_rate must be positive, got {learning_rate}")
     reward_head_after = round(
-        initial_reward_head + 0.5 * (reward_target - initial_reward_head), 6
+        initial_reward_head
+        + float(learning_rate) * (reward_target - initial_reward_head),
+        6,
     )
     # A real trainer produced a checkpoint => a real policy delta occurred.
-    policy_delta_l2 = round(0.05 + 0.001 * float(iterations), 6) if checkpoint_uri else 0.0
+    policy_delta_l2 = (
+        round(0.05 + 0.001 * float(iterations), 6) if checkpoint_uri else 0.0
+    )
     return {
         "schema": "npa.lerobot.vlm_signal_adapter.v1",
         "status": status,
         "backend": "isaac_rsl_rl_ppo",
         "steps": int(iterations),
+        "ppo": {
+            "iterations": int(iterations),
+            "num_envs": int(num_envs),
+            "steps_per_env": int(steps_per_env),
+            "total_environment_steps": int(iterations * num_envs * steps_per_env),
+        },
         "loss_before": 1.0,
         "loss_after": round(max(0.0, 1.0 - 0.5 * reward_target), 6),
         "reward_head_before": round(float(initial_reward_head), 6),
@@ -751,9 +1080,22 @@ def build_update_result(
         "policy_delta_l2": policy_delta_l2,
         "mean_reward": round(mean_reward, 6),
         "mean_advantage": round(mean_advantage, 6),
+        "signal_statistics": {
+            "signed_mean_advantage": round(mean_advantage, 6),
+            "mean_absolute_advantage": round(
+                float(stats.get("mean_absolute_advantage") or 0.0), 6
+            ),
+            "advantage_variance": round(
+                float(stats.get("advantage_variance") or 0.0), 10
+            ),
+            "reward_variance": round(float(stats.get("reward_variance") or 0.0), 10),
+            "nonzero_advantage_count": int(stats.get("nonzero_advantage_count") or 0),
+        },
         "checkpoint_path": checkpoint_uri,
         "signal_count": int(stats.get("step_count", 0)),
         "control": False,
+        "effective_learning_rate": float(learning_rate),
+        "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
         "loss_integration_point": (
             "Isaac-Lab RSL-RL PPO sibling job (real policy training); VLM signal "
             "shapes reward via env.rewards weight overrides: "
@@ -766,7 +1108,9 @@ def build_update_result(
 # --------------------------------------------------------------------------- #
 # kubectl orchestration (live path)
 # --------------------------------------------------------------------------- #
-def _kubectl(args: list[str], *, stdin: str | None = None, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+def _kubectl(
+    args: list[str], *, stdin: str | None = None, timeout: int = 300
+) -> subprocess.CompletedProcess[str]:
     cmd = [os.environ.get("NPA_KUBECTL_BIN") or "kubectl", *args]
     return subprocess.run(
         cmd, input=stdin, capture_output=True, text=True, timeout=timeout, check=False
@@ -796,8 +1140,12 @@ def k8s_job_name(*parts: str, max_length: int = 63) -> str:
         elif not previous_dash:
             cleaned.append("-")
             previous_dash = True
-    name = "".join(cleaned).strip("-")[:max_length].strip("-")
-    return name or "s2r-job"
+    name = "".join(cleaned).strip("-")
+    if len(name) <= max_length:
+        return name or "s2r-job"
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:8]
+    prefix = name[: max_length - len(digest) - 1].rstrip("-")
+    return f"{prefix}-{digest}"
 
 
 def artifact_tag(value: str, *, default: str = "") -> str:
@@ -817,7 +1165,13 @@ def artifact_tag_from_output_dir(output_dir: Path, *, default: str = "iter") -> 
     return artifact_tag(name, default=default)
 
 
-def latest_byo_checkpoint_uri(bucket: str, run_id: str, *, s3_endpoint: str = "") -> str:
+def latest_byo_checkpoint_uri(
+    bucket: str,
+    run_id: str,
+    *,
+    s3_endpoint: str = "",
+    s3_prefix: str = "sim2real-b",
+) -> str:
     """Return the newest same-run BYO trainer model_latest.pt, if any."""
 
     if not bucket or not run_id:
@@ -826,7 +1180,7 @@ def latest_byo_checkpoint_uri(bucket: str, run_id: str, *, s3_endpoint: str = ""
         import boto3
 
         s3 = boto3.client("s3", endpoint_url=s3_endpoint or None)
-        prefix = f"sim2real-b/{run_id}/byo-trainer/"
+        prefix = f"{s3_prefix.strip('/')}/{run_id}/byo-trainer/"
         paginator = s3.get_paginator("list_objects_v2")
         newest_key = ""
         newest_ts = None
@@ -849,12 +1203,18 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     """Submit the Isaac sibling Job, wait, and return an update-result dict."""
 
     task = _env("NPA_BYO_ISAAC_TASK", DEFAULT_ISAAC_TASK)
-    num_envs = int(_env("NPA_BYO_ISAAC_NUM_ENVS", str(DEFAULT_NUM_ENVS)) or DEFAULT_NUM_ENVS)
-    iterations = int(_env("NPA_BYO_ISAAC_ITERATIONS", str(DEFAULT_ITERATIONS)) or DEFAULT_ITERATIONS)
+    ppo = ppo_settings()
+    num_envs = int(ppo["num_envs"])
+    iterations = int(ppo["iterations"])
+    steps_per_env = int(ppo["steps_per_env"])
+    validation_interval = int(_env("NPA_BYO_ISAAC_VALIDATION_INTERVAL", "100") or 100)
     image = _env("ISAAC_IMAGE") or _env("NPA_SIM2REAL_ISAAC_IMAGE")
     if not image:
-        raise SystemExit("byo_isaac_trainer: ISAAC_IMAGE/NPA_SIM2REAL_ISAAC_IMAGE not set")
+        raise SystemExit(
+            "byo_isaac_trainer: ISAAC_IMAGE/NPA_SIM2REAL_ISAAC_IMAGE not set"
+        )
     bucket = _env("NPA_SIM2REAL_BUCKET") or _env("S3_BUCKET")
+    s3_prefix = _env("NPA_SIM2REAL_PREFIX", "sim2real-b").strip("/")
     endpoint = _env("AWS_ENDPOINT_URL")
     namespace = _env("NPA_SIM2REAL_K8S_NAMESPACE", "default")
     service_account = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
@@ -866,11 +1226,28 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     # Unset => byte-identical to the historical single-shot path.
     tag = _sanitize_tag(_env("NPA_SIM2REAL_TRAINER_TAG"))
     path_seg = f"{job_name}/{tag}/" if tag else f"{job_name}/"
-    s3_output = f"s3://{bucket}/sim2real-b/{run_id}/byo-trainer/{path_seg}"
-    timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "7200") or 7200)
+    s3_output = f"s3://{bucket}/{s3_prefix}/{run_id}/byo-trainer/{path_seg}"
+    timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "0") or 0)
+    learning_rate = float(
+        _env(
+            "NPA_SIM2REAL_LEARNING_RATE",
+            str(DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE),
+        )
+    )
+    print(
+        "byo_isaac_trainer: effective VLM signal-adapter learning_rate -> "
+        f"{learning_rate} (Isaac PPO optimizer remains task-configured)",
+        flush=True,
+    )
 
     # VLM critique -> PPO reward-term shaping (the VLM drives what the policy learns).
     stats = read_signal_stats(signal_json)
+    if int(stats.get("step_count") or 0) <= 0:
+        raise RuntimeError("real PPO received no temporal training signals")
+    if int(stats.get("nonzero_advantage_count") or 0) <= 0:
+        raise RuntimeError(
+            "real PPO refused a degenerate signal batch with zero nonzero advantages"
+        )
     reward_overrides = vlm_reward_overrides(stats)
     print(f"byo_isaac_trainer: VLM reward overrides -> {reward_overrides}", flush=True)
     object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
@@ -880,39 +1257,72 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     raw_ent = _env("NPA_BYO_ISAAC_ENTROPY_COEF", DEFAULT_ENTROPY_COEF)
     entropy_coef = "" if raw_ent.lower() in _STOCK_ENTROPY_SENTINELS else raw_ent
     init_noise_std = _env("NPA_BYO_ISAAC_INIT_NOISE_STD")
+    ppo_optimizer_learning_rate = _env(
+        "NPA_BYO_ISAAC_PPO_LEARNING_RATE",
+        DEFAULT_PPO_OPTIMIZER_LEARNING_RATE,
+    )
     if entropy_coef:
-        print(f"byo_isaac_trainer: PPO entropy_coef -> {entropy_coef} "
-              f"(exploration floor; stock ~0.006)", flush=True)
+        print(
+            f"byo_isaac_trainer: PPO entropy_coef -> {entropy_coef} "
+            f"(exploration floor; stock ~0.006)",
+            flush=True,
+        )
+    print(
+        "byo_isaac_trainer: PPO optimizer initial learning_rate -> "
+        f"{ppo_optimizer_learning_rate} (independent of signal adapter)",
+        flush=True,
+    )
     if object_usd:
         default_tag = " (default)" if not _env("NPA_BYO_ISAAC_OBJECT_USD") else ""
-        print(f"byo_isaac_trainer: object USD -> {object_usd}{default_tag} scale={object_scale}", flush=True)
+        print(
+            f"byo_isaac_trainer: object USD -> {object_usd}{default_tag} scale={object_scale}",
+            flush=True,
+        )
     else:
-        print("byo_isaac_trainer: stock primitive cube (object USD opted out)", flush=True)
+        print(
+            "byo_isaac_trainer: stock primitive cube (object USD opted out)", flush=True
+        )
 
-    # GENERATED train-env spec: seed drives Isaac randomization so the policy
-    # trains on the envgen-produced distribution (matches the held-out eval).
-    train_env = read_generated_train_env(
-        _env("NPA_SIM2REAL_TRAIN_ENVS_DIR"), envs_uri=_env("NPA_SIM2REAL_TRAIN_ENVS_URI"))
-    gen_seed = int(train_env.get("seed") or 0)
-    if train_env:
-        print(f"byo_isaac_trainer: GENERATED train env {train_env.get('env_id')} "
-              f"seed={gen_seed} physics={train_env.get('physics')}", flush=True)
+    train_envs_uri = _env("NPA_SIM2REAL_TRAIN_ENVS_URI")
+    train_envs, scenarios_jsonl = read_generated_train_envs(
+        _env("NPA_SIM2REAL_TRAIN_ENVS_DIR"),
+        envs_uri=train_envs_uri,
+    )
+    if not train_envs:
+        raise RuntimeError(
+            "real Isaac training requires a non-empty curated train split"
+        )
+    from npa.workflows.sim2real.isaac_scenario_task import scenario_contract_summary
 
-    # Opt-in generated-physics injection (guarded; default path unchanged): map the
-    # generated env's friction/mass_scale onto NPA_GEN_* and use the physics-variant
-    # task (friction/mass startup events) instead of stock train.py.
+    gen_seed = int(_env("NPA_SIM2REAL_SEED", "0") or 0)
+    scenario_summary = scenario_contract_summary(train_envs)
+    scenarios_bytes = scenarios_jsonl.encode("utf-8")
+    scenarios_sha256 = hashlib.sha256(scenarios_bytes).hexdigest()
+    scenario_summary.update(
+        {
+            "source_uri": train_envs_uri or "embedded",
+            "source_sha256": scenarios_sha256,
+            "source_bytes": len(scenarios_bytes),
+            "transport": "s3_sha256" if train_envs_uri else "embedded",
+        }
+    )
+    print(
+        "byo_isaac_trainer: curated scenario distribution -> "
+        + json.dumps(scenario_summary, sort_keys=True),
+        flush=True,
+    )
+
+    # The legacy single-config physics task is incompatible with distributional
+    # scenario application. Exact per-env friction/mass are now always installed
+    # by isaac_scenario_task; the old opt-in is retained only as a loud migration
+    # marker and never diverts the canonical run.
     physics = None
     if _env("NPA_BYO_ISAAC_PHYSICS") == "1":
-        from npa.workflows.sim2real import isaac_physics_task as _physmod
-
-        gen_phys = (train_env.get("physics") or {}) if train_env else {}
-        phys_env = {
-            "NPA_GEN_FRICTION": _env("NPA_GEN_FRICTION") or str(gen_phys.get("friction", "")),
-            "NPA_GEN_MASS_SCALE": _env("NPA_GEN_MASS_SCALE") or str(gen_phys.get("mass_scale", "")),
-        }
-        physics = _physmod.physics_params_from_env(phys_env)
-        print(f"byo_isaac_trainer: PHYSICS injection {'ON' if physics else 'OFF (no params)'} "
-              f"-> {physics}", flush=True)
+        print(
+            "byo_isaac_trainer: NPA_BYO_ISAAC_PHYSICS is obsolete; "
+            "applying the complete curated per-env distribution instead",
+            flush=True,
+        )
 
     # Opt-in BYO-robot task path (guarded; default path unchanged): route the
     # customer robot_spec into a registered Isaac Lift variant that swaps in the
@@ -921,12 +1331,18 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     robot_usd_uri = ""
     if _env("NPA_BYO_ROBOT_TASK") == "1":
         if physics:
-            print("byo_isaac_trainer: NPA_BYO_ROBOT_TASK=1 takes precedence over "
-                  "PHYSICS path; disabling physics injection", flush=True)
+            print(
+                "byo_isaac_trainer: NPA_BYO_ROBOT_TASK=1 takes precedence over "
+                "PHYSICS path; disabling physics injection",
+                flush=True,
+            )
             physics = None
         spec = _resolve_byo_robot_spec()
         usd_dest = ""
-        if spec is not None and str(getattr(spec, "robot_source", "")) != "stock_franka":
+        if (
+            spec is not None
+            and str(getattr(spec, "robot_source", "")) != "stock_franka"
+        ):
             robot_uri = str(getattr(spec, "robot_uri", "") or "")
             if robot_uri.startswith("s3://"):
                 robot_usd_uri = robot_uri
@@ -937,13 +1353,22 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
                 # No silent Franka swap for a real BYO robot: warn loudly. The
                 # wrapper still trains (stock cfg) but the operator must know the
                 # robot USD was not staged (URDF→USD conversion is a follow-up).
-                print(f"byo_isaac_trainer: WARNING BYO robot {getattr(spec, 'name', '?')!r} "
-                      f"({getattr(spec, 'robot_source', '?')}) has no stageable USD "
-                      "(s3:// or container path); robot articulation will NOT be swapped",
-                      flush=True)
+                print(
+                    f"byo_isaac_trainer: WARNING BYO robot {getattr(spec, 'name', '?')!r} "
+                    f"({getattr(spec, 'robot_source', '?')}) has no stageable USD "
+                    "(s3:// or container path); robot articulation will NOT be swapped",
+                    flush=True,
+                )
         robot_spec_dict = robot_spec_payload(spec, usd_container_path=usd_dest)
-        print(f"byo_isaac_trainer: BYO-ROBOT task path "
-              f"{'ON' if robot_spec_dict else 'OFF (no spec)'} -> {robot_spec_dict}", flush=True)
+        print(
+            f"byo_isaac_trainer: BYO-ROBOT task path "
+            f"{'ON' if robot_spec_dict else 'OFF (no spec)'} -> {robot_spec_dict}",
+            flush=True,
+        )
+    # Force the post-boot variant wrapper even for stock Franka: it is the single
+    # path that installs the scenario reset and goal command terms.
+    if robot_spec_dict is None:
+        robot_spec_dict = {"robot_source": "stock_franka", "name": "franka"}
 
     # B2-derived robot-aware task config (action scale / placement / reward
     # thresholds / gripper). Set by the onboarding CLI as NPA_BYO_TASK_CONFIG_JSON
@@ -955,28 +1380,46 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             parsed = json.loads(raw_task_cfg)
             if isinstance(parsed, dict):
                 task_config = parsed
-                print(f"byo_isaac_trainer: BYO task config -> {task_config}", flush=True)
+                print(
+                    f"byo_isaac_trainer: BYO task config -> {task_config}", flush=True
+                )
         except (ValueError, TypeError) as exc:
-            print(f"byo_isaac_trainer: WARNING invalid NPA_BYO_TASK_CONFIG_JSON ({exc!r}); "
-                  "variant keeps stock task numbers", flush=True)
+            print(
+                f"byo_isaac_trainer: WARNING invalid NPA_BYO_TASK_CONFIG_JSON ({exc!r}); "
+                "variant keeps stock task numbers",
+                flush=True,
+            )
 
     # OUTER-LOOP RESUME: the orchestrator passes the prior iteration's checkpoint URI
     # so this run continues the SAME policy (stage 11B "more RL" compounds). Ignored on
     # the physics-variant path (different task) — log it so the skip is visible.
     resume_uri = _env("NPA_SIM2REAL_RESUME_CHECKPOINT_URI")
     if not resume_uri and _env("NPA_BYO_ISAAC_AUTO_RESUME", "1") != "0":
-        resume_uri = latest_byo_checkpoint_uri(bucket, run_id, s3_endpoint=endpoint)
+        resume_uri = latest_byo_checkpoint_uri(
+            bucket,
+            run_id,
+            s3_endpoint=endpoint,
+            s3_prefix=s3_prefix,
+        )
         if resume_uri:
-            print(f"byo_isaac_trainer: AUTO-RESUME from latest same-run checkpoint {resume_uri}",
-                  flush=True)
+            print(
+                f"byo_isaac_trainer: AUTO-RESUME from latest same-run checkpoint {resume_uri}",
+                flush=True,
+            )
     experiment_name = _env("NPA_BYO_ISAAC_EXPERIMENT_NAME", DEFAULT_EXPERIMENT_NAME)
     if resume_uri:
         if physics:
-            print(f"byo_isaac_trainer: RESUME requested but physics path active; "
-                  f"ignoring resume_uri={resume_uri}", flush=True)
+            print(
+                f"byo_isaac_trainer: RESUME requested but physics path active; "
+                f"ignoring resume_uri={resume_uri}",
+                flush=True,
+            )
         else:
-            print(f"byo_isaac_trainer: RESUME from {resume_uri} "
-                  f"(experiment={experiment_name}) -> continue same policy", flush=True)
+            print(
+                f"byo_isaac_trainer: RESUME from {resume_uri} "
+                f"(experiment={experiment_name}) -> continue same policy",
+                flush=True,
+            )
 
     manifest = build_isaac_job_manifest(
         job_name=job_name,
@@ -985,6 +1428,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         task=task,
         num_envs=num_envs,
         iterations=iterations,
+        steps_per_env=steps_per_env,
         s3_output_uri=s3_output,
         s3_endpoint=endpoint,
         namespace=namespace,
@@ -996,41 +1440,114 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         seed=gen_seed,
         physics=physics,
         entropy_coef=entropy_coef,
+        ppo_optimizer_learning_rate=ppo_optimizer_learning_rate,
         init_noise_std=init_noise_std,
+        validation_interval=validation_interval,
         resume_uri=resume_uri,
         experiment_name=experiment_name,
         robot_spec=robot_spec_dict,
         robot_usd_uri=robot_usd_uri,
         task_config=task_config,
+        scenarios_jsonl="" if train_envs_uri else scenarios_jsonl,
+        scenarios_uri=train_envs_uri,
+        scenarios_sha256=scenarios_sha256,
     )
-    start = time.time()
-    _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
-    apply = _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120)
-    if apply.returncode != 0:
-        raise SystemExit(f"byo_isaac_trainer: kubectl apply failed: {apply.stderr}")
-    print(f"byo_isaac_trainer: applied {job_name}; waiting up to {timeout_s}s", flush=True)
-    wait = _kubectl(
-        ["wait", f"job/{job_name}", "-n", namespace,
-         "--for=condition=complete", f"--timeout={timeout_s}s"],
-        timeout=timeout_s + 60,
-    )
-    status = "success" if wait.returncode == 0 else "failed"
-    if status != "success":
-        logs = _kubectl(["logs", f"job/{job_name}", "-n", namespace, "--tail=80"], timeout=120)
-        raise SystemExit(
-            f"byo_isaac_trainer: Isaac training job {job_name} did not complete: "
-            f"{wait.stderr}\n--- logs ---\n{logs.stdout}"
+    from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
+
+    def manifest_factory(product: str, candidate_job_name: str) -> dict[str, Any]:
+        candidate = copy.deepcopy(manifest)
+        candidate.setdefault("metadata", {})["name"] = candidate_job_name
+        pod_spec = (
+            candidate.setdefault("spec", {})
+            .setdefault("template", {})
+            .setdefault("spec", {})
         )
+        pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
+        return candidate
+
+    def kubectl(args: list[str], **kwargs: Any):
+        timeout = int(kwargs.pop("timeout_s", 300))
+        return _kubectl(args, timeout=timeout, **kwargs)
+
+    start = time.time()
+    provenance = run_gpu_job_with_fallback(
+        kubectl=kubectl,
+        manifest_factory=manifest_factory,
+        base_job_name=job_name,
+        namespace=namespace,
+        image=image,
+        preferred_product=gpu_product,
+        explicit_candidates=_env("NPA_SIM2REAL_K8S_GPU_CANDIDATES"),
+        workload="isaac",
+        gpu_resource=_env("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
+        gpu_count=1,
+        timeout_s=timeout_s,
+    )
+    job_name = str(provenance["job_name"])
+    status = "success"
     checkpoint_uri = s3_output + "model_latest.pt"
-    return build_update_result(
+    result = build_update_result(
         stats=stats,
-        initial_reward_head=float(_env("NPA_SIM2REAL_INITIAL_REWARD_HEAD", "0.0") or 0.0),
+        initial_reward_head=float(
+            _env("NPA_SIM2REAL_INITIAL_REWARD_HEAD", "0.0") or 0.0
+        ),
         iterations=iterations,
         checkpoint_uri=checkpoint_uri,
         status=status,
         duration_ms=(time.time() - start) * 1000.0,
         reward_overrides=reward_overrides,
+        num_envs=num_envs,
+        steps_per_env=steps_per_env,
+        learning_rate=learning_rate,
     )
+    result["component_invocation"] = {
+        "mode": "kubernetes_job",
+        "job_name": job_name,
+        "image": image,
+        "gpu_provenance": provenance,
+    }
+    result["ppo"] = ppo
+    result["scenario_distribution"] = scenario_summary
+    result["applied_scenarios_uri"] = s3_output + "applied-scenarios.json"
+    applied_scenarios = _load_s3_json(
+        result["applied_scenarios_uri"], endpoint=endpoint
+    )
+    if (
+        int(applied_scenarios.get("scenario_count") or 0) != len(train_envs)
+        or float(applied_scenarios.get("coverage_rate") or 0.0) < 0.90
+    ):
+        raise RuntimeError(
+            "Isaac PPO scenario audit did not prove >=90% curated-train coverage"
+        )
+    result["applied_scenario_proof"] = applied_scenarios
+    telemetry = _load_and_publish_ppo_telemetry(
+        bucket=bucket,
+        s3_output=s3_output,
+        endpoint=endpoint,
+    )
+    result["ppo_telemetry"] = telemetry
+    result["ppo_telemetry_uri"] = telemetry["telemetry_uri"]
+    result["ppo_raw_log_uri"] = telemetry["raw_log_uri"]
+    result["ppo_hyperparameters"] = {
+        "signal_adapter_learning_rate": learning_rate,
+        "ppo_optimizer_initial_learning_rate": float(ppo_optimizer_learning_rate),
+        "ppo_optimizer_schedule": "task_registry_adaptive_schedule",
+        "entropy_coef": float(entropy_coef) if entropy_coef else "task_default",
+        "init_noise_std": float(init_noise_std) if init_noise_std else "task_default",
+        "reward_weights": reward_overrides,
+        "iterations": iterations,
+        "num_envs": num_envs,
+        "steps_per_env": steps_per_env,
+    }
+    result["periodic_checkpoints"] = enumerate_periodic_checkpoints(
+        s3_output=s3_output,
+        endpoint=endpoint,
+        validation_interval=validation_interval,
+    )
+    result["ppo_hyperparameters"]["validation_checkpoint_interval"] = (
+        validation_interval
+    )
+    return result
 
 
 def main() -> int:
@@ -1043,21 +1560,36 @@ def main() -> int:
 
     if _env("NPA_BYO_ISAAC_DRYRUN") == "1":
         stats = read_signal_stats(signal_json)
+        ppo = ppo_settings()
+        learning_rate = float(
+            _env(
+                "NPA_SIM2REAL_LEARNING_RATE",
+                str(DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE),
+            )
+        )
         result = build_update_result(
             stats=stats,
-            initial_reward_head=float(_env("NPA_SIM2REAL_INITIAL_REWARD_HEAD", "0.0") or 0.0),
-            iterations=int(_env("NPA_BYO_ISAAC_ITERATIONS", "2") or 2),
+            initial_reward_head=float(
+                _env("NPA_SIM2REAL_INITIAL_REWARD_HEAD", "0.0") or 0.0
+            ),
+            iterations=int(ppo["iterations"]),
             checkpoint_uri=f"s3://dryrun/{run_id}/model_latest.pt",
             status="success",
             duration_ms=0.0,
+            num_envs=int(ppo["num_envs"]),
+            steps_per_env=int(ppo["steps_per_env"]),
+            learning_rate=learning_rate,
         )
     else:
         result = run_isaac_training_job(run_id, signal_json=signal_json)
 
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
     Path(output_json).write_text(json.dumps(result, indent=2), encoding="utf-8")
-    print(f"byo_isaac_trainer: wrote update result -> {output_json} "
-          f"(checkpoint={result['checkpoint_path']})", flush=True)
+    print(
+        f"byo_isaac_trainer: wrote update result -> {output_json} "
+        f"(checkpoint={result['checkpoint_path']})",
+        flush=True,
+    )
     return 0
 
 

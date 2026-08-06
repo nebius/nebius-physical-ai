@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from npa.workflows.sim2real.engine import _component_job_script
@@ -73,7 +76,9 @@ def test_reference_and_explore_policy_variants_emit_distinct_actions(
         limit=1,
         train_envs_uri="s3://bucket/run/envs/train/envs.jsonl",
     )
-    ref_amp = _max_abs(_read_actions(tmp_path / "ref" / "action-conditioned-train-envs.jsonl"))
+    ref_amp = _max_abs(
+        _read_actions(tmp_path / "ref" / "action-conditioned-train-envs.jsonl")
+    )
 
     monkeypatch.setenv("NPA_SIM2REAL_POLICY_VARIANT", "explore")
     write_action_conditioned_envs(
@@ -83,7 +88,9 @@ def test_reference_and_explore_policy_variants_emit_distinct_actions(
         limit=1,
         train_envs_uri="s3://bucket/run/envs/train/envs.jsonl",
     )
-    alt_amp = _max_abs(_read_actions(tmp_path / "alt" / "action-conditioned-train-envs.jsonl"))
+    alt_amp = _max_abs(
+        _read_actions(tmp_path / "alt" / "action-conditioned-train-envs.jsonl")
+    )
 
     assert ref["policy_image"].endswith("reference-policy:0.1.1")
     assert alt_amp > ref_amp
@@ -100,9 +107,37 @@ def test_isaac_heldout_script_requires_source_tarball() -> None:
 
 def test_envgen_raw_shard_script_invokes_envgen_module_directly() -> None:
     script = _component_job_script("envgen_raw_shard")
+    assert "export NPA_SKIP_EAGER_IMPORTS=1" in script
     assert "python -m npa.workflows.sim2real_envgen raw-shard" in script
     assert "python -m npa.workflows.sim2real python" not in script
     assert "invalid choice" not in script
+
+
+def test_cosmos_transfer_script_uses_lightweight_source_import() -> None:
+    script = _component_job_script("cosmos2_transfer")
+    assert "export NPA_SKIP_EAGER_IMPORTS=1" in script
+    assert "python -m npa.workflows.sim2real component-cosmos2-transfer" in script
+
+
+def test_lightweight_cosmos_reason_import_does_not_load_http_sdk() -> None:
+    env = os.environ.copy()
+    env["NPA_SKIP_EAGER_IMPORTS"] = "1"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import npa.workbench.cosmos.reason; "
+                "assert 'npa.workbench.cosmos.cosmos3' not in sys.modules; "
+                "assert 'httpx' not in sys.modules"
+            ),
+        ],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_engine_resolve_isaac_scene_consumed_stock_envelope(tmp_path: Path) -> None:

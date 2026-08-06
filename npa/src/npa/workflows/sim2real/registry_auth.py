@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from npa.clients.nebius_auth import mint_nebius_iam_token, strip_ambient_token_env
@@ -38,7 +39,9 @@ def _registry_server_from_image(image: str) -> str:
     return ""
 
 
-def docker_config_json(*, registry_servers: Sequence[str], token: str) -> dict[str, Any]:
+def docker_config_json(
+    *, registry_servers: Sequence[str], token: str, username: str = "iam"
+) -> dict[str, Any]:
     """Return a dockerconfigjson whose ``auths`` covers every given registry host.
 
     A pull secret holds exactly one dockerconfigjson and ``kubectl apply`` replaces
@@ -47,7 +50,6 @@ def docker_config_json(*, registry_servers: Sequence[str], token: str) -> dict[s
     than host-scoped.
     """
 
-    username = "iam"
     auth = base64.b64encode(f"{username}:{token}".encode("utf-8")).decode("ascii")
     return {
         "auths": {
@@ -62,6 +64,64 @@ def _normalize_registry_server(value: str) -> str:
     if not server.startswith("cr.") or ".nebius.cloud" not in server:
         return ""
     return server
+
+
+def _docker_helper_credential(
+    registry_server: str,
+    *,
+    env: dict[str, str] | None = None,
+) -> tuple[str, str] | None:
+    """Resolve the credential Docker actually uses for ``registry_server``.
+
+    Operator VMs commonly configure ``docker-credential-nebius-agent-sa`` in
+    ``~/.docker/config.json``. Copying that file into a Kubernetes pull secret
+    only copies an empty ``auths`` placeholder; kubelet cannot execute Docker's
+    credential helper and the subsequent private-image pull fails with 403.
+    Materialize the helper result into the pull secret instead. In-cluster
+    orchestrators generally have neither the config nor helper, so they fall
+    through to the existing CLI/injected-token path.
+    """
+
+    process_env = dict(os.environ if env is None else env)
+    docker_config_dir = (process_env.get("DOCKER_CONFIG") or "").strip()
+    config_path = (
+        Path(docker_config_dir) / "config.json"
+        if docker_config_dir
+        else Path.home() / ".docker" / "config.json"
+    )
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    helper_suffix = str(
+        (config.get("credHelpers") or {}).get(registry_server) or ""
+    ).strip()
+    if not helper_suffix:
+        return None
+    try:
+        result = subprocess.run(
+            [f"docker-credential-{helper_suffix}", "get"],
+            input=f"{registry_server}\n",
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+            env=strip_ambient_token_env(process_env),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        credential = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    username = str(credential.get("Username") or "").strip()
+    secret = str(credential.get("Secret") or "").strip()
+    if not username or not secret:
+        return None
+    return username, secret
 
 
 def ensure_nebius_registry_pull_secret(
@@ -85,13 +145,29 @@ def ensure_nebius_registry_pull_secret(
     servers = [
         normalized
         for normalized in (
-            _normalize_registry_server(value) for value in (registry_server, *registry_servers)
+            _normalize_registry_server(value)
+            for value in (registry_server, *registry_servers)
         )
         if normalized
     ]
     if not servers:
         return
-    token = mint_nebius_registry_token(nebius_cli=nebius_cli)
+    credentials: dict[str, tuple[str, str]] = {}
+    fallback_token = ""
+    for server in servers:
+        credential = _docker_helper_credential(server)
+        if credential is None:
+            if not fallback_token:
+                fallback_token = mint_nebius_registry_token(nebius_cli=nebius_cli)
+            credential = ("iam", fallback_token)
+        credentials[server] = credential
+    auths: dict[str, Any] = {}
+    for server, (username, token) in credentials.items():
+        auths.update(
+            docker_config_json(
+                registry_servers=[server], token=token, username=username
+            )["auths"]
+        )
     payload = {
         "apiVersion": "v1",
         "kind": "Secret",
@@ -99,9 +175,7 @@ def ensure_nebius_registry_pull_secret(
         "type": "kubernetes.io/dockerconfigjson",
         "data": {
             ".dockerconfigjson": base64.b64encode(
-                json.dumps(docker_config_json(registry_servers=servers, token=token)).encode(
-                    "utf-8"
-                )
+                json.dumps({"auths": auths}).encode("utf-8")
             ).decode("ascii")
         },
     }
@@ -135,7 +209,9 @@ def ensure_nebius_registry_pull_secret(
         ) from exc
     if proc.returncode != 0:
         detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
-        raise RuntimeError(f"failed to apply registry pull secret {secret_name}: {detail}")
+        raise RuntimeError(
+            f"failed to apply registry pull secret {secret_name}: {detail}"
+        )
 
 
 def ensure_registry_pull_secret_for_images(

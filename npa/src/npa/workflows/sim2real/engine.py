@@ -16,7 +16,7 @@ Canonical stage map (``monitor._STAGE_SPECS``, ``sim2real_stages``):
 | 7 | ``stage_07_actions_train`` | ``run_inner_loop`` → ``run_policy_rollouts`` | ``actions/train/`` |
 | 8 | ``stage_08_vlm_eval_train`` | ``run_inner_loop`` → ``evaluate_rollout_with_vlm`` | ``vlm_eval/train/`` |
 | 9 | ``stage_09_training_signal`` | ``run_inner_loop`` (signal + trainer) | ``training_signal/train/`` |
-| 10 | ``stage_10_eval_heldout`` | ``run_single_outer_iteration`` → ``run_heldout_eval`` | ``eval/heldout/report.json`` |
+| 10 | ``stage_10_eval_heldout`` | ``run_single_outer_iteration`` → ``run_heldout_eval`` | ``eval/gold-heldout/outer-N/report.json`` |
 | 11 | ``stage_11_outer_loop`` | ``run_single_outer_iteration`` → ``threshold_decision`` | ``outer_loop/decision.json`` |
 | 12 | ``stage_12_external_validation_stub`` | ``run_finalize`` | ``stage_12_external_validation/external_stub.json`` |
 | 13 | ``stage_13_retrigger`` | ``run_finalize`` | ``stage_13_retrigger/retrigger.json`` |
@@ -49,6 +49,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from npa.clients.storage import StorageClient
+from npa.workflows.sim2real.artifact_upload import (
+    _upload_final_report,
+    upload_run_artifacts,  # noqa: F401 - public engine import surface
+)
 from npa.workbench.cosmos.reason import (
     CosmosReasonError,
     merge_dual_reason_evaluations,
@@ -56,12 +60,12 @@ from npa.workbench.cosmos.reason import (
     run_cosmos_reason_vlm,
     task_description_from_manifest,
 )
-from npa.workbench.cosmos.reason import (
-    apply_cosmos_reason_kubernetes_env,
-    cosmos_reason_k8s_shell_preamble,
-    vlm_k8s_component,
-)
 from npa.workflows.sim2real.config import artifact_uris, byo_seams
+from npa.workflows.sim2real.component_records import (
+    _expand_envgen_component_records,
+    _loop_component_records,
+)
+from npa.workflows.sim2real.capture import runtime_parameter_metadata
 from npa.workflows.sim2real.constants import (
     CORRECTIVE_TARGETS,
     DEFAULT_ISAAC_TASK,
@@ -73,7 +77,6 @@ from npa.workflows.sim2real.constants import (
     SCHEMA_E2E_REPORT,
     SCHEMA_HELDOUT_REPORT,
     SCHEMA_RL_SIGNAL,
-    SCHEMA_THRESHOLD_DECISION,
     SCHEMA_VLM_EVAL,
     SIM_BACKEND_GENESIS,
     SIM_BACKEND_ISAAC,
@@ -84,6 +87,33 @@ from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
     Sim2RealLoopError,
 )
+from npa.workflows.sim2real.decision import threshold_decision
+from npa.workflows.sim2real.gpu_fallback import (
+    GpuCapacityExhausted,
+    GpuJobFailure,
+    gpu_fallback_report_contract,
+    minimum_vram_for_workload,
+    run_gpu_job_with_fallback,
+    workload_kind,
+)
+from npa.workflows.sim2real.k8s_components import (
+    _component_job_manifest,
+    _component_job_script as _component_job_script,
+    _indexed_component_job_manifest,
+    _kubernetes_component_env as _kubernetes_component_env,
+)
+from npa.workflows.sim2real.reporting import build_progress_metrics
+from npa.workflows.sim2real.policy_actions_stage import (
+    run_policy_actions_component_from_s3 as run_policy_actions_component_from_s3,
+)
+from npa.workflows.sim2real.reference_helpers import (
+    _heldout_env_score,
+    _signal_diversity_report,
+    _signal_mean_reward,
+    _write_env_manifest as _write_env_manifest,
+    _write_ppm,
+    _write_train_heldout_split as _write_train_heldout_split,
+)
 from npa.workflows.sim2real.utils import (
     _artifact_root_uri,
     _bool_value,
@@ -91,6 +121,14 @@ from npa.workflows.sim2real.utils import (
     _split_csv,
     _utc_now,
     _write_json_artifact,
+)
+from npa.workflows.sim2real.viz_contract import visualization_run_metadata
+from npa.workflows.sim2real.workflow_state_io import (
+    _read_workflow_state,
+    _workflow_state_path,  # noqa: F401 - legacy engine import surface
+    _write_workflow_state,
+    emit_active_progress_rerun,  # noqa: F401 - imported by runner from engine
+    sync_workflow_state_to_s3,  # noqa: F401 - imported by runner from engine
 )
 
 # Isaac Sim app handle — closed only after held-out report upload.
@@ -115,56 +153,6 @@ def _signal_training_imports():
 
 
 # =============================================================================
-# Workflow state (cross-stage polling)
-# =============================================================================
-
-
-def _workflow_state_path(local_dir: Path) -> Path:
-    return local_dir / "state" / "workflow_state.json"
-
-
-def sync_workflow_state_to_s3(
-    config: Sim2RealLoopConfig, local_dir: Path
-) -> dict[str, Any] | None:
-    """Upload ``state/workflow_state.json`` for live ``workflow status`` polling."""
-
-    if not config.upload_artifacts or not config.s3_bucket:
-        return None
-    state_path = local_dir / "state" / "workflow_state.json"
-    if not state_path.is_file():
-        return None
-    destination = f"{_artifact_root_uri(config)}/state/workflow_state.json"
-    try:
-        client = _storage_client(config)
-        uri = client.upload_file(str(state_path), destination)
-    except Exception as exc:
-        return {"status": "blocked", "reason": str(exc)}
-    return {"status": "uploaded", "uri": uri}
-
-
-def _write_workflow_state(
-    local_dir: Path,
-    payload: dict[str, Any],
-    *,
-    config: Sim2RealLoopConfig | None = None,
-) -> dict[str, Any]:
-    record = _write_json_artifact(_workflow_state_path(local_dir), payload)
-    if config is not None:
-        sync_workflow_state_to_s3(config, local_dir)
-    return record["payload"]
-
-
-def _read_workflow_state(local_dir: Path) -> dict[str, Any]:
-    path = _workflow_state_path(local_dir)
-    if not path.exists():
-        raise Sim2RealLoopError(f"workflow state file not found: {path}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise Sim2RealLoopError("workflow state payload must be a JSON object")
-    return payload
-
-
-# =============================================================================
 # Stages 1–6 — preamble (`run_preamble`)
 # =============================================================================
 
@@ -177,37 +165,131 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         tempfile.mkdtemp(prefix=f"npa-{config.run_id}-")
     )
     local_dir.mkdir(parents=True, exist_ok=True)
-    rng = random.Random(config.seed)
     components: list[ComponentRecord] = []
     stage_records: list[dict[str, Any]] = []
 
-    stage_records.append(
-        _write_stage(local_dir, 1, "trigger", _trigger_payload(config))
+    from npa.workflows.sim2real.task_contract import (
+        build_task_contract,
+        validate_seed_dataset_manifest,
+        validate_task_dataset,
     )
+
+    task_contract = build_task_contract(
+        task_id=config.isaac_task,
+        dataset_id=config.trigger_dataset_id,
+        dataset_uri=config.trigger_dataset_uri,
+        robot_source=config.robot_source,
+        robot_preset=config.robot_preset,
+    )
+    task_contract_path = local_dir / "stage_02_assets" / "task-contract.json"
+    _write_json_artifact(task_contract_path, task_contract)
+
+    seed_dataset_proof: dict[str, Any] = {
+        "mode": "local_contract_only",
+        "provenance": task_contract["dataset"]["provenance"],
+    }
+    real_required = bool(
+        config.s3_bucket.strip() and config.byo_trainer_command.strip()
+    )
+    validate_task_dataset(
+        task_id=config.isaac_task,
+        dataset_id=config.trigger_dataset_id,
+        dataset_uri=config.trigger_dataset_uri,
+        real_required=real_required,
+    )
+    if real_required:
+        from npa.clients.storage import StorageClient
+
+        client = StorageClient.from_environment()
+        seed_manifest_uri = (
+            config.trigger_dataset_uri.rstrip("/") + "/task-dataset-manifest.json"
+        )
+        seed_manifest_path = (
+            local_dir / "stage_01_trigger" / "task-dataset-manifest.json"
+        )
+        client.download_path(seed_manifest_uri, str(seed_manifest_path))
+        seed_manifest = json.loads(seed_manifest_path.read_text(encoding="utf-8"))
+        seed_dataset_proof = validate_seed_dataset_manifest(
+            seed_manifest, contract=task_contract
+        )
+        sample_path = local_dir / "stage_01_trigger" / "sample-rollout-manifest.json"
+        client.download_path(
+            seed_dataset_proof["sample_rollout_manifest_uri"], str(sample_path)
+        )
+        sample = json.loads(sample_path.read_text(encoding="utf-8"))
+        if not (sample.get("actions") and sample.get("camera_observations")):
+            raise Sim2RealLoopError(
+                "task seed sample must contain real actions and camera observations"
+            )
+        seed_dataset_proof["mode"] = "validated_isaac_seed_dataset"
+        seed_dataset_proof["manifest_uri"] = seed_manifest_uri
+
+    stage_started = time.monotonic()
+    stage_records.append(
+        _write_stage(
+            local_dir,
+            1,
+            "trigger",
+            {
+                **_trigger_payload(config),
+                "task_contract_digest": task_contract["task_contract_digest"],
+                "task_data_compatible": True,
+                "seed_dataset_provenance": task_contract["dataset"]["provenance"],
+                "seed_dataset_proof": seed_dataset_proof,
+            },
+        )
+    )
+    stage_01_duration = round(time.monotonic() - stage_started, 3)
     components.append(
         ComponentRecord(
             "stage_01_trigger",
             "WORKS",
-            "Consumed the dedicated LeRobot dataset trigger path and resolved runtime plug points.",
-            {"local": str(local_dir / "stage_01_trigger" / "trigger.json")},
+            "Validated a task-aligned Isaac lift-cube seed dataset and resolved runtime plug points.",
+            {
+                "local": str(local_dir / "stage_01_trigger" / "trigger.json"),
+                "job_name": config.run_id,
+                "execution": "orchestrator_record",
+                "duration_s": stage_01_duration,
+            },
         )
     )
 
     from npa.workflows.sim2real_assets import run_assets_stage
     from npa.workflows.sim2real_stages import run_augment_stage, run_envgen_split_stage
 
+    stage_started = time.monotonic()
     assets_result = run_assets_stage(config, local_dir)
     stage_records.append(assets_result.stage_record)
-    components.append(ComponentRecord(**assets_result.component))
+    assets_component = dict(assets_result.component)
+    assets_artifacts = dict(assets_component.get("artifacts") or {})
+    assets_artifacts.update(
+        {
+            "task_contract": (
+                f"{_artifact_root_uri(config)}/stage_02_assets/task-contract.json"
+                if config.s3_bucket
+                else str(task_contract_path)
+            ),
+            "task_contract_digest": task_contract["task_contract_digest"],
+            "job_name": config.run_id,
+            "execution": "orchestrator_materialization",
+            "duration_s": round(time.monotonic() - stage_started, 3),
+        }
+    )
+    assets_component["artifacts"] = assets_artifacts
+    components.append(ComponentRecord(**assets_component))
     scene_spec_uri = assets_result.scene_spec_uri
     robot_spec_uri = assets_result.robot_spec_uri
 
+    stage_started = time.monotonic()
     augment_result = run_augment_stage(config, local_dir)
     stage_records.append(
         _write_json_artifact(
             local_dir / "augment" / "manifest.json", augment_result["manifest"]
         )
     )
+    augment_artifacts = augment_result["component"].setdefault("artifacts", {})
+    if not augment_artifacts.get("duration_s"):
+        augment_artifacts["duration_s"] = round(time.monotonic() - stage_started, 3)
     components.append(ComponentRecord(**augment_result["component"]))
 
     envgen_result = run_envgen_split_stage(
@@ -217,9 +299,13 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         scene_spec_uri=scene_spec_uri,
         robot_spec_uri=robot_spec_uri,
     )
-    components.append(ComponentRecord(**envgen_result["component"]))
+    envgen_components = envgen_result.get("components") or [envgen_result["component"]]
+    components.extend(ComponentRecord(**component) for component in envgen_components)
     train_envs_uri = envgen_result["train_envs_uri"]
+    validation_envs_uri = envgen_result["validation_envs_uri"]
     heldout_envs_uri = envgen_result["heldout_envs_uri"]
+    gold_heldout_envs_uri = envgen_result["gold_heldout_envs_uri"]
+    task_contract_uri = str(task_contract_path)
     sibling_source_tarball_uri = ""
     if config.s3_bucket:
         sibling_source_tarball_uri = ensure_sibling_source_tarball(config)
@@ -235,18 +321,24 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "stage_records": stage_records,
         "components": [asdict(component) for component in components],
         "train_envs_uri": train_envs_uri,
+        "validation_envs_uri": validation_envs_uri,
         "heldout_envs_uri": heldout_envs_uri,
+        "gold_heldout_envs_uri": gold_heldout_envs_uri,
+        "task_contract_uri": task_contract_uri,
+        "task_contract_digest": task_contract["task_contract_digest"],
         "scene_spec_uri": scene_spec_uri,
         "robot_spec_uri": robot_spec_uri,
         "env_count": envgen_result["env_count"],
         "train_env_count": envgen_result["train_count"],
+        "validation_env_count": envgen_result["validation_count"],
         "heldout_env_count": envgen_result["heldout_count"],
+        "gold_heldout_env_count": envgen_result["gold_heldout_count"],
         "outer_history": [],
         "final_inner": None,
         "final_eval": None,
         "final_decision": None,
         "sibling_source_tarball_uri": sibling_source_tarball_uri,
-        "current_quality": 0.36 + rng.random() * 0.04,
+        "current_quality": 0.0,
         "next_outer_iteration": 1,
         "updated_at": _utc_now(),
     }
@@ -281,21 +373,29 @@ def run_single_outer_iteration(
         resume_checkpoint_uri=resume_checkpoint_uri,
     )
     quality = float(inner["final_quality"])
-    heldout_report = run_heldout_eval(
-        config,
-        local_dir=local_dir,
-        inner_evidence=inner,
-        outer_iteration=outer_iteration,
-    )
+    # Checkpoint selection consumes only validation. The gold split is not opened
+    # until the final configured Stage 10 evaluation.
+    if outer_iteration < config.outer_iterations and inner.get(
+        "selected_validation_report"
+    ):
+        heldout_report = dict(inner["selected_validation_report"])
+    else:
+        heldout_report = run_heldout_eval(
+            config,
+            local_dir=local_dir,
+            inner_evidence=inner,
+            outer_iteration=outer_iteration,
+            evaluation_split="gold_heldout",
+        )
     decision = threshold_decision(
         config,
         local_dir=local_dir,
         heldout_report=heldout_report,
         outer_iteration=outer_iteration,
     )
-    next_quality = quality
-    if decision["decision"] != "promote_checkpoint":
-        next_quality = min(0.95, quality + 0.12)
+    # This field is retained for reference-rollout compatibility, but is now a
+    # measured validation/gold strict-success rate rather than synthetic uplift.
+    next_quality = float(heldout_report.get("success_rate") or quality)
     checkpoint_uri = str(inner.get("final_checkpoint_uri") or "").strip()
     result = {
         "outer_iteration": outer_iteration,
@@ -342,59 +442,31 @@ def _append_outer_iteration_workflow_state(
     except Sim2RealLoopError:
         return
     components = list(state.get("components") or [])
-    stage_updates = (
-        (
-            "stage_07_actions_train",
-            "WORKS",
-            f"Policy rollouts completed for outer-{outer_iteration:02d} "
-            f"({config.rollout_count} rollouts × {config.inner_iterations} inner iters).",
-            {"prefix": str(local_dir / "actions" / "train" / f"outer-{outer_iteration:02d}")},
-        ),
-        (
-            "stage_08_vlm_eval_train",
-            "WORKS",
-            "Dual Reason VLM critique merged for train rollouts.",
-            {"prefix": str(local_dir / "vlm_eval" / "train" / f"outer-{outer_iteration:02d}")},
-        ),
-        (
-            "stage_09_training_signal",
-            "WORKS",
-            "VLM critiques converted to RL training signals.",
-            {"prefix": str(local_dir / "training_signal" / "train" / f"outer-{outer_iteration:02d}")},
-        ),
-        (
-            "stage_10_eval_heldout",
-            "WORKS",
-            f"Held-out eval report written (success_rate={heldout_report.get('success_rate', 'n/a')}).",
-            {"report": heldout_report.get("report_uri", "")},
-        ),
-        (
-            "stage_11_outer_loop",
-            "WORKS",
-            f"Threshold decision: {decision.get('decision', 'unknown')}.",
-            {"decision": str(local_dir / "outer_loop" / "decision.json")},
-        ),
+    stage_updates = _loop_component_records(
+        config,
+        local_dir=local_dir,
+        outer_iteration=outer_iteration,
+        inner=inner,
+        heldout_report=heldout_report,
+        decision=decision,
     )
-    names = {str(item.get("name") or "") for item in components if isinstance(item, dict)}
-    for name, tier, evidence, artifacts in stage_updates:
-        if name in names:
-            continue
-        components.append(
-            asdict(
-                ComponentRecord(
-                    name,
-                    tier,
-                    evidence,
-                    artifacts,
-                )
-            )
-        )
+    updates_by_name = {component.name: asdict(component) for component in stage_updates}
+    components = [
+        updates_by_name.pop(str(item.get("name") or ""), item)
+        if isinstance(item, dict)
+        else item
+        for item in components
+    ]
+    for component in stage_updates:
+        if component.name in updates_by_name:
+            components.append(updates_by_name.pop(component.name))
     state["components"] = components
     state["status"] = "outer_iteration_completed"
     state["final_inner"] = inner
     state["final_eval"] = heldout_report
     state["final_decision"] = decision
     state["current_quality"] = next_quality
+    state["last_checkpoint_uri"] = str(inner.get("final_checkpoint_uri") or "")
     state["next_outer_iteration"] = outer_iteration + 1
     history = list(state.get("outer_history") or [])
     history.append(
@@ -408,11 +480,6 @@ def _append_outer_iteration_workflow_state(
     state["outer_history"] = history
     state["updated_at"] = _utc_now()
     _write_workflow_state(local_dir, state, config=config)
-
-
-# =============================================================================
-# Stages 12–14 — finalize (`run_finalize`)
-# =============================================================================
 
 
 def run_finalize(
@@ -429,6 +496,26 @@ def run_finalize(
 ) -> dict[str, Any]:
     """Run stages 12-13, visualization, and final report/upload."""
 
+    components = _expand_envgen_component_records(config, components)
+    loop_components = _loop_component_records(
+        config,
+        local_dir=local_dir,
+        outer_iteration=int(
+            final_decision.get("outer_iteration") or len(outer_history) or 1
+        ),
+        inner=final_inner,
+        heldout_report=final_eval,
+        decision=final_decision,
+    )
+    loop_names = {component.name for component in loop_components}
+    components = [
+        component
+        for component in components
+        if str(component.get("name") or "") not in loop_names
+    ]
+    components.extend(asdict(component) for component in loop_components)
+
+    stage_started = time.monotonic()
     stage_records.append(
         _write_stage(
             local_dir,
@@ -453,13 +540,19 @@ def run_finalize(
                 "External real-world validation is a documented BYO gate; loop-of-loops continues through Stage 13.",
                 {
                     "local": str(
-                        local_dir / "stage_12_external_validation" / "external_stub.json"
-                    )
+                        local_dir
+                        / "stage_12_external_validation"
+                        / "external_stub.json"
+                    ),
+                    "job_name": "external_stub",
+                    "execution": "external_byo_gate_not_dispatched",
+                    "duration_s": round(time.monotonic() - stage_started, 3),
                 },
             )
         )
     )
 
+    stage_started = time.monotonic()
     retrigger = {
         "schema": "npa.sim2real.retrigger.v1",
         "stage": 13,
@@ -470,8 +563,13 @@ def run_finalize(
         "target_stage": 1,
         "trigger_dataset_uri": config.trigger_dataset_uri,
         "trigger_dataset_id": config.trigger_dataset_id,
-        "retrigger_condition": "real_world_lerobot_dataset_landed",
-        "should_retrigger": config.loop_of_loops_iterations > 1,
+        "retrigger_condition": "new_verified_real_failure_or_corrected_scenario_data",
+        "should_retrigger": False,
+        "reason": (
+            "No new external real-robot failure dataset or corrected scenario "
+            "dataset was produced after Stage 12; reusing existing bytes would "
+            "not constitute a genuine loop-of-loops trigger."
+        ),
     }
     stage_records.append(
         _write_json_artifact(
@@ -483,18 +581,39 @@ def run_finalize(
             ComponentRecord(
                 "stage_13_retrigger",
                 "WORKS",
-                "Wrote loop-of-loops retrigger record with max-iteration cap.",
-                {"local": str(local_dir / "stage_13_retrigger" / "retrigger.json")},
+                "Recorded that no genuinely new failure/scenario data exists; no retrigger was issued.",
+                {
+                    "local": str(local_dir / "stage_13_retrigger" / "retrigger.json"),
+                    "job_name": config.run_id,
+                    "execution": "orchestrator_record",
+                    "duration_s": round(time.monotonic() - stage_started, 3),
+                },
             )
         )
     )
 
+    viz_stage_record = ComponentRecord(
+        "stage_14_rerun_viz",
+        "WORKS",
+        "Rerun visualization is being written from the completed real-tier artifacts.",
+        {
+            "rrd": f"{_artifact_root_uri(config)}/reports/sim2real.rrd",
+            "job_name": config.run_id,
+            "execution": "in_process_orchestrator_visualization",
+            "node_product": config.k8s_gpu_product,
+        },
+    )
+    stage_started = time.monotonic()
     viz_component, viz_info = _run_sim2real_viz_stage(
         config,
         local_dir=local_dir,
         inner_evidence=final_inner,
         heldout_report=final_eval,
+        stage_components=[*components, asdict(viz_stage_record)],
+        outer_history=outer_history,
+        final_decision=final_decision,
     )
+    viz_component.artifacts["duration_s"] = round(time.monotonic() - stage_started, 3)
     components.append(asdict(viz_component))
 
     components.extend(
@@ -527,6 +646,18 @@ def run_finalize(
         ]
     )
 
+    candidate_path = local_dir / "checkpoints" / "candidate" / "candidate.json"
+    candidate_payload = (
+        json.loads(candidate_path.read_text(encoding="utf-8"))
+        if candidate_path.is_file()
+        else {}
+    )
+    final_iterations = list(final_inner.get("iterations") or [])
+    final_update = dict(
+        (final_iterations[-1].get("update") or {}) if final_iterations else {}
+    )
+    ppo_hyperparameters = dict(final_update.get("ppo_hyperparameters") or {})
+    runtime_parameters = runtime_parameter_metadata()
     report = {
         "schema": SCHEMA_E2E_REPORT,
         "run_id": config.run_id,
@@ -535,8 +666,30 @@ def run_finalize(
         "local_artifact_dir": str(local_dir),
         "s3_artifacts": artifact_uris(config),
         "config": _redacted_config(config),
+        "runtime_parameters": runtime_parameters,
+        "training_provenance": {
+            "effective_learning_rate": config.learning_rate,
+            "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
+            "source": "LEARNING_RATE/--learning-rate",
+            "ppo_optimizer_initial_learning_rate": ppo_hyperparameters.get(
+                "ppo_optimizer_initial_learning_rate",
+                os.environ.get("NPA_BYO_ISAAC_PPO_LEARNING_RATE", "task_default"),
+            ),
+            "ppo_optimizer_schedule": ppo_hyperparameters.get(
+                "ppo_optimizer_schedule", "task_registry_schedule"
+            ),
+            "entropy_coef": ppo_hyperparameters.get("entropy_coef", "task_default"),
+            "init_noise_std": ppo_hyperparameters.get("init_noise_std", "task_default"),
+            "reward_weights": ppo_hyperparameters.get("reward_weights", {}),
+            "ppo_workload": runtime_parameters.get("ppo", {}),
+            "ppo_optimizer_source": (
+                "NPA_BYO_ISAAC_PPO_LEARNING_RATE plus the selected Isaac task's "
+                "RSL-RL agent configuration"
+            ),
+        },
         "byo_seams": byo_seams(config),
         "components": components,
+        "gpu_fallback_contract": gpu_fallback_report_contract(config, components),
         "stage_records": stage_records,
         "inner_loop": final_inner,
         "outer_loop": {
@@ -544,7 +697,24 @@ def run_finalize(
             "latest_heldout_report": final_eval,
             "latest_decision": final_decision,
         },
+        "progress_metrics": build_progress_metrics(local_dir, outer_history),
         "visualization": viz_info,
+        "policy_access": {
+            "deployable_policy": candidate_payload.get("deployable_policy", False),
+            "policy_bytes_available": candidate_payload.get(
+                "policy_bytes_available", False
+            ),
+            "identity": candidate_payload.get("policy_checkpoint_identity", ""),
+            "sha256": candidate_payload.get("policy_checkpoint_sha256", ""),
+            "size_bytes": candidate_payload.get("policy_checkpoint_size_bytes", 0),
+            "checkpoint_uri": candidate_payload.get("policy_checkpoint_uri", ""),
+            "candidate_manifest_uri": f"{_artifact_root_uri(config)}/checkpoints/candidate/candidate.json",
+            "authenticated_download_command": candidate_payload.get(
+                "policy_download_command", ""
+            ),
+            "ui_action": candidate_payload.get("policy_ui_action", ""),
+            "viewer_executes_policy": False,
+        },
         "image_completeness": {
             "required": [
                 config.augment_image,
@@ -602,7 +772,9 @@ def run_finalize(
                     {
                         "public_url": rerun_serve.get("public_url", ""),
                         "local_url": rerun_serve.get("local_url", ""),
-                        "port_forward_command": rerun_serve.get("port_forward_command", ""),
+                        "port_forward_command": rerun_serve.get(
+                            "port_forward_command", ""
+                        ),
                         "deployment_name": rerun_serve.get("deployment_name", ""),
                     },
                 )
@@ -634,14 +806,15 @@ def run_finalize(
     return report
 
 
-
-
 def _run_sim2real_viz_stage(
     config: Sim2RealLoopConfig,
     *,
     local_dir: Path,
     inner_evidence: dict[str, Any],
     heldout_report: dict[str, Any] | None,
+    stage_components: list[dict[str, Any]] | None = None,
+    outer_history: list[dict[str, Any]] | None = None,
+    final_decision: dict[str, Any] | None = None,
 ) -> tuple[ComponentRecord, dict[str, Any]]:
     """Produce ``reports/sim2real.rrd`` and a status ComponentRecord.
 
@@ -682,23 +855,50 @@ def _run_sim2real_viz_stage(
     try:
         from npa.workflows.sim2real_viz import (
             RerunUnavailableError,
+            emit_sim2real_mcap_if_enabled,
             emit_sim2real_rerun,
+        )
+
+        candidate_path = local_dir / "checkpoints" / "candidate" / "candidate.json"
+        candidate_payload = (
+            json.loads(candidate_path.read_text(encoding="utf-8"))
+            if candidate_path.is_file()
+            else {}
         )
 
         result = emit_sim2real_rerun(
             local_dir=local_dir,
             inner_evidence=inner_evidence,
             heldout_report=heldout_report,
+            stage_components=stage_components,
+            outer_history=outer_history,
+            run_metadata=visualization_run_metadata(
+                config=config,
+                artifact_root=_artifact_root_uri(config),
+                policy_checkpoint=str(
+                    (final_decision or {}).get("checkpoint_uri") or ""
+                ),
+                candidate=candidate_payload,
+                heldout_report=heldout_report,
+            ),
             output_rrd=rrd_path,
             write_mp4=_bool_value(os.environ.get("NPA_SIM2REAL_RERUN_MP4", "0")),
         )
     except RerunUnavailableError as exc:
-        info = {"status": "skipped", "reason": str(exc), "source": "reference"}
-        info["mcap"] = _emit_sim2real_mcap_artifact(
-            config,
+        if _bool_value(os.environ.get("NPA_SIM2REAL_REQUIRE_VISUALIZATION", "0")):
+            raise Sim2RealLoopError(
+                f"required Stage 14 Rerun recording could not be emitted: {exc}"
+            ) from exc
+        viz_info: dict[str, Any] = {
+            "status": "skipped",
+            "reason": str(exc),
+            "source": "reference",
+        }
+        viz_info["mcap"] = emit_sim2real_mcap_if_enabled(
             local_dir=local_dir,
             inner_evidence=inner_evidence,
             heldout_report=heldout_report,
+            output_mcap=local_dir / "reports" / "sim2real.mcap",
         )
         return (
             ComponentRecord(
@@ -708,19 +908,40 @@ def _run_sim2real_viz_stage(
                 {},
                 next_action="CONTINUE",
             ),
-            info,
+            viz_info,
         )
-    info = {"source": "reference", **result.to_dict()}
-    mcap_info = _emit_sim2real_mcap_artifact(
-        config,
+    viz_info = {"source": "reference", **result.to_dict()}
+    mcap_info = emit_sim2real_mcap_if_enabled(
         local_dir=local_dir,
         inner_evidence=inner_evidence,
         heldout_report=heldout_report,
+        output_mcap=local_dir / "reports" / "sim2real.mcap",
     )
-    info["mcap"] = mcap_info
-    artifacts = {"rrd": str(rrd_path)}
+    viz_info["mcap"] = mcap_info
+    if (
+        _bool_value(os.environ.get("NPA_SIM2REAL_REQUIRE_VISUALIZATION", "0"))
+        and _bool_value(os.environ.get("NPA_SIM2REAL_MCAP", "1"))
+        and mcap_info.get("status") != "written"
+    ):
+        raise Sim2RealLoopError(
+            "required Stage 14 MCAP recording could not be emitted: "
+            + str(mcap_info.get("reason") or mcap_info.get("status"))
+        )
+    root = _artifact_root_uri(config)
+    artifacts: dict[str, Any] = {
+        "rrd": f"{root}/reports/sim2real.rrd" if config.s3_bucket else str(rrd_path),
+        "rrd_local": str(rrd_path),
+        "job_name": config.run_id,
+        "execution": "in_process_orchestrator_visualization",
+        "node_product": config.k8s_gpu_product,
+    }
     if mcap_info.get("status") == "written" and mcap_info.get("output_mcap_path"):
-        artifacts["mcap"] = str(mcap_info["output_mcap_path"])
+        artifacts["mcap"] = (
+            f"{root}/reports/sim2real.mcap"
+            if config.s3_bucket
+            else str(mcap_info["output_mcap_path"])
+        )
+        artifacts["mcap_local"] = str(mcap_info["output_mcap_path"])
     mcap_note = ""
     if mcap_info.get("status") == "written":
         mcap_note = f" Also wrote a Lichtblick/Foxglove MCAP with {mcap_info.get('message_count', 0)} message(s)."
@@ -737,31 +958,7 @@ def _run_sim2real_viz_stage(
             ),
             artifacts,
         ),
-        info,
-    )
-
-
-def _emit_sim2real_mcap_artifact(
-    config: Sim2RealLoopConfig,
-    *,
-    local_dir: Path,
-    inner_evidence: dict[str, Any],
-    heldout_report: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Emit ``reports/sim2real.mcap`` alongside the ``.rrd`` (best-effort).
-
-    Gated behind ``NPA_SIM2REAL_MCAP`` (default on when rerun viz is on). Degrades
-    gracefully (skip + reason) when ``mcap`` is unavailable, mirroring the ``.rrd``
-    path, so a missing writer never fails the finalize stage.
-    """
-
-    from npa.workflows.sim2real_viz import emit_sim2real_mcap_if_enabled
-
-    return emit_sim2real_mcap_if_enabled(
-        local_dir=local_dir,
-        inner_evidence=inner_evidence,
-        heldout_report=heldout_report,
-        output_mcap=local_dir / "reports" / "sim2real.mcap",
+        viz_info,
     )
 
 
@@ -835,12 +1032,28 @@ def run_inner_loop(
 
     iteration_records: list[dict[str, Any]] = []
     reward_trend: list[float] = []
+    loss_trend: list[dict[str, float]] = []
     policy_deltas: list[float] = []
     all_signals: list[dict[str, Any]] = []
+    calibration_trend: list[dict[str, Any]] = []
+    checkpoint_candidates: list[dict[str, Any]] = []
     quality = float(initial_quality)
     reward_head = 0.0
     action_bias = 0.0
     current_checkpoint_uri = str(resume_checkpoint_uri or "").strip()
+    prior_selection_path = (
+        local_dir
+        / "checkpoints"
+        / "validation-selection"
+        / f"outer-{outer_iteration - 1:02d}.json"
+    )
+    if outer_iteration > 1 and prior_selection_path.is_file():
+        prior_candidate = json.loads(prior_selection_path.read_text(encoding="utf-8"))
+        if (
+            prior_candidate.get("evaluation_split") == "validation"
+            and prior_candidate.get("checkpoint_uri") == current_checkpoint_uri
+        ):
+            checkpoint_candidates.append(prior_candidate)
     for iteration in range(1, config.inner_iterations + 1):
         actions_dir = (
             local_dir
@@ -855,6 +1068,7 @@ def run_inner_loop(
             actions_dir=actions_dir,
             outer_iteration=outer_iteration,
             iteration=iteration,
+            checkpoint_uri=current_checkpoint_uri,
         )
         eval_dir = (
             local_dir
@@ -875,12 +1089,10 @@ def run_inner_loop(
         signal_converter_source = (
             "byo_command" if config.byo_signal_converter.strip() else "reference"
         )
-        vlm_k8s_parallel = (
-            not config.byo_vlm_command.strip() and bool(config.s3_bucket.strip())
+        vlm_k8s_parallel = not config.byo_vlm_command.strip() and bool(
+            config.s3_bucket.strip()
         )
-        jobs_per_rollout = (
-            2 if vlm_k8s_parallel and config.vlm_dual_reason else 1
-        )
+        jobs_per_rollout = 2 if vlm_k8s_parallel and config.vlm_dual_reason else 1
         if vlm_k8s_parallel and len(rollouts) > 1:
             max_workers = min(
                 len(rollouts),
@@ -900,9 +1112,7 @@ def run_inner_loop(
                 for future in as_completed(futures):
                     index = futures[future]
                     evaluations[index] = future.result()
-            ordered_evaluations = [
-                item for item in evaluations if item is not None
-            ]
+            ordered_evaluations = [item for item in evaluations if item is not None]
             if len(ordered_evaluations) != len(rollouts):
                 raise Sim2RealLoopError("parallel VLM eval did not return all rollouts")
             for evaluation in ordered_evaluations:
@@ -911,7 +1121,9 @@ def run_inner_loop(
                     config=config,
                     output_dir=signal_dir,
                 )
-                _write_json_artifact(signal_dir / f"{signal['rollout_id']}.json", signal)
+                _write_json_artifact(
+                    signal_dir / f"{signal['rollout_id']}.json", signal
+                )
                 evals.append(evaluation)
                 signals.append(signal)
                 all_signals.append(signal)
@@ -927,7 +1139,9 @@ def run_inner_loop(
                     config=config,
                     output_dir=signal_dir,
                 )
-                _write_json_artifact(signal_dir / f"{signal['rollout_id']}.json", signal)
+                _write_json_artifact(
+                    signal_dir / f"{signal['rollout_id']}.json", signal
+                )
                 evals.append(evaluation)
                 signals.append(signal)
                 all_signals.append(signal)
@@ -937,10 +1151,124 @@ def run_inner_loop(
             / f"outer-{outer_iteration:02d}"
             / f"signals-iter-{iteration:02d}.json"
         )
+        calibration = {
+            "rollout_count": len(signals),
+            "step_count": sum(
+                int((signal.get("calibration") or {}).get("step_count") or 0)
+                for signal in signals
+            ),
+            "simulator_grounded_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get("simulator_grounded_steps")
+                    or 0
+                )
+                for signal in signals
+            ),
+            "nonzero_advantage_count": sum(
+                int(
+                    (signal.get("calibration") or {}).get("nonzero_advantage_count")
+                    or 0
+                )
+                for signal in signals
+            ),
+            "model_disagreement_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get("model_disagreement_steps")
+                    or 0
+                )
+                for signal in signals
+            ),
+            "vlm_calibrated_steps": sum(
+                int((signal.get("calibration") or {}).get("vlm_calibrated_steps") or 0)
+                for signal in signals
+            ),
+            "vlm_accepted_steps": sum(
+                int((signal.get("calibration") or {}).get("vlm_accepted_steps") or 0)
+                for signal in signals
+            ),
+            "vlm_rejected_or_downweighted_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get(
+                        "vlm_rejected_or_downweighted_steps"
+                    )
+                    or 0
+                )
+                for signal in signals
+            ),
+            "vlm_missing_or_malformed_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get(
+                        "vlm_missing_or_malformed_steps"
+                    )
+                    or 0
+                )
+                for signal in signals
+            ),
+            "vlm_low_confidence_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get("vlm_low_confidence_steps")
+                    or 0
+                )
+                for signal in signals
+            ),
+            "vlm_contradictory_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get("vlm_contradictory_steps")
+                    or 0
+                )
+                for signal in signals
+            ),
+            "vlm_summary_broadcast_steps": sum(
+                int(
+                    (signal.get("calibration") or {}).get("vlm_summary_broadcast_steps")
+                    or 0
+                )
+                for signal in signals
+            ),
+            "mean_reward_variance": round(
+                sum(
+                    float(
+                        (signal.get("calibration") or {}).get("reward_variance") or 0.0
+                    )
+                    for signal in signals
+                )
+                / max(1, len(signals)),
+                10,
+            ),
+            "simulator_fallback_rollouts": sum(
+                bool(
+                    (signal.get("calibration") or {}).get(
+                        "degenerate_simulator_fallback_used"
+                    )
+                )
+                for signal in signals
+            ),
+            "degenerate_rollouts": sum(
+                bool((signal.get("calibration") or {}).get("degenerate"))
+                for signal in signals
+            ),
+        }
+        if (
+            config.byo_trainer_command.strip()
+            and calibration["simulator_grounded_steps"] > 0
+            and calibration["nonzero_advantage_count"] == 0
+        ):
+            raise Sim2RealLoopError(
+                "simulator-grounded temporal credit is degenerate: every "
+                "advantage is zero; refusing to train on useless feedback"
+            )
+        calibration_trend.append(calibration)
         _write_json_artifact(
-            signal_batch_path, {"schema": SCHEMA_RL_SIGNAL, "signals": signals}
+            signal_batch_path,
+            {
+                "schema": SCHEMA_RL_SIGNAL,
+                "signals": signals,
+                "calibration": calibration,
+            },
         )
-        parse_vlm_signal_batch, run_vlm_signal_training_step = _signal_training_imports()
+        parse_vlm_signal_batch, run_vlm_signal_training_step = (
+            _signal_training_imports()
+        )
         parsed_signals = parse_vlm_signal_batch({"signals": signals})
         trainer_dir = (
             local_dir
@@ -966,6 +1294,67 @@ def run_inner_loop(
             if str(getattr(update, "checkpoint_path", "") or "").strip():
                 current_checkpoint_uri = update.checkpoint_path.strip()
             trainer_source = "byo_command"
+            trainer_provenance_path = trainer_dir / "byo-trainer-gpu-provenance.json"
+            trainer_component_invocation = (
+                json.loads(trainer_provenance_path.read_text(encoding="utf-8"))
+                if trainer_provenance_path.is_file()
+                else {}
+            )
+            validation_report = None
+            validation_reports: list[dict[str, Any]] = []
+            if config.s3_bucket.strip():
+                periodic = list(update.periodic_checkpoints) or [
+                    {
+                        "training_iteration": int(
+                            (update.ppo or {}).get("iterations") or 0
+                        ),
+                        "checkpoint_uri": current_checkpoint_uri,
+                    }
+                ]
+                for periodic_checkpoint in periodic:
+                    candidate_uri = str(periodic_checkpoint.get("checkpoint_uri") or "")
+                    training_iteration = int(
+                        periodic_checkpoint.get("training_iteration") or 0
+                    )
+                    checkpoint_evidence = {
+                        "schema": "npa.sim2real.checkpoint_evidence.v1",
+                        "iterations": [{"update": update.to_dict()}],
+                        "selected_checkpoint_uri": candidate_uri,
+                        "final_checkpoint_uri": candidate_uri,
+                    }
+                    report = run_heldout_eval(
+                        config,
+                        local_dir=local_dir,
+                        inner_evidence=checkpoint_evidence,
+                        outer_iteration=outer_iteration,
+                        evaluation_split="validation",
+                        inner_iteration=iteration,
+                        checkpoint_iteration=training_iteration,
+                    )
+                    validation_reports.append(report)
+                    checkpoint_candidates.append(
+                        {
+                            "evaluation_split": "validation",
+                            "outer_iteration": outer_iteration,
+                            "inner_iteration": iteration,
+                            "training_iteration": training_iteration,
+                            "checkpoint_uri": candidate_uri,
+                            "checkpoint_sha256": report.get(
+                                "policy_checkpoint_sha256", ""
+                            ),
+                            "validation_report_uri": report["report_uri"],
+                            "validation_report": report,
+                        }
+                    )
+                from npa.workflows.sim2real.checkpoint_selection import (
+                    select_best_checkpoint,
+                )
+
+                interim_selection = select_best_checkpoint(checkpoint_candidates)
+                current_checkpoint_uri = str(interim_selection["checkpoint_uri"])
+                validation_report = dict(
+                    interim_selection.get("validation_report") or {}
+                )
         else:
             update = run_vlm_signal_training_step(
                 parsed_signals,
@@ -976,6 +1365,9 @@ def run_inner_loop(
                 initial_action_bias=action_bias,
             )
             trainer_source = "reference"
+            trainer_component_invocation = {}
+            validation_report = None
+            validation_reports = []
         # The no-signal control always runs the in-process reference trainer so the
         # policy-delta attribution baseline stays honest even when a BYO trainer
         # produces the signal-driven update.
@@ -1002,11 +1394,14 @@ def run_inner_loop(
             6,
         )
         reward_trend.append(mean_reward)
+        loss_trend.append(
+            {
+                "before": round(float(update.loss_before), 8),
+                "after": round(float(update.loss_after), 8),
+            }
+        )
         delta_vs_control = max(0.0, update.policy_delta_l2 - control.policy_delta_l2)
         policy_deltas.append(round(delta_vs_control, 8))
-        quality = min(
-            0.98, quality + max(0.06, min(0.18, delta_vs_control * 2.0 + 0.07))
-        )
         iteration_records.append(
             {
                 "iteration": iteration,
@@ -1015,14 +1410,19 @@ def run_inner_loop(
                 "signal_dir": str(signal_dir),
                 "signal_batch": str(signal_batch_path),
                 "mean_reward": mean_reward,
+                "effective_learning_rate": config.learning_rate,
+                "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
                 "trainer_source": trainer_source,
+                "trainer_component_invocation": trainer_component_invocation,
                 "signal_converter_source": signal_converter_source,
                 "update": update.to_dict(),
                 "no_signal_control": control.to_dict(),
                 "policy_delta_vs_control": round(delta_vs_control, 8),
-                "next_rollout_quality": round(quality, 6),
+                "validation_report": validation_report,
+                "periodic_validation_reports": validation_reports,
                 "sample_vlm_eval": evals[0],
                 "sample_signal": signals[0],
+                "signal_calibration": calibration,
             }
         )
 
@@ -1039,6 +1439,26 @@ def run_inner_loop(
             "Unset NPA_SIM2REAL_REQUIRE_SIGNAL_DIVERSITY to downgrade this gate to a "
             "diagnostic."
         )
+    checkpoint_selection: dict[str, Any] = {}
+    selected_checkpoint_uri = current_checkpoint_uri
+    selected_validation_report: dict[str, Any] | None = None
+    if checkpoint_candidates:
+        from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
+
+        checkpoint_selection = select_best_checkpoint(checkpoint_candidates)
+        selected_checkpoint_uri = str(checkpoint_selection["checkpoint_uri"])
+        selected_validation_report = dict(
+            checkpoint_selection.get("validation_report") or {}
+        )
+        quality = float(selected_validation_report.get("success_rate") or 0.0)
+        selection_path = (
+            local_dir
+            / "checkpoints"
+            / "validation-selection"
+            / f"outer-{outer_iteration:02d}.json"
+        )
+        _write_json_artifact(selection_path, checkpoint_selection)
+        checkpoint_selection["selection_report_uri"] = str(selection_path)
     evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
         "outer_iteration": outer_iteration,
@@ -1049,18 +1469,31 @@ def run_inner_loop(
         "signal_converter_source": (
             "byo_command" if config.byo_signal_converter.strip() else "reference"
         ),
+        "effective_learning_rate": config.learning_rate,
+        "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
         "reward_trend": reward_trend,
+        "loss_trend": loss_trend,
         "signal_diversity": signal_diversity,
+        "signal_calibration": calibration_trend,
         "policy_delta_vs_no_signal_control": policy_deltas,
         "attribution": (
             "The reference update and no-signal control share initial adapter state. "
             "Only the VLM-derived rewards, advantages, and corrective targets produce the policy-output delta."
         ),
         "iterations": iteration_records,
+        "selected_validation_strict_success": round(quality, 6),
+        "efficacy_metric_definition": (
+            "strict stable-placement success rate on the fixed validation split; "
+            "never a synthetic training-progress uplift"
+            if checkpoint_candidates
+            else "reference-only compatibility metric; not real task efficacy"
+        ),
         "final_quality": round(quality, 6),
-        # Latest real-policy checkpoint produced this outer iteration; the next outer
-        # iteration resumes from it (empty for the reference trainer / no checkpoint).
-        "final_checkpoint_uri": current_checkpoint_uri,
+        "latest_checkpoint_uri": current_checkpoint_uri,
+        "selected_checkpoint_uri": selected_checkpoint_uri,
+        "final_checkpoint_uri": selected_checkpoint_uri,
+        "checkpoint_selection": checkpoint_selection,
+        "selected_validation_report": selected_validation_report,
         "resumed_from_checkpoint_uri": str(resume_checkpoint_uri or "").strip(),
     }
     evidence_path = (
@@ -1196,8 +1629,8 @@ def evaluate_rollout_with_vlm(
         reason2_image = (config.vlm_reason2_image or config.vlm_image).strip()
         reason3_image = (config.vlm_reason3_image or config.vlm_image).strip()
 
-        def _run_reason2() -> dict[str, Any]:
-            evaluation, _ = _evaluate_reason_rollout_k8s(
+        def _run_reason2() -> tuple[dict[str, Any], dict[str, Any]]:
+            return _evaluate_reason_rollout_k8s(
                 rollout_dir,
                 manifest=manifest,
                 manifest_path=manifest_path,
@@ -1208,10 +1641,9 @@ def evaluate_rollout_with_vlm(
                 component="vlm_eval_reason2",
                 output_dir=output_dir,
             )
-            return evaluation
 
-        def _run_reason3() -> dict[str, Any]:
-            evaluation, _ = _evaluate_reason_rollout_k8s(
+        def _run_reason3() -> tuple[dict[str, Any], dict[str, Any]]:
+            return _evaluate_reason_rollout_k8s(
                 rollout_dir,
                 manifest=manifest,
                 manifest_path=manifest_path,
@@ -1222,13 +1654,12 @@ def evaluate_rollout_with_vlm(
                 component="vlm_eval_reason3",
                 output_dir=output_dir,
             )
-            return evaluation
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             reason2_future = pool.submit(_run_reason2)
             reason3_future = pool.submit(_run_reason3)
-            reason2_eval = reason2_future.result()
-            reason3_eval = reason3_future.result()
+            reason2_eval, reason2_invocation = reason2_future.result()
+            reason3_eval, reason3_invocation = reason3_future.result()
         payload = merge_dual_reason_evaluations(
             reason2_eval, reason3_eval, threshold=config.threshold
         )
@@ -1237,6 +1668,107 @@ def evaluate_rollout_with_vlm(
             "mode": "kubernetes_job_dual_reason",
             "reason2_image": reason2_image,
             "reason3_image": reason3_image,
+            "reason2_invocation": _public_invocation(reason2_invocation),
+            "reason3_invocation": _public_invocation(reason3_invocation),
+            "gpu_provenance": {
+                "candidate_order": list(
+                    dict.fromkeys(
+                        list(
+                            (reason2_invocation.get("gpu_provenance") or {}).get(
+                                "candidate_order", []
+                            )
+                        )
+                        + list(
+                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                                "candidate_order", []
+                            )
+                        )
+                    )
+                ),
+                "attempts": list(
+                    (reason2_invocation.get("gpu_provenance") or {}).get("attempts", [])
+                )
+                + list(
+                    (reason3_invocation.get("gpu_provenance") or {}).get("attempts", [])
+                ),
+                "selected_products": list(
+                    dict.fromkeys(
+                        product
+                        for product in (
+                            (reason2_invocation.get("gpu_provenance") or {}).get(
+                                "selected_product"
+                            ),
+                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                                "selected_product"
+                            ),
+                        )
+                        if product
+                    )
+                ),
+                "selected_nodes": list(
+                    dict.fromkeys(
+                        node
+                        for node in (
+                            (reason2_invocation.get("gpu_provenance") or {}).get(
+                                "selected_node"
+                            ),
+                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                                "selected_node"
+                            ),
+                        )
+                        if node
+                    )
+                ),
+                "allocated_gpu": {
+                    "resource": config.k8s_gpu_resource,
+                    "count_per_job": 1,
+                },
+                "minimum_vram_gb": max(
+                    int(
+                        (reason2_invocation.get("gpu_provenance") or {}).get(
+                            "minimum_vram_gb", 0
+                        )
+                    ),
+                    int(
+                        (reason3_invocation.get("gpu_provenance") or {}).get(
+                            "minimum_vram_gb", 0
+                        )
+                    ),
+                ),
+                "model_requirement": [
+                    config.vlm_reason2_model,
+                    config.vlm_reason3_model,
+                ],
+                "image_digests": list(
+                    dict.fromkeys(
+                        list(
+                            (reason2_invocation.get("gpu_provenance") or {}).get(
+                                "image_digests", []
+                            )
+                        )
+                        + list(
+                            (reason3_invocation.get("gpu_provenance") or {}).get(
+                                "image_digests", []
+                            )
+                        )
+                    )
+                ),
+                "duration_s": round(
+                    float(
+                        (reason2_invocation.get("gpu_provenance") or {}).get(
+                            "duration_s", 0
+                        )
+                        or 0
+                    )
+                    + float(
+                        (reason3_invocation.get("gpu_provenance") or {}).get(
+                            "duration_s", 0
+                        )
+                        or 0
+                    ),
+                    3,
+                ),
+            },
         }
         _write_json_artifact(output_path, payload)
     else:
@@ -1342,6 +1874,14 @@ def _component_env(
             "NPA_SIM2REAL_S3_BUCKET": config.s3_bucket,
             "NPA_SIM2REAL_S3_PREFIX": config.s3_prefix,
             "AWS_ENDPOINT_URL": config.s3_endpoint or env.get("AWS_ENDPOINT_URL", ""),
+            "NPA_SIM2REAL_K8S_GPU_RESOURCE": config.k8s_gpu_resource,
+            "NPA_SIM2REAL_K8S_GPU_PRODUCT": config.k8s_gpu_product,
+            "NPA_SIM2REAL_TASK_CONTRACT_DIGEST": str(
+                getattr(config, "task_contract_digest", "") or ""
+            ),
+            "NPA_SIM2REAL_K8S_GPU_CANDIDATES": ",".join(
+                getattr(config, "k8s_gpu_candidates", ())
+            ),
         }
     )
     env.update(extra)
@@ -1354,7 +1894,7 @@ def _run_component_command(
     cwd: Path,
     env: dict[str, str],
     component: str,
-    timeout_s: int = 7200,
+    timeout_s: int = 0,
 ) -> dict[str, Any]:
     result = subprocess.run(
         command,
@@ -1364,7 +1904,7 @@ def _run_component_command(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=timeout_s,
+        timeout=timeout_s or None,
         check=False,
     )
     if result.returncode != 0:
@@ -1399,7 +1939,9 @@ def run_cosmos2_transfer_component(
     """Run Cosmos Transfer 2.5 in a sibling GPU job and return augment artifacts."""
 
     if not config.s3_bucket:
-        raise Sim2RealLoopError("s3_bucket is required for Cosmos Transfer sibling jobs")
+        raise Sim2RealLoopError(
+            "s3_bucket is required for Cosmos Transfer sibling jobs"
+        )
     frames_uri = _normalized_s3_prefix(f"{output_uri.rstrip('/')}/frames/")
     augment_prefix = output_uri.rstrip("/") + "/"
     result_uri = f"{augment_prefix}cosmos2-transfer-result.json"
@@ -1412,6 +1954,16 @@ def run_cosmos2_transfer_component(
         "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
         "NPA_SIM2REAL_AUGMENT_IMAGE": config.augment_image,
         "NPA_SIM2REAL_ROLLOUT_COUNT": str(config.rollout_count),
+        # A registry-qualified production Job must never turn a descriptor
+        # fallback into a WORKS record. Unit/CPU entrypoint calls can still use
+        # the descriptor seam by omitting this explicit real-tier contract.
+        "NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS": "1",
+        # Match the proven serverless real-GPU path: component images can have
+        # read-only baked HOME/default caches even though /tmp is writable.
+        "HF_HOME": "/tmp/hf_home",
+        "HF_XET_CACHE": "/tmp/hf_xet_cache",
+        "UV_CACHE_DIR": "/tmp/uv_cache",
+        "XDG_CACHE_HOME": "/tmp/xdg_cache",
     }
     output_json = local_dir / "cosmos2-transfer-result.json"
     invocation = _run_image_component(
@@ -1425,7 +1977,9 @@ def run_cosmos2_transfer_component(
     payload = _read_component_json(output_json, invocation)
     manifest = payload.get("manifest") or payload
     augmented_frames_uri = str(
-        manifest.get("augmented_frames_uri") or payload.get("augmented_frames_uri") or frames_uri
+        manifest.get("augmented_frames_uri")
+        or payload.get("augmented_frames_uri")
+        or frames_uri
     )
     return {
         "manifest": manifest,
@@ -1495,6 +2049,7 @@ def run_policy_rollout_component(
     outer_iteration: int,
     iteration: int,
     train_envs_uri: str,
+    checkpoint_uri: str = "",
 ) -> list[Path]:
     """Run swappable LeRobot policy image to produce action rollouts."""
 
@@ -1505,6 +2060,7 @@ def run_policy_rollout_component(
             outer_iteration=outer_iteration,
             iteration=iteration,
             train_envs_uri=train_envs_uri,
+            checkpoint_uri=checkpoint_uri,
         )
     output_uri = _normalized_s3_prefix(
         f"{_artifact_root_uri(config)}/actions/train/"
@@ -1514,7 +2070,9 @@ def run_policy_rollout_component(
         "NPA_SIM2REAL_TRAIN_ENVS_URI": train_envs_uri,
         "NPA_SIM2REAL_OUTPUT_URI": output_uri,
         "NPA_SIM2REAL_POLICY_IMAGE": config.policy_image,
-        "NPA_SIM2REAL_ACTION_LIMIT": str(min(config.action_env_limit, config.rollout_count)),
+        "NPA_SIM2REAL_ACTION_LIMIT": str(
+            min(config.action_env_limit, config.rollout_count)
+        ),
         "NPA_SIM2REAL_SEED": str(config.seed + outer_iteration * 100 + iteration),
         "NPA_SIM2REAL_ROLLOUT_COUNT": str(config.rollout_count),
         "NPA_SIM2REAL_STEPS_PER_ROLLOUT": str(config.steps_per_rollout),
@@ -1549,6 +2107,7 @@ def _run_policy_rollouts_via_command(
     outer_iteration: int,
     iteration: int,
     train_envs_uri: str,
+    checkpoint_uri: str = "",
 ) -> list[Path]:
     actions_dir.mkdir(parents=True, exist_ok=True)
     output_path = actions_dir / "byo-policy-rollouts.json"
@@ -1558,6 +2117,10 @@ def _run_policy_rollouts_via_command(
         output_json=output_path,
         extra={
             "NPA_SIM2REAL_TRAIN_ENVS_URI": train_envs_uri,
+            "NPA_SIM2REAL_POLICY_CHECKPOINT_URI": checkpoint_uri,
+            "NPA_SIM2REAL_TRAIN_ENVS_DIR": str(
+                actions_dir.parents[3] / "envs" / "train"
+            ),
             "NPA_SIM2REAL_POLICY_IMAGE": config.policy_image,
             "NPA_SIM2REAL_ROLLOUT_COUNT": str(config.rollout_count),
             "NPA_SIM2REAL_STEPS_PER_ROLLOUT": str(config.steps_per_rollout),
@@ -1573,7 +2136,17 @@ def _run_policy_rollouts_via_command(
     )
     payload = _read_component_json(output_path, invocation)
     if payload.get("rollout_dirs"):
-        return [Path(item) for item in payload["rollout_dirs"]]
+        rollout_paths = [Path(item) for item in payload["rollout_dirs"]]
+        nested_invocation = dict(payload.get("component_invocation") or {})
+        if nested_invocation:
+            for rollout_path in rollout_paths:
+                manifest_path = rollout_path / "manifest.json"
+                if not manifest_path.is_file():
+                    continue
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["component_invocation"] = nested_invocation
+                _write_json_artifact(manifest_path, manifest)
+        return rollout_paths
     return generate_action_rollouts(
         actions_dir,
         count=config.rollout_count,
@@ -1589,7 +2162,18 @@ def _config_from_workflow_state(
     from dataclasses import replace
 
     updates: dict[str, Any] = {}
-    for state_field in ("train_envs_uri", "heldout_envs_uri", "scene_spec_uri", "robot_spec_uri"):
+    for state_field in (
+        "train_envs_uri",
+        "validation_envs_uri",
+        "heldout_envs_uri",
+        "gold_heldout_envs_uri",
+        "task_contract_uri",
+        "task_contract_digest",
+        "scene_spec_uri",
+        "robot_spec_uri",
+    ):
+        if not hasattr(config, state_field):
+            continue
         value = str(state.get(state_field) or "").strip()
         if value:
             updates[state_field] = value
@@ -1606,8 +2190,9 @@ def _run_image_component(
     output_json: Path,
     output_uri: str,
     config: Sim2RealLoopConfig,
-    timeout_s: int = 7200,
+    timeout_s: int | None = None,
 ) -> dict[str, Any]:
+    effective_timeout_s = config.k8s_job_timeout_s if timeout_s is None else timeout_s
     return _run_kubernetes_image_component(
         image,
         component=component,
@@ -1615,7 +2200,7 @@ def _run_image_component(
         output_json=output_json,
         output_uri=output_uri,
         config=config,
-        timeout_s=timeout_s,
+        timeout_s=effective_timeout_s,
     )
 
 
@@ -1643,7 +2228,7 @@ def _wait_kubernetes_job(
 
     External or manual Job deletion during a wait is treated as failure so the
     driver fails fast instead of blocking on ``kubectl wait`` for ``timeout_s``.
-  """
+    """
 
     initial_status = _kubectl(
         config,
@@ -1723,8 +2308,8 @@ def _wait_kubernetes_job(
             return "failed"
 
     poll_s = max(2, int(os.environ.get("NPA_SIM2REAL_JOB_POLL_SECONDS", "5")))
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
+    deadline = time.monotonic() + timeout_s if timeout_s > 0 else None
+    while deadline is None or time.monotonic() < deadline:
         result = _kubectl(
             config,
             [
@@ -1810,10 +2395,14 @@ def _npa_package_root() -> Path | None:
     """Return the checkout ``npa/`` directory when running from source."""
 
     for candidate in Path(__file__).resolve().parents:
-        if (candidate / "pyproject.toml").exists() and (candidate / "src" / "npa").is_dir():
+        if (candidate / "pyproject.toml").exists() and (
+            candidate / "src" / "npa"
+        ).is_dir():
             return candidate
     for fallback in (Path("/tmp/npa-src/npa"), Path("/tmp/npa-source/npa")):
-        if (fallback / "pyproject.toml").exists() and (fallback / "src" / "npa").is_dir():
+        if (fallback / "pyproject.toml").exists() and (
+            fallback / "src" / "npa"
+        ).is_dir():
             return fallback
     return None
 
@@ -1892,7 +2481,9 @@ def _refresh_registry_pull_secret_for_sibling_job(
     if _bool_value(os.environ.get("NPA_SIM2REAL_SKIP_REGISTRY_REFRESH", "0")):
         return
 
-    from npa.workflows.sim2real.registry_auth import ensure_registry_pull_secret_for_images
+    from npa.workflows.sim2real.registry_auth import (
+        ensure_registry_pull_secret_for_images,
+    )
 
     # Best-effort: sibling Jobs already carry the run's imagePullSecrets (e.g.
     # ``agent-sa``) via ``config.k8s_image_pull_secrets``, so a refresh failure
@@ -1923,37 +2514,56 @@ def _run_kubernetes_indexed_image_component(
     timeout_s: int,
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
-    job_name = _k8s_job_name(config.run_id, component)
+    base_job_name = _k8s_job_name(config.run_id, component)
     env = _ensure_sibling_source_env(config, env)
     _refresh_registry_pull_secret_for_sibling_job(
         image, config=config, namespace=namespace
     )
-    manifest = _indexed_component_job_manifest(
-        image,
-        component=component,
-        env=env,
-        config=config,
-        namespace=namespace,
-        job_name=job_name,
-        completions=completions,
-        parallelism=parallelism,
-        timeout_s=timeout_s,
-    )
-    apply_result = _kubectl(
-        config,
-        ["apply", "-f", "-"],
-        stdin=json.dumps(manifest),
-        timeout_s=120,
-    )
+
+    def manifest_factory(product: str, job_name: str) -> dict[str, Any]:
+        return _indexed_component_job_manifest(
+            image,
+            component=component,
+            env=env,
+            config=config,
+            namespace=namespace,
+            job_name=job_name,
+            completions=completions,
+            parallelism=parallelism,
+            timeout_s=timeout_s,
+            gpu_product=product,
+        )
+
+    def kubectl(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _kubectl(config, args, check=False, **kwargs)
+
+    job_workload = workload_kind(component, sim_backend=config.sim_backend)
+    model_hint = env.get("NPA_SIM2REAL_VLM_MODEL", "")
+    try:
+        gpu_provenance = run_gpu_job_with_fallback(
+            kubectl=kubectl,
+            manifest_factory=manifest_factory,
+            base_job_name=base_job_name,
+            namespace=namespace,
+            image=image,
+            preferred_product=config.k8s_gpu_product,
+            explicit_candidates=config.k8s_gpu_candidates,
+            workload=job_workload,
+            gpu_resource=config.k8s_gpu_resource,
+            gpu_count=1,
+            timeout_s=timeout_s,
+            minimum_vram_gb=minimum_vram_for_workload(
+                job_workload,
+                model=model_hint,
+                explicit=env.get("NPA_SIM2REAL_MIN_GPU_VRAM_GB"),
+            ),
+            model=model_hint,
+        )
+    except (GpuCapacityExhausted, GpuJobFailure) as exc:
+        raise Sim2RealLoopError(str(exc)) from exc
+    job_name = str(gpu_provenance["job_name"])
     job_uid = _log_sibling_job_applied(
         config, namespace=namespace, job_name=job_name, component=component
-    )
-    wait_result = _wait_kubernetes_job(
-        config,
-        namespace=namespace,
-        job_name=job_name,
-        timeout_s=timeout_s,
-        required_successes=completions,
     )
     pod_info = _component_pod_info(config, namespace=namespace, job_name=job_name)
     logs_result = _kubectl(
@@ -1969,40 +2579,15 @@ def _run_kubernetes_indexed_image_component(
         timeout_s=300,
         check=False,
     )
-    events_excerpt = ""
-    if wait_result != "complete":
-        events = _kubectl(
-            config,
-            [
-                "get",
-                "events",
-                "-n",
-                namespace,
-                "--field-selector",
-                f"involvedObject.name={job_name}",
-                "-o",
-                "json",
-            ],
-            timeout_s=120,
-            check=False,
-        )
-        events_excerpt = _component_excerpt(events.stdout or events.stderr)
     delete_result = _cleanup_component_job(
         config, namespace=namespace, job_name=job_name
     )
-    if wait_result != "complete":
-        raise Sim2RealLoopError(
-            f"{component} indexed Kubernetes Job {job_name} did not complete: "
-            f"status={wait_result} "
-            f"{_format_pod_exit_diagnostics(pod_info)} "
-            f"{_component_excerpt(logs_result.stdout or logs_result.stderr)} "
-            f"{events_excerpt}"
-        )
     return {
         "mode": "kubernetes_indexed_job",
         "component": component,
         "image": image,
-        "image_digests": pod_info.get("image_digests", []),
+        "image_digests": gpu_provenance.get("image_digests", [])
+        or pod_info.get("image_digests", []),
         "namespace": namespace,
         "job_name": job_name,
         "job_uid": job_uid,
@@ -2011,11 +2596,11 @@ def _run_kubernetes_indexed_image_component(
         "pod": pod_info,
         "gpu_request": {
             "resource": config.k8s_gpu_resource,
-            "product": config.k8s_gpu_product,
+            "product": gpu_provenance["selected_product"],
             "count": 1,
         },
-        "returncode": 0 if wait_result == "complete" else 1,
-        "apply_stdout_excerpt": _component_excerpt(apply_result.stdout),
+        "gpu_provenance": gpu_provenance,
+        "returncode": 0,
         "stdout_excerpt": _component_excerpt(logs_result.stdout),
         "stderr_excerpt": _component_excerpt(logs_result.stderr),
         "cleanup_stdout_excerpt": _component_excerpt(delete_result.stdout),
@@ -2034,34 +2619,54 @@ def _run_kubernetes_image_component(
     timeout_s: int,
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
-    job_name = _k8s_job_name(config.run_id, component)
+    base_job_name = _k8s_job_name(config.run_id, component)
     env = _ensure_sibling_source_env(config, env)
     _refresh_registry_pull_secret_for_sibling_job(
         image, config=config, namespace=namespace
     )
-    manifest = _component_job_manifest(
-        image,
-        component=component,
-        env=env,
-        config=config,
-        namespace=namespace,
-        job_name=job_name,
-        timeout_s=timeout_s,
-    )
-    apply_result = _kubectl(
-        config,
-        ["apply", "-f", "-"],
-        stdin=json.dumps(manifest),
-        timeout_s=120,
-    )
+
+    def manifest_factory(product: str, job_name: str) -> dict[str, Any]:
+        return _component_job_manifest(
+            image,
+            component=component,
+            env=env,
+            config=config,
+            namespace=namespace,
+            job_name=job_name,
+            timeout_s=timeout_s,
+            gpu_product=product,
+        )
+
+    def kubectl(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return _kubectl(config, args, check=False, **kwargs)
+
+    job_workload = workload_kind(component, sim_backend=config.sim_backend)
+    model_hint = env.get("NPA_SIM2REAL_VLM_MODEL", "")
+    try:
+        gpu_provenance = run_gpu_job_with_fallback(
+            kubectl=kubectl,
+            manifest_factory=manifest_factory,
+            base_job_name=base_job_name,
+            namespace=namespace,
+            image=image,
+            preferred_product=config.k8s_gpu_product,
+            explicit_candidates=config.k8s_gpu_candidates,
+            workload=job_workload,
+            gpu_resource=config.k8s_gpu_resource,
+            gpu_count=1,
+            timeout_s=timeout_s,
+            minimum_vram_gb=minimum_vram_for_workload(
+                job_workload,
+                model=model_hint,
+                explicit=env.get("NPA_SIM2REAL_MIN_GPU_VRAM_GB"),
+            ),
+            model=model_hint,
+        )
+    except (GpuCapacityExhausted, GpuJobFailure) as exc:
+        raise Sim2RealLoopError(str(exc)) from exc
+    job_name = str(gpu_provenance["job_name"])
     job_uid = _log_sibling_job_applied(
         config, namespace=namespace, job_name=job_name, component=component
-    )
-    wait_result = _wait_kubernetes_job(
-        config,
-        namespace=namespace,
-        job_name=job_name,
-        timeout_s=timeout_s,
     )
     pod_info = _component_pod_info(config, namespace=namespace, job_name=job_name)
     logs_result = _kubectl(
@@ -2077,35 +2682,9 @@ def _run_kubernetes_image_component(
         timeout_s=300,
         check=False,
     )
-    events_excerpt = ""
-    if wait_result != "complete":
-        events = _kubectl(
-            config,
-            [
-                "get",
-                "events",
-                "-n",
-                namespace,
-                "--field-selector",
-                f"involvedObject.name={job_name}",
-                "-o",
-                "json",
-            ],
-            timeout_s=120,
-            check=False,
-        )
-        events_excerpt = _component_excerpt(events.stdout or events.stderr)
     delete_result = _cleanup_component_job(
         config, namespace=namespace, job_name=job_name
     )
-    if wait_result != "complete":
-        raise Sim2RealLoopError(
-            f"{component} Kubernetes Job {job_name} did not complete: "
-            f"status={wait_result} "
-            f"{_format_pod_exit_diagnostics(pod_info)} "
-            f"{_component_excerpt(logs_result.stdout or logs_result.stderr)} "
-            f"{events_excerpt}"
-        )
     try:
         _download_component_output(config, output_uri, output_json)
     except Sim2RealLoopError as exc:
@@ -2115,311 +2694,28 @@ def _run_kubernetes_image_component(
         "mode": "kubernetes_job",
         "component": component,
         "image": image,
-        "image_digests": pod_info.get("image_digests", []),
+        "image_digests": gpu_provenance.get("image_digests", [])
+        or pod_info.get("image_digests", []),
         "namespace": namespace,
         "job_name": job_name,
         "job_uid": job_uid,
         "pod": pod_info,
         "gpu_request": {
             "resource": config.k8s_gpu_resource,
-            "product": config.k8s_gpu_product,
+            "product": gpu_provenance["selected_product"],
             "count": 1,
         },
+        "gpu_provenance": gpu_provenance,
         "service_account": config.k8s_service_account,
         "image_pull_secrets": _split_csv(config.k8s_image_pull_secrets),
         "env_secret_names": _split_csv(config.k8s_env_secret_names),
         "output_uri": output_uri,
-        "returncode": 0 if wait_result == "complete" else 1,
-        "apply_stdout_excerpt": _component_excerpt(apply_result.stdout),
+        "returncode": 0,
         "stdout_excerpt": _component_excerpt(logs_result.stdout),
         "stderr_excerpt": _component_excerpt(logs_result.stderr),
         "cleanup_stdout_excerpt": _component_excerpt(delete_result.stdout),
         "cleanup_stderr_excerpt": _component_excerpt(delete_result.stderr),
     }
-
-
-def _indexed_component_job_manifest(
-    image: str,
-    *,
-    component: str,
-    env: dict[str, str],
-    config: Sim2RealLoopConfig,
-    namespace: str,
-    job_name: str,
-    completions: int,
-    parallelism: int,
-    timeout_s: int,
-) -> dict[str, Any]:
-    manifest = _component_job_manifest(
-        image,
-        component=component,
-        env=env,
-        config=config,
-        namespace=namespace,
-        job_name=job_name,
-        timeout_s=timeout_s,
-    )
-    manifest["spec"]["completions"] = completions
-    manifest["spec"]["parallelism"] = parallelism
-    manifest["spec"]["completionMode"] = "Indexed"
-    return manifest
-
-
-def _component_job_manifest(
-    image: str,
-    *,
-    component: str,
-    env: dict[str, str],
-    config: Sim2RealLoopConfig,
-    namespace: str,
-    job_name: str,
-    timeout_s: int,
-) -> dict[str, Any]:
-    env_values = _kubernetes_component_env(env, config)
-    pull_secrets = [
-        {"name": name} for name in _split_csv(config.k8s_image_pull_secrets)
-    ]
-    env_from = [
-        {"secretRef": {"name": name, "optional": True}}
-        for name in _split_csv(config.k8s_env_secret_names)
-    ]
-    template_spec: dict[str, Any] = {
-        "restartPolicy": "Never",
-        "serviceAccountName": config.k8s_service_account,
-        "containers": [
-            {
-                "name": "component",
-                "image": image,
-                "imagePullPolicy": _image_pull_policy(image),
-                "command": ["bash", "-lc"],
-                "args": [_component_job_script(component, sim_backend=config.sim_backend)],
-                "env": [
-                    {"name": key, "value": value}
-                    for key, value in sorted(env_values.items())
-                    if value != ""
-                ],
-                "envFrom": env_from,
-                "resources": {
-                    "requests": {
-                        "cpu": "4",
-                        "memory": "16Gi",
-                        config.k8s_gpu_resource: 1,
-                    },
-                    "limits": {
-                        config.k8s_gpu_resource: 1,
-                    },
-                },
-            }
-        ],
-        "nodeSelector": {
-            "nvidia.com/gpu.compute.major": "12",
-            "nvidia.com/gpu.compute.minor": "0",
-            "nvidia.com/gpu.product": config.k8s_gpu_product,
-        },
-    }
-    if pull_secrets:
-        template_spec["imagePullSecrets"] = pull_secrets
-    return {
-        "apiVersion": "batch/v1",
-        "kind": "Job",
-        "metadata": {
-            "name": job_name,
-            "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/name": "sim2real-sibling-component",
-                "app.kubernetes.io/component": component.replace("_", "-"),
-                "sim2real.local/run-id": _label_value(config.run_id),
-            },
-            "annotations": {
-                "sim2real.local/gpu-request": (
-                    "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-                )
-            },
-        },
-        "spec": {
-            "backoffLimit": 0,
-            "activeDeadlineSeconds": timeout_s,
-            "template": {
-                "metadata": {
-                    "labels": {
-                        "app.kubernetes.io/name": "sim2real-sibling-component",
-                        "app.kubernetes.io/component": component.replace("_", "-"),
-                        "sim2real.local/run-id": _label_value(config.run_id),
-                    }
-                },
-                "spec": template_spec,
-            },
-        },
-    }
-
-
-def _component_job_script(component: str, *, sim_backend: str = DEFAULT_SIM_BACKEND) -> str:
-    if component in {"vlm_eval", "vlm_eval_reason2", "vlm_eval_reason3"}:
-        subcommand = (
-            "component-vlm-eval "
-            "--input-uri \"${NPA_SIM2REAL_ROLLOUT_URI}\" "
-            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
-            "--rollout-id \"${NPA_SIM2REAL_ROLLOUT_ID}\" "
-            "--model \"${NPA_SIM2REAL_VLM_MODEL}\" "
-            "--threshold \"${NPA_SIM2REAL_THRESHOLD}\""
-        )
-    elif component == "heldout_eval":
-        subcommand = (
-            "component-heldout-eval "
-            "--heldout-envs-uri \"${NPA_SIM2REAL_HELDOUT_ENVS_URI}\" "
-            "--inner-evidence-uri \"${NPA_SIM2REAL_INNER_EVIDENCE_URI}\" "
-            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
-            "--threshold \"${NPA_SIM2REAL_THRESHOLD}\" "
-            "--limit \"${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}\" "
-            "--sim-backend \"${NPA_SIM2REAL_SIM_BACKEND:-isaac}\" "
-            "--isaac-task \"${NPA_SIM2REAL_ISAAC_TASK:-}\" "
-            "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
-            "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\" "
-            "--cameras-uri \"${NPA_SIM2REAL_CAMERAS_URI:-}\" "
-            "--robot-spec-uri \"${NPA_SIM2REAL_ROBOT_SPEC_URI:-}\" "
-            "--robot-source \"${NPA_SIM2REAL_ROBOT_SOURCE:-}\" "
-            "--robot-preset \"${NPA_SIM2REAL_ROBOT_PRESET:-}\""
-        )
-    elif component == "cosmos2_transfer":
-        subcommand = (
-            "component-cosmos2-transfer "
-            "--input-uri \"${NPA_SIM2REAL_INPUT_URI}\" "
-            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
-            "--augmented-frames-uri \"${NPA_SIM2REAL_AUGMENTED_FRAMES_URI}\" "
-            "--assets-uri \"${NPA_SIM2REAL_ASSETS_URI:-}\" "
-            "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
-            "--image \"${NPA_SIM2REAL_AUGMENT_IMAGE:-}\""
-        )
-    elif component == "policy_actions":
-        subcommand = (
-            "component-policy-actions "
-            "--train-envs-uri \"${NPA_SIM2REAL_TRAIN_ENVS_URI}\" "
-            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
-            "--policy-image \"${NPA_SIM2REAL_POLICY_IMAGE}\" "
-            "--limit \"${NPA_SIM2REAL_ACTION_LIMIT:-256}\" "
-            "--seed \"${NPA_SIM2REAL_SEED:-42}\" "
-            "--rollout-count \"${NPA_SIM2REAL_ROLLOUT_COUNT:-3}\" "
-            "--steps-per-rollout \"${NPA_SIM2REAL_STEPS_PER_ROLLOUT:-4}\""
-        )
-    elif component == "envgen_raw_shard":
-        subcommand = (
-            "python -m npa.workflows.sim2real_envgen raw-shard "
-            "--run-id \"${NPA_SIM2REAL_RUN_ID}\" "
-            "--output-uri \"${NPA_SIM2REAL_OUTPUT_URI}\" "
-            "--env-count \"${NPA_SIM2REAL_ENV_COUNT}\" "
-            "--shard-index \"${JOB_COMPLETION_INDEX:-0}\" "
-            "--shard-count \"${NPA_SIM2REAL_SHARD_COUNT}\" "
-            "--train-fraction \"${NPA_SIM2REAL_TRAIN_FRACTION}\" "
-            "--seed \"${NPA_SIM2REAL_SEED}\" "
-            "--augmented-frames-uri \"${NPA_SIM2REAL_AUGMENTED_FRAMES_URI:-}\" "
-            "--scene-spec-uri \"${NPA_SIM2REAL_SCENE_SPEC_URI:-}\" "
-            "--output-dir /tmp/npa-envgen-shard"
-        )
-    else:
-        raise Sim2RealLoopError(f"unsupported image component: {component}")
-    vlm_preamble = ""
-    if vlm_k8s_component(component):
-        vlm_preamble = cosmos_reason_k8s_shell_preamble()
-    # The Isaac Lab image ships Isaac Sim + isaaclab only under its bundled
-    # interpreter (/isaac-sim/python.sh) and bakes no npa code. Branch npa code
-    # is injected at start either from an S3 source tarball
-    # (NPA_SIM2REAL_SOURCE_TARBALL_URI, using the pod's mounted S3 creds) or via
-    # a git clone (NPA_SOURCE_REPO/NPA_SOURCE_REF when the repo is reachable).
-    # boto3 is installed to a writable target dir for the S3 client.
-    if component == "heldout_eval" and sim_backend == SIM_BACKEND_ISAAC:
-        heldout_entry_cmd = (
-            '"$PYBIN" -m npa.workflows.sim2real.heldout_entry '
-            '--heldout-envs-uri "${NPA_SIM2REAL_HELDOUT_ENVS_URI}" '
-            '--inner-evidence-uri "${NPA_SIM2REAL_INNER_EVIDENCE_URI}" '
-            '--output-uri "${NPA_SIM2REAL_OUTPUT_URI}" '
-            '--threshold "${NPA_SIM2REAL_THRESHOLD}" '
-            '--limit "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}" '
-            '--sim-backend "${NPA_SIM2REAL_SIM_BACKEND:-isaac}" '
-            '--isaac-task "${NPA_SIM2REAL_ISAAC_TASK:-}" '
-            '--scene-spec-uri "${NPA_SIM2REAL_SCENE_SPEC_URI:-}" '
-            '--assets-uri "${NPA_SIM2REAL_ASSETS_URI:-}" '
-            '--cameras-uri "${NPA_SIM2REAL_CAMERAS_URI:-}" '
-            '--robot-spec-uri "${NPA_SIM2REAL_ROBOT_SPEC_URI:-}" '
-            '--robot-source "${NPA_SIM2REAL_ROBOT_SOURCE:-}" '
-            '--robot-preset "${NPA_SIM2REAL_ROBOT_PRESET:-}"'
-        )
-        return f"""set -euo pipefail
-{vlm_preamble}export NPA_SKIP_EAGER_IMPORTS=1
-export PYTHONUNBUFFERED=1
-PYBIN=/isaac-sim/python.sh
-if [ ! -x "$PYBIN" ]; then PYBIN=python; fi
-DEPS=/tmp/npa-pydeps
-mkdir -p "$DEPS"
-"$PYBIN" -c "import boto3" 2>/dev/null || "$PYBIN" -m pip install --quiet --target "$DEPS" boto3 botocore
-"$PYBIN" -m pip install --quiet --target "$DEPS" pyyaml httpx typer rich jinja2 joblib numpy pillow 2>/dev/null || true
-export PYTHONPATH="$DEPS:${{PYTHONPATH:-}}"
-if [ -z "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
-  echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"missing NPA_SIM2REAL_SOURCE_TARBALL_URI"}}' >&2
-  exit 2
-fi
-rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
-"$PYBIN" - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
-import os, sys, tarfile, urllib.parse, boto3
-u = urllib.parse.urlparse(sys.argv[1])
-ep = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
-boto3.client("s3", endpoint_url=ep).download_file(u.netloc, u.path.lstrip("/"), "/tmp/npa-src.tgz")
-with tarfile.open("/tmp/npa-src.tgz") as tar:
-    tar.extractall("/tmp/npa-source")
-PYB
-export PYTHONPATH="/tmp/npa-source/npa/src:${{DEPS}}:${{PYTHONPATH:-}}"
-if ! "$PYBIN" -c "import npa.workflows.sim2real.heldout_entry" 2>/tmp/npa-bootstrap.err; then
-  echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"npa import failed"}}' >&2
-  cat /tmp/npa-bootstrap.err >&2 || true
-  exit 3
-fi
-{heldout_entry_cmd}
-"""
-    exec_cmd = (
-        subcommand
-        if component == "envgen_raw_shard"
-        else f"python -m npa.workflows.sim2real {subcommand}"
-    )
-    return f"""set -euo pipefail
-{vlm_preamble}if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
-  rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
-  python - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
-import os, sys, tarfile, urllib.parse, boto3
-u = urllib.parse.urlparse(sys.argv[1])
-ep = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
-boto3.client("s3", endpoint_url=ep).download_file(u.netloc, u.path.lstrip("/"), "/tmp/npa-src.tgz")
-with tarfile.open("/tmp/npa-src.tgz") as tar:
-    tar.extractall("/tmp/npa-source")
-PYB
-  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
-elif [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
-  rm -rf /tmp/npa-source
-  git clone --quiet --depth 1 --branch "${{NPA_SOURCE_REF}}" "${{NPA_SOURCE_REPO}}" /tmp/npa-source
-  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
-fi
-{exec_cmd}
-"""
-
-
-def _kubernetes_component_env(
-    env: dict[str, str], config: Sim2RealLoopConfig
-) -> dict[str, str]:
-    safe: dict[str, str] = {}
-    for key, value in env.items():
-        if key.startswith("NPA_SIM2REAL") or key.startswith("NPA_COSMOS_") or key == "HF_HOME":
-            safe[key] = value
-    endpoint = config.s3_endpoint or env.get("AWS_ENDPOINT_URL", "") or os.environ.get(
-        "AWS_ENDPOINT_URL", ""
-    )
-    safe["AWS_ENDPOINT_URL"] = endpoint
-    safe["S3_ENDPOINT_URL"] = endpoint
-    apply_cosmos_reason_kubernetes_env(safe)
-    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
-        value = str(env.get(key) or os.environ.get(key) or "").strip()
-        if value:
-            safe[key] = value
-    safe["NPA_SOURCE_REPO"] = config.source_repo or env.get("NPA_SOURCE_REPO", "")
-    safe["NPA_SOURCE_REF"] = config.source_ref or env.get("NPA_SOURCE_REF", "")
-    return safe
 
 
 def _kubectl(
@@ -2537,7 +2833,9 @@ def _cleanup_component_job(
 def _component_attempt_id(
     config: Sim2RealLoopConfig, component: str, label: str
 ) -> str:
-    digest = hashlib.sha1(f"{config.run_id}:{component}:{label}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha1(
+        f"{config.run_id}:{component}:{label}".encode("utf-8")
+    ).hexdigest()
     return f"{_safe_slug(component)}-{digest[:10]}-{uuid.uuid4().hex[:8]}"
 
 
@@ -2594,7 +2892,9 @@ def _download_component_output(
 ) -> None:
     output_json.parent.mkdir(parents=True, exist_ok=True)
     client = _storage_client(config)
-    attempts = max(1, int(os.environ.get("NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES", "12")))
+    attempts = max(
+        1, int(os.environ.get("NPA_SIM2REAL_COMPONENT_DOWNLOAD_RETRIES", "12"))
+    )
     grace_s = float(os.environ.get("NPA_SIM2REAL_HELDOUT_UPLOAD_GRACE_S", "0") or "0")
     if grace_s > 0:
         time.sleep(grace_s)
@@ -2622,10 +2922,6 @@ def _k8s_job_name(run_id: str, component: str) -> str:
     return f"s2r-{component_part}-{run_part}-{suffix}"[:63].rstrip("-")
 
 
-def _label_value(value: str) -> str:
-    return (_safe_slug(value)[:63] or "run").rstrip("-")
-
-
 def _safe_slug(value: str) -> str:
     chars = [char.lower() if char.isalnum() else "-" for char in str(value)]
     return "-".join(part for part in "".join(chars).split("-") if part)
@@ -2635,14 +2931,12 @@ def _normalized_s3_prefix(uri: str) -> str:
     return str(uri or "").strip()
 
 
-def _read_component_json(output_path: Path, invocation: dict[str, Any]) -> dict[str, Any]:
+def _read_component_json(
+    output_path: Path, invocation: dict[str, Any]
+) -> dict[str, Any]:
     if output_path.exists():
         return json.loads(output_path.read_text(encoding="utf-8"))
-    stdout = str(
-        invocation.get("stdout")
-        or invocation.get("stdout_excerpt")
-        or ""
-    )
+    stdout = str(invocation.get("stdout") or invocation.get("stdout_excerpt") or "")
     for line in reversed(stdout.splitlines()):
         stripped = line.strip()
         if stripped.startswith("{") and stripped.endswith("}"):
@@ -2675,9 +2969,7 @@ def _inner_loop_progress_score(inner_evidence: dict[str, Any]) -> float:
     return max(0.0, min(1.0, max(reward_progress, final_quality, vlm_progress)))
 
 
-def _reference_adapter_env_score(
-    base: float, env: dict[str, Any], index: int
-) -> float:
+def _reference_adapter_env_score(base: float, env: dict[str, Any], index: int) -> float:
     physics = env.get("physics") or {}
     friction = float(physics.get("friction", 0.5))
     return max(0.0, min(1.0, base + 0.04 * (friction - 0.5) + 0.01 * index))
@@ -2802,20 +3094,32 @@ def _normalize_vlm_evaluation(
     success = bool(payload.get("success", score >= config.threshold))
     raw_steps = payload.get("per_step") or payload.get("steps") or []
     if not raw_steps and payload.get("critique_text"):
-        raw_steps = [{"step": 0, "critique_text": payload["critique_text"], "error_tags": payload.get("error_tags", [])}]
+        raw_steps = [
+            {
+                "step": 0,
+                "critique_text": payload["critique_text"],
+                "error_tags": payload.get("error_tags", []),
+            }
+        ]
     if not isinstance(raw_steps, list) or not raw_steps:
         raise Sim2RealLoopError("VLM component output must include non-empty per_step")
-    actions = {int(item["step"]): item.get("action", []) for item in manifest.get("actions", [])}
+    action_items = {int(item["step"]): item for item in manifest.get("actions", [])}
     observations = list(manifest.get("camera_observations", []))
     per_step: list[dict[str, Any]] = []
+    normalized_steps: set[int] = set()
     for raw in raw_steps:
         step = int(raw.get("step", len(per_step)))
+        if action_items and (step not in action_items or step in normalized_steps):
+            continue
         tags = raw.get("error_tags", raw.get("tags", [])) or ["ok"]
         if isinstance(tags, str):
             tags = [tags]
-        critique = str(raw.get("critique_text") or raw.get("critique") or raw.get("text") or "")
-        if not critique:
-            raise Sim2RealLoopError("VLM component per_step entries must include critique text")
+        critique = str(
+            raw.get("critique_text") or raw.get("critique") or raw.get("text") or ""
+        )
+        malformed = not critique
+        if malformed:
+            critique = "Malformed model-local critique rejected; simulator state only."
         camera = raw.get("camera_observation")
         if not camera and 0 <= step < len(observations):
             camera = observations[step]
@@ -2824,10 +3128,59 @@ def _normalize_vlm_evaluation(
                 "step": step,
                 "critique_text": critique,
                 "error_tags": [str(tag) for tag in tags],
-                "action": raw.get("action", actions.get(step, [])),
+                "action": raw.get(
+                    "action", (action_items.get(step) or {}).get("action", [])
+                ),
                 "camera_observation": str(camera or f"camera-{step:03d}.ppm"),
+                "confidence": 0.0 if malformed else float(raw.get("confidence", 0.65)),
+                "critique_source": str(
+                    "model_malformed"
+                    if malformed
+                    else raw.get("critique_source") or "model_per_step"
+                ),
+                "model_disagreement": bool(raw.get("model_disagreement")),
+                "reason2_critique": str(raw.get("reason2_critique") or ""),
+                "reason3_critique": str(raw.get("reason3_critique") or ""),
+                "simulator_ground_truth": dict(
+                    (action_items.get(step) or {}).get("simulator_ground_truth") or {}
+                ),
+                "scenario_config_digest": str(
+                    (action_items.get(step) or {}).get("scenario_config_digest")
+                    or manifest.get("scenario_config_digest")
+                    or ""
+                ),
             }
         )
+        normalized_steps.add(step)
+    covered = {int(item["step"]) for item in per_step}
+    for step, action_item in action_items.items():
+        if step in covered:
+            continue
+        per_step.append(
+            {
+                "step": step,
+                "critique_text": "No model-local critique; simulator state only.",
+                "error_tags": ["ok"],
+                "action": action_item.get("action", []),
+                "camera_observation": str(
+                    action_item.get("camera_observation") or f"camera-{step:03d}.png"
+                ),
+                "confidence": 0.0,
+                "critique_source": "model_missing",
+                "model_disagreement": False,
+                "reason2_critique": "",
+                "reason3_critique": "",
+                "simulator_ground_truth": dict(
+                    action_item.get("simulator_ground_truth") or {}
+                ),
+                "scenario_config_digest": str(
+                    action_item.get("scenario_config_digest")
+                    or manifest.get("scenario_config_digest")
+                    or ""
+                ),
+            }
+        )
+    per_step.sort(key=lambda item: int(item["step"]))
     return {
         "schema": SCHEMA_VLM_EVAL,
         "rollout_id": str(payload.get("rollout_id") or rollout_id),
@@ -2854,7 +3207,12 @@ def _component_excerpt(text: str, limit: int = 1200) -> str:
 
 def _redact_command(command: str) -> str:
     redacted = str(command)
-    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"):
+    for key in (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+        "NGC_API_KEY",
+    ):
         value = os.environ.get(key)
         if value:
             redacted = redacted.replace(value, f"<{key}>")
@@ -2870,58 +3228,21 @@ def _public_invocation(invocation: dict[str, Any]) -> dict[str, Any]:
 
 
 def convert_vlm_eval_to_rl_signal(evaluation: dict[str, Any]) -> dict[str, Any]:
-    """Convert structured VLM critique JSON into a dense RL signal."""
+    """Convert structured critique into simulator-grounded temporal credit."""
 
     if evaluation.get("schema") != SCHEMA_VLM_EVAL:
         raise Sim2RealLoopError(
             f"unsupported VLM eval schema: {evaluation.get('schema')}"
         )
-    raw_steps = evaluation.get("per_step")
-    if not isinstance(raw_steps, list) or not raw_steps:
-        raise Sim2RealLoopError("VLM eval must include non-empty per_step")
-    success = bool(evaluation["success"])
-    step_items: list[dict[str, Any]] = []
-    rewards: list[float] = []
-    for raw_step in raw_steps:
-        tags = [str(tag) for tag in raw_step.get("error_tags", [])] or ["ok"]
-        severity = max(ERROR_SEVERITY.get(tag, 0.4) for tag in tags)
-        success_bonus = 0.35 if success else -0.15
-        reward = max(
-            -1.0, min(1.0, success_bonus + 0.65 * (1.0 - severity) - 0.75 * severity)
-        )
-        rewards.append(reward)
-        target = _merge_targets(tags)
-        source_action = raw_step.get("action") or []
-        credit = [
-            round(abs(float(value)) * reward, 6)
-            for value in source_action
-            if isinstance(value, int | float)
-        ]
-        step_items.append(
-            {
-                "step": int(raw_step["step"]),
-                "reward": round(reward, 6),
-                "target": target,
-                "critique_text": str(raw_step.get("critique_text") or ""),
-                "error_tags": tags,
-                "action_credit": {
-                    "source_action": source_action,
-                    "credit": credit,
-                },
-            }
-        )
-    baseline = sum(rewards) / float(len(rewards))
-    for item in step_items:
-        item["advantage"] = round(float(item["reward"]) - baseline, 6)
-    return {
-        "schema": SCHEMA_RL_SIGNAL,
-        "rollout_id": str(evaluation["rollout_id"]),
-        "source": "vlm",
-        "success": success,
-        "score": evaluation.get("score"),
-        "per_step": step_items,
-        "mapping_rules": signal_mapping_rules(),
-    }
+    from npa.workflows.sim2real.temporal_credit import (
+        TemporalCreditError,
+        convert_evaluation,
+    )
+
+    try:
+        return convert_evaluation(evaluation)
+    except TemporalCreditError as exc:
+        raise Sim2RealLoopError(f"invalid temporal credit input: {exc}") from exc
 
 
 def signal_mapping_rules() -> dict[str, Any]:
@@ -2929,11 +3250,15 @@ def signal_mapping_rules() -> dict[str, Any]:
 
     return {
         "dense_reward": (
-            "reward = success_bonus + 0.65 * (1 - max_tag_severity) - "
-            "0.75 * max_tag_severity, clipped to [-1, 1]."
+            "authoritative weighted goal/reach progress, contact, stable grasp, "
+            "lift, stable placement, distance, drop, and termination terms; "
+            "bounded Cosmos auxiliary contribution <=0.12; clipped to [-1,1]"
         ),
-        "success_bonus": {"success": 0.35, "failure": -0.15},
         "advantage": "per-step reward minus rollout mean reward",
+        "degeneracy": (
+            "use distance/action simulator fallback when grounded reward is "
+            "constant; refuse real PPO if every advantage remains zero"
+        ),
         "per_action_credit": "abs(action_i) * step_reward for each source action dimension",
         "nl_corrective_targets": CORRECTIVE_TARGETS,
         "error_severity": ERROR_SEVERITY,
@@ -3092,7 +3417,9 @@ def _run_trainer_via_command(
         )
     # Per-iteration tag keeps each iteration's trainer artifacts (checkpoint) at a
     # DISTINCT path so the prior model survives for the next iteration to resume from.
-    extra["NPA_SIM2REAL_TRAINER_TAG"] = f"outer-{outer_iteration:02d}-iter-{iteration:02d}"
+    extra["NPA_SIM2REAL_TRAINER_TAG"] = (
+        f"outer-{outer_iteration:02d}-iter-{iteration:02d}"
+    )
     # OUTER-LOOP RESUME: continue the same policy from the prior iteration's checkpoint
     # so stage 11B "send back for more RL" compounds instead of restarting from scratch.
     if resume_checkpoint_uri.strip():
@@ -3127,6 +3454,11 @@ def _run_trainer_via_command(
         raise Sim2RealLoopError(
             f"trainer command output is not a valid update result: {exc}"
         ) from exc
+    nested_invocation = dict(payload.get("component_invocation") or {})
+    if nested_invocation:
+        _write_json_artifact(
+            output_dir / "byo-trainer-gpu-provenance.json", nested_invocation
+        )
     _write_json_artifact(output_path, result.to_dict())
     return result
 
@@ -3148,17 +3480,43 @@ def run_heldout_eval(
     local_dir: Path,
     inner_evidence: dict[str, Any],
     outer_iteration: int,
+    evaluation_split: str = "",
+    inner_iteration: int = 0,
+    checkpoint_iteration: int = 0,
 ) -> dict[str, Any]:
-    """Invoke the configured held-out eval component and write report.json."""
+    """Evaluate one exact checkpoint on validation or final gold scenarios."""
 
-    output_dir = local_dir / "eval" / "heldout"
+    if not evaluation_split:
+        evaluation_split = (
+            "gold_heldout"
+            if outer_iteration >= config.outer_iterations
+            else "validation"
+        )
+    if evaluation_split not in {"validation", "gold_heldout"}:
+        raise Sim2RealLoopError(
+            f"unsupported checkpoint evaluation split: {evaluation_split}"
+        )
+    split_dir_name = (
+        "validation" if evaluation_split == "validation" else "gold-heldout"
+    )
+    eval_count = (
+        config.validation_env_count
+        if evaluation_split == "validation"
+        else config.heldout_env_count
+    )
+    output_dir = local_dir / "eval" / split_dir_name / f"outer-{outer_iteration:02d}"
+    if inner_iteration:
+        output_dir = output_dir / f"iter-{inner_iteration:02d}"
+    if checkpoint_iteration:
+        output_dir = output_dir / f"checkpoint-{checkpoint_iteration:04d}"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "report.json"
     inner_path = output_dir / f"inner-evidence-outer-{outer_iteration:02d}.json"
     _write_json_artifact(inner_path, inner_evidence)
     extra = {
-        "NPA_SIM2REAL_HELDOUT_ENVS_DIR": str(local_dir / "envs" / "heldout"),
-        "NPA_SIM2REAL_HELDOUT_ENV_COUNT": str(config.heldout_env_count),
+        "NPA_SIM2REAL_HELDOUT_ENVS_DIR": str(local_dir / "envs" / split_dir_name),
+        "NPA_SIM2REAL_HELDOUT_ENV_COUNT": str(eval_count),
+        "NPA_SIM2REAL_EVALUATION_SPLIT": evaluation_split,
         "NPA_SIM2REAL_INNER_EVIDENCE_JSON": str(inner_path),
         "NPA_SIM2REAL_THRESHOLD": str(config.threshold),
         "NPA_SIM2REAL_EVAL_IMAGE": config.eval_image,
@@ -3168,7 +3526,15 @@ def run_heldout_eval(
         "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
         "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
         "NPA_SIM2REAL_CAMERAS_URI": config.cameras_uri,
-        "NPA_SIM2REAL_EVAL_TAG": f"outer-{outer_iteration:02d}",
+        "NPA_SIM2REAL_EVAL_TAG": (
+            f"{evaluation_split}-outer-{outer_iteration:02d}"
+            + (f"-iter-{inner_iteration:02d}" if inner_iteration else "")
+            + (
+                f"-checkpoint-{checkpoint_iteration:04d}"
+                if checkpoint_iteration
+                else ""
+            )
+        ),
     }
     # BYO robot: opt the held-out eval into the SAME robot-swapped Lift variant the
     # policy trained on. This sets NPA_BYO_ROBOT_TASK=1 (+ the robot uri/source/preset)
@@ -3207,7 +3573,9 @@ def run_heldout_eval(
             component="heldout_eval",
         )
     elif not config.s3_bucket.strip() or not _heldout_k8s_image_ready(config):
-        heldout_manifest = local_dir / "envs" / "heldout" / "manifest.json"
+        heldout_manifest = local_dir / "envs" / split_dir_name / "manifest.json"
+        if not heldout_manifest.is_file():
+            heldout_manifest = local_dir / "envs" / "heldout" / "manifest.json"
         envs = json.loads(heldout_manifest.read_text(encoding="utf-8")).get("envs", [])
         local_backend = config.sim_backend
         if local_backend == SIM_BACKEND_ISAAC:
@@ -3250,14 +3618,27 @@ def run_heldout_eval(
         }
     else:
         attempt_id = _component_attempt_id(
-            config, "heldout_eval", f"outer-{outer_iteration:02d}"
+            config,
+            "heldout_eval",
+            f"{evaluation_split}-outer-{outer_iteration:02d}"
+            + (f"-iter-{inner_iteration:02d}" if inner_iteration else "")
+            + (
+                f"-checkpoint-{checkpoint_iteration:04d}"
+                if checkpoint_iteration
+                else ""
+            ),
         )
-        if config.heldout_envs_uri:
+        split_envs_uri = (
+            config.validation_envs_uri
+            if evaluation_split == "validation"
+            else (config.gold_heldout_envs_uri or config.heldout_envs_uri)
+        )
+        if split_envs_uri:
             heldout_envs_uri = _resolve_env_records_s3_uri(
-                _normalized_s3_prefix(config.heldout_envs_uri)
+                _normalized_s3_prefix(split_envs_uri)
             )
         else:
-            local_heldout = local_dir / "envs" / "heldout"
+            local_heldout = local_dir / "envs" / split_dir_name
             jsonl_path = local_heldout / "envs.jsonl"
             if jsonl_path.is_file():
                 heldout_envs_uri = _upload_component_file(
@@ -3301,6 +3682,13 @@ def run_heldout_eval(
             config=config,
         )
     payload = _read_component_json(output_path, invocation)
+    nested_invocation = dict(payload.get("component_invocation") or {})
+    if nested_invocation:
+        invocation = {
+            **invocation,
+            **nested_invocation,
+            "command_invocation": _public_invocation(invocation),
+        }
     report = _normalize_heldout_report(
         payload,
         config=config,
@@ -3308,12 +3696,16 @@ def run_heldout_eval(
         inner_evidence_uri=str(inner_path),
         invocation=invocation,
     )
+    report["evaluation_split"] = evaluation_split
+    report["checkpoint_training_iteration"] = checkpoint_iteration
+    report["gold_heldout_untouched"] = evaluation_split == "validation"
     report = _ensure_heldout_renders_for_viz(
         config,
         local_dir,
         report,
         invocation=invocation,
         payload=payload,
+        renders_dir=output_dir / "renders",
     )
     _write_json_artifact(output_path, report)
     return {**report, "report_uri": str(output_path)}
@@ -3361,20 +3753,26 @@ def _normalize_heldout_report(
     inner_evidence_uri: str,
     invocation: dict[str, Any],
 ) -> dict[str, Any]:
-    raw_items = payload.get("per_env") or payload.get("env_scores") or payload.get("scores")
+    raw_items = (
+        payload.get("per_env") or payload.get("env_scores") or payload.get("scores")
+    )
     if isinstance(raw_items, dict):
         raw_items = [
             {"env_id": key, **(value if isinstance(value, dict) else {"score": value})}
             for key, value in raw_items.items()
         ]
     if not isinstance(raw_items, list) or not raw_items:
-        raise Sim2RealLoopError("held-out eval component output must include non-empty per_env/env_scores")
+        raise Sim2RealLoopError(
+            "held-out eval component output must include non-empty per_env/env_scores"
+        )
     per_env: list[dict[str, Any]] = []
     passed = 0
     for index, item in enumerate(raw_items):
         if not isinstance(item, dict):
             item = {"score": item}
-        score = max(0.0, min(1.0, float(item.get("score", item.get("success_score", 0.0)))))
+        score = max(
+            0.0, min(1.0, float(item.get("score", item.get("success_score", 0.0))))
+        )
         success = bool(item.get("success", score >= config.threshold))
         passed += int(success)
         per_env.append(
@@ -3390,7 +3788,7 @@ def _normalize_heldout_report(
     # progress (a policy can score 0 at 0.05m yet land 81% within 0.15m). Carry
     # through the byo_isaac_eval payload's success_summary when present, otherwise
     # recompute it from the per-env object->goal distances so accuracy stays
-    # visible in eval/heldout/report.json even when success_rate is 0.
+    # visible in the split-specific evaluation report even when success_rate is 0.
     success_summary = _heldout_success_summary(payload, per_env)
     report = {
         "schema": SCHEMA_HELDOUT_REPORT,
@@ -3419,6 +3817,16 @@ def _normalize_heldout_report(
         "generated_envs_tested",
         "generated_env_ids",
         "policy_checkpoint",
+        "policy_checkpoint_sha256",
+        "policy_checkpoint_size_bytes",
+        "policy_inference_provenance",
+        "applied_scenario_proof",
+        "capture",
+        "camera_metadata",
+        "success_distance_m",
+        "strict_success",
+        "decomposed_metrics",
+        "per_difficulty",
         "deployable_policy_eval",
     ):
         if payload.get(key):
@@ -3450,6 +3858,7 @@ def _ensure_heldout_renders_for_viz(
     *,
     invocation: dict[str, Any] | None = None,
     payload: dict[str, Any] | None = None,
+    renders_dir: Path | None = None,
 ) -> dict[str, Any] | None:
     """Sync Isaac held-out camera PNGs locally and attach a render manifest."""
 
@@ -3457,8 +3866,9 @@ def _ensure_heldout_renders_for_viz(
         return heldout_report
 
     report = dict(heldout_report)
-    renders_dir = local_dir / "eval" / "heldout" / "renders"
+    renders_dir = renders_dir or (local_dir / "eval" / "heldout" / "renders")
     renders_dir.mkdir(parents=True, exist_ok=True)
+    report["local_renders_dir"] = str(renders_dir)
 
     if config.s3_bucket.strip():
         from npa.clients.storage import StorageError
@@ -3475,7 +3885,7 @@ def _ensure_heldout_renders_for_viz(
             except (StorageError, OSError):
                 pass
             manifest_uri = _sibling_uri(output_uri, "render-manifest.json")
-            manifest_path = local_dir / "eval" / "heldout" / "render-manifest.sibling.json"
+            manifest_path = renders_dir.parent / "render-manifest.sibling.json"
             try:
                 client.download_path(manifest_uri, str(manifest_path))
                 if manifest_path.is_file():
@@ -3485,11 +3895,17 @@ def _ensure_heldout_renders_for_viz(
             except (StorageError, OSError, json.JSONDecodeError):
                 pass
 
-        if payload and payload.get("render_manifest") and not report.get("render_manifest"):
+        if (
+            payload
+            and payload.get("render_manifest")
+            and not report.get("render_manifest")
+        ):
             report["render_manifest"] = payload["render_manifest"]
 
         sync_heldout_renders(config, local_dir, heldout_report=report, client=client)
-    elif payload and payload.get("render_manifest") and not report.get("render_manifest"):
+    elif (
+        payload and payload.get("render_manifest") and not report.get("render_manifest")
+    ):
         report["render_manifest"] = payload["render_manifest"]
 
     if not report.get("render_manifest") and _has_heldout_camera_pngs(renders_dir):
@@ -3501,115 +3917,6 @@ def _ensure_heldout_renders_for_viz(
         if manifest.get("episodes"):
             report["render_manifest"] = manifest
     return report
-
-
-# =============================================================================
-# Stage 11 — outer loop decision (`threshold_decision`)
-# =============================================================================
-
-
-def threshold_decision(
-    config: Sim2RealLoopConfig,
-    *,
-    local_dir: Path,
-    heldout_report: dict[str, Any],
-    outer_iteration: int,
-) -> dict[str, Any]:
-    """Apply Stage 11 threshold gate and write promote/loop-back artifacts."""
-
-    success_rate = float(heldout_report["success_rate"])
-    promoted = success_rate >= config.threshold
-    checkpoint_dir = local_dir / "checkpoints" / "candidate"
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    # When a BYO trainer produced a real policy checkpoint (surfaced by the heldout
-    # eval as policy_checkpoint), promote should reference those real weights and be
-    # deployable — not the reference-metadata stub.
-    real_checkpoint = str(heldout_report.get("policy_checkpoint") or "").strip()
-    is_real_policy = real_checkpoint.startswith("s3://") and real_checkpoint.endswith(".pt")
-    checkpoint_uri = real_checkpoint if is_real_policy else str(checkpoint_dir)
-    decision = {
-        "schema": SCHEMA_THRESHOLD_DECISION,
-        "stage": 11,
-        "outer_iteration": outer_iteration,
-        "success_rate": round(success_rate, 6),
-        "threshold": config.threshold,
-        "decision": "promote_checkpoint" if promoted else "loop_back_to_inner_loop",
-        "checkpoint_uri": checkpoint_uri,
-        "max_outer_iterations": config.outer_iterations,
-        "remaining_outer_iterations": max(0, config.outer_iterations - outer_iteration),
-    }
-    if promoted:
-        _write_json_artifact(
-            checkpoint_dir / "candidate.json",
-            {
-                "schema": "npa.sim2real.candidate_checkpoint.v1",
-                "run_id": config.run_id,
-                "source": "isaac-rsl-rl-ppo" if is_real_policy else "vlm-rl-reference-update",
-                "deployable_policy": is_real_policy,
-                "policy_artifact_kind": (
-                    "isaac_rsl_rl_checkpoint" if is_real_policy else "reference_metadata"
-                ),
-                "policy_checkpoint_uri": real_checkpoint if is_real_policy else "",
-                "handoff_doc": "docs/workbench/guides/sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam",
-                "heldout_success_rate": round(success_rate, 6),
-                "threshold": config.threshold,
-                "promoted_at": _utc_now(),
-            },
-        )
-    else:
-        _write_json_artifact(
-            local_dir / "outer_loop" / "loopback.json",
-            {
-                "schema": "npa.sim2real.loopback.v1",
-                "from_stage": 11,
-                "to_stage": 7,
-                "reason": "heldout threshold not met",
-                "decision": decision,
-            },
-        )
-    path = local_dir / "outer_loop" / "decision.json"
-    _write_json_artifact(path, decision)
-    return {**decision, "decision_uri": str(path)}
-
-
-# =============================================================================
-# Artifact upload (post-finalize)
-# =============================================================================
-
-
-def _upload_final_report(config: Sim2RealLoopConfig, report_path: Path) -> dict[str, Any]:
-    """Upload the finalized E2E report after optional auto rerun serve metadata is written."""
-
-    if not config.s3_bucket or not report_path.exists():
-        return {"status": "skipped", "reason": "report or s3_bucket missing"}
-    try:
-        uri = f"{_artifact_root_uri(config)}/reports/sim2real-report.json"
-        _storage_client(config).upload_file(str(report_path), uri)
-    except Exception as exc:
-        return {
-            "status": "blocked",
-            "reason": f"report re-upload failed: {exc}",
-            "next_action": "CONTINUE",
-        }
-    return {"status": "uploaded", "uri": uri, "artifact": "sim2real-report.json"}
-
-
-def upload_run_artifacts(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, Any]:
-    """Upload the run artifact tree to S3-compatible storage."""
-
-    if not config.s3_bucket:
-        return {"status": "skipped", "reason": "s3_bucket is not configured"}
-    try:
-        client = StorageClient.from_environment(endpoint_url=config.s3_endpoint)
-        destination = f"{_artifact_root_uri(config)}/"
-        uploaded = client.upload_directory(str(local_dir), destination)
-    except Exception as exc:
-        return {
-            "status": "blocked",
-            "reason": f"S3 upload failed: {exc}",
-            "next_action": "CONTINUE",
-        }
-    return {"status": "uploaded", "uri": uploaded}
 
 
 def run_vlm_eval_component_from_s3(
@@ -3697,9 +4004,7 @@ def run_heldout_eval_component_from_s3(
         )
         records_path = env_dir / "envs.jsonl"
         _download_s3_env_records(client, heldout_envs_uri, records_path)
-        inner_local = Path(
-            client.download_path(inner_evidence_uri, str(inner_path))
-        )
+        inner_local = Path(client.download_path(inner_evidence_uri, str(inner_path)))
         inner_evidence = json.loads(inner_local.read_text(encoding="utf-8"))
         envs = _read_component_env_records(records_path)
         if limit > 0:
@@ -3745,9 +4050,7 @@ def run_heldout_eval_component_from_s3(
             sim_backend=sim_backend,
             isaac_task=isaac_task,
             renders_dir=(
-                root / "heldout-renders"
-                if sim_backend == SIM_BACKEND_ISAAC
-                else None
+                root / "heldout-renders" if sim_backend == SIM_BACKEND_ISAAC else None
             ),
         )
         _write_json_artifact(output_path, payload)
@@ -3790,7 +4093,9 @@ def run_heldout_eval_component_from_s3(
                     "env_count": len(payload["per_env"]),
                     "output_uri": output_uri,
                     "asset_fallback_used": payload.get("asset_fallback_used"),
-                    "robot_source": payload.get("robot_provenance", {}).get("robot_source")
+                    "robot_source": payload.get("robot_provenance", {}).get(
+                        "robot_source"
+                    )
                     if payload.get("robot_provenance")
                     else None,
                 },
@@ -3939,7 +4244,10 @@ def _resolve_heldout_robot(
         if spec is None:
             return None
     backend = str(sim_backend or DEFAULT_SIM_BACKEND).strip().lower()
-    if backend == SIM_BACKEND_ISAAC and spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_MJCF:
+    if (
+        backend == SIM_BACKEND_ISAAC
+        and spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_MJCF
+    ):
         return None
     spec = robot_assets.adapt_robot_spec_for_sim_backend(spec, sim_backend)
     robot_assets.resolve_robot_asset(spec, dest_dir=dest_dir, client=client)
@@ -4268,7 +4576,9 @@ def _run_genesis_heldout_rollouts(
             domain_randomize=True,
             max_episode_steps=max_steps,
             action_space="cartesian",
-            action_scale=float(os.environ.get("NPA_SIM2REAL_GENESIS_ACTION_SCALE", "0.045")),
+            action_scale=float(
+                os.environ.get("NPA_SIM2REAL_GENESIS_ACTION_SCALE", "0.045")
+            ),
             scene_spec=scene,
             robot_spec=robot,
         )
@@ -4310,13 +4620,19 @@ def _run_genesis_heldout_rollouts(
         for step in range(max_steps):
             actions = _adapter_policy_actions(obs, adapter, step=step)
             obs, reward, done, info = env.step(actions)
-            distance = torch.norm(obs["object_pose"][:, :3] - obs["goal_position"], dim=-1)
+            distance = torch.norm(
+                obs["object_pose"][:, :3] - obs["goal_position"], dim=-1
+            )
             final_distance = torch.where(active, distance, final_distance)
-            max_reward = torch.where(active, torch.maximum(max_reward, reward), max_reward)
+            max_reward = torch.where(
+                active, torch.maximum(max_reward, reward), max_reward
+            )
             just_done = active & done
             if bool(just_done.any()):
                 success = torch.where(just_done, info["success"].bool(), success)
-                steps_done = torch.where(just_done, torch.full_like(steps_done, step + 1), steps_done)
+                steps_done = torch.where(
+                    just_done, torch.full_like(steps_done, step + 1), steps_done
+                )
                 active = active & ~just_done
             if not bool(active.any()):
                 break
@@ -4350,7 +4666,9 @@ def _run_genesis_heldout_rollouts(
             )
             per_env.append(
                 {
-                    "env_id": str(env_record.get("env_id") or f"heldout-{start + index:04d}"),
+                    "env_id": str(
+                        env_record.get("env_id") or f"heldout-{start + index:04d}"
+                    ),
                     "score": score,
                     "success": env_success,
                     "details": {
@@ -4405,7 +4723,9 @@ def _isaac_import_mesh_to_usd(local_path: str, *, work_dir: Path) -> str:
                 force_usd_conversion=True,
                 mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+                collision_props=sim_utils.CollisionPropertiesCfg(
+                    collision_enabled=True
+                ),
             )
             converter = MeshConverter(cfg)
     except Exception as exc:  # noqa: BLE001 - surface converter import/runtime errors
@@ -4541,7 +4861,9 @@ def _isaac_goal_distance(env_unwrapped: Any) -> Any:
     return torch.norm(object_pos_w - des_pos_w, dim=-1)
 
 
-def _isaac_adapter_actions(action_dim: int, adapter: dict[str, Any], *, n_envs: int, step: int, device: str):
+def _isaac_adapter_actions(
+    action_dim: int, adapter: dict[str, Any], *, n_envs: int, step: int, device: str
+):
     """Deterministic adapter-biased actions for the Isaac manipulation rollout.
 
     The inner-loop adapter bias steers the arm action; a small seeded,
@@ -4557,15 +4879,20 @@ def _isaac_adapter_actions(action_dim: int, adapter: dict[str, Any], *, n_envs: 
         bias[i] = float(bias_values[i])
     actions = bias.unsqueeze(0).repeat(n_envs, 1)
     decay = 1.0 / (1.0 + 0.05 * step)
-    explore = 0.15 * decay * torch.sin(
-        torch.arange(action_dim, device=device, dtype=torch.float32) * (step + 1) * 0.37
+    explore = (
+        0.15
+        * decay
+        * torch.sin(
+            torch.arange(action_dim, device=device, dtype=torch.float32)
+            * (step + 1)
+            * 0.37
+        )
     )
     actions = actions + explore.unsqueeze(0)
     if action_dim >= 1:
         # Last channel = gripper: open early, close as the episode progresses.
         actions[:, -1] = 1.0 if step < 30 else -1.0
     return torch.clamp(actions, -1.0, 1.0)
-
 
 
 def _heldout_render_frames_enabled() -> bool:
@@ -4710,10 +5037,20 @@ def _build_heldout_render_manifest(
             frames = sorted(env_dir.glob("camera-*.png"))
             if not frames:
                 continue
+            views: dict[str, list[str]] = {}
+            for frame in frames:
+                parts = frame.stem.split("-")
+                view = (
+                    parts[1]
+                    if len(parts) >= 3 and not parts[1].isdigit()
+                    else "primary"
+                )
+                views.setdefault(view, []).append(frame.name)
             episodes.append(
                 {
                     "env_id": env_dir.name,
-                    "frames": [frame.name for frame in frames],
+                    "frames": views.get("primary", []),
+                    "camera_views": views,
                 }
             )
     return {
@@ -4722,6 +5059,7 @@ def _build_heldout_render_manifest(
         "isaac_task": isaac_task,
         "episodes": episodes,
     }
+
 
 def _run_isaac_heldout_rollouts(
     envs: list[dict[str, Any]],
@@ -4844,9 +5182,7 @@ def _run_isaac_heldout_rollouts(
     max_steps = max(1, int(os.environ.get("NPA_SIM2REAL_ISAAC_MAX_STEPS", "120")))
     reward_norm = float(os.environ.get("NPA_SIM2REAL_ISAAC_REWARD_NORM", "20.0"))
     success_dist = float(os.environ.get("NPA_SIM2REAL_ISAAC_SUCCESS_DIST", "0.05"))
-    render_steps = (
-        _heldout_render_step_indices(max_steps) if capture_renders else set()
-    )
+    render_steps = _heldout_render_step_indices(max_steps) if capture_renders else set()
     per_env: list[dict[str, Any]] = []
     for start in range(0, len(envs), batch_size):
         batch = envs[start : start + batch_size]
@@ -4886,12 +5222,14 @@ def _run_isaac_heldout_rollouts(
                         renders_dir / env_id / f"camera-{step + 1:03d}.png",
                         frame,
                     )
-            reward_t = torch.as_tensor(reward, device=device, dtype=torch.float32).reshape(-1)
+            reward_t = torch.as_tensor(
+                reward, device=device, dtype=torch.float32
+            ).reshape(-1)
             max_reward = torch.maximum(max_reward, reward_t)
             final_distance = _isaac_goal_distance(env.unwrapped).reshape(-1).detach()
-            done = torch.as_tensor(terminated, device=device).reshape(-1) | torch.as_tensor(
-                truncated, device=device
-            ).reshape(-1)
+            done = torch.as_tensor(terminated, device=device).reshape(
+                -1
+            ) | torch.as_tensor(truncated, device=device).reshape(-1)
             if bool(done.all()):
                 break
         success = final_distance < success_dist
@@ -4961,7 +5299,9 @@ def _close_isaac_app() -> None:
             logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
 
 
-def _policy_adapter_from_inner_evidence(inner_evidence: dict[str, Any]) -> dict[str, Any]:
+def _policy_adapter_from_inner_evidence(
+    inner_evidence: dict[str, Any],
+) -> dict[str, Any]:
     iterations = inner_evidence.get("iterations") or []
     update = {}
     if iterations and isinstance(iterations[-1], dict):
@@ -4987,7 +5327,9 @@ def _adapter_policy_actions(obs: dict[str, Any], adapter: dict[str, Any], *, ste
     to_cube = cube_pos - ee_pos
     to_target = target_pos - cube_pos
     bias_values = adapter.get("action_bias") or [0.0, 0.0, 0.0]
-    bias = torch.tensor(bias_values[:3], device=ee_pos.device, dtype=ee_pos.dtype).unsqueeze(0)
+    bias = torch.tensor(
+        bias_values[:3], device=ee_pos.device, dtype=ee_pos.dtype
+    ).unsqueeze(0)
     approach_delta = to_cube * 0.45 + bias * 0.02
     place_delta = (to_target + (cube_pos - ee_pos) * 0.25) * 0.35 + bias * 0.02
     delta_xyz = torch.where(contacts, place_delta, approach_delta)
@@ -5101,80 +5443,22 @@ def run_cosmos2_transfer_component_from_s3(
     image: str = "",
     run_id: str = "",
 ) -> dict[str, Any]:
-    """Sibling-job entrypoint: Cosmos Transfer 2.5 augment of LeRobot trigger data."""
+    """Sibling-job entrypoint for task-conditioned Cosmos Transfer."""
 
-    from npa.clients.storage import StorageClient
-    from npa.workflows.cosmos_split import Cosmos2TransferConfig, build_cosmos2_transfer_manifest
-    from npa.workflows.sim2real_stages import resolve_augment_frame_count
-
-    client = StorageClient.from_environment()
-    result_uri = output_uri.rstrip("/")
-    if result_uri.endswith("/"):
-        result_uri = f"{result_uri}cosmos2-transfer-result.json"
-    augment_prefix = result_uri.rsplit("/", 1)[0] + "/"
-    frames_root = augmented_frames_uri.rstrip("/") + "/"
-    frame_count = resolve_augment_frame_count()
-
-    manifest = build_cosmos2_transfer_manifest(
-        Cosmos2TransferConfig(
-            input_uri=input_uri,
-            output_uri=augment_prefix,
-            assets_uri=assets_uri,
-            scene_spec_uri=scene_spec_uri,
-            image=image,
-            run_id=run_id,
-        )
+    from npa.workflows.sim2real.cosmos_transfer_stage import (
+        run_cosmos_transfer_component,
     )
 
-    # Prefer running the REAL Cosmos-Transfer2.5 model (video-to-video world
-    # transfer) inside the transfer image. Fall back to the structured descriptor
-    # manifest only when the transfer runtime is unavailable (non-GPU / unit
-    # environments) or NPA_SIM2REAL_AUGMENT_MODE=stub.
-    real = _run_real_cosmos_transfer(client, input_uri, augment_prefix, frames_root, run_id)
-    if real is not None:
-        manifest["status"] = "executed"
-        manifest["mode"] = "cosmos_transfer2.5_gpu"
-        manifest["augmented_frames_uri"] = frames_root
-        manifest["augmented_video_uri"] = real["augmented_video_uri"]
-        manifest["frame_count"] = real["frame_count"]
-        manifest["video_bytes"] = real["video_bytes"]
-        manifest["control_spec"] = real["spec"]
-    else:
-        index: list[dict[str, str]] = []
-        for index_no in range(frame_count):
-            frame_key = f"frame-{index_no:05d}.json"
-            payload = {
-                "schema": "npa.sim2real.augmented_frame.v1",
-                "frame_id": f"frame-{index_no:05d}",
-                "source_dataset_uri": input_uri,
-                "perturbation": ["lighting", "texture", "background", "contrast"][index_no % 4],
-                "status": "cosmos2_transfer_executed",
-            }
-            local = Path(f"/tmp/{frame_key}")
-            local.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
-            client.upload_file(str(local), f"{frames_root}{frame_key}")
-            index.append({"frame_id": payload["frame_id"], "uri": f"{frames_root}{frame_key}"})
-        index_payload = {
-            "schema": "npa.sim2real.augmented_frames.v1",
-            "frame_count": frame_count,
-            "frames": index,
-        }
-        index_local = Path("/tmp/augmented-frames-index.json")
-        index_local.write_text(json.dumps(index_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        client.upload_file(str(index_local), f"{frames_root}index.json")
-        manifest["status"] = "executed"
-        manifest["mode"] = "descriptor_stub"
-        manifest["augmented_frames_uri"] = frames_root
-        manifest["frame_count"] = frame_count
-
-    manifest_local = Path("/tmp/cosmos2-transfer-manifest.json")
-    manifest_local.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    client.upload_file(str(manifest_local), f"{augment_prefix}manifest.json")
-    result = {"manifest": manifest, "augmented_frames_uri": frames_root}
-    result_local = Path("/tmp/cosmos2-transfer-result.json")
-    result_local.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    client.upload_file(str(result_local), result_uri)
-    return result
+    return run_cosmos_transfer_component(
+        input_uri=input_uri,
+        output_uri=output_uri,
+        augmented_frames_uri=augmented_frames_uri,
+        assets_uri=assets_uri,
+        scene_spec_uri=scene_spec_uri,
+        image=image,
+        run_id=run_id,
+        real_runner=_run_real_cosmos_transfer,
+    )
 
 
 def _run_real_cosmos_transfer(
@@ -5184,156 +5468,15 @@ def _run_real_cosmos_transfer(
     frames_root: str,
     run_id: str,
 ) -> dict[str, Any] | None:
-    """Run real Cosmos-Transfer2.5 and publish the generated video + frames.
+    """Compatibility surface delegating to the task-conditioned stage module."""
 
-    Returns augment metadata, or ``None`` to signal the caller to fall back to the
-    descriptor manifest (transfer runtime absent, disabled, inference failed, or
-    the generated video cannot provide the frame contract). Unrelated programming
-    errors still propagate.
-    """
-
-    if os.environ.get("NPA_SIM2REAL_AUGMENT_MODE", "real").strip().lower() == "stub":
-        return None
-    try:
-        from npa.workbench.cosmos.transfer import (
-            FrameExtractionError,
-            cosmos_transfer_available,
-            extract_frames,
-            run_cosmos_transfer,
-        )
-    except ImportError:
-        return None
-    if not cosmos_transfer_available():
-        return None
-
-    try:
-        transfer = run_cosmos_transfer(
-            run_id=run_id or "augment",
-            spec=os.environ.get("NPA_SIM2REAL_TRANSFER_SPEC") or None,
-        )
-    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
-        print(
-            json.dumps(
-                {
-                    "component": "cosmos2_transfer",
-                    "event": "real_transfer_failed_fallback",
-                    "error": str(exc)[:400],
-                }
-            ),
-            file=sys.stderr,
-        )
-        return None
-
-    from npa.workflows.sim2real_stages import resolve_augment_frame_count
-
-    augmented_video_uri = f"{augment_prefix}video/augmented.mp4"
-    index: list[dict[str, str]] = []
-    with tempfile.TemporaryDirectory(prefix="npa-augment-frames-") as frame_tmp:
-        try:
-            frames = extract_frames(
-                transfer["video_path"],
-                Path(frame_tmp),
-                max_frames=resolve_augment_frame_count(),
-            )
-        except FrameExtractionError as exc:
-            print(
-                json.dumps(
-                    {
-                        "component": "cosmos2_transfer",
-                        "event": "frame_extraction_failed_fallback",
-                        "error": str(exc)[:400],
-                    }
-                ),
-                file=sys.stderr,
-            )
-            return None
-        if not frames:
-            print(
-                json.dumps(
-                    {
-                        "component": "cosmos2_transfer",
-                        "event": "zero_frames_fallback",
-                    }
-                ),
-                file=sys.stderr,
-            )
-            return None
-        client.upload_file(transfer["video_path"], augmented_video_uri)
-        for i, frame_path in enumerate(frames):
-            frame_key = f"frame-{i:05d}.png"
-            client.upload_file(str(frame_path), f"{frames_root}{frame_key}")
-            index.append(
-                {"frame_id": f"frame-{i:05d}", "uri": f"{frames_root}{frame_key}"}
-            )
-    index_payload = {
-        "schema": "npa.sim2real.augmented_frames.v1",
-        "frame_count": len(index),
-        "frames": index,
-        "augmented_video_uri": augmented_video_uri,
-        "mode": "cosmos_transfer2.5_gpu",
-    }
-    index_local = Path("/tmp/augmented-frames-index.json")
-    index_local.write_text(
-        json.dumps(index_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    from npa.workflows.sim2real.cosmos_transfer_stage import (
+        run_real_cosmos_transfer,
     )
-    client.upload_file(str(index_local), f"{frames_root}index.json")
 
-    print(
-        json.dumps(
-            {
-                "component": "cosmos2_transfer",
-                "event": "real_transfer_complete",
-                "augmented_video_uri": augmented_video_uri,
-                "video_bytes": transfer["video_bytes"],
-                "frame_count": len(index),
-                "spec": transfer["spec"],
-            },
-            sort_keys=True,
-        )
+    return run_real_cosmos_transfer(
+        client, input_uri, augment_prefix, frames_root, run_id
     )
-    return {
-        "augmented_video_uri": augmented_video_uri,
-        "frame_count": len(index),
-        "video_bytes": transfer["video_bytes"],
-        "spec": transfer["spec"],
-    }
-
-
-def run_policy_actions_component_from_s3(
-    *,
-    train_envs_uri: str,
-    output_uri: str,
-    policy_image: str,
-    limit: int,
-    seed: int,
-    run_id: str,
-    rollout_count: int,
-    steps_per_rollout: int,
-) -> dict[str, Any]:
-    """Sibling-job entrypoint: swappable LeRobot policy container contract."""
-
-    from npa.clients.storage import StorageClient
-    from npa.workflows.sim2real_envgen import EnvGenConfig, write_action_conditioned_envs
-
-    config = EnvGenConfig(
-        run_id=run_id or "sim2real-policy",
-        output_uri=output_uri.rsplit("/actions/", 1)[0],
-        env_count=max(limit, rollout_count),
-        seed=seed,
-    )
-    with tempfile.TemporaryDirectory(prefix="npa-policy-actions-") as tmp:
-        result = write_action_conditioned_envs(
-            config,
-            Path(tmp),
-            policy_image=policy_image,
-            limit=min(limit, rollout_count),
-            train_envs_uri=train_envs_uri,
-            actions_uri=output_uri.rsplit("/", 1)[0] + "/",
-        )
-    result_local = Path("/tmp/policy-actions-result.json")
-    result_local.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    StorageClient.from_environment().upload_file(str(result_local), output_uri)
-    return result
 
 
 def _write_stage(
@@ -5346,68 +5489,6 @@ def _write_stage(
 ) -> dict[str, Any]:
     path = local_dir / f"stage_{number:02d}_{name}" / (filename or f"{name}.json")
     return _write_json_artifact(path, payload)
-
-
-def _write_env_manifest(root: Path, *, count: int, seed: int) -> dict[str, Any]:
-    rng = random.Random(seed)
-    envs = [
-        {
-            "env_id": f"env-{index:04d}",
-            "seed": rng.randrange(1, 2**31 - 1),
-            "asset_ref": f"asset-{index:04d}",
-            "physics": {
-                "friction": round(0.5 + rng.random() * 0.5, 4),
-                "mass_scale": round(0.85 + rng.random() * 0.3, 4),
-                "lighting": round(0.4 + rng.random() * 0.5, 4),
-            },
-        }
-        for index in range(count)
-    ]
-    return _write_json_artifact(
-        root / "manifest.json",
-        {"schema": "npa.sim2real.env_manifest.v1", "stage": 4, "envs": envs},
-    )
-
-
-def _write_train_heldout_split(
-    root: Path,
-    *,
-    raw_envs: dict[str, Any],
-    train_count: int,
-    heldout_count: int,
-    seed: int,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    envs = list(raw_envs["payload"]["envs"])
-    expected = train_count + heldout_count
-    if len(envs) != expected:
-        raise Sim2RealLoopError(
-            f"raw env count {len(envs)} must equal train+heldout count {expected}"
-        )
-    rng = random.Random(seed)
-    rng.shuffle(envs)
-    train = envs[:train_count]
-    heldout = envs[train_count:train_count + heldout_count]
-    if len(train) != train_count or len(heldout) != heldout_count:
-        raise Sim2RealLoopError("train/heldout split did not preserve requested counts")
-    train_record = _write_json_artifact(
-        root / "train" / "manifest.json",
-        {
-            "schema": "npa.sim2real.env_split.v1",
-            "stage": 5,
-            "split": "train",
-            "envs": train,
-        },
-    )
-    heldout_record = _write_json_artifact(
-        root / "heldout" / "manifest.json",
-        {
-            "schema": "npa.sim2real.env_split.v1",
-            "stage": 5,
-            "split": "heldout",
-            "envs": heldout,
-        },
-    )
-    return train_record, heldout_record
 
 
 def _trigger_payload(config: Sim2RealLoopConfig) -> dict[str, Any]:
@@ -5423,122 +5504,6 @@ def _trigger_payload(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "artifact_root": artifact_uris(config).get("root", ""),
         "byo_seams": byo_seams(config),
     }
-
-
-def _tags_for_quality(quality: float, *, step: int) -> list[str]:
-    if quality < 0.45:
-        return ["missed_target", "unstable"] if step % 2 == 0 else ["late_grasp"]
-    if quality < 0.65:
-        return ["minor_alignment"] if step % 2 == 0 else ["late_grasp"]
-    if quality < 0.8:
-        return ["minor_alignment"]
-    return ["ok"]
-
-
-def _critique_for_tags(tags: list[str], *, quality: float) -> str:
-    if tags == ["ok"]:
-        return f"Step is stable; estimated rollout quality {quality:.2f}."
-    corrections = [
-        CORRECTIVE_TARGETS.get(tag, CORRECTIVE_TARGETS["minor_alignment"])[
-            "nl_correction"
-        ]
-        for tag in tags
-    ]
-    return " ".join(corrections)
-
-
-def _merge_targets(tags: list[str]) -> dict[str, Any]:
-    corrections = [
-        CORRECTIVE_TARGETS.get(tag, CORRECTIVE_TARGETS["minor_alignment"])
-        for tag in tags
-    ]
-    action_dim = max(len(item["action_delta"]) for item in corrections)
-    merged = [0.0 for _ in range(action_dim)]
-    for item in corrections:
-        for index, value in enumerate(item["action_delta"]):
-            merged[index] += float(value) / float(len(corrections))
-    return {
-        "nl_correction": " ".join(str(item["nl_correction"]) for item in corrections),
-        "action_delta": [round(value, 6) for value in merged],
-    }
-
-
-def _signal_mean_reward(signal: dict[str, Any]) -> float:
-    steps = signal.get("per_step") or []
-    return sum(float(step["reward"]) for step in steps) / float(len(steps))
-
-
-def _heldout_env_score(
-    distance_score: float, reward_score: float, *, env_success: bool
-) -> float:
-    """Map per-env distance/reward to a continuous held-out score.
-
-    Successful and failed envs occupy separate bands, but the score stays
-    continuous in the env's own distance/reward so the held-out report keeps a
-    gradient instead of collapsing to a flat ``1.0`` across every env (which
-    produced an uninformative, incoherent signal).
-    """
-
-    quality = max(0.0, min(1.0, 0.7 * distance_score + 0.3 * reward_score))
-    if env_success:
-        return round(0.75 + 0.25 * quality, 6)
-    return round(0.6 * quality, 6)
-
-
-def _signal_diversity_report(signals: list[dict[str, Any]]) -> dict[str, Any]:
-    """Summarize cross-rollout diversity of the VLM->RL signal.
-
-    A genuine signal varies across rollouts; a single distinct score/reward
-    across every rollout is the degenerate ("hollow") pattern. These metrics
-    (``distinct_scores``, ``coherent``) are emitted into loop evidence so a run
-    is self-describing instead of requiring an external validator to infer them.
-    """
-
-    scores = [round(float(signal.get("score") or 0.0), 4) for signal in signals]
-    mean_rewards = [round(_signal_mean_reward(signal), 4) for signal in signals]
-    distinct_scores = sorted({score for score in scores})
-    distinct_rewards = sorted({reward for reward in mean_rewards})
-    total = len(signals)
-    coherent = total > 1 and len(distinct_scores) > 1 and len(distinct_rewards) > 1
-    return {
-        "total_rollouts": total,
-        "distinct_scores": len(distinct_scores),
-        "distinct_mean_rewards": len(distinct_rewards),
-        "score_values": distinct_scores,
-        "mean_reward_values": distinct_rewards,
-        "coherent": coherent,
-        "degenerate": not coherent,
-    }
-
-
-def _image_pull_policy(image: str) -> str:
-    """Choose the imagePullPolicy for a sibling component image.
-
-    Provenance-sensitive ``-genuine-`` builds are pulled fresh so a stale image
-    cached under the same tag cannot silently masquerade as the genuine build.
-    A digest-pinned reference (``@sha256:``) is already immutable.
-    """
-
-    override = os.environ.get("NPA_SIM2REAL_IMAGE_PULL_POLICY", "").strip()
-    if override:
-        return override
-    if "@sha256:" in image:
-        return "IfNotPresent"
-    tag = image.rsplit(":", 1)[-1] if ":" in image.rsplit("/", 1)[-1] else ""
-    if "genuine" in tag:
-        return "Always"
-    return "IfNotPresent"
-
-
-def _write_ppm(path: Path, *, red: int, green: int, blue: int) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    width = 32
-    height = 32
-    header = f"P6\n{width} {height}\n255\n".encode("ascii")
-    pixel = bytes(
-        [max(0, min(255, red)), max(0, min(255, green)), max(0, min(255, blue))]
-    )
-    path.write_bytes(header + pixel * width * height)
 
 
 def _redacted_config(config: Sim2RealLoopConfig) -> dict[str, Any]:
