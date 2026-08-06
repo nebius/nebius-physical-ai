@@ -567,7 +567,23 @@ def run_gpu_job_with_fallback(
             namespace=namespace,
             provenance=provenance,
         )
-        apply = kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout_s=120)
+        # Client-side ``kubectl apply`` copies the complete Job manifest into
+        # kubectl.kubernetes.io/last-applied-configuration.  Isaac jobs embed
+        # executable task/scenario source in ``args`` and can legitimately
+        # exceed Kubernetes' 256 KiB aggregate annotation limit.  We delete the
+        # same-name Job above, then use server-side apply so the API receives the
+        # identical payload without manufacturing that unbounded annotation.
+        apply = kubectl(
+            [
+                "apply",
+                "--server-side=true",
+                "--field-manager=npa-sim2real",
+                "-f",
+                "-",
+            ],
+            stdin=json.dumps(manifest),
+            timeout_s=120,
+        )
         attempt: dict[str, Any] = {
             "product": product,
             "job_name": job_name,

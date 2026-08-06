@@ -136,9 +136,10 @@ def test_plan_only_materializes_qualified_real_images_without_external_writes(
     for key in k8s_submit._required_real_image_envs(env):
         assert k8s_submit._registry_qualified(env[key]), (key, env[key])
     assert "manifest_path" not in {field.name for field in fields(result)}
-    assert result.manifest_sha256 == hashlib.sha256(
-        captured["manifest_yaml"].encode("utf-8")
-    ).hexdigest()
+    assert (
+        result.manifest_sha256
+        == hashlib.sha256(captured["manifest_yaml"].encode("utf-8")).hexdigest()
+    )
     assert not Path(captured["path"]).exists()
 
 
@@ -180,7 +181,9 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
                     ]
                 }
             )
-        elif args[:2] == ["apply", "-f"]:
+        elif args and args[0] == "apply":
+            assert "--server-side=true" in args
+            assert "--field-manager=npa-sim2real" in args
             applied.append(json.loads(kwargs["stdin"]))
             stdout = "job.batch/sim2real-unit-submit created"
         elif args[:2] == ["get", "pods"]:

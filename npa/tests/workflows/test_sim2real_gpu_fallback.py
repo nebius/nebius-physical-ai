@@ -248,7 +248,9 @@ class _Scheduler:
         self.commands.append(args)
         if args[:2] == ["get", "nodes"]:
             return subprocess.CompletedProcess(args, 0, _nodes(RTX, L40S, H100), "")
-        if args[:2] == ["apply", "-f"]:
+        if args and args[0] == "apply":
+            assert "--server-side=true" in args
+            assert "--field-manager=npa-sim2real" in args
             manifest = json.loads(stdin or "{}")
             self.current_product = manifest["spec"]["template"]["spec"]["nodeSelector"][
                 "nvidia.com/gpu.product"
@@ -369,11 +371,44 @@ def test_capacity_retry_order_and_provenance(monkeypatch: pytest.MonkeyPatch) ->
     first_apply_index = next(
         index
         for index, command in enumerate(scheduler.commands)
-        if command[:2] == ["apply", "-f"]
+        if command and command[0] == "apply"
     )
     assert scheduler.commands.index(first_delete) < first_apply_index
     assert "--wait=true" in first_delete
     assert "--timeout=120s" in first_delete
+
+
+def test_large_embedded_job_uses_server_side_apply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Large Isaac scripts must not become a last-applied annotation."""
+
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "success"})
+
+    def large_manifest(product: str, job_name: str) -> dict[str, Any]:
+        manifest = _manifest(product, job_name)
+        manifest["spec"]["template"]["spec"]["containers"][0]["args"] = ["x" * 270_000]
+        return manifest
+
+    run_gpu_job_with_fallback(
+        kubectl=scheduler,
+        manifest_factory=large_manifest,
+        base_job_name="s2r-large-script",
+        namespace="default",
+        image="registry/image@sha256:abc123",
+        preferred_product=RTX,
+        explicit_candidates=(),
+        workload="isaac",
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+        timeout_s=10,
+    )
+    apply_command = next(
+        command for command in scheduler.commands if command[0] == "apply"
+    )
+    assert "--server-side=true" in apply_command
+    assert "--field-manager=npa-sim2real" in apply_command
 
 
 def test_zero_timeout_waits_without_imposing_job_deadline(
