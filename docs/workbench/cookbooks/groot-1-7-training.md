@@ -144,3 +144,13 @@ artifact have all passed validation.
 
 If `prefix` or `checkpoint_uri` is overridden, use those resolved locations
 and pass the corresponding parent prefix to `workflow list`.
+
+## Kubernetes image prerequisites
+
+The image keeps its non-root `ubuntu` runtime while enabling the repository's
+SkyPilot Kubernetes prerequisite layer. That layer supplies the system Python,
+rsync/SSH client, netcat, and passwordless `sudo` required by SkyPilot's in-pod
+bootstrap. If a historical image exits before setup with `sudo: command not
+found`, build the additive repair tag with
+`npa/docker/workbench/groot/Dockerfile.k8s-prereqs`; do not clear the workflow's
+image pin or switch the task to root.

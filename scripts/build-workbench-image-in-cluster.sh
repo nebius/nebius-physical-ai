@@ -57,6 +57,10 @@ if [[ -z "$TAG" ]]; then
   echo "ERROR: --tag <registry>/<image>:<tag> is required" >&2
   exit 2
 fi
+if ! [[ "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: NPA_BUILD_TIMEOUT must be a non-negative integer (0 waits indefinitely)" >&2
+  exit 2
+fi
 if [[ -z "$DOCKERFILE" && -z "$RUN_SNIPPET" ]]; then
   echo "ERROR: pass --dockerfile <path> or --run '<shell>'" >&2
   exit 2
@@ -143,11 +147,15 @@ $(printf '%s\n' "${BUILD_ARGS[@]}")
 EOF
 
 kubectl -n "$NAMESPACE" apply -f "$WORK_DIR/pod.yaml" >/dev/null
-echo "build pod ${POD_NAME} submitted; streaming progress (timeout ${TIMEOUT_SECONDS}s)"
+if [[ "$TIMEOUT_SECONDS" -eq 0 ]]; then
+  echo "build pod ${POD_NAME} submitted; waiting without a deadline"
+else
+  echo "build pod ${POD_NAME} submitted; streaming progress (timeout ${TIMEOUT_SECONDS}s)"
+fi
 
 deadline=$(( $(date +%s) + TIMEOUT_SECONDS ))
 phase=""
-while [[ $(date +%s) -lt $deadline ]]; do
+while [[ "$TIMEOUT_SECONDS" -eq 0 || $(date +%s) -lt $deadline ]]; do
   phase="$(kubectl -n "$NAMESPACE" get pod "$POD_NAME" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
   case "$phase" in
     Succeeded) break ;;
