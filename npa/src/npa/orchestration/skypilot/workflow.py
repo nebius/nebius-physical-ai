@@ -1393,7 +1393,11 @@ def _verified_job_id(
         return parsed
     if not ids:
         return parsed
-    if parsed and parsed in ids:
+    # ``parse_job_ids_by_name`` returns newest first. A repeated workflow wave
+    # legitimately reuses its deterministic name, so an older cancelled id can
+    # still be present in ``ids`` and in stale launch output. Only trust the
+    # parsed id when it names the newest match.
+    if parsed == ids[0]:
         return parsed
     return ids[0]
 

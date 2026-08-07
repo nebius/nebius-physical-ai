@@ -1391,7 +1391,9 @@ def test_stale_job_id_from_launch_output_is_corrected_by_name(tmp_path: Path) ->
         spec,
         submitter=StaleIdSubmitter(),
         status_fn=status_fn,
-        name_lookup_fn=lambda name: ["141"],
+        # The old id still matches the deterministic wave name; newest-first
+        # lookup must win even when the stale parsed id appears later in the list.
+        name_lookup_fn=lambda name: ["141", "140"],
     )
     report = run_workflow_runtime(
         spec, run_id="rt-stale-id", executor=executor, options=executor.options
