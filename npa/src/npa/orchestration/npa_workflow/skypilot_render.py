@@ -865,9 +865,22 @@ def default_npa_setup() -> str:
         "npa_pip_install() {\n"
         "  target=\"$1\"\n"
         "  shift\n"
-        "  python3 -m pip install -q \"$target\" \"$@\" \\\n"
-        "    || python3 -m pip install -q \"$target\" \"$@\" --break-system-packages \\\n"
-        "    || python3 -m pip install -q \"$target\" \"$@\" --user\n"
+        # uv-created environments deliberately need not contain pip. GR00T's
+        # image is one: `python3 -m pip` exits before the source overlay can be
+        # staged even though the image ships uv. Let uv target the exact
+        # interpreter that `python3` resolves to; unlike activating another
+        # interpreter, this preserves the vendor environment and its pins.
+        "  npa_install_python=\"$(command -v python3)\"\n"
+        "  if \"$npa_install_python\" -m pip --version >/dev/null 2>&1; then\n"
+        "    \"$npa_install_python\" -m pip install -q \"$target\" \"$@\" \\\n"
+        "      || \"$npa_install_python\" -m pip install -q \"$target\" \"$@\" --break-system-packages \\\n"
+        "      || \"$npa_install_python\" -m pip install -q \"$target\" \"$@\" --user\n"
+        "  elif command -v uv >/dev/null 2>&1; then\n"
+        "    uv pip install -q --python \"$npa_install_python\" \"$target\" \"$@\"\n"
+        "  else\n"
+        "    echo \"python3 has no pip and uv is unavailable: $npa_install_python\" >&2\n"
+        "    return 1\n"
+        "  fi\n"
         "}\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
         "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
