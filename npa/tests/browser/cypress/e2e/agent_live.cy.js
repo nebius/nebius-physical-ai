@@ -15,6 +15,10 @@ function liveRunId() {
   return Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") || Cypress.env("NPA_AGENT_RUN_ID") || "";
 }
 
+function liveArtifactRunId() {
+  return Cypress.env("NPA_AGENT_CYPRESS_ARTIFACT_RUN_ID") || "";
+}
+
 function liveAgentRequest(path, options = {}) {
   const baseUrl = Cypress.env("agentBaseUrl") || Cypress.env("NPA_AGENT_BASE_URL") || Cypress.config("baseUrl");
   const username = Cypress.env("agentUser") || Cypress.env("NPA_AGENT_USER");
@@ -179,6 +183,34 @@ describe("NPA agent UI against live infra", () => {
     });
 
     cy.get("#openRerun").should("be.visible");
+  });
+
+  it("loads a configured artifact-only run and clears stale panels on search/switch", function () {
+    const runId = liveArtifactRunId();
+    if (!runId) {
+      this.skip();
+    }
+
+    cy.get("#tabRerun").click();
+    cy.get("#runIdInput").clear().type(`${runId}{enter}`, { delay: 0 });
+    cy.get("#artifactList", { timeout: 120000 }).should("contain.text", runId);
+    cy.get("#renderModeData", { timeout: 120000 }).should("have.class", "is-active");
+    cy.get("#artifactPreviewHost pre", { timeout: 120000 }).should(($pre) => {
+      expect(String($pre.text() || "").trim().length, "JSON/text preview is useful").to.be.greaterThan(2);
+    });
+    cy.get("#tabMain").click();
+    cy.get("#runSummary").should("contain.text", runId);
+    cy.get("#stageList .stage-item").should("have.length.greaterThan", 0);
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactPrefix").clear().type("no-such-run-for-stale-state-check", { delay: 0 });
+    cy.get("#artifactList").should("contain.text", "Select a run");
+    cy.get("#runSummary").should("not.contain.text", runId);
+    cy.get("#artifactPrefix").clear();
+    cy.get("#runIdInput").clear().type("franka-demo{enter}", { delay: 0 });
+    cy.get("#simRunId", { timeout: 120000 }).should("contain.text", "franka-demo");
+    cy.get("#tabMain").click();
+    cy.get("#stageList").should("contain.text", "Local Franka demo");
   });
 
   it("embeds the Lichtblick MCAP viewer and co-serves the recording", () => {

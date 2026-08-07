@@ -2398,6 +2398,10 @@
         document.querySelectorAll(".render-mode-tab[data-render-mode]").forEach((btn) => {
           btn.addEventListener("click", () => {
             const mode = String(btn.getAttribute("data-render-mode") || "rerun");
+            // A manual viewer choice supersedes any artifact preview started by
+            // run auto-selection.  Otherwise a slow JSON fetch can repaint Data
+            // after the operator has already switched to another viewer.
+            artifactLoadRequestId += 1;
             setRenderMode(mode);
             // Clicking the Lichtblick tab should load the active run's MCAP, not just
             // reveal an empty viewer (the .mcap is 1-of-many artifacts, easy to miss).
@@ -2499,9 +2503,7 @@
           runIdSelect.addEventListener("change", () => {
             const chosen = String(runIdSelect.value || "").trim();
             if (!chosen) return;
-            syncRunChooserFields(chosen);
-            loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
+            loadSelectedRun(runEntryFromSelect(runIdSelect) || chosen)
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
@@ -2510,9 +2512,7 @@
           stagesRunSelect.addEventListener("change", () => {
             const chosen = String(stagesRunSelect.value || "").trim();
             if (!chosen) return;
-            syncRunChooserFields(chosen);
-            loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
+            loadSelectedRun(runEntryFromSelect(stagesRunSelect) || chosen)
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
@@ -2524,7 +2524,6 @@
           const selected = String((select && select.value) || "").trim();
           const chosen = resolveStagesRunChoice(typed, selected);
           await loadSelectedRun(chosen);
-          await loadArtifactsForSelectedRun().catch(() => false);
         }, "Load run for stages");
         const stagesRunInput = document.getElementById("stagesRunInput");
         if (stagesRunInput) {
@@ -2536,7 +2535,10 @@
             // are surfaced by name/ID (then re-filtered into this select).
             const value = String(stagesRunInput.value || "").trim();
             if (stagesSearchTimer) clearTimeout(stagesSearchTimer);
-            if (!value) return;
+            if (!value) {
+              runSearchRequestId += 1;
+              return;
+            }
             stagesSearchTimer = setTimeout(async () => {
               try {
                 await refreshArtifactRuns(value);
@@ -2552,7 +2554,6 @@
             const selected = String((select && select.value) || "").trim();
             const chosen = resolveStagesRunChoice(typed, selected);
             loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
@@ -2563,7 +2564,6 @@
             event.preventDefault();
             const chosen = String(runIdInput.value || "").trim();
             loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
@@ -2584,13 +2584,19 @@
         if (runFilterInput) {
           let runSearchTimer = null;
           runFilterInput.addEventListener("input", () => {
+            const value = runFilterValue();
+            if (value && activeRunId && !String(activeRunId).toLowerCase().includes(value.toLowerCase())) {
+              clearVisibleRunState("Search changed. Select a matching run to load fresh content.");
+            }
             // Immediate client-side filter of what's already loaded…
             applyMergedRunSelectors(activeRunId);
             // …plus a debounced server-side search so runs older than the newest
             // page (beyond the fetch limit) are surfaced by name/ID too.
-            const value = runFilterValue();
             if (runSearchTimer) clearTimeout(runSearchTimer);
-            if (!value) return;
+            if (!value) {
+              runSearchRequestId += 1;
+              return;
+            }
             runSearchTimer = setTimeout(async () => {
               try {
                 await refreshArtifactRuns(value);
@@ -3501,6 +3507,21 @@
             } catch (_grabErr) { /* retry */ }
             await new Promise((r) => window.setTimeout(r, 80));
           }
+          // A static canvas can occasionally fail to emit its first MediaStream
+          // frame in headless Chromium. Fall back to a final synchronous copy;
+          // real cleared WebGL buffers still fail the blank-frame gate here.
+          try {
+            const copy = document.createElement("canvas");
+            copy.width = Math.max(1, bridge.canvas.width || 1);
+            copy.height = Math.max(1, bridge.canvas.height || 1);
+            const ctx = copy.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(bridge.canvas, 0, 0);
+              if (!frameLooksBlank(copy)) {
+                return downscaleCanvasToDataUrl(copy, 768, 0.72) || "";
+              }
+            }
+          } catch (_fallbackErr) { /* unavailable WebGL readback */ }
           return "";
         };
         try {
@@ -4830,9 +4851,11 @@
         if (host) host._previewObjectUrl = objectUrl;
         return objectUrl;
       }
-      async function showArtifactPreview(simViz, render) {
+      async function showArtifactPreview(simViz, render, is_current_request) {
         const host = document.getElementById("artifactPreviewHost");
         if (!host) return;
+        const isCurrent = () => typeof is_current_request !== "function" || is_current_request();
+        if (!isCurrent()) return;
         const previewUrl = String((simViz && simViz.artifact_preview_url) || "");
         const downloadUrl = String((simViz && simViz.artifact_download_url) || previewUrl || "");
         const safeRender = String(render || "");
@@ -4864,11 +4887,20 @@
           host.hidden = false;
           host.innerHTML = `<p class="hint">Loading image preview…</p>`;
           try {
-            const src = await authenticatedPreviewObjectUrl(previewUrl, host);
+            const src = await authenticatedPreviewObjectUrl(previewUrl, null);
+            if (!isCurrent()) {
+              try { URL.revokeObjectURL(src); } catch (_err) { /* ignore */ }
+              return;
+            }
+            if (host._previewObjectUrl) {
+              try { URL.revokeObjectURL(host._previewObjectUrl); } catch (_err) { /* ignore */ }
+            }
+            host._previewObjectUrl = src;
             host.innerHTML =
               `<img alt="artifact image" src="${src}" data-preview-url="${escapeHtml(previewUrl)}" />` +
               downloadHtml;
           } catch (err) {
+            if (!isCurrent()) return;
             host.innerHTML =
               `<p class="preview-error">Image preview failed: ${escapeHtml(String((err && err.message) || err))}.</p>` +
               downloadHtml;
@@ -4879,11 +4911,20 @@
           host.hidden = false;
           host.innerHTML = `<p class="hint">Loading video preview…</p>`;
           try {
-            const src = await authenticatedPreviewObjectUrl(previewUrl, host);
+            const src = await authenticatedPreviewObjectUrl(previewUrl, null);
+            if (!isCurrent()) {
+              try { URL.revokeObjectURL(src); } catch (_err) { /* ignore */ }
+              return;
+            }
+            if (host._previewObjectUrl) {
+              try { URL.revokeObjectURL(host._previewObjectUrl); } catch (_err) { /* ignore */ }
+            }
+            host._previewObjectUrl = src;
             host.innerHTML =
               `<video controls playsinline src="${src}" data-preview-url="${escapeHtml(previewUrl)}"></video>` +
               downloadHtml;
           } catch (err) {
+            if (!isCurrent()) return;
             host.innerHTML =
               `<p class="preview-error">Video preview failed: ${escapeHtml(String((err && err.message) || err))}. ` +
               `Sign in again if auth expired, then retry Play.</p>` +
@@ -4896,13 +4937,16 @@
             const resp = await fetchWithTimeout(previewUrl, { credentials: "include" }, 12000);
             if (!resp.ok) throw new Error("preview fetch failed");
             const text = await resp.text();
+            if (!isCurrent()) return;
             host.hidden = false;
             host.innerHTML = `<pre style="white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;max-height:min(70vh,720px);overflow:auto;">${escapeHtml(text.slice(0, 20000))}</pre>`;
             return;
           } catch (_err) {
+            if (!isCurrent()) return;
             // fall through to download link
           }
         }
+        if (!isCurrent()) return;
         host.hidden = false;
         host.innerHTML = `<p>Artifact render: <strong>${escapeHtml(safeRender || "download")}</strong>. <a href="${escapeHtml(downloadUrl)}" target="_blank" rel="noopener">Download artifact</a></p>`;
       }
@@ -5577,6 +5621,10 @@
       let knownAvailableRuns = [];
       let discoveredArtifactRuns = [];
       let mergedRunsCache = [];
+      let activeRunEntryKey = "";
+      let autoLoadedPreferredKey = "";
+      let runSearchRequestId = 0;
+      let artifactLoadRequestId = 0;
       // Load the whole run list into the picker by default so every run shows
       // without the operator having to guess a search fragment. The server still
       // supports (q=) search for buckets larger than this, and the "Find run" /
@@ -5616,7 +5664,8 @@
         const matches = mergedRunsCache.filter((run) =>
           String((run && run.run_id) || "").toLowerCase().includes(lowered)
         );
-        if (matches.length === 1) return String(matches[0].run_id || "").trim();
+        const matchIds = [...new Set(matches.map((run) => String((run && run.run_id) || "").trim()).filter(Boolean))];
+        if (matchIds.length === 1) return matchIds[0];
         // Allow loading a pasted id that is not yet in the cached list.
         return query;
       }
@@ -5627,13 +5676,54 @@
       function effectiveRunTs(run) {
         return String((run && (run.started_at || run.last_modified || run.activity_at)) || "");
       }
+      function normalizeRunSource(run, fallbackSource) {
+        const explicit = String((run && run.source_type) || "").trim();
+        if (explicit) return explicit;
+        if (fallbackSource === "discovered") return "artifact_storage";
+        if (String((run && run.run_id) || "") === "franka-demo") return "local_demo";
+        return "workflow_history";
+      }
+      function runSourceLabel(sourceType, run) {
+        const explicit = String((run && run.source_label) || "").trim();
+        if (explicit) return explicit;
+        return {
+          local_demo: "local demo",
+          workflow_history: "workflow history",
+          artifact_storage: "S3 artifacts",
+        }[sourceType] || String(sourceType || "run").replaceAll("_", " ");
+      }
+      function runEntryIdentity(runId, sourceType, run) {
+        const bucket = String((run && run.bucket) || "").trim();
+        const project = String((run && run.project_id) || "").trim();
+        return [sourceType, project, bucket, runId].join("|");
+      }
       function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
         const map = new Map();
-        const ingest = (run, source) => {
+        const ingest = (run, fallbackSource) => {
           const runId = String((run && run.run_id) || run || "").trim();
           if (!runId) return;
-          const prev = map.get(runId) || {
+          const sourceType = normalizeRunSource(run, fallbackSource);
+          let entryKey = runEntryIdentity(runId, sourceType, run);
+          let priorKey = entryKey;
+          let prev = map.get(entryKey);
+          // Viewer history knows an artifact's run id before it necessarily knows
+          // the tenant project/bucket. Merge that sparse history row into the
+          // matching discovered row, while retaining genuinely distinct buckets.
+          if (!prev && sourceType === "artifact_storage") {
+            const sparseMatch = [...map.entries()].find(([, item]) =>
+              item.run_id === runId && item.source_type === sourceType &&
+              (!item.bucket || !(run && run.bucket)) &&
+              (!item.project_id || !(run && run.project_id))
+            );
+            if (sparseMatch) {
+              priorKey = sparseMatch[0];
+              prev = sparseMatch[1];
+              if (run && (run.bucket || run.project_id)) entryKey = runEntryIdentity(runId, sourceType, run);
+            }
+          }
+          prev = prev || {
             run_id: runId,
+            entry_key: entryKey,
             started_at: "",
             last_modified: "",
             activity_at: "",
@@ -5641,7 +5731,8 @@
             artifact_count: 0,
             project_id: "",
             bucket: "",
-            source: source,
+            source_type: sourceType,
+            source_label: runSourceLabel(sourceType, run),
           };
           // Run start: keep the EARLIEST across sources (submit time / earliest
           // artifact write). This is the displayed date.
@@ -5659,14 +5750,18 @@
           if (run && run.project_id) prev.project_id = String(run.project_id || "");
           if (run && run.bucket) prev.bucket = String(run.bucket || "");
           if (run && run.stage) prev.stage = String(run.stage || "");
-          prev.source = prev.source === "both" || (prev.source && prev.source !== source) ? "both" : source;
-          map.set(runId, prev);
+          prev.entry_key = entryKey;
+          if (priorKey !== entryKey) map.delete(priorKey);
+          map.set(entryKey, prev);
         };
         for (const run of Array.isArray(knownRuns) ? knownRuns : []) ingest(run, "known");
         for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) ingest(run, "discovered");
         return [...map.values()].sort((a, b) => {
           const cmp = effectiveRunTs(b).localeCompare(effectiveRunTs(a));
           if (cmp !== 0) return cmp;
+          const priority = { artifact_storage: 0, local_demo: 1, workflow_history: 2 };
+          const sourceCmp = (priority[a.source_type] ?? 9) - (priority[b.source_type] ?? 9);
+          if (sourceCmp !== 0) return sourceCmp;
           return String(b.run_id || "").localeCompare(String(a.run_id || ""));
         });
       }
@@ -5677,33 +5772,100 @@
           ? "(select run)"
           : "(select run — latest first)";
         select.innerHTML = '<option value="">' + placeholder + '</option>';
+        let selectedSet = false;
         for (const run of runs) {
           const runId = String((run && run.run_id) || run || "").trim();
           if (!runId) continue;
           const opt = document.createElement("option");
           opt.value = runId;
+          opt.dataset.entryKey = String((run && run.entry_key) || "");
+          opt.dataset.sourceType = String((run && run.source_type) || "workflow_history");
+          opt.dataset.sourceLabel = String((run && run.source_label) || "workflow history");
+          opt.dataset.bucket = String((run && run.bucket) || "");
+          opt.dataset.projectId = String((run && run.project_id) || "");
           const bits = [runId];
+          bits.push(String((run && run.source_label) || "workflow history"));
           if (run && run.project_id) bits.push("project " + String(run.project_id));
+          if (run && run.bucket) bits.push("bucket " + String(run.bucket));
           if (run && run.has_viewable) bits.push("viewable");
           if (run && run.artifact_count) bits.push(String(run.artifact_count) + " artifacts");
           const shownTs = effectiveRunTs(run);
           if (shownTs) bits.push(shownTs.slice(0, 19));
           opt.textContent = bits.length > 1 ? (runId + " · " + bits.slice(1).join(" · ")) : runId;
-          if (runId === current || (!current && runId === previous)) opt.selected = true;
+          const currentText = String(current || "");
+          if (
+            (!selectedSet && currentText && (run.entry_key === currentText || runId === currentText)) ||
+            (!currentText && runId === previous)
+          ) {
+            opt.selected = true;
+            selectedSet = true;
+          }
           select.appendChild(opt);
         }
+      }
+      function runEntryFromSelect(select) {
+        if (!select || !select.selectedOptions || !select.selectedOptions.length) return null;
+        const option = select.selectedOptions[0];
+        const runId = String(option.value || "").trim();
+        if (!runId) return null;
+        const key = String(option.dataset.entryKey || "");
+        return mergedRunsCache.find((item) => String(item.entry_key || "") === key) || {
+          run_id: runId,
+          entry_key: key,
+          source_type: String(option.dataset.sourceType || "workflow_history"),
+          source_label: String(option.dataset.sourceLabel || "workflow history"),
+          bucket: String(option.dataset.bucket || ""),
+          project_id: String(option.dataset.projectId || ""),
+        };
+      }
+      function preferredRunEntry(runId) {
+        const rid = String(runId || "").trim();
+        if (!rid) return null;
+        if (activeRunEntryKey) {
+          const active = mergedRunsCache.find((item) => item.entry_key === activeRunEntryKey && item.run_id === rid);
+          if (active) return active;
+        }
+        return mergedRunsCache.find((item) => String(item.run_id || "") === rid) || null;
+      }
+      function clearVisibleRunState(message) {
+        activeRunId = "";
+        activeRunEntryKey = "";
+        autoLoadedPreferredKey = "";
+        activeArtifactRender = "";
+        currentLichtblickSimViz = null;
+        const replacements = {
+          runSummary: "Select a run to load its result.",
+          stageList: "",
+          runLog: "No run selected.",
+          stageDetail: "",
+          artifactList: "<p>Select a run to list its artifacts.</p>",
+          artifactProvenance: "",
+        };
+        for (const [id, value] of Object.entries(replacements)) {
+          const node = document.getElementById(id);
+          if (!node) continue;
+          if (id === "artifactList") node.innerHTML = value;
+          else node.textContent = value;
+        }
+        hideArtifactPreview();
+        updateRenderedDataSummary(null);
+        showRerunPlaceholder(message || "Select a run to load its viewer content.", { force: true });
       }
       function filterStagesRunSelect(query) {
         const select = document.getElementById("stagesRunSelect");
         const hint = document.getElementById("stagesRunSearchHint");
         const needle = String(query || "").trim().toLowerCase();
-        const current = String((select && select.value) || activeRunId || "").trim();
+        let current = String((select && select.value) || activeRunId || "").trim();
         const filtered = !needle
           ? mergedRunsCache
           : mergedRunsCache.filter((run) =>
               String((run && run.run_id) || "").toLowerCase().includes(needle)
             );
-        fillRunSelectOptionsRich(select, filtered, current);
+        if (needle && activeRunId && !String(activeRunId).toLowerCase().includes(needle)) {
+          clearVisibleRunState("Search changed. Select a matching run to load fresh content.");
+          current = "";
+        }
+        fillRunSelectOptionsRich(select, filtered, activeRunEntryKey || current);
         if (hint) {
           if (!needle) {
             hint.textContent = "Type to filter runs by name.";
@@ -5714,7 +5876,7 @@
           }
         }
         // When exactly one run matches the search, preselect it for one-click Load.
-        if (filtered.length === 1 && select) {
+        if (new Set(filtered.map((item) => String(item.run_id || ""))).size === 1 && select) {
           select.value = String(filtered[0].run_id || "");
         }
         return filtered;
@@ -5722,7 +5884,13 @@
       function applyMergedRunSelectors(current) {
         const merged = mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
         mergedRunsCache = merged;
-        const chosen = String(current || activeRunId || "").trim();
+        const chosen = String(activeRunEntryKey || current || activeRunId || "").trim();
+        const chosenRun = String(
+          activeRunId ||
+          ((merged.find((item) => item.entry_key === chosen) || {}).run_id) ||
+          current ||
+          ""
+        ).trim();
         // Filter the Rerun-tab run picker by the "Find run (name or ID)" box.
         const runFilter = runFilterValue().toLowerCase();
         const runList = runFilter
@@ -5741,7 +5909,7 @@
         } else {
           fillRunSelectOptionsRich(document.getElementById("stagesRunSelect"), merged, chosen);
         }
-        syncRunChooserFields(chosen);
+        syncRunChooserFields(chosenRun, activeRunEntryKey);
         return merged;
       }
       async function refreshArtifactRuns(query) {
@@ -5750,18 +5918,27 @@
         // newest page) so old runs beyond the default limit are still findable,
         // and union the matches into the discovered list.
         const q = String(query || "").trim();
+        // A background/default refresh must not supersede an in-flight q=
+        // request and leave the user's filtered picker empty.
+        const requestId = ++runSearchRequestId;
         const url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
         const data = await apiJson(url);
+        if (requestId !== runSearchRequestId) return false;
         const runs = Array.isArray(data.runs) ? data.runs : [];
         if (q) {
-          const byId = new Map((discoveredArtifactRuns || []).map((r) => [String((r && r.run_id) || ""), r]));
-          for (const r of runs) byId.set(String((r && r.run_id) || ""), r);
+          const identity = (r) => [
+            String((r && r.run_id) || ""),
+            String((r && r.project_id) || ""),
+            String((r && r.bucket) || ""),
+          ].join("|");
+          const byId = new Map((discoveredArtifactRuns || []).map((r) => [identity(r), r]));
+          for (const r of runs) byId.set(identity(r), r);
           discoveredArtifactRuns = [...byId.values()];
         } else {
           discoveredArtifactRuns = runs;
         }
         // API already returns latest-first; keep that order when merging.
-        const merged = applyMergedRunSelectors(activeRunId);
+        const merged = applyMergedRunSelectors(activeRunEntryKey || activeRunId);
         const status = document.getElementById("artifactDiscoverStatus");
         if (status) {
           const trunc = data.truncated ? " (truncated)" : "";
@@ -5772,22 +5949,33 @@
         }
         return true;
       }
-      async function loadArtifactsForSelectedRun(explicitRunId, priorPage) {
+      async function loadArtifactsForSelectedRun(explicitRunId, priorPage, explicitEntry) {
         // explicitRunId is optional; guard against event objects passed by
         // click handlers (bindClick calls fn(event)).
         const runId = (typeof explicitRunId === "string" && explicitRunId.trim())
           ? explicitRunId.trim()
           : selectedRunIdFromUi();
         if (!runId) throw new Error("Select a run or enter a run_id first");
-        syncRunChooserFields(runId);
+        const entry = (explicitEntry && typeof explicitEntry === "object")
+          ? explicitEntry
+          : preferredRunEntry(runId);
+        activeRunId = runId;
+        activeRunEntryKey = String((entry && entry.entry_key) || activeRunEntryKey || "");
+        syncRunChooserFields(runId, activeRunEntryKey);
         // No path prefix: the server locates the run by id across the whole run root.
         const previous = priorPage && Array.isArray(priorPage.artifacts) ? priorPage.artifacts : [];
-        const continuation = priorPage && priorPage.next_cursor
-          ? "?cursor=" + encodeURIComponent(String(priorPage.next_cursor)) +
-            "&resolved_prefix=" + encodeURIComponent(String(priorPage.resolved_prefix || "")) +
-            "&resource_bucket=" + encodeURIComponent(String(priorPage.bucket || ""))
-          : "";
-        const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId) + continuation);
+        const params = new URLSearchParams();
+        if (priorPage && priorPage.next_cursor) {
+          params.set("cursor", String(priorPage.next_cursor));
+          params.set("resolved_prefix", String(priorPage.resolved_prefix || ""));
+          params.set("resource_bucket", String(priorPage.bucket || ""));
+        } else if (entry && entry.bucket) {
+          params.set("resource_bucket", String(entry.bucket));
+        }
+        const query = params.toString();
+        const data = await apiJson(
+          "/api/artifacts/run/" + encodeURIComponent(runId) + (query ? "?" + query : "")
+        );
         if (previous.length) {
           const merged = new Map(previous.map((item) => [String((item && item.s3_uri) || (item && item.key) || ""), item]));
           for (const item of (Array.isArray(data.artifacts) ? data.artifacts : [])) {
@@ -5924,7 +6112,16 @@
             }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
           });
         });
-        if (preferred && String(preferred.render || "") === "rerun" && !isMobileLayout()) {
+        const preferredRender = String((preferred && preferred.render) || "");
+        const preferredLoadKey = [
+          String((entry && entry.entry_key) || runId),
+          String((preferred && preferred.key) || ""),
+        ].join("|");
+        const shouldLoadPreferred = preferred && ["rerun", "mcap", "video", "image", "json", "text"].includes(preferredRender) &&
+          !(preferredRender === "rerun" && isMobileLayout()) &&
+          preferredLoadKey !== autoLoadedPreferredKey;
+        if (shouldLoadPreferred) {
+          autoLoadedPreferredKey = preferredLoadKey;
           await loadArtifact({
             run_id: runId,
             key: String(preferred.key || "").trim(),
@@ -6162,6 +6359,7 @@
         }
       }
       async function loadArtifact(payload) {
+        const requestId = ++artifactLoadRequestId;
         const body = {
           run_id: String((payload && payload.run_id) || "").trim(),
           key: String((payload && payload.key) || "").trim(),
@@ -6172,6 +6370,7 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
         });
+        if (requestId !== artifactLoadRequestId) return false;
         const simViz = data.sim_viz || {};
         const render = String(data.render || simViz.artifact_render || "");
         activeArtifactRender = render;
@@ -6189,6 +6388,7 @@
           return true;
         }
         await activateMainTab("rerun", { skipEnsure: true });
+        if (requestId !== artifactLoadRequestId) return false;
         if (render === "rerun") {
           setRenderMode("rerun");
           hideArtifactPreview();
@@ -6197,6 +6397,15 @@
           if (!(await swapRerunRecordingInPlace(String(simViz.camera || "workspace"), loadedRunId))) {
             rerunIframeLoaded = false;
             await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
+            // A boot-time mount may have been in flight when the source-aware
+            // switch cleared the old frame. The single-flight promise can finish
+            // successfully for that superseded frame, so verify the DOM target
+            // before declaring the selected run mounted and retry once if needed.
+            const selectedFrame = document.getElementById("rerunFrame");
+            if (!selectedFrame || !selectedFrame.getAttribute("src")) {
+              rerunIframeLoaded = false;
+              await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
+            }
           }
         } else if (render === "mcap" || render === "lichtblick") {
           hideArtifactPreview();
@@ -6204,11 +6413,21 @@
           mountLichtblickIframe(simViz);
         } else {
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
-          await showArtifactPreview(simViz, render);
+          await showArtifactPreview(simViz, render, () => requestId === artifactLoadRequestId);
         }
-        // Loading/viewing an artifact must not spam the chat log; the viewer +
-        // rendered-data summary already reflect the loaded artifact.
-        await refresh();
+        if (requestId !== artifactLoadRequestId) return false;
+        // Apply the load response directly. A general refresh can race a newer
+        // artifact selection and repaint an older render mode after the newer
+        // request wins; the load response already contains selector/status data.
+        updateRunSelector(simViz);
+        const simRunId = document.getElementById("simRunId");
+        const simStage = document.getElementById("simStage");
+        const simCamera = document.getElementById("simCamera");
+        if (simRunId) simRunId.textContent = String(simViz.run_id || loadedRunId || "-");
+        if (simStage) simStage.textContent = String(simViz.stage || "artifact-loaded");
+        if (simCamera) simCamera.textContent = String(simViz.camera || "workspace");
+        lastSimVizStatus = simViz;
+        updateSimvizCta(simViz);
         return true;
       }
       let voxelDatasetRun = "";
@@ -6524,8 +6743,9 @@
           props: (cubeEl && cubeEl.checked) ? ["cube"] : []
         };
       }
-      function syncRunChooserFields(runId) {
+      function syncRunChooserFields(runId, entryKey) {
         const chosen = String(runId || "").trim();
+        const chosenKey = String(entryKey || "").trim();
         // Keep stagesRunInput operator-owned (search/paste). Syncing the active
         // run_id into it re-filters the Stages dropdown on the next refresh.
         const runInput = document.getElementById("runIdInput");
@@ -6534,8 +6754,11 @@
           const select = document.getElementById(id);
           if (!select || !chosen) continue;
           if (document.activeElement === select) continue;
-          if (Array.from(select.options).some((opt) => opt.value === chosen)) {
-            select.value = chosen;
+          const matching = Array.from(select.options).find((opt) =>
+            opt.value === chosen && (!chosenKey || String(opt.dataset.entryKey || "") === chosenKey)
+          );
+          if (matching) {
+            matching.selected = true;
           }
         }
       }
@@ -6548,24 +6771,71 @@
             last_modified: String((item && item.last_modified) || "").trim(),
             activity_at: String((item && (item.activity_at || item.rrd_updated_at)) || "").trim(),
             stage: String((item && item.stage) || "").trim(),
+            source_type: String((item && item.source_type) || "workflow_history").trim(),
+            source_label: String((item && item.source_label) || "Workflow history").trim(),
           })).filter((item) => item.run_id);
         } else {
           const ids = Array.isArray(simViz && simViz.available_run_ids)
             ? simViz.available_run_ids.map(String)
             : [];
-          knownAvailableRuns = ids.map((runId) => ({ run_id: runId, last_modified: "" }));
+          knownAvailableRuns = ids.map((runId) => ({
+            run_id: runId,
+            last_modified: "",
+            source_type: runId === "franka-demo" ? "local_demo" : "workflow_history",
+            source_label: runId === "franka-demo" ? "Local demo" : "Workflow history",
+          }));
         }
         applyMergedRunSelectors(current);
       }
-      async function loadSelectedRun(runId) {
-        const chosen = String(runId || "").trim();
+      async function loadSelectedRun(entryOrRunId) {
+        const supplied = entryOrRunId && typeof entryOrRunId === "object" ? entryOrRunId : null;
+        const chosen = String((supplied && supplied.run_id) || entryOrRunId || "").trim();
         if (!chosen) {
           throw new Error("Enter or select a run_id first");
         }
-        syncRunChooserFields(chosen);
+        let entry = supplied || preferredRunEntry(chosen);
+        if (!entry) {
+          await refreshArtifactRuns(chosen).catch(() => false);
+          entry = preferredRunEntry(chosen);
+        }
+        // A pasted id absent from workflow history is treated as an artifact run:
+        // server-side discovery is the safe generic load path and cannot mutate or
+        // submit a workflow in the deployment project.
+        if (!entry) {
+          entry = {
+            run_id: chosen,
+            source_type: chosen === "franka-demo" ? "local_demo" : "artifact_storage",
+            source_label: chosen === "franka-demo" ? "Local demo" : "S3 artifacts",
+            entry_key: runEntryIdentity(
+              chosen,
+              chosen === "franka-demo" ? "local_demo" : "artifact_storage",
+              {}
+            ),
+          };
+        }
+        clearVisibleRunState("Loading " + chosen + "…");
+        activeRunId = chosen;
+        activeRunEntryKey = String(entry.entry_key || "");
+        syncRunChooserFields(chosen, activeRunEntryKey);
         const input = document.getElementById("runIdInput");
         if (input) input.value = chosen;
-        await loadRunData();
+        if (entry.source_type === "local_demo") {
+          const data = await apiJson("/api/sim-viz/load-franka-demo", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          await loadRunDetails(chosen);
+          if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {
+            await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), chosen);
+          }
+          await refresh();
+          return data;
+        }
+        if (entry.source_type === "artifact_storage") {
+          return loadArtifactsForSelectedRun(chosen, null, entry);
+        }
+        return loadWorkflowHistoryRun(chosen);
       }
       function normalizeStageStatus(value) {
         const raw = String(value || "pending").trim().toLowerCase();
@@ -6819,25 +7089,33 @@
           return null;
         }
       }
-      async function loadRunData() {
-        const runId = String(selectedRunIdFromUi() || "").trim();
-        if (!runId) {
+      async function loadWorkflowHistoryRun(runId) {
+        const targetRunId = String(runId || "").trim();
+        if (!targetRunId) {
           throw new Error("Enter or select a run_id first");
         }
         const data = await apiJson("/api/sim-viz/load-run", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ run_id: runId }),
+          body: JSON.stringify({ run_id: targetRunId }),
         });
-        activeRunId = runId;
-        appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
-        await loadRunDetails(runId);
+        activeRunId = targetRunId;
+        appendChat("assistant", "Loaded run context (workflow history) — **run_id**: `" + targetRunId + "`.");
+        await loadRunDetails(targetRunId);
         if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {
-          await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), runId);
+          await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), targetRunId);
         } else {
-          showRerunPlaceholder("No .rrd recording for this run yet. See run stages and logs below.", { force: true });
+          showRerunPlaceholder("No .rrd recording for this run yet (workflow history). See stages and logs below.", { force: true });
         }
         await refresh();
+        return data;
+      }
+      async function loadRunData() {
+        const runId = String(selectedRunIdFromUi() || "").trim();
+        if (!runId) {
+          throw new Error("Enter or select a run_id first");
+        }
+        return loadSelectedRun(preferredRunEntry(runId) || runId);
       }
       async function selectCamera(camera) {
         const selected = String(camera || "");

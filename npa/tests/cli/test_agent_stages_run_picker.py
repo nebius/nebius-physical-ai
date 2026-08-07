@@ -46,8 +46,13 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     assert 'getElementById("stagesRunSelect")' in ui
     assert 'getElementById("runIdSelect")' in ui
     load_fn = ui.split("async function loadSelectedRun")[1].split("function normalizeStageStatus")[0]
-    assert "loadRunData()" in load_fn
     assert "syncRunChooserFields" in load_fn
+    # The shared chooser keeps provenance and dispatches each source to its own
+    # compatible load path instead of blindly POSTing every run to load-run.
+    assert 'entry.source_type === "local_demo"' in load_fn
+    assert 'entry.source_type === "artifact_storage"' in load_fn
+    assert "loadArtifactsForSelectedRun(chosen, null, entry)" in load_fn
+    assert "loadWorkflowHistoryRun(chosen)" in load_fn
 
 
 def test_artifact_backed_stages_skip_unrelated_draft_overlay() -> None:

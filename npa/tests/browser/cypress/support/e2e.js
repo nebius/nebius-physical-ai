@@ -81,8 +81,10 @@ const SIM_VIZ = {
   // Intentionally not alphabetical — UI must keep latest-first order.
   available_run_ids: ["submitted-run", "mock-run"],
   available_runs: [
-    { run_id: "submitted-run", last_modified: "2026-07-08T12:00:00Z", stage: "submitted" },
-    { run_id: "mock-run", last_modified: "2026-07-07T03:33:00Z", stage: "demo" },
+    { run_id: "franka-demo", last_modified: "2026-07-09T12:00:00Z", stage: "demo", source_type: "local_demo", source_label: "Local demo" },
+    { run_id: "cosmos-reason-run", last_modified: "2026-07-08T13:00:00Z", stage: "running", source_type: "workflow_history", source_label: "Workflow history" },
+    { run_id: "submitted-run", last_modified: "2026-07-08T12:00:00Z", stage: "submitted", source_type: "workflow_history", source_label: "Workflow history" },
+    { run_id: "mock-run", last_modified: "2026-07-07T03:33:00Z", stage: "demo", source_type: "workflow_history", source_label: "Workflow history" },
   ],
 };
 
@@ -99,9 +101,11 @@ const NON_STOCK_SIM_VIZ = {
   rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=customer-overhead",
   available_run_ids: [NON_STOCK_RUN_ID, "mock-run", "submitted-run"],
   available_runs: [
-    { run_id: NON_STOCK_RUN_ID, last_modified: "2026-07-11T18:00:00Z", stage: "stage_14_rerun_viz" },
-    { run_id: "submitted-run", last_modified: "2026-07-08T12:00:00Z", stage: "submitted" },
-    { run_id: "mock-run", last_modified: "2026-07-07T03:33:00Z", stage: "demo" },
+    { run_id: NON_STOCK_RUN_ID, last_modified: "2026-07-11T18:00:00Z", stage: "stage_14_rerun_viz", source_type: "workflow_history", source_label: "Workflow history" },
+    { run_id: "franka-demo", last_modified: "2026-07-09T12:00:00Z", stage: "demo", source_type: "local_demo", source_label: "Local demo" },
+    { run_id: "cosmos-reason-run", last_modified: "2026-07-08T13:00:00Z", stage: "running", source_type: "workflow_history", source_label: "Workflow history" },
+    { run_id: "submitted-run", last_modified: "2026-07-08T12:00:00Z", stage: "submitted", source_type: "workflow_history", source_label: "Workflow history" },
+    { run_id: "mock-run", last_modified: "2026-07-07T03:33:00Z", stage: "demo", source_type: "workflow_history", source_label: "Workflow history" },
   ],
   artifact_render: "rerun",
   artifact_key: `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
@@ -228,6 +232,24 @@ const NON_STOCK_ARTIFACTS = [
     render: "download",
     inline: false,
     size: 512,
+  },
+];
+
+const JSON_ONLY_RUN_ID = "json-only-storage-run";
+const JSON_ONLY_ARTIFACTS = [
+  {
+    key: `${JSON_ONLY_RUN_ID}/evaluation/aggregate.json`,
+    s3_uri: `s3://project-artifacts/${JSON_ONLY_RUN_ID}/evaluation/aggregate.json`,
+    render: "json",
+    inline: true,
+    size: 768,
+  },
+  {
+    key: `${JSON_ONLY_RUN_ID}/checkpoints/policy.ckpt`,
+    s3_uri: `s3://project-artifacts/${JSON_ONLY_RUN_ID}/checkpoints/policy.ckpt`,
+    render: "download",
+    inline: false,
+    size: 4096,
   },
 ];
 
@@ -374,7 +396,13 @@ function renderForArtifactKey(key) {
 
 function simVizForArtifact(key) {
   const render = renderForArtifactKey(key);
-  const base = String(key || "").startsWith(`${NON_STOCK_RUN_ID}/`) ? NON_STOCK_SIM_VIZ : SIM_VIZ;
+  const isNonStock = String(key || "").startsWith(`${NON_STOCK_RUN_ID}/`);
+  const isJsonOnly = String(key || "").startsWith(`${JSON_ONLY_RUN_ID}/`);
+  const base = isNonStock
+    ? NON_STOCK_SIM_VIZ
+    : (isJsonOnly
+      ? { ...SIM_VIZ, run_id: JSON_ONLY_RUN_ID, active_run_id: JSON_ONLY_RUN_ID }
+      : SIM_VIZ);
   const previewPath = `/api/artifacts/file/${encodeURIComponent(key.replaceAll("/", "__"))}`;
   if (render === "rerun") {
     return { ...base, artifact_render: render, artifact_key: key, artifact_uri: `s3://mock/${key}` };
@@ -397,6 +425,8 @@ function simVizForArtifact(key) {
   }
   return {
     ...base,
+    source_type: "artifact_storage",
+    source_label: "S3 artifacts",
     rrd_uri: "",
     rerun_ready: false,
     rerun_iframe_url: "/rerun/",
@@ -574,7 +604,17 @@ function installAgentApiMocks() {
     headers: { "content-type": "application/octet-stream" },
     body: "mock-rrd-payload",
   }).as("rrd");
-  cy.intercept("POST", "/api/sim-viz/load-franka-demo", json({ ok: true, sim_viz: SIM_VIZ })).as("loadFranka");
+  cy.intercept("POST", "/api/sim-viz/load-franka-demo", (req) => {
+    activeSimViz = {
+      ...SIM_VIZ,
+      run_id: "franka-demo",
+      active_run_id: "franka-demo",
+      source_type: "local_demo",
+      source_label: "Local demo",
+      stage: "demo",
+    };
+    req.reply(json({ ok: true, sim_viz: activeSimViz }));
+  }).as("loadFranka");
   cy.intercept("POST", "/api/sim-viz/load-run", (req) => {
     const runId = String(req.body.run_id || "mock-run");
     activeSimViz = runId === NON_STOCK_RUN_ID
@@ -626,6 +666,14 @@ function installAgentApiMocks() {
       });
       return;
     }
+    if (decoded.includes("aggregate.json")) {
+      req.reply({
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ run_id: JSON_ONLY_RUN_ID, evaluations: 4, checkpoint: "policy.ckpt" }),
+      });
+      return;
+    }
     if (decoded.includes("orchestrator.log")) {
       req.reply({
         statusCode: 200,
@@ -661,18 +709,36 @@ function installAgentApiMocks() {
     runs: [
       {
         run_id: NON_STOCK_RUN_ID,
+        source_type: "artifact_storage",
+        source_label: "S3 artifacts",
+        bucket: "project-artifacts",
+        project_id: "project-a",
         has_viewable: true,
         artifact_count: NON_STOCK_ARTIFACTS.length,
         last_modified: "2026-07-11T18:00:00Z",
       },
       {
+        run_id: JSON_ONLY_RUN_ID,
+        source_type: "artifact_storage",
+        source_label: "S3 artifacts",
+        bucket: "project-artifacts",
+        project_id: "project-a",
+        has_viewable: true,
+        artifact_count: JSON_ONLY_ARTIFACTS.length,
+        last_modified: "2026-07-10T12:00:00Z",
+      },
+      {
         run_id: "mock-run",
+        source_type: "artifact_storage",
+        source_label: "S3 artifacts",
+        bucket: "mock",
+        project_id: "project-local",
         has_viewable: true,
         artifact_count: 1,
         last_modified: "2026-07-07T03:33:00Z",
       },
     ],
-    total_runs: 2,
+    total_runs: 3,
     truncated: false,
   })).as("artifactRuns");
   cy.intercept("GET", `/api/artifacts/run/${NON_STOCK_RUN_ID}*`, json({
@@ -682,6 +748,15 @@ function installAgentApiMocks() {
     artifacts: NON_STOCK_ARTIFACTS,
     preferred: NON_STOCK_ARTIFACTS[0],
   })).as("nonStockArtifactList");
+  cy.intercept("GET", `/api/artifacts/run/${JSON_ONLY_RUN_ID}*`, json({
+    run_id: JSON_ONLY_RUN_ID,
+    bucket: "project-artifacts",
+    project_id: "project-a",
+    resolved_prefix: "",
+    count: JSON_ONLY_ARTIFACTS.length,
+    artifacts: JSON_ONLY_ARTIFACTS,
+    preferred: JSON_ONLY_ARTIFACTS[0],
+  })).as("jsonOnlyArtifactList");
   cy.intercept("GET", "/api/artifacts/run/mock-run*", json({
     run_id: "mock-run",
     prefix: "sim2real-b",
@@ -757,6 +832,20 @@ function installAgentApiMocks() {
   })).as("workflowStatus");
   cy.intercept("GET", "/api/workflows/sim2real/runs/*", (req) => {
     const runId = decodeURIComponent(req.url.split("/").pop().split("?")[0] || "mock-run");
+    if (runId === "franka-demo") {
+      req.reply(json({
+        run: {
+          run_id: "franka-demo",
+          source_type: "local_demo",
+          source_label: "Local demo",
+          status: "completed",
+          result: "rerun_ready",
+          stages: [{ id: "local_demo", label: "Local Franka demo", status: "succeeded", summary: "Deterministically generated locally." }],
+          logs: [{ timestamp: "2026-07-09T12:00:00Z", level: "info", message: "Local Franka demo recording regenerated." }],
+        },
+      }));
+      return;
+    }
     if (runId === NON_STOCK_RUN_ID) {
       req.reply(json(NON_STOCK_RUN_DETAILS));
       return;

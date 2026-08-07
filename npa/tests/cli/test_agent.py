@@ -1141,7 +1141,9 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
-    assert "body: JSON.stringify({ run_id: runId })" in ui
+    assert "body: JSON.stringify({ run_id: targetRunId })" in ui
+    assert 'entry.source_type === "artifact_storage"' in ui
+    assert "loadArtifactsForSelectedRun(chosen, null, entry)" in ui
     assert "prefix: artifactPrefixValue()" not in ui
 
 
@@ -1814,6 +1816,8 @@ def test_bootstrap_installs_nebius_cli_and_sa_profile() -> None:
     assert 'nebius_profile = "cursor-sa"' in source
     assert "--profile {nebius_profile}" in source
     assert '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null' in source
+    assert 'sudo -H "$NEBIUS_BIN" profile create' in source
+    assert 'sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token' in source
     assert "nebius CLI binary not found after install" in source
     assert "--parent-id" in source
 

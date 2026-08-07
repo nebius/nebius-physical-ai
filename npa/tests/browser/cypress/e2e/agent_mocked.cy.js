@@ -5,6 +5,7 @@ import {
   FIELD_IDS,
   GENERIC_WORKFLOW_YAML,
   NON_STOCK_RUN_ID,
+  SIM_VIZ,
   STATIC_BUTTON_IDS,
   WORKFLOW_YAML,
 } from "../support/e2e";
@@ -156,6 +157,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
     cy.wait("@nonStockArtifactList");
     cy.wait("@loadArtifact");
+    cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
 
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
     cy.get("#artifactList").should("contain.text", "mcap");
@@ -277,8 +279,11 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "Latest workflow status");
 
     cy.get("#tabRerun").click();
-    cy.get("#runIdInput").clear().type("mock-run");
-    cy.get("#loadRunData").click();
+    cy.get('#runIdSelect option[value="mock-run"][data-source-type="workflow_history"]').then(($opt) => {
+      const select = $opt[0].parentElement;
+      select.selectedIndex = [...select.options].indexOf($opt[0]);
+      cy.wrap(select).trigger("change");
+    });
     cy.wait("@loadRun");
     cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Loaded run context");
@@ -321,7 +326,10 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     // Consolidated picker may already have mock-run selected — force list via button.
-    cy.get("#runIdSelect").select("mock-run", { force: true });
+    cy.get('#runIdSelect option[value="mock-run"][data-source-type="artifact_storage"]').then(($opt) => {
+      const select = $opt[0].parentElement;
+      select.selectedIndex = [...select.options].indexOf($opt[0]);
+    });
     cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@artifactList");
     cy.get("#artifactList").should("contain.text", "mock-run/preview.png");
@@ -339,6 +347,58 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#panelRerun").should("have.class", "is-inactive");
   });
 
+  it("dispatches local, workflow-history, and JSON-only S3 runs by provenance", () => {
+    const JSON_RUN_ID = "json-only-storage-run";
+    let workflowLoads = 0;
+    let localLoads = 0;
+    cy.intercept("POST", "/api/sim-viz/load-run", (req) => {
+      workflowLoads += 1;
+      const runId = String((req.body && req.body.run_id) || "");
+      req.reply({ statusCode: 200, body: { ok: true, sim_viz: { ...SIM_VIZ, run_id: runId, active_run_id: runId } } });
+    }).as("provenanceWorkflowLoad");
+    cy.intercept("POST", "/api/sim-viz/load-franka-demo", (req) => {
+      localLoads += 1;
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          sim_viz: { ...SIM_VIZ, run_id: "franka-demo", active_run_id: "franka-demo", source_type: "local_demo" },
+        },
+      });
+    }).as("provenanceLocalLoad");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get(`#runIdSelect option[value="${JSON_RUN_ID}"]`)
+      .should("have.attr", "data-source-type", "artifact_storage")
+      .and("contain.text", "S3 artifacts");
+    cy.get("#runIdSelect").select(JSON_RUN_ID);
+    cy.wait("@jsonOnlyArtifactList");
+    cy.wait("@loadArtifact");
+    cy.get("#renderModeData").should("have.class", "is-active");
+    cy.get("#artifactPreviewHost pre").should("contain.text", "evaluations");
+    cy.get("#stageList").should("contain.text", "evaluation");
+    cy.get("#artifactList").should("contain.text", "policy.ckpt");
+    cy.get(`#runIdSelect option[value="${JSON_RUN_ID}"][data-source-type="artifact_storage"]`)
+      .should("have.length", 1);
+    cy.wrap(null).should(() => expect(workflowLoads, "S3 selection never calls load-run").to.eq(0));
+
+    cy.get("#runIdSelect").select("franka-demo");
+    cy.wait("@provenanceLocalLoad");
+    cy.get("#tabMain").click();
+    cy.get("#stageList").should("contain.text", "Local Franka demo");
+    cy.get("#runSummary").should("contain.text", "franka-demo");
+    cy.wrap(null).should(() => expect(localLoads, "local demo endpoint called once").to.eq(1));
+
+    cy.get("#tabRerun").click();
+    cy.get("#runIdSelect").select("cosmos-reason-run");
+    cy.wait("@provenanceWorkflowLoad");
+    cy.get("#tabMain").click();
+    cy.get("#stageList").should("contain.text", "Fetch checkpoint");
+    cy.wrap(null).should(() => expect(workflowLoads, "workflow endpoint called once").to.eq(1));
+  });
+
   it("discovers and interacts with non-stock Sim2Real run artifacts", () => {
     cy.window().then((win) => {
       cy.stub(win, "open").as("windowOpen");
@@ -353,6 +413,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@loadArtifact");
 
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
+    cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
     cy.get("#artifactList").should("contain.text", "rerun");
     cy.get("#artifactList").should("contain.text", "video");
     cy.get("#artifactList").should("contain.text", "json");
@@ -374,8 +435,11 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simCamera").should("contain.text", "customer-overhead");
     cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
 
-    cy.get("#runIdInput").clear().type(NON_STOCK_RUN_ID);
-    cy.get("#loadRunData").click();
+    cy.get(`#runIdSelect option[value="${NON_STOCK_RUN_ID}"][data-source-type="workflow_history"]`).then(($opt) => {
+      const select = $opt[0].parentElement;
+      select.selectedIndex = [...select.options].indexOf($opt[0]);
+      cy.wrap(select).trigger("change");
+    });
     cy.wait("@loadRun");
     cy.get("#tabMain").click();
     cy.get("#stagesPanel h3").should("have.text", "Stages");
@@ -384,6 +448,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runLog").should("contain.text", "non-stock sim2real artifacts");
 
     cy.get("#tabRerun").click();
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@nonStockArtifactList");
+    cy.wait("@loadArtifact");
     cy.get(
       `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`
     ).click();
@@ -462,7 +529,6 @@ describe("NPA agent UI with mocked APIs", () => {
     // Load a data-factory run whose augment is a REAL Cosmos Transfer 2.5 GPU render.
     // Enter in the paste box loads the typed run and lists its artifacts.
     cy.get("#runIdInput").clear({ force: true }).type(`${DF_MOCK_RUN_ID}{enter}`, { force: true });
-    cy.wait("@loadRun");
     cy.wait("@dfArtifactList");
     cy.wait("@artifactProvenance");
 
@@ -494,7 +560,6 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#runIdInput").clear({ force: true }).type(`${DF_MOCK_RUN_ID}{enter}`, { force: true });
-    cy.wait("@loadRun");
     cy.wait("@dfArtifactList");
     cy.wait("@artifactProvenance");
 
@@ -521,7 +586,6 @@ describe("NPA agent UI with mocked APIs", () => {
     // A DF run with only input/ + configs/ (augment never produced output) must
     // be flagged so a raw input clip is not mistaken for a Data Factory result.
     cy.get("#runIdInput").clear({ force: true }).type(`${DF_INPUT_ONLY_RUN_ID}{enter}`, { force: true });
-    cy.wait("@loadRun");
     cy.wait("@dfInputOnlyArtifactList");
     cy.wait("@artifactProvenance");
     cy.get("#artifactProvenance .prov-warn").should("contain.text", "no augmented output");
@@ -641,7 +705,10 @@ describe("NPA agent UI with mocked APIs", () => {
       },
     }).as("evilArtifactList");
     cy.get("#tabRerun").click();
-    cy.get("#runIdSelect").select("mock-run", { force: true });
+    cy.get('#runIdSelect option[value="mock-run"][data-source-type="artifact_storage"]').then(($opt) => {
+      const select = $opt[0].parentElement;
+      select.selectedIndex = [...select.options].indexOf($opt[0]);
+    });
     cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@evilArtifactList");
     cy.get("#artifactList").then(($el) => {
@@ -762,7 +829,9 @@ describe("NPA agent UI with mocked APIs", () => {
 
   it("Stages Load prefers pasted run id over a stale dropdown selection", () => {
     cy.get("#tabMain").click();
-    cy.get("#stagesRunSelect").select("mock-run");
+    cy.get("#stagesRunSelect").then(($select) => {
+      $select[0].value = "mock-run";
+    });
     cy.get("#stagesRunInput").clear().type("cosmos-reason-run", { delay: 0 });
     cy.get("#stagesLoadRun").click();
     cy.wait("@loadRun");
@@ -779,7 +848,7 @@ describe("NPA agent UI with mocked APIs", () => {
       expect(values.every((value) => value.includes("mock"))).to.eq(true);
     });
     cy.get("#stagesLoadRun").click();
-    cy.wait("@loadRun");
+    cy.wait("@artifactList");
     cy.get("#runSummary").should("contain.text", "mock-run");
   });
 
@@ -839,8 +908,10 @@ describe("NPA agent UI with mocked APIs", () => {
     });
     // …but typing a fragment triggers a debounced server search that finds it.
     cy.get("#artifactPrefix").clear().type(FRAGMENT, { delay: 0 });
+    cy.get("#runSummary").should("not.contain.text", "mock-run");
+    cy.get("#artifactList").should("contain.text", "Select a run");
     cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
-    cy.get("#runIdSelect option").then(($opts) => {
+    cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
       expect(values, "server search surfaces the old run in the Rerun picker").to.include(OLD_RUN_ID);
     });
@@ -849,7 +920,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabMain").click();
     cy.get("#stagesRunInput").clear().type(FRAGMENT, { delay: 0 });
     cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
-    cy.get("#stagesRunSelect option").then(($opts) => {
+    cy.get("#stagesRunSelect option").should(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
       expect(values, "server search surfaces the old run in the Stages picker").to.include(OLD_RUN_ID);
     });
@@ -889,7 +960,7 @@ describe("NPA agent UI with mocked APIs", () => {
       expect(limitMatch, "default discovery sends a limit").to.not.eq(null);
       expect(Number(limitMatch[1]), "default discovery limit exceeds the old 100 cap").to.be.greaterThan(100);
     });
-    cy.get("#runIdSelect option").then(($opts) => {
+    cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
       // Far more than the historical 100-run cap render without any search
       // (the picker also unions the sim-viz "known" runs, so allow >=).
@@ -1209,10 +1280,13 @@ describe("NPA agent UI with mocked APIs", () => {
       const api = win.__NPA_AGENT_TEST__;
       const iframe = win.document.getElementById("rerunFrame");
       expect(win.document.documentElement.outerHTML).to.include("ensureRerunCaptureBridge");
-      const bridge = api.ensureRerunCaptureBridge(iframe);
+      // Restart after the mock canvas paints content so the MediaStream cannot
+      // retain an empty frame produced by the preceding page-load mount.
+      const bridge = api.ensureRerunCaptureBridge(iframe, { forceRestart: true });
       expect(bridge, "capture bridge").to.exist;
       expect(bridge.video).to.exist;
-      const grabbed = await api.grabFromRerunCaptureBridge(3000);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const grabbed = await api.grabFromRerunCaptureBridge(5000);
       expect(grabbed).to.match(/^data:image\/jpeg/);
       // Capture must succeed even if we ignore sync blank gates (the live WebGL failure mode).
       const quality = await api.waitForQualityRerunFrame(4000);

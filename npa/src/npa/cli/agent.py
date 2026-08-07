@@ -73,7 +73,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026080601"
+AGENT_UI_VERSION = "2026080701"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -1898,6 +1898,12 @@ if [ -s /mnt/cloud-metadata/token ]; then
   if ! "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
     "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
   fi
+  # The backend systemd service runs as root. Provision the same rotating
+  # metadata profile under root's CLI home so tenant inventory does not fail
+  # merely because bootstrap itself ran through the SSH user's home.
+  if ! sudo -H "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
+    sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
+  fi
 fi
 sudo mkdir -p /opt/npa-agent
 cat <<'ENV' | sudo tee /opt/npa-agent/public.env >/dev/null
@@ -2089,6 +2095,8 @@ DEFAULT_SELECTION = {{
 }}
 DEFAULT_SIM_VIZ = {{
     "run_id": "",
+    "source_type": "",
+    "source_label": "",
     "stage": "idle",
     "rrd_uri": "",
     "rrd_updated_at": "",
@@ -2322,6 +2330,7 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
         snapshot.update(existing)
     snapshot.update(payload)
     snapshot["run_id"] = run_id
+    snapshot["source_type"], snapshot["source_label"] = resolve_run_source(payload, existing, run_id)
     incoming_rrd = bool(str(payload.get("rrd_uri") or "").strip())
     incoming_render = str(payload.get("artifact_render") or "").strip().lower()
     # A Rerun/demo update must not resurrect a prior video/image/json media preview.
@@ -2615,6 +2624,11 @@ def _sim2real_run_details(state: dict, run_id: str = "", prefix: str = "") -> di
     if not isinstance(sim_viz, dict):
         sim_viz = {{}}
     resolved_run_id = str(run_id or latest.get("run_id") or sim_viz.get("run_id") or state.get("active_run_id") or "").strip()
+    history = state.get("sim_viz_runs") if isinstance(state.get("sim_viz_runs"), dict) else {{}}
+    recorded = history.get(resolved_run_id) if isinstance(history.get(resolved_run_id), dict) else {{}}
+    local_demo = local_demo_run_details(state, resolved_run_id, recorded, _now_iso())
+    if local_demo:
+        return local_demo
     details_map = state.get("sim2real_runs")
     if not isinstance(details_map, dict):
         details_map = {{}}
@@ -3483,6 +3497,8 @@ def _apply_loaded_artifact(
     sim_viz.update(
         {{
             "run_id": run_id,
+            "source_type": "artifact_storage",
+            "source_label": "S3 artifacts",
             "stage": "artifact-loaded",
             "rrd_updated_at": now,
             "artifact_uri": s3_uri,
@@ -3734,10 +3750,13 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     _save_state(state)
     return viz
 
-def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
-    active = _wire_active_sim2real_recording(state, camera=camera)
-    if active is not None:
-        return active
+def _wire_franka_demo(
+    state: dict, *, camera: str = "workspace", force_local_demo: bool = False
+) -> dict:
+    if not force_local_demo:
+        active = _wire_active_sim2real_recording(state, camera=camera)
+        if active is not None:
+            return active
     # Preserve operator-posted custom URIs; only fill stock defaults when empty.
     current = state.get("selection") if isinstance(state.get("selection"), dict) else {{}}
     if not current:
@@ -3751,6 +3770,8 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     # Always use the stock demo run id and clear any prior media-artifact preview.
     viz = {{
         "run_id": "franka-demo",
+        "source_type": "local_demo",
+        "source_label": "Local demo",
         "stage": "demo",
         "rrd_uri": f"file://{{target}}",
         "rrd_updated_at": now,
@@ -3783,6 +3804,8 @@ def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "works
     now = _now_iso()
     viz = {{
         "run_id": str(run_id or "").strip() or f"agent-run-{{secrets.token_hex(6)}}",
+        "source_type": "workflow_history",
+        "source_label": "Workflow history",
         "stage": "stage_14_rerun_viz",
         "rrd_uri": f"file://{{target}}",
         "rrd_updated_at": now,
@@ -5117,7 +5140,7 @@ def _maybe_toolground_chat_reply(
         if not rerun_ready:
             selected = state.get("camera_selection", ["workspace"])
             cam = str(selected[0] if isinstance(selected, list) and selected else "workspace")
-            _wire_franka_demo(state, camera=cam)
+            _wire_franka_demo(state, camera=cam, force_local_demo=True)
             apis_used.append("sim-viz/load-franka-demo")
             state = _load_state()
             loaded_now = True
@@ -6910,31 +6933,7 @@ def sim_viz_status(run_id: str = ""):
         for item in _sim_viz_runs(state)
         if str(item.get("run_id") or "").strip()
     ]
-    payload["available_runs"] = [
-        {{
-            "run_id": str(item.get("run_id") or "").strip(),
-            # activity_at is when this run was last loaded/visualized in the agent
-            # (rrd_updated_at), NOT when its artifacts were produced. It is exposed
-            # separately so the client never relabels a days-old run as recent just
-            # because it was opened today. Real recency (last_modified) is supplied
-            # by S3 artifact discovery; left blank here so viewer activity cannot
-            # override it in the merged, date-sorted run list.
-            "activity_at": str(
-                item.get("rrd_updated_at")
-                or item.get("updated_at")
-                or item.get("submitted_at")
-                or ""
-            ).strip(),
-            # When the run started (its submit time). Used for the displayed date;
-            # S3 discovery supplies started_at for runs it can see, and the client
-            # keeps the earliest of the two.
-            "started_at": str(item.get("submitted_at") or "").strip(),
-            "last_modified": "",
-            "stage": str(item.get("stage") or "").strip(),
-        }}
-        for item in _sim_viz_runs(state)
-        if str(item.get("run_id") or "").strip()
-    ]
+    payload["available_runs"] = build_available_sim_viz_runs(_sim_viz_runs(state))
     payload["active_run_id"] = str(state.get("active_run_id") or payload.get("run_id") or "").strip()
     return payload
 
@@ -6994,25 +6993,7 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
         for item in _sim_viz_runs(state)
         if str(item.get("run_id") or "").strip()
     ]
-    payload["available_runs"] = [
-        {{
-            "run_id": str(item.get("run_id") or "").strip(),
-            # See sim_viz_status: activity_at is viewer-load time, not artifact
-            # recency; last_modified stays blank so S3 discovery owns the date.
-            "activity_at": str(
-                item.get("rrd_updated_at")
-                or item.get("updated_at")
-                or item.get("submitted_at")
-                or ""
-            ).strip(),
-            # Run start (submit time) for the displayed date; see sim_viz_status.
-            "started_at": str(item.get("submitted_at") or "").strip(),
-            "last_modified": "",
-            "stage": str(item.get("stage") or "").strip(),
-        }}
-        for item in _sim_viz_runs(state)
-        if str(item.get("run_id") or "").strip()
-    ]
+    payload["available_runs"] = build_available_sim_viz_runs(_sim_viz_runs(state))
     render = str(payload.get("artifact_render") or "").strip().lower()
     if render and render != "rerun":
         payload["rrd_uri"] = ""
@@ -7248,11 +7229,11 @@ def artifacts_for_run(
         page = ArtifactListPage([], False, "", 1000)
         artifact_prefix = ""
         run_bucket = settings["bucket"]
-        if cursor or resolved_prefix or resource_bucket:
-            if not (resolved_prefix and resource_bucket):
+        if cursor or resolved_prefix:
+            if not resource_bucket:
                 raise HTTPException(
                     status_code=400,
-                    detail="resolved_prefix and resource_bucket are required for continuation",
+                    detail="resource_bucket is required for continuation",
                 )
             if resource_bucket not in _agent_s3_buckets(s3, settings):
                 raise HTTPException(
@@ -7268,6 +7249,19 @@ def artifacts_for_run(
                 cursor=cursor,
                 s3=s3,
             )
+        elif resource_bucket:
+            if resource_bucket not in _agent_s3_buckets(s3, settings):
+                raise HTTPException(
+                    status_code=400,
+                    detail="artifact bucket is outside effective agent access",
+                )
+            run_bucket = str(resource_bucket).strip()
+            artifact_prefix, page = find_run_artifact_page(
+                run_bucket,
+                base_prefix=settings.get("prefix", ""),
+                run_id=normalized_run,
+                s3=s3,
+            )
         elif prefix:
             artifact_prefix = effective_prefix
             page = list_artifacts_page(
@@ -7278,7 +7272,7 @@ def artifacts_for_run(
             )
         # Generic fallback: locate the run across EVERY accessible bucket and its
         # category folders (no hardcoded workflow path, no single-bucket assumption).
-        if not page.artifacts and not cursor:
+        if not page.artifacts and not cursor and not resource_bucket:
             run_bucket, artifact_prefix, page = find_run_artifact_page_across_buckets(
                 _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
@@ -7618,7 +7612,7 @@ def load_franka_demo(payload: dict | None = None):
         else:
             camera = "workspace"
     state = _load_state()
-    viz = _wire_franka_demo(state, camera=camera)
+    viz = _wire_franka_demo(state, camera=camera, force_local_demo=True)
     return {{"ok": True, "sim_viz": viz, "selection": state["selection"]}}
 
 @app.post("/sim-viz/camera-preview")

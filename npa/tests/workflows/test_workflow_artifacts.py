@@ -635,6 +635,74 @@ def test_list_all_runs_excludes_infra_roots() -> None:
     assert "scenario-gen-smoke-1" in ids
 
 
+def test_infrastructure_state_roots_are_never_discovered_as_runs() -> None:
+    layout = _MULTI_ROOT_LAYOUT + [
+        ("terraform-state/environments/production.tfstate", "2026-08-01T00:00:00+00:00"),
+        ("terraform_state/workspaces/default.tfstate", "2026-08-01T00:01:00+00:00"),
+        ("checkpoints/sim2real-b/terraform-state/current.tfstate", "2026-08-01T00:02:00+00:00"),
+        ("scenario-gen-smoke/terraform_state/current.tfstate", "2026-08-01T00:03:00+00:00"),
+    ]
+
+    full = list_all_runs("bucket", base_prefix="checkpoints", limit=50, s3=_PrefixAwareS3(layout))
+    light = list_all_run_prefixes(
+        "bucket", base_prefix="checkpoints", limit=50, s3=_PrefixAwareS3(layout)
+    )
+
+    assert "terraform-state" not in {item.run_id for item in full.runs}
+    assert "terraform_state" not in {item.run_id for item in full.runs}
+    assert "environments" not in {item.run_id for item in light.runs}
+    assert "workspaces" not in {item.run_id for item in light.runs}
+
+
+def test_infrastructure_only_bucket_returns_no_user_runs() -> None:
+    layout = [
+        ("terraform-state/environments/production.tfstate", "2026-08-01T00:00:00+00:00"),
+        ("terraform_state/workspaces/default.tfstate", "2026-08-01T00:01:00+00:00"),
+    ]
+
+    full = list_all_runs("bucket", limit=50, contains="terraform-state", s3=_PrefixAwareS3(layout))
+    light = list_all_run_prefixes(
+        "bucket", limit=50, contains="terraform-state", s3=_PrefixAwareS3(layout)
+    )
+
+    assert full.runs == []
+    assert full.total_runs == 0
+    assert light.runs == []
+    assert light.total_runs == 0
+
+
+def test_mixed_category_and_flat_layout_retains_timestamped_parent_run() -> None:
+    flat_run = "policy-run-20310405t060708z"
+    layout = _MULTI_ROOT_LAYOUT + [
+        (f"{flat_run}/evaluation/aggregate.json", "2031-04-05T06:10:00+00:00"),
+        (f"{flat_run}/checkpoints/policy.ckpt", "2031-04-05T06:11:00+00:00"),
+    ]
+
+    page = list_all_run_prefixes(
+        "bucket", base_prefix="checkpoints", limit=50, s3=_PrefixAwareS3(layout)
+    )
+
+    run_ids = {item.run_id for item in page.runs}
+    assert flat_run in run_ids
+    assert "evaluation" not in run_ids
+    assert page.runs[[item.run_id for item in page.runs].index(flat_run)].to_dict()[
+        "source_type"
+    ] == "artifact_storage"
+
+
+def test_flat_run_detection_still_honors_server_side_search() -> None:
+    layout = [
+        ("alpha-run-20310405t060708z/evaluation/report.json", "2031-04-05T06:10:00+00:00"),
+        ("beta-run-20310406t060708z/evaluation/report.json", "2031-04-06T06:10:00+00:00"),
+    ]
+
+    page = list_all_run_prefixes(
+        "bucket", limit=50, contains="beta-run", s3=_PrefixAwareS3(layout)
+    )
+
+    assert [item.run_id for item in page.runs] == ["beta-run-20310406t060708z"]
+
+
 def test_ppm_and_netpbm_are_images_and_need_transcode() -> None:
     from npa.workflows.artifacts import needs_image_transcode, render_hint_for_object
 
@@ -896,6 +964,35 @@ def test_list_all_runs_across_buckets_merges_and_tags(monkeypatch) -> None:
     assert ("b1", "project-a", "run-b1") in tagged
     assert ("b2", "project-b", "run-b2") in tagged
     assert page.total_runs == 2
+
+
+def test_multi_bucket_discovery_keeps_accessible_siblings_when_one_is_denied(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    def fake_light(bucket, *, base_prefix, limit, exclude, contains, s3):
+        if bucket == "denied-bucket":
+            raise A.ArtifactDiscoveryError("access denied")
+        return A.RunListPage(
+            runs=[A.RunSummary(f"real-run-{bucket}", "2030-01-01T00:00:00+00:00", 0, False)],
+            truncated=False,
+            total_runs=1,
+            limit=limit,
+        )
+
+    monkeypatch.setattr(A, "list_all_run_prefixes", fake_light)
+    page = A.list_all_runs_across_buckets(
+        ["accessible-a", "denied-bucket", "accessible-b"],
+        base_prefix="",
+        limit=50,
+        bucket_projects={"accessible-a": "project-a", "accessible-b": "project-b"},
+        lightweight=True,
+        s3=object(),
+    )
+
+    assert {(item.bucket, item.project_id, item.run_id) for item in page.runs} == {
+        ("accessible-a", "project-a", "real-run-accessible-a"),
+        ("accessible-b", "project-b", "real-run-accessible-b"),
+    }
 
 
 def test_build_fiftyone_dataset_emits_bucket_qualified_uris() -> None:

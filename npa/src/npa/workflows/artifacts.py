@@ -87,6 +87,11 @@ _RENDER_ORDER = {
     "download": 6,
 }
 
+# Bucket roots owned by infrastructure tooling are never user workflow runs.
+# Keep this list deliberately narrow and structural: these are canonical state
+# roots, not customer-selected bucket/run names or a deployment allowlist.
+_INFRASTRUCTURE_ROOTS = frozenset({".terraform", "terraform", "terraform-state", "tfstate"})
+
 
 class ArtifactDiscoveryError(RuntimeError):
     """Raised when artifact discovery or retrieval fails."""
@@ -154,7 +159,34 @@ class RunSummary:
             "bucket": self.bucket,
             "project_id": self.project_id,
             "summary_complete": self.summary_complete,
+            "source_type": "artifact_storage",
+            "source_label": "S3 artifacts",
         }
+
+
+def _canonical_root(value: str) -> str:
+    return str(value or "").strip().strip("/").split("/", 1)[0].lower().replace("_", "-")
+
+
+def is_infrastructure_root(value: str) -> bool:
+    """Return whether a bucket-root prefix belongs to infrastructure state."""
+    return _canonical_root(value) in _INFRASTRUCTURE_ROOTS
+
+
+def _looks_like_flat_run_prefix(prefix: str) -> bool:
+    """Best-effort distinguish a root-level run from a workflow category.
+
+    S3 has no directory metadata, so ``<run>/<stage>/file`` and
+    ``<category>/<run>/file`` are structurally identical. Real run identifiers
+    conventionally carry an encoded timestamp (or an explicit ``run`` token),
+    which is the useful signal available without walking every object.
+    """
+    leaf = str(prefix or "").strip().strip("/").rsplit("/", 1)[-1]
+    if not leaf or is_infrastructure_root(leaf):
+        return False
+    if _parse_run_id_timestamps(leaf):
+        return True
+    return bool(re.search(r"(?:^|[-_.])run(?:$|[-_.])", leaf, re.IGNORECASE))
 
 
 @dataclass(frozen=True)
@@ -171,6 +203,18 @@ class RunListPage:
             "total_runs": self.total_runs,
             "limit": self.limit,
         }
+
+
+def _without_infrastructure_roots(page: RunListPage) -> RunListPage:
+    """Remove infrastructure-only root rows from a fallback run page."""
+    runs = [item for item in page.runs if not is_infrastructure_root(item.run_id)]
+    removed = len(page.runs) - len(runs)
+    return RunListPage(
+        runs=runs,
+        truncated=page.truncated,
+        total_runs=max(0, page.total_runs - removed),
+        limit=page.limit,
+    )
 
 
 def parse_s3_uri(uri: str) -> tuple[str, str]:
@@ -310,7 +354,7 @@ def list_runs(
             for item in page.get("Contents", []) or []:
                 key = str(item.get("Key") or "")
                 run_id = _run_id_for_key(key, normalized_prefix)
-                if not run_id:
+                if not run_id or is_infrastructure_root(run_id):
                     continue
                 # A run is a directory (``<run_id>/<stage>/...``). Skip bare files
                 # sitting directly under the prefix (e.g. ``<cat>/records.json``),
@@ -410,7 +454,9 @@ def discovery_categories(
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
     base = str(base_prefix or "").strip().strip("/")
-    excluded = {str(x).strip().strip("/") for x in (exclude or set()) if str(x).strip().strip("/")}
+    excluded = {
+        _canonical_root(str(x)) for x in (exclude or set()) if str(x).strip().strip("/")
+    }
     ordered: list[str] = []
     seen: set[str] = set()
 
@@ -418,7 +464,7 @@ def discovery_categories(
         value = str(prefix or "").strip().strip("/")
         if not value or value in seen:
             return
-        if value in excluded or value.split("/", 1)[0] in excluded:
+        if is_infrastructure_root(value) or _canonical_root(value) in excluded:
             return
         seen.add(value)
         ordered.append(value)
@@ -458,7 +504,9 @@ def list_all_runs(
     categories = discovery_categories(bucket, base_prefix=base_prefix, exclude=exclude, s3=s3)
     if not categories:
         # Flat layout: run_ids sit directly under the root.
-        return list_runs(bucket, prefix=base_prefix, limit=limit, contains=contains, s3=s3)
+        return _without_infrastructure_roots(
+            list_runs(bucket, prefix=base_prefix, limit=limit, contains=contains, s3=s3)
+        )
     # A bucket can mix ``<category>/<run>/...`` and ``<run>/<stage>/...`` at
     # the same root. Structurally, an arbitrary category and an arbitrary run
     # cannot be distinguished from object keys alone. For an exact server-side
@@ -468,18 +516,32 @@ def list_all_runs(
     needle = str(contains or "").strip().lower()
     exact_flat: list[RunSummary] = []
     exact_parent_prefixes: set[str] = set()
-    if needle:
+    flat_candidates = [
+        category
+        for category in categories
+        if _looks_like_flat_run_prefix(category)
+        and (not needle or needle in category.rsplit("/", 1)[-1].lower())
+    ]
+    if needle or flat_candidates:
         seen_flat: set[tuple[str, str]] = set()
-        for flat_prefix in (str(base_prefix or "").strip().strip("/"), ""):
+        flat_parents = {str(base_prefix or "").strip().strip("/"), ""}
+        flat_parents.update(
+            category.rsplit("/", 1)[0] if "/" in category else ""
+            for category in flat_candidates
+        )
+        flat_leafs = {category.rsplit("/", 1)[-1].lower() for category in flat_candidates}
+        for flat_prefix in flat_parents:
             flat_page = list_runs(
                 bucket,
                 prefix=flat_prefix,
                 limit=max(limit, 1),
-                contains=contains,
+                contains=contains if needle else "",
                 s3=s3,
             )
             for run in flat_page.runs:
-                if run.run_id.lower() != needle:
+                if needle and run.run_id.lower() != needle and run.run_id.lower() not in flat_leafs:
+                    continue
+                if not needle and run.run_id.lower() not in flat_leafs:
                     continue
                 identity = (flat_prefix, run.run_id)
                 if identity in seen_flat:
@@ -550,7 +612,11 @@ def list_run_prefixes(
     summaries: list[RunSummary] = []
     for child in list_run_categories(bucket, base_prefix=parent, s3=s3):
         run_id = child.rsplit("/", 1)[-1].strip()
-        if not run_id or (needle and needle not in run_id.lower()):
+        if (
+            not run_id
+            or is_infrastructure_root(run_id)
+            or (needle and needle not in run_id.lower())
+        ):
             continue
         started_at = _run_started_at(run_id, "")
         summaries.append(
@@ -597,12 +663,14 @@ def list_all_run_prefixes(
         s3=s3,
     )
     if not categories:
-        return list_run_prefixes(
-            bucket,
-            prefix=base_prefix,
-            limit=limit,
-            contains=contains,
-            s3=s3,
+        return _without_infrastructure_roots(
+            list_run_prefixes(
+                bucket,
+                prefix=base_prefix,
+                limit=limit,
+                contains=contains,
+                s3=s3,
+            )
         )
 
     needle = str(contains or "").strip().lower()
@@ -610,7 +678,9 @@ def list_all_run_prefixes(
     parents: list[str] = []
     for category in categories:
         leaf = category.rsplit("/", 1)[-1].strip()
-        if needle and leaf.lower() == needle:
+        if _looks_like_flat_run_prefix(category) and (
+            not needle or needle in leaf.lower()
+        ):
             started_at = _run_started_at(leaf, "")
             exact_flat.append(
                 RunSummary(

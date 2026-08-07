@@ -13,6 +13,82 @@ import re
 from typing import Any
 
 
+def resolve_run_source(payload: dict[str, Any], existing: dict[str, Any], run_id: str) -> tuple[str, str]:
+    """Resolve stable provenance for a viewer-history entry."""
+    source_type = str(payload.get("source_type") or existing.get("source_type") or "").strip()
+    if not source_type:
+        if run_id == "franka-demo":
+            source_type = "local_demo"
+        elif str(payload.get("artifact_uri") or existing.get("artifact_uri") or "").startswith("s3://"):
+            source_type = "artifact_storage"
+        else:
+            source_type = "workflow_history"
+    source_label = {
+        "local_demo": "Local demo",
+        "artifact_storage": "S3 artifacts",
+        "workflow_history": "Workflow history",
+    }.get(source_type, source_type.replace("_", " ").title())
+    return source_type, source_label
+
+
+def build_available_sim_viz_runs(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Project viewer history into source-aware selector summaries."""
+    return [
+        {
+            "run_id": str(item.get("run_id") or "").strip(),
+            # Viewer activity must not override artifact recency in the merged list.
+            "activity_at": str(
+                item.get("rrd_updated_at")
+                or item.get("updated_at")
+                or item.get("submitted_at")
+                or ""
+            ).strip(),
+            "started_at": str(item.get("submitted_at") or "").strip(),
+            "last_modified": "",
+            "stage": str(item.get("stage") or "").strip(),
+            "source_type": str(item.get("source_type") or "workflow_history").strip(),
+            "source_label": str(item.get("source_label") or "Workflow history").strip(),
+        }
+        for item in runs
+        if str(item.get("run_id") or "").strip()
+    ]
+
+
+def local_demo_run_details(
+    state: dict[str, Any], run_id: str, recorded: dict[str, Any], now_iso: str
+) -> dict[str, Any] | None:
+    """Return deterministic local-demo stage details, or ``None`` for real runs."""
+    if str(recorded.get("source_type") or "") != "local_demo" and run_id != "franka-demo":
+        return None
+    updated_at = str(recorded.get("rrd_updated_at") or now_iso)
+    ready = bool(recorded.get("rerun_ready"))
+    return {
+        "run_id": "franka-demo",
+        "source_type": "local_demo",
+        "source_label": "Local demo",
+        "status": "completed",
+        "result": "rerun_ready" if ready else "recording_unavailable",
+        "updated_at": updated_at,
+        "selection": state.get("selection") if isinstance(state.get("selection"), dict) else {},
+        "stages": [
+            {
+                "id": "local_demo",
+                "label": "Local Franka demo",
+                "status": "succeeded" if ready else "pending",
+                "summary": "Deterministically generated on this agent VM.",
+            }
+        ],
+        "logs": [
+            {
+                "timestamp": updated_at,
+                "level": "info",
+                "message": "Local Franka demo recording regenerated from stock assets.",
+            }
+        ],
+        "artifacts": [],
+    }
+
+
 def _slug(value: str, *, fallback: str = "default") -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", str(value or "").strip()).strip("-._")
     return cleaned or fallback
