@@ -190,6 +190,22 @@ def _agent_access_diagnostics(report: "AgentAccessReport") -> dict:
     }
 
 
+def _agent_artifact_list_scope(report, resource_bucket: str = "", project_id: str = ""):
+    """Resolve list filters through the effective-access model for API routes."""
+    try:
+        buckets = scoped_artifact_buckets(
+            report,
+            resource_bucket=resource_bucket,
+            project_id=project_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return buckets, {
+        "project_id": str(project_id or "").strip(),
+        "bucket": str(resource_bucket or "").strip(),
+    }
+
+
 def _agent_access_api_response(refresh: bool = False):
     try:
         report = _agent_access_report(refresh=bool(refresh))

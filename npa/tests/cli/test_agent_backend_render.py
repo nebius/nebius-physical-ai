@@ -331,7 +331,9 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         list_projects=lambda _tenant: [
             {"metadata": {"id": "project-test", "name": "Project Test"}}
         ],
-        list_buckets=lambda _project: [],
+        list_buckets=lambda _project: [
+            {"metadata": {"id": "bucket-resource-test", "name": "bucket-test"}}
+        ],
         probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
         now=lambda: "2026-08-06T23:30:00+00:00",
     )
@@ -340,6 +342,38 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     assert access_payload["apiVersion"] == "npa.agent.access/v1"
     assert access_payload["identity"]["tenant_id"] == "tenant-test"
     assert access_payload["projects"][0]["id"] == "project-test"
+
+    called: dict[str, object] = {}
+
+    class _RunPage:
+        def to_dict(self):
+            return {"runs": [], "total_runs": 0, "truncated": False, "limit": 20}
+
+    def _list_runs(buckets, **kwargs):
+        called["buckets"] = list(buckets)
+        called["project_map"] = dict(kwargs.get("bucket_projects") or {})
+        return _RunPage()
+
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(module, "list_runs_cached_multi", _list_runs)
+    scoped = module.artifacts_runs(
+        limit=20,
+        resource_bucket="bucket-test",
+        project_id="project-test",
+    )
+    assert called["buckets"] == ["bucket-test"]
+    assert called["project_map"] == {"bucket-test": "project-test"}
+    assert scoped["resource_scope"] == {
+        "project_id": "project-test",
+        "bucket": "bucket-test",
+    }
+    with pytest.raises(module.HTTPException) as exc_info:
+        module.artifacts_runs(resource_bucket="caller-bucket", project_id="project-test")
+    assert exc_info.value.status_code == 403
 
     secret = "do-not-return-this-credential"
 

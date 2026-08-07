@@ -491,3 +491,34 @@ def artifact_bucket_projects(report: AgentAccessReport | dict[str, Any]) -> dict
             if name:
                 mapping[name] = project_id
     return mapping
+
+
+def scoped_artifact_buckets(
+    report: AgentAccessReport | dict[str, Any],
+    *,
+    resource_bucket: str = "",
+    project_id: str = "",
+) -> list[str]:
+    """Resolve a caller-selected list scope against effective read-only access.
+
+    Empty selectors preserve tenant-wide discovery. A selected bucket must be a
+    first-class resource with verified artifact-discovery access, and an
+    accompanying project id must match that resource's owner. This keeps UI
+    filtering useful without turning a caller-supplied bucket name into an
+    authorization mechanism.
+    """
+    bucket = str(resource_bucket or "").strip()
+    project = str(project_id or "").strip()
+    mapping = artifact_bucket_projects(report)
+    if bucket:
+        if bucket not in mapping:
+            raise ValueError("artifact bucket is outside effective agent access")
+        if project and mapping[bucket] != project:
+            raise ValueError("artifact bucket does not belong to the selected project")
+        return [bucket]
+    if project:
+        selected = [name for name, owner in mapping.items() if owner == project]
+        if not selected:
+            raise ValueError("selected project has no searchable artifact bucket")
+        return selected
+    return accessible_artifact_buckets(report)

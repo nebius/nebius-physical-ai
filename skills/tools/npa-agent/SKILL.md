@@ -223,7 +223,10 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
 ### Artifact-first discovery + load
 
 - `GET /api/artifacts/runs?prefix=&limit=100` discovers run prefixes from every
-  project bucket with verified effective list access.
+  project bucket with verified effective list access. The Agent access panel's
+  **List artifacts** / **Browse / preview** actions add the selected
+  `project_id` and `resource_bucket`; the backend verifies that pair against
+  effective access before searching and returns the selected provenance.
 - `GET /api/artifacts/run/{run_id}` returns an S3-native artifact page with
   `render` hints. Follow `next_cursor` with the returned `resolved_prefix` and
   `bucket` (as `resource_bucket`) until `truncated=false`; the UI exposes this

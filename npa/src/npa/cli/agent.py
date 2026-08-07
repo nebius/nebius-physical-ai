@@ -73,7 +73,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026080701"
+AGENT_UI_VERSION = "2026080702"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -7154,7 +7154,10 @@ def sim_viz_recordings():
 
 
 @app.get("/artifacts/runs")
-def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
+def artifacts_runs(
+    prefix: str = "", limit: int = 50, q: str = "",
+    resource_bucket: str = "", project_id: str = "",
+):
     # q: case-insensitive substring search over run ids, applied across ALL runs
     # (every bucket root) before the limit — so old runs beyond the newest `limit`
     # are still findable by name from the "Find run" box.
@@ -7163,7 +7166,9 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
         access_report = _agent_access_report()
         access_diagnostics = _agent_access_diagnostics(access_report)
         bucket_projects = artifact_bucket_projects(access_report)
-        buckets = _agent_s3_buckets(s3, settings)
+        buckets, selected_scope = _agent_artifact_list_scope(
+            access_report, resource_bucket, project_id
+        )
         query = str(q or "").strip()
         if prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
@@ -7181,7 +7186,7 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
                 lightweight=True,
                 s3=s3,
             )
-            return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, "summary_mode": "prefixes", "access": access_diagnostics, **page.to_dict()}}
+            return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "resource_scope": selected_scope, "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, "summary_mode": "prefixes", "access": access_diagnostics, **page.to_dict()}}
         # No user prefix: discover runs generically across ALL bucket roots.
         # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
         # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
@@ -7202,7 +7207,7 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
             lightweight=True,
             s3=s3,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "prefix": base, "base_prefix": base, "query": query, "summary_mode": "prefixes", "access": access_diagnostics, **page.to_dict()}}
+        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "resource_scope": selected_scope, "prefix": base, "base_prefix": base, "query": query, "summary_mode": "prefixes", "access": access_diagnostics, **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:

@@ -197,16 +197,54 @@
       .access-project-id { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
       .access-resources { margin-top: 7px; display: grid; gap: 5px; }
       .access-resource {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
+        display: grid;
+        gap: 7px;
         font-size: 12px;
         border-top: 1px solid var(--border);
         padding-top: 5px;
       }
+      .access-resource-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
       .access-resource code { overflow-wrap: anywhere; }
+      .access-capabilities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+      .access-capability {
+        display: grid;
+        grid-template-columns: auto minmax(112px, auto);
+        align-items: center;
+        gap: 5px 7px;
+        min-width: 0;
+      }
+      .access-capability-reason {
+        grid-column: 1 / -1;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .access-capability .btn { justify-self: start; min-height: 36px; }
+      .access-capability .btn[disabled] { cursor: not-allowed; opacity: 0.58; }
+      .access-action-result {
+        margin-top: 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        padding: 9px 10px;
+      }
+      .access-action-result[hidden] { display: none; }
+      .access-action-result.is-error { border-color: #f4aaaa; background: #fff7f7; }
+      .access-action-result-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+      .access-action-runs { display: grid; gap: 6px; margin-top: 8px; }
+      .access-action-run {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        border-top: 1px solid var(--border);
+        padding-top: 6px;
+      }
+      .access-action-run-copy { min-width: 0; overflow-wrap: anywhere; }
       .access-errors { margin-top: 8px; color: var(--danger-text); font-size: 12px; }
+      @media (max-width: 760px) {
+        .access-capabilities { grid-template-columns: 1fr; }
+        .access-action-run { align-items: flex-start; flex-direction: column; }
+      }
       .subsection {
         border: 1px solid var(--border);
         border-radius: 10px;
@@ -877,7 +915,8 @@
         transform: none;
       }
       body.viewer-focus #panelChat .workflow-panel,
-      body.viewer-focus #panelChat .stages-panel {
+      body.viewer-focus #panelChat .stages-panel,
+      body.viewer-focus #panelChat #agentAccessPanel {
         display: none !important;
       }
       body.viewer-focus #panelChat .chat-panel {
@@ -1674,6 +1713,7 @@
           <div id="agentAccessSummary" class="access-summary" aria-live="polite"></div>
           <div id="agentAccessProjects" class="access-projects"></div>
           <div id="agentAccessErrors" class="access-errors" role="status"></div>
+          <div id="agentAccessActionResult" class="access-action-result" role="status" aria-live="polite" aria-busy="false" hidden></div>
         </section>
         <section class="panel chat-panel">
           <div class="chat-panel-head">
@@ -2211,6 +2251,238 @@
           ? status
           : "unavailable";
       }
+      let accessActionRequestId = 0;
+      let accessActionController = null;
+      let accessRefreshRequestId = 0;
+      let accessRefreshController = null;
+      let selectedAccessResource = null;
+      function accessSelectionFromButton(button) {
+        return {
+          projectId: String(button.getAttribute("data-project-id") || "").trim(),
+          projectName: String(button.getAttribute("data-project-name") || "").trim(),
+          bucket: String(button.getAttribute("data-resource-bucket") || "").trim(),
+          readStatus: accessStatusClass(button.getAttribute("data-read-status")),
+          readReason: String(button.getAttribute("data-read-reason") || "").trim(),
+        };
+      }
+      function sameAccessSelection(left, right) {
+        return Boolean(left && right) &&
+          left.projectId === right.projectId && left.bucket === right.bucket;
+      }
+      function accessActionIsCurrent(requestId, selection) {
+        return requestId === accessActionRequestId && sameAccessSelection(selection, selectedAccessResource);
+      }
+      function resetAccessActionButtons() {
+        document.querySelectorAll("button[data-access-action]").forEach((button) => {
+          button.removeAttribute("aria-busy");
+          if (button.dataset.defaultLabel) button.textContent = button.dataset.defaultLabel;
+          const enabled = button.getAttribute("data-capability-status") === "available";
+          button.disabled = !enabled;
+        });
+      }
+      function cancelAccessAction(clearResult) {
+        const hadAction = Boolean(accessActionController || selectedAccessResource);
+        accessActionRequestId += 1;
+        if (hadAction) {
+          runSearchRequestId += 1;
+          artifactLoadRequestId += 1;
+        }
+        if (accessActionController) accessActionController.abort();
+        accessActionController = null;
+        selectedAccessResource = null;
+        resetAccessActionButtons();
+        const host = document.getElementById("agentAccessActionResult");
+        if (host) {
+          host.setAttribute("aria-busy", "false");
+          if (clearResult !== false) {
+            host.hidden = true;
+            host.classList.remove("is-error");
+            host.innerHTML = "";
+          }
+        }
+        return hadAction;
+      }
+      function beginAccessAction(selection, button, busyLabel) {
+        const previousSelection = selectedAccessResource;
+        if (accessActionController) accessActionController.abort();
+        if (!previousSelection || !sameAccessSelection(previousSelection, selection)) {
+          runSearchRequestId += 1;
+          artifactLoadRequestId += 1;
+          clearVisibleRunState("Storage resource changed. Loading fresh scoped content…");
+        }
+        const requestId = ++accessActionRequestId;
+        const controller = new AbortController();
+        accessActionController = controller;
+        selectedAccessResource = selection;
+        resetAccessActionButtons();
+        if (button) {
+          button.dataset.defaultLabel = button.dataset.defaultLabel || button.textContent;
+          button.textContent = busyLabel;
+          button.disabled = true;
+          button.setAttribute("aria-busy", "true");
+        }
+        return {
+          requestId,
+          selection,
+          signal: controller.signal,
+          isCurrent: () => accessActionIsCurrent(requestId, selection),
+        };
+      }
+      function finishAccessAction(context) {
+        if (!context.isCurrent()) return;
+        accessActionController = null;
+        resetAccessActionButtons();
+        const host = document.getElementById("agentAccessActionResult");
+        if (host) host.setAttribute("aria-busy", "false");
+      }
+      function renderAccessActionResult(options) {
+        const opts = options || {};
+        const host = document.getElementById("agentAccessActionResult");
+        if (!host) return;
+        const selection = opts.selection || selectedAccessResource || {};
+        const runs = Array.isArray(opts.runs) ? opts.runs : [];
+        const title = String(opts.title || "Artifact access");
+        const message = String(opts.message || "");
+        const kind = String(opts.kind || "info");
+        const shown = runs.slice(0, 25);
+        const canRead = selection.readStatus === "available";
+        host.hidden = false;
+        host.classList.toggle("is-error", kind === "error");
+        host.setAttribute("role", kind === "error" ? "alert" : "status");
+        host.setAttribute("aria-busy", kind === "busy" ? "true" : "false");
+        host.innerHTML =
+          '<div class="access-action-result-head"><strong>' + escapeHtml(title) + "</strong>" +
+          '<span><span class="pill">project <strong>' + escapeHtml(String(selection.projectName || selection.projectId || "unknown")) + "</strong></span> " +
+          '<span class="pill">bucket <strong>' + escapeHtml(String(selection.bucket || "unknown")) + "</strong></span></span></div>" +
+          '<p class="hint" style="margin-top:6px;">' + escapeHtml(message) + "</p>" +
+          (shown.length ? '<div class="access-action-runs">' + shown.map((run) => {
+            const runId = String((run && run.run_id) || "");
+            const runBucket = String((run && run.bucket) || selection.bucket || "");
+            const runProject = String((run && run.project_id) || selection.projectId || "");
+            const disabled = canRead ? "" : " disabled aria-disabled=\"true\"";
+            const reason = canRead ? "Browse and preview this run's readable artifacts." : (selection.readReason || "Artifact read is not available.");
+            return '<div class="access-action-run"><div class="access-action-run-copy"><strong>' + escapeHtml(runId) + "</strong><br>" +
+              '<span class="hint">project ' + escapeHtml(runProject || "unknown") + " · bucket " + escapeHtml(runBucket || "unknown") + "</span></div>" +
+              '<button class="btn" type="button" data-access-action="read-run" data-capability-status="' + (canRead ? "available" : "unavailable") + '"' +
+              ' data-project-id="' + escapeHtml(runProject) + '" data-project-name="' + escapeHtml(String(selection.projectName || "")) + '"' +
+              ' data-resource-bucket="' + escapeHtml(runBucket) + '" data-read-status="' + escapeHtml(selection.readStatus || "unavailable") + '"' +
+              ' data-read-reason="' + escapeHtml(selection.readReason || "") + '" data-run-id="' + escapeHtml(runId) + '"' +
+              ' aria-label="Browse readable artifacts for run ' + escapeHtml(runId) + '" title="' + escapeHtml(reason) + '"' + disabled + ">Browse run</button></div>";
+          }).join("") + "</div>" : "") +
+          (runs.length > shown.length ? '<p class="hint" style="margin-top:6px;">Showing the first ' + String(shown.length) + " of " + String(runs.length) + " runs. The full scoped result is in Runs &amp; artifacts.</p>" : "");
+      }
+      async function listAccessResource(selection, button) {
+        const context = beginAccessAction(selection, button, "Listing…");
+        renderAccessActionResult({
+          kind: "busy",
+          title: "Listing readable runs",
+          message: "Querying the selected project and bucket…",
+          selection,
+        });
+        try {
+          const result = await refreshArtifactRuns("", {
+            projectId: selection.projectId,
+            resourceBucket: selection.bucket,
+            signal: context.signal,
+            isCurrent: context.isCurrent,
+          });
+          if (!context.isCurrent() || !result) return false;
+          const runs = result.runs || [];
+          renderAccessActionResult({
+            kind: "success",
+            title: "List complete",
+            message: String(runs.length) + " run" + (runs.length === 1 ? "" : "s") + " found in the selected resource.",
+            selection,
+            runs,
+          });
+          setStatus("Listed " + String(runs.length) + " scoped artifact runs");
+          return true;
+        } catch (err) {
+          if (!context.isCurrent()) return false;
+          renderAccessActionResult({
+            kind: "error",
+            title: "List failed",
+            message: String((err && err.message) || err),
+            selection,
+          });
+          setStatus("Scoped artifact listing failed");
+          return false;
+        } finally {
+          finishAccessAction(context);
+        }
+      }
+      async function readAccessResource(selection, button, requestedRunId) {
+        const context = beginAccessAction(selection, button, "Opening…");
+        renderAccessActionResult({
+          kind: "busy",
+          title: "Opening readable artifacts",
+          message: "Finding a selectable run in the selected project and bucket…",
+          selection,
+        });
+        try {
+          const result = await refreshArtifactRuns("", {
+            projectId: selection.projectId,
+            resourceBucket: selection.bucket,
+            signal: context.signal,
+            isCurrent: context.isCurrent,
+          });
+          if (!context.isCurrent() || !result) return false;
+          const runs = result.runs || [];
+          if (!runs.length) {
+            renderAccessActionResult({
+              kind: "success",
+              title: "No readable runs yet",
+              message: "No runs were found in this bucket. Choose another available resource or refresh access after artifacts are uploaded.",
+              selection,
+            });
+            return true;
+          }
+          const requested = String(requestedRunId || "").trim();
+          const current = String(activeRunId || selectedRunIdFromUi() || "").trim();
+          const entry = runs.find((run) => String((run && run.run_id) || "") === requested) ||
+            runs.find((run) => String((run && run.run_id) || "") === current) || runs[0];
+          const runId = String((entry && entry.run_id) || "").trim();
+          renderAccessActionResult({
+            kind: "busy",
+            title: "Opening run " + runId,
+            message: "Listing its artifacts and loading the preferred preview. If no preview is supported, the artifact browser keeps a download action.",
+            selection,
+            runs,
+          });
+          const opened = await loadArtifactsForSelectedRun(runId, null, entry, context);
+          if (!context.isCurrent() || opened === false) return false;
+          renderAccessActionResult({
+            kind: "success",
+            title: "Readable artifacts opened",
+            message: "Opened run " + runId + " in Runs & artifacts with project/bucket provenance and preview/download controls.",
+            selection,
+            runs,
+          });
+          setStatus("Opened readable artifacts for " + runId);
+          return true;
+        } catch (err) {
+          if (!context.isCurrent()) return false;
+          renderAccessActionResult({
+            kind: "error",
+            title: "Read failed",
+            message: String((err && err.message) || err),
+            selection,
+          });
+          setStatus("Artifact read failed");
+          return false;
+        } finally {
+          finishAccessAction(context);
+        }
+      }
+      async function dispatchAccessAction(button) {
+        const action = String(button.getAttribute("data-access-action") || "");
+        const selection = accessSelectionFromButton(button);
+        if (action === "list") return listAccessResource(selection, button);
+        if (action === "read" || action === "read-run") {
+          return readAccessResource(selection, button, button.getAttribute("data-run-id") || "");
+        }
+        return false;
+      }
       function renderAccessReport(report) {
         const panel = document.getElementById("agentAccessPanel");
         const statusEl = document.getElementById("agentAccessStatus");
@@ -2236,19 +2508,37 @@
         }
         const projects = Array.isArray(report && report.projects) ? report.projects : [];
         if (projectsHost) {
-          projectsHost.innerHTML = projects.length ? projects.map((project) => {
+          projectsHost.innerHTML = projects.length ? projects.map((project, projectIndex) => {
             const capabilities = (project && project.capabilities) || {};
             const discovery = capabilities.artifact_discovery || {};
             const submit = capabilities.workflow_submission || {};
             const resources = Array.isArray(project && project.resources) ? project.resources : [];
-            const resourceHtml = resources.length ? resources.map((resource) => {
+            const resourceHtml = resources.length ? resources.map((resource, resourceIndex) => {
               const caps = (resource && resource.capabilities) || {};
               const list = caps.artifact_discovery || {};
               const read = caps.artifact_read || {};
+              const bucket = String(resource.name || "unnamed bucket");
+              const projectId = String(project.id || "");
+              const projectName = String(project.name || projectId || "project");
+              const capabilityHtml = (name, capability, action, label) => {
+                const capStatus = accessStatusClass(capability.status);
+                const reasonId = "accessReason-" + String(projectIndex) + "-" + String(resourceIndex) + "-" + action;
+                const enabled = capStatus === "available";
+                return '<div class="access-capability"><span class="access-status ' + capStatus + '">' + escapeHtml(name + ": " + capStatus) + "</span>" +
+                  '<button class="btn" type="button" data-access-action="' + action + '" data-capability-status="' + capStatus + '"' +
+                  ' data-project-id="' + escapeHtml(projectId) + '" data-project-name="' + escapeHtml(projectName) + '"' +
+                  ' data-resource-bucket="' + escapeHtml(bucket) + '" data-read-status="' + escapeHtml(String(read.status || "unavailable")) + '"' +
+                  ' data-read-reason="' + escapeHtml(String(read.reason || "")) + '" aria-describedby="' + reasonId + '"' +
+                  ' aria-label="' + escapeHtml(label + " in " + bucket + " (project " + projectName + ")") + '"' +
+                  (enabled ? "" : ' disabled aria-disabled="true"') + ">" + escapeHtml(label) + "</button>" +
+                  '<span id="' + reasonId + '" class="access-capability-reason">' + escapeHtml(String(capability.reason || "No capability reason was reported.")) + "</span></div>";
+              };
               return '<div class="access-resource">' +
-                '<code>' + escapeHtml(String(resource.name || "unnamed bucket")) + "</code>" +
-                '<span><span class="access-status ' + accessStatusClass(list.status) + '" title="' + escapeHtml(String(list.reason || "")) + '">list ' + escapeHtml(String(list.status || "unavailable")) + "</span> " +
-                '<span class="access-status ' + accessStatusClass(read.status) + '" title="' + escapeHtml(String(read.reason || "")) + '">read ' + escapeHtml(String(read.status || "unavailable")) + "</span></span>" +
+                '<div class="access-resource-head"><span class="pill">object storage</span><code>' + escapeHtml(bucket) + "</code></div>" +
+                '<div class="access-capabilities">' +
+                capabilityHtml("List", list, "list", "List artifacts") +
+                capabilityHtml("Read", read, "read", "Browse / preview") +
+                "</div>" +
                 "</div>";
             }).join("") : '<div class="hint" style="margin-top:6px;">No searchable storage resource was reported.</div>';
             return '<article class="access-project">' +
@@ -2270,6 +2560,16 @@
         }
       }
       async function refreshAccess(force) {
+        const invalidatedAction = cancelAccessAction(true);
+        if (force && invalidatedAction) {
+          activeArtifactBrowseScope = null;
+          discoveredArtifactRuns = [];
+          applyMergedRunSelectors("");
+          clearVisibleRunState("Access refreshed. Select a resource to list or read fresh artifacts.");
+        }
+        const refreshId = ++accessRefreshRequestId;
+        if (accessRefreshController) accessRefreshController.abort();
+        accessRefreshController = new AbortController();
         const panel = document.getElementById("agentAccessPanel");
         const statusEl = document.getElementById("agentAccessStatus");
         const errorsHost = document.getElementById("agentAccessErrors");
@@ -2279,10 +2579,14 @@
           statusEl.textContent = force ? "Refreshing" : "Loading";
         }
         try {
-          const report = await apiJson("/api/access" + (force ? "?refresh=true" : ""));
+          const report = await apiJson("/api/access" + (force ? "?refresh=true" : ""), {
+            signal: accessRefreshController.signal,
+          });
+          if (refreshId !== accessRefreshRequestId) return false;
           renderAccessReport(report);
           return true;
         } catch (err) {
+          if (refreshId !== accessRefreshRequestId) return false;
           if (panel) panel.setAttribute("aria-busy", "false");
           if (statusEl) {
             statusEl.className = "access-status unavailable";
@@ -2292,6 +2596,8 @@
             errorsHost.textContent = "Access refresh failed. Existing project-scoped operations are unchanged; retry refresh for current diagnostics.";
           }
           throw err;
+        } finally {
+          if (refreshId === accessRefreshRequestId) accessRefreshController = null;
         }
       }
       function bindClick(id, fn, label) {
@@ -2458,6 +2764,32 @@
         bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
         bindClick("workflowSubmitYaml", submitWorkflowYaml, "Submit workflow YAML");
         bindClick("agentAccessRefresh", () => refreshAccess(true), "Refresh agent access");
+        const accessPanel = document.getElementById("agentAccessPanel");
+        if (accessPanel) {
+          // One delegated handler owns all dynamically-rendered access actions.
+          // Native buttons provide mouse, Enter and Space activation semantics.
+          accessPanel.addEventListener("click", (event) => {
+            const target = event.target instanceof Element
+              ? event.target.closest("button[data-access-action]")
+              : null;
+            if (!target || target.disabled) return;
+            event.preventDefault();
+            dispatchAccessAction(target).catch((err) => {
+              showToast("Access action failed: " + String((err && err.message) || err), "error");
+            });
+          });
+          accessPanel.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            const target = event.target instanceof Element
+              ? event.target.closest("button[data-access-action]")
+              : null;
+            if (!target || target.disabled) return;
+            // Explicitly normalize Enter/Space for embedded and assistive browser
+            // contexts, while keeping one delegated action path via click.
+            event.preventDefault();
+            target.click();
+          });
+        }
         bindClick("artifactRefreshRuns", refreshArtifactRuns, "Discover artifact runs");
         bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
@@ -5388,6 +5720,12 @@
         const ctrl = new AbortController();
         const timer = window.setTimeout(() => ctrl.abort(), ms);
         const req = init || {};
+        const externalSignal = req.signal;
+        const relayAbort = () => ctrl.abort();
+        if (externalSignal) {
+          if (externalSignal.aborted) ctrl.abort();
+          else externalSignal.addEventListener("abort", relayAbort, { once: true });
+        }
         const headers = withMobileAuth({
           ...(req.headers || {}),
         });
@@ -5401,6 +5739,7 @@
           });
         } finally {
           window.clearTimeout(timer);
+          if (externalSignal) externalSignal.removeEventListener("abort", relayAbort);
         }
       }
       async function apiJson(path, init) {
@@ -5625,6 +5964,7 @@
       let autoLoadedPreferredKey = "";
       let runSearchRequestId = 0;
       let artifactLoadRequestId = 0;
+      let activeArtifactBrowseScope = null;
       // Load the whole run list into the picker by default so every run shows
       // without the operator having to guess a search fragment. The server still
       // supports (q=) search for buckets larger than this, and the "Find run" /
@@ -5882,7 +6222,12 @@
         return filtered;
       }
       function applyMergedRunSelectors(current) {
-        const merged = mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
+        // Once an access action selects a project/bucket, keep the existing
+        // browser scoped to those S3 results instead of mixing in unrelated
+        // local/workflow-history runs.
+        const merged = activeArtifactBrowseScope
+          ? mergeRunsLatestFirst([], discoveredArtifactRuns)
+          : mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
         mergedRunsCache = merged;
         const chosen = String(activeRunEntryKey || current || activeRunId || "").trim();
         const chosenRun = String(
@@ -5912,18 +6257,28 @@
         syncRunChooserFields(chosenRun, activeRunEntryKey);
         return merged;
       }
-      async function refreshArtifactRuns(query) {
+      async function refreshArtifactRuns(query, options) {
         // Discover runs generically across the whole bucket. When a search query
         // is given, ask the SERVER to search ALL runs by name/ID (not just the
         // newest page) so old runs beyond the default limit are still findable,
         // and union the matches into the discovered list.
-        const q = String(query || "").trim();
+        const q = typeof query === "string" ? query.trim() : "";
+        const opts = options && typeof options === "object" ? options : {};
+        if (opts.resourceBucket || opts.projectId) {
+          activeArtifactBrowseScope = {
+            resourceBucket: String(opts.resourceBucket || "").trim(),
+            projectId: String(opts.projectId || "").trim(),
+          };
+        }
+        const scope = activeArtifactBrowseScope || {};
         // A background/default refresh must not supersede an in-flight q=
         // request and leave the user's filtered picker empty.
         const requestId = ++runSearchRequestId;
-        const url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
-        const data = await apiJson(url);
-        if (requestId !== runSearchRequestId) return false;
+        let url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
+        if (scope.projectId) url += "&project_id=" + encodeURIComponent(scope.projectId);
+        if (scope.resourceBucket) url += "&resource_bucket=" + encodeURIComponent(scope.resourceBucket);
+        const data = await apiJson(url, opts.signal ? { signal: opts.signal } : undefined);
+        if (requestId !== runSearchRequestId || (opts.isCurrent && !opts.isCurrent())) return false;
         const runs = Array.isArray(data.runs) ? data.runs : [];
         if (q) {
           const identity = (r) => [
@@ -5942,14 +6297,17 @@
         const status = document.getElementById("artifactDiscoverStatus");
         if (status) {
           const trunc = data.truncated ? " (truncated)" : "";
+          const scoped = scope.resourceBucket
+            ? " · project " + String(scope.projectId || "unknown") + " · bucket " + String(scope.resourceBucket)
+            : "";
           status.textContent =
             "Runs (latest first): " + String(merged.length) +
             " consolidated · discovered " + String(data.total_runs || 0) + trunc +
-            (data.access && data.access.status ? " · access " + String(data.access.status) : "");
+            (data.access && data.access.status ? " · access " + String(data.access.status) : "") + scoped;
         }
-        return true;
+        return { data, runs, merged };
       }
-      async function loadArtifactsForSelectedRun(explicitRunId, priorPage, explicitEntry) {
+      async function loadArtifactsForSelectedRun(explicitRunId, priorPage, explicitEntry, requestContext) {
         // explicitRunId is optional; guard against event objects passed by
         // click handlers (bindClick calls fn(event)).
         const runId = (typeof explicitRunId === "string" && explicitRunId.trim())
@@ -5973,9 +6331,12 @@
           params.set("resource_bucket", String(entry.bucket));
         }
         const query = params.toString();
+        const context = requestContext && typeof requestContext === "object" ? requestContext : {};
         const data = await apiJson(
-          "/api/artifacts/run/" + encodeURIComponent(runId) + (query ? "?" + query : "")
+          "/api/artifacts/run/" + encodeURIComponent(runId) + (query ? "?" + query : ""),
+          context.signal ? { signal: context.signal } : undefined
         );
+        if (context.isCurrent && !context.isCurrent()) return false;
         if (previous.length) {
           const merged = new Map(previous.map((item) => [String((item && item.s3_uri) || (item && item.key) || ""), item]));
           for (const item of (Array.isArray(data.artifacts) ? data.artifacts : [])) {
@@ -6117,7 +6478,7 @@
           String((entry && entry.entry_key) || runId),
           String((preferred && preferred.key) || ""),
         ].join("|");
-        const shouldLoadPreferred = preferred && ["rerun", "mcap", "video", "image", "json", "text"].includes(preferredRender) &&
+        const shouldLoadPreferred = preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
           !(preferredRender === "rerun" && isMobileLayout()) &&
           preferredLoadKey !== autoLoadedPreferredKey;
         if (shouldLoadPreferred) {
@@ -6126,7 +6487,7 @@
             run_id: runId,
             key: String(preferred.key || "").trim(),
             s3_uri: String(preferred.s3_uri || "").trim(),
-          });
+          }, context);
           renderArtifactDerivedRunDetails(runId, artifacts);
         } else {
           renderArtifactDerivedRunDetails(runId, artifacts);
@@ -6360,6 +6721,10 @@
       }
       async function loadArtifact(payload) {
         const requestId = ++artifactLoadRequestId;
+        const requestContext = arguments.length > 1 ? arguments[1] : null;
+        const context = requestContext && typeof requestContext === "object" ? requestContext : {};
+        const isCurrent = () => requestId === artifactLoadRequestId &&
+          (!context.isCurrent || context.isCurrent());
         const body = {
           run_id: String((payload && payload.run_id) || "").trim(),
           key: String((payload && payload.key) || "").trim(),
@@ -6369,8 +6734,9 @@
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
+          ...(context.signal ? { signal: context.signal } : {}),
         });
-        if (requestId !== artifactLoadRequestId) return false;
+        if (!isCurrent()) return false;
         const simViz = data.sim_viz || {};
         const render = String(data.render || simViz.artifact_render || "");
         activeArtifactRender = render;
@@ -6388,7 +6754,7 @@
           return true;
         }
         await activateMainTab("rerun", { skipEnsure: true });
-        if (requestId !== artifactLoadRequestId) return false;
+        if (!isCurrent()) return false;
         if (render === "rerun") {
           setRenderMode("rerun");
           hideArtifactPreview();
@@ -6413,9 +6779,9 @@
           mountLichtblickIframe(simViz);
         } else {
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
-          await showArtifactPreview(simViz, render, () => requestId === artifactLoadRequestId);
+          await showArtifactPreview(simViz, render, isCurrent);
         }
-        if (requestId !== artifactLoadRequestId) return false;
+        if (!isCurrent()) return false;
         // Apply the load response directly. A general refresh can race a newer
         // artifact selection and repaint an older render mode after the newer
         // request wins; the load response already contains selector/status data.

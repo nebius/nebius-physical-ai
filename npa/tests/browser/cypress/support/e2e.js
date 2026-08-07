@@ -441,6 +441,72 @@ function simVizForArtifact(key) {
 function installAgentApiMocks() {
   let activeSimViz = SIM_VIZ;
   cy.intercept("GET", "/api/health", json({ ok: true, tool_refs: 19 })).as("health");
+  cy.intercept("GET", "/api/access*", json({
+    apiVersion: "npa.agent.access/v1",
+    identity: {
+      tenant_id: "tenant-test",
+      deployment_project_id: "project-a",
+      deployment_project_name: "Project Alpha",
+    },
+    status: "partial",
+    scope: "partial_tenant",
+    capabilities: {},
+    projects: [
+      {
+        id: "project-a",
+        name: "Project Alpha",
+        deployment_project: true,
+        status: "available",
+        capabilities: {
+          artifact_discovery: { status: "available", reason: "Readable object storage is available." },
+          workflow_submission: { status: "available", reason: "Deployment project only." },
+        },
+        resources: [
+          {
+            type: "object_storage_bucket",
+            id: "resource-a",
+            name: "project-artifacts",
+            project_id: "project-a",
+            capabilities: {
+              artifact_discovery: { status: "available", reason: "Object listing was verified.", scope: "read_only" },
+              artifact_read: { status: "available", reason: "Object reads were verified.", scope: "read_only" },
+            },
+          },
+          {
+            type: "object_storage_bucket",
+            id: "resource-archive",
+            name: "archive-artifacts",
+            project_id: "project-a",
+            capabilities: {
+              artifact_discovery: { status: "available", reason: "Object listing was verified.", scope: "read_only" },
+              artifact_read: { status: "available", reason: "Object reads were verified.", scope: "read_only" },
+            },
+          },
+          {
+            type: "object_storage_bucket",
+            id: "resource-denied",
+            name: "denied-artifacts",
+            project_id: "project-a",
+            capabilities: {
+              artifact_discovery: { status: "denied", reason: "Permission denied while listing objects.", scope: "read_only" },
+              artifact_read: { status: "denied", reason: "Permission denied while reading objects.", scope: "read_only" },
+            },
+          },
+          {
+            type: "object_storage_bucket",
+            id: "resource-unavailable",
+            name: "unavailable-artifacts",
+            project_id: "project-a",
+            capabilities: {
+              artifact_discovery: { status: "unavailable", reason: "The object service is unavailable.", scope: "read_only" },
+              artifact_read: { status: "unavailable", reason: "Object reads could not be verified.", scope: "read_only" },
+            },
+          },
+        ],
+      },
+    ],
+    errors: [],
+  })).as("agentAccess");
   cy.intercept("GET", "/api/models", json({
     ok: true,
     model: "nvidia/Cosmos3-Super-Reasoner",
@@ -704,9 +770,9 @@ function installAgentApiMocks() {
       body: "mock artifact payload",
     });
   }).as("artifactFile");
-  cy.intercept("GET", "/api/artifacts/runs*", json({
+  cy.intercept("GET", "/api/artifacts/runs*", (req) => {
     // Latest-first order from the API (non-stock newer than mock-run).
-    runs: [
+    const allRuns = [
       {
         run_id: NON_STOCK_RUN_ID,
         source_type: "artifact_storage",
@@ -737,10 +803,35 @@ function installAgentApiMocks() {
         artifact_count: 1,
         last_modified: "2026-07-07T03:33:00Z",
       },
-    ],
-    total_runs: 3,
-    truncated: false,
-  })).as("artifactRuns");
+      {
+        run_id: "archive-run",
+        source_type: "artifact_storage",
+        source_label: "S3 artifacts",
+        bucket: "archive-artifacts",
+        project_id: "project-a",
+        has_viewable: true,
+        artifact_count: 1,
+        last_modified: "2026-07-06T03:33:00Z",
+      },
+    ];
+    const url = new URL(req.url);
+    const bucket = url.searchParams.get("resource_bucket") || "";
+    const project = url.searchParams.get("project_id") || "";
+    const query = String(url.searchParams.get("q") || "").toLowerCase();
+    const runs = allRuns.filter((run) =>
+      (!bucket || run.bucket === bucket) &&
+      (!project || run.project_id === project) &&
+      (!query || run.run_id.toLowerCase().includes(query))
+    );
+    req.reply(json({
+      ok: true,
+      runs,
+      total_runs: runs.length,
+      truncated: false,
+      resource_scope: { project_id: project, bucket },
+      access: { status: "available", scope: bucket ? "selected_resource" : "tenant" },
+    }));
+  }).as("artifactRuns");
   cy.intercept("GET", `/api/artifacts/run/${NON_STOCK_RUN_ID}*`, json({
     run_id: NON_STOCK_RUN_ID,
     prefix: "sim2real-b",

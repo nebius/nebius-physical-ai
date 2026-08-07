@@ -10,6 +10,7 @@ from npa.cli.agent_access import (
     accessible_artifact_buckets,
     artifact_bucket_projects,
     discover_agent_access,
+    scoped_artifact_buckets,
 )
 
 
@@ -67,6 +68,27 @@ def test_full_tenant_access_is_explicit_and_project_owned() -> None:
     }
     assert payload["capabilities"]["artifact_delete"]["status"] == "unavailable"
     assert payload["capabilities"]["arbitrary_s3_uri"]["status"] == "unavailable"
+
+
+def test_selected_artifact_scope_is_verified_against_project_ownership() -> None:
+    report = _discover()
+
+    assert scoped_artifact_buckets(report) == ["bucket-a", "bucket-b"]
+    assert scoped_artifact_buckets(report, project_id="project-b") == ["bucket-b"]
+    assert scoped_artifact_buckets(
+        report,
+        project_id="project-b",
+        resource_bucket="bucket-b",
+    ) == ["bucket-b"]
+
+    with pytest.raises(ValueError, match="does not belong to the selected project"):
+        scoped_artifact_buckets(
+            report,
+            project_id="project-a",
+            resource_bucket="bucket-b",
+        )
+    with pytest.raises(ValueError, match="outside effective agent access"):
+        scoped_artifact_buckets(report, resource_bucket="caller-controlled-bucket")
 
 
 def test_partial_access_keeps_accessible_project_and_reports_denied_project() -> None:
@@ -184,6 +206,15 @@ def test_access_model_is_embedded_with_api_ui_and_read_boundary() -> None:
     assert "cross-project s3_uri requires a run_id and exact discovered artifact" in runtime
     assert 'id="agentAccessPanel"' in ui_source
     assert 'apiJson("/api/access"' in ui_source
+    assert 'data-access-action="' in ui_source
+    assert 'data-capability-status="' in ui_source
+    assert "async function listAccessResource" in ui_source
+    assert "async function readAccessResource" in ui_source
+    assert "resource_bucket=" in ui_source
+    assert "project_id=" in ui_source
+    assert "accessActionController.abort()" in ui_source
+    assert 'event.key !== "Enter" && event.key !== " "' in ui_source
+    assert 'id="agentAccessActionResult"' in ui_source
 
 
 def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) -> None:
