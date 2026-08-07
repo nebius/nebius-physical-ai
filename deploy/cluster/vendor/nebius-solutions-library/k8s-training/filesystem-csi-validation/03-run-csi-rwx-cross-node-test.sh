@@ -143,9 +143,9 @@ log_pass "RWX pod placement details collected for both nodes"
 log_step "Writing a unique marker on the CPU node and checking it on the GPU node"
 CPU_MARKER="cpu-to-gpu:${CPU_NODE}:$(date +%s):$$"
 CPU_WRITTEN_SHA="$(kubectl exec -n "${TEST_NAMESPACE}" "${FILESYSTEM_RWX_WRITER_POD_NAME}" -- sh -lc \
-  "printf '%s\\n' '${CPU_MARKER}' > /data/cpu-to-gpu.txt; sha256sum /data/cpu-to-gpu.txt | awk '{print \\$1}'")"
+  "printf '%s\\n' '${CPU_MARKER}' > /data/cpu-to-gpu.txt; sha256sum /data/cpu-to-gpu.txt | awk '{print \$1}'")"
 CPU_READ_SHA="$(kubectl exec -n "${TEST_NAMESPACE}" "${FILESYSTEM_RWX_READER_POD_NAME}" -- sh -lc \
-  "cat /data/cpu-to-gpu.txt >/dev/null; sha256sum /data/cpu-to-gpu.txt | awk '{print \\$1}'")"
+  "cat /data/cpu-to-gpu.txt >/dev/null; sha256sum /data/cpu-to-gpu.txt | awk '{print \$1}'")"
 if [[ -z "${CPU_WRITTEN_SHA}" || "${CPU_WRITTEN_SHA}" != "${CPU_READ_SHA}" ]]; then
   log_fail "GPU pod did not read the exact checksum written by the CPU pod"
   exit 1
@@ -155,9 +155,9 @@ log_pass "GPU pod read the CPU pod's unique marker with checksum ${CPU_READ_SHA}
 log_step "Writing a unique marker on the GPU node and checking it on the CPU node"
 GPU_MARKER="gpu-to-cpu:${GPU_NODE}:$(date +%s):$$"
 GPU_WRITTEN_SHA="$(kubectl exec -n "${TEST_NAMESPACE}" "${FILESYSTEM_RWX_READER_POD_NAME}" -- sh -lc \
-  "printf '%s\\n' '${GPU_MARKER}' > /data/gpu-to-cpu.txt; sha256sum /data/gpu-to-cpu.txt | awk '{print \\$1}'")"
+  "printf '%s\\n' '${GPU_MARKER}' > /data/gpu-to-cpu.txt; sha256sum /data/gpu-to-cpu.txt | awk '{print \$1}'")"
 GPU_READ_SHA="$(kubectl exec -n "${TEST_NAMESPACE}" "${FILESYSTEM_RWX_WRITER_POD_NAME}" -- sh -lc \
-  "cat /data/gpu-to-cpu.txt >/dev/null; sha256sum /data/gpu-to-cpu.txt | awk '{print \\$1}'")"
+  "cat /data/gpu-to-cpu.txt >/dev/null; sha256sum /data/gpu-to-cpu.txt | awk '{print \$1}'")"
 if [[ -z "${GPU_WRITTEN_SHA}" || "${GPU_WRITTEN_SHA}" != "${GPU_READ_SHA}" ]]; then
   log_fail "CPU pod did not read the exact checksum written by the GPU pod"
   exit 1

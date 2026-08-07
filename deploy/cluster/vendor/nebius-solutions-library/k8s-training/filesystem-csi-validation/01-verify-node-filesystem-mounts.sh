@@ -111,7 +111,7 @@ for node in "${NODES_TO_CHECK[@]}"; do
   echo "------------------------------------------------------------"
   echo "=== ${node} ==="
   output_file="$(mktemp)"
-  if ! kubectl debug -n "${TEST_NAMESPACE}" "${node}" \
+  if kubectl debug -n "${TEST_NAMESPACE}" "${node}" \
     --attach=true \
     --quiet \
     --image="${DEBUG_IMAGE}" \
@@ -133,6 +133,13 @@ for node in "${NODES_TO_CHECK[@]}"; do
       rm -f \"\$probe\"
       echo '[result] PASS: shared filesystem host mount is writable virtiofs with reboot-safe nofail at ${MOUNT_POINT} on this node'
     " 2>&1 | tee "${output_file}"; then
+    if ! grep -Fq \
+      "[result] PASS: shared filesystem host mount is writable virtiofs with reboot-safe nofail at ${MOUNT_POINT} on this node" \
+      "${output_file}"; then
+      FAILED=1
+      echo "[result] FAIL: ${node} completed without the required shared-filesystem success evidence" >&2
+    fi
+  else
     FAILED=1
     echo "[result] FAIL: ${node} does not have a healthy shared filesystem mount at ${MOUNT_POINT}" >&2
   fi

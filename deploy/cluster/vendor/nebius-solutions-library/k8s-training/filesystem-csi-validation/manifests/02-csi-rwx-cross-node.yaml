@@ -46,7 +46,8 @@ metadata:
     app.kubernetes.io/part-of: filesystem-csi-validation
     app.kubernetes.io/component: rwx-writer
 spec:
-  nodeName: __CPU_NODE__
+  nodeSelector:
+    kubernetes.io/hostname: __CPU_NODE__
   containers:
     - name: writer
       image: busybox
@@ -78,7 +79,8 @@ metadata:
     app.kubernetes.io/part-of: filesystem-csi-validation
     app.kubernetes.io/component: rwx-reader
 spec:
-  nodeName: __GPU_NODE__
+  nodeSelector:
+    kubernetes.io/hostname: __GPU_NODE__
   tolerations:
     - key: nvidia.com/gpu
       operator: Exists

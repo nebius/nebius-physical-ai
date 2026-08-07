@@ -263,6 +263,19 @@ def test_vendored_filestore_contract_matches_official_guide() -> None:
     recipe = repo_root / "deploy/cluster/vendor/nebius-solutions-library"
     cloud_init = (recipe / "modules/cloud-init/k8s-cloud-init.tftpl").read_text()
     main_tf = (recipe / "k8s-training/main.tf").read_text()
+    egress_tf = (recipe / "modules/cilium-egress-gateway/main.tf").read_text()
+    mount_validation = (
+        recipe
+        / "k8s-training/filesystem-csi-validation/01-verify-node-filesystem-mounts.sh"
+    ).read_text()
+    rwx_validation = (
+        recipe
+        / "k8s-training/filesystem-csi-validation/03-run-csi-rwx-cross-node-test.sh"
+    ).read_text()
+    rwx_manifest = (
+        recipe
+        / "k8s-training/filesystem-csi-validation/manifests/02-csi-rwx-cross-node.yaml"
+    ).read_text()
     variables_tf = (recipe / "k8s-training/variables.tf").read_text()
 
     assert (
@@ -272,6 +285,15 @@ def test_vendored_filestore_contract_matches_official_guide() -> None:
     assert main_tf.count('attach_mode = "READ_WRITE"') == 2
     assert main_tf.count("mount_tag   = local.filestore.mount_tag") == 2
     assert main_tf.count("filestore_mount_tag  = local.filestore.mount_tag") == 2
+    assert 'filestore_mount_tag  = "data"' in egress_tf
+    assert 'grep -Fq \\' in mount_validation
+    assert "completed without the required shared-filesystem success evidence" in (
+        mount_validation
+    )
+    assert "nodeName:" not in rwx_manifest
+    assert rwx_manifest.count("kubernetes.io/hostname:") == 2
+    assert rwx_validation.count("awk '{print \\$1}'") == 4
+    assert "awk '{print \\\\$1}'" not in rwx_validation
     assert (
         'chart_version                       = optional(string, "0.1.6")'
         in variables_tf
