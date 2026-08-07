@@ -58,7 +58,10 @@ whether the problem is the token or the license:
 
 Measured signature, from the vLLM-Omni serving path (`nvidia/Cosmos-1.0-Guardrail`,
 before the license was accepted; shown because the same status-code
-diagnostic applies on either path):
+diagnostic applies on either path). The status below is `401` rather than the
+`403` this section describes because the container held no token, so its fetch
+was anonymous: the first row of the table above. The `403` came from a manual
+authenticated request against the same URL:
 
 ```
 GatedRepoError: 401 Client Error

@@ -169,12 +169,11 @@ def require_model_access(
                 f"download {' and '.join(needs)} from Hugging Face. Set HF_TOKEN "
                 f"(or {HF_TOKEN_ENV_OVERRIDE}) to a token that has accepted those "
                 "licenses. A staged local/s3 --checkpoint only removes this "
-                "requirement when --no-guardrails is also passed. If a token is "
-                "already set and a download still fails: an anonymous request to "
-                "the gated repo's URL returning 401 means the token is missing or "
-                "invalid, while an authenticated request returning 403 means the "
-                f"token works but its license has not been accepted yet; see "
-                f"{ACCESS_PREFLIGHT_DOC}."
+                "requirement when --no-guardrails is also passed. With no token "
+                "set, a fetch of a gated repo is anonymous and fails with 401; "
+                "if you set a token and then see 403 instead, the token itself "
+                "is reaching Hugging Face and the account behind it still has to "
+                f"accept the repo's license. See {ACCESS_PREFLIGHT_DOC}."
             )
         hf_auth = "configured"
 
@@ -225,6 +224,8 @@ def _installed_package_versions(
     try:
         versions = json.loads(getattr(completed, "stdout", "") or "{}")
     except ValueError:
+        return {}
+    if not isinstance(versions, dict):
         return {}
     return {k: str(v) for k, v in versions.items() if isinstance(k, str)}
 
@@ -453,13 +454,16 @@ def run_cosmos3_generate(
     parallelism_preset: str = DEFAULT_PARALLELISM_PRESET,
     environ: Mapping[str, str] | None = None,
     runner: Any = None,
+    version_probe_runner: Any = None,
 ) -> dict[str, Any]:
     """Run a real Cosmos 3 generation; return the artifact plus its metadata.
 
     Guardrails stay on unless ``no_guardrails`` is explicitly requested. Raises
     :class:`Cosmos3GenerateError` when the runtime is absent, the operator's
     Hugging Face credentials are missing, inference fails, or no media artifact
-    was produced.
+    was produced. ``version_probe_runner`` overrides only the xet pin check's
+    subprocess seam, so a test can drive that check without also mocking the
+    inference call or the check itself; production leaves it ``None``.
     """
 
     env = dict(environ if environ is not None else os.environ)
@@ -489,8 +493,11 @@ def run_cosmos3_generate(
         guardrails=bool(plan["guardrails"]),
         environ=env,
     )
-    if plan["guardrails"]:
-        xet_warning = check_xet_pin(Path(plan["repo"]))
+    if access["hf_auth"] == "configured":
+        # Scoped to "this run downloads from Hugging Face", not to guardrails:
+        # xet-core#895 is a transfer bug, so a guardrails-off run that still
+        # pulls its checkpoint from HF hits it too.
+        xet_warning = check_xet_pin(Path(plan["repo"]), runner=version_probe_runner)
         if xet_warning:
             print(f"WARNING: {xet_warning}", file=sys.stderr)
 
