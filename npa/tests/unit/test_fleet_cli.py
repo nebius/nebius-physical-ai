@@ -8,6 +8,8 @@ lifecycle at the call site for deploy/destroy paths.
 from __future__ import annotations
 
 import json
+import os
+import stat
 import textwrap
 from pathlib import Path
 
@@ -1365,6 +1367,343 @@ def test_deploy_and_destroy_help_document_profile() -> None:
         assert "--profile" in result.output
 
 
+_FAKE_TERRAFORM_MARKER = "UNMISTAKABLE_TERRAFORM_SUBPROCESS_MARKER"
+_FAKE_IAM_TOKEN = "sentinel-iam-token-that-must-be-redacted"
+
+
+def _fake_terraform_executable(tmp_path: Path) -> Path:
+    executable = tmp_path / "fake-terraform"
+    executable.write_text(
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env bash
+            set -euo pipefail
+            action="${{1:-}}"
+            case "$action" in
+              version)
+                printf '{{"terraform_version":"1.12.3"}}\\n'
+                ;;
+              output)
+                printf '{{"kube_cluster":{{"value":{{"id":"mk8s-test"}}}}}}\\n'
+                ;;
+              init|apply|destroy)
+                printf '{_FAKE_TERRAFORM_MARKER} stdout %s\\n' "$action"
+                printf '{_FAKE_TERRAFORM_MARKER} stderr %s\\n' "$action" >&2
+                printf 'credential=%s\\n' "${{TF_VAR_iam_token:-missing}}"
+                printf 'credential=%s\\n' "${{TF_VAR_iam_token:-missing}}" >&2
+                if [ "${{NPA_FAKE_TF_FAIL_ACTION:-}}" = "$action" ]; then
+                  exit 17
+                fi
+                ;;
+              *)
+                printf 'unexpected fake terraform action: %s\\n' "$action" >&2
+                exit 19
+                ;;
+            esac
+            """
+        )
+    )
+    executable.chmod(0o700)
+    return executable
+
+
+def _subprocess_fleet_spec(tmp_path: Path, cluster_names: tuple[str, ...]) -> Path:
+    path = tmp_path / "fleet-subprocess.yaml"
+    path.write_text(
+        json.dumps(
+            {
+                "apiVersion": "npa.fleet/v0.0.1",
+                "name": "f",
+                "region": "us-central1",
+                "projects": [
+                    {
+                        "name": "a",
+                        "clusters": [
+                            {
+                                "name": name,
+                                "cpu_nodes": {
+                                    "count": 1,
+                                    "platform": "cpu-d3",
+                                    "preset": "4vcpu-16gb",
+                                },
+                            }
+                            for name in cluster_names
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    return path
+
+
+def _patch_infra_free_subprocess_boundaries(tmp_path: Path, monkeypatch):
+    from npa.fleet import lifecycle as L
+
+    terraform = _fake_terraform_executable(tmp_path)
+    recipe = tmp_path / "recipe"
+    (recipe / "k8s-training").mkdir(parents=True)
+    (recipe / "modules").mkdir()
+    work_root = tmp_path / "work"
+
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", str(terraform))
+    monkeypatch.setenv("NPA_NEBIUS_BIN", "/bin/true")
+    monkeypatch.setattr(L, "_default_work_root", lambda: work_root)
+    monkeypatch.setattr(L, "_resolve_tenant_id", lambda *a, **k: "tenant-test")
+    monkeypatch.setattr(L, "_resolve_region", lambda *a, **k: "us-central1")
+    monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda *a, **k: "ssh-test")
+    monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **k: recipe)
+    monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
+    monkeypatch.setattr(L, "resolve_project_id", lambda *a, **k: ("project-test", False))
+    monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: ("subnet-test", ""))
+    monkeypatch.setattr(L, "_find_cluster_id_by_name", lambda *a, **k: "")
+
+    def fake_tf_env(*args, **kwargs):
+        return {
+            "PATH": os.environ["PATH"],
+            "TF_VAR_iam_token": _FAKE_IAM_TOKEN,
+            "NEBIUS_IAM_TOKEN": _FAKE_IAM_TOKEN,
+            "NPA_FAKE_TF_FAIL_ACTION": os.environ.get(
+                "NPA_FAKE_TF_FAIL_ACTION", ""
+            ),
+        }
+
+    def fake_kubeconfig(_bin, _cluster_id, path, _context, _env, _profile=""):
+        path.write_text("apiVersion: v1\n")
+
+    monkeypatch.setattr(L, "_terraform_env", fake_tf_env)
+    monkeypatch.setattr(L, "_write_kubeconfig", fake_kubeconfig)
+    return L, work_root
+
+
+def _prepare_destroy_state(L, work_root: Path, cluster_names: tuple[str, ...]) -> None:
+    for cluster_name in cluster_names:
+        install_dir = work_root / "f" / "a" / cluster_name
+        (install_dir / L._K8S_TRAINING_SUBDIR).mkdir(parents=True)
+        L._write_env_sidecar(
+            install_dir,
+            {
+                "tenant_id": "tenant-test",
+                "project_id": "project-test",
+                "region": "us-central1",
+                "subnet_id": "subnet-test",
+                "cluster_name": cluster_name,
+                "status": "deployed",
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("command", "extra_args", "fail_action"),
+    [
+        ("deploy", [], ""),  # default concurrency=1
+        ("destroy", ["-j", "4"], ""),  # one target is still non-parallel
+        ("deploy", [], "apply"),
+        ("destroy", [], "destroy"),
+    ],
+)
+def test_json_lifecycle_subprocess_is_logged_redacted_and_stdout_stays_one_document(
+    command, extra_args, fail_action, tmp_path, monkeypatch
+) -> None:
+    L, work_root = _patch_infra_free_subprocess_boundaries(tmp_path, monkeypatch)
+    cluster_names = ("c",)
+    spec_file = _subprocess_fleet_spec(tmp_path, cluster_names)
+    if command == "destroy":
+        _prepare_destroy_state(L, work_root, cluster_names)
+    if fail_action:
+        monkeypatch.setenv("NPA_FAKE_TF_FAIL_ACTION", fail_action)
+
+    fleet_root = work_root / "f"
+    if command == "deploy":
+        expected_log = fleet_root / "a" / "c" / "deploy.log"
+    else:
+        expected_log = fleet_root / ".logs" / "a" / "c" / "destroy.log"
+    expected_log.parent.mkdir(parents=True, exist_ok=True)
+    expected_log.write_text("PREEXISTING_DIAGNOSTIC\n")
+    expected_log.chmod(0o644)
+
+    args = [
+        "fleet",
+        command,
+        "--spec",
+        str(spec_file),
+        "--yes",
+        "--output",
+        "json",
+        *extra_args,
+    ]
+    if command == "deploy":
+        args.append("--no-preflight")
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == (1 if fail_action else 0), result.output
+    payload = json.loads(result.stdout)
+    assert payload["failed"] == (1 if fail_action else 0)
+    assert _FAKE_TERRAFORM_MARKER not in result.stdout
+    assert _FAKE_IAM_TOKEN not in result.stdout
+    assert _FAKE_IAM_TOKEN not in result.stderr
+
+    entry = payload["clusters"][0]
+    assert Path(entry["terraform_log"]) == expected_log
+    log_text = expected_log.read_text()
+    assert "PREEXISTING_DIAGNOSTIC" in log_text  # append, never truncate
+    assert _FAKE_TERRAFORM_MARKER in log_text
+    assert "<redacted>" in log_text
+    assert _FAKE_IAM_TOKEN not in log_text
+    assert stat.S_IMODE(expected_log.stat().st_mode) == 0o600
+    current = expected_log.parent
+    while current != fleet_root.parent:
+        assert stat.S_IMODE(current.stat().st_mode) == 0o700
+        if current == fleet_root:
+            break
+        current = current.parent
+
+
+def test_json_multiple_targets_remain_sequential_and_each_subprocess_is_logged(
+    tmp_path, monkeypatch
+) -> None:
+    _L, work_root = _patch_infra_free_subprocess_boundaries(tmp_path, monkeypatch)
+    spec_file = _subprocess_fleet_spec(tmp_path, ("c1", "c2"))
+    result = runner.invoke(
+        app,
+        [
+            "fleet",
+            "deploy",
+            "--spec",
+            str(spec_file),
+            "--yes",
+            "--no-preflight",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["deployed"] == 2
+    assert _FAKE_TERRAFORM_MARKER not in result.stdout
+    for entry in payload["clusters"]:
+        log_path = Path(entry["terraform_log"])
+        assert log_path.is_file()
+        assert _FAKE_TERRAFORM_MARKER in log_path.read_text()
+        assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
+        assert work_root / "f" in log_path.parents
+
+
+def test_json_parallel_prewarm_and_targets_never_write_terraform_to_stdout(
+    tmp_path, monkeypatch
+) -> None:
+    _L, work_root = _patch_infra_free_subprocess_boundaries(tmp_path, monkeypatch)
+    spec_file = _subprocess_fleet_spec(tmp_path, ("c1", "c2"))
+    result = runner.invoke(
+        app,
+        [
+            "fleet",
+            "deploy",
+            "--spec",
+            str(spec_file),
+            "--yes",
+            "--no-preflight",
+            "--output",
+            "json",
+            "-j",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["deployed"] == 2
+    assert _FAKE_TERRAFORM_MARKER not in result.stdout
+    prewarm_log = work_root / "f" / ".logs" / "terraform-prewarm.log"
+    for log_path in [
+        prewarm_log,
+        *(Path(entry["terraform_log"]) for entry in payload["clusters"]),
+    ]:
+        text = log_path.read_text()
+        assert _FAKE_TERRAFORM_MARKER in text
+        assert _FAKE_IAM_TOKEN not in text
+        assert "<redacted>" in text
+        assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    ("link_kind", "error_text"),
+    [
+        ("symlink", "securely open Terraform diagnostics log"),
+        ("hardlink", "multiple hard links"),
+    ],
+)
+def test_json_deploy_refuses_unsafe_preexisting_log_link_without_touching_target(
+    link_kind, error_text, tmp_path, monkeypatch
+) -> None:
+    _L, work_root = _patch_infra_free_subprocess_boundaries(tmp_path, monkeypatch)
+    spec_file = _subprocess_fleet_spec(tmp_path, ("c",))
+    victim = tmp_path / "victim"
+    victim.write_text("DO_NOT_TOUCH\n")
+    victim_mode = stat.S_IMODE(victim.stat().st_mode)
+    log_path = work_root / "f" / "a" / "c" / "deploy.log"
+    log_path.parent.mkdir(parents=True)
+    if link_kind == "symlink":
+        log_path.symlink_to(victim)
+    else:
+        os.link(victim, log_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "fleet",
+            "deploy",
+            "--spec",
+            str(spec_file),
+            "--yes",
+            "--no-preflight",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.stdout)
+    assert payload["failed"] == 1
+    assert error_text in payload["clusters"][0]["error"]
+    assert log_path.is_symlink() is (link_kind == "symlink")
+    assert victim.read_text() == "DO_NOT_TOUCH\n"
+    assert stat.S_IMODE(victim.stat().st_mode) == victim_mode
+    assert _FAKE_IAM_TOKEN not in result.stdout
+    assert _FAKE_IAM_TOKEN not in result.stderr
+
+
+@pytest.mark.parametrize("command", ["deploy", "destroy"])
+def test_json_handled_lifecycle_error_still_emits_one_document(
+    command, tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    def fail(*args, **kwargs):
+        raise ValueError("sanitized preflight failure")
+
+    monkeypatch.setattr(L, f"{command}_fleet", fail)
+    result = runner.invoke(
+        app,
+        [
+            "fleet",
+            command,
+            "--spec",
+            str(_spec_file(tmp_path)),
+            "--yes",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["failed"] == 1
+    assert payload["error"] == "sanitized preflight failure"
+    assert "sanitized preflight failure" in result.stderr
+
+
 def test_deploy_json_output_keeps_stdout_pure_json(tmp_path, monkeypatch) -> None:
     from npa.fleet import lifecycle as L
 
@@ -1519,7 +1858,8 @@ def test_required_quotas_counts_nodes_vcpu_gpus_and_filesystem() -> None:
             )
         ]
     )
-    assert needed["compute.instance.count"] == 7  # four workers + three etcd members
+    # Managed control-plane etcd consumes neither customer VM nor disk quota.
+    assert needed["compute.instance.count"] == 4
     assert needed["compute.disk.count"] == 4
     assert needed["compute.disk.size.network-ssd"] == (2 * 128 + 2 * 1023) * 1024**3
     assert needed["compute.instance.non-gpu.vcpu"] == 96  # GPU-node vCPUs excluded
@@ -1528,6 +1868,26 @@ def test_required_quotas_counts_nodes_vcpu_gpus_and_filesystem() -> None:
     assert needed["compute.filesystem.size.network-ssd"] == 2048 * 1024**3
     assert needed["mk8s.cluster.count"] == 1
     assert "compute.gpucluster.count" not in needed
+
+
+def test_required_quotas_excludes_managed_control_plane_compute_resources() -> None:
+    from npa.fleet.quotas import required_quotas
+
+    needed = required_quotas(
+        [
+            ClusterSpec(
+                name="c",
+                cpu_nodes=NodePoolSpec(
+                    count=1, platform="cpu-d3", preset="4vcpu-16gb"
+                ),
+            )
+        ]
+    )
+    # The service-owned etcd/control plane uses neither customer VM nor disk
+    # quota. Only the single node-group VM and its boot disk are counted.
+    assert needed["compute.instance.count"] == 1
+    assert needed["compute.disk.count"] == 1
+    assert needed["compute.disk.size.network-ssd"] == 128 * 1024**3
 
 
 def test_required_quotas_counts_gpu_cluster_and_skips_existing_filestore() -> None:
@@ -1571,7 +1931,7 @@ def test_required_quotas_excludes_strictly_reserved_gpu_but_keeps_other_quotas()
     )
     needed = required_quotas([cluster])
     assert "compute.instance.gpu.rtx6000" not in needed
-    assert needed["compute.instance.count"] == 6  # three workers + three etcd members
+    assert needed["compute.instance.count"] == 3
     assert needed["compute.disk.count"] == 3
     assert needed["compute.instance.non-gpu.vcpu"] == 48
     reservations = required_reservations([cluster], "us-central1")

@@ -29,7 +29,6 @@ from typing import Any, Callable, Iterable
 from npa.fleet.spec import ClusterSpec
 
 _GIB = 1024**3
-_ETCD_CLUSTER_SIZE = 3
 _CPU_DISK_GIB = 128
 _FILESYSTEM_SIZE_QUOTA = "compute.filesystem.size.network-ssd"
 _FILESYSTEM_SIZE_UNIT = "byte"
@@ -299,9 +298,10 @@ def required_quotas(clusters: Iterable[ClusterSpec]) -> dict[str, int]:
         cpu, gpu = cluster.cpu_nodes, cluster.gpu_nodes
         nodes = cluster.cpu_count() + cluster.gpu_count()
         add("mk8s.cluster.count", 1)
-        # The managed control plane consumes three etcd instances in addition
-        # to the explicitly declared worker nodes.
-        add("compute.instance.count", nodes + _ETCD_CLUSTER_SIZE)
+        # Managed control-plane etcd is service-owned: it consumes control-plane
+        # IP allocations, but not the tenant's Compute VM or disk quotas. Only
+        # node-group VMs and their explicitly rendered boot disks count here.
+        add("compute.instance.count", nodes)
         add("compute.disk.count", nodes)  # one boot disk per node
         if cpu and cpu.count > 0:
             cpu_disk_gib = cpu.disk_size_gib if cpu.disk_size_gib > 0 else _CPU_DISK_GIB

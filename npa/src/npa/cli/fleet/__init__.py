@@ -284,11 +284,25 @@ def deploy_cmd(
             timeout_minutes=timeout,
             profile=profile or None,
             preflight=preflight,
+            stream_terraform=not json_mode,
             on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         # Resolution/preflight failures are operator-actionable, not bugs: report
         # the message instead of a traceback.
+        if json_mode:
+            typer.echo(
+                json.dumps(
+                    {
+                        "name": spec.name,
+                        "clusters": [],
+                        "deployed": 0,
+                        "failed": 1,
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
     if output == OutputFormat.json:
@@ -390,9 +404,23 @@ def destroy_cmd(
             timeout_minutes=timeout,
             concurrency=max(1, concurrency),
             profile=profile or None,
+            stream_terraform=not json_mode,
             on_status=lambda msg: typer.echo(f"  - {msg}", err=json_mode),
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
+        if json_mode:
+            typer.echo(
+                json.dumps(
+                    {
+                        "name": spec.name,
+                        "clusters": [],
+                        "networks": [],
+                        "failed": 1,
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
     if output == OutputFormat.json:

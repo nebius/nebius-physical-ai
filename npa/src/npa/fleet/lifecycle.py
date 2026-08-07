@@ -20,13 +20,17 @@ Reuses the terraform subprocess helpers from
 from __future__ import annotations
 
 import concurrent.futures
+import codecs
 import json
 import logging
 import os
 import re
+import selectors
 import shutil
+import stat
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -703,30 +707,187 @@ def _prepare_install_dir(
     return workdir
 
 
+def _ensure_private_directory(path: Path) -> None:
+    """Create/open one directory without following a final symlink and set 0700."""
+
+    try:
+        path.mkdir(mode=0o700, exist_ok=True)
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise RuntimeError(
+            f"could not securely prepare Terraform diagnostics directory {path}: "
+            f"{type(exc).__name__}"
+        ) from exc
+    try:
+        os.fchmod(fd, 0o700)
+    finally:
+        os.close(fd)
+
+
+def _open_private_log(log_path: Path):
+    """Open an append-only 0600 regular file without following a final symlink."""
+
+    _ensure_private_directory(log_path.parent)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    flags = (
+        os.O_WRONLY
+        | os.O_APPEND
+        | os.O_CREAT
+        | os.O_CLOEXEC
+        | os.O_NOFOLLOW
+        | os.O_NONBLOCK
+    )
+    try:
+        parent_fd = os.open(log_path.parent, directory_flags)
+        try:
+            fd = os.open(log_path.name, flags, 0o600, dir_fd=parent_fd)
+        finally:
+            os.close(parent_fd)
+    except OSError as exc:
+        raise RuntimeError(
+            f"could not securely open Terraform diagnostics log {log_path}: "
+            f"{type(exc).__name__}"
+        ) from exc
+    try:
+        target_stat = os.fstat(fd)
+        if not stat.S_ISREG(target_stat.st_mode):
+            raise RuntimeError(
+                f"Terraform diagnostics log target is not a regular file: {log_path}"
+            )
+        if target_stat.st_nlink != 1:
+            raise RuntimeError(
+                f"Terraform diagnostics log target has multiple hard links: {log_path}"
+            )
+        # A pre-existing file may have been created under a permissive umask.
+        os.fchmod(fd, 0o600)
+        return os.fdopen(fd, "a", encoding="utf-8")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _ensure_private_log_parent(log_path: Path, fleet_root: Path) -> None:
+    """Prepare every diagnostics directory below *fleet_root* as 0700."""
+
+    try:
+        relative_parent = log_path.parent.relative_to(fleet_root)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Terraform diagnostics log escapes the fleet run directory: {log_path}"
+        ) from exc
+    _ensure_private_directory(fleet_root)
+    current = fleet_root
+    for part in relative_parent.parts:
+        current /= part
+        _ensure_private_directory(current)
+
+
 def _run_to_log(
     args: list[str], *, cwd: Path, env: dict[str, str], timeout: int, log_path: Path
 ) -> None:
-    """Run *args* streaming combined stdout/stderr to *log_path*; raise on failure.
+    """Run *args*, streaming redacted stdout/stderr to a private log.
 
-    Used in parallel deploys so each cluster's terraform output goes to its own
-    file instead of interleaving on the shared stdout.
+    Terraform credentials remain environment-only. If provider output
+    accidentally prints a token, exact known credential values are redacted
+    before the bytes reach disk. The subprocess remains list-form and human
+    sequential mode continues to use ``_run_stream`` directly.
     """
 
-    with open(log_path, "a", encoding="utf-8") as fh:
+    sensitive_values = sorted(
+        {
+            env[key]
+            for key in (
+                "TF_VAR_iam_token",
+                "NEBIUS_IAM_TOKEN",
+                "NPA_NEBIUS_IAM_TOKEN",
+            )
+            if env.get(key)
+        },
+        key=len,
+        reverse=True,
+    )
+    max_sensitive_length = max((len(value) for value in sensitive_values), default=0)
+    pending = ""
+
+    with _open_private_log(log_path) as fh:
         fh.write(f"\n$ {' '.join(args)}\n")
         fh.flush()
-        proc = subprocess.run(
-            args,
-            cwd=cwd,
-            env=env,
-            stdout=fh,
-            stderr=subprocess.STDOUT,
-            timeout=timeout,
-            check=False,
+        proc = subprocess.Popen(
+            args, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )
-    if proc.returncode != 0:
+        if proc.stdout is None:  # pragma: no cover - guaranteed by stdout=PIPE
+            proc.kill()
+            proc.wait()
+            raise RuntimeError("could not capture Terraform diagnostics")
+
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+
+        def write_redacted(chunk: str, *, final: bool = False) -> None:
+            nonlocal pending
+            pending += chunk
+            if final or max_sensitive_length == 0:
+                cutoff = len(pending)
+            else:
+                # Retain enough trailing characters for a credential split
+                # across OS pipe reads to be recognized on the next read.
+                cutoff = max(0, len(pending) - max_sensitive_length + 1)
+                changed = True
+                while changed:
+                    changed = False
+                    for value in sensitive_values:
+                        start = 0
+                        while True:
+                            index = pending.find(value, start)
+                            if index < 0:
+                                break
+                            if index < cutoff < index + len(value):
+                                cutoff = index
+                                changed = True
+                            start = index + 1
+            prefix, pending = pending[:cutoff], pending[cutoff:]
+            for value in sensitive_values:
+                prefix = prefix.replace(value, "<redacted>")
+            if prefix:
+                fh.write(prefix)
+                fh.flush()
+
+        selector = selectors.DefaultSelector()
+        selector.register(proc.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    proc.kill()
+                    remainder, _ = proc.communicate()
+                    write_redacted(decoder.decode(remainder or b"", final=True), final=True)
+                    raise subprocess.TimeoutExpired(args, timeout)
+                events = selector.select(timeout=min(1.0, remaining))
+                if not events:
+                    continue
+                chunk = os.read(proc.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                write_redacted(decoder.decode(chunk))
+            write_redacted(decoder.decode(b"", final=True), final=True)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                proc.wait()
+                raise subprocess.TimeoutExpired(args, timeout)
+            returncode = proc.wait(timeout=remaining)
+        except BaseException:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
+        finally:
+            selector.close()
+            proc.stdout.close()
+    if returncode != 0:
         raise RuntimeError(
-            f"command failed ({proc.returncode}): {' '.join(args)} (see {log_path})"
+            f"command failed ({returncode}): {' '.join(args)} (see {log_path})"
         )
 
 
@@ -791,6 +952,7 @@ def _prewarm_plugin_cache(
     nebius_bin: str,
     profile: str = "",
     on_status: Callable[[str], None] | None,
+    log_path: Path | None = None,
 ) -> None:
     """Populate a shared terraform plugin cache with a single ``init`` before fan-out.
 
@@ -815,11 +977,12 @@ def _prewarm_plugin_cache(
         on_status=None,
     )
     _log(on_status, f"pre-warming terraform provider cache at {cache_dir}")
-    _run_stream(
+    _tf_run(
         [terraform_bin, "init", "-input=false"],
         cwd=workdir,
         env=_terraform_env(nebius_bin, profile=profile),
         timeout=900,
+        log_path=log_path,
     )
 
 
@@ -1052,6 +1215,7 @@ def deploy_fleet(
     concurrency: int = 1,
     profile: str | None = None,
     preflight: bool = True,
+    stream_terraform: bool = True,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Deploy every ``(project, cluster)`` target in *spec*. Returns fleet metadata.
@@ -1079,6 +1243,10 @@ def deploy_fleet(
     allowances before any apply. mk8s accepts a node group it cannot fill, so
     without this a capacity/quota wall shows up as terraform blocking on
     ``Still creating...`` until the timeout.
+
+    ``stream_terraform`` defaults to the historical human-facing behavior.
+    Machine-readable callers can set it false to keep stdout untouched and
+    retain Terraform diagnostics in restrictive per-cluster logs.
     """
 
     spec.validate()
@@ -1094,7 +1262,8 @@ def deploy_fleet(
 
     work_root = (work_root or _default_work_root()).expanduser()
     fleet_root = work_root / spec.name
-    fleet_root.mkdir(parents=True, exist_ok=True)
+    work_root.mkdir(parents=True, exist_ok=True)
+    _ensure_private_directory(fleet_root)
     recipe_root = _resolve_recipe_root(
         k8s_training_dir, ref=k8s_training_ref, work_root=work_root, on_status=on_status
     )
@@ -1196,6 +1365,11 @@ def deploy_fleet(
 
     parallel = concurrency > 1 and len(targets) > 1
     if parallel:
+        prewarm_log = None
+        if not stream_terraform:
+            diagnostics_root = fleet_root / ".logs"
+            _ensure_private_directory(diagnostics_root)
+            prewarm_log = diagnostics_root / "terraform-prewarm.log"
         _prewarm_plugin_cache(
             recipe_root,
             region=targets[0]["region"],
@@ -1206,15 +1380,15 @@ def deploy_fleet(
             nebius_bin=nebius_bin,
             profile=nebius_profile,
             on_status=on_status,
+            log_path=prewarm_log,
         )
 
     def _run_target(t: dict[str, Any]) -> dict[str, Any]:
         log_path = None
-        if parallel:
+        if parallel or not stream_terraform:
             log_path = (
                 fleet_root / t["project"].key() / t["cluster"].name / "deploy.log"
             )
-            log_path.parent.mkdir(parents=True, exist_ok=True)
         return _deploy_one_cluster(
             spec=spec,
             project=t["project"],
@@ -1320,7 +1494,11 @@ def _deploy_one_cluster(
     install_dir = fleet_root / project_key / cluster.name
     context = _context_name(spec.name, project_key, cluster.name)
     label = f"{project_key}/{cluster.name}"
+    log_metadata = {"terraform_log": str(log_path)} if log_path is not None else {}
     try:
+        _ensure_private_directory(fleet_root)
+        _ensure_private_directory(install_dir.parent)
+        _ensure_private_directory(install_dir)
         workdir = _prepare_install_dir(
             install_dir,
             recipe_root=recipe_root,
@@ -1397,6 +1575,7 @@ def _deploy_one_cluster(
                 "install_dir": str(install_dir),
                 "status": "deployed-credentials-failed",
                 "error": message,
+                **log_metadata,
             }
         _log(on_status, f"[{label}] writing kubeconfig context {context}")
         try:
@@ -1426,6 +1605,7 @@ def _deploy_one_cluster(
                 "install_dir": str(install_dir),
                 "status": "deployed-credentials-failed",
                 "error": message,
+                **log_metadata,
             }
         _write_env_sidecar(
             install_dir, {**sidecar, "cluster_id": cluster_id, "status": "deployed"}
@@ -1441,6 +1621,7 @@ def _deploy_one_cluster(
             "kubeconfig": str(kubeconfig_path) if cluster_id else "",
             "install_dir": str(install_dir),
             "status": "deployed",
+            **log_metadata,
         }
     except Exception as exc:  # noqa: BLE001 - capture per-cluster failure
         _log(on_status, f"[{label}] FAILED: {exc}")
@@ -1452,6 +1633,7 @@ def _deploy_one_cluster(
             "install_dir": str(install_dir),
             "status": "error",
             "error": str(exc),
+            **log_metadata,
         }
 
 
@@ -1545,6 +1727,7 @@ def destroy_fleet(
     timeout_minutes: int = 120,
     concurrency: int = 1,
     profile: str | None = None,
+    stream_terraform: bool = True,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Destroy the fleet's clusters (best-effort, per-target).
@@ -1560,6 +1743,10 @@ def destroy_fleet(
     ``profile`` overrides the spec's ``profile``; when neither is set the profile
     recorded in each cluster's env sidecar at deploy time is used, so a teardown
     authenticates as the same principal that created the cluster.
+
+    ``stream_terraform`` defaults to the historical human-facing behavior.
+    Machine-readable callers can set it false to retain diagnostics under the
+    fleet's private ``.logs`` tree without writing Terraform output to stdout.
     """
 
     spec.validate()
@@ -1568,6 +1755,8 @@ def destroy_fleet(
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
     work_root = (work_root or _default_work_root()).expanduser()
     fleet_root = work_root / spec.name
+    if fleet_root.exists() or fleet_root.is_symlink():
+        _ensure_private_directory(fleet_root)
 
     prefix = project_prefix if project_prefix is not None else spec.project_prefix
     targets: list[tuple[ProjectSpec, ClusterSpec]] = [
@@ -1583,6 +1772,14 @@ def destroy_fleet(
     # two clusters sharing a subnet from both claiming/deleting the same VPC.
     for project, cluster in targets:
         install_dir = fleet_root / project.key() / cluster.name
+        if install_dir.exists() or install_dir.is_symlink():
+            try:
+                _ensure_private_directory(install_dir.parent)
+                _ensure_private_directory(install_dir)
+            except RuntimeError:
+                # _destroy_one_cluster reports the unsafe path as retained
+                # per-cluster recovery state; never inspect through the link.
+                continue
         saved = _load_env_sidecar(install_dir) or {}
         created_network_id = str(saved.get("created_network_id") or "")
         network_state_path = fleet_root / project.key() / _PROJECT_NETWORK_STATE
@@ -1602,10 +1799,16 @@ def destroy_fleet(
     def _run(target: tuple[ProjectSpec, ClusterSpec]) -> dict[str, Any]:
         project, cluster = target
         log_path = None
-        if parallel:
-            log_path = fleet_root / project.key() / cluster.name / "destroy.log"
-            if log_path.parent.exists():
-                log_path.parent.mkdir(parents=True, exist_ok=True)
+        if parallel or not stream_terraform:
+            # Successful destroy removes <install_dir>, so diagnostics live in
+            # a sibling private tree that survives authoritative state cleanup.
+            log_path = (
+                fleet_root
+                / ".logs"
+                / project.key()
+                / cluster.name
+                / "destroy.log"
+            )
         return _destroy_one_cluster(
             spec=spec,
             project=project,
@@ -1655,10 +1858,27 @@ def destroy_fleet(
         if not _project_in_scope(project, only_projects, prefix):
             continue
         project_root = fleet_root / project.key()
-        has_cluster_state = project_root.exists() and any(
-            child.is_dir() and (child / _ENV_SIDECAR).exists()
-            for child in project_root.iterdir()
-        )
+        if project_root.exists() or project_root.is_symlink():
+            try:
+                _ensure_private_directory(project_root)
+                has_cluster_state = any(
+                    child.is_dir() and (child / _ENV_SIDECAR).exists()
+                    for child in project_root.iterdir()
+                )
+            except (OSError, RuntimeError) as exc:
+                network_results.append(
+                    {
+                        "project_key": project.key(),
+                        "status": "destroy-incomplete",
+                        "errors": [
+                            f"could not safely inspect project recovery state: "
+                            f"{type(exc).__name__}"
+                        ],
+                    }
+                )
+                continue
+        else:
+            has_cluster_state = False
         if has_cluster_state:
             continue
         network_state_path = project_root / _PROJECT_NETWORK_STATE
@@ -1735,12 +1955,31 @@ def _destroy_one_cluster(
 ) -> dict[str, Any]:
     install_dir = fleet_root / project.key() / cluster.name
     label = f"{project.key()}/{cluster.name}"
-    if not install_dir.exists():
+    if not install_dir.exists() and not install_dir.is_symlink():
         _log(on_status, f"[{label}] no install dir; skipping")
         return {
             "project_key": project.key(),
             "cluster_name": cluster.name,
             "status": "absent",
+        }
+    retry_command = (
+        "npa fleet destroy --spec <fleet-spec.yaml> "
+        f"--only-projects {project.key()} --only-clusters {cluster.name} --yes"
+    )
+    log_metadata = {"terraform_log": str(log_path)} if log_path is not None else {}
+    try:
+        _ensure_private_directory(fleet_root)
+        _ensure_private_directory(install_dir.parent)
+        _ensure_private_directory(install_dir)
+    except RuntimeError as exc:
+        return {
+            "project_key": project.key(),
+            "cluster_name": cluster.name,
+            "status": "destroy-incomplete",
+            "errors": [str(exc)],
+            "retry_command": retry_command,
+            "install_dir": str(install_dir),
+            **log_metadata,
         }
     saved = _load_env_sidecar(install_dir) or {}
     project_id = str(saved.get("project_id") or "")
@@ -1761,12 +2000,10 @@ def _destroy_one_cluster(
         on_status,
         f"[{label}] terraform destroy" + (f" (-> {log_path})" if log_path else ""),
     )
-    retry_command = (
-        "npa fleet destroy --spec <fleet-spec.yaml> "
-        f"--only-projects {project.key()} --only-clusters {cluster.name} --yes"
-    )
     errors: list[str] = []
     try:
+        if log_path is not None:
+            _ensure_private_log_parent(log_path, fleet_root)
         _tf_run(
             [terraform_bin, "init", "-input=false"],
             cwd=workdir,
@@ -1842,6 +2079,7 @@ def _destroy_one_cluster(
             "errors": errors,
             "retry_command": retry_command,
             "install_dir": str(install_dir),
+            **log_metadata,
         }
 
     # Terraform is the authoritative owner of all recipe resources. Only after
@@ -1859,11 +2097,13 @@ def _destroy_one_cluster(
             "errors": errors,
             "retry_command": retry_command,
             "install_dir": str(install_dir),
+            **log_metadata,
         }
     return {
         "project_key": project.key(),
         "cluster_name": cluster.name,
         "status": "destroyed",
+        **log_metadata,
     }
 
 

@@ -134,7 +134,8 @@ depends on it.
    that validation does it exclude those GPUs from ordinary GPU quota; all
    node, boot-disk, GPU-cluster, Kubernetes, and storage quotas still apply.
 5. **Preflight quotas at the tenant, before anything else.** Each cluster needs,
-   in the target region: `compute.instance.count` (nodes + etcd),
+   in the target region: `compute.instance.count` (worker nodes only; the
+   managed control plane is service-owned),
    `compute.instance.non-gpu.vcpu` for the CPU preset,
    `compute.instance.gpu.<family>` for the GPU preset (on-demand GPU quota is
    frequently **0**), `compute.disk.count`/`compute.disk.size.network-ssd`,
@@ -230,11 +231,14 @@ Both `deploy` and `destroy` confirm before acting (bypass with `--yes`/`-y`;
 - **Parallelism** (`--concurrency N` / `-j N`, default 1 = sequential): applies/
   destroys N clusters at once. Each cluster has isolated terraform state, so there
   is no lock contention; the provider plugin cache is pre-warmed once (a single
-  `init`) to avoid concurrent-init corruption, and each cluster streams to its own
-  `<install_dir>/deploy.log` (or `destroy.log`). Wall-clock drops from `sum` to
-  ~`max` of the applies. Project network resolution remains sequential and
-  single-flight, eliminating duplicate network/subnet creation in a fresh shared
-  project; explicit per-cluster `subnet_id` values are preserved.
+  `init`) to avoid concurrent-init corruption, and each cluster writes restrictive
+  per-cluster diagnostics to `<install_dir>/deploy.log` or the surviving
+  `<fleet_root>/.logs/<project>/<cluster>/destroy.log`. JSON mode uses the same
+  logs even for sequential or one-target runs so stdout remains one JSON document.
+  Wall-clock drops from `sum` to ~`max` of the applies. Project network resolution
+  remains sequential and single-flight, eliminating duplicate network/subnet
+  creation in a fresh shared project; explicit per-cluster `subnet_id` values are
+  preserved.
 - **Stale IAM token**: a stale ambient `NEBIUS_IAM_TOKEN` shadows the profile
   exec-plugin; npa strips it for `nebius`/`terraform` calls unless
   `NPA_REUSE_IAM_TOKEN` is set (CI injecting a short-lived token). This is also
