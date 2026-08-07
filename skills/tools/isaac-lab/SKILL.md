@@ -81,7 +81,10 @@ records checkpoint provenance, `policy_loaded`, per-episode metrics,
 `success_rate`, and `passed`. An S3 output prefix is uploaded on both runtime
 success and failure so failed evaluations remain diagnosable. `passed=false`
 does not turn a completed rollout into a runtime error; automation should gate
-on `passed` (the Sim2Real workflow does this in Stage 11).
+on `passed` (the Sim2Real workflow does this in Stage 11). With
+`--output-format json`, `eval_status`, `policy_loaded`, `success_rate`, and
+`passed` are top-level structured CLI fields; callers do not need to scrape
+the remote log tail.
 
 ## Custom Forks
 

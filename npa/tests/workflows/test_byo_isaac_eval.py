@@ -25,7 +25,7 @@ def test_extract_checkpoint_uri_absent_returns_empty():
 def test_per_env_from_distances_scoring():
     rows = ev.per_env_from_distances([0.0, 0.05, 0.2], success_dist_m=0.05)
     assert rows[0]["success"] is True and rows[0]["score"] == 1.0
-    assert rows[1]["success"] is False  # 0.05 is not < 0.05
+    assert rows[1]["success"] is True  # boundary agrees with eval_runner (<=)
     assert rows[2]["success"] is False and rows[2]["score"] == 0.0
     assert rows[0]["details"]["object_goal_distance_m"] == 0.0
 
@@ -41,7 +41,7 @@ def test_build_isaac_eval_job_manifest_shape():
     )
     c = m["spec"]["template"]["spec"]["containers"][0]
     assert c["image"].endswith("npa-isaac-lab:2.3.2.post1")
-    assert c["imagePullPolicy"] == "IfNotPresent"
+    assert c["imagePullPolicy"] == "Always"
     assert c["resources"]["limits"]["nvidia.com/gpu"] == "1"
     args = c["args"][0]
     assert "Isaac-Lift-Cube-Franka-v0" in args
@@ -72,6 +72,7 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
         captured["renders_s3_prefix"] = kwargs["renders_s3_prefix"]
         captured["min_success_rate"] = kwargs["min_success_rate"]
         captured["success_dist_m"] = kwargs["success_dist_m"]
+        captured["image_pull_policy"] = kwargs["image_pull_policy"]
         return {"kind": "Job"}
 
     monkeypatch.setattr(ev, "build_isaac_eval_job_manifest", fake_build)
@@ -101,6 +102,7 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_EVAL_TAG", "outer-02")
     monkeypatch.setenv("NPA_SIM2REAL_THRESHOLD", "0.75")
+    monkeypatch.setenv("NPA_SIM2REAL_IMAGE_PULL_POLICY", "Never")
 
     rows = ev.run_isaac_eval_job(
         "myrun",
@@ -117,6 +119,7 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
     assert captured["renders_s3_prefix"].endswith("/byo-eval/s2r-byo-isaac-eval-myrun-outer-02/renders")
     assert captured["min_success_rate"] == 0.75
     assert captured["success_dist_m"] == ev.DEFAULT_SUCCESS_DIST_M
+    assert captured["image_pull_policy"] == "Never"
 
 
 def test_wait_for_job_terminal_returns_failed_without_waiting(monkeypatch):
@@ -226,6 +229,21 @@ def test_eval_script_uses_oblique_workspace_camera_for_renders():
     assert 'convention="world"' in script
     assert "width=256" in script and "height=256" in script
     assert "clipping_range=(0.05, 20.0)" in script
+
+
+def test_eval_script_marks_unavailable_reward_null_instead_of_zero() -> None:
+    script = ev.ISAAC_EVAL_SCRIPT
+
+    assert "reward_metric_unavailable" in script
+    assert '"reward": float(reward_sum[i]) if reward_available else None' in script
+    assert "reward batch does not match environment count" in script
+
+
+def test_main_rejects_invalid_threshold_before_launch(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_OUTPUT_JSON", str(tmp_path / "report.json"))
+    monkeypatch.setenv("NPA_SIM2REAL_THRESHOLD", "90")
+
+    assert ev.main() == 2
 
 
 def test_eval_manifest_embeds_custom_object_usd():

@@ -13,6 +13,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import time
 import traceback
 from typing import Any
@@ -21,6 +22,11 @@ from typing import Any
 EVAL_FORMAT = "npa.isaac_lab.eval.v1"
 SUPPORTED_SUCCESS_METRICS = {"auto", "goal-distance", "survival"}
 _LOGGER = logging.getLogger(__name__)
+PORTABLE_CHECKPOINT_NAMES = (
+    "npa_isaac_lab_checkpoint.pt",
+    "model_latest.pt",
+    "model.pt",
+)
 
 
 @dataclass(frozen=True)
@@ -108,17 +114,13 @@ def resolve_checkpoint(path: Path) -> tuple[Path, str]:
     if not path.exists():
         raise FileNotFoundError(f"checkpoint not found: {path}")
     if path.is_dir():
-        candidates = [path / "npa_isaac_lab_checkpoint.pt"]
-        candidates.extend(
-            sorted(
-                path.rglob("model_*.pt"),
-                key=lambda candidate: (candidate.stat().st_mtime, str(candidate)),
-                reverse=True,
-            )
-        )
-        for candidate in candidates:
-            if candidate.is_file():
-                return candidate, "rsl_rl_checkpoint"
+        candidates = [
+            candidate
+            for candidate in path.rglob("*")
+            if candidate.is_file() and candidate.suffix.lower() in {".pt", ".pth"}
+        ]
+        if candidates:
+            return max(candidates, key=checkpoint_preference_key), "rsl_rl_checkpoint"
         raise FileNotFoundError(
             f"checkpoint directory contains no RSL-RL weights: {path}"
         )
@@ -135,15 +137,36 @@ def resolve_checkpoint(path: Path) -> tuple[Path, str]:
             continue
         declared = Path(str(info[key]))
         for candidate in (
-            declared,
-            path.parent / declared.name,
             path.parent / "npa_isaac_lab_checkpoint.pt",
+            path.parent / "model_latest.pt",
+            path.parent / "model.pt",
+            path.parent / declared.name,
+            declared,
         ):
             if candidate.is_file():
                 return candidate, str(info.get("format") or "manifest")
     raise FileNotFoundError(
         f"manifest does not resolve to local RSL-RL weights: {path}"
     )
+
+
+def checkpoint_preference_key(path: Path) -> tuple[int, int, float, str]:
+    """Rank portable/final weights ahead of numbered and arbitrary checkpoints."""
+
+    try:
+        modified = path.stat().st_mtime
+    except OSError:
+        modified = 0.0
+    if path.name in PORTABLE_CHECKPOINT_NAMES:
+        # Earlier entries are the strongest contract names.
+        rank = len(PORTABLE_CHECKPOINT_NAMES) - PORTABLE_CHECKPOINT_NAMES.index(
+            path.name
+        )
+        return 3, rank, modified, str(path)
+    numbered = re.fullmatch(r"model_(\d+)\.(?:pt|pth)", path.name)
+    if numbered:
+        return 2, int(numbered.group(1)), modified, str(path)
+    return 1, 0, modified, str(path)
 
 
 def resolve_success_metric(
@@ -153,6 +176,8 @@ def resolve_success_metric(
 
     if requested != "auto":
         return requested
+    if not episode_results:
+        raise ValueError("episode_results must not be empty")
     if episode_results and all(
         item.get("native_success") is not None for item in episode_results
     ):
@@ -196,8 +221,9 @@ def _as_bool(value: Any, torch: Any) -> bool | None:
         return None
     try:
         return bool(torch.as_tensor(value).any().item())
-    except Exception:
-        return bool(value)
+    except Exception as exc:
+        _LOGGER.debug("native success conversion is unavailable", exc_info=exc)
+        return None
 
 
 def _native_success(info: Any, torch: Any) -> bool | None:
@@ -260,7 +286,8 @@ def _goal_distance(env: Any, torch: Any) -> tuple[float | None, str]:
             float(torch.linalg.norm(end_effector - goal, dim=1).min().item()),
             "ee_pose",
         )
-    except Exception:
+    except Exception as exc:
+        _LOGGER.debug("ee_pose goal distance is unavailable", exc_info=exc)
         return None, ""
 
 
@@ -329,8 +356,15 @@ def write_eval_summary(
         success_distance_m=config.success_distance_m,
         task=config.task,
     )
-    mean_reward = sum(float(item.get("reward", 0.0)) for item in episode_results) / len(
-        episode_results
+    reward_values = [
+        float(item["reward"])
+        for item in episode_results
+        if item.get("reward") is not None
+    ]
+    mean_reward = (
+        sum(reward_values) / len(reward_values)
+        if len(reward_values) == len(episode_results)
+        else None
     )
     distances = [
         float(item["min_goal_distance_m"])

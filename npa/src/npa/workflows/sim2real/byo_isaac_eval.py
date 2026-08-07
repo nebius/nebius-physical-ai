@@ -46,6 +46,21 @@ _ISAAC_EVAL_SUMMARY_URI = ""
 # --------------------------------------------------------------------------- #
 # Pure helpers (unit-tested without a cluster)
 # --------------------------------------------------------------------------- #
+def _success_threshold_from_env() -> float:
+    raw = _env("NPA_SIM2REAL_THRESHOLD", "0.0") or "0.0"
+    try:
+        threshold = float(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"NPA_SIM2REAL_THRESHOLD must be a number in [0, 1], got {raw!r}"
+        ) from exc
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(
+            f"NPA_SIM2REAL_THRESHOLD must be in [0, 1], got {threshold}"
+        )
+    return threshold
+
+
 def extract_checkpoint_uri(inner_evidence: dict[str, Any]) -> str:
     """Pull the trained-policy checkpoint S3 URI from inner-loop evidence.
 
@@ -150,7 +165,7 @@ def per_env_from_distances(
 ) -> list[dict[str, Any]]:
     """Convert per-env final object-to-goal distances into scored per-env rows.
 
-    score = clamp(1 - dist/(2*success_dist), 0, 1); success = dist < threshold.
+    score = clamp(1 - dist/(2*success_dist), 0, 1); success = dist <= threshold.
     A genuine measurement of the trained policy, grounded in the task metric.
     When provided, rows are labelled by the GENERATED env_id/seed they came from.
     """
@@ -166,7 +181,7 @@ def per_env_from_distances(
         rows.append(
             {
                 "env_id": env_id,
-                "success": bool(d < success_dist_m),
+                "success": bool(d <= success_dist_m),
                 "score": round(score, 6),
                 "details": details,
             }
@@ -291,7 +306,8 @@ try:
     try:
         reset_out = env.reset()
         obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
-    except Exception:
+    except Exception as e:
+        print("reset failed; falling back to get_observations:", repr(e), flush=True)
         obs, _ = env.get_observations()
     print("OBS_TYPE", type(obs).__name__, "realN", realN, flush=True)
     N = realN
@@ -421,6 +437,7 @@ try:
     stage = "rollout"
     min_dist = np.full(N, 1e9)
     reward_sum = np.zeros(N, dtype=np.float64)
+    reward_available = True
     for _step in range(STEPS):
         with torch.inference_mode():
             actions = policy(_batched_obs(obs))
@@ -429,10 +446,22 @@ try:
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
         obs, rewards, dones, extras = env.step(actions)
-        try:
-            reward_sum += torch.as_tensor(rewards).detach().cpu().numpy().reshape(-1)[:N]
-        except Exception:
-            pass
+        if reward_available:
+            try:
+                reward_values = (
+                    torch.as_tensor(rewards).detach().cpu().numpy().reshape(-1)
+                )
+                if reward_values.size != N:
+                    raise ValueError(
+                        "reward batch does not match environment count: "
+                        f"rewards={reward_values.size} envs={N}"
+                    )
+                if not np.isfinite(reward_values).all():
+                    raise ValueError("reward batch contains non-finite values")
+                reward_sum += reward_values
+            except Exception as e:
+                reward_available = False
+                print("reward_metric_unavailable", repr(e), flush=True)
         if _step % CAP_EVERY == 0:
             capture(_step)
         # object-to-goal distance: prefer an explicit metric, else infer.
@@ -454,8 +483,9 @@ try:
                 per = torch.linalg.norm(obj - goal, dim=1).detach().cpu().numpy()
                 min_dist = np.minimum(min_dist, per);
                 continue
-        except Exception:
-            pass
+        except Exception as e:
+            if _step == 0:
+                print("object_pose_distance_unavailable", repr(e), flush=True)
         if d is not None:
             min_dist = np.minimum(min_dist, np.full(N, d))
     capture(STEPS)  # final frame
@@ -471,8 +501,12 @@ try:
             "episode": i + 1,
             "env_id": _env_id(i),
             "steps": STEPS,
-            "reward": float(reward_sum[i]),
-            "mean_reward_per_step": float(reward_sum[i]) / max(1, STEPS),
+            "reward": float(reward_sum[i]) if reward_available else None,
+            "mean_reward_per_step": (
+                float(reward_sum[i]) / max(1, STEPS)
+                if reward_available
+                else None
+            ),
             "min_goal_distance_m": distances[i],
             "goal_distance_source": "object_pose",
             "terminated": False,
@@ -505,7 +539,7 @@ except Exception as e:
         stage=stage,
         error=e,
         started=STARTED,
-        resolved_checkpoint=CKPT if stage not in {"runtime_start", "checkpoint_resolution"} else "",
+        resolved_checkpoint=CKPT if Path(CKPT).is_file() else "",
     )
     persist(summary)
     exit_code = 1
@@ -572,7 +606,7 @@ def build_isaac_eval_job_manifest(
     service_account: str,
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
-    image_pull_policy: str = "IfNotPresent",
+    image_pull_policy: str = "Always",
     seed: int = 0,
     object_usd: str = "",
     env_ids_json: str = "[]",
@@ -727,10 +761,9 @@ def build_isaac_eval_job_manifest(
                         {
                             "name": "eval",
                             "image": image,
-                            # Build-tagged Isaac images are immutable for a run.
-                            # Reuse a validated node cache when a short-lived
-                            # registry token expires; fresh nodes still pull via
-                            # the credential refresh above.
+                            # The shared Sim2Real policy honors the operator
+                            # override and image provenance (tag versus digest).
+                            # Train, rollout, and eval all use the same decision.
                             "imagePullPolicy": image_pull_policy,
                             # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
                             # write under the prebuilt workspace; current RTX PRO runtime
@@ -741,6 +774,9 @@ def build_isaac_eval_job_manifest(
                                 "requests": {gpu_resource: "1"},
                             },
                             "envFrom": [
+                                # Isaac bootstrap and artifact I/O do not require
+                                # NGC/HF credentials. Keep customer override tokens
+                                # optional while storage credentials remain required.
                                 {
                                     "secretRef": {
                                         "name": "hf-ngc-tokens",
@@ -864,9 +900,10 @@ def run_isaac_eval_job(
     sa = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
     success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)
-    min_success_rate = float(_env("NPA_SIM2REAL_THRESHOLD", "0.0") or 0.0)
+    min_success_rate = _success_threshold_from_env()
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "5400") or 5400)
     from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+    from npa.workflows.sim2real.engine import _image_pull_policy
 
     eval_tag = artifact_tag(_env("NPA_SIM2REAL_EVAL_TAG"))
     job_name = k8s_job_name("s2r-byo-isaac-eval", run_id, eval_tag)
@@ -922,6 +959,7 @@ def run_isaac_eval_job(
         service_account=sa, gpu_product=gpu_product, seed=seed, object_usd=object_usd,
         env_ids_json=json.dumps([e["env_id"] for e in gen]), renders_s3_prefix=renders_prefix,
         success_dist_m=success_dist, min_success_rate=min_success_rate,
+        image_pull_policy=_image_pull_policy(image),
         robot_spec=robot_spec_dict, robot_usd_uri=robot_usd_uri, task_config=task_config_dict,
     )
     _refresh_registry_pull_secret(image, namespace=namespace)
@@ -1024,6 +1062,11 @@ def main() -> int:
     run_id = _env("NPA_SIM2REAL_RUN_ID") or _env("RUN_ID") or "byo-isaac"
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     num_envs = int(_env("NPA_SIM2REAL_HELDOUT_ENV_COUNT", "4") or 4)
+    try:
+        _success_threshold_from_env()
+    except ValueError as exc:
+        print(f"byo_isaac_eval: {exc}", file=sys.stderr)
+        return 2
     # Heldout renders live next to the report so stage-14 viz finds them.
     _RENDERS_LOCAL_DIR = str(Path(output_json).parent / "renders")
     success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)

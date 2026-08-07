@@ -347,6 +347,7 @@ def build_isaac_rollout_job_manifest(
     service_account: str,
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
+    image_pull_policy: str = "Always",
     object_usd: str = "",
 ) -> dict[str, Any]:
     """Isaac policy-rollout Job: roll the policy, capture frames+actions, upload.
@@ -439,7 +440,7 @@ def build_isaac_rollout_job_manifest(
                         {
                             "name": "rollout",
                             "image": image,
-                            "imagePullPolicy": "Always",
+                            "imagePullPolicy": image_pull_policy,
                             # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
                             # write under the prebuilt workspace; current RTX PRO runtime
                             # requires root for that path. Keep this scoped to BYO Isaac jobs.
@@ -522,6 +523,7 @@ def run_isaac_rollout_job(
 ) -> list[str]:
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
+    from npa.workflows.sim2real.engine import _image_pull_policy
     bucket = _env("NPA_SIM2REAL_BUCKET") or _env("S3_BUCKET") or _env("NPA_SIM2REAL_S3_BUCKET")
     namespace = _env("NPA_SIM2REAL_K8S_NAMESPACE", "default")
     sa = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
@@ -551,6 +553,7 @@ def run_isaac_rollout_job(
         rollout_count=rollout_count, steps_per_rollout=steps_per_rollout,
         checkpoint_uri=checkpoint_uri, out_s3_prefix=out_s3, s3_endpoint=endpoint,
         namespace=namespace, service_account=sa, gpu_product=gpu_product,
+        image_pull_policy=_image_pull_policy(image),
         object_usd=object_usd,
     )
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)

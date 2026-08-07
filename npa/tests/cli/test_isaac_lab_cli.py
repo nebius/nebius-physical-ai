@@ -824,20 +824,13 @@ def test_isaac_lab_eval_builds_remote_command(mocker) -> None:
     assert "NPA_ISAAC_EVAL_CHECKPOINT" in cmd
     assert "/opt/isaac-lab/runs/model.pt" in cmd
     assert "NPA_ISAAC_EVAL_EPISODES" in cmd
-    assert "3" in cmd
     assert "NPA_ISAAC_EVAL_MAX_STEPS" in cmd
-    assert "123" in cmd
     assert "NPA_ISAAC_EVAL_SEED" in cmd
-    assert "99" in cmd
     assert "NPA_ISAAC_EVAL_SUCCESS_METRIC" in cmd
-    assert "survival" in cmd
     assert "NPA_ISAAC_EVAL_MIN_SUCCESS_RATE" in cmd
-    assert "0.75" in cmd
     assert "NPA_ISAAC_EVAL_VIDEO" in cmd
     assert "NPA_ISAAC_EVAL_VIDEO_LENGTH" in cmd
-    assert "120" in cmd
     assert "NPA_ISAAC_EVAL_VIDEO_FPS" in cmd
-    assert "15" in cmd
     assert "/tmp/isaac-eval" in cmd
     assert "npa.isaac_lab.eval.v1" in cmd
     assert "ISAAC_LAB_EVAL_POLICY_LOAD_FAILED" not in cmd
@@ -845,6 +838,37 @@ def test_isaac_lab_eval_builds_remote_command(mocker) -> None:
     assert "ISAAC_LAB_EVAL_EPISODE" in cmd
     assert "ISAAC_LAB_EVAL_COMPLETE" in cmd
     assert "ISAAC_LAB_EVAL_STATUS_VERIFIED" in cmd
+
+
+def test_isaac_lab_eval_script_has_exact_runtime_options() -> None:
+    from npa.cli.isaac_lab import IsaacLabEvalMetric, _build_eval_script
+
+    script = _build_eval_script(
+        "Isaac-Reach-Franka-v0",
+        "/opt/isaac-lab/runs/model.pt",
+        3,
+        "/tmp/isaac-eval",
+        success_metric=IsaacLabEvalMetric.survival,
+        min_success_rate=0.75,
+        max_steps_per_episode=123,
+        seed=99,
+        capture_video=True,
+        video_length=120,
+        video_fps=15,
+    )
+
+    expected = {
+        "NPA_ISAAC_EVAL_EPISODES": "3",
+        "NPA_ISAAC_EVAL_MAX_STEPS": "123",
+        "NPA_ISAAC_EVAL_SEED": "99",
+        "NPA_ISAAC_EVAL_SUCCESS_METRIC": "survival",
+        "NPA_ISAAC_EVAL_MIN_SUCCESS_RATE": "0.75",
+        "NPA_ISAAC_EVAL_VIDEO": "1",
+        "NPA_ISAAC_EVAL_VIDEO_LENGTH": "120",
+        "NPA_ISAAC_EVAL_VIDEO_FPS": "15",
+    }
+    for name, value in expected.items():
+        assert f"os.environ[{name!r}] = {value!r}" in script
 
 
 def test_isaac_lab_eval_inline_script_compiles() -> None:
@@ -880,7 +904,12 @@ def test_isaac_lab_eval_status_check_enforces_summary(
 
     (tmp_path / "npa_isaac_lab_eval_summary.json").write_text(
         json.dumps(
-            {"status": status, "policy_loaded": policy_loaded, "passed": passed}
+            {
+                "status": status,
+                "policy_loaded": policy_loaded,
+                "passed": passed,
+                "success_rate": 0.25,
+            }
         )
     )
 
@@ -892,6 +921,49 @@ def test_isaac_lab_eval_status_check_enforces_summary(
     )
 
     assert completed.returncode == expected_exit
+    from npa.cli.isaac_lab import _extract_eval_verdict
+
+    assert _extract_eval_verdict(completed.stdout) == {
+        "eval_status": status,
+        "passed": passed,
+        "policy_loaded": policy_loaded,
+        "success_rate": 0.25,
+    }
+
+
+def test_isaac_lab_eval_json_includes_structured_verdict(mocker) -> None:
+    ssh = mocker.MagicMock()
+    ssh.run.return_value = (
+        0,
+        'ISAAC_LAB_EVAL_RESULT_JSON {"eval_status":"success",'
+        '"passed":false,"policy_loaded":true,"success_rate":0.25}\n'
+        "ISAAC_LAB_EVAL_STATUS_VERIFIED passed=False success_rate=0.25\n",
+        "",
+    )
+    mocker.patch("npa.cli.isaac_lab.resolve_ssh_config", return_value=_ssh_cfg())
+    mocker.patch("npa.cli.isaac_lab.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "eval",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--checkpoint",
+            "/tmp/model.pt",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["eval_status"] == "success"
+    assert payload["policy_loaded"] is True
+    assert payload["success_rate"] == 0.25
+    assert payload["passed"] is False
 
 
 @pytest.mark.parametrize(
@@ -981,6 +1053,34 @@ def test_isaac_lab_s3_checkpoint_prefers_portable_stable_weights(mocker) -> None
     uploaded_local, uploaded_remote = ssh.upload_file.call_args.args
     assert Path(uploaded_local).name == "npa_isaac_lab_checkpoint.pt"
     assert uploaded_remote == remote
+
+
+def test_isaac_lab_s3_checkpoint_prefers_model_latest_over_numbered(mocker) -> None:
+    from npa.cli import isaac_lab
+
+    ssh = mocker.MagicMock()
+    storage = mocker.MagicMock()
+
+    def download_path(_uri: str, destination: str) -> None:
+        root = Path(destination)
+        root.mkdir(parents=True)
+        (root / "npa_isaac_lab_checkpoint_manifest.json").write_text(
+            json.dumps({"checkpoint_path": "/stale/training/vm/model_500.pt"})
+        )
+        (root / "model_latest.pt").write_bytes(b"latest")
+        (root / "model_500.pt").write_bytes(b"500")
+        (root / "model_1500.pt").write_bytes(b"1500")
+
+    storage.download_path.side_effect = download_path
+    mocker.patch("npa.cli.isaac_lab._storage_client", return_value=storage)
+
+    remote = isaac_lab._prepare_remote_input_path(
+        ssh,
+        _ssh_cfg(),
+        "s3://bucket/isaac-lab/train/",
+    )
+
+    assert remote.endswith("/model_latest.pt")
 
 
 def test_isaac_lab_public_path_options_reject_local_paths(mocker) -> None:

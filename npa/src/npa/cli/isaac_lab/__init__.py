@@ -625,7 +625,12 @@ def _prepare_remote_input_path(ssh: SSHClient, cfg, input_path: str) -> str:
         # a manifest whose paths point at the machine that produced it. Prefer
         # the real weights so an eval on a different VM never resolves a stale
         # absolute path from the manifest.
-        preferred_names = ("npa_isaac_lab_checkpoint.pt", "model.pt")
+        from npa.cli.isaac_lab.eval_runner import (
+            PORTABLE_CHECKPOINT_NAMES,
+            checkpoint_preference_key,
+        )
+
+        preferred_names = PORTABLE_CHECKPOINT_NAMES
         local_checkpoint = next(
             (
                 path
@@ -636,9 +641,17 @@ def _prepare_remote_input_path(ssh: SSHClient, cfg, input_path: str) -> str:
             None,
         )
         if local_checkpoint is None:
-            local_checkpoint = next(
-                (path for path in checkpoint_candidates if path.suffix in {".pt", ".pth"}),
-                checkpoint_candidates[0] if checkpoint_candidates else local_dir,
+            weight_candidates = [
+                path
+                for path in checkpoint_candidates
+                if path.suffix.lower() in {".pt", ".pth"}
+            ]
+            local_checkpoint = (
+                max(weight_candidates, key=checkpoint_preference_key)
+                if weight_candidates
+                else checkpoint_candidates[0]
+                if checkpoint_candidates
+                else local_dir
             )
         if local_checkpoint.is_dir():
             ssh.upload_directory(str(local_checkpoint), remote_dir)
@@ -1182,6 +1195,19 @@ if not summary_path.is_file():
     print(f"ISAAC_LAB_EVAL_STATUS_FAILED missing summary: {{summary_path}}", file=sys.stderr)
     raise SystemExit(1)
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
+print(
+    "ISAAC_LAB_EVAL_RESULT_JSON "
+    + json.dumps(
+        {{
+            "eval_status": summary.get("status"),
+            "policy_loaded": summary.get("policy_loaded"),
+            "success_rate": summary.get("success_rate"),
+            "passed": summary.get("passed"),
+        }},
+        sort_keys=True,
+    ),
+    flush=True,
+)
 if summary.get("status") != "success" or summary.get("policy_loaded") is not True:
     print(
         "ISAAC_LAB_EVAL_STATUS_FAILED "
@@ -1196,6 +1222,21 @@ print(
 )
 PYEVALSTATUS
 """
+
+
+def _extract_eval_verdict(stdout: str) -> dict[str, Any]:
+    """Extract the structured evaluator verdict emitted by the status check."""
+
+    prefix = "ISAAC_LAB_EVAL_RESULT_JSON "
+    for line in reversed(stdout.splitlines()):
+        if not line.startswith(prefix):
+            continue
+        try:
+            verdict = json.loads(line[len(prefix) :])
+        except json.JSONDecodeError:
+            return {}
+        return verdict if isinstance(verdict, dict) else {}
+    return {}
 
 
 def _build_export_lerobot_script(
@@ -2991,6 +3032,10 @@ def eval_cmd(
         "output_dir": remote_output_dir,
         "duration_seconds": round(time.time() - start, 1),
     }
+    verdict = _extract_eval_verdict(stdout)
+    for field in ("eval_status", "policy_loaded", "success_rate", "passed"):
+        if field in verdict:
+            result[field] = verdict[field]
     if output_is_s3:
         # The inline evaluator writes a structured failure summary before
         # exiting, so upload the run directory on both success and failure.

@@ -90,6 +90,7 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert m["kind"] == "Job"
     c = m["spec"]["template"]["spec"]["containers"][0]
     assert c["image"] == "reg/npa-isaac-lab:2.3.2.post1"
+    assert c["imagePullPolicy"] == "Always"
     script = c["args"][0]
     # downloads the checkpoint, applies the custom object, runs the rollout script.
     assert "DOWNLOADED_CKPT" in script
@@ -131,6 +132,7 @@ def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monke
     def fake_build(**kwargs):
         captured["job_name"] = kwargs["job_name"]
         captured["out_s3_prefix"] = kwargs["out_s3_prefix"]
+        captured["image_pull_policy"] = kwargs["image_pull_policy"]
         return {"kind": "Job"}
 
     monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3())
@@ -140,6 +142,7 @@ def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monke
     monkeypatch.setattr(pr, "materialize_rollout_dirs", lambda *a, **k: [])
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
+    monkeypatch.setenv("NPA_SIM2REAL_IMAGE_PULL_POLICY", "Never")
 
     pr.run_isaac_rollout_job(
         tmp_path / "actions" / "train" / "outer-02" / "iter-01",
@@ -150,3 +153,4 @@ def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monke
 
     assert captured["job_name"].endswith("outer-02-iter-01")
     assert captured["out_s3_prefix"].endswith("/byo-rollouts/outer-02-iter-01")
+    assert captured["image_pull_policy"] == "Never"

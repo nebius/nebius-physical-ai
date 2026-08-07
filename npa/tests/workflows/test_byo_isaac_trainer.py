@@ -98,6 +98,7 @@ def test_build_isaac_job_manifest_shape():
     spec = manifest["spec"]["template"]["spec"]
     container = spec["containers"][0]
     assert container["image"] == "reg/npa-isaac-lab:2.3.2.post1"
+    assert container["imagePullPolicy"] == "Always"
     assert container["resources"]["limits"]["nvidia.com/gpu"] == "1"
     assert spec["nodeSelector"]["nvidia.com/gpu.product"].startswith("NVIDIA-RTX-PRO")
     args = container["args"][0]
@@ -397,6 +398,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     def fake_build(*args, **kwargs):
         captured["s3_output_uri"] = kwargs["s3_output_uri"]
         captured["resume_uri"] = kwargs.get("resume_uri", "")
+        captured["image_pull_policy"] = kwargs["image_pull_policy"]
         return {"manifest": True}
 
     class _Proc:
@@ -412,6 +414,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_TRAINER_TAG", "outer-02-iter-01")
     monkeypatch.setenv("NPA_SIM2REAL_RESUME_CHECKPOINT_URI", "s3://bkt/prior/model_latest.pt")
+    monkeypatch.setenv("NPA_SIM2REAL_IMAGE_PULL_POLICY", "Never")
     monkeypatch.delenv("NPA_BYO_ISAAC_PHYSICS", raising=False)
 
     result = byo.run_isaac_training_job("myrun", signal_json="ignored")
@@ -420,5 +423,6 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     assert "byo-trainer" in captured["s3_output_uri"]
     # resume uri threaded through to the manifest builder
     assert captured["resume_uri"] == "s3://bkt/prior/model_latest.pt"
+    assert captured["image_pull_policy"] == "Never"
     # returned checkpoint points at the tagged path
     assert result["checkpoint_path"].endswith("/outer-02-iter-01/model_latest.pt")
