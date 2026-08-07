@@ -552,6 +552,44 @@ def test_timeout_cancels_the_managed_job(tmp_path: Path) -> None:
     assert cancels and cancels[0]["job_id"]
 
 
+def test_timeout_without_cancel_preserves_the_in_flight_job(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    cancels: list[dict[str, Any]] = []
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=2, cancel_on_timeout=False)
+    executor = _executor(
+        spec,
+        status_fn=FakeStatus(["RUNNING"] * 20),
+        options=options,
+        cancels=cancels,
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-timeout-preserve", executor=executor, options=options
+    )
+
+    assert report.status == "failed"
+    assert "did not reach a terminal status" in report.error
+    assert not cancels
+    assert report.waves[0]["status"] == "running"
+    assert report.waves[0]["sky_status"] == "SUBMITTED"
+
+
+def test_zero_max_wait_is_unbounded(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=0)
+    executor = _executor(
+        spec,
+        status_fn=FakeStatus(["PENDING", "RUNNING", "SUCCEEDED"] * 3),
+        options=options,
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-unbounded-wait", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+
+
 def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     store = MemoryStore()
