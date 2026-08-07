@@ -57,12 +57,35 @@ def _transactional_cluster_up(function):
         bound.apply_defaults()
         tf_dir = _resolve_terraform_dir(bound.arguments.get("terraform_dir"))
         tfvars = _read_tfvars(tf_dir)
+        from npa.provisioning_preflight import current_resolved_plan
+
+        inherited_plan = current_resolved_plan()
         context_arg = str(bound.arguments.get("context_name") or "").strip()
-        context = context_arg or str(tfvars.get("cluster_name") or "npa-cluster")
-        project = str(bound.arguments.get("project") or "").strip()
-        project_id = str(tfvars.get("parent_id") or "")
-        tenant_id = str(tfvars.get("tenant_id") or "")
-        region = str(tfvars.get("region") or "")
+        context = context_arg or str(
+            (inherited_plan.topology.cluster_name if inherited_plan else "")
+            or tfvars.get("cluster_name")
+            or "npa-cluster"
+        )
+        project = str(
+            (inherited_plan.project_alias if inherited_plan else "")
+            or bound.arguments.get("project")
+            or ""
+        ).strip()
+        project_id = str(
+            (inherited_plan.project_id if inherited_plan else "")
+            or tfvars.get("parent_id")
+            or ""
+        )
+        tenant_id = str(
+            (inherited_plan.tenant_id if inherited_plan else "")
+            or tfvars.get("tenant_id")
+            or ""
+        )
+        region = str(
+            (inherited_plan.region if inherited_plan else "")
+            or tfvars.get("region")
+            or ""
+        )
         if not project_id:
             from npa.clients.config import resolve_environment
 
@@ -294,6 +317,19 @@ def up_cmd(
     kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
     _preflight_provider_lock(tf_dir)
     tfvars = _read_tfvars(tf_dir)
+    from npa.provisioning_preflight import current_resolved_plan
+
+    inherited_plan = current_resolved_plan()
+    if inherited_plan is not None:
+        topology = _apply_inherited_plan_tfvars(tfvars, inherited_plan)
+        project = inherited_plan.project_alias
+        gpu_nodes = topology.gpu_nodes
+        cpu_nodes = topology.cpu_nodes
+        cpu_platform = topology.cpu_platform
+        cpu_preset = topology.cpu_preset
+        gpu_platform = topology.gpu_platform
+        gpu_preset = topology.gpu_preset
+        preemptible = topology.gpu_preemptible
     # First-class node-count flags: a runbook can pick "agent XOR 2-GPU cluster"
     # under a tight compute.instance.count without editing tfvars or exporting
     # TF_VAR_*. -1 means "leave the configured value alone".
@@ -320,7 +356,9 @@ def up_cmd(
         _preflight_terraform_version(terraform_bin)
         _apply_project_tf_vars(env, project, tfvars)
         _guard_tfvars_iam_token(tf_dir, tfvars)
-        _preflight_whole_path_capacity(tfvars, env, context=context)
+        _preflight_whole_path_capacity(
+            tfvars, env, context=context, project_alias=project
+        )
         _terraform_init(terraform_bin, tf_dir, env)
         _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
         _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
@@ -335,6 +373,9 @@ def up_cmd(
             # explicitly so `--capacity-block-group` is not silently dropped by a
             # `capacity_block_group = ""` line in a checked-in tfvars file.
             *_capacity_block_group_var_args(capacity_block_group),
+            *_string_var_args(
+                "cluster_name", str(tfvars.get("cluster_name") or "npa-cluster")
+            ),
             *_node_count_var_args(tfvars, "gpu_nodes_count", gpu_nodes),
             *_node_count_var_args(tfvars, "cpu_nodes_count", cpu_nodes),
             *_string_var_args("cpu_nodes_platform", cpu_platform),
@@ -1754,6 +1795,28 @@ def _apply_node_count_override(tfvars: dict[str, Any], key: str, value: int) -> 
         tfvars[key] = int(value)
 
 
+def _apply_inherited_plan_tfvars(tfvars: dict[str, Any], plan: Any) -> Any:
+    """Make a previously resolved plan authoritative over env and checked tfvars."""
+
+    topology = plan.topology
+    tfvars.update(
+        {
+            "cluster_name": topology.cluster_name,
+            "parent_id": plan.project_id,
+            "tenant_id": plan.tenant_id,
+            "region": plan.region,
+            "gpu_nodes_count": topology.gpu_nodes,
+            "cpu_nodes_count": topology.cpu_nodes,
+            "cpu_nodes_platform": topology.cpu_platform,
+            "cpu_nodes_preset": topology.cpu_preset,
+            "gpu_nodes_platform": topology.gpu_platform,
+            "gpu_nodes_preset": topology.gpu_preset,
+            "gpu_nodes_preemptible": topology.gpu_preemptible,
+        }
+    )
+    return topology
+
+
 def _node_count_var_args(tfvars: dict[str, Any], key: str, value: int) -> list[str]:
     """Return ``-var key=N`` when the flag was given, so it beats a tfvars line."""
     if value is not None and value >= 0:
@@ -1819,15 +1882,39 @@ def _preflight_instance_count_quota(
 
 
 def _preflight_whole_path_capacity(
-    tfvars: dict[str, Any], env: dict[str, str], *, context: str
+    tfvars: dict[str, Any],
+    env: dict[str, str],
+    *,
+    context: str,
+    project_alias: str = "",
 ) -> None:
     """Gate direct Terraform apply with the same immutable cumulative model."""
 
     from npa.provisioning_preflight import (
         build_whole_path_plan,
+        current_resolved_plan,
         discover_existing_capacity,
         resolve_topology,
     )
+
+    inherited_plan = current_resolved_plan()
+    if inherited_plan is not None:
+        operation = current_operation()
+        if operation is not None:
+            operation.record_preflight_plan(inherited_plan.to_dict())
+        try:
+            inherited_plan.assert_mutation_ready()
+        except Exception as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        topology = inherited_plan.topology
+        typer.echo(
+            "Whole-path preflight ready: "
+            f"cpu={topology.cpu_nodes}x{topology.cpu_platform}/{topology.cpu_preset}, "
+            f"gpu={topology.gpu_nodes}x{topology.gpu_platform}/{topology.gpu_preset}, "
+            f"preemptible={str(topology.gpu_preemptible).lower()}, "
+            f"new instances={topology.required_instances}, disks={topology.required_disks}."
+        )
+        return
 
     gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 1) or 0)
     cpu_nodes = int(_tfvar_value(tfvars, env, "cpu_nodes_count", 1) or 0)
@@ -1889,7 +1976,7 @@ def _preflight_whole_path_capacity(
         public_node_ips=requested.public_node_ips,
     )
     plan = build_whole_path_plan(
-        project_alias="",
+        project_alias=project_alias,
         project_id=str(_tfvar_value(tfvars, env, "parent_id", "") or ""),
         tenant_id=str(_tfvar_value(tfvars, env, "tenant_id", "") or ""),
         region=str(_tfvar_value(tfvars, env, "region", "") or ""),

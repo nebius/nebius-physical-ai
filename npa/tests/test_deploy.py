@@ -211,6 +211,27 @@ def test_agent_destroy_hides_deprecated_gpu_aliases_from_human_terraform_output(
     )
 
 
+def test_agent_apply_compacts_terraform_local_exec_script_body() -> None:
+    visible, suppressing = provisioner._compact_local_exec_error_line(
+        "Error running command 'set -euo pipefail\n", suppressing_body=False
+    )
+    assert visible == ""
+    assert suppressing is True
+
+    visible, suppressing = provisioner._compact_local_exec_error_line(
+        "echo thousands-of-bytes-of-provisioner\n", suppressing_body=suppressing
+    )
+    assert visible == ""
+    visible, suppressing = provisioner._compact_local_exec_error_line(
+        "': exit status 1. Output: ERROR: SSH never authenticated\n",
+        suppressing_body=suppressing,
+    )
+    assert suppressing is False
+    assert "thousands-of-bytes" not in visible
+    assert "exit status 1" in visible
+    assert "SSH never authenticated" in visible
+
+
 def test_cloud_init_mounts_cosmos_data_disk() -> None:
     template = (PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
 

@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.deploy import (
     DeployTarget,
+    bind_deploy_targets_to_submit,
     ensure_infra_present,
     plan_infra_present,
     parse_deploy_targets,
@@ -79,6 +80,28 @@ def test_parse_targets_false_and_absent_are_ignored() -> None:
         }
     )
     assert parse_deploy_targets(spec) == []
+
+
+def test_explicit_submit_identity_binds_kubernetes_deploy_targets() -> None:
+    targets = [
+        DeployTarget(
+            profile="gpu", cluster_name="yaml-cluster", project="yaml-project"
+        ),
+        DeployTarget(
+            profile="vm", cluster_name="yaml-vm", project="yaml-project", cloud="nebius"
+        ),
+    ]
+
+    bound = bind_deploy_targets_to_submit(
+        targets, project="submit-project", infra="k8s/submit-context"
+    )
+
+    assert bound[0].project == "submit-project"
+    assert bound[0].cluster_name == "submit-context"
+    assert bound[0].context == "submit-context"
+    assert bound[1].project == "submit-project"
+    assert bound[1].cluster_name == "yaml-vm"
+    assert bound[1].context == ""
 
 
 def test_ensure_infra_present_dedupes_by_context_and_returns_records() -> None:

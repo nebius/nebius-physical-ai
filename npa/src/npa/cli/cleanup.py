@@ -1086,6 +1086,18 @@ def cleanup_cmd(
     sky_operational_state_present = any(
         item.label in {"SkyPilot venv", "SkyPilot state (~/.sky)"} for item in residue
     )
+    project_submission_audit = None
+    if project:
+        from npa.orchestration.npa_workflow.submission_state import (
+            audit_project_submissions,
+        )
+
+        project_submission_audit = audit_project_submissions(project)
+    project_audit_skip = bool(
+        project_submission_audit
+        and project_submission_audit.outcome == "not_submitted"
+        and (not yes or not include_sky)
+    )
     attestation_safe = False
     if attest_no_active_jobs:
         if not skip_jobs or not project or not receipt_project_id:
@@ -1108,6 +1120,10 @@ def cleanup_cmd(
         job_ids: list[str] = []
         job_note = ""
         job_queue_state = "SKIPPED_BY_OPERATOR"
+    elif project_audit_skip:
+        job_ids = []
+        job_note = ""
+        job_queue_state = "PROJECT_NOT_SUBMITTED"
     else:
         job_audit = _nonterminal_jobs(sky_bin)
         # Keep compatibility with extensions/tests that wrapped the historical
@@ -1145,6 +1161,9 @@ def cleanup_cmd(
             phase="workflow_audit",
             resource="all-managed-jobs",
             terminal_state=(
+                "not_submitted"
+                if job_queue_state == "PROJECT_NOT_SUBMITTED"
+                else
                 "verified_absent"
                 if not job_ids and not job_note
                 and not skip_jobs

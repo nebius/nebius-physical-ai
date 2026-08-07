@@ -194,6 +194,16 @@ PROJECT="$NPA_PROJECT_ALIAS"
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
 REGISTRY="$NPA_REGISTRY"
 npa workbench health preflight
+# Run every deterministic, read-only gate before provisioning storage/GPU
+# resources or allowing submit to stage the repository source.
+npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
+npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
+  --cpu-nodes 1 --cpu-platform cpu-d3 --cpu-preset 8vcpu-32gb \
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
+  --gpu-preset 1gpu-24vcpu-218gb --on-demand \
+  --accelerator RTXPRO6000:1 --dry-run --output-format json
+npa destroy --project "$PROJECT" --all --json
+
 npa provision-if-absent --project "$PROJECT" --skip-k8s
 eval "$(npa configure --show --env)"
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
@@ -210,7 +220,6 @@ npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
   --gpu-preset 1gpu-24vcpu-218gb --on-demand \
   --accelerator RTXPRO6000:1 --gpu-readiness-timeout 900
-npa workbench workflow preflight-images "$SPEC" --registry "$REGISTRY"
 
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --registry "$REGISTRY" \
@@ -239,6 +248,11 @@ durable Terraform state, and prints one deterministic resume command. Source
 staging and submission are content-addressed/idempotent for the explicit
 `RUN_ID`. A stale or ambiguous run is never selected silently: resume it with
 `--resume-run "$RUN_ID"`, or use `prepare-run` to create a distinct run.
+The image check, immutable whole-path topology/quota plan, and exact project
+teardown plan are intentionally read before any explicit provisioning in this
+sequence. Submit repeats its deterministic checks before input/source staging,
+so a missing image or identity mismatch cannot upload the 1,225-file source tree
+or start a paid cluster first.
 
 The browser agent can be deployed independently after the core submit. Its
 failure does not cancel or block PAIDF:

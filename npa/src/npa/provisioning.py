@@ -205,7 +205,7 @@ def _transactional_provision(function):
                 _rollback_owned_cluster(
                     operation,
                     project_alias=alias,
-                    context=cluster_name,
+                    context=context,
                     terraform_dir=bound.arguments.get("terraform_dir"),
                     kubeconfig=bound.arguments.get("kubeconfig"),
                     timeout=int(bound.arguments.get("timeout") or 120),
@@ -226,7 +226,7 @@ def _transactional_provision(function):
                 rolled_back = _rollback_owned_cluster(
                     operation,
                     project_alias=alias,
-                    context=cluster_name,
+                    context=context,
                     terraform_dir=bound.arguments.get("terraform_dir"),
                     kubeconfig=bound.arguments.get("kubeconfig"),
                     timeout=int(bound.arguments.get("timeout") or 120),
@@ -428,7 +428,11 @@ def provision_if_absent(
             + (f" ({shape})" if shape else "")
         )
     else:
-        with _runtime_env(alias, environment, storage, registry):
+        from npa.provisioning_preflight import resolved_plan_context
+
+        with _runtime_env(alias, environment, storage, registry), resolved_plan_context(
+            plan
+        ):
             from npa.cli.cluster.terraform_lifecycle import up_cmd
 
             # Every parameter is passed explicitly: `up_cmd` is a Typer command,

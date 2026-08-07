@@ -1646,6 +1646,23 @@ def test_agent_status_json(monkeypatch) -> None:
     assert payload["cameras_api_url"].endswith("/assets/api/sim-assets/cameras")
 
 
+def test_agent_status_not_found_json_is_nonzero(monkeypatch) -> None:
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda _project, _name: {})
+    monkeypatch.setattr(
+        "npa.agent_status.partial_agent_status",
+        lambda project, name: {
+            "project": project,
+            "name": name,
+            "classification": "NOT_FOUND",
+        },
+    )
+
+    result = runner.invoke(app, ["status", "--project", "demo", "--json"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.output)["classification"] == "NOT_FOUND"
+
+
 def test_verify_live_accepts_non_us_central1_region(monkeypatch) -> None:
     """Route C deploys with --region eu-north1; verify-live must not hard-fail
     non-us-central1 regions (regression for the README Route C failure)."""
@@ -3816,6 +3833,7 @@ def test_destroy_terraform_orphan_sweep_runs_after_tf_destroy(
             "nebius_region": "eu-north1",
             "instance_name": f"agent-{p}-{n}",
             "nebius_project_id": "project-x",
+            "s3_session_token": "backend-only-session",
         },
     )
     monkeypatch.setattr(
@@ -3963,6 +3981,7 @@ def test_agent_destroy_recovers_default_sg_by_deleting_owned_parent_network(
     agent_module._destroy_agent_terraform("prod", "agent", record={"instance_id": "i"})
 
     assert len(destroys) == 2
+    assert all("s3_session_token" not in call["tf_vars"] for call in destroys)
     network_delete.assert_called_once_with(
         ["vpc", "network", "delete", "--id", "vpcnetwork-owned"]
     )

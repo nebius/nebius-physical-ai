@@ -132,7 +132,7 @@ DEFAULT_LLM_MODELS = (
 AGENT_UI_VERSION = "2026073001"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
-_AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
+_AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix", "s3_session_token"})
 
 
 class AgentStorageCredentialError(RuntimeError):
@@ -9319,6 +9319,8 @@ def status_cmd(
         else:
             for key, value in payload.items():
                 typer.echo(f"{key}: {value}")
+        if payload.get("classification") == "NOT_FOUND":
+            raise typer.Exit(code=1)
         return
     try:
         auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))

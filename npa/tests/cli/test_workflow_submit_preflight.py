@@ -786,13 +786,25 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
     monkeypatch.setenv("KUBECONFIG", str(_write_kubeconfig(tmp_path, "other-ctx")))
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
     _mock_sky_bin_ok(monkeypatch)
+    planned_targets = []
+    provisioned_targets = []
+
+    def plan(targets, *, mutation):
+        assert mutation is True
+        planned_targets.extend(targets)
+        return {"submit-context": mocker.Mock()}
+
+    def ensure(targets, **_kwargs):
+        provisioned_targets.extend(targets)
+        return []
+
     ensure_infra_present = mocker.patch(
         "npa.orchestration.npa_workflow.deploy.ensure_infra_present",
-        return_value=[],
+        side_effect=ensure,
     )
     mocker.patch(
         "npa.orchestration.npa_workflow.deploy.plan_infra_present",
-        return_value={"npa-cluster": mocker.Mock()},
+        side_effect=plan,
     )
     # Registry pull semantics are covered independently; this test reaches the
     # deploy-if-absent delegation path.
@@ -811,8 +823,10 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
             str(HARDENING_SPEC),
             "--run-id",
             "self-provision-demo",
+            "--project",
+            "submit-project",
             "--infra",
-            "k8s/npa-cluster",
+            "k8s/submit-context",
             "--var",
             "bucket=real-bucket",
         ],
@@ -820,3 +834,8 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
 
     assert "kube context" not in result.output
     assert ensure_infra_present.called
+    assert planned_targets == provisioned_targets
+    assert planned_targets
+    assert all(target.project == "submit-project" for target in planned_targets)
+    assert all(target.cluster_name == "submit-context" for target in planned_targets)
+    assert all(target.context == "submit-context" for target in planned_targets)

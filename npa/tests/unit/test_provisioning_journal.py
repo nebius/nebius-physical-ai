@@ -108,6 +108,33 @@ def test_journal_is_private_atomic_secret_free_and_identity_guarded(
         )
 
 
+def test_immutable_plan_conflict_names_sanitized_nested_fields(
+    journal_root: Path,
+) -> None:
+    operation = _prepare()
+    original = {
+        "project_alias": "prod",
+        "project_id": "project-a",
+        "tenant_id": "tenant-a",
+        "region": "eu-north1",
+        "topology": {"cluster_name": "a", "gpu_nodes": 1},
+    }
+    operation.record_preflight_plan(original)
+
+    changed = {**original, "topology": {"cluster_name": "b", "gpu_nodes": 2}}
+    with pytest.raises(OperationIdentityError) as caught:
+        operation.record_preflight_plan(changed)
+
+    message = str(caught.value)
+    assert "topology.cluster_name" in message
+    assert "topology.gpu_nodes" in message
+
+    with pytest.raises(OperationJournalError, match="secret-bearing preflight plan"):
+        operation.record_preflight_plan(
+            {**original, "topology": {"api_token": "must-not-persist"}}
+        )
+
+
 def test_authoritative_region_can_be_corrected_only_before_resource_creation(
     journal_root: Path,
 ) -> None:

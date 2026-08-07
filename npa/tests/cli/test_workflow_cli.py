@@ -1590,6 +1590,47 @@ def test_ordinary_workflow_missing_manifest_remains_an_error(monkeypatch) -> Non
     assert payload["verification"] == "conclusively_absent"
 
 
+def test_verified_never_submitted_status_touches_no_s3_or_skypilot(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    update_submission_state("demo", "reserved-run", {"launch_state": "reserved"})
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("never-submitted proof must return before external lookup")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.resolve_workflow_s3_config",
+        forbidden,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", forbidden
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._resolve_sky_bin", forbidden
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            "reserved-run",
+            "--project",
+            "demo",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 4, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "NOT_SUBMITTED"
+    assert payload["verification_status"] == "VERIFIED"
+
+
 def test_paidf_partial_prefix_preserves_exact_workflow_s3_uri(monkeypatch) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)

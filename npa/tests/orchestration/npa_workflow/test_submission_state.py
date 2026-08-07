@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from npa.orchestration.npa_workflow.submission_state import (
+    audit_project_submissions,
     inspect_submission_state,
     load_submission_state,
     submission_lock,
@@ -75,3 +76,35 @@ def test_inspection_distinguishes_absent_and_corrupt_receipts(
     inspected = inspect_submission_state("demo", "run-1")
     assert inspected.outcome == "unavailable"
     assert "invalid receipt JSON" in inspected.error
+
+
+def test_project_audit_requires_every_exact_ledger_to_prove_no_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert audit_project_submissions("demo").outcome == "absent"
+
+    update_submission_state("demo", "reserved", {"launch_state": "reserved"})
+    audit = audit_project_submissions("demo")
+    assert audit.outcome == "not_submitted"
+    assert audit.ledger_count == 1
+
+    update_submission_state("demo", "launched", {"launch": {"status": "launching"}})
+    assert audit_project_submissions("demo").outcome == "launch_evidence"
+
+
+def test_project_audit_rejects_symlinks_and_unavailable_ledgers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    update_submission_state("demo", "reserved", {"launch_state": "reserved"})
+    foreign = submission_state_path("other", "foreign")
+    foreign.parent.mkdir(parents=True)
+    foreign.write_text("{}", encoding="utf-8")
+    link = submission_state_path("demo", "linked")
+    link.symlink_to(foreign)
+    assert audit_project_submissions("demo").outcome == "unavailable"
+
+    link.unlink()
+    submission_state_path("demo", "corrupt").write_text("not-json", encoding="utf-8")
+    assert audit_project_submissions("demo").outcome == "unavailable"

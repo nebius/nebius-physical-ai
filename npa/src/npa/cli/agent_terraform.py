@@ -607,6 +607,11 @@ def _destroy_agent_terraform(
         )
     else:
         tf_vars = agent_module._resolve_destroy_tf_vars(project, name, recovery_record)
+    tf_vars = {
+        key: value
+        for key, value in tf_vars.items()
+        if key not in agent_module._AGENT_TERRAFORM_RUNTIME_ONLY_VARS
+    }
     region = tf_vars["nebius_region"]
     instance_id = str((record or {}).get("instance_id", "")).strip()
     instance_name = tf_vars["instance_name"]

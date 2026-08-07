@@ -78,6 +78,45 @@ def test_cleanup_yes_removes_only_local_caches(monkeypatch: pytest.MonkeyPatch, 
     assert not sky.exists()
 
 
+def test_exact_never_submitted_project_cleanup_with_keep_sky_skips_default_queue(
+    monkeypatch: pytest.MonkeyPatch, npa_home: Path
+) -> None:
+    from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+    update_submission_state("demo", "reserved", {"launch_state": "reserved"})
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_nonterminal_jobs",
+        lambda _sky: (_ for _ in ()).throw(
+            AssertionError("exact safe shortcut must not touch default SkyPilot state")
+        ),
+    )
+
+    result = runner.invoke(app, ["cleanup", "--project", "demo", "--keep-sky"])
+
+    assert result.exit_code == 0, result.output
+
+
+def test_destructive_global_sky_cleanup_still_verifies_queue(
+    monkeypatch: pytest.MonkeyPatch, npa_home: Path
+) -> None:
+    from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+    update_submission_state("demo", "reserved", {"launch_state": "reserved"})
+    (npa_home / ".sky").mkdir()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_nonterminal_jobs",
+        lambda sky: calls.append(sky) or ([], "", "verified_empty"),
+    )
+
+    result = runner.invoke(app, ["cleanup", "--project", "demo", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [""]
+
+
 def test_cleanup_keep_sky_leaves_skypilot_state(monkeypatch: pytest.MonkeyPatch, npa_home: Path) -> None:
     venv = npa_home / ".npa" / "skypilot-venv"
     venv.mkdir()
@@ -673,6 +712,122 @@ def test_node_flags_reach_the_cluster_up_call(monkeypatch: pytest.MonkeyPatch) -
     # Every Typer parameter must be passed explicitly, or omitted ones arrive as
     # OptionInfo sentinels and reach the Terraform overrides as objects.
     assert expected_params <= set(seen)
+
+
+def test_nested_cluster_preflight_inherits_exact_outer_plan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa import provisioning
+    from npa.provisioning_preflight import (
+        WholePathPreflightPlan,
+        current_resolved_plan,
+        resolve_topology,
+    )
+
+    plan = WholePathPreflightPlan(
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="region-a",
+        topology=resolve_topology(cluster_name="provider-cluster", gpu_nodes=2),
+        decision="ready",
+    )
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(provisioning, "_build_provision_plan", lambda **_kwargs: plan)
+    monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        provisioning,
+        "_resolve_project_runtime",
+        lambda _project: (
+            "demo",
+            type("E", (), {"project_id": "project-a", "tenant_id": "tenant-a", "region": "region-a"})(),
+            type(
+                "S",
+                (),
+                {
+                    "checkpoint_bucket": "bucket",
+                    "endpoint_url": "",
+                    "aws_access_key_id": "",
+                    "aws_secret_access_key": "",
+                },
+            )(),
+            "registry",
+        ),
+    )
+    seen: list[object] = []
+
+    def fake_up(**_kwargs):
+        seen.append(current_resolved_plan())
+
+    monkeypatch.setattr("npa.cli.cluster.terraform_lifecycle.up_cmd", fake_up)
+    result = provisioning.provision_if_absent(
+        project="demo",
+        cluster_name="provider-cluster",
+        context_name="explicit-context",
+        skip_s3=True,
+    )
+
+    assert seen == [plan]
+    assert current_resolved_plan() is None
+    assert result.preflight == plan.to_dict()
+
+
+def test_provisioning_rollback_uses_explicit_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa import provisioning
+    from npa.provisioning_preflight import WholePathPreflightPlan, resolve_topology
+
+    plan = WholePathPreflightPlan(
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="region-a",
+        topology=resolve_topology(cluster_name="provider-cluster"),
+        decision="ready",
+    )
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(provisioning, "_build_provision_plan", lambda **_kwargs: plan)
+    monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        provisioning,
+        "_resolve_project_runtime",
+        lambda _project: (
+            "demo",
+            type("E", (), {"project_id": "project-a", "tenant_id": "tenant-a", "region": "region-a"})(),
+            type(
+                "S",
+                (),
+                {
+                    "checkpoint_bucket": "bucket",
+                    "endpoint_url": "",
+                    "aws_access_key_id": "",
+                    "aws_secret_access_key": "",
+                },
+            )(),
+            "registry",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("apply failed")),
+    )
+    rollback: dict[str, object] = {}
+    monkeypatch.setattr(
+        provisioning,
+        "_rollback_owned_cluster",
+        lambda _operation, **kwargs: rollback.update(kwargs) or False,
+    )
+
+    with pytest.raises(RuntimeError, match="apply failed"):
+        provisioning.provision_if_absent(
+            project="demo",
+            cluster_name="provider-cluster",
+            context_name="explicit-context",
+            skip_s3=True,
+        )
+
+    assert rollback["context"] == "explicit-context"
 
 
 def test_dry_run_reports_the_requested_node_shape(

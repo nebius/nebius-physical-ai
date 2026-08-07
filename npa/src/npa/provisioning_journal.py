@@ -177,6 +177,50 @@ def operation_contains_secret(payload: object) -> bool:
     return contains(payload)
 
 
+def _plan_differences(
+    saved: Mapping[str, Any],
+    requested: Mapping[str, Any],
+    *,
+    immutable_keys: Sequence[str],
+    limit: int = 16,
+) -> list[str]:
+    """Return bounded, sanitized leaf differences for immutable plan identity."""
+
+    differences: list[str] = []
+
+    def render(value: object) -> str:
+        sanitized = _sanitize(value)
+        try:
+            result = json.dumps(sanitized, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError):
+            result = repr(sanitized)
+        return result if len(result) <= 120 else result[:117] + "..."
+
+    def compare(path: str, before: object, after: object) -> None:
+        if len(differences) >= limit:
+            return
+        if isinstance(before, Mapping) and isinstance(after, Mapping):
+            for key in sorted(set(before) | set(after), key=str):
+                compare(
+                    f"{path}.{key}" if path else str(key),
+                    before.get(key),
+                    after.get(key),
+                )
+                if len(differences) >= limit:
+                    return
+            return
+        if before != after:
+            differences.append(
+                f"{path}: journal={render(before)}, request={render(after)}"
+            )
+
+    for key in immutable_keys:
+        compare(key, saved.get(key), requested.get(key))
+        if len(differences) >= limit:
+            break
+    return differences
+
+
 def _pid_is_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -813,12 +857,16 @@ class ProvisioningOperation:
                 "source_action",
                 "input_action",
             )
-            if isinstance(existing, dict) and any(
-                existing.get(key) != candidate.get(key) for key in immutable_keys
-            ):
+            differences = (
+                _plan_differences(existing, candidate, immutable_keys=immutable_keys)
+                if isinstance(existing, dict)
+                else []
+            )
+            if differences:
                 raise OperationIdentityError(
                     f"operation {self.operation_id} resolved topology changed; "
-                    "resume must keep the original resource shape"
+                    "resume must keep the original resource shape; changed fields: "
+                    + "; ".join(differences)
                 )
             payload.setdefault("preflight_evaluations", []).append(
                 {

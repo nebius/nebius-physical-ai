@@ -9,8 +9,10 @@ creating infrastructure.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from npa.cli.cluster.capacity import gpu_quota_name
 
@@ -213,6 +215,28 @@ class WholePathPreflightPlan:
         raise PreflightBlockedError(
             f"Whole-path preflight {self.decision}; no resources were created: {detail}"
         )
+
+
+_RESOLVED_PLAN: ContextVar[WholePathPreflightPlan | None] = ContextVar(
+    "npa_resolved_provisioning_plan", default=None
+)
+
+
+@contextmanager
+def resolved_plan_context(plan: WholePathPreflightPlan) -> Iterator[None]:
+    """Make one immutable outer plan authoritative for nested provisioning."""
+
+    token = _RESOLVED_PLAN.set(plan)
+    try:
+        yield
+    finally:
+        _RESOLVED_PLAN.reset(token)
+
+
+def current_resolved_plan() -> WholePathPreflightPlan | None:
+    """Return the plan inherited by the current transactional call chain."""
+
+    return _RESOLVED_PLAN.get()
 
 
 QuotaReader = Callable[[str, str, Sequence[str]], Mapping[str, QuotaObservation]]
@@ -627,8 +651,10 @@ __all__ = [
     "WholePathPreflightPlan",
     "assess_quota",
     "build_whole_path_plan",
+    "current_resolved_plan",
     "discover_existing_capacity",
     "parse_quota_allowances",
     "read_provider_quotas",
+    "resolved_plan_context",
     "resolve_topology",
 ]

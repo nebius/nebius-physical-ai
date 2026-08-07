@@ -219,6 +219,104 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     assert "16 allocatable GPUs" in result.output
 
 
+def test_inherited_topology_overrides_every_effective_terraform_input() -> None:
+    from npa.provisioning_preflight import WholePathPreflightPlan, resolve_topology
+
+    tfvars = {
+        "cluster_name": "checked-in",
+        "parent_id": "wrong-project",
+        "tenant_id": "wrong-tenant",
+        "region": "wrong-region",
+        "cpu_nodes_count": 99,
+        "gpu_nodes_count": 99,
+        "cpu_nodes_platform": "wrong-cpu",
+        "cpu_nodes_preset": "wrong-cpu-preset",
+        "gpu_nodes_platform": "wrong-gpu",
+        "gpu_nodes_preset": "wrong-gpu-preset",
+        "gpu_nodes_preemptible": False,
+    }
+    plan = WholePathPreflightPlan(
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="region-a",
+        topology=resolve_topology(
+            cluster_name="canonical",
+            cpu_nodes=1,
+            gpu_nodes=2,
+            cpu_platform="cpu-d3",
+            cpu_preset="8vcpu-32gb",
+            gpu_platform="gpu-rtx6000",
+            gpu_preset="1gpu-24vcpu-218gb",
+            preemptible=True,
+        ),
+        decision="ready",
+    )
+
+    tf_mod._apply_inherited_plan_tfvars(tfvars, plan)
+
+    assert tfvars == {
+        "cluster_name": "canonical",
+        "parent_id": "project-a",
+        "tenant_id": "tenant-a",
+        "region": "region-a",
+        "cpu_nodes_count": 1,
+        "gpu_nodes_count": 2,
+        "cpu_nodes_platform": "cpu-d3",
+        "cpu_nodes_preset": "8vcpu-32gb",
+        "gpu_nodes_platform": "gpu-rtx6000",
+        "gpu_nodes_preset": "1gpu-24vcpu-218gb",
+        "gpu_nodes_preemptible": True,
+    }
+    assert tf_mod._string_var_args("cluster_name", tfvars["cluster_name"]) == [
+        "-var",
+        "cluster_name=canonical",
+    ]
+
+
+def test_direct_cluster_preflight_keeps_supplied_project_alias(monkeypatch) -> None:
+    from npa import provisioning_preflight
+    from npa.provisioning_preflight import ExistingCapacity, WholePathPreflightPlan
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        tf_mod, "_preflight_whole_path_capacity", _REAL_WHOLE_PATH_PREFLIGHT
+    )
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "discover_existing_capacity",
+        lambda **_kwargs: ExistingCapacity(),
+    )
+
+    def build(**kwargs):
+        captured.update(kwargs)
+        return WholePathPreflightPlan(
+            project_alias=str(kwargs["project_alias"]),
+            project_id=str(kwargs["project_id"]),
+            tenant_id=str(kwargs["tenant_id"]),
+            region=str(kwargs["region"]),
+            topology=kwargs["topology"],
+            decision="ready",
+        )
+
+    monkeypatch.setattr(provisioning_preflight, "build_whole_path_plan", build)
+    tf_mod._preflight_whole_path_capacity(
+        {
+            "parent_id": "project-a",
+            "tenant_id": "tenant-a",
+            "region": "region-a",
+            "cluster_name": "cluster-a",
+            "cpu_nodes_count": 0,
+            "gpu_nodes_count": 0,
+        },
+        {},
+        context="cluster-a",
+        project_alias="demo",
+    )
+
+    assert captured["project_alias"] == "demo"
+
+
 @pytest.mark.parametrize(
     "blocking_quota", ["compute.instance.count", "compute.disk.count"]
 )

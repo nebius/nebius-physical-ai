@@ -13,8 +13,8 @@ from npa.orchestration.npa_workflow.run_state import (
     paidf_workflow_prefix,
 )
 from npa.orchestration.npa_workflow.submission_state import (
-    SCHEMA_VERSION as SUBMISSION_SCHEMA_VERSION,
     inspect_submission_state,
+    submission_proves_never_launched,
 )
 from npa.orchestration.skypilot.workflow import ManagedJobEvidence, lookup_managed_job
 from npa.orchestration.skypilot.workflow_state import (
@@ -401,23 +401,12 @@ def resolve_run(
         result.receipt = receipt_read.payload
         workflow = _receipt_workflow(result.receipt)
         launch = _receipt_launch(result.receipt)
-        launch_status = str(launch.get("status") or "").lower()
-        planning_status = str(
-            result.receipt.get("launch_state") or launch_status
-        ).lower()
-        launch_was_never_recorded = "launch" not in result.receipt
-        current_submission_schema = (
-            result.receipt.get("schema_version") == SUBMISSION_SCHEMA_VERSION
-        )
         if (
             allow_local_not_submitted
-            and current_submission_schema
-            and (
-                planning_status in {"planned", "reserved", "staged", "not_submitted"}
-                or launch_was_never_recorded
-            )
-            and not launch.get("sky_job_id")
             and not exact_job_id
+            and submission_proves_never_launched(
+                result.receipt, project=ledger_project, run_id=resolved_id
+            )
         ):
             result.not_submitted = True
             result.source = "durable_submission_receipt"
@@ -427,6 +416,7 @@ def resolve_run(
                 "durable local ledger has no launch transition; submission never began",
             )
             return result
+        launch_status = str(launch.get("status") or "").lower()
         receipt_proves_run = bool(
             workflow
             or launch.get("sky_job_id")

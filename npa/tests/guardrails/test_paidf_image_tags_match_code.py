@@ -119,6 +119,19 @@ def test_the_readme_path_names_the_image_step() -> None:
     assert "--gpu-nodes" in whole_path
 
 
+def test_readme_runs_deterministic_paidf_gates_before_paid_provisioning() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    whole_path = readme.split("### The whole path, in order", 1)[1].split(
+        "\n### ", 1
+    )[0]
+    paid_apply = whole_path.index("--gpu-readiness-timeout 900")
+
+    assert whole_path.index("preflight-images") < paid_apply
+    assert whole_path.index("--dry-run --output-format json") < paid_apply
+    assert whole_path.index('npa destroy --project "$PROJECT" --all --json') < paid_apply
+    assert "1,225-file source tree" in whole_path
+
+
 def test_no_build_command_when_the_dockerfile_is_not_where_we_would_say() -> None:
     """Not every tool builds from npa/docker/workbench/<tool>/Dockerfile.
 

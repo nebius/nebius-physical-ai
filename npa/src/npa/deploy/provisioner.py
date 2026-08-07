@@ -311,6 +311,31 @@ def _filter_destroy_output_line(line: str) -> str:
     return "" if _DEPRECATED_GPU_OUTPUT_RE.match(plain) else line
 
 
+def _compact_local_exec_error_line(
+    line: str, *, suppressing_body: bool
+) -> tuple[str, bool]:
+    """Collapse Terraform's quoted local-exec script while retaining its output."""
+
+    marker = "': exit status"
+    if not suppressing_body and "Error running command '" not in line:
+        return line, False
+    if not suppressing_body:
+        suppressing_body = True
+    if marker not in line:
+        return "", suppressing_body
+    tail = line.split(marker, 1)[1]
+    status, _, output = tail.partition(". Output:")
+    visible = (
+        "Terraform local-exec provisioner failed "
+        f"(exit status {status.strip() or 'unknown'}).\n"
+    )
+    if output.strip():
+        visible += output.lstrip()
+        if not visible.endswith("\n"):
+            visible += "\n"
+    return visible, False
+
+
 def _run_destroy_stream(
     cmd: list[str],
     *,
@@ -331,6 +356,7 @@ def _run_destroy_stream(
     )
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
+    compact_local_exec = bool(cmd and Path(cmd[0]).name == "terraform" and "apply" in cmd)
 
     def _pump_stdout() -> None:
         assert process.stdout is not None
@@ -344,11 +370,18 @@ def _run_destroy_stream(
 
     def _pump_stderr() -> None:
         assert process.stderr is not None
+        suppressing_body = False
         for line in process.stderr:
             safe_line = _redact_backend_secrets(line, backend_context)
-            stderr_lines.append(safe_line)
-            sys.stderr.write(safe_line)
-            sys.stderr.flush()
+            visible = safe_line
+            if compact_local_exec:
+                visible, suppressing_body = _compact_local_exec_error_line(
+                    safe_line, suppressing_body=suppressing_body
+                )
+            if visible:
+                stderr_lines.append(visible)
+                sys.stderr.write(visible)
+                sys.stderr.flush()
 
     threads = [
         threading.Thread(target=_pump_stdout, name="npa-terraform-stdout", daemon=True),

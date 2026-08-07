@@ -31,7 +31,7 @@ no-op ("reused") rather than a re-deploy.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
@@ -173,6 +173,34 @@ def parse_deploy_targets(spec: NpaWorkflowSpec) -> list[DeployTarget]:
             )
         )
     return targets
+
+
+def bind_deploy_targets_to_submit(
+    targets: list[DeployTarget], *, project: str = "", infra: str = ""
+) -> list[DeployTarget]:
+    """Bind explicit submit identity before any deploy planning or mutation."""
+
+    selected_project = str(project or "").strip()
+    selected_context = ""
+    raw_infra = str(infra or "").strip()
+    if "/" in raw_infra:
+        kind, _, candidate = raw_infra.partition("/")
+        if kind.strip().lower() in {"k8s", "kubernetes"}:
+            selected_context = candidate.strip()
+
+    bound: list[DeployTarget] = []
+    for target in targets:
+        item = target
+        if selected_project:
+            item = replace(item, project=selected_project)
+        if selected_context and item.cloud.strip().lower() in {"k8s", "kubernetes"}:
+            item = replace(
+                item,
+                cluster_name=selected_context,
+                context=selected_context,
+            )
+        bound.append(item)
+    return bound
 
 
 def _default_provisioner() -> Provisioner:
@@ -336,6 +364,7 @@ def plan_infra_present(
 
 __all__ = [
     "DeployTarget",
+    "bind_deploy_targets_to_submit",
     "ensure_infra_present",
     "plan_infra_present",
     "parse_deploy_targets",

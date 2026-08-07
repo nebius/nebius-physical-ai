@@ -121,6 +121,7 @@ def _emit_status(
             configured_region=configured_region,
             terraform_dir=terraform_dir,
             cached=cached,
+            project_scoped=bool(project.strip() or project_id.strip()),
         )
         if fmt == "json":
             typer.echo(json.dumps(rows, indent=2, sort_keys=True))
@@ -179,6 +180,10 @@ def _resolve_environment_for_status(
         configured_region = str(getattr(saved, "region", "") or "")
         if resolved:
             return resolved, configured_region
+        raise ClusterConfigError(
+            f"configured project alias {alias!r} has no immutable project_id; "
+            "refusing to fall back to a different default project"
+        )
     try:
         resolved = resolve_project_id()
     except ClusterConfigError:
@@ -200,18 +205,35 @@ def _collect_rows(
     configured_region: str = "",
     terraform_dir: Path | None = None,
     cached: bool = False,
+    project_scoped: bool = False,
 ) -> list[dict[str, Any]]:
     client = MK8sClient(timeout=120, poll_interval=30.0)
-    local_by_name = {state.name: state for state in list_local_clusters()}
+    local_by_name = {
+        state.name: state
+        for state in list_local_clusters()
+        if not project_scoped or not project_id or state.project_id == project_id
+    }
     remote_by_name: dict[str, ClusterInfo] = {}
     verification_errors: dict[str, str] = {}
     verified_absent: set[str] = set()
     terraform_row = _terraform_row(terraform_dir)
+    if terraform_row is not None and project_scoped and project_id:
+        terraform_project = str(terraform_row.get("project_id") or "")
+        if terraform_project != project_id:
+            # Terraform outputs/tfvars without the exact selected project are not
+            # evidence about that project and must never be merged into its row.
+            terraform_row = None
 
     if name:
         local_state = load_cluster_state(name)
-        if local_state is not None:
+        if local_state is not None and (
+            not project_scoped
+            or not project_id
+            or local_state.project_id == project_id
+        ):
             local_by_name[name] = local_state
+        elif local_state is not None:
+            local_state = None
         lookup_project_id = (
             local_state.project_id if local_state else ""
         ) or project_id
@@ -311,6 +333,7 @@ def _terraform_row(terraform_dir: Path | None) -> dict[str, Any] | None:
     return {
         "name": name,
         "cluster_id": str(cluster.get("id") or ""),
+        "project_id": str(tfvars.get("parent_id") or ""),
         "region": region or None,
         "region_source": "terraform_tfvars" if region else "unknown",
         "endpoint": str(endpoints.get("public_endpoint") or ""),

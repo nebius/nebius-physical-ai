@@ -224,6 +224,73 @@ def test_list_resolves_project_alias_like_up_and_down(monkeypatch) -> None:
     assert status_result.exit_code == 0, status_result.output
 
 
+def test_project_scoped_status_never_uses_an_unrelated_local_cluster(
+    monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    import npa.clients.config as config_mod
+
+    unrelated = _state()
+    unrelated.project_id = "project-other"
+
+    class ExactProjectClient:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def list_clusters(self, project_id):
+            assert project_id == "project-selected"
+            return []
+
+        def get_cluster(self, name, *, project_id=""):
+            assert name == unrelated.name
+            assert project_id == "project-selected"
+            raise status_mod.ClusterNotFoundError("absent from selected project")
+
+    monkeypatch.setattr(status_mod, "MK8sClient", ExactProjectClient)
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [unrelated])
+    monkeypatch.setattr(status_mod, "load_cluster_state", lambda _name: unrelated)
+    monkeypatch.setattr(
+        config_mod,
+        "resolve_environment",
+        lambda _project=None: SimpleNamespace(project_id="project-selected", region="r"),
+    )
+
+    listed = runner.invoke(
+        app, ["list", "--project", "selected", "--format", "json"]
+    )
+    assert listed.exit_code == 0, listed.output
+    assert json.loads(listed.output) == []
+
+    named = runner.invoke(
+        app,
+        ["status", "--name", unrelated.name, "--project", "selected", "--format", "json"],
+    )
+    assert named.exit_code == 0, named.output
+    assert json.loads(named.output)[0]["project_id"] != "project-other"
+
+
+def test_missing_project_alias_never_falls_back_to_default(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import npa.clients.config as config_mod
+
+    monkeypatch.setattr(
+        config_mod,
+        "resolve_environment",
+        lambda project=None: (
+            SimpleNamespace(project_id="default-project", region="r")
+            if project is None
+            else None
+        ),
+    )
+
+    result = runner.invoke(app, ["status", "--project", "missing"])
+
+    assert result.exit_code == 1
+    assert "refusing to fall back" in result.output
+
+
 def test_status_json_includes_terraform_outputs(monkeypatch, tmp_path) -> None:
     class FakeClient:
         def __init__(self, **kwargs) -> None:

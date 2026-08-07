@@ -803,6 +803,7 @@ def submit_cmd(
         # temporary mutation.
         if deploy_if_absent:
             from npa.orchestration.npa_workflow.deploy import (
+                bind_deploy_targets_to_submit,
                 parse_deploy_targets,
                 plan_infra_present,
             )
@@ -811,7 +812,11 @@ def submit_cmd(
             )
 
             try:
-                deploy_targets = parse_deploy_targets(_load_deploy_spec(yaml_path))
+                deploy_targets = bind_deploy_targets_to_submit(
+                    parse_deploy_targets(_load_deploy_spec(yaml_path)),
+                    project=project,
+                    infra=infra,
+                )
                 resolved_deploy_plans = plan_infra_present(
                     deploy_targets, mutation=not plan_only
                 )
@@ -2628,6 +2633,7 @@ def _durable_workflow_status(
         s3_bucket=s3_bucket,
         s3_endpoint=s3_endpoint,
         sky_bin=sky_bin,
+        allow_local_not_submitted=True,
     )
     from npa.verification import (
         CACHED,
@@ -2642,6 +2648,36 @@ def _durable_workflow_status(
     retry_command = f"npa workbench workflow status {_display_run_id(run_id)}" + (
         f" --project {project}" if project else ""
     )
+    if resolution.not_submitted:
+        payload = {
+            "run_id": resolution.run_id,
+            "workflow_name": resolution.workflow_name,
+            "status": "NOT_SUBMITTED",
+            "lifecycle_state": "PLAN_ONLY",
+            "submission_state": "NOT_SUBMITTED",
+            "manifest_state": "absent",
+            "manifest_pending": False,
+            "resolution_source": resolution.source,
+            "resolution_checks": resolution.checks_payload(),
+            "live_status": "",
+            "sky_job_id": "",
+            "run_prefix_uri": "",
+            "manifest_uri": "",
+            "stages": {},
+            "diagnostics": [
+                "Current-schema durable local evidence proves submission never began."
+            ],
+        }
+        return apply_verification(
+            payload,
+            status=VERIFIED,
+            target=resolution.run_id,
+            last_known_state="NOT_SUBMITTED",
+            last_known_at=str(resolution.receipt.get("updated_at") or ""),
+            last_known_source="durable_submission_receipt",
+            retry_command=retry_command,
+            attempted_at=attempted_at,
+        )
     if not resolution.found:
         payload = {
             "run_id": resolution.run_id,
