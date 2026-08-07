@@ -40,12 +40,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libsm6 \
       libxext6 \
       libxrender1 \
+      openssh-server \
       procps \
+      rsync \
+      sudo \
     && (apt-get install -y --no-install-recommends libcurl4t64 \
         || apt-get install -y --no-install-recommends libcurl4) \
+    && install -d -m 0755 /run/sshd \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
+    && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-fiftyone \
+    && chmod 0440 /etc/sudoers.d/npa-fiftyone \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/fiftyone \
       /opt/fiftyone/db \
@@ -73,6 +79,7 @@ RUN python -m venv "${FIFTYONE_VENV}" \
 
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/smoke_env.py /opt/npa/docker/workbench/fiftyone/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/smoke_functional.py /opt/npa/docker/workbench/fiftyone/smoke_functional.py
+COPY --chown=ubuntu:ubuntu --chmod=0755 docker/workbench/fiftyone/entrypoint.sh /opt/npa/docker/workbench/fiftyone/entrypoint.sh
 
 # Bundle mongod so FiftyOne can launch its own metadata DB (needed for real
 # curation: compute_uniqueness / compute_similarity / compute_visualization).
@@ -100,4 +107,4 @@ print(f"FIFTYONE_BUILD_VERSION_OK {actual}")
 PY
 
 EXPOSE 5151
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["/opt/npa/docker/workbench/fiftyone/entrypoint.sh"]

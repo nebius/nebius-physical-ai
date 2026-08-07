@@ -9,6 +9,7 @@ Nebius Physical AI.
 | --- | --- |
 | [hackathon-cosmos3-reasoner.md](hackathon-cosmos3-reasoner.md) | **Hackathon quickstart** — copy-paste path to the serverless Cosmos3 reasoner (Token Factory), no GPU/VM |
 | [hackathon-isaac-token-factory.md](hackathon-isaac-token-factory.md) | **Hackathon combo** — Isaac Lab Franka sim frames + Token Factory reasoner (workflow + SDK example) |
+| [workbench/guides/physical-ai-data-factory-deploy.md](workbench/guides/physical-ai-data-factory-deploy.md) | **Physical AI Data Factory** — copy-paste quickstart to stage input frames and run the annotate → Cosmos augment → curate → visualize blueprint |
 | [workbench/](workbench/) | Workbench solution docs, including getting started, cookbooks, and troubleshooting |
 | [workbench/kubernetes.md](workbench/kubernetes.md) | User setup and operational guide for running Workbench on managed Kubernetes |
 | [workbench/cosmos3-generate.md](workbench/cosmos3-generate.md) | Cosmos 3 generation (`npa-cosmos3`) — build, run via CLI/SDK/workflow, and the runtime-credential posture that keeps weights out of the image |

@@ -23,32 +23,32 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-# Appearance-only variables for the demo's indoor tabletop-manipulation footage
-# (a robot arm folding cloth). These must match the SCENE so the sampled combo is
-# coherent with the pixels AND can drive the Cosmos Transfer prompt — appearance
-# only (lighting/background/materials), never the geometry or the folding motion.
+# Appearance-only variables that remain coherent for a replaceable physical
+# scene. The input video is authoritative for geometry, objects, camera, and motion.
 APPEARANCE_VARIABLES = {
     "lighting": ["bright daylight", "warm lamp light", "dim evening light", "cool overhead light"],
     "background": ["plain wall", "cluttered shelves", "sunlit window", "hanging curtain"],
-    "cloth_color": ["blue", "red", "white", "green"],
-    "surface": ["beige sofa", "wooden table", "gray countertop"],
+    "color_grade": ["neutral", "warm", "cool", "high contrast"],
+    "surface_finish": ["matte", "satin", "lightly reflective", "weathered"],
 }
 
 
 def prompt_from_combo(combo: dict[str, Any]) -> str:
     """Turn a sampled appearance combo into a natural-language Cosmos prompt.
 
-    Keeps the scene/action fixed (robot folding cloth) and varies only appearance,
-    so the augmentation is a faithful re-render of the SAME clip under new looks.
+    The clip defines the scene. This varies appearance only and explicitly
+    protects object identity, geometry, camera, and motion.
     """
-    cloth = str(combo.get("cloth_color") or "").strip()
-    surface = str(combo.get("surface") or "").strip()
     lighting = str(combo.get("lighting") or "").strip()
     background = str(combo.get("background") or "").strip()
+    color_grade = str(combo.get("color_grade") or "").strip()
+    surface_finish = str(combo.get("surface_finish") or "").strip()
     return (
-        f"A robot arm folding a {cloth or 'blue'} cloth on a {surface or 'beige sofa'}, "
-        f"{lighting or 'bright daylight'}, {background or 'plain wall'} in the background. "
-        "Photorealistic, same motion and layout, appearance changed only."
+        "Photorealistic input-conditioned physical robot manipulation scene, "
+        f"{lighting or 'bright daylight'}, {background or 'plain wall'} background appearance, "
+        f"{color_grade or 'neutral'} color grade, {surface_finish or 'matte'} surface finish. "
+        "Preserve the exact input objects, identities, geometry, camera, timing, and motion; "
+        "change appearance only."
     )
 
 
@@ -136,11 +136,72 @@ def _download_json(uri: str) -> dict[str, Any]:
         return json.loads(Path(p).read_text())
 
 
-def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str = "") -> dict[str, Any]:
+def _is_truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_DEFAULT_INPUT_FRAME_COUNT = 8
+
+
+def _seed_fixture_frames(
+    input_uri: str, count: int = _DEFAULT_INPUT_FRAME_COUNT, seed: str = ""
+) -> int:
+    """Seed a small set of synthetic, captionable PNG frames into ``input_uri``.
+
+    These repository-authored geometric placeholders are never a production
+    default. Skip when any supported media exists so user input is never mixed
+    with or clobbered by the fixture.
+    """
+    if not input_uri:
+        return 0
+    existing = [
+        k for k in _list_keys(input_uri)
+        if k.lower().endswith((".png", ".jpg", ".jpeg", ".mp4"))
+    ]
+    if existing:
+        return 0
+
+    from PIL import Image, ImageDraw
+
+    rng = random.Random(f"{seed}:fixture-input")
+    written = 0
+    with tempfile.TemporaryDirectory(prefix="npa-df-seed-") as tmp:
+        for i in range(max(1, count)):
+            img = Image.new("RGB", (1280, 720), (18 + (i * 5) % 60, 24, 40))
+            draw = ImageDraw.Draw(img)
+            # A varying colored block ("cloth"/object) plus a fixed gripper-ish
+            # bar, so frames are distinct and give the VLM something concrete.
+            bx = 200 + (i * 90) % 700
+            color = (rng.randint(60, 230), rng.randint(60, 230), rng.randint(60, 230))
+            draw.rectangle([bx, 300, bx + 260, 520], fill=color)
+            draw.rectangle([600, 120, 680, 320], fill=(200, 200, 200))
+            local = Path(tmp) / f"frame_{i:04d}.png"
+            img.save(local)
+            _storage().upload_file(str(local), input_uri.rstrip("/") + f"/frame_{i:04d}.png")
+            written += 1
+    return written
+
+
+# Compatibility name for older callers that already opted in explicitly.
+_seed_default_input_frames = _seed_fixture_frames
+
+
+def generate_configs(
+    configs_uri: str,
+    n_augmentations: int | str = 2,
+    seed: str = "",
+    input_uri: str = "",
+    seed_default_input: str | bool = "",
+    seed_fixture: str | bool = "",
+) -> dict[str, Any]:
     """Sample appearance-only augmentation combos and write a real config manifest.
 
     ``n_augmentations`` accepts a str (the blueprint interpolates a quoted config
     value) or int; a non-numeric value falls back to 2 rather than crashing.
+
+    ``seed_fixture`` (or the compatibility ``seed_default_input`` spelling) is an
+    explicit developer/test opt-in. Production provenance is read from the
+    canonical ``input/provenance.json`` written by the prepare step.
     """
     try:
         n = int(n_augmentations)
@@ -156,11 +217,73 @@ def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str
         combos.append(combo)
     manifest = {
         "schema": "npa.data_factory.configs.v1",
-        "scene": "indoor robot arm folding cloth (tabletop manipulation)",
+        "scene": "input-conditioned physical robot manipulation",
         "n_augmentations": len(combos),
         "variables": APPEARANCE_VARIABLES,
         "augmentations": combos,
     }
+    # Seed before uploading: the manifest is this stage's declared artifact, and
+    # downstream readers (the agent artifact browser, insights ingest) cannot tell
+    # a synthetic-frame demo run from a real dataset run if the count only ever
+    # reaches stdout.
+    existing_provenance = None
+    if input_uri:
+        try:
+            existing_provenance = _download_json(input_uri.rstrip("/") + "/provenance.json")
+        except Exception:  # noqa: BLE001 - absent until a fixture is generated
+            existing_provenance = None
+    seeded = 0
+    fixture_requested = _is_truthy(seed_fixture) or _is_truthy(seed_default_input)
+    if fixture_requested:
+        try:
+            seeded = _seed_default_input_frames(input_uri, seed=seed)
+        except Exception as exc:  # noqa: BLE001 - re-raised with context below
+            # Explicitly requested seeding: swallowing this leaves the pipeline to
+            # die two stages later with "No images found in .../input/", the exact
+            # failure the flag exists to prevent, and buries the cause in an
+            # earlier task's log.
+            raise RuntimeError(
+                f"seed_default_input was requested via explicit seed_fixture, but seeding "
+                f"{input_uri or '<unset input_uri>'} "
+                f"failed: {exc}"
+            ) from exc
+        if not seeded:
+            existing_kind = (
+                str(existing_provenance.get("source_kind") or "")
+                if isinstance(existing_provenance, dict)
+                else ""
+            )
+            if existing_kind != "synthetic_fixture":
+                raise RuntimeError(
+                    "seed_fixture was requested, but the canonical input prefix "
+                    "already contains user media or is unavailable; refusing to "
+                    "silently reuse or overwrite it. Use a new run id."
+                )
+    manifest["seeded_default_input_frames"] = seeded
+    if seeded:
+        from npa.workflows.data_factory_input import _fixture_provenance
+
+        provenance = _fixture_provenance(seed, input_uri.rstrip("/") + "/")
+        provenance["kind"] = "npa_seeded_fixture"
+        provenance["frame_count"] = seeded
+        provenance["derivation"]["source_frames"] = [
+            f"frame_{index:04d}.png" for index in range(seeded)
+        ]
+        _upload_json(provenance, input_uri.rstrip("/") + "/provenance.json")
+    elif isinstance(existing_provenance, dict):
+        provenance = existing_provenance
+    else:
+        provenance = {
+            "schema_version": "npa.paidf.input-provenance.v1",
+            "source_kind": "user_supplied",
+            "kind": "operator_provided",
+            "input_origin": "operator_supplied",
+            "input_origin_label": "User-supplied input",
+            "staged_canonical_s3_uri": input_uri,
+            "frame_count": 0,
+            "description": "Pre-staged operator input; authenticity and license were not inferred.",
+        }
+    manifest["input_source"] = provenance
     uri = configs_uri.rstrip("/") + "/manifest.json" if not configs_uri.endswith(".json") else configs_uri
     manifest["written_uri"] = _upload_json(manifest, uri)
     print(json.dumps(manifest))
@@ -293,6 +416,30 @@ def curate(
         },
         "status": "curated",
     }
+    run_root = augment_uri.rstrip("/").rsplit("/", 1)[0]
+    try:
+        input_source = _download_json(f"{run_root}/input/provenance.json")
+    except Exception:  # noqa: BLE001 - legacy runs predate provenance
+        input_source = {}
+    if isinstance(input_source, dict) and input_source:
+        report["input_source"] = input_source
+        report["dataset_groups"] = [
+            {
+                "name": "source",
+                "label": input_source.get("input_origin_label") or "Source input",
+                "role": input_source.get("source_kind") or "user_supplied",
+            },
+            {
+                "name": "conditioning",
+                "label": "Derived conditioning clip",
+                "role": "derived_conditioning",
+            },
+            {
+                "name": "augmented",
+                "label": "Synthetic / augmented variants",
+                "role": "cosmos_transfer_output",
+            },
+        ]
 
     report = _enrich_with_fiftyone_curation(report, augment_uri, keys, dedup_threshold)
     report = _merge_curator_report(report, curator_report_uri)
@@ -410,6 +557,12 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
         "multiply_mode": "multi-variant" if n_variants > 1 else "single-variant",
         "variant_count": n_variants,
     }
+    try:
+        input_source = _download_json(run_root_uri.rstrip("/") + "/input/provenance.json")
+    except Exception:  # noqa: BLE001 - legacy runs predate provenance
+        input_source = {}
+    if isinstance(input_source, dict) and input_source:
+        report["input_source"] = input_source
     report["written_uri"] = _upload_json(report, report_uri)
     print(json.dumps(report))
     return report

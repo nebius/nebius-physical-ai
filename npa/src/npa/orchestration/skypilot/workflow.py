@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -28,10 +30,26 @@ from npa.orchestration.skypilot.controller import (
     ControllerBackend,
     apply_controller_override,
 )
+from npa.orchestration.skypilot.diagnostics import (
+    SkyPilotDiagnosis,
+    diagnose_skypilot_output,
+)
+from npa.orchestration.skypilot.json_output import (
+    parse_single_json_document,
+    queue_rows_from_output,
+)
+from npa.orchestration.skypilot.workflow_state import redact_text
 
 
 JOBS_CONTROLLER_PREFIX = "sky-jobs-controller-"
 HEALTHY_CONTROLLER_STATUS = "UP"
+# A managed-jobs controller may be UP or autostopped (STOPPED). Both are safe to
+# launch against: `sky jobs launch` restarts a STOPPED controller on demand.
+# Only genuinely transient states (e.g. INIT / provisioning) should block a
+# concurrent launch. Treating STOPPED as unhealthy made a stale/autostopped
+# controller wait for a status ("UP") it never reaches without a launch, so the
+# preflight burned the whole timeout and failed a submit that would have worked.
+READY_CONTROLLER_STATUSES = frozenset({HEALTHY_CONTROLLER_STATUS, "STOPPED"})
 
 
 def _stable_sky_cwd(isolated_config_dir: Path | None) -> str:
@@ -77,6 +95,17 @@ class WorkflowResult:
         return self.returncode == 0 and not self.error
 
 
+@dataclass(frozen=True)
+class ManagedJobEvidence:
+    """One exact managed-job lookup through NPA's pinned SkyPilot runtime."""
+
+    outcome: str
+    job_id: str = ""
+    status: str = ""
+    task_rows: tuple[dict[str, Any], ...] = ()
+    error: str = ""
+
+
 class SkyPilotSubmitError(RuntimeError):
     """Raised when a SkyPilot workflow cannot be submitted."""
 
@@ -99,7 +128,7 @@ def _controller_region_from_infra(
     value = (infra or "").strip()
     for prefix in ("k8s/", "kubernetes/"):
         if value.startswith(prefix):
-            context = value[len(prefix):].strip()
+            context = value[len(prefix) :].strip()
             return context or None
     return None
 
@@ -119,6 +148,8 @@ def submit_workflow(
     timeout: int = 1800,
     controller_preflight_timeout: int = 300,
     controller_preflight_interval: float = 15.0,
+    stream_output: bool = True,
+    echo: Callable[[str], None] | None = None,
 ) -> WorkflowResult:
     """Submit a SkyPilot YAML through NPA's controller convention."""
 
@@ -126,6 +157,7 @@ def submit_workflow(
     submission_dir: Path | None = None
     owned_submission_dir: Path | None = None
     prepared_yaml: Path | None = None
+    streamer: _LaunchStreamer | None = None
     try:
         runtime_config = resolve_config(
             sky_bin=sky_bin,
@@ -140,6 +172,8 @@ def submit_workflow(
             owned_submission_dir = submission_dir
         prepared_yaml = submission_dir / "workflow.yaml"
         shutil.copy2(yaml_path, prepared_yaml)
+        # The task YAML can carry registry/docker auth + S3 creds; keep it owner-only.
+        _chmod_owner_only(prepared_yaml)
         sky_executable = str(ensure_skypilot_version(runtime_config.sky_bin))
         global_config = apply_controller_override(
             _load_base_config(runtime_config.global_config_path),
@@ -147,7 +181,10 @@ def submit_workflow(
             controller_region=_controller_region_from_infra(infra, controller_backend),
         )
         generated_config_path = submission_dir / "skypilot-config.yaml"
-        generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        generated_config_path.write_text(
+            yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
+        )
+        _chmod_owner_only(generated_config_path)
         env = sky_environment(runtime_config.isolated_config_dir)
         for key, value in (extra_env or {}).items():
             if value:
@@ -178,19 +215,31 @@ def submit_workflow(
             require_existing=require_controller_up,
             cwd=stable_cwd,
         )
-        result = subprocess.run(
+        streamer = (
+            _LaunchStreamer(
+                echo or _default_launch_echo,
+                optional_nebius_profile=_nebius_profile_is_optional(
+                    docs,
+                    controller_backend=controller_backend,
+                    infra=infra,
+                ),
+            )
+            if stream_output
+            else None
+        )
+        result, streamed_diagnoses = _run_launch(
             cmd,
             env=env,
             cwd=stable_cwd,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             timeout=timeout,
-            check=False,
+            log_dir=submission_dir,
+            streamer=streamer,
         )
         if result.returncode != 0:
             _cleanup_owned_submission_dir(owned_submission_dir)
-            raise SkyPilotSubmitError(_format_submit_error(cmd, result))
+            raise SkyPilotSubmitError(
+                _format_submit_error(cmd, result, streamed=streamed_diagnoses)
+            )
         combined = f"{result.stdout}\n{result.stderr}"
         job_id = _verified_job_id(
             _parse_job_id(combined),
@@ -202,7 +251,10 @@ def submit_workflow(
         return WorkflowResult(
             status="SUBMITTED",
             job_id=job_id,
-            log_paths={"submission_dir": str(submission_dir), "config": str(generated_config_path)},
+            log_paths={
+                "submission_dir": str(submission_dir),
+                "config": str(generated_config_path),
+            },
             returncode=result.returncode,
             stdout=result.stdout,
             stderr=result.stderr,
@@ -210,7 +262,10 @@ def submit_workflow(
         )
     except subprocess.TimeoutExpired as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
-        raise SkyPilotSubmitError(f"sky jobs launch timed out after {timeout}s") from exc
+        message = f"sky jobs launch timed out after {timeout}s"
+        for diagnosis in streamer.diagnoses if streamer is not None else ():
+            message = f"{message}\n{diagnosis.render()}"
+        raise SkyPilotSubmitError(message) from exc
     except SkyPilotSubmitError:
         _cleanup_owned_submission_dir(owned_submission_dir)
         raise
@@ -223,7 +278,9 @@ def submit_workflow(
         SkyPilotVersionError,
     ) as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
-        raise SkyPilotSubmitError(f"SkyPilot workflow submission failed: {exc}") from exc
+        raise SkyPilotSubmitError(
+            f"SkyPilot workflow submission failed: {exc}"
+        ) from exc
 
 
 def workflow_status(
@@ -243,7 +300,14 @@ def workflow_status(
         global_config_path=config_path,
         isolated_config_dir=isolated_config_dir,
     )
-    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "jobs", "queue", "--all", "--output", "json"]
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "queue",
+        "--all",
+        "--output",
+        "json",
+    ]
     if runtime_config.global_config_path is not None:
         cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
     result = subprocess.run(
@@ -320,6 +384,41 @@ def workflow_task_statuses(
     return parse_task_statuses(result.stdout, job_id)
 
 
+def workflow_controller_logs(
+    job_id: str,
+    *,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    timeout: int = 60,
+) -> subprocess.CompletedProcess[str]:
+    """Fetch bounded managed-jobs controller evidence without following logs."""
+
+    runtime_config = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "logs",
+        "--controller",
+        str(job_id),
+        "--no-follow",
+    ]
+    return subprocess.run(
+        cmd,
+        env=sky_environment(runtime_config.isolated_config_dir),
+        cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
+
+
 def find_job_ids_by_name(
     job_name: str,
     *,
@@ -363,13 +462,117 @@ def find_job_ids_by_name(
     return parse_job_ids_by_name(result.stdout, job_name)
 
 
+def lookup_managed_job(
+    job_name: str,
+    *,
+    job_id: str = "",
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    timeout: int = 300,
+) -> ManagedJobEvidence:
+    """Authoritatively find one exact job name/id without fuzzy matching.
+
+    A failed provider/auth/CLI request is ``unavailable``. Only a successful,
+    parseable ``jobs queue --all --output json`` response can return ``absent``.
+    """
+
+    try:
+        runtime_config = resolve_config(
+            sky_bin=sky_bin,
+            global_config_path=config_path,
+            isolated_config_dir=isolated_config_dir,
+        )
+        cmd = [
+            str(ensure_skypilot_version(runtime_config.sky_bin)),
+            "jobs",
+            "queue",
+            "--all",
+            "--output",
+            "json",
+        ]
+        if runtime_config.global_config_path is not None:
+            cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
+        result = subprocess.run(
+            cmd,
+            env=sky_environment(runtime_config.isolated_config_dir),
+            cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - callers must distinguish unavailability
+        return ManagedJobEvidence("unavailable", error=redact_text(str(exc)))
+    if result.returncode != 0:
+        detail = (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or f"exit {result.returncode}"
+        )
+        return ManagedJobEvidence("unavailable", error=redact_text(detail))
+    jobs = queue_rows_from_output(result.stdout)
+    if jobs is None:
+        return ManagedJobEvidence(
+            "unavailable",
+            error="SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON",
+        )
+
+    wanted_id = str(job_id or "").strip()
+    matching_ids: set[int] = set()
+    declared_job_names: set[str] = set()
+    for row in jobs:
+        if not isinstance(row, dict):
+            continue
+        raw_id = str(row.get("job_id") or row.get("id") or "")
+        row_name = str(row.get("job_name") or row.get("name") or "")
+        if wanted_id:
+            if raw_id != wanted_id:
+                continue
+            declared_name = str(row.get("job_name") or "")
+            if declared_name:
+                declared_job_names.add(declared_name)
+        elif row_name != job_name:
+            continue
+        if raw_id.isdigit():
+            matching_ids.add(int(raw_id))
+    if wanted_id and declared_job_names and job_name not in declared_job_names:
+        names = ", ".join(sorted(declared_job_names))
+        return ManagedJobEvidence(
+            "unavailable",
+            error=(
+                f"recorded SkyPilot job {wanted_id} belongs to {names!r}, "
+                f"not exact run {job_name!r}"
+            ),
+        )
+    if not matching_ids:
+        return ManagedJobEvidence("absent")
+    if not wanted_id and len(matching_ids) > 1:
+        rendered = ", ".join(str(value) for value in sorted(matching_ids))
+        return ManagedJobEvidence(
+            "unavailable",
+            error=(
+                f"exact managed-job name {job_name!r} is ambiguous; matching IDs: "
+                f"{rendered}. Supply durable run state with an immutable job ID."
+            ),
+        )
+    selected = str(max(matching_ids))
+    rows = tuple(parse_task_statuses(result.stdout, selected))
+    return ManagedJobEvidence(
+        "found",
+        job_id=selected,
+        status=_status_from_queue_payload(result.stdout, selected) or "UNKNOWN",
+        task_rows=rows,
+    )
+
+
 def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
     """Extract managed-job ids for ``job_name`` from queue JSON, newest first."""
 
-    payload = _json_payload_from_output(output)
-    if payload is None:
+    jobs = queue_rows_from_output(output)
+    if jobs is None:
         return []
-    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
     ids: list[int] = []
     for job in jobs or []:
         if not isinstance(job, dict):
@@ -385,10 +588,9 @@ def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
 def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
     """Extract per-task rows for ``job_id`` from ``sky jobs queue --output json``."""
 
-    payload = _json_payload_from_output(output)
-    if payload is None:
+    jobs = queue_rows_from_output(output)
+    if jobs is None:
         return []
-    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
     rows: list[dict[str, Any]] = []
     for job in jobs or []:
         if not isinstance(job, dict):
@@ -396,24 +598,227 @@ def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
         current_id = str(job.get("job_id") or job.get("id") or "")
         if current_id != str(job_id):
             continue
-        rows.append(
-            {
-                "job_id": current_id,
-                "task_id": job.get("task_id"),
-                "task_name": job.get("task_name") or job.get("job_name") or "",
-                "status": str(job.get("status") or "").upper(),
-                "submitted_at": job.get("submitted_at"),
-                "start_at": job.get("start_at"),
-                "end_at": job.get("end_at"),
-                "is_job_group": job.get("is_job_group"),
-                "execution": job.get("execution"),
-                "cluster_name": job.get("cluster_name_on_cloud")
-                or job.get("current_cluster_name")
-                or "",
-            }
-        )
+        row = {
+            "job_id": current_id,
+            "task_id": job.get("task_id"),
+            "task_name": job.get("task_name") or job.get("job_name") or "",
+            "status": str(job.get("status") or "").upper(),
+            "submitted_at": job.get("submitted_at"),
+            "start_at": job.get("start_at"),
+            "end_at": job.get("end_at"),
+            "is_job_group": job.get("is_job_group"),
+            "execution": job.get("execution"),
+            "cluster_name": job.get("cluster_name_on_cloud")
+            or job.get("current_cluster_name")
+            or "",
+        }
+        # Preserve scheduler/recovery evidence without binding to one SkyPilot
+        # release's field spelling.  The actionable status projector consumes
+        # these normalized names and keeps the raw status separately.
+        for target, aliases in {
+            "retry_count": ("retry_count", "recovery_count", "num_restarts", "attempt"),
+            "last_progress_at": ("last_progress_at", "last_transition_at"),
+            "last_updated_at": ("last_updated_at", "updated_at"),
+            "failure_reason": ("failure_reason", "failure_message", "error"),
+        }.items():
+            for alias in aliases:
+                if job.get(alias) not in (None, ""):
+                    row[target] = job[alias]
+                    break
+        rows.append(row)
     rows.sort(key=lambda row: (row.get("task_id") is None, row.get("task_id") or 0))
     return rows
+
+
+class _LaunchStreamer:
+    """Tee ``sky jobs launch`` output to the operator while it is still running.
+
+    SkyPilot buffers nothing useful into its exit status: a controller stuck in a
+    retry loop simply never returns. Capturing stdout/stderr to a pipe therefore
+    leaves the operator staring at a blank terminal for the full submit timeout.
+    Writing to files and tailing them keeps ``subprocess.run`` (so callers and
+    tests that stub it are unaffected) while still showing progress live.
+    """
+
+    _POLL_SECONDS = 0.25
+
+    def __init__(
+        self,
+        echo: Callable[[str], None],
+        *,
+        optional_nebius_profile: bool = False,
+    ) -> None:
+        self._echo = echo
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._paths: list[Path] = []
+        self._offsets: dict[Path, int] = {}
+        self._pending: dict[Path, str] = {}
+        self.diagnoses: list[SkyPilotDiagnosis] = []
+        self._optional_nebius_profile = optional_nebius_profile
+        self._profile_notice_emitted = False
+
+    def watch(self, paths: Sequence[Path]) -> None:
+        self._paths = list(paths)
+        self._offsets = {path: 0 for path in self._paths}
+        self._pending = {path: "" for path in self._paths}
+        self._thread = threading.Thread(
+            target=self._run, name="sky-launch-stream", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        self._drain()
+        for path, pending in self._pending.items():
+            if pending.strip():
+                self._emit(pending)
+            self._pending[path] = ""
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._drain()
+            self._stop.wait(self._POLL_SECONDS)
+
+    def _drain(self) -> None:
+        for path in self._paths:
+            try:
+                with path.open("r", encoding="utf-8", errors="replace") as handle:
+                    handle.seek(self._offsets[path])
+                    chunk = handle.read()
+                    self._offsets[path] = handle.tell()
+            except OSError:
+                continue
+            if not chunk:
+                continue
+            buffered = self._pending[path] + chunk
+            *lines, self._pending[path] = buffered.split("\n")
+            for line in lines:
+                self._emit(line)
+
+    def _emit(self, line: str) -> None:
+        text = line.rstrip()
+        if self._optional_nebius_profile and "Unable to create Nebius profile" in text:
+            if not self._profile_notice_emitted:
+                self._echo(
+                    "npa: optional SkyPilot Nebius provider-profile creation was skipped; "
+                    "the active Kubernetes-controller/context execution path remains selected."
+                )
+                self._profile_notice_emitted = True
+            return
+        if text:
+            self._echo(text)
+        diagnosis = diagnose_skypilot_output(text)
+        if diagnosis is not None and all(
+            existing.code != diagnosis.code for existing in self.diagnoses
+        ):
+            self.diagnoses.append(diagnosis)
+            self._echo(f"npa: detected {diagnosis.code}. {diagnosis.render()}")
+
+
+def _nebius_profile_is_optional(
+    documents: Sequence[Mapping[str, Any]],
+    *,
+    controller_backend: ControllerBackend,
+    infra: str,
+) -> bool:
+    """Whether a Nebius provider profile is outside the selected execution path.
+
+    A Kubernetes jobs controller alone is not proof: it can orchestrate tasks on
+    the Nebius VM provider.  The profile is optional only when ``--infra`` pins a
+    Kubernetes context, or every explicit task cloud is Kubernetes.  Missing or
+    mixed cloud declarations fail closed so a real provider-auth failure remains
+    visible and fatal.
+    """
+
+    if controller_backend != "kubernetes":
+        return False
+    selected = str(infra or "").strip().lower()
+    if selected.startswith(("k8s/", "kubernetes/")):
+        return True
+    clouds: list[str] = []
+
+    def collect(value: object) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if str(key).lower() == "cloud" and isinstance(item, str):
+                    clouds.append(item.strip().lower())
+                else:
+                    collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    for document in documents:
+        collect(document.get("resources"))
+    return bool(clouds) and all(cloud in {"kubernetes", "k8s"} for cloud in clouds)
+
+
+def _default_launch_echo(line: str) -> None:
+    print(line, file=sys.stderr, flush=True)
+
+
+def _run_launch(
+    cmd: Sequence[str],
+    *,
+    env: Mapping[str, str],
+    cwd: str | None,
+    timeout: int,
+    log_dir: Path,
+    streamer: _LaunchStreamer | None,
+) -> tuple[subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]]:
+    """Run ``sky jobs launch``, streaming output when a streamer is supplied."""
+
+    if streamer is None:
+        result = subprocess.run(
+            list(cmd),
+            env=dict(env),
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+        return result, []
+
+    out_path = log_dir / "sky-launch.stdout.log"
+    err_path = log_dir / "sky-launch.stderr.log"
+    with (
+        out_path.open("w", encoding="utf-8") as out_handle,
+        err_path.open("w", encoding="utf-8") as err_handle,
+    ):
+        streamer.watch([out_path, err_path])
+        try:
+            result = subprocess.run(
+                list(cmd),
+                env=dict(env),
+                cwd=cwd,
+                text=True,
+                stdout=out_handle,
+                stderr=err_handle,
+                timeout=timeout,
+                check=False,
+            )
+        finally:
+            streamer.stop()
+    # A stubbed subprocess.run returns captured text directly and never touches
+    # the files; prefer whichever side is actually populated.
+    stdout = result.stdout or _read_text(out_path)
+    stderr = result.stderr or _read_text(err_path)
+    return (
+        subprocess.CompletedProcess(list(cmd), result.returncode, stdout, stderr),
+        list(streamer.diagnoses),
+    )
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def _wait_for_healthy_jobs_controller(
@@ -429,6 +834,7 @@ def _wait_for_healthy_jobs_controller(
 
     deadline = time.monotonic() + max(timeout, 0)
     last_summary = "no jobs-controller found" if require_existing else ""
+    unhealthy: list[tuple[str, str]] = []
     while True:
         result = subprocess.run(
             [sky_executable, "status", "--refresh", "--output", "json"],
@@ -441,34 +847,158 @@ def _wait_for_healthy_jobs_controller(
             check=False,
         )
         if result.returncode != 0:
-            raise SkyPilotSubmitError(f"SkyPilot controller health check failed: {_command_detail(result)}")
+            detail = _command_detail(result)
+            raise SkyPilotSubmitError(
+                f"SkyPilot controller health check failed: {detail}"
+                + _controller_health_remedy(detail)
+            )
         controllers = _jobs_controller_statuses(result.stdout)
         if require_existing and not controllers:
             last_summary = "no jobs-controller found"
+            unhealthy = []
         else:
             unhealthy = [
                 (name, status)
                 for name, status in controllers
-                if status.upper() != HEALTHY_CONTROLLER_STATUS
+                if status.upper() not in READY_CONTROLLER_STATUSES
             ]
             if not unhealthy:
                 return
-            last_summary = ", ".join(f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy)
+            last_summary = ", ".join(
+                f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy
+            )
         if time.monotonic() >= deadline:
-            raise SkyPilotSubmitError(f"SkyPilot jobs controller not healthy before launch: {last_summary}")
+            # Name the controller that is actually unhealthy: pointing `sky down`
+            # at the first of several cached controllers (or at a placeholder when
+            # none exists) tears down the wrong thing.
+            stuck = [name for name, _status in unhealthy]
+            remedy = (
+                f" If it is stuck/stale, tear it down with `sky down {stuck[0]}` "
+                "(it is recreated on the next launch)."
+                if stuck
+                else " A launch creates one, so retry the submit; if it keeps failing, "
+                "check `sky check` and your kube context."
+            )
+            raise SkyPilotSubmitError(
+                f"SkyPilot jobs controller not healthy before launch: {last_summary}.{remedy}"
+            )
         time.sleep(max(interval, 0.1))
+
+
+# Signals that `sky status` failed because a *cached* controller still points at
+# infrastructure that is gone (a kubeconfig from another setup, a deleted
+# cluster, a renamed context) rather than because of a transient error.
+_STALE_CONTROLLER_SIGNALS = (
+    "kubeconfig",
+    "kube-config",
+    "not found in kubeconfig",
+    "invalid kube-context",
+    "kubernetes context",
+    "credentials not found",
+    "cachedclusterunavailable",
+    "clusterstatusfetchingerror",
+)
+# Transport/filesystem errors that also describe unrelated failures — an API
+# server that is not running, a missing ~/.sky config. They only point at a stale
+# controller when the same message also names a controller or a kube context;
+# alone they would send the operator to `sky down` for something else entirely.
+_AMBIGUOUS_STALE_SIGNALS = (
+    "no such file or directory",
+    "unable to connect",
+    "connection refused",
+)
+_CONTROLLER_CONTEXT_SIGNALS = (
+    "kubeconfig",
+    "kube-config",
+    "kube-context",
+    "kubernetes",
+    "sky-jobs-controller",
+)
+_KUBECONFIG_PATH_RE = re.compile(r"[\w./~-]*kubeconfig[\w./-]*")
+
+
+def _referenced_kubeconfig_path(detail: str) -> str:
+    """Return the kubeconfig *path* named in *detail*, or "".
+
+    SkyPilot's message mentions the bare word "kubeconfig" several times before
+    the actual file, so pick the longest match that looks like a path.
+    """
+    candidates = [
+        match
+        for match in _KUBECONFIG_PATH_RE.findall(str(detail or ""))
+        if "/" in match
+    ]
+    return max(candidates, key=len) if candidates else ""
+
+
+def _looks_like_stale_controller(lowered: str) -> bool:
+    if any(signal in lowered for signal in _STALE_CONTROLLER_SIGNALS):
+        return True
+    return any(signal in lowered for signal in _AMBIGUOUS_STALE_SIGNALS) and any(
+        signal in lowered for signal in _CONTROLLER_CONTEXT_SIGNALS
+    )
+
+
+def _controller_health_remedy(detail: str) -> str:
+    """Return actionable remediation text for a failed controller health check.
+
+    A stale managed-jobs controller cached from an unrelated NPA setup (pointing
+    at a kubeconfig that no longer exists) surfaced only as a raw `sky status`
+    stack trace, with nothing telling the operator that the fix is to purge the
+    controller or repoint KUBECONFIG.
+    """
+
+    lowered = str(detail or "").lower()
+    if not _looks_like_stale_controller(lowered):
+        return ""
+    lines = [
+        "",
+        "",
+        "This usually means a cached SkyPilot managed-jobs controller "
+        "(sky-jobs-controller-*) still points at infrastructure from another "
+        "setup. To recover:",
+    ]
+    referenced = _referenced_kubeconfig_path(detail)
+    if referenced:
+        lines.append(
+            f"  - the referenced kubeconfig is {referenced}; provision or "
+            "restore that cluster (`npa cluster up` / `npa provision-if-absent "
+            "--project <alias>`), or point KUBECONFIG at the cluster you want."
+        )
+    else:
+        lines.append(
+            "  - point KUBECONFIG at the cluster you want, or provision one "
+            "with `npa cluster up` / `npa provision-if-absent --project <alias>`."
+        )
+    lines.extend(
+        [
+            "  - list what SkyPilot has cached: `sky status -r` (refresh) or "
+            "`sky status` (SkyPilot 0.12 has no `--all` for `sky status`).",
+            "  - purge the stale controller: `sky down sky-jobs-controller-<id>` "
+            "(it is recreated on the next launch).",
+            "  - if `sky status -r` still reports nothing useful, the API server is "
+            "holding the stale state: `sky api stop && sky api start`, then retry.",
+            "  - target a specific context explicitly with "
+            "`npa workbench workflow submit ... --infra k8s/<context>`.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _jobs_controller_statuses(output: str) -> list[tuple[str, str]]:
     payload = _json_payload_from_output(output)
     if payload is None:
-        raise SkyPilotSubmitError("SkyPilot controller health check returned non-json output")
+        raise SkyPilotSubmitError(
+            "SkyPilot controller health check returned non-json output"
+        )
+    raw_clusters: Any
     if isinstance(payload, list):
-        clusters = payload
+        raw_clusters = payload
     elif isinstance(payload, dict):
-        clusters = payload.get("clusters", payload.get("jobs", []))
+        raw_clusters = payload.get("clusters", payload.get("jobs", []))
     else:
-        clusters = []
+        raw_clusters = []
+    clusters = raw_clusters if isinstance(raw_clusters, list) else []
     controllers = []
     for cluster in clusters or []:
         if not isinstance(cluster, dict):
@@ -482,22 +1012,7 @@ def _jobs_controller_statuses(output: str) -> list[tuple[str, str]]:
 
 
 def _json_payload_from_output(output: str) -> Any | None:
-    text = output.strip()
-    for candidate in _json_payload_candidates(text):
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-    return None
-
-
-def _json_payload_candidates(text: str) -> list[str]:
-    candidates = [text or "[]"]
-    for marker in ("\n[", "\n{"):
-        idx = text.rfind(marker)
-        if idx != -1:
-            candidates.append(text[idx + 1 :])
-    return candidates
+    return parse_single_json_document(output)
 
 
 def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
@@ -521,6 +1036,19 @@ def _load_base_config(config_path: Path | None) -> dict[str, Any]:
     return data
 
 
+def _chmod_owner_only(path: Path, *, is_dir: bool = False) -> None:
+    """Best-effort ``chmod`` to owner-only (0700 dir / 0600 file).
+
+    The submission dir holds the rendered task YAML and generated SkyPilot config,
+    which can carry registry/docker auth and S3 creds. ``write_text`` /
+    ``mkdir`` honor the umask (commonly world-readable), so tighten explicitly.
+    """
+    try:
+        path.chmod(0o700 if is_dir else 0o600)
+    except OSError:  # pragma: no cover - unusual filesystems (e.g. mounted FAT)
+        pass
+
+
 def _submission_dir(run_id: str, isolated_config_dir: Path | None) -> Path:
     if isolated_config_dir is None:
         # Successful submissions return this path for debugging; exception paths
@@ -530,6 +1058,7 @@ def _submission_dir(run_id: str, isolated_config_dir: Path | None) -> Path:
         root = Path(isolated_config_dir) / "submissions" / run_id
         root.mkdir(parents=True, exist_ok=True)
     root.mkdir(parents=True, exist_ok=True)
+    _chmod_owner_only(root, is_dir=True)
     return root
 
 
@@ -600,10 +1129,71 @@ def _cleanup_owned_submission_dir(path: Path | None) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _format_submit_error(cmd: list[str], result: subprocess.CompletedProcess[str]) -> str:
+def _format_submit_error(
+    cmd: Sequence[str],
+    result: subprocess.CompletedProcess[str],
+    *,
+    streamed: Sequence[SkyPilotDiagnosis] = (),
+) -> str:
     detail = _command_detail(result)
-    prefix = "SkyPilot auth failure during jobs launch" if _looks_like_auth_error(detail) else "sky jobs launch failed"
-    return f"{prefix}: {' '.join(cmd)}: {detail}"
+    prefix = (
+        "SkyPilot auth failure during jobs launch"
+        if _looks_like_auth_error(detail)
+        else "sky jobs launch failed"
+    )
+    # `sky status --refresh` exits 0 while merely *warning* about clusters it
+    # cannot refresh, so a controller cached against a dead kubeconfig gets past
+    # the health check and fails here instead (CachedClusterUnavailable). Attach
+    # the same NPA-level recovery steps.
+    pod_config_remedy = _pod_config_error_remedy(detail)
+    message = (
+        f"{prefix}: {' '.join(cmd)}: {detail}"
+        + pod_config_remedy
+        + _controller_health_remedy(detail)
+    )
+    diagnoses = list(streamed)
+    diagnosis = diagnose_skypilot_output(
+        f"{result.stdout or ''}\n{result.stderr or ''}"
+    )
+    if diagnosis is not None and all(item.code != diagnosis.code for item in diagnoses):
+        diagnoses.append(diagnosis)
+    for item in diagnoses:
+        # The pod_config case already has a dedicated remedy above; do not say it twice.
+        if item.code == "kubernetes_client_pod_config" and pod_config_remedy:
+            continue
+        message = f"{message}\n{item.render()}"
+    return message
+
+
+def _looks_like_pod_config_error(detail: str) -> bool:
+    """Detect the SkyPilot/kubernetes-client pod_config type-resolution failure.
+
+    A too-new ``kubernetes`` client makes SkyPilot 0.12.x fail to render the jobs
+    controller pod with ``Invalid pod_config … No module named
+    'kubernetes.client.models.dict[str, str]'``. The controller retries this
+    *forever* (it is neither a quota nor a capacity problem), so a submit hangs
+    with almost no feedback.
+    """
+    normalized = detail.lower()
+    if "invalid pod_config" in normalized:
+        return True
+    if "kubernetes.client.models" in normalized:
+        return True
+    return "no module named" in normalized and "kubernetes" in normalized
+
+
+def _pod_config_error_remedy(detail: str) -> str:
+    if not _looks_like_pod_config_error(detail):
+        return ""
+    return (
+        "\n\nThis is a SkyPilot/kubernetes-client incompatibility (the pod_config "
+        "type resolver fails with 'No module named kubernetes.client.models…'), not "
+        "a cluster/quota problem — the jobs controller retries it indefinitely, so a "
+        "submit appears to hang. Rebuild the isolated SkyPilot runtime so its "
+        "kubernetes client matches SkyPilot: `npa skypilot uninstall && npa skypilot "
+        "bootstrap` (or `pip install 'kubernetes<31'` into ~/.npa/skypilot-venv), then "
+        "re-submit."
+    )
 
 
 def _command_detail(result: subprocess.CompletedProcess[str]) -> str:
@@ -612,15 +1202,24 @@ def _command_detail(result: subprocess.CompletedProcess[str]) -> str:
 
 def _looks_like_auth_error(detail: str) -> bool:
     normalized = detail.lower()
-    return any(token in normalized for token in ("auth", "credential", "unauthorized", "forbidden", "permission denied", "401", "403"))
+    return any(
+        token in normalized
+        for token in (
+            "auth",
+            "credential",
+            "unauthorized",
+            "forbidden",
+            "permission denied",
+            "401",
+            "403",
+        )
+    )
 
 
 def _status_from_queue_payload(output: str, job_id: str) -> str:
-    try:
-        payload = json.loads(output or "[]")
-    except json.JSONDecodeError:
+    jobs = queue_rows_from_output(output)
+    if jobs is None:
         return ""
-    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
     statuses = []
     for job in jobs or []:
         current_id = str(job.get("job_id") or job.get("id") or "")

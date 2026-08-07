@@ -189,6 +189,63 @@ def test_alias_has_terraform_state_false_for_byovm_alias(isolated_config: Path) 
     assert config.workbench_is_byovm("proj-a", "wb-a") is True
 
 
+# ── teardown helpers: clear_terraform_state_for_bucket / forget_project ───────
+
+
+def test_clear_terraform_state_for_bucket_removes_matching_state(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)  # proj-a.terraform_state.bucket == "state-bucket"
+
+    # A bucket URI must normalize to the bare name before comparing.
+    cleared = config.clear_terraform_state_for_bucket("s3://state-bucket/")
+
+    assert cleared == ["proj-a"]
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert "terraform_state" not in saved["projects"]["proj-a"]
+    # Everything else in the stanza survives.
+    assert saved["projects"]["proj-a"]["project_id"] == "project-1"
+    assert saved["projects"]["proj-a"]["workbenches"]["wb-a"]
+
+
+def test_clear_terraform_state_for_bucket_no_match_leaves_config(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)
+
+    assert config.clear_terraform_state_for_bucket("some-other-bucket") == []
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert saved["projects"]["proj-a"]["terraform_state"]["access_key"] == "state-key"
+
+
+def test_forget_project_removes_stanza_and_repoints_default(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)  # default_project == "proj-a"
+
+    assert config.forget_project("proj-a") is True
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert "proj-a" not in saved["projects"]
+    assert "proj-b" in saved["projects"]
+    assert saved["default_project"] == "proj-b"
+
+
+def test_forget_project_missing_is_a_noop(isolated_config: Path) -> None:
+    _write_full_config(isolated_config)
+
+    assert config.forget_project("nope") is False
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert set(saved["projects"]) == {"proj-a", "proj-b"}
+
+
+def test_clear_skypilot_bin_removes_only_that_key(isolated_config: Path) -> None:
+    isolated_config.parent.mkdir(parents=True)
+    isolated_config.write_text(
+        yaml.safe_dump({"skypilot": {"sky_bin": "/x/bin/sky"}, "default_project": "p"})
+    )
+
+    assert config.clear_skypilot_bin() is True
+    saved = yaml.safe_load(isolated_config.read_text())
+    assert "skypilot" not in saved  # section emptied and dropped
+    assert saved["default_project"] == "p"
+    # Idempotent: nothing left to clear.
+    assert config.clear_skypilot_bin() is False
+
+
 def test_resolve_project_storage_reads_object_storage(isolated_config: Path) -> None:
     isolated_config.parent.mkdir(parents=True)
     isolated_config.write_text(
@@ -784,3 +841,45 @@ def test_resolve_container_registry_prefers_project_override(
     monkeypatch.setenv("NPA_REGISTRY_ID", "myregid123")
     # proj-a has an explicit container_registry, which wins over env.
     assert config.resolve_container_registry("proj-a") == "registry.example/npa"
+
+
+def test_write_config_locks_down_file_and_directory(tmp_path, monkeypatch) -> None:
+    """~/.npa holds S3 keys, kubeconfigs and agent auth secrets: owner-only."""
+    import stat as stat_module
+
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / ".npa" / "config.yaml"
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    config_module.write_config({"projects": {"p": {"project_id": "pid"}}})
+
+    assert stat_module.S_IMODE(config_path.stat().st_mode) == 0o600
+    assert stat_module.S_IMODE(config_path.parent.stat().st_mode) == 0o700
+
+
+def test_config_permissions_warning_flags_a_world_readable_file(
+    tmp_path, monkeypatch
+) -> None:
+    """Terraform backend S3 keys live in config.yaml, so loose modes matter."""
+    from npa.clients import config as config_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("projects: {}\n", encoding="utf-8")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+
+    config_path.chmod(0o600)
+    assert config_module.config_permissions_warning() == ""
+
+    config_path.chmod(0o644)
+    warning = config_module.config_permissions_warning()
+    assert "terraform_state" in warning
+    assert "chmod 600" in warning
+
+
+def test_config_permissions_warning_is_quiet_without_a_file(tmp_path, monkeypatch) -> None:
+    from npa.clients import config as config_module
+
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "missing.yaml")
+
+    assert config_module.config_permissions_warning() == ""

@@ -47,6 +47,12 @@ source .venv/bin/activate
 
 On Windows, do this inside **WSL2 Ubuntu** (see [§6](#6-windows-via-wsl2)).
 
+> **`.venv` vs `npa/.venv`.** Every user-facing doc uses repo-root `.venv`.
+> Contributor tooling — [`docs/testing/e2e.md`](testing/e2e.md), the agent
+> skills, and `AGENTS.md` — validates the repo with `npa/.venv/bin/python`.
+> Both work; pick one per checkout so `npa` resolves to the interpreter you
+> think it does.
+
 ## 3. Install npa (editable, from the clone)
 
 ```bash
@@ -64,23 +70,67 @@ npa --version
 Prefer [`uv`](https://docs.astral.sh/uv/)? It can install Python and create the
 env in one go: `uv venv .venv && source .venv/bin/activate && uv pip install -e npa`.
 
-The base install is the core CLI, with no GPU or database wheels. Add extras
-when a workload requires them:
+The base install is fully capable: a plain `pip install -e npa` already
+includes every non-GPU workbench dependency (dataframe/reporting, LanceDB, the
+Rerun viewer, and the local eval/agent server). There is no separate
+`npa[full]` step. Only these extras are opt-in:
 
 ```bash
-pip install -e "npa[full]"      # everything below except the GPU extras
-pip install -e "npa[data]"      # pandas/scipy/matplotlib curation + reports
-pip install -e "npa[lancedb]"   # LanceDB workbench tool
-pip install -e "npa[viz]"       # Rerun viewer/recording integration
-pip install -e "npa[server]"    # FastAPI policy/eval server
-pip install -e "npa[adapter]"   # dataset conversion
-pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU)
-pip install -e "npa[groot]"     # GR00T SDK (GPU)
+pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU, local)
+pip install -e "npa[groot]"     # GR00T SDK (GPU, local)
+pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (GPU, local)
+pip install -e "npa[agent-eval]"  # guardrails-ai output validators (optional)
+pip install -e "npa[agent-trace]" # Langfuse/OpenTelemetry tracing (optional)
 pip install -e "npa[dev]"       # tests, lint (pytest, ruff)
 ```
 
+The GPU/simulation wheels above are only needed when you run those engines
+**locally**; cloud jobs execute them inside the Nebius images they launch. The
+`full`, `data`, `lancedb`, `viz`, and `server` extras still resolve (as no-ops
+now folded into the base install) so older `npa[full]` commands keep working.
+
 Activate the venv in every new shell (`source .venv/bin/activate`), or call the
 interpreter directly with `./.venv/bin/npa` without activating.
+
+### Safely uninstall the repository-local environment
+
+Ordinary `npa cleanup` removes operational caches only; it never removes the
+environment containing the running `npa` executable. From a supported checkout
+layout (`<repo>/.venv` from this guide, or contributor `<repo>/npa/.venv`), first
+preview the exact target:
+
+```bash
+npa uninstall
+npa uninstall --json
+```
+
+Actual removal requires both explicit flags:
+
+```bash
+npa uninstall --remove-environment --yes
+```
+
+NPA refuses system, conda, pipx, user-wide, externally managed, symlinked,
+arbitrary, dirty-overlapping, active, and identity-mismatched environments. The
+command writes a mode-0600 one-time receipt, prints and flushes the status path,
+then launches a base-Python helper outside the target. The helper waits for the
+parent process to exit and revalidates the exact realpath, device/inode,
+`pyvenv.cfg` digest, repository markers, nonce, and other-process use before
+descriptor-relative removal. Source, `.git`, credentials, user data, and
+unrelated caches are never in the plan.
+
+If deferred deletion fails, the target and failure receipt remain. While the
+environment still exists, inspect or retry with the exact commands printed in
+the receipt:
+
+```bash
+npa uninstall --status <receipt-id>
+npa uninstall --remove-environment --yes --retry <receipt-id>
+```
+
+Successful removal naturally removes that environment's `npa` executable; the
+receipt remains under `~/.npa/uninstall-receipts/` for direct inspection or for
+`npa uninstall --status` after reinstalling NPA.
 
 ## 4. Nebius CLI (required)
 
@@ -89,9 +139,15 @@ interpreter directly with `./.venv/bin/npa` without activating.
 
 ```bash
 # macOS / Linux (and inside WSL2)
-curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
+  | NEBIUS_CLI_VERSION=0.12.254 bash
 export PATH="${HOME}/.nebius/bin:${PATH}"   # add to ~/.zshrc or ~/.bashrc to persist
 ```
+
+NPA's recommended/tested version is `0.12.254`; `0.12.227` is also tested and
+continues with a compatibility warning. Untested versions are blocked with an
+exact command to install the recommended version, so the install guide and the
+runtime parser contract cannot silently drift apart.
 
 `npa configure` creates or reuses a local profile for you (no manual
 `nebius profile create` step). See <https://docs.nebius.com/cli/install> for

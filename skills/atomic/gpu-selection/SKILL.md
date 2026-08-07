@@ -65,6 +65,11 @@ verdicts in `npa/docker/workbench/blackwell-dc-images.json`.
   Genesis/Sim2Real tags passed real kernel compilation and physics smokes on
   both B200 and B300; the NVIDIA Isaac vendor stacks and the per-image Cosmos
   blockers in `blackwell-dc-images.json` remain separate constraints.
+- Terraform's canonical compute outputs are `platform` and `preset`, with
+  `cpu_platform`/`cpu_preset` for CPU-only instances. Deprecated
+  `gpu_platform`/`gpu_preset` aliases are GPU-only and return null for CPU
+  instances; do not interpret a historical CPU value under those aliases as GPU
+  placement.
 
 ## Verify
 

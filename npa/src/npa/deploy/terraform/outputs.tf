@@ -1,5 +1,8 @@
 locals {
-  ssh_private_key_path = trimsuffix(var.ssh_public_key_path, ".pub")
+  # pathexpand so the emitted ssh_key_path is absolute (no leading ~) for
+  # downstream non-shell consumers, even on the destroy path where the CLI does
+  # not pre-expand ssh_public_key_path.
+  ssh_private_key_path = trimsuffix(pathexpand(var.ssh_public_key_path), ".pub")
   _raw_public          = try(nebius_compute_v1_instance.workbench.status.network_interfaces[0].public_ip_address.address, "")
   _raw_private         = try(nebius_compute_v1_instance.workbench.status.network_interfaces[0].ip_address.address, "")
   instance_external_ip = local._raw_public != "" ? split("/", local._raw_public)[0] : ""
@@ -51,14 +54,37 @@ output "nebius_region" {
   value       = var.nebius_region
 }
 
-output "gpu_platform" {
-  description = "GPU platform"
+output "platform" {
+  description = "Compute platform (CPU or GPU)"
   value       = var.gpu_platform
 }
 
-output "gpu_preset" {
-  description = "GPU preset"
+output "preset" {
+  description = "Compute preset (CPU or GPU)"
   value       = var.gpu_preset
+}
+
+output "cpu_platform" {
+  description = "CPU platform for CPU-only instances; null for GPU instances"
+  value       = startswith(var.gpu_platform, "cpu-") ? var.gpu_platform : null
+}
+
+output "cpu_preset" {
+  description = "CPU preset for CPU-only instances; null for GPU instances"
+  value       = startswith(var.gpu_platform, "cpu-") ? var.gpu_preset : null
+}
+
+# Compatibility aliases for existing state/readers. These names predate the
+# CPU-only agent VM; new callers use platform/preset. Old state may contain CPU
+# values under these names, but current CPU instances publish null aliases.
+output "gpu_platform" {
+  description = "DEPRECATED compatibility alias for GPU platform; null for CPU instances"
+  value       = startswith(var.gpu_platform, "cpu-") ? null : var.gpu_platform
+}
+
+output "gpu_preset" {
+  description = "DEPRECATED compatibility alias for GPU preset; null for CPU instances"
+  value       = startswith(var.gpu_platform, "cpu-") ? null : var.gpu_preset
 }
 
 output "security_group_id" {

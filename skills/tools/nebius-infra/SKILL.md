@@ -41,6 +41,49 @@ workflow environment variables.
    checked. Use `--sky-smoke` only when live GPU validation is explicitly
    requested.
 
+## Full Teardown
+
+Run project-scoped cloud deletion before forgetting the project, then use the
+explicit full local scope:
+
+```bash
+npa workflow cancel <run-id> --project <alias> --json
+npa agent destroy --project <alias> --name <name> --yes
+npa skypilot cleanup-controller --project <alias> --context <context> --yes
+npa cluster down --project <alias> --force
+npa storage bucket delete --project <alias> --yes --wait
+npa storage service-account delete --project <alias> --dry-run
+# If ownership provenance is missing, verify and explicitly attest the exact ID:
+npa storage service-account reconcile --project <alias> --id <exact-id> --dry-run
+npa storage service-account reconcile --project <alias> --id <exact-id> \
+  --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
+npa storage service-account delete --project <alias> --dry-run
+npa storage service-account delete --project <alias> --yes
+npa configure --forget-project <alias>
+npa cleanup --full --yes --project <alias>
+```
+
+The storage service-account command is ownership-gated: it only deletes the
+exact `lerobot-training` identity whose successful create call NPA recorded for
+that project, either in committed `storage_iam` or the crash-safe setup journal
+written before the next provider step. Bucket credentials and storage IAM
+provenance have separate
+lifecycles: bucket deletion preserves the dedicated `storage_iam` record until
+the account is deleted or conclusively absent, while a familiar name or legacy
+saved ID remains evidence but is not proof of ownership. Agent bootstrap may
+change the generic `nebius.service_account_id` without changing this record.
+For legacy NPA-created residue, `service-account reconcile` verifies the exact
+immutable ID, expected name, project, tenant, and selected profile, then stores
+non-secret operator/when/reason attestation. It never deletes the resource;
+the existing guarded `delete` command remains the only deletion path. Unresolved
+evidence is journaled in the project stanza and blocks project forgetting.
+Plain `npa cleanup --yes` keeps credentials; `--full --yes` additionally removes
+the locally saved Hugging Face, Token Factory, and NGC entries and prunes only
+empty NPA-owned local state plus exactly validated NPA Terraform residue. It does
+not delete cloud resources, but full cleanup performs read-only storage-IAM
+verification. Verified deletion/absence exits 0; missing trustworthy ownership
+or provider/auth verification failure is partial cleanup and exits 2.
+
 ## Three-Tier Contract
 
 - CLI: `npa configure` writes runtime config and credentials; `npa
@@ -64,11 +107,72 @@ workflow environment variables.
 
 ## Gotchas
 
+- `nebius iam v2 access-key list --format json` may disclose access-key secret
+  material in the external CLI's ordinary list response. NPA inventory uses
+  CLI-side JSONPath to select identifiers/metadata before stdout capture and
+  redacts provider errors; never replace that helper with a raw list or recommend
+  raw JSON in diagnostics/docs.
+- A default security group cannot be deleted directly. Full teardown deletes its
+  parent network only when the NPA Terraform state proves ownership (`npa agent
+  destroy` / `npa cluster down`). Existing, reused, shared, and unproven networks
+  are preserved for their owner.
 - Use `https://storage.eu-north1.nebius.cloud` for the current primary region.
+- `npa cluster down` uses the selected cluster's saved kubeconfig for its
+  best-effort PDB preview, sets exec auth to non-interactive, and adds Nebius
+  `--no-browser`. Authentication/RBAC/API/kubeconfig preview failures are
+  explained and never masquerade as verified drain safety. Preview uses one
+  cluster-wide node/pod/controller/PDB inventory and the same eviction selector
+  and placement semantics for every namespace. It reports cilium/CoreDNS/
+  autoscaler/metrics-server and future matching blockers, including the one-node
+  CPU-pool shape. It requests normal eviction first. Only an explicitly
+  confirmed whole-cluster destroy with an exact provider-verified NPA
+  project/context may temporarily remove the exact kube-system
+  cilium-operator/CoreDNS/CoreDNS-autoscaler/metrics-server blockers. It records
+  each decision and restores the exact specs if destroy aborts while the cluster
+  remains. Shared clusters, node-pool operations, unverified contexts, and
+  user/application PDBs are never weakened or force-deleted.
+- Shared-controller cleanup requires the selected NPA project and its exact
+  saved context (explicit flags take precedence), verifies stable provider and
+  local identities, proves remote absence, durably checkpoints it, and only then
+  removes matching local metadata. Never use an ambient kube current-context,
+  the first SkyPilot profile, or a stale unrelated row.
+- Teardown receipts live under `~/.npa/teardown-receipts/`, contain no secrets,
+  and survive removal of project config/caches. Managed jobs must be audited and
+  receipted before SkyPilot operational state is removed. List receipts with
+  `npa cleanup --list-receipts`; prune only terminal aged receipts with the
+  explicit `--prune-receipts --receipt-retention-days <days> --yes` path.
+- Receipt v2 is the durable recovery identity after a project stanza is removed.
+  Use the opaque ID printed before `configure --forget-project` with `--receipt`;
+  exact flags override receipt fields, receipts override live config, and every
+  overlap conflict fails closed before mutation. Never pass an arbitrary path.
+- Alias-free agent, cluster, storage-IAM, and controller reconciliation journals
+  into the existing project-ID-keyed receipt namespace; it never recreates an
+  alias. Exact NotFound is absence, while RBAC/auth/network/parse uncertainty is
+  unresolved and nonzero.
+- With no cluster state/inventory and no NPA kubeconfig, `npa cluster down` is a
+  no-op before binary lookup, authentication, Terraform init/provider download,
+  or Kubernetes/RBAC calls. Real apply/destroy uses marked ephemeral
+  `TF_DATA_DIR` scratch, never source `deploy/cluster/.terraform`, and keeps the
+  tracked lock read-only. Checksum mismatch is an actionable hard failure; verify
+  the provider source and reconcile with reviewed `terraform providers lock`
+  output rather than bypassing checksum verification.
+- Cleanup reports distinguish operational residue, retained audit receipts, and
+  unresolved verification. A receipt file alone never makes a fully cleaned
+  machine report operational residue.
 - On Nebius VMs with an attached service account, IAM token resolution can use
   service-account token sources (`/mnt/cloud-metadata/token` and IMDS) even
   when `~/.nebius/config.yaml` is absent. Keep this as fallback behavior, not a
-  substitute for explicit operator-machine profile setup.
+  substitute for explicit operator-machine profile setup. `get_iam_token()` keeps
+  its full first-match chain — CLI profile → `NPA_NEBIUS_IAM_TOKEN`/
+  `NEBIUS_IAM_TOKEN` → token files → metadata IMDS — so workbench/`configure`/CI
+  on machines with **no** attached SA still resolve via the profile or an injected
+  token. The attached-SA/metadata path is one option, never the only one; never
+  couple workbench credential resolution to the agent.
+- The **`npa-agent` VM** relies on this attached-SA path as its intended default:
+  deploy attaches the SA (Terraform `main.tf`) and does **not** copy the
+  operator's short-lived IAM token onto the VM (it would go stale). S3 access keys
+  stay staged (object storage is HMAC-based; a bearer IAM token cannot replace
+  them).
 - Nebius IAM registry tokens expire. If Kubernetes image pulls fail with `401
   Unauthorized` / `403 Forbidden` / `ErrImagePull`, refresh the registry pull
   secret in the namespace that owns the pod. **Do not hand-mint or hand-test the

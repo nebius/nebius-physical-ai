@@ -43,7 +43,7 @@ is pure composition of existing toolRefs; only add real tools with tests.
 | Evaluate & Validate | `grade` loop (`evaluate` + `quality-gate`) | `workbench.cosmos_evaluator.evaluate` (real Cosmos Evaluator: hallucination + attribute verification) + `data_factory_stages.grade_gate` | Token Factory + CPU |
 | Pseudo-Label Augmented | `annotate-augmented` | `npa workbench token-factory caption` (run.shell) | Token Factory |
 | Curation | `cosmos-curate` | `workbench.cosmos_curate.curate` (real Cosmos Curator stages → `clips/` + `metas/v0/`) | CPU |
-| Curation review | `curate` | `data_factory_stages.curate` (real FiftyOne Brain, merges the curator report) | CPU |
+| Curation review | `curate` | `workbench.fiftyone.curate_augmented` (real FiftyOne Brain, fail closed, merges the curator report) | CPU |
 | Visualize | `visualize` | `data_factory_viz.build_run_rrd` → `reports/sim2real.rrd` | CPU |
 | Finalize | `finalize` | `data_factory_stages.finalize` (real aggregate report) | CPU |
 
@@ -88,17 +88,19 @@ planned before it is returned (chat only emits runnable specs). `generate_data_f
 is the direct entry point; `generate_workflow_draft(intent="create_data_factory_workflow", user_text=...)`
 is the chat path.
 
-**Input conditioning (real augmentation of the caller's clip).** The managed
-`workbench.cosmos2.transfer_execute` path always conditions on the caller's real
-footage. Its `config.trigger_uri` must contain at least one supported video (`.mp4`,
-`.mov`, `.webm`, `.mkv`, or `.avi`); an empty, inaccessible, or video-free input
-fails closed before inference. Bundled upstream media was removed for
-redistribution reasons and is not a fallback. The augment downloads the first clip
-under `--input-uri` (the run's `input/`), builds a controlnet spec with `video_path`
-= that clip and an **`edge`** (or `vis`) control computed on-the-fly, and the sampled
-appearance prompt drives the new look — so the output preserves the input's
-structure/motion with a new appearance. Generic direct CLI callers can opt into the
-same behavior with `--condition-on-input` or `--input-video <path|s3://>`. `edge`/
+**Input conditioning (real augmentation of the caller's input).** The managed
+`workbench.cosmos2.transfer_execute` path always conditions on the PAIDF run's
+input. Its `config.trigger_uri` must contain captionable PNG/JPEG frames and may
+also contain a supported video (`.mp4`, `.mov`, `.webm`, `.mkv`, or `.avi`). The
+augment uses the first video when present; for a PAIDF frame-only prefix it
+assembles those frames into a temporary 1280x720, 93-frame clip inside the GPU
+runner. An empty, inaccessible, or image/video-free input fails closed before
+inference. Bundled upstream media was removed for redistribution reasons and is
+not a fallback. The runner builds a controlnet spec with `video_path` = that clip
+and an **`edge`** (or `vis`) control computed on-the-fly, and the sampled appearance
+prompt drives the new look — so the output preserves the input's structure/motion
+with a new appearance. Generic direct CLI callers remain strict: they opt in with
+`--condition-on-input` or `--input-video <path|s3://>` and must supply a video. `edge`/
 `vis` need no precomputed control asset; `depth`/`seg` would need one, so input-only
 conditioning falls back to `edge`. Conditioned runs record `mode:
 cosmos_transfer2.5_gpu` + `input_conditioned: true` + `conditioned_input` in the
@@ -226,14 +228,54 @@ Token Factory model.
 ```bash
 SPEC=npa/workflows/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
-npa workbench workflow plan-spec   "$SPEC" --run-id demo --assume-decision promote_checkpoint --json
-# Render/submit on GPUs (needs NPA_SRC_S3_URI or --image, and secret-envs):
+# --var bucket= is required for a meaningful plan; without it the spec's
+# `example-bucket` placeholder is planned (plan-spec warns).
+npa workbench workflow plan-spec "$SPEC" --run-id demo \
+  --assume-decision promote_checkpoint --var bucket=<bucket> --json
+
+# Prerequisites, in order, on a fresh machine/account:
+npa provision-if-absent --project <alias>       # bucket + GPU cluster if missing
+npa skypilot bootstrap                          # persists skypilot.sky_bin
+# Submit stages missing/outdated content-addressed NPA source automatically.
+# `stage-src` or submit `--stage-src` remains the explicit force/restage path.
+
+# Render/submit on GPUs:
 npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \
   --assume-decision promote_checkpoint --var bucket=<bucket> \
+  --var n_augmentations=1 \
+  --infra k8s/<context> \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
 ```
 
+The secret names above are resolved from the environment first and then the
+selected project's configured NPA credentials; operators do not re-export values
+already stored by `npa configure`. With no input selector, submit fetches,
+checksum-verifies, caches, normalizes, and stages the pinned real RoboPro starter.
+Use `--input-video` or `--input-uri` to replace it; use `--seed-fixture` only for
+explicitly synthetic developer/test input.
+The one-variant override keeps the first real run decisive; omit it for the
+spec's default two-variant multiply or raise it with the requested GPU count.
+
+`submit` runs a prerequisite check first and reports **every** missing item at
+once (SkyPilot CLI, npa source for image-less steps, placeholder bucket) with
+the command that fixes each. `--plan-only` skips the runtime-only checks;
+`--skip-preflight` bypasses them.
+
+## Key Operational Notes
+
+- **Prepare a verified video before GPU work.** The submit path selects the
+  pinned RoboPro physical capture by default, or an explicit `--input-video` /
+  `--input-uri`; it validates H.264 MP4 media, verifies the default digest,
+  caches/reuses safely, stages `source.mp4`, and derives the exact
+  `conditioning.mp4` plus caption frames. `--seed-fixture` is the only synthetic
+  geometry path. Conflicts, offline cache misses, invalid media, or checksum
+  failures stop before automatic provisioning and never fall back. The catalog's
+  mandatory `--condition-on-input` makes the staged conditioning clip the real
+  Cosmos control. Consequently the Dataset & provenance tab and the full
+  `reports/sim2real.rrd` Rerun
+  recording only appear once the run gets past annotate → augment → curate →
+  visualize.
 Run either NVIDIA component on its own, against a run prefix or local files:
 
 ```bash
@@ -251,7 +293,7 @@ npa workbench cosmos-evaluator evaluate \
 # One check at a time (both take local paths).
 npa workbench cosmos-evaluator hallucination --original-video a.mp4 --augmented-video b.mp4
 npa workbench cosmos-evaluator attribute-verify --video b.mp4 \
-  --variables '{"cloth_color": "blue"}' --options '{"cloth_color": ["blue","red","white","green"]}'
+  --variables '{"color_grade": "warm"}' --options '{"color_grade": ["warm","cool","neutral"]}'
 
 # Curate one run's variants (writes the curator tree + cosmos_curator.json).
 npa workbench cosmos-curate curate-augmented \
@@ -264,6 +306,21 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
 
 ## Key Operational Notes
 
+- **Cancellation distinguishes planning from launch.** A durable
+  planned/reserved/staged ledger with no workflow, stage, controller, or job ID
+  returns `NOT_SUBMITTED` without S3 or SkyPilot. Once any durable evidence says
+  submission began, missing S3/SkyPilot remains `VERIFICATION_UNAVAILABLE` until
+  exact provider or terminal receipt evidence resolves it. Receipt/exact flags
+  follow exact > receipt > live-config precedence and conflicts fail closed.
+- **Managed-job identity is per stage/wave attempt.** Runtime state records each
+  wave key, encoded stage members, attempt number, job ID/name, timestamps, and
+  outcome. Status and cancellation reconcile those records independently; they
+  never copy one discovered job ID (for example `8`) onto every stage. Parallel
+  JobGroup members share an ID only because the durable wave proves that
+  membership. Retries retain all attempts and select the final attempt
+  deterministically; missing/conflicting evidence is `unknown`/ambiguous rather
+  than an invented mapping. Legacy root-ID fan-out remains only for the proven
+  single-managed-job manifest contract.
 - **Neither NVIDIA component fetches code at run time.** The evaluator looks for
   a checkout at `NPA_COSMOS_EVALUATOR_SRC` / `/opt/cosmos-evaluator` and falls
   back to the in-repo port; the curator requires `NPA_COSMOS_CURATE_SRC` /
@@ -300,20 +357,20 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   plus a run-level `cosmos_augmented/manifest.json`.   `curate` counts clip
   subdirs (not top-level files) and `build_run_rrd` reads each clip's
   `metadata.json` for its Rerun label. Producer and consumers share this shape;
-- **Real FiftyOne curation (Voxel51):** the `curate` stage runs *real* FiftyOne
-  Brain curation over the augmented variants when FiftyOne is importable (i.e. the
-  stage runs in the `npa-fiftyone` image): `data_factory_stages.curate` delegates
-  to `data_factory_curate.run_curation`, which builds a `fiftyone.Dataset`,
+- **Real FiftyOne curation:** the `curate` stage invokes
+  `workbench.fiftyone.curate_augmented` in the `npa-fiftyone` image with
+  `--require-fiftyone`. It builds a `fiftyone.Dataset`,
   computes a GPU-free per-variant embedding (downsampled RGB + color histogram),
   and runs `compute_uniqueness` + `compute_similarity().find_duplicates()` +
   `compute_visualization(method="pca")`. The report gains `curation_engine:
   fiftyone-brain`, per-variant `uniqueness`, near-duplicate clusters, and a
   kept/dropped `selection` (schema stays `npa.fiftyone.curation.v1` — new fields
-  are additive). Outside the image (unit tests, dev-VM worktree python) it
-  degrades to the report-only counts path (`curation_engine: report-only`). Run it
-  standalone with `npa workbench fiftyone curate-augmented --augment-uri ...
-  --report-uri ...`. The agent's Voxel51 tab surfaces uniqueness + kept/dropped
-  per card and curation stats in the summary (`build_fiftyone_dataset`).
+  are additive). If Brain or its database is unavailable, PAIDF fails this stage;
+  it never calls a report-only summary FiftyOne review. Standalone callers may
+  omit `--require-fiftyone` to obtain a clearly labeled report-only fallback.
+  The agent's Dataset & provenance tab surfaces uniqueness + kept/dropped per
+  card, curation stats, original-versus-synthetic grouping, and source metadata
+  (`build_fiftyone_dataset`).
   `test_publish_transfer_layout_interoperates_with_curate_and_viz` guards it. The
   augment stage "multiplies": it runs one inference per sampled combo and emits
   one clip dir per variant (`publish_transfer_clip` per clip + a single

@@ -500,6 +500,28 @@ def test_combine_scores_is_zero_when_both_checks_are_missing() -> None:
     ) == (0.0, False)
 
 
+def test_conditioned_clip_cannot_pass_on_attributes_without_hallucination() -> None:
+    from npa.workbench.cosmos_evaluator.evaluate import _combine_scores
+
+    attribute = av.AttributeVerificationResult(
+        clip_id="conditioned",
+        passed=True,
+        total_checks=1,
+        passed_checks=1,
+        failed_checks=0,
+        score=1.0,
+        question_model="llm",
+        vlm_model="vlm",
+    )
+
+    assert _combine_scores(
+        attribute_result=attribute,
+        hallucination_result=None,
+        input_conditioned=True,
+        hallucination_weight=0.5,
+    ) == (0.0, False)
+
+
 def test_report_uri_for_appends_the_result_filename() -> None:
     from npa.workbench.cosmos_evaluator import RESULT_FILENAME, report_uri_for
 

@@ -13,6 +13,25 @@ work lives).
 
 ## Active
 
+### High
+
+#### [H] Agent VM S3 credentials are readable from its cloud-init user data
+
+- **Surfaced by**: third README-path walkthrough report on 2026-07-30.
+- **Status**: Active. The argv half is fixed (`npa.deploy.provisioner` passes
+  secret Terraform variables through a 0600 var-file instead of `-var`, so they
+  no longer appear in `ps`); the user-data half is not.
+- **Current issue**: `npa agent deploy` bakes the S3 access key and secret into
+  the VM's `cloud_init_user_data`, which anyone with read access to the project
+  can retrieve with `nebius compute instance get`. The IAM token was already
+  removed from the VM (the attached `npa-agent` service account self-mints one),
+  but the S3 keys still ride along in plaintext.
+- **Next step**: have the VM obtain S3 credentials at boot through its attached
+  service account (mint or read an access key with the token it already
+  self-mints) instead of receiving them in user data; until then, treat the keys
+  staged onto an agent VM as project-readable and rotate them when the VM is
+  destroyed.
+
 ### Medium
 
 #### [M] SkyPilot's runtime bootstrap stalled once in npa-cosmos-curate
@@ -87,6 +106,19 @@ work lives).
   `npa/tests/docker/test_cosmos_oss_images.py` runs the relocation block itself
   against a fixture shaped like the published image.
 
+- 2026-07-26 - First-install `SyntaxWarning` + silent embedded-regex corruption.
+  `npa --version` (the README verify step) printed `SyntaxWarning: invalid
+  escape sequence '\s'` from `npa/src/npa/cli/agent.py`. Root cause: the
+  `_bootstrap_agent_stack` `setup_script` f-string embeds the agent backend
+  source verbatim, so single-backslash regex escapes are processed by the outer
+  f-string — `\s`/`\d` emitted a warning while `\b` silently collapsed to a
+  backspace (0x08), corrupting the deployed backend's word-boundary regexes
+  (e.g. `_maybe_stage_count_numeric_reply`, the `find_artifacts` run-id matcher,
+  and the small-sim2real chat shortcut never matched). Doubled the backslashes
+  in the six affected embedded regexes and hardened
+  `tests/cli/test_agent_backend_render.py` to compile the rendered backend with
+  `SyntaxWarning` as an error and assert no backspace byte / intact regex
+  classes. Whole-package compile scan now emits zero escape warnings.
 - 2026-07-22 - FIXME Active bookkeeping: removed seven stale `Status: Fixed`
   entries that were already covered under Resolved (Isaac Lab→LeRobot
   formatter, Isaac Lab train trajectories/`list-tasks`, GR00T BYOVM S3

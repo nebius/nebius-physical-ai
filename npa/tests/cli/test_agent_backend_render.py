@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import re
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -54,7 +55,6 @@ def _render_backend_body(monkeypatch) -> str:
         llm_model="nvidia/Cosmos3-Super-Reasoner",
         llm_models=["nvidia/Cosmos3-Super-Reasoner"],
         tf_api_key="",
-        nebius_ai_key="",
         public_https=True,
     )
     setup_script = captured["setup_script"]
@@ -73,7 +73,29 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert "__NPA_AGENT_" not in body, "an embed placeholder was not substituted"
     tree = ast.parse(body)
     assert tree is not None
-    compile(body, "backend.py", "exec")
+    # Treat SyntaxWarning as an error so an invalid escape sequence (e.g. a
+    # single-backslash regex class like ``\s``/``\d`` written into the embedded
+    # f-string) fails here instead of spamming the operator on first import.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SyntaxWarning)
+        compile(body, "backend.py", "exec")
+
+
+def test_rendered_backend_has_no_mangled_backslash_escapes(monkeypatch) -> None:
+    """Single-backslash escapes in the embedded f-string are silently mangled.
+
+    ``\\b`` becomes a backspace (0x08) and other regex classes lose their
+    backslash when the outer ``setup_script`` f-string is evaluated. Both forms
+    corrupt regexes in the deployed backend without raising at import time, so
+    guard the rendered body directly: it must not contain a raw control byte,
+    and every regex-metacharacter class must keep its literal backslash.
+    """
+    body = _render_backend_body(monkeypatch)
+    # A mangled ``\b`` collapses to a literal backspace control byte.
+    assert "\x08" not in body, "rendered backend contains a backspace byte (mangled \\b escape)"
+    # Regexes that should reach the backend intact (single backslash preserved).
+    for needle in (r"\b(?:sim", r"\b(agent-run-", r"\b(?:run|start|submit|launch)", r"(\d+)"):
+        assert needle in body, f"expected literal regex {needle!r} in rendered backend"
 
 
 def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
@@ -173,7 +195,6 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
         llm_model="nvidia/Cosmos3-Super-Reasoner",
         llm_models=["nvidia/Cosmos3-Super-Reasoner"],
         tf_api_key="",
-        nebius_ai_key="",
         public_https=True,
     )
     setup_script = captured["setup_script"]
@@ -226,7 +247,6 @@ def _capture_setup_script(monkeypatch) -> str:
         llm_model="nvidia/Cosmos3-Super-Reasoner",
         llm_models=["nvidia/Cosmos3-Super-Reasoner"],
         tf_api_key="",
-        nebius_ai_key="",
         public_https=True,
     )
     return captured["setup_script"]
@@ -322,6 +342,27 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "/foxglove/live",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
+
+    full_run_id = "paidf-readme-20260803t23521785801124z"
+    state = {"active_run_id": full_run_id, "sim_viz_runs": {}}
+    loaded = {
+        "run_id": full_run_id,
+        "rrd_uri": f"s3://bucket/physical-ai-data-factory/{full_run_id}/reports/sim2real.rrd",
+        "artifact_render": "rerun",
+        "rerun_iframe_url": "",
+    }
+    monkeypatch.setattr(module, "_rerun_ready_state", lambda **_kwargs: True)
+    ready = module._sim_viz_load_response(state, loaded, run_id=full_run_id)
+    assert ready["active_run_id"] == full_run_id
+    assert ready["rerun_ready"] is True
+    assert ready["rrd_uri"].endswith("/reports/sim2real.rrd")
+    assert ready["rerun_iframe_url"].startswith("/rerun/")
+
+    monkeypatch.setattr(module, "_rerun_ready_state", lambda **_kwargs: False)
+    unavailable = module._sim_viz_load_response(state, loaded, run_id=full_run_id)
+    assert unavailable["active_run_id"] == full_run_id
+    assert unavailable["rerun_ready"] is False
+    assert unavailable["rerun_iframe_url"] == ""
 
 
 def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):

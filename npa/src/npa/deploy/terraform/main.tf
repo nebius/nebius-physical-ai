@@ -54,7 +54,7 @@ resource "nebius_vpc_v1_security_rule" "allow_server" {
 
   ingress = {
     source_cidrs      = [var.ssh_cidr_block]
-    destination_ports = distinct(concat([var.server_port], var.extra_ingress_ports))
+    destination_ports = distinct(concat([var.server_port], jsondecode(var.extra_ingress_ports)))
   }
 }
 
@@ -162,10 +162,13 @@ resource "nebius_compute_v1_instance" "workbench" {
 
   service_account_id = trimspace(var.service_account_id) != "" ? trimspace(var.service_account_id) : null
 
-  labels = {
-    environment = "ml-workbench"
-    workload    = "physical-ai"
-  }
+  labels = merge(
+    {
+      environment = "ml-workbench"
+      workload    = "physical-ai"
+    },
+    trimspace(var.operation_id) != "" ? { "npa-operation-id" = var.operation_id } : {}
+  )
 
   lifecycle {
     # Cloud-init is bootstrap-only here. Updating user_data on a running instance
@@ -177,6 +180,10 @@ resource "nebius_compute_v1_instance" "workbench" {
 # ── Wait for cloud-init to finish ─────────────────────────────────────────
 
 resource "null_resource" "wait_for_cloud_init" {
+  # Skipped with wait_for_ssh = false, for a machine that cannot open outbound
+  # tcp/22 to a fresh public IP (corporate VPN / split tunnel). The VM still
+  # finishes cloud-init on its own; the deploy just stops verifying it over SSH.
+  count      = var.wait_for_ssh ? 1 : 0
   depends_on = [nebius_compute_v1_instance.workbench]
 
   triggers = {
@@ -191,16 +198,55 @@ resource "null_resource" "wait_for_cloud_init" {
       key_path="${pathexpand(trimsuffix(var.ssh_public_key_path, ".pub"))}"
       host="${local.instance_external_ip}"
       user="${var.ssh_user}"
-      ssh_cmd=(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i "$key_path" "$user@$host")
+      ssh_cmd=(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$key_path" "$user@$host")
 
-      echo "Waiting for SSH on $host..."
-      for _ in $(seq 1 60); do
+      # A fresh VM answers SSH in well under a minute, so a total window of ~4
+      # minutes is generous. The previous 60 x (10s connect + 5s sleep) could
+      # burn 15 minutes printing nothing, which read as a hang.
+      attempts=30
+      echo "Waiting for SSH on $host:22 (up to ~4 minutes, progress every 30s)..."
+      ssh_ok=0
+      tcp_ok=0
+      for attempt in $(seq 1 $attempts); do
+        # Separate "port never opened" (local reachability) from "SSH refused the
+        # key", so the failure below can name the real cause.
+        if timeout 5 bash -c "cat < /dev/null > /dev/tcp/$host/22" >/dev/null 2>&1; then
+          tcp_ok=1
+        fi
         if "$${ssh_cmd[@]}" "true" >/dev/null 2>&1; then
+          ssh_ok=1
           break
         fi
-        sleep 5
+        if [ $((attempt % 4)) -eq 0 ]; then
+          if [ "$tcp_ok" -eq 1 ]; then
+            echo "  still waiting (attempt $attempt/$attempts): tcp/22 is open, SSH not ready yet"
+          else
+            echo "  still waiting (attempt $attempt/$attempts): tcp/22 has not opened from this host yet"
+          fi
+        fi
+        # Give up early when the port has never opened: past the boot window that
+        # is a blocked path, not a slow VM, and 3 more minutes will not fix it.
+        if [ "$attempt" -ge 12 ] && [ "$tcp_ok" -eq 0 ]; then
+          break
+        fi
+        sleep 3
       done
-      "$${ssh_cmd[@]}" "true" >/dev/null 2>&1
+      if [ "$ssh_ok" -ne 1 ]; then
+        # Emit a clear, actionable message instead of letting `set -e` kill the
+        # script silently (which makes Terraform dump the whole provisioner body).
+        echo "ERROR: SSH to $user@$host:22 never succeeded within the boot window." >&2
+        if [ "$tcp_ok" -eq 0 ]; then
+          echo "tcp/22 on $host never opened from this machine, so the VM's SSH port is unreachable from here." >&2
+          echo "The VM is RUNNING with a public IP; this is almost always local reachability, not the VM. Check:" >&2
+          echo "  - can this host reach $host:22? (corporate VPN / split-tunnel / firewall often block outbound SSH to fresh public IPs)" >&2
+          echo "  - does the security group allow tcp/22 from your address?" >&2
+        else
+          echo "tcp/22 on $host opened, but SSH never authenticated, so this is the key or the sshd config rather than the network. Check:" >&2
+          echo "  - does the private key ($key_path) match --ssh-public-key-path?" >&2
+          echo "  - is $user the right --ssh-user for this image?" >&2
+        fi
+        exit 1
+      fi
 
       echo "Waiting for cloud-init boot-finished..."
       for _ in $(seq 1 120); do
@@ -213,15 +259,25 @@ resource "null_resource" "wait_for_cloud_init" {
       # Do not use `cloud-init status --wait`: on some CUDA13 images it hangs
       # forever even when status is already "done" (boot-finished present).
       echo "Polling cloud-init status..."
+      final_status="unknown"
       for _ in $(seq 1 60); do
         status="$("$${ssh_cmd[@]}" "cloud-init status 2>/dev/null | awk '{print \$2}'" || true)"
-        echo "cloud-init status: $${status:-unknown}"
+        final_status="$${status:-unknown}"
+        echo "cloud-init status: $final_status"
         case "$status" in
           done|error|disabled) break ;;
         esac
         sleep 5
       done
       "$${ssh_cmd[@]}" "cloud-init status --long || true" || true
+
+      # A cloud-init "error" means a runcmd (e.g. the workbench install) failed.
+      # Treat it as a hard failure so the deploy does not report success on a VM
+      # whose bootstrap is broken; Terraform then rolls the instance back.
+      if [ "$final_status" = "error" ]; then
+        echo "ERROR: cloud-init finished with status 'error'; the VM bootstrap failed."
+        exit 1
+      fi
     EOT
   }
 }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -395,3 +396,116 @@ def test_remove_npa_ingress_rules_deletes_allow_npa_rules(mocker) -> None:
 
     assert deleted == ["rule-npa"]
     run.assert_called_once_with(["vpc", "security-rule", "delete", "--id", "rule-npa"])
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "rpc error: code = FailedPrecondition desc = cannot delete default security group",
+        "Error: default security group cannot be deleted",
+        "operation failed: CannotDeleteDefaultSecurityGroup",
+    ],
+)
+def test_default_security_group_refusal_is_narrowly_classified(message: str) -> None:
+    from npa.clients.network import is_default_security_group_delete_refusal
+
+    assert is_default_security_group_delete_refusal(message)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "FailedPrecondition: security group is assigned to an instance",
+        "PermissionDenied deleting non-default security group",
+        "FailedPrecondition: non-default security group cannot be deleted while in use",
+        "connection reset while deleting security group",
+        "default network route is still in use",
+    ],
+)
+def test_non_default_security_group_failures_are_not_reclassified(message: str) -> None:
+    from npa.clients.network import is_default_security_group_delete_refusal
+
+    assert not is_default_security_group_delete_refusal(message)
+
+
+def test_owned_network_recovers_default_security_group_refusal(mocker) -> None:
+    from npa.clients.network import recover_default_security_group_delete
+
+    run = mocker.patch("npa.clients.network.nebius._run")
+    status: list[str] = []
+
+    recovered = recover_default_security_group_delete(
+        error="FailedPrecondition: cannot delete default security group",
+        parent_network_id="vpcnetwork-owned",
+        parent_network_owned=True,
+        cleanup_action="`npa agent destroy --project prod --yes`",
+        on_status=status.append,
+    )
+
+    assert recovered is True
+    run.assert_called_once_with(
+        ["vpc", "network", "delete", "--id", "vpcnetwork-owned"]
+    )
+    joined = "\n".join(status)
+    assert "cannot be deleted directly" in joined
+    assert "NPA-owned" in joined
+    assert "parent network" in joined
+
+
+def test_unowned_network_is_preserved_after_default_security_group_refusal(
+    mocker,
+) -> None:
+    from npa.clients.network import (
+        NetworkCleanupError,
+        recover_default_security_group_delete,
+    )
+
+    run = mocker.patch("npa.clients.network.nebius._run")
+
+    with pytest.raises(NetworkCleanupError) as caught:
+        recover_default_security_group_delete(
+            error="FailedPrecondition: cannot delete default security group",
+            parent_network_id="vpcnetwork-shared",
+            parent_network_owned=False,
+            cleanup_action="`npa agent destroy --project prod --yes`",
+        )
+
+    run.assert_not_called()
+    message = str(caught.value)
+    assert "reused/shared network" in message
+    assert "proof that NPA owns" in message
+    assert "parent network" in message
+    assert "npa agent destroy" in message
+
+
+def test_owned_parent_network_already_absent_is_idempotent(mocker) -> None:
+    from npa.clients.network import recover_default_security_group_delete
+
+    mocker.patch(
+        "npa.clients.network.nebius._run",
+        side_effect=NebiusError("NotFound: network is already absent"),
+    )
+    status: list[str] = []
+
+    assert recover_default_security_group_delete(
+        error="FailedPrecondition: default security group cannot be deleted",
+        parent_network_id="vpcnetwork-gone",
+        parent_network_owned=True,
+        cleanup_action="`npa agent destroy --project prod --yes`",
+        on_status=status.append,
+    )
+    assert any("already absent" in line for line in status)
+
+
+def test_genuine_security_group_failure_never_deletes_parent_network(mocker) -> None:
+    from npa.clients.network import recover_default_security_group_delete
+
+    run = mocker.patch("npa.clients.network.nebius._run")
+
+    assert not recover_default_security_group_delete(
+        error="FailedPrecondition: non-default security group is still in use",
+        parent_network_id="vpcnetwork-owned",
+        parent_network_owned=True,
+        cleanup_action="`npa agent destroy --project prod --yes`",
+    )
+    run.assert_not_called()

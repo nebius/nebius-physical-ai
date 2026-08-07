@@ -1,0 +1,314 @@
+"""Atomic project-scoped ownership for the shared SkyPilot jobs controller."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import hashlib
+from typing import Any
+
+from npa.clients.config import CONFIG_PATH, default_project_name, resolve_environment
+from npa.clients.credentials import update_private_yaml
+from npa.cluster.state import load_cluster_state
+
+
+class ClusterOwnerIdentityMismatchError(RuntimeError):
+    """A controller operation targets a different immutable cluster owner."""
+
+
+@dataclass(frozen=True)
+class ControllerOwner:
+    project_alias: str
+    project_id: str
+    cluster_id: str
+    cluster_name: str
+    context: str
+    context_fingerprint: str
+    mode: str = "kubernetes"
+    namespace: str = "sky-system"
+    name: str = "jobs-controller"
+    operation_id: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "schema_version": "npa.controller-owner.v1",
+            "project_alias": self.project_alias,
+            "project_id": self.project_id,
+            "cluster_id": self.cluster_id,
+            "cluster_name": self.cluster_name,
+            "context": self.context,
+            "context_fingerprint": self.context_fingerprint,
+            "mode": self.mode,
+            "namespace": self.namespace,
+            "name": self.name,
+            "operation_id": self.operation_id,
+        }
+
+
+def _owner_from_mapping(value: object) -> ControllerOwner | None:
+    if not isinstance(value, dict):
+        return None
+    required = ("project_alias", "project_id", "cluster_id", "context")
+    if any(not str(value.get(key) or "").strip() for key in required):
+        return None
+    return ControllerOwner(
+        project_alias=str(value.get("project_alias") or ""),
+        project_id=str(value.get("project_id") or ""),
+        cluster_id=str(value.get("cluster_id") or ""),
+        cluster_name=str(value.get("cluster_name") or ""),
+        context=str(value.get("context") or ""),
+        context_fingerprint=str(value.get("context_fingerprint") or ""),
+        mode=str(value.get("mode") or "kubernetes"),
+        namespace=str(value.get("namespace") or "sky-system"),
+        name=str(value.get("name") or "jobs-controller"),
+        operation_id=str(value.get("operation_id") or ""),
+    )
+
+
+def resolve_controller_candidate(project: str, context: str) -> ControllerOwner:
+    alias = str(project or default_project_name() or "").strip()
+    if not alias or not context:
+        raise ClusterOwnerIdentityMismatchError(
+            "Controller ownership requires an exact project alias and Kubernetes context."
+        )
+    environment = resolve_environment(alias)
+    if environment is None or not environment.project_id:
+        raise ClusterOwnerIdentityMismatchError(
+            f"Project {alias!r} has no immutable project identity."
+        )
+    cluster = load_cluster_state(context)
+    if cluster is None:
+        raise ClusterOwnerIdentityMismatchError(
+            f"No NPA cluster identity exists for context {context!r}; refusing controller adoption."
+        )
+    if cluster.project_id != environment.project_id:
+        raise ClusterOwnerIdentityMismatchError(
+            f"Context {context!r} belongs to project {cluster.project_id!r}, not "
+            f"selected project {environment.project_id!r}."
+        )
+    digest = hashlib.sha256()
+    for value in (environment.project_id, cluster.cluster_id, context):
+        digest.update(value.encode("utf-8"))
+        digest.update(b"\0")
+    return ControllerOwner(
+        project_alias=alias,
+        project_id=environment.project_id,
+        cluster_id=cluster.cluster_id,
+        cluster_name=cluster.name,
+        context=context,
+        context_fingerprint=digest.hexdigest(),
+    )
+
+
+def _same_immutable_owner(left: ControllerOwner, right: ControllerOwner) -> bool:
+    return (
+        left.project_id,
+        left.cluster_id,
+        left.context_fingerprint,
+        left.mode,
+        left.namespace,
+        left.name,
+    ) == (
+        right.project_id,
+        right.cluster_id,
+        right.context_fingerprint,
+        right.mode,
+        right.namespace,
+        right.name,
+    )
+
+
+def _configured_owner(payload: dict[str, Any]) -> ControllerOwner | None:
+    skypilot = payload.get("skypilot")
+    owner = _owner_from_mapping(
+        skypilot.get("controller_owner") if isinstance(skypilot, dict) else None
+    )
+    if owner is not None:
+        return owner
+    projects = payload.get("projects")
+    legacy = {
+        candidate
+        for candidate in (
+            _owner_from_mapping(project.get("controller_owner"))
+            for project in (projects.values() if isinstance(projects, dict) else [])
+            if isinstance(project, dict)
+        )
+        if candidate is not None
+    }
+    if len(legacy) > 1:
+        raise ClusterOwnerIdentityMismatchError(
+            "Multiple legacy controller owners are recorded; explicit reconciliation is required."
+        )
+    return next(iter(legacy), None)
+
+
+def controller_owner(project: str = "") -> ControllerOwner | None:
+    import yaml
+
+    try:
+        payload = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    owner = _configured_owner(payload)
+    if owner is None or not project:
+        return owner
+    if owner.project_alias == project:
+        return owner
+    try:
+        environment = resolve_environment(project)
+        return (
+            owner
+            if environment is not None and environment.project_id == owner.project_id
+            else None
+        )
+    except Exception:  # noqa: BLE001 - lookup convenience, immutable ID still governs
+        return None
+
+
+def bind_controller_owner(
+    candidate: ControllerOwner, *, allow_rebind: bool = False
+) -> ControllerOwner:
+    """Atomically create or compare-and-swap one controller owner record."""
+
+    def mutate(payload: dict[str, Any]) -> dict[str, Any]:
+        projects = payload.get("projects", {})
+        if not isinstance(projects, dict):
+            raise ClusterOwnerIdentityMismatchError(
+                "NPA project configuration is invalid."
+            )
+        project = projects.get(candidate.project_alias)
+        if not isinstance(project, dict):
+            raise ClusterOwnerIdentityMismatchError(
+                f"Project alias {candidate.project_alias!r} is not configured."
+            )
+        existing = _configured_owner(payload)
+        if (
+            existing is not None
+            and not _same_immutable_owner(existing, candidate)
+            and not allow_rebind
+        ):
+            raise ClusterOwnerIdentityMismatchError(
+                "Shared controller owner mismatch: recorded "
+                f"{existing.project_alias}/{existing.context}/{existing.cluster_id}, requested "
+                f"{candidate.project_alias}/{candidate.context}/{candidate.cluster_id}. "
+                "Use `npa skypilot bind-controller --rebind` only after managed jobs are terminal."
+            )
+        skypilot = payload.setdefault("skypilot", {})
+        if not isinstance(skypilot, dict):
+            raise ClusterOwnerIdentityMismatchError(
+                "NPA SkyPilot configuration is invalid."
+            )
+        skypilot["controller_owner"] = candidate.to_dict()
+        payload["skypilot"] = skypilot
+        # Migrate the pre-release per-project representation atomically.
+        for configured in projects.values():
+            if isinstance(configured, dict):
+                configured.pop("controller_owner", None)
+        payload["projects"] = projects
+        return payload
+
+    update_private_yaml(CONFIG_PATH, mutate)
+    return candidate
+
+
+def verify_controller_owner(project: str, context: str) -> ControllerOwner:
+    candidate = resolve_controller_candidate(project, context)
+    existing = controller_owner()
+    if existing is None:
+        raise ClusterOwnerIdentityMismatchError(
+            "No shared controller owner is bound. Run `npa skypilot bind-controller "
+            f"--project {candidate.project_alias} --context {context}` before submit."
+        )
+    if not _same_immutable_owner(existing, candidate):
+        raise ClusterOwnerIdentityMismatchError(
+            "Shared controller owner does not match the selected immutable project/cluster context. "
+            f"After verifying its jobs terminal, run `npa skypilot bind-controller --project "
+            f"{candidate.project_alias} --context {context} --rebind`."
+        )
+    return existing
+
+
+def verify_recorded_controller_owner() -> ControllerOwner | None:
+    """Fail fast when a saved owner points at a replaced or missing local cluster."""
+
+    existing = controller_owner()
+    if existing is None:
+        return None
+    cluster = load_cluster_state(existing.context)
+    if cluster is None:
+        raise ClusterOwnerIdentityMismatchError(
+            "The shared controller owner references a missing NPA cluster identity. "
+            "Restore its exact receipt/state or clean up the old controller before rebinding."
+        )
+    digest = hashlib.sha256()
+    for value in (existing.project_id, cluster.cluster_id, existing.context):
+        digest.update(value.encode("utf-8"))
+        digest.update(b"\0")
+    if (
+        cluster.project_id != existing.project_id
+        or cluster.cluster_id != existing.cluster_id
+        or digest.hexdigest() != existing.context_fingerprint
+    ):
+        raise ClusterOwnerIdentityMismatchError(
+            "The shared controller owner does not match the current immutable cluster "
+            "record. Verify old jobs terminal, then use `npa skypilot bind-controller "
+            "--project <alias> --context <context> --rebind`."
+        )
+    return existing
+
+
+def clear_controller_owner(
+    project: str = "",
+    *,
+    project_id: str = "",
+    cluster_id: str = "",
+    context: str = "",
+) -> bool:
+    """Clear only a record matching the cluster just verified absent."""
+
+    changed = False
+
+    def mutate(payload: dict[str, Any]) -> dict[str, Any]:
+        nonlocal changed
+        existing = _configured_owner(payload)
+        if existing is None:
+            return payload
+        requested_project_id = str(project_id or "").strip()
+        if project and not requested_project_id:
+            try:
+                environment = resolve_environment(project)
+                requested_project_id = (
+                    str(environment.project_id or "") if environment is not None else ""
+                )
+            except Exception:  # noqa: BLE001 - exact saved alias is accepted after stanza loss
+                requested_project_id = ""
+        if requested_project_id and existing.project_id != requested_project_id:
+            raise ClusterOwnerIdentityMismatchError(
+                "Refusing to clear controller ownership for a different immutable project id."
+            )
+        if not requested_project_id and existing.project_alias != project:
+            raise ClusterOwnerIdentityMismatchError(
+                "Refusing to clear controller ownership for a different project."
+            )
+        if cluster_id and existing.cluster_id != cluster_id:
+            raise ClusterOwnerIdentityMismatchError(
+                "Refusing to clear controller ownership for a different cluster id."
+            )
+        if context and existing.context != context:
+            raise ClusterOwnerIdentityMismatchError(
+                "Refusing to clear controller ownership for a different context."
+            )
+        skypilot = payload.get("skypilot")
+        if isinstance(skypilot, dict):
+            skypilot.pop("controller_owner", None)
+        projects = payload.get("projects")
+        if isinstance(projects, dict):
+            for selected in projects.values():
+                if isinstance(selected, dict):
+                    selected.pop("controller_owner", None)
+        changed = True
+        return payload
+
+    update_private_yaml(CONFIG_PATH, mutate)
+    return changed

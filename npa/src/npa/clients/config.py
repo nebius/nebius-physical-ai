@@ -25,6 +25,7 @@ User secrets that are not tied to a single workbench live in
 from __future__ import annotations
 
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,54 @@ APP_STATUS_PROVISIONED = "provisioned"
 APP_STATUS_INSTALLING = "installing"
 APP_STATUS_HEALTHY = "healthy"
 APP_STATUS_INSTALL_FAILED = "install_failed"
+
+# Non-secret, project-scoped evidence that cloud storage IAM still needs an
+# authoritative verification or guarded deletion.  Keeping this beside the
+# project stanza prevents a local cleanup pass from erasing the only remaining
+# route back to a legacy service account.
+STORAGE_IAM_RESIDUE_KEY = "storage_iam_verification_required"
+STORAGE_IAM_RESIDUE_SCHEMA = "npa.storage-iam-residue.v2"
+
+
+def _normalize_storage_iam_residue(marker: dict[str, Any]) -> dict[str, Any]:
+    """Migrate a secret-free IAM cleanup marker to the current state machine."""
+
+    normalized = dict(marker)
+    status = str(normalized.get("status", "") or "").strip()
+    ownership = str(normalized.get("ownership", "") or "").strip()
+    ownership_state = str(normalized.get("ownership_state", "") or "").strip()
+    if ownership_state not in {
+        "owned",
+        "pending-verification",
+        "verified-deleted",
+        "pre-existing",
+        "unknown",
+    }:
+        if status in {"verified_absent", "verified_deleted"}:
+            ownership_state = "verified-deleted"
+        elif status == "pre_existing":
+            ownership_state = "pre-existing"
+        elif ownership in {"npa", "npa-recovery-attested"} or status in {
+            "present_owned",
+            "reconciled_pending_delete",
+        }:
+            ownership_state = "owned"
+        elif status == "present_unverified_ownership":
+            ownership_state = "pending-verification"
+        else:
+            ownership_state = "unknown"
+    for key in ("access_key_ids", "candidate_service_account_ids"):
+        values = normalized.get(key)
+        if isinstance(values, (list, tuple, set)):
+            normalized[key] = sorted(
+                {str(item).strip() for item in values if str(item).strip()}
+            )
+        else:
+            normalized.pop(key, None)
+    normalized["ownership_state"] = ownership_state
+    normalized["schema_version"] = STORAGE_IAM_RESIDUE_SCHEMA
+    return normalized
+
 
 ENV_MAP = {
     "endpoint": "NPA_WORKBENCH_ENDPOINT",
@@ -89,6 +138,9 @@ class TerraformStateConfig:
     endpoint: str = ""
     access_key: str = ""
     secret_key: str = ""
+    session_token: str = ""
+    region: str = ""
+    addressing_style: str = "path"
 
 
 @dataclass
@@ -277,6 +329,17 @@ def _resolve_project_section(
     ``workbench``.
     """
     projects = yml.get("projects")
+    if project and not (isinstance(projects, dict) and projects):
+        # An explicit alias against an empty/absent `projects` map used to fall
+        # through to the legacy branches, which silently ignored it: the command
+        # then failed downstream complaining it could not tell which Nebius
+        # project to use, never mentioning the alias the operator had passed.
+        # This is what an alias removed by teardown looks like.
+        raise ConfigError(
+            f"Project '{project}' is not configured in ~/.npa/config.yaml "
+            "(no projects are). Pass an explicit --project-id, or run "
+            "`npa configure` to recreate the project entry."
+        )
     if isinstance(projects, dict) and projects:
         if project:
             proj = projects.get(project, {})
@@ -463,18 +526,324 @@ def resolve_container_registry(project: str | None = None) -> str:
     return value.rstrip("/") if value else DEFAULT_CONTAINER_REGISTRY
 
 
+def resolve_workflow_src_s3_uri(project: str | None = None) -> str:
+    """Return the staged ``npa`` source prefix used when no workbench image is pinned.
+
+    Staging the source is a one-off setup step, but the URI was previously only
+    readable from the environment, so the next shell failed preflight even though
+    the objects were already in the bucket. Persisting it under the project makes
+    it survive the shell that staged it.
+    """
+
+    yml = _load_yaml()
+    try:
+        proj = _resolve_project_section(yml, project)
+    except ConfigError:
+        proj = {}
+    value = ""
+    if isinstance(proj, dict):
+        value = str(proj.get("src_s3_uri", "") or "")
+    if not value:
+        value = str(yml.get("src_s3_uri", "") or "")
+    return value.strip()
+
+
+def persist_workflow_src_s3_uri(uri: str, project: str | None = None) -> Path:
+    """Persist a verified, non-secret staged-source URI for future shells.
+
+    The URI contains no credentials.  An explicit project is honored; otherwise
+    the configured default (or sole project) is used.  Legacy single-project
+    configs retain a top-level value for compatibility.
+    """
+
+    value = str(uri or "").strip()
+    if not value.startswith("s3://"):
+        raise ConfigError(f"workflow source URI must use s3://, got {value or '<empty>'}")
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    if isinstance(projects, dict) and projects:
+        alias = str(project or yml.get("default_project", "") or "").strip()
+        if not alias and len(projects) == 1:
+            alias = str(next(iter(projects)))
+        if not alias or alias not in projects:
+            available = ", ".join(str(item) for item in projects)
+            raise ConfigError(
+                "Cannot persist workflow source without a configured project alias. "
+                f"Pass --project (available: {available})."
+            )
+        return write_config({"projects": {alias: {"src_s3_uri": value}}})
+    return write_config({"src_s3_uri": value})
+
+
 # ── Read / write ─────────────────────────────────────────────────────────
+
+
+CONFIG_PERMISSIONS_WARNING = (
+    "config.yaml is readable by other users. It holds Terraform backend S3 keys "
+    "under projects.<alias>.terraform_state. Run chmod 600 ~/.npa/config.yaml."
+)
+
+
+def config_permissions_warning(path: Path | None = None) -> str:
+    """Return a warning when ``~/.npa/config.yaml`` is group/world-readable.
+
+    ``config.yaml`` is usually thought of as non-secret machine config, but the
+    deploy paths persist Terraform remote-state S3 access keys into it
+    (``projects.<alias>.terraform_state``). ``credentials.yaml`` already warns on
+    loose permissions; this gives config.yaml the same treatment for a file that
+    predates the ``terraform_state`` block or was copied between machines.
+    """
+    target = path or CONFIG_PATH
+    try:
+        if not target.exists():
+            return ""
+        mode = target.stat().st_mode
+    except OSError:
+        return ""
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        return CONFIG_PERMISSIONS_WARNING
+    return ""
 
 
 def write_config(data: dict[str, Any]) -> Path:
     """Deep-merge *data* into ``~/.npa/config.yaml`` and write."""
-    existing = _load_yaml()
-    merged = _deep_merge(existing, data)
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w") as f:
-        yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
-    CONFIG_PATH.chmod(0o600)
+    from npa.clients.credentials import update_private_yaml
+
+    update_private_yaml(CONFIG_PATH, lambda existing: _deep_merge(existing, data))
     return CONFIG_PATH
+
+
+def _write_config_replace(data: dict[str, Any]) -> Path:
+    """Write *data* to ``config.yaml`` verbatim (replacing), 0600.
+
+    ``write_config`` deep-merges and so cannot *drop* a key; teardown paths that
+    remove a stanza (a deleted bucket's ``terraform_state``, an uninstalled
+    SkyPilot ``sky_bin``, a forgotten project) rewrite the whole file instead.
+    """
+    from npa.clients.credentials import update_private_yaml
+
+    update_private_yaml(CONFIG_PATH, lambda _existing: data)
+    return CONFIG_PATH
+
+
+def _bucket_key(value: str) -> str:
+    """Normalize a bucket URI/name to its bare bucket name for comparison."""
+    return str(value or "").strip().removeprefix("s3://").strip("/").split("/", 1)[0]
+
+
+def clear_terraform_state_for_bucket(bucket_name: str) -> list[str]:
+    """Drop ``projects.<alias>.terraform_state`` entries backed by *bucket_name*.
+
+    The Terraform remote-state block persists S3 access/secret keys for the
+    backend bucket. When that bucket is deleted, those secrets are dead weight
+    (and a leak) on disk; remove them for every project whose state bucket
+    matches. Returns the aliases whose state was cleared.
+    """
+    target = _bucket_key(bucket_name)
+    if not target:
+        return []
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    if not isinstance(projects, dict):
+        return []
+    cleared: list[str] = []
+    for alias, proj in projects.items():
+        if not isinstance(proj, dict):
+            continue
+        state = proj.get("terraform_state")
+        if not isinstance(state, dict):
+            continue
+        if _bucket_key(str(state.get("bucket", "") or "")) == target:
+            del proj["terraform_state"]
+            cleared.append(str(alias))
+    if cleared:
+        yml["projects"] = projects
+        _write_config_replace(yml)
+    return cleared
+
+
+def clear_skypilot_bin() -> bool:
+    """Remove ``skypilot.sky_bin`` from ``config.yaml``; return whether present.
+
+    Paired with removing ``~/.npa/skypilot-venv`` so an uninstalled SkyPilot
+    runtime does not leave a dangling persisted binary path behind.
+    """
+    yml = _load_yaml()
+    sky = yml.get("skypilot")
+    if not isinstance(sky, dict) or "sky_bin" not in sky:
+        return False
+    del sky["sky_bin"]
+    if sky:
+        yml["skypilot"] = sky
+    else:
+        yml.pop("skypilot", None)
+    _write_config_replace(yml)
+    return True
+
+
+def storage_iam_residue(alias: str) -> dict[str, Any]:
+    """Return the non-secret unresolved storage-IAM marker for *alias*."""
+
+    cleaned = str(alias or "").strip()
+    if not cleaned:
+        return {}
+    projects = _load_yaml().get("projects")
+    project = projects.get(cleaned) if isinstance(projects, dict) else None
+    marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
+    return _normalize_storage_iam_residue(marker) if isinstance(marker, dict) else {}
+
+
+def storage_iam_residues() -> dict[str, dict[str, Any]]:
+    """Return every project alias with unresolved storage-IAM evidence."""
+
+    projects = _load_yaml().get("projects")
+    if not isinstance(projects, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for alias, project in projects.items():
+        marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
+        if isinstance(marker, dict) and marker:
+            result[str(alias)] = _normalize_storage_iam_residue(marker)
+    return result
+
+
+def project_alias_for_id(project_id: str) -> str:
+    """Return the unique configured alias for *project_id*, else ``""``."""
+
+    wanted = str(project_id or "").strip()
+    if not wanted:
+        return ""
+    projects = _load_yaml().get("projects")
+    if not isinstance(projects, dict):
+        return ""
+    aliases = [
+        str(alias)
+        for alias, project in projects.items()
+        if isinstance(project, dict)
+        and str(project.get("project_id", "") or "").strip() == wanted
+    ]
+    return aliases[0] if len(aliases) == 1 else ""
+
+
+def mark_storage_iam_residue(alias: str, evidence: dict[str, Any]) -> dict[str, Any]:
+    """Persist non-secret unresolved IAM evidence, preserving prior facts.
+
+    A later provider/auth failure must not overwrite a prior positive presence
+    observation.  Callers therefore provide only fresh, allowlisted metadata;
+    this helper merges it into the existing journal and never deletes fields.
+    """
+
+    cleaned = str(alias or "").strip()
+    if not cleaned:
+        raise ConfigError("A configured project alias is required to save IAM residue.")
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    if not isinstance(projects, dict) or cleaned not in projects:
+        raise ConfigError(
+            f"Project '{cleaned}' must remain configured while storage IAM is unresolved."
+        )
+    project = projects[cleaned]
+    if not isinstance(project, dict):
+        raise ConfigError(f"Project '{cleaned}' has an invalid configuration stanza.")
+    current = project.get(STORAGE_IAM_RESIDUE_KEY)
+    merged = (
+        _normalize_storage_iam_residue(current) if isinstance(current, dict) else {}
+    )
+    status_rank = {
+        "verification_failed": 0,
+        "present_unverified_ownership": 1,
+        "present_owned": 2,
+        "reconciled_pending_delete": 3,
+    }
+    current_status = str(merged.get("status", "") or "")
+    incoming_status = str(evidence.get("status", "") or "")
+    incoming = dict(evidence)
+    if any(key in evidence for key in ("status", "ownership", "ownership_state")):
+        incoming["ownership_state"] = _normalize_storage_iam_residue(evidence)[
+            "ownership_state"
+        ]
+    for key, value in incoming.items():
+        if value not in (None, "", [], {}):
+            if (
+                key == "status"
+                and status_rank.get(incoming_status, -1)
+                < status_rank.get(current_status, -1)
+            ):
+                continue
+            merged[str(key)] = value
+    merged = _normalize_storage_iam_residue(merged)
+    project[STORAGE_IAM_RESIDUE_KEY] = merged
+    projects[cleaned] = project
+    yml["projects"] = projects
+    _write_config_replace(yml)
+    return merged
+
+
+def clear_storage_iam_residue(alias: str, *, account_id: str = "") -> bool:
+    """Clear a residue marker after provider-verified absence/deletion only."""
+
+    cleaned = str(alias or "").strip()
+    if not cleaned:
+        return False
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    project = projects.get(cleaned) if isinstance(projects, dict) else None
+    if not isinstance(project, dict):
+        return False
+    marker = project.get(STORAGE_IAM_RESIDUE_KEY)
+    if not isinstance(marker, dict):
+        return False
+    expected = str(account_id or "").strip()
+    recorded = str(marker.get("service_account_id", "") or "").strip()
+    if expected and recorded and recorded != expected:
+        raise ConfigError(
+            "Refusing to clear storage-IAM residue for a different service account."
+        )
+    project.pop(STORAGE_IAM_RESIDUE_KEY, None)
+    projects[cleaned] = project
+    yml["projects"] = projects
+    _write_config_replace(yml)
+    return True
+
+
+def forget_project(alias: str) -> bool:
+    """Remove ``projects.<alias>`` (stanza + ``terraform_state``) from config.
+
+    The inverse of the project stanza ``npa configure`` writes. Fixes
+    ``default_project`` when the forgotten alias was the default. Returns whether
+    a stanza was removed.
+    """
+    cleaned = str(alias or "").strip()
+    if not cleaned:
+        return False
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    if not isinstance(projects, dict) or cleaned not in projects:
+        return False
+    project = projects.get(cleaned)
+    marker = project.get(STORAGE_IAM_RESIDUE_KEY) if isinstance(project, dict) else None
+    if isinstance(marker, dict) and marker:
+        account_id = str(marker.get("service_account_id", "") or "").strip()
+        suffix = f" ({account_id})" if account_id else ""
+        raise ConfigError(
+            f"Project '{cleaned}' has unresolved storage IAM{suffix}. Reconcile it "
+            "with `npa storage service-account reconcile --project "
+            f"{cleaned} --dry-run`, complete guarded deletion/verification, then "
+            "retry forgetting the project."
+        )
+    del projects[cleaned]
+    yml["projects"] = projects
+    if yml.get("default_project") == cleaned:
+        remaining = list(projects.keys())
+        if remaining:
+            yml["default_project"] = remaining[0]
+        else:
+            # Pointing `default_project` at the literal "default" once the last
+            # project is gone leaves a dangling alias that resolves to nothing;
+            # an absent key is the honest "no project configured".
+            yml.pop("default_project", None)
+    _write_config_replace(yml)
+    return True
 
 
 def remove_workbench_config(
@@ -495,10 +864,7 @@ def remove_workbench_config(
                 remaining = list(projects.keys())
                 existing["default_project"] = remaining[0] if remaining else "default"
         existing["projects"] = projects
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with CONFIG_PATH.open("w") as f:
-            yaml.dump(existing, f, default_flow_style=False, sort_keys=False)
-        CONFIG_PATH.chmod(0o600)
+        _write_config_replace(existing)
 
 
 def workbench_entry(project: str | None, name: str | None) -> dict[str, Any]:
@@ -975,6 +1341,9 @@ def resolve_terraform_state(project: str | None = None) -> TerraformStateConfig:
         endpoint=str(state.get("endpoint", "") or ""),
         access_key=str(state.get("access_key", "") or ""),
         secret_key=str(state.get("secret_key", "") or ""),
+        session_token=str(state.get("session_token", "") or ""),
+        region=str(state.get("region", "") or ""),
+        addressing_style=str(state.get("addressing_style", "path") or "path"),
     )
 
 

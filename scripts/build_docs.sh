@@ -32,9 +32,11 @@ fi
 # scratch help file and the --check temp dir must be removed from one place.
 TMP_FILE=""
 TEMP_DOCS_DIR=""
+HELP_CACHE_DIR=""
 cleanup() {
   [ -n "$TMP_FILE" ] && rm -f "$TMP_FILE"
   [ -n "$TEMP_DOCS_DIR" ] && rm -rf "$TEMP_DOCS_DIR"
+  [ -n "$HELP_CACHE_DIR" ] && rm -rf "$HELP_CACHE_DIR"
   # An EXIT trap's final command can replace an otherwise successful status.
   # Keep normal regeneration successful when TEMP_DOCS_DIR is intentionally empty.
   return 0
@@ -46,6 +48,34 @@ if [ "$CHECK" -eq 1 ]; then
   TEMP_DOCS_DIR="$(mktemp -d)"
   DOCS_DIR="$TEMP_DOCS_DIR"
 fi
+
+HELP_CACHE_DIR="$(mktemp -d)"
+
+# `npa <path> --help` costs a full Python + Typer startup, and the walk below
+# needs the same text three times per node (is_group, the page itself, and the
+# child listing). Fetch each once.
+help_for() {
+  local key cache
+  key="$(printf '%s_' "$@" | tr -c 'A-Za-z0-9_' '.')"
+  cache="${HELP_CACHE_DIR}/${key}.help"
+  if [ ! -f "$cache" ]; then
+    local staging="${cache}.$$"
+    run_with_docs_width "$@" --help > "$staging" 2>&1 || true
+    mv -f "$staging" "$cache"
+  fi
+  cat "$cache"
+}
+
+# Warm the cache for several command paths at once; the fetches are independent
+# and each is dominated by interpreter startup rather than CPU.
+prefetch_help() {
+  local path
+  for path in "$@"; do
+    # shellcheck disable=SC2086 - deliberate word split: the path is a command.
+    ( help_for $path >/dev/null ) &
+  done
+  wait
+}
 
 discover_commands() {
   python3 -c '
@@ -70,7 +100,7 @@ print("\n".join(sorted(set(names))))
 # spurious non-match.
 is_group() {
   local help_text
-  help_text="$(run_with_docs_width "$@" --help 2>&1 || true)"
+  help_text="$(help_for "$@")"
   case "$help_text" in
     *"COMMAND [ARGS]"*) return 0 ;;
     *) return 1 ;;
@@ -100,7 +130,7 @@ document_command() {
          "same-named subgroup already generated ${output}. Use a unique group name." >&2
     exit 1
   fi
-  run_with_docs_width "${command_path[@]}" --help > "$tmp"
+  help_for "${command_path[@]}" > "$tmp"
   python3 scripts/_help_to_markdown.py "$tmp" "$output_name" "${display_path[*]}" > "$output"
 }
 
@@ -111,18 +141,33 @@ document_group_recursive() {
   local output_name="$1"
   shift
   local command_path=("$@")
+  local prefetch_paths=()
   document_command "$output_name" "${command_path[@]}"
-  local child_help child
-  child_help="$(run_with_docs_width "${command_path[@]}" --help 2>&1)"
-  for child in $(printf "%s" "$child_help" | discover_commands); do
+  local child_help child children
+  child_help="$(help_for "${command_path[@]}")"
+  children="$(printf "%s" "$child_help" | discover_commands)"
+  for child in $children; do
+    prefetch_paths+=("${command_path[*]} $child")
+  done
+  prefetch_help "${prefetch_paths[@]}"
+  prefetch_paths=()
+  for child in $children; do
     if is_group "${command_path[@]}" "$child"; then
       document_group_recursive "$child" "${command_path[@]}" "$child"
     fi
   done
 }
 
-top_help="$(run_with_docs_width "$NPA_BIN" --help 2>&1)"
+top_help="$(help_for "$NPA_BIN")"
 groups="$(printf "%s" "$top_help" | discover_commands)"
+
+# The top level is the widest layer of the walk; warming it in parallel turns the
+# dominant cost (one interpreter start per command) into wall-clock we overlap.
+top_paths=()
+for group in $groups; do
+  top_paths+=("$NPA_BIN $group")
+done
+prefetch_help "${top_paths[@]}"
 
 for group in $groups; do
   if is_group "$NPA_BIN" "$group"; then

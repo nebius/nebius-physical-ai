@@ -197,7 +197,7 @@ Store the key once (writes `~/.npa/credentials.yaml`, mode 0600 — no env var
 needed afterward):
 
 ```bash
-npa configure --token-factory-key "$NEBIUS_TOKEN_FACTORY_KEY"
+npa configure --no-interactive --save-env-credentials
 ```
 
 ✅ **Checkpoint** — authenticates and lists models (no key value printed):
@@ -290,7 +290,7 @@ npa workbench token-factory generate \
 | `401` | key invalid/revoked | create a new key |
 | `402` / quota / billing error | project has no credit | add credit/payment in the Token Factory console |
 | `404` on a model id | model name typo or not enabled for your key | `curl …/v1/models` (step 3) and copy the exact id |
-| `NEBIUS_TOKEN_FACTORY_KEY is not set` (CLI) | CLI can't find the key | `npa configure --token-factory-key "$NEBIUS_TOKEN_FACTORY_KEY"` or `export NEBIUS_TOKEN_FACTORY_KEY=…` |
+| `NEBIUS_TOKEN_FACTORY_KEY is not set` (CLI) | CLI can't find the key | `export NEBIUS_TOKEN_FACTORY_KEY=…`, then `npa configure --no-interactive --save-env-credentials` |
 | CLI: `No scene images found` | `--input-path` has no `.png/.jpg/.jpeg/.webp/.bmp/.ppm` | point it at a folder that contains images |
 | answer contains `<think>…</think>` | model's visible reasoning | keep it, or strip up to the last `</think>` |
 

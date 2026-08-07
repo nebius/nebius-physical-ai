@@ -38,20 +38,20 @@ variable "ssh_user_name" {
 }
 
 variable "ssh_public_key" {
-  description = "SSH public key for Kubernetes node access."
+  description = "SSH public key for Kubernetes node access. `npa cluster up` pins the first key that exists on the machine (NPA_SSH_PUBLIC_KEY, then ~/.ssh/id_ed25519.pub, id_rsa.pub, id_ecdsa.pub) unless this is set explicitly; the module rejects a path that does not exist."
   type = object({
     key  = optional(string)
     path = optional(string)
   })
   default = {
-    path = "~/.ssh/id_rsa.pub"
+    path = "~/.ssh/id_ed25519.pub"
   }
 }
 
 variable "cpu_nodes_count" {
-  description = "CPU-only node count. Keep zero when the target cluster should contain only GPU worker nodes."
+  description = "CPU-only node count. Default is one small CPU node for the FTUE / Physical AI Data Factory shape (CPU stages such as annotate/curate run here; GPU stages run on the GPU node). Set to 0 for a GPU-only cluster."
   type        = number
-  default     = 0
+  default     = 1
 }
 
 variable "cpu_nodes_platform" {
@@ -61,15 +61,15 @@ variable "cpu_nodes_platform" {
 }
 
 variable "cpu_nodes_preset" {
-  description = "CPU-only node preset."
+  description = "CPU-only node preset. The default matches the documented first-run / Physical AI Data Factory topology."
   type        = string
-  default     = "4vcpu-16gb"
+  default     = "8vcpu-32gb"
 }
 
 variable "gpu_nodes_count" {
-  description = "GPU node count in the single GPU node group."
+  description = "GPU node count in the single GPU node group. Default is one node for the FTUE / Physical AI Data Factory shape. Raise it (with a multi-GPU preset and enable_gpu_cluster) for a training farm."
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "gpu_nodes_platform" {
@@ -79,9 +79,15 @@ variable "gpu_nodes_platform" {
 }
 
 variable "gpu_nodes_preset" {
-  description = "GPU node preset. The default is the 8-GPU RTX PRO 6000 preset exposed by the Nebius platform catalog."
+  description = "GPU node preset. The default is the single-GPU RTX PRO 6000 preset for the small FTUE / Physical AI Data Factory shape. For a training farm, use a multi-GPU preset such as 8gpu-192vcpu-1744gb (and set enable_gpu_cluster = true for InfiniBand)."
   type        = string
-  default     = "8gpu-192vcpu-1744gb"
+  default     = "1gpu-24vcpu-218gb"
+}
+
+variable "gpu_nodes_preemptible" {
+  description = "Run the GPU node group on preemptible VMs. Off by default; preemptible capacity does not bypass hard tenant instance, disk, or public-IP quotas."
+  type        = bool
+  default     = false
 }
 
 variable "capacity_block_group" {
@@ -116,13 +122,13 @@ variable "infiniband_fabric" {
 }
 
 variable "enable_filestore" {
-  description = "Create or attach a shared filesystem for cluster storage."
+  description = "Create a shared filesystem (SFS) for cross-node cluster storage. Off by default: npa.workflow stages (including the Physical AI Data Factory) hand off artifacts via S3 URIs, so a small 1-GPU + 1-CPU cluster does not need it, and creating it requires Shared Filesystem SSD quota. Set true when a workload needs a shared /mnt/data + the filesystem CSI default StorageClass; supplying existing_filestore enables the same wiring without creating a filesystem."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "existing_filestore" {
-  description = "Existing shared filesystem ID to attach instead of creating one."
+  description = "Existing shared filesystem ID to attach instead of creating one. Setting it implies enable_filestore."
   type        = string
   default     = ""
 }

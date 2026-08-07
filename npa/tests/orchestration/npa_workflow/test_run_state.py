@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import json
 
-from npa.orchestration.npa_workflow.run_state import RunManifest, RunStateStore
+import pytest
+
+from npa.orchestration.npa_workflow.run_state import (
+    RunManifest,
+    RunStateStore,
+    reconcile_submitted_manifest,
+)
 
 
 def test_run_state_store_roundtrip() -> None:
@@ -34,6 +40,66 @@ def test_run_state_store_roundtrip() -> None:
     assert loaded.steps[0]["state"] == "augment"
     status_payload = json.loads(store[("bucket", "runs/demo/npa-workflow/status.json")])
     assert status_payload["status"] == "running"
+
+
+def test_submitted_manifest_reconciles_partial_failure_and_keeps_resources() -> None:
+    manifest = RunManifest(
+        workflow="paidf",
+        run_id="run-1",
+        api_version="npa.workflow/v0.0.1",
+        status="submitted",
+        sky_job_id="4",
+        steps=[
+            {"state": "annotate", "status": "submitted", "resources_profile": {}},
+            {
+                "state": "augment",
+                "status": "submitted",
+                "resources_profile": {
+                    "accelerators": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+                },
+            },
+            {"state": "evaluate", "status": "submitted", "resources_profile": {}},
+        ],
+    )
+
+    reconcile_submitted_manifest(
+        manifest,
+        live_status="FAILED",
+        task_rows=(
+            {"task_id": 0, "task_name": "annotate", "status": "SUCCEEDED"},
+            {"task_id": 1, "task_name": "augment", "status": "FAILED"},
+            {"task_id": 2, "task_name": "evaluate", "status": "PENDING"},
+        ),
+    )
+
+    assert manifest.status == "FAILED"
+    assert [step["status"] for step in manifest.steps] == [
+        "SUCCEEDED",
+        "FAILED",
+        "PENDING",
+    ]
+    assert manifest.steps[1]["resources_profile"]["accelerators"].startswith("RTXPRO-")
+    assert manifest.sky_job_id == "4"
+
+
+def test_terminal_success_reconciles_every_stage_without_queue_rows() -> None:
+    manifest = RunManifest(
+        workflow="paidf",
+        run_id="run-success",
+        api_version="npa.workflow/v0.0.1",
+        status="submitted",
+        sky_job_id="7",
+        steps=[
+            {"state": "annotate", "status": "submitted", "artifact": "s3://b/a"},
+            {"state": "augment", "status": "running", "artifact": "s3://b/v"},
+        ],
+    )
+
+    reconcile_submitted_manifest(manifest, live_status="SUCCEEDED", task_rows=())
+
+    assert manifest.status == "SUCCEEDED"
+    assert [step["status"] for step in manifest.steps] == ["SUCCEEDED", "SUCCEEDED"]
+    assert [step["artifact"] for step in manifest.steps] == ["s3://b/a", "s3://b/v"]
 
 
 def test_runtime_run_state_roundtrip_is_separate_from_the_manifest() -> None:
@@ -104,8 +170,6 @@ def test_completed_wave_ignores_failed_attempts() -> None:
 def test_read_runtime_state_propagates_unexpected_storage_errors() -> None:
     """A transient read error must not look like "no ledger" (resume safety)."""
 
-    import pytest
-
     from npa.orchestration.npa_workflow.run_state import RunStateStore as Store
 
     def angry_reader(bucket: str, key: str) -> str:
@@ -151,6 +215,25 @@ def test_plan_step_records_carry_the_resource_profile() -> None:
     assert "tool_ref" not in records[1]
 
 
+def test_plan_step_records_persist_exact_submit_accelerator_override() -> None:
+    from npa.orchestration.npa_workflow.run_state import plan_step_records
+
+    records = plan_step_records(
+        [
+            _FakeStep(
+                "augment",
+                "gpu",
+                {"accelerators": "RTXPRO6000:1", "cpus": 16},
+            )
+        ],
+        accelerator_override="RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
+    )
+
+    assert records[0]["resources_profile"]["accelerators"] == (
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    )
+
+
 def test_persist_submitted_manifest_writes_a_resource_honest_manifest() -> None:
     from npa.orchestration.npa_workflow import run_state as rs
 
@@ -161,7 +244,7 @@ def test_persist_submitted_manifest_writes_a_resource_honest_manifest() -> None:
             written[(self.bucket, key)] = json.dumps(payload).encode("utf-8")
 
     original = rs.store_for_config
-    rs.store_for_config = lambda config, *, run_id: _Store(  # type: ignore[assignment]
+    rs.store_for_config = lambda config, *, run_id, **kwargs: _Store(  # type: ignore[assignment]
         bucket=str(config.get("bucket")), prefix=str(config.get("prefix") or run_id)
     )
     try:
@@ -186,6 +269,73 @@ def test_persist_submitted_manifest_without_a_bucket_is_a_no_op() -> None:
     from npa.orchestration.npa_workflow.run_state import persist_submitted_manifest
 
     assert persist_submitted_manifest({}, run_id="r", workflow="w", steps=[]) == ""
+
+
+def test_paidf_input_provenance_survives_run_manifest_round_trip() -> None:
+    from npa.orchestration.npa_workflow.run_state import input_source_from_config
+
+    source = input_source_from_config(
+        {
+            "input_source_kind": "upstream_sample",
+            "input_origin": "actual_capture",
+            "input_origin_label": "Upstream real sample",
+            "input_authoritative_url": "https://official.example/dataset",
+            "input_immutable_revision": "a" * 40,
+            "input_license": "CC-BY-4.0",
+            "input_attribution": "Example author",
+            "input_sha256": "b" * 64,
+            "input_staged_uri": "s3://bucket/physical-ai-data-factory/run/input/",
+            "input_provenance_uri": (
+                "s3://bucket/physical-ai-data-factory/run/input/provenance.json"
+            ),
+        }
+    )
+    manifest = RunManifest(
+        workflow="physical-ai-data-factory",
+        run_id="run",
+        api_version="npa.workflow/v0.0.1",
+        input_source=source,
+    )
+
+    restored = RunManifest.from_dict(manifest.to_dict())
+
+    assert restored.input_source == source
+    assert restored.input_source["source_kind"] == "upstream_sample"
+    assert restored.input_source["sha256"] == "b" * 64
+    assert restored.input_source["staged_canonical_s3_uri"].endswith("/run/input/")
+
+
+def test_persist_submitted_manifest_passes_configured_storage_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.orchestration.npa_workflow import run_state as rs
+
+    captured: dict[str, object] = {}
+
+    class _Store:
+        run_prefix_uri = "s3://bucket/run-1"
+
+        def write_manifest(self, manifest: object) -> None:
+            captured["manifest"] = manifest
+
+    def fake_store(config, *, run_id, **kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+        return _Store()
+
+    monkeypatch.setattr(rs, "store_for_config", fake_store)
+
+    rs.persist_submitted_manifest(
+        {"bucket": "bucket"},
+        run_id="run-1",
+        workflow="demo",
+        endpoint_url="https://storage.example",
+        aws_access_key_id="configured-access",
+        aws_secret_access_key="configured-secret",
+    )
+
+    assert captured["endpoint_url"] == "https://storage.example"
+    assert captured["aws_access_key_id"] == "configured-access"
+    assert captured["aws_secret_access_key"] == "configured-secret"
 
 
 def test_dispatch_step_records_carry_resources_for_any_executor() -> None:

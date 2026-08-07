@@ -630,6 +630,8 @@ class MK8sClient:
         *,
         timeout: int | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        from npa.clients.nebius import nebius_cli_env
+
         full_args = [self._nebius_bin, *args]
         last_result: subprocess.CompletedProcess[str] | None = None
         for attempt in range(1, self._retries + 1):
@@ -641,6 +643,9 @@ class MK8sClient:
                     stderr=subprocess.PIPE,
                     check=False,
                     timeout=timeout or self._timeout,
+                    # Sanitize a stale NEBIUS_IAM_TOKEN so mk8s/compute calls use
+                    # the active profile, not a shadowing ambient token.
+                    env=nebius_cli_env(),
                 )
             except subprocess.TimeoutExpired as exc:
                 if attempt >= self._retries:

@@ -328,6 +328,11 @@ def _combine_scores(
 
     attribute_score = attribute_result.score if attribute_result else None
     hallucination_score = hallucination_result.score if hallucination_result else None
+    # A conditioned augmentation must be judged against its source.  Falling
+    # back to an attribute-only pass when the source/hallucination result is
+    # missing silently weakens the advertised quality gate.
+    if input_conditioned and hallucination_score is None:
+        return 0.0, False
     use_hallucination = input_conditioned and hallucination_score is not None
 
     if attribute_score is None and not use_hallucination:

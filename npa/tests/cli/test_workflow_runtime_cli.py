@@ -8,6 +8,7 @@ that the **default** submit path is untouched by the new flags.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -24,8 +25,108 @@ GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
 RUNNER = CliRunner()
 
 
+def test_prepare_run_is_fresh_by_default_and_resume_is_explicit(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.npa_workflow import first_run_state
+
+    monkeypatch.setattr(first_run_state, "DEFAULT_ROOT", tmp_path / "scoped")
+    monkeypatch.setattr(first_run_state, "LEGACY_PATH", tmp_path / "missing-legacy")
+    monkeypatch.setattr(
+        first_run_state,
+        "resolve_project_identity",
+        lambda project: (
+            "project-stable",
+            project or "default",
+            "configured_project_id",
+        ),
+    )
+
+    first = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "prepare-run",
+            str(FANOUT),
+            "--project",
+            "synthetic",
+            "--json",
+        ],
+    )
+    assert first.exit_code == 0, first.output
+    first_payload = json.loads(first.output)
+    assert first_payload["generated_new"] is True
+    assert first_payload["resume_explicit"] is False
+
+    second = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "prepare-run",
+            str(FANOUT),
+            "--project",
+            "synthetic",
+            "--json",
+        ],
+    )
+    assert second.exit_code == 0, second.output
+    second_payload = json.loads(second.output)
+    assert second_payload["run_id"] != first_payload["run_id"]
+    assert second_payload["previous_run"]["run_id"] == first_payload["run_id"]
+    assert second_payload["previous_run"]["age_seconds"] is not None
+
+    resumed = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "prepare-run",
+            str(FANOUT),
+            "--project",
+            "synthetic",
+            "--resume-run",
+            first_payload["run_id"],
+            "--json",
+        ],
+    )
+    assert resumed.exit_code == 0, resumed.output
+    resumed_payload = json.loads(resumed.output)
+    assert resumed_payload["run_id"] == first_payload["run_id"]
+    assert resumed_payload["generated_new"] is False
+    assert resumed_payload["resume_explicit"] is True
+
+
 @pytest.fixture()
-def fake_runtime(mocker):
+def satisfied_preflight(mocker, monkeypatch):
+    """Meet `submit`'s prerequisites so these tests exercise the runtime wiring.
+
+    The runtime path runs the same preflight as the one-shot path (it needs the
+    SkyPilot CLI and an npa source for image-less steps); `--var bucket=` in each
+    invocation covers the placeholder-bucket check.
+    """
+    import npa.orchestration.skypilot._bin as skybin
+    from npa.clients import storage_validation
+    from npa.clients.storage_validation import StorageProbeResult
+
+    mocker.patch.object(skybin, "resolve_sky_bin", lambda _bin: "/usr/bin/sky")
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://rt-bucket/npa-src/npa")
+    monkeypatch.setattr(
+        storage_validation,
+        "probe_storage_write",
+        lambda **_kwargs: StorageProbeResult(
+            True,
+            "ok",
+            "Writable S3 verified with a cleaned write/delete probe.",
+            cleanup_attempted=True,
+            cleanup_succeeded=True,
+        ),
+    )
+
+
+@pytest.fixture()
+def fake_runtime(mocker, satisfied_preflight):
     """Patch the runtime driver and capture how the CLI invoked it."""
 
     captured: dict[str, object] = {}
@@ -54,7 +155,9 @@ def fake_runtime(mocker):
                     "status": "succeeded",
                 },
             ],
-            decisions=[{"decision": "promote_checkpoint", "uri": "s3://b/gate/decision.json"}],
+            decisions=[
+                {"decision": "promote_checkpoint", "uri": "s3://b/gate/decision.json"}
+            ],
             run_prefix_uri="s3://b/prefix",
             runtime_state_uri="s3://b/prefix/npa-workflow/runtime.json",
         )
@@ -77,6 +180,8 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
             "--run-id",
             "rt-cli-1",
             "--runtime",
+            "--var",
+            "bucket=rt-bucket",
             "--registry",
             "cr.example.invalid/reg",
             "--poll-seconds",
@@ -102,6 +207,7 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
     assert options.retries == 2
     assert options.max_concurrency == 2
     assert options.cancel_on_timeout is False
+    # A run without an explicit --resume-run is always fresh.
     assert options.resume is False
     # --var reaches the spec's config, not just the renderer.
     assert fake_runtime["spec"].config["max_images"] == "1"
@@ -124,6 +230,8 @@ def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
             "--run-id",
             "rt-cli-resume",
             "--runtime",
+            "--var",
+            "bucket=rt-bucket",
             "--resume",
             "--output-format",
             "json",
@@ -133,10 +241,78 @@ def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
     assert fake_runtime["options"].resume is True
 
 
+def test_runtime_uses_configured_secrets_for_local_ledger_without_leaking_env(
+    mocker, monkeypatch, satisfied_preflight
+) -> None:
+    secret = "configured-runtime-secret"
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        lambda **kwargs: type(
+            "Context",
+            (),
+            {
+                "endpoint_url": "https://storage.us-central1.nebius.cloud",
+                "secret_values": {"AWS_SECRET_ACCESS_KEY": secret},
+                "missing": (),
+            },
+        )(),
+    )
+    observed: dict[str, str] = {}
+
+    def fake_run(spec, **kwargs):  # noqa: ANN001
+        observed["secret"] = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+        observed["endpoint"] = os.environ.get("AWS_ENDPOINT_URL", "")
+        return RuntimeReport(
+            workflow=spec.name,
+            run_id=str(kwargs["run_id"]),
+            status="succeeded",
+        )
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime",
+        side_effect=fake_run,
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-configured-creds",
+            "--runtime",
+            "--var",
+            "bucket=rt-bucket",
+            "--secret-env",
+            "AWS_SECRET_ACCESS_KEY",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed == {
+        "secret": secret,
+        "endpoint": "https://storage.us-central1.nebius.cloud",
+    }
+    assert "AWS_SECRET_ACCESS_KEY" not in os.environ
+    assert secret not in result.output
+
+
 def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> None:
     result = RUNNER.invoke(
         app,
-        ["workbench", "workflow", "submit", str(FANOUT), "--run-id", "rt-cli-2", "--runtime"],
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-cli-2",
+            "--runtime",
+            "--var",
+            "bucket=rt-bucket",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert "status: succeeded" in result.output
@@ -145,7 +321,7 @@ def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> N
     assert "decision: promote_checkpoint" in result.output
 
 
-def test_submit_runtime_failure_exits_non_zero(mocker) -> None:
+def test_submit_runtime_failure_exits_non_zero(mocker, satisfied_preflight) -> None:
     mocker.patch(
         "npa.orchestration.npa_workflow.runtime.run_workflow_runtime",
         side_effect=lambda spec, **kwargs: RuntimeReport(
@@ -165,6 +341,8 @@ def test_submit_runtime_failure_exits_non_zero(mocker) -> None:
             "--run-id",
             "rt-cli-fail",
             "--runtime",
+            "--var",
+            "bucket=rt-bucket",
             "--output-format",
             "json",
         ],
@@ -175,7 +353,9 @@ def test_submit_runtime_failure_exits_non_zero(mocker) -> None:
     assert "terminal status FAILED" in payload["error"]
 
 
-def test_submit_without_runtime_uses_the_one_shot_path(mocker, monkeypatch) -> None:
+def test_submit_without_runtime_uses_the_one_shot_path(
+    mocker, monkeypatch, satisfied_preflight
+) -> None:
     """Backwards compatibility: the default submit path never calls the driver."""
 
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
@@ -188,7 +368,7 @@ def test_submit_without_runtime_uses_the_one_shot_path(mocker, monkeypatch) -> N
         submitted["content"] = Path(path).read_text(encoding="utf-8")
         return WorkflowResult(status="SUBMITTED", job_id="9", returncode=0)
 
-    mocker.patch(
+    submit_mock = mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow", side_effect=fake_submit
     )
 
@@ -203,6 +383,8 @@ def test_submit_without_runtime_uses_the_one_shot_path(mocker, monkeypatch) -> N
             "one-shot-1",
             "--image",
             "none",
+            "--var",
+            "bucket=rt-bucket",
         ],
     )
 
@@ -212,8 +394,27 @@ def test_submit_without_runtime_uses_the_one_shot_path(mocker, monkeypatch) -> N
     assert "execution: serial" in str(submitted["content"])
     assert "caption-shard-c" in str(submitted["content"])
 
+    resumed = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "one-shot-1",
+            "--image",
+            "none",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+    assert resumed.exit_code == 0, resumed.output
+    assert "no duplicate launch" in resumed.output
+    assert submit_mock.call_count == 1
 
-def test_plan_only_wins_over_runtime(mocker, monkeypatch) -> None:
+
+def test_plan_only_wins_over_runtime(mocker, monkeypatch, satisfied_preflight) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     runtime_driver = mocker.patch(
         "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
@@ -243,7 +444,15 @@ def test_plan_only_wins_over_runtime(mocker, monkeypatch) -> None:
 def test_plan_spec_waves_text_and_json() -> None:
     text_result = RUNNER.invoke(
         app,
-        ["workbench", "workflow", "plan-spec", str(FANOUT), "--run-id", "w1", "--waves"],
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(FANOUT),
+            "--run-id",
+            "w1",
+            "--waves",
+        ],
     )
     assert text_result.exit_code == 0, text_result.output
     assert "waves: 2" in text_result.output
@@ -303,3 +512,31 @@ def test_plan_spec_waves_for_a_loop_spec_shows_every_iteration() -> None:
         "publish",
     ]
     assert payload["parallel_waves"] == 0
+
+
+def test_submit_runtime_is_subject_to_the_prerequisite_preflight(mocker) -> None:
+    """`--runtime` needs SkyPilot and an npa source just as much as the one-shot path.
+
+    Without them the driver must not be reached: the run would fail later, in the
+    controller, with far less to go on.
+    """
+    runtime_driver = mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-cli-preflight",
+            "--runtime",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "missing prerequisites" in result.output
+    runtime_driver.assert_not_called()

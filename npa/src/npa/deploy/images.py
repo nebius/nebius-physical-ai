@@ -145,7 +145,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "lichtblick": "1.26.0",
     "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
-    "nebius-cli": "0.12.192",
+    "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
 }
@@ -280,6 +280,63 @@ def container_image_for_tool(
             f"docs/workbench/container-packaging.md."
         )
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"
+
+
+def tool_for_image_name(image_name: str) -> str:
+    """Reverse ``CONTAINER_IMAGE_NAMES``: ``npa-cosmos-curate`` -> ``cosmos-curate``."""
+
+    wanted = str(image_name or "").strip()
+    if not wanted:
+        return ""
+    for tool, name in CONTAINER_IMAGE_NAMES.items():
+        if name == wanted:
+            return tool
+    return ""
+
+
+def build_and_push_command(image: str) -> str:
+    """Return the buildx command that produces ``image``, or "" if it is not ours.
+
+    A missing workbench image is the one preflight failure whose fix is entirely
+    mechanical, so the remedy carries the command rather than pointing at a guide
+    whose tags can drift from these pins.
+    """
+
+    ref = str(image or "").removeprefix("docker:").strip()
+    if "/" not in ref:
+        return ""
+    repository = ref.rsplit("/", 1)[-1]
+    image_name = repository.rsplit(":", 1)[0] if ":" in repository else repository
+    tool = tool_for_image_name(image_name)
+    if not tool:
+        return ""
+    dockerfile = _workbench_dockerfile(tool)
+    if not dockerfile:
+        # Not every tool builds from npa/docker/workbench/<tool>/Dockerfile
+        # (sim2real tools in particular live elsewhere). Printing a command whose
+        # -f path does not exist is worse than printing none.
+        return ""
+    registry = ref.rsplit("/", 1)[0]
+    tag = supported_tool_version(tool)
+    return (
+        f"docker buildx build --push -f {dockerfile} "
+        f"-t {registry}/{image_name}:{tag} npa"
+    )
+
+
+def _workbench_dockerfile(tool: str) -> str:
+    """Return the repo-relative Dockerfile for ``tool``, or "" if there is none.
+
+    Resolved against the checkout when one is reachable; an installed npa has no
+    docker/ tree, and there the conventional path is still the right advice.
+    """
+
+    relative = f"npa/docker/workbench/{tool}/Dockerfile"
+    package_root = Path(__file__).resolve().parents[2]
+    repo_root = package_root.parent.parent
+    if not (repo_root / "npa" / "docker").is_dir():
+        return relative
+    return relative if (repo_root / relative).is_file() else ""
 
 
 def registry_from_id(registry_id: str) -> str:
