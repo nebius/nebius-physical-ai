@@ -136,7 +136,12 @@ def _download_json(uri: str) -> dict[str, Any]:
         return json.loads(Path(p).read_text())
 
 
-def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str = "") -> dict[str, Any]:
+def generate_configs(
+    configs_uri: str,
+    n_augmentations: int | str = 2,
+    seed: str = "",
+    augment_subject: str = "",
+) -> dict[str, Any]:
     """Sample appearance-only augmentation combos and write a real config manifest.
 
     ``n_augmentations`` accepts a str (the blueprint interpolates a quoted config
@@ -146,17 +151,18 @@ def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str
         n = int(n_augmentations)
     except (TypeError, ValueError):
         n = 2
+    subject = str(augment_subject or "").strip() or "the input robot clip"
     rng = random.Random(seed or None)
     combos = []
     for _ in range(max(1, n)):
         combo = {k: rng.choice(v) for k, v in APPEARANCE_VARIABLES.items()}
         # The prompt is what actually conditions the Cosmos Transfer augmentation,
         # so the sampled appearance drives the pixels (not just a Rerun label).
-        combo["prompt"] = prompt_from_combo(combo)
+        combo["prompt"] = f"{prompt_from_combo(combo)} Subject: {subject}."
         combos.append(combo)
     manifest = {
         "schema": "npa.data_factory.configs.v1",
-        "scene": "indoor robot arm folding cloth (tabletop manipulation)",
+        "scene": subject,
         "n_augmentations": len(combos),
         "variables": APPEARANCE_VARIABLES,
         "augmentations": combos,

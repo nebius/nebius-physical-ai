@@ -100,6 +100,8 @@ Intent router in `npa/src/npa/cli/agent_chat.py` (embedded in remote `backend.py
 | `load_franka` | "load franka", "show demo" | sim-viz/load-franka-demo |
 | `find_artifacts` | "what can I view?", "browse artifacts" | artifacts/runs, artifacts/run/{id}, sim-viz/load-artifact |
 | `onboard_solution` | "containerize github repo", "onboard workbench solution" | tools, workflows/validate, workflows/plan |
+| `create_data_factory_workflow` | "create PAIDF YAML", "fan out augmented variants" | workflows/draft, workflows/validate, workflows/plan |
+| `create_vlm_rl_workflow` | "create sim-to-real YAML", "VLM-RL workflow" | workflows/draft, workflows/validate, workflows/plan |
 
 **BYOF onboarding:** load `skills/workflows/byof-onboard/SKILL.md` (source of truth for base profiles, workloads, live verify). Chat replies reference this skill path — do not paste the full procedure into `agent_chat.py`.
 
@@ -110,6 +112,11 @@ Rules:
 - Grounded replies set `"grounded": true` and `"apis_used": ["sim-viz/status", …]`
 - LLM fallback injects `format_live_context_block(state)` JSON snapshot into the system prompt
 - Workflow drafting should pick a template by **intent + workflow capabilities** (sim2real loop-gate, VLM-RL loop, tokenfactory-cosmos gate, or simple two-step), not by hardcoded endpoint-only replies.
+- PAIDF and sim-to-real drafting resolves the staged agent bucket and configured
+  Kubernetes accelerator/profile before rendering. A conflicting requested GPU
+  fails closed; absent infrastructure remains an explicit placeholder/warning.
+- Chat-generated sim-to-real uses `workbench.sim2real.run` (the real staged
+  engine), not the legacy `workbench.sim2real.*` demo/echo toolRefs.
 
 ## Workflow Draft / Validate / Plan / Submit Loop
 

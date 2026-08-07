@@ -26,6 +26,20 @@ def test_generate_configs_writes_real_manifest(tmp_path: Path) -> None:
     assert json.loads(out.read_text())["schema"] == "npa.data_factory.configs.v1"
 
 
+def test_generate_configs_propagates_augmentation_subject_into_real_prompts(tmp_path: Path) -> None:
+    result = dfs.generate_configs(
+        str(tmp_path / "subject") + "/",
+        n_augmentations=2,
+        seed="run-subject",
+        augment_subject="warehouse picking robot clips",
+    )
+    assert result["scene"] == "warehouse picking robot clips"
+    assert all(
+        "warehouse picking robot clips" in item["prompt"]
+        for item in result["augmentations"]
+    )
+
+
 def test_prompt_from_combo_is_appearance_only() -> None:
     combo = {"cloth_color": "red", "surface": "wooden table", "lighting": "dim evening light", "background": "plain wall"}
     prompt = dfs.prompt_from_combo(combo)

@@ -198,6 +198,35 @@ plan = build_plan(spec, run_id="sdk-demo")
 report = run_workflow(spec, run_id="sdk-demo", persist_state=True)
 ```
 
+## Grounded agent chat drafting
+
+The NPA agent handles PAIDF and sim-to-real authoring on its deterministic,
+zero-token grounded path. It selects a contract-aware template, applies values
+from the natural-language request, then validates and plans the result before
+returning YAML.
+
+- PAIDF supports scenario count/GPU fan-out, augmentation subject, refinement
+  passes, grade threshold, caption limits, and Cosmos Curator clip settings. Its
+  graph invokes real Cosmos Transfer, Cosmos Evaluator, Cosmos Curator,
+  FiftyOne, and Rerun stages.
+- Sim-to-real supports robot/backend/task and input URIs, generated environment
+  counts/splits, loop and rollout counts, held-out success threshold, and seed.
+  It invokes `workbench.sim2real.run`, the maintained staged engine, instead of
+  the legacy demo toolRefs.
+- On a bootstrapped agent, `config.bucket`, Kubernetes target, and accelerator
+  come from staged `~/.npa/config.yaml` and agent S3 settings. A user-requested
+  accelerator that contradicts the configured profile fails closed. Missing S3
+  or Kubernetes setup is surfaced as an explicit placeholder/warning; the agent
+  does not invent a cluster or bucket.
+
+Examples:
+
+```text
+Create PAIDF YAML for my robot clips: 6 variants on 4 GPUs, grade threshold 70%.
+Create sim-to-real YAML for UR5e on Genesis with 12000 environments, 4 inner
+iterations, 2 outer iterations, and an 82% held-out success threshold.
+```
+
 ## Verify (same gates as CI / agent skill)
 
 ```bash
