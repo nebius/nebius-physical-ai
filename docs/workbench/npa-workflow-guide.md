@@ -179,7 +179,7 @@ npa workbench workflow submit <spec.yaml> --run-id <id> --runtime \
 | Data-dependent branching | `transitions` outside a loop body are resolved from the real decision artifact (`goto`) |
 | Trigger / watch | A state's `trigger:` prefix is polled by the driver before its wave is submitted |
 | Retry / resume | Every wave attempt is written to `<config.prefix>/npa-workflow/runtime.json` (`npa.workflow.runtime.v1`); `--resume` replays succeeded waves instead of resubmitting them |
-| Timeout | A wave that never reaches a terminal state is cancelled (job + cluster) and fails the run |
+| Timeout | A positive `--max-wait-seconds` bounds each wave; `0` waits indefinitely. `--no-cancel-on-timeout` preserves a timed-out job as in-flight so `--resume` adopts it instead of submitting a duplicate |
 
 Design notes: [`DESIGN.md`](../../DESIGN.md). Live evidence:
 [`EVIDENCE.md`](../../EVIDENCE.md).

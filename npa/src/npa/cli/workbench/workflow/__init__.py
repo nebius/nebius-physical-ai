@@ -299,7 +299,10 @@ def submit_cmd(
     max_wait_seconds: int = typer.Option(
         3600,
         "--max-wait-seconds",
-        help="With --runtime: per-wave deadline before the job is cancelled.",
+        help=(
+            "With --runtime: per-wave deadline before the job is cancelled; "
+            "0 waits indefinitely."
+        ),
     ),
     cancel_on_timeout: bool = typer.Option(
         True,
