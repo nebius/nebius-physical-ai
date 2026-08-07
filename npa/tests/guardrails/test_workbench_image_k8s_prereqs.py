@@ -119,6 +119,12 @@ def test_groot_enables_the_shared_skypilot_prerequisite_layer() -> None:
     dockerfile = (DOCKER_ROOT / "groot" / "Dockerfile").read_text(encoding="utf-8")
     assert "NPA_INSTALL_SKYPILOT_PREREQS=1" in dockerfile
     assert "NPA_INSTALL_SKYPILOT_PREREQS=0" not in dockerfile
+    assert "dpkg --purge --force-depends linux-libc-dev" not in dockerfile
+
+    derived = (DOCKER_ROOT / "groot" / "Dockerfile.k8s-prereqs").read_text(
+        encoding="utf-8"
+    )
+    assert "--fix-broken" in derived
 
 
 @pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)

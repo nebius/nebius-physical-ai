@@ -154,3 +154,9 @@ bootstrap. If a historical image exits before setup with `sudo: command not
 found`, build the additive repair tag with
 `npa/docker/workbench/groot/Dockerfile.k8s-prereqs`; do not clear the workflow's
 image pin or switch the task to root.
+
+Historical `0.1.0` images also removed `linux-libc-dev` after build while
+retaining `libc6-dev`, which makes later `apt` operations fail dependency
+resolution. The derived recipe repairs that package relationship before adding
+the prerequisites. Fresh source builds retain the current header package so
+SkyPilot can install any remaining SSH runtime packages during bootstrap.

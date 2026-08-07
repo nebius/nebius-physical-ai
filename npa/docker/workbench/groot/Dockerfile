@@ -325,7 +325,8 @@ PY
 USER root
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade gpgv openssl libssl3 \
+    && apt-get install -y --no-install-recommends --only-upgrade \
+      gpgv openssl libssl3 linux-libc-dev \
     && apt-get purge -y --auto-remove \
       dirmngr \
       gnupg \
@@ -334,7 +335,6 @@ RUN apt-get update \
       gpg \
       gpg-agent \
       software-properties-common \
-    && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /opt/nvidia/nsight-compute \
     `# The isaacsim extscache / pip_prebundle cleanup that used to be here existed only` \
     `# to claw back size from a BAKED Isaac install. There is no baked Isaac any more,` \
