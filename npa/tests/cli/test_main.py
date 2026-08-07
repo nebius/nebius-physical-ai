@@ -1848,6 +1848,37 @@ def test_normalize_pasted_secret_strips_quotes_and_auth_prefixes() -> None:
     # A bare token is unchanged.
     assert n("hf_plain") == "hf_plain"
     assert n("") == ""
+    # AWS keys may legitimately begin with words that look like auth schemes;
+    # the S3 prompt opts into quote-only normalization.
+    assert n('"Bearer valid-aws-secret"', strip_auth_wrapper=False) == (
+        "Bearer valid-aws-secret"
+    )
+    assert n("Authorization:valid-access-key", strip_auth_wrapper=False) == (
+        "Authorization:valid-access-key"
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("0", 0),
+        ("-1", 0),
+        ("1", 1024**3),
+        ("0.5", 512 * 1024**2),
+        ("0.000000001", 1),
+    ],
+)
+def test_gb_to_bytes_has_explicit_gib_flooring_boundaries(
+    value: str, expected: int
+) -> None:
+    assert cli_main._gb_to_bytes(value) == expected
+
+
+def test_gb_to_bytes_invalid_or_nonfinite_uses_recommended_cap() -> None:
+    expected = int(cli_main.RECOMMENDED_BUCKET_SIZE_GB) * 1024**3
+    assert cli_main._gb_to_bytes("invalid") == expected
+    assert cli_main._gb_to_bytes("nan") == expected
+    assert cli_main._gb_to_bytes("inf") == expected
 
 
 def test_configure_normalizes_tokens_and_warns_on_bad_token_factory_key(

@@ -13,7 +13,7 @@ import typer
 
 from npa.cli.cluster.terraform_lifecycle import _read_tfvars, terraform_status
 from npa.cluster.api import ClusterInfo, MK8sClient
-from npa.cluster.config import DEFAULT_REGION, resolve_project_id
+from npa.cluster.config import resolve_project_id
 from npa.cluster.exceptions import (
     ClusterConfigError,
     ClusterError,
@@ -217,11 +217,11 @@ def _collect_rows(
         ) or project_id
         if lookup_project_id and not cached:
             try:
-                remote = client.get_cluster(
+                target_remote = client.get_cluster(
                     local_state.cluster_id if local_state else name,
                     project_id=lookup_project_id,
                 )
-                remote_by_name[remote.name or name] = remote
+                remote_by_name[target_remote.name or name] = target_remote
             except ClusterNotFoundError:
                 verified_absent.add(name)
             except Exception as exc:  # noqa: BLE001 - preserve exact local evidence
@@ -232,10 +232,11 @@ def _collect_rows(
     else:
         if project_id and not cached:
             try:
-                for remote in client.list_clusters(project_id):
-                    remote_by_name[remote.name] = remote
+                for remote_item in client.list_clusters(project_id):
+                    remote_by_name[remote_item.name] = remote_item
             except Exception as exc:  # noqa: BLE001
-                for local_name in local_by_name or {"<configured-project>": None}:
+                local_names = list(local_by_name) or ["<configured-project>"]
+                for local_name in local_names:
                     verification_errors[str(local_name)] = (
                         f"{type(exc).__name__}: {exc}"
                     )
@@ -252,7 +253,7 @@ def _collect_rows(
     rows: list[dict[str, Any]] = []
     for target_name in target_names:
         local_state = local_by_name.get(target_name)
-        remote = remote_by_name.get(target_name)
+        remote: ClusterInfo | None = remote_by_name.get(target_name)
         if (
             remote is None
             and local_state is not None
@@ -293,9 +294,8 @@ def _terraform_row(terraform_dir: Path | None) -> dict[str, Any] | None:
     cluster = outputs.get("kube_cluster", {}).get("value") or {}
     if not isinstance(cluster, dict) or not cluster.get("name"):
         return None
-    endpoints = (
-        cluster.get("endpoints") if isinstance(cluster.get("endpoints"), dict) else {}
-    )
+    raw_endpoints = cluster.get("endpoints")
+    endpoints: dict[str, Any] = raw_endpoints if isinstance(raw_endpoints, dict) else {}
     filesystem = outputs.get("shared_filesystem", {}).get("value") or {}
     shared_filesystem_id = (
         str(filesystem.get("id") or "") if isinstance(filesystem, dict) else ""
@@ -305,14 +305,18 @@ def _terraform_row(terraform_dir: Path | None) -> dict[str, Any] | None:
         filesystem_csi = {}
     tfvars = _read_tfvars(terraform_dir)
     name = str(cluster.get("name"))
+    region = str(tfvars.get("region") or "").strip()
+    training_ref = outputs.get("k8s_training_ref")
+    training_value = training_ref.get("value") if isinstance(training_ref, dict) else ""
     return {
         "name": name,
         "cluster_id": str(cluster.get("id") or ""),
-        "region": str(tfvars.get("region") or DEFAULT_REGION),
+        "region": region or None,
+        "region_source": "terraform_tfvars" if region else "unknown",
         "endpoint": str(endpoints.get("public_endpoint") or ""),
         "kubeconfig_path": str(kubeconfig_file(name)),
         "terraform_dir": str(terraform_dir),
-        "k8s_training_ref": str(outputs.get("k8s_training_ref", {}).get("value") or ""),
+        "k8s_training_ref": str(training_value or ""),
         "shared_filesystem_id": shared_filesystem_id,
         "filesystem_csi_storage_class": (
             str(filesystem_csi.get("storage_class_name") or "")
@@ -330,7 +334,7 @@ def _state_from_terraform_row(row: dict[str, Any]) -> ClusterState:
         name=str(row["name"]),
         cluster_id=str(row.get("cluster_id") or ""),
         project_id="",
-        region=str(row.get("region") or DEFAULT_REGION),
+        region=str(row.get("region") or ""),
         node_count=0,
         node_platform="",
         node_preset="",
@@ -347,10 +351,17 @@ def _merge_terraform_row(
 ) -> dict[str, Any]:
     merged = dict(row)
     for key, value in terraform_row.items():
+        if key in {"region", "region_source"}:
+            continue
         if key in {"name", "cluster_id", "endpoint", "kubeconfig_path"}:
             merged[key] = merged.get(key) or value
         else:
             merged[key] = value
+    if not merged.get("region") and terraform_row.get("region"):
+        merged["region"] = terraform_row["region"]
+        merged["region_source"] = (
+            terraform_row.get("region_source") or "terraform_tfvars"
+        )
     return merged
 
 
@@ -424,15 +435,25 @@ def _row_for_cluster(
     created_at = (remote.created_at if remote is not None else "") or (
         local_state.created_at if local_state else ""
     )
+    remote_region = _remote_region(remote)
+    local_region = local_state.region if local_state else ""
+    resolved_region = remote_region or local_region or configured_region
+    region_source = (
+        "provider_inventory"
+        if remote_region
+        else "local_cluster_state"
+        if local_region
+        else "project_configuration"
+        if configured_region
+        else "unknown"
+    )
     row = {
         "name": (remote.name if remote is not None and remote.name else name),
         "cluster_id": (remote.id if remote is not None else "")
         or (local_state.cluster_id if local_state else ""),
         "state": state,
-        "region": _remote_region(remote)
-        or (local_state.region if local_state else "")
-        or configured_region
-        or "unknown",
+        "region": resolved_region or None,
+        "region_source": region_source,
         "node_count": node_count,
         "node_group_id": node_group_id,
         "endpoint": endpoint,
@@ -598,7 +619,7 @@ def _format_table(rows: list[dict[str, Any]]) -> str:
             str(row["name"]),
             str(row["cluster_id"]),
             str(row["state"]),
-            str(row["region"]),
+            str(row.get("region") or "unknown"),
             str(row["node_count"]),
             str(row["endpoint"]),
             str(row["kubeconfig_path"]),

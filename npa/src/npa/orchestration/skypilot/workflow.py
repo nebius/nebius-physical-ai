@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import subprocess
@@ -34,6 +33,10 @@ from npa.orchestration.skypilot.controller import (
 from npa.orchestration.skypilot.diagnostics import (
     SkyPilotDiagnosis,
     diagnose_skypilot_output,
+)
+from npa.orchestration.skypilot.json_output import (
+    parse_single_json_document,
+    queue_rows_from_output,
 )
 from npa.orchestration.skypilot.workflow_state import redact_text
 
@@ -509,15 +512,11 @@ def lookup_managed_job(
             or f"exit {result.returncode}"
         )
         return ManagedJobEvidence("unavailable", error=redact_text(detail))
-    payload = _json_payload_from_output(result.stdout)
-    if payload is None:
+    jobs = queue_rows_from_output(result.stdout)
+    if jobs is None:
         return ManagedJobEvidence(
-            "unavailable", error="SkyPilot queue returned invalid JSON"
-        )
-    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
-    if not isinstance(jobs, list):
-        return ManagedJobEvidence(
-            "unavailable", error="SkyPilot queue JSON has no jobs list"
+            "unavailable",
+            error="SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON",
         )
 
     wanted_id = str(job_id or "").strip()
@@ -571,10 +570,9 @@ def lookup_managed_job(
 def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
     """Extract managed-job ids for ``job_name`` from queue JSON, newest first."""
 
-    payload = _json_payload_from_output(output)
-    if payload is None:
+    jobs = queue_rows_from_output(output)
+    if jobs is None:
         return []
-    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
     ids: list[int] = []
     for job in jobs or []:
         if not isinstance(job, dict):
@@ -590,10 +588,9 @@ def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
 def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
     """Extract per-task rows for ``job_id`` from ``sky jobs queue --output json``."""
 
-    payload = _json_payload_from_output(output)
-    if payload is None:
+    jobs = queue_rows_from_output(output)
+    if jobs is None:
         return []
-    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
     rows: list[dict[str, Any]] = []
     for job in jobs or []:
         if not isinstance(job, dict):
@@ -994,12 +991,14 @@ def _jobs_controller_statuses(output: str) -> list[tuple[str, str]]:
         raise SkyPilotSubmitError(
             "SkyPilot controller health check returned non-json output"
         )
+    raw_clusters: Any
     if isinstance(payload, list):
-        clusters = payload
+        raw_clusters = payload
     elif isinstance(payload, dict):
-        clusters = payload.get("clusters", payload.get("jobs", []))
+        raw_clusters = payload.get("clusters", payload.get("jobs", []))
     else:
-        clusters = []
+        raw_clusters = []
+    clusters = raw_clusters if isinstance(raw_clusters, list) else []
     controllers = []
     for cluster in clusters or []:
         if not isinstance(cluster, dict):
@@ -1013,22 +1012,7 @@ def _jobs_controller_statuses(output: str) -> list[tuple[str, str]]:
 
 
 def _json_payload_from_output(output: str) -> Any | None:
-    text = output.strip()
-    for candidate in _json_payload_candidates(text):
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-    return None
-
-
-def _json_payload_candidates(text: str) -> list[str]:
-    candidates = [text or "[]"]
-    for marker in ("\n[", "\n{"):
-        idx = text.rfind(marker)
-        if idx != -1:
-            candidates.append(text[idx + 1 :])
-    return candidates
+    return parse_single_json_document(output)
 
 
 def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
@@ -1233,11 +1217,9 @@ def _looks_like_auth_error(detail: str) -> bool:
 
 
 def _status_from_queue_payload(output: str, job_id: str) -> str:
-    try:
-        payload = json.loads(output or "[]")
-    except json.JSONDecodeError:
+    jobs = queue_rows_from_output(output)
+    if jobs is None:
         return ""
-    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
     statuses = []
     for job in jobs or []:
         current_id = str(job.get("job_id") or job.get("id") or "")

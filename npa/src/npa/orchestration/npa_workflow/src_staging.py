@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
 from typing import Any, Callable, Iterable
 
@@ -52,11 +53,32 @@ EXCLUDED_DIR_NAMES = frozenset(
 #: File suffixes that are build artifacts rather than source.
 EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".pyd", ".so", ".log")
 
-#: Suffixes and names that must never reach a bucket or a worker. Only applied to
-#: the directory-walk fallback: everything .gitignore keeps out of the repo (local
-#: state, keys, env files) is invisible to the git listing used first.
-SENSITIVE_SUFFIXES = (".pem", ".key", ".tfstate", ".tfvars", ".kubeconfig")
-SENSITIVE_NAMES = frozenset({".env", "auth.env", "credentials.yaml", "credentials.yml"})
+#: Suffixes and names that must never reach a bucket or a worker, even when a
+#: secret was accidentally committed to the git index.
+SENSITIVE_SUFFIXES = (
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    ".tfstate",
+    ".tfstate.backup",
+    ".tfvars",
+    ".kubeconfig",
+)
+SENSITIVE_NAMES = frozenset(
+    {
+        ".env",
+        "auth.env",
+        "credentials.yaml",
+        "credentials.yml",
+        "credentials.json",
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+    }
+)
+SENSITIVE_DIR_NAMES = frozenset({".aws", ".kube"})
 
 
 class SrcStagingError(RuntimeError):
@@ -103,9 +125,33 @@ def _is_excluded(relative: Path) -> bool:
 
 
 def _is_sensitive(relative: Path) -> bool:
-    if relative.name in SENSITIVE_NAMES:
+    lowered = Path(*(part.casefold() for part in relative.parts))
+    if SENSITIVE_DIR_NAMES & set(lowered.parts):
         return True
-    return relative.name.endswith(SENSITIVE_SUFFIXES)
+    if lowered.name in SENSITIVE_NAMES or lowered.name.startswith(".env."):
+        return True
+    return lowered.name.endswith(SENSITIVE_SUFFIXES)
+
+
+def _is_safe_regular_source(root: Path, relative: Path) -> bool:
+    """Apply one normalized filter to git-index and filesystem-walk candidates."""
+
+    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+        return False
+    normalized = Path(relative.as_posix())
+    if normalized != relative or _is_excluded(normalized) or _is_sensitive(normalized):
+        return False
+    candidate = root / normalized
+    current = root
+    try:
+        for part in normalized.parts:
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                return False
+        return stat.S_ISREG(candidate.lstat().st_mode)
+    except OSError:
+        return False
 
 
 def _git_tracked_files(root: Path) -> list[Path] | None:
@@ -151,19 +197,14 @@ def iter_source_files(root: Path) -> Iterable[Path]:
     tracked = _git_tracked_files(root)
     if tracked is not None:
         for relative in sorted(tracked):
-            if _is_excluded(relative):
-                continue
-            if (root / relative).is_file():
+            if _is_safe_regular_source(root, relative):
                 yield relative
         return
 
     for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
         relative = path.relative_to(root)
-        if _is_excluded(relative) or _is_sensitive(relative):
-            continue
-        yield relative
+        if _is_safe_regular_source(root, relative):
+            yield relative
 
 
 def source_fingerprint(root: Path, files: Iterable[Path] | None = None) -> str:

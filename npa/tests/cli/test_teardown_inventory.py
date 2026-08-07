@@ -28,18 +28,28 @@ from npa.cluster import state as state_module
 runner = CliRunner()
 
 
-def _completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+def _completed(
+    stdout: str = "", returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=""
+    )
 
 
-def _terraform_stubs(monkeypatch, *, streams: list[list[str]] | None = None, node_groups: str = ""):
+def _terraform_stubs(
+    monkeypatch, *, streams: list[list[str]] | None = None, node_groups: str = ""
+):
     def fake_capture(args, **kwargs):
         if args[:2] == ["terraform", "version"]:
             return _completed(json.dumps({"terraform_version": "1.12.2"}))
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
-            return _completed(json.dumps({"items": [{"metadata": {"name": "npa-cluster", "id": "c1"}}]}))
+            return _completed(
+                json.dumps(
+                    {"items": [{"metadata": {"name": "npa-cluster", "id": "c1"}}]}
+                )
+            )
         if args[:4] == ["nebius", "mk8s", "node-group", "list"]:
             return _completed(node_groups or '{"items":[]}')
         raise AssertionError(args)
@@ -81,7 +91,9 @@ def test_down_removes_the_local_cluster_state(monkeypatch, tmp_path: Path) -> No
     )
     _terraform_stubs(monkeypatch)
 
-    result = runner.invoke(app, ["cluster", "down", "--terraform-dir", str(tf_dir), "--force"])
+    result = runner.invoke(
+        app, ["cluster", "down", "--terraform-dir", str(tf_dir), "--force"]
+    )
 
     assert result.exit_code == 0, result.output
     assert not state_dir.exists()
@@ -96,12 +108,21 @@ def test_down_keeps_local_state_when_asked(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(state_module, "CLUSTERS_DIR", clusters)
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
-    (tf_dir / "terraform.tfvars").write_text('cluster_name = "npa-cluster"\nparent_id = "p"\n')
+    (tf_dir / "terraform.tfvars").write_text(
+        'cluster_name = "npa-cluster"\nparent_id = "p"\n'
+    )
     _terraform_stubs(monkeypatch)
 
     result = runner.invoke(
         app,
-        ["cluster", "down", "--terraform-dir", str(tf_dir), "--force", "--keep-local-state"],
+        [
+            "cluster",
+            "down",
+            "--terraform-dir",
+            str(tf_dir),
+            "--force",
+            "--keep-local-state",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -111,7 +132,9 @@ def test_down_keeps_local_state_when_asked(monkeypatch, tmp_path: Path) -> None:
     assert "teardown will continue" in result.output
 
 
-def test_down_removes_state_for_an_explicit_context(monkeypatch, tmp_path: Path) -> None:
+def test_down_removes_state_for_an_explicit_context(
+    monkeypatch, tmp_path: Path
+) -> None:
     """`up --context` can name the context something other than the cluster."""
     clusters = tmp_path / "clusters"
     (clusters / "npa-cluster").mkdir(parents=True)
@@ -121,12 +144,22 @@ def test_down_removes_state_for_an_explicit_context(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(state_module, "CLUSTERS_DIR", clusters)
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
-    (tf_dir / "terraform.tfvars").write_text('cluster_name = "npa-cluster"\nparent_id = "p"\n')
+    (tf_dir / "terraform.tfvars").write_text(
+        'cluster_name = "npa-cluster"\nparent_id = "p"\n'
+    )
     _terraform_stubs(monkeypatch)
 
     result = runner.invoke(
         app,
-        ["cluster", "down", "--terraform-dir", str(tf_dir), "--force", "--context", "custom-ctx"],
+        [
+            "cluster",
+            "down",
+            "--terraform-dir",
+            str(tf_dir),
+            "--force",
+            "--context",
+            "custom-ctx",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -134,20 +167,28 @@ def test_down_removes_state_for_an_explicit_context(monkeypatch, tmp_path: Path)
     assert (clusters / "npa-cluster").exists()  # untouched
 
 
-def test_down_is_quiet_when_there_is_no_local_state(monkeypatch, tmp_path: Path) -> None:
+def test_down_is_quiet_when_there_is_no_local_state(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(state_module, "CLUSTERS_DIR", tmp_path / "clusters")
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
-    (tf_dir / "terraform.tfvars").write_text('cluster_name = "npa-cluster"\nparent_id = "p"\n')
+    (tf_dir / "terraform.tfvars").write_text(
+        'cluster_name = "npa-cluster"\nparent_id = "p"\n'
+    )
     _terraform_stubs(monkeypatch)
 
-    result = runner.invoke(app, ["cluster", "down", "--terraform-dir", str(tf_dir), "--force"])
+    result = runner.invoke(
+        app, ["cluster", "down", "--terraform-dir", str(tf_dir), "--force"]
+    )
 
     assert result.exit_code == 0, result.output
     assert "Removed local cluster state" not in result.output
 
 
-def test_down_keeps_local_state_when_the_destroy_fails(monkeypatch, tmp_path: Path) -> None:
+def test_down_keeps_local_state_when_the_destroy_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
     """State is the only record of a cluster a failed destroy may have left."""
     clusters = tmp_path / "clusters"
     (clusters / "npa-cluster").mkdir(parents=True)
@@ -155,7 +196,9 @@ def test_down_keeps_local_state_when_the_destroy_fails(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(state_module, "CLUSTERS_DIR", clusters)
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
-    (tf_dir / "terraform.tfvars").write_text('cluster_name = "npa-cluster"\nparent_id = "p"\n')
+    (tf_dir / "terraform.tfvars").write_text(
+        'cluster_name = "npa-cluster"\nparent_id = "p"\n'
+    )
     _terraform_stubs(monkeypatch)
 
     def failing_stream(args, **kwargs):
@@ -165,18 +208,24 @@ def test_down_keeps_local_state_when_the_destroy_fails(monkeypatch, tmp_path: Pa
 
     monkeypatch.setattr(tf_mod, "_run_stream", failing_stream)
 
-    result = runner.invoke(app, ["cluster", "down", "--terraform-dir", str(tf_dir), "--force"])
+    result = runner.invoke(
+        app, ["cluster", "down", "--terraform-dir", str(tf_dir), "--force"]
+    )
 
     assert result.exit_code != 0
     assert (clusters / "npa-cluster").exists()
 
 
-def test_down_reports_node_group_progress_while_destroying(monkeypatch, tmp_path: Path) -> None:
+def test_down_reports_node_group_progress_while_destroying(
+    monkeypatch, tmp_path: Path
+) -> None:
     """A ~6-minute node-group drain printed `Still destroying...` and nothing else."""
     monkeypatch.setattr(state_module, "CLUSTERS_DIR", tmp_path / "clusters")
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
-    (tf_dir / "terraform.tfvars").write_text('cluster_name = "npa-cluster"\nparent_id = "p"\n')
+    (tf_dir / "terraform.tfvars").write_text(
+        'cluster_name = "npa-cluster"\nparent_id = "p"\n'
+    )
     # This test exercises an actual destroy, so provide the state evidence that
     # distinguishes it from the required no-cluster fast path.
     (tf_dir / "terraform.tfstate").write_text('{"version": 4, "resources": [{}]}\n')
@@ -185,7 +234,11 @@ def test_down_reports_node_group_progress_while_destroying(monkeypatch, tmp_path
             "items": [
                 {
                     "metadata": {"name": "npa-cluster-cpu"},
-                    "status": {"state": "DELETING", "target_node_count": "0", "ready_node_count": "1"},
+                    "status": {
+                        "state": "DELETING",
+                        "target_node_count": "0",
+                        "ready_node_count": "1",
+                    },
                 }
             ]
         }
@@ -204,14 +257,20 @@ def test_down_reports_node_group_progress_while_destroying(monkeypatch, tmp_path
     monkeypatch.setattr(tf_mod, "_NodeGroupWatcher", RecordingWatcher)
     _terraform_stubs(monkeypatch, node_groups=node_groups)
 
-    result = runner.invoke(app, ["cluster", "down", "--terraform-dir", str(tf_dir), "--force"])
+    result = runner.invoke(
+        app, ["cluster", "down", "--terraform-dir", str(tf_dir), "--force"]
+    )
 
     assert result.exit_code == 0, result.output
     assert watchers, "the destroy did not start a node-group watcher"
     watchers[-1]._poll()
-    assert "node group npa-cluster-cpu: DELETING" in result.output or True  # polled after the run
+    assert (
+        "node group npa-cluster-cpu: DELETING" in result.output or True
+    )  # polled after the run
     lines: list[str] = []
-    monkeypatch.setattr(tf_mod.typer, "echo", lambda message="", **kwargs: lines.append(str(message)))
+    monkeypatch.setattr(
+        tf_mod.typer, "echo", lambda message="", **kwargs: lines.append(str(message))
+    )
     watchers[-1]._seen.clear()
     watchers[-1]._poll()
     assert any("npa-cluster-cpu: DELETING (1/0 ready)" in line for line in lines)
@@ -258,7 +317,10 @@ def test_agent_list_shows_recorded_agents(monkeypatch, tmp_path: Path) -> None:
                         }
                     },
                 },
-                "dev": {"project_id": "project-2", "agents": {"scratch": {"region": "us-central1"}}},
+                "dev": {
+                    "project_id": "project-2",
+                    "agents": {"scratch": {"region": "us-central1"}},
+                },
             },
         },
     )
@@ -328,7 +390,9 @@ def test_agent_list_explains_an_empty_inventory(monkeypatch, tmp_path: Path) -> 
 def test_agent_list_tolerates_a_malformed_config(monkeypatch, tmp_path: Path) -> None:
     from npa.cli.agent_inventory import agent_rows
 
-    _write_agents(monkeypatch, tmp_path, {"projects": {"prod": {"agents": "not-a-mapping"}}})
+    _write_agents(
+        monkeypatch, tmp_path, {"projects": {"prod": {"agents": "not-a-mapping"}}}
+    )
 
     assert agent_rows() == []
 
@@ -341,7 +405,9 @@ def test_bucket_list_marks_the_configured_bucket(monkeypatch, tmp_path: Path) ->
     from npa.clients import nebius as nebius_module
 
     creds = tmp_path / "credentials.yaml"
-    creds.write_text(yaml.safe_dump({"storage": {"bucket": "s3://npa-bucket-8a0bcf2c/"}}))
+    creds.write_text(
+        yaml.safe_dump({"storage": {"bucket": "s3://npa-bucket-8a0bcf2c/"}})
+    )
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds)
     monkeypatch.setattr(
         nebius_module,
@@ -352,7 +418,9 @@ def test_bucket_list_marks_the_configured_bucket(monkeypatch, tmp_path: Path) ->
         ],
     )
 
-    result = runner.invoke(app, ["storage", "bucket", "list", "--project-id", "project-a"])
+    result = runner.invoke(
+        app, ["storage", "bucket", "list", "--project-id", "project-a"]
+    )
 
     assert result.exit_code == 0, result.output
     assert "npa-bucket-8a0bcf2c" in result.output
@@ -368,10 +436,14 @@ def test_bucket_list_json_and_empty_project(monkeypatch, tmp_path: Path) -> None
     from npa.clients import credentials as credentials_module
     from npa.clients import nebius as nebius_module
 
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
     monkeypatch.setattr(nebius_module, "_list_project_buckets", lambda project_id: [])
 
-    empty = runner.invoke(app, ["storage", "bucket", "list", "--project-id", "project-a"])
+    empty = runner.invoke(
+        app, ["storage", "bucket", "list", "--project-id", "project-a"]
+    )
     assert empty.exit_code == 0, empty.output
     assert "No buckets in project" in empty.output
 
@@ -404,23 +476,38 @@ def test_bucket_list_requires_a_project(monkeypatch, tmp_path: Path) -> None:
 # ── agent IAM cleanup is the default ─────────────────────────────────────────
 
 
-def _iam_stubs(monkeypatch, *, sa_id: str = "serviceaccount-agent", keys=("accesskey-1",)):
+def _iam_stubs(
+    monkeypatch, *, sa_id: str = "serviceaccount-agent", keys=("accesskey-1",)
+):
     from npa.clients import nebius as nebius_module
 
     monkeypatch.setattr(
-        nebius_module, "get_service_account_id_by_name", lambda project_id, name: sa_id or None
+        nebius_module,
+        "get_service_account_id_by_name",
+        lambda project_id, name, **kwargs: sa_id or None,
     )
     monkeypatch.setattr(
         nebius_module,
         "list_access_keys_for_service_account",
-        lambda project_id, account: [
-            {"id": key, "name": "npa-agent-access-key", "state": "ACTIVE"} for key in keys
+        lambda project_id, account, **kwargs: [
+            {"id": key, "name": "npa-agent-access-key", "state": "ACTIVE"}
+            for key in keys
         ],
     )
-    deleted: list[str] = []
-    monkeypatch.setattr(nebius_module, "delete_access_key", lambda key_id: deleted.append(key_id))
     monkeypatch.setattr(
-        nebius_module, "delete_service_account", lambda account_id: deleted.append(account_id)
+        nebius_module, "_run_json", lambda *args, **kwargs: {"items": []}
+    )
+    monkeypatch.setattr(
+        nebius_module, "get_compute_instance_identity", lambda *args, **kwargs: None
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        nebius_module, "delete_access_key", lambda key_id: deleted.append(key_id)
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "delete_service_account",
+        lambda account_id: deleted.append(account_id),
     )
     return deleted
 
@@ -428,6 +515,14 @@ def _iam_stubs(monkeypatch, *, sa_id: str = "serviceaccount-agent", keys=("acces
 def _agent_config(monkeypatch, tmp_path: Path, agents: dict) -> None:
     from npa.clients import config as config_module
 
+    agents = {
+        name: {
+            **record,
+            "project_id": str(record.get("project_id") or "project-a"),
+            "instance_id": str(record.get("instance_id") or f"instance-{name}"),
+        }
+        for name, record in agents.items()
+    }
     path = tmp_path / "config.yaml"
     path.write_text(
         yaml.safe_dump(
@@ -446,7 +541,9 @@ def test_agent_destroy_purges_iam_by_default(monkeypatch, tmp_path: Path) -> Non
 
     _agent_config(monkeypatch, tmp_path, {"agent": {"public_ip": "203.0.113.50"}})
     monkeypatch.setattr(agent_module, "_destroy_agent_terraform", lambda *a, **k: None)
-    monkeypatch.setattr(agent_module, "_cleanup_agent_local_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agent_module, "_cleanup_agent_local_files", lambda *a, **k: None
+    )
     deleted = _iam_stubs(monkeypatch)
     monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
@@ -457,16 +554,40 @@ def test_agent_destroy_purges_iam_by_default(monkeypatch, tmp_path: Path) -> Non
     assert deleted == ["accesskey-1", "serviceaccount-agent"]
 
 
+def test_agent_destroy_requires_yes_without_a_tty_before_mutation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent as agent_module
+
+    _agent_config(monkeypatch, tmp_path, {"agent": {"public_ip": "203.0.113.50"}})
+    destroyed: list[str] = []
+    monkeypatch.setattr(
+        agent_module,
+        "_destroy_agent_terraform",
+        lambda *args, **kwargs: destroyed.append("called"),
+    )
+
+    result = runner.invoke(app, ["agent", "destroy", "--project", "prod"])
+
+    assert result.exit_code == 1
+    assert "Re-run with --yes" in result.output
+    assert destroyed == []
+
+
 def test_agent_destroy_keep_iam_only_reports(monkeypatch, tmp_path: Path) -> None:
     from npa.cli import agent as agent_module
 
     _agent_config(monkeypatch, tmp_path, {"agent": {"public_ip": "203.0.113.50"}})
     monkeypatch.setattr(agent_module, "_destroy_agent_terraform", lambda *a, **k: None)
-    monkeypatch.setattr(agent_module, "_cleanup_agent_local_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agent_module, "_cleanup_agent_local_files", lambda *a, **k: None
+    )
     deleted = _iam_stubs(monkeypatch)
     monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
 
-    result = runner.invoke(app, ["agent", "destroy", "--project", "prod", "--yes", "--keep-iam"])
+    result = runner.invoke(
+        app, ["agent", "destroy", "--project", "prod", "--yes", "--keep-iam"]
+    )
 
     assert result.exit_code == 0, result.output
     assert deleted == []
@@ -482,10 +603,15 @@ def test_agent_destroy_keeps_iam_other_agents_need(monkeypatch, tmp_path: Path) 
     _agent_config(
         monkeypatch,
         tmp_path,
-        {"agent": {"public_ip": "203.0.113.50"}, "second": {"public_ip": "203.0.113.50"}},
+        {
+            "agent": {"public_ip": "203.0.113.50"},
+            "second": {"public_ip": "203.0.113.50"},
+        },
     )
     monkeypatch.setattr(agent_module, "_destroy_agent_terraform", lambda *a, **k: None)
-    monkeypatch.setattr(agent_module, "_cleanup_agent_local_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agent_module, "_cleanup_agent_local_files", lambda *a, **k: None
+    )
     deleted = _iam_stubs(monkeypatch)
     monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
@@ -495,6 +621,62 @@ def test_agent_destroy_keeps_iam_other_agents_need(monkeypatch, tmp_path: Path) 
     assert result.exit_code == 0, result.output
     assert deleted == []
     assert "still use it" in result.output
+
+
+def test_agent_destroy_does_not_claim_success_when_provider_still_has_vm(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.clients import config as config_module
+    from npa.clients import nebius as nebius_module
+
+    _agent_config(monkeypatch, tmp_path, {"agent": {"public_ip": "203.0.113.50"}})
+    monkeypatch.setattr(agent_module, "_destroy_agent_terraform", lambda *a, **k: None)
+    monkeypatch.setattr(
+        nebius_module,
+        "get_compute_instance_identity",
+        lambda instance_id, **kwargs: nebius_module.ComputeInstanceIdentity(
+            instance_id=instance_id,
+            name="agent-prod-agent",
+            project_id="project-a",
+            labels={},
+        ),
+    )
+
+    result = runner.invoke(app, ["agent", "destroy", "--project", "prod", "--yes"])
+
+    assert result.exit_code == 1
+    assert "still present" in result.output
+    assert "destroyed: prod/agent" not in result.output
+    assert (
+        "agent"
+        in yaml.safe_load(config_module.CONFIG_PATH.read_text())["projects"]["prod"][
+            "agents"
+        ]
+    )
+
+
+def test_agent_destroy_provider_rejection_never_writes_verified_deleted(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent as agent_module
+    from npa.deploy.provisioner import ProvisionerError
+
+    _agent_config(monkeypatch, tmp_path, {"agent": {"public_ip": "203.0.113.50"}})
+    monkeypatch.setattr(
+        agent_module,
+        "_destroy_agent_terraform",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ProvisionerError("provider rejected destroy")
+        ),
+    )
+
+    result = runner.invoke(app, ["agent", "destroy", "--project", "prod", "--yes"])
+
+    assert result.exit_code == 1
+    assert "provider rejected destroy" in result.output
+    assert "verified_deleted" not in result.output
+    assert "destroyed: prod/agent" not in result.output
 
 
 @pytest.mark.parametrize("flag", ["--purge-iam", "--keep-iam"])
@@ -517,9 +699,9 @@ def test_wait_for_ssh_gates_the_terraform_wait_resource() -> None:
     """The flag has to reach Terraform, not just the help text."""
     from npa.deploy import provisioner as provisioner_module
 
-    main_tf = (Path(provisioner_module.__file__).parent / "terraform" / "main.tf").read_text(
-        encoding="utf-8"
-    )
+    main_tf = (
+        Path(provisioner_module.__file__).parent / "terraform" / "main.tf"
+    ).read_text(encoding="utf-8")
     variables_tf = (
         Path(provisioner_module.__file__).parent / "terraform" / "variables.tf"
     ).read_text(encoding="utf-8")

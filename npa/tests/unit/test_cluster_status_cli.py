@@ -141,7 +141,40 @@ def test_remote_only_cluster_uses_inventory_region_then_explicit_unknown(
     )
 
     assert row["region"] == "me-west1"
-    assert unknown["region"] == "unknown"
+    assert row["region_source"] == "provider_inventory"
+    assert unknown["region"] is None
+    assert unknown["region_source"] == "unknown"
+
+
+def test_terraform_status_never_invents_default_region(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        status_mod,
+        "terraform_status",
+        lambda path: {
+            "kube_cluster": {"value": {"id": "cluster-a", "name": "cluster-a"}}
+        },
+    )
+    monkeypatch.setattr(status_mod, "_read_tfvars", lambda path: {})
+
+    row = status_mod._terraform_row(tmp_path)
+
+    assert row is not None
+    assert row["region"] is None
+    assert row["region_source"] == "unknown"
+
+
+def test_terraform_merge_never_erases_authoritative_provider_region() -> None:
+    merged = status_mod._merge_terraform_row(
+        {
+            "name": "cluster-a",
+            "region": "me-west1",
+            "region_source": "provider_inventory",
+        },
+        {"name": "cluster-a", "region": None, "region_source": "unknown"},
+    )
+
+    assert merged["region"] == "me-west1"
+    assert merged["region_source"] == "provider_inventory"
 
 
 def test_list_resolves_project_alias_like_up_and_down(monkeypatch) -> None:

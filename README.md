@@ -545,7 +545,12 @@ trustworthy ownership or a provider/auth verification failure reports
 `Partial cleanup` and exits 2. A project-scoped, non-secret
 `storage_iam_verification_required` journal keeps the exact candidate visible and
 blocks `--forget-project` until provider-verified absence or guarded deletion.
-Do not treat exit 2 as success. The complete NPA-only sequence is:
+Do not treat exit 2 as success. `agent destroy`, `storage bucket delete`, and
+`storage service-account delete` share one confirmation contract: an interactive
+terminal prompts when `--yes` is absent, a non-interactive invocation refuses
+with exit 1, and explicit `--yes` is required to bypass confirmation. Read-only
+and `--dry-run` paths remain available without confirmation; `--json` confirmation
+refusals contain one machine-readable document. The complete NPA-only sequence is:
 
 ```bash
 npa workflow cancel <run-id> --project <alias> --json

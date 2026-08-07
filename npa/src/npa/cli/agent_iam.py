@@ -185,8 +185,8 @@ def remove_agent_iam_resource(project_id: str, kind: str, resource_id: str) -> b
 def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
     """Return the ``npa-agent`` service account and its access keys, if any.
 
-    Best-effort: any lookup failure reports "nothing found" rather than blocking a
-    teardown that has already removed the VM.
+    Provider inventory failures are explicit and block IAM deletion. An unreadable
+    inventory must never look like proof that no peer agent depends on the account.
     """
     try:
         from npa.clients.nebius import (
@@ -194,33 +194,118 @@ def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
             get_service_account_id_by_name,
             list_access_keys_for_service_account,
         )
-    except Exception:  # noqa: BLE001 - import-time failure means "cannot check"
-        return {"service_account_id": "", "service_account_name": "", "access_keys": []}
+    except Exception as exc:  # noqa: BLE001 - surfaced as unresolved inventory
+        return {
+            "service_account_id": "",
+            "service_account_name": "",
+            "access_keys": [],
+            "inventory_verified": False,
+            "inventory_error": str(exc),
+            "dependents": [],
+        }
 
     if not project_id:
-        return {"service_account_id": "", "service_account_name": AGENT_SERVICE_ACCOUNT_NAME, "access_keys": []}
+        return {
+            "service_account_id": "",
+            "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
+            "access_keys": [],
+            "inventory_verified": False,
+            "inventory_error": "exact project ID is missing",
+            "dependents": [],
+        }
     try:
-        sa_id = get_service_account_id_by_name(project_id, AGENT_SERVICE_ACCOUNT_NAME) or ""
-    except Exception:  # noqa: BLE001 - unreadable IAM is not a destroy failure
-        sa_id = ""
+        sa_id = (
+            get_service_account_id_by_name(
+                project_id, AGENT_SERVICE_ACCOUNT_NAME, strict=True
+            )
+            or ""
+        )
+    except Exception as exc:  # noqa: BLE001 - fail closed and report exact blocker
+        return {
+            "project_id": project_id,
+            "service_account_id": "",
+            "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
+            "access_keys": [],
+            "inventory_verified": False,
+            "inventory_error": str(exc),
+            "dependents": [],
+        }
     keys: list[dict[str, str]] = []
     if sa_id:
         try:
-            keys = list_access_keys_for_service_account(project_id, sa_id)
-        except Exception:  # noqa: BLE001
-            keys = []
+            keys = list_access_keys_for_service_account(project_id, sa_id, strict=True)
+            dependents = _provider_agent_dependents(project_id, sa_id)
+        except Exception as exc:  # noqa: BLE001 - fail closed and report exact blocker
+            return {
+                "project_id": project_id,
+                "service_account_id": sa_id,
+                "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
+                "access_keys": [],
+                "owned_by_npa": agent_iam_owned(project_id, sa_id),
+                "inventory_verified": False,
+                "inventory_error": str(exc),
+                "dependents": [],
+            }
+    else:
+        dependents = []
     return {
         "project_id": project_id,
         "service_account_id": sa_id,
         "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
         "access_keys": keys,
         "owned_by_npa": agent_iam_owned(project_id, sa_id),
+        "inventory_verified": True,
+        "inventory_error": "",
+        "dependents": dependents,
     }
+
+
+def _provider_agent_dependents(project_id: str, account_id: str) -> list[str]:
+    """List exact provider VMs attached to the shared agent service account."""
+
+    from npa.clients.nebius import NebiusError, _run_json
+
+    payload = _run_json(
+        ["compute", "instance", "list", "--parent-id", project_id, "--all"]
+    )
+    items = payload.get("items")
+    if not isinstance(items, list):
+        raise NebiusError("Nebius returned a schema-invalid compute inventory")
+    dependents: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise NebiusError("Nebius returned a non-object compute inventory item")
+        metadata = item.get("metadata")
+        spec = item.get("spec")
+        if not isinstance(metadata, dict) or not isinstance(spec, dict):
+            raise NebiusError("Nebius returned incomplete compute identity/spec data")
+        account = spec.get("account")
+        account = account if isinstance(account, dict) else {}
+        nested = account.get("service_account")
+        nested = nested if isinstance(nested, dict) else {}
+        attached = str(
+            nested.get("id")
+            or account.get("service_account_id")
+            or spec.get("service_account_id")
+            or ""
+        ).strip()
+        if attached != account_id:
+            continue
+        identity = str(metadata.get("id") or "").strip()
+        name = str(metadata.get("name") or "").strip()
+        if not identity or not name:
+            raise NebiusError("Nebius returned an attached VM without exact identity")
+        dependents.append(f"{name} ({identity})")
+    return sorted(dependents)
 
 
 def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[str]:
     """Delete the access keys then the service account. Returns what was deleted."""
-    from npa.clients.nebius import NebiusError, delete_access_key, delete_service_account
+    from npa.clients.nebius import (
+        NebiusError,
+        delete_access_key,
+        delete_service_account,
+    )
 
     deleted: list[str] = []
     for key in leftovers.get("access_keys") or []:
@@ -240,7 +325,9 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
         except NebiusError as exc:
             on_status(f"Warning: could not delete service account {sa_id}: {exc}")
         else:
-            deleted.append(f"service account {leftovers.get('service_account_name') or sa_id} ({sa_id})")
+            deleted.append(
+                f"service account {leftovers.get('service_account_name') or sa_id} ({sa_id})"
+            )
             clear_agent_iam_record(str(leftovers.get("project_id", "") or ""), sa_id)
     for item in deleted:
         on_status(f"Deleted {item}.")
@@ -282,9 +369,18 @@ def report_agent_iam(
     teardown was complete.
     """
     leftovers = agent_iam_leftovers(project_id)
+    if not leftovers.get("inventory_verified"):
+        on_status(
+            "Keeping the npa-agent service account: exact provider dependency "
+            "inventory is unresolved ("
+            + str(leftovers.get("inventory_error") or "unknown provider error")
+            + "). No IAM resources were deleted."
+        )
+        return []
     if not leftovers.get("service_account_id"):
         return []
-    last_agent = remaining_agents == 0
+    provider_dependents = list(leftovers.get("dependents") or [])
+    last_agent = remaining_agents == 0 and not provider_dependents
     owned = bool(leftovers.get("owned_by_npa"))
     if purge and last_agent and owned:
         return purge_agent_iam(leftovers, on_status=on_status)
@@ -294,22 +390,35 @@ def report_agent_iam(
             "that NPA created it. No IAM resources were deleted."
         )
     if purge and not last_agent:
-        on_status(
-            "Keeping the npa-agent service account: "
-            f"{remaining_agents} other agent(s) in this project still use it."
-        )
-    for line in format_iam_leftovers(leftovers, project_id=project_id, last_agent=last_agent):
+        if provider_dependents:
+            on_status(
+                "Keeping the npa-agent service account: exact provider inventory "
+                "shows dependent VM(s): " + ", ".join(provider_dependents) + "."
+            )
+        else:
+            on_status(
+                "Keeping the npa-agent service account: "
+                f"{remaining_agents} other local agent record(s) still use it."
+            )
+    for line in format_iam_leftovers(
+        leftovers, project_id=project_id, last_agent=last_agent
+    ):
         on_status(line)
     return []
 
 
-def format_iam_leftovers(leftovers: dict[str, Any], *, project_id: str, last_agent: bool) -> list[str]:
+def format_iam_leftovers(
+    leftovers: dict[str, Any], *, project_id: str, last_agent: bool
+) -> list[str]:
     """Return report lines naming what destroy did not delete, with NPA guidance."""
     sa_id = str(leftovers.get("service_account_id", "") or "")
     if not sa_id:
         return []
     name = leftovers.get("service_account_name") or "npa-agent"
-    keys = [str((key or {}).get("id", "") or "") for key in leftovers.get("access_keys") or []]
+    keys = [
+        str((key or {}).get("id", "") or "")
+        for key in leftovers.get("access_keys") or []
+    ]
     keys = [key for key in keys if key]
     lines = [
         f"Left in place: service account {name} ({sa_id})"

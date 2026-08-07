@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -145,8 +146,10 @@ def _full_credential_labels() -> list[str]:
     raw_tokens = data.get("tokens")
     tokens = raw_tokens if isinstance(raw_tokens, dict) else {}
     labels: list[str] = []
-    if data.get("HF_TOKEN") or tokens.get("HF_TOKEN") or _section_has_any(
-        data, "huggingface"
+    if (
+        data.get("HF_TOKEN")
+        or tokens.get("HF_TOKEN")
+        or _section_has_any(data, "huggingface")
     ):
         labels.append("Hugging Face token")
     if (
@@ -155,7 +158,10 @@ def _full_credential_labels() -> list[str]:
         or _section_has_any(data, "token_factory")
     ):
         labels.append("Token Factory key")
-    if any(data.get(key) or tokens.get(key) for key in ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")):
+    if any(
+        data.get(key) or tokens.get(key)
+        for key in ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
+    ):
         labels.append("NGC credentials")
     elif _section_has_any(data, "ngc"):
         labels.append("NGC credentials")
@@ -166,60 +172,52 @@ def _section_has_any(data: dict, section_name: str) -> bool:
     section = data.get(section_name)
     if not isinstance(section, dict):
         return False
-    return any(section.get(key) not in (None, "") for key in _SERVICE_CREDENTIAL_FIELDS[section_name])
+    return any(
+        section.get(key) not in (None, "")
+        for key in _SERVICE_CREDENTIAL_FIELDS[section_name]
+    )
 
 
 def _clear_full_credentials() -> list[str]:
     """Remove only known shared-service credentials, preserving other data."""
 
-    import yaml
+    from copy import deepcopy
 
-    from npa.clients.credentials import CREDENTIALS_PATH
+    from npa.clients.credentials import CREDENTIALS_PATH, update_private_yaml
 
     labels = _full_credential_labels()
     if not labels:
         return []
-    try:
-        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return []
-    if not isinstance(data, dict):
-        return []
 
-    for key in _FULL_TOKEN_KEYS:
-        data.pop(key, None)
-    tokens = data.get("tokens")
-    if isinstance(tokens, dict):
+    def clear(existing: dict[str, Any]) -> dict[str, Any]:
+        data = deepcopy(existing)
         for key in _FULL_TOKEN_KEYS:
-            tokens.pop(key, None)
-        if tokens:
-            data["tokens"] = tokens
-        else:
-            data.pop("tokens", None)
-    for section_name, fields in _SERVICE_CREDENTIAL_FIELDS.items():
-        section = data.get(section_name)
-        if not isinstance(section, dict):
-            continue
-        for key in fields:
-            section.pop(key, None)
-        if section:
-            data[section_name] = section
-        else:
-            data.pop(section_name, None)
+            data.pop(key, None)
+        tokens = data.get("tokens")
+        if isinstance(tokens, dict):
+            tokens = dict(tokens)
+            for key in _FULL_TOKEN_KEYS:
+                tokens.pop(key, None)
+            if tokens:
+                data["tokens"] = tokens
+            else:
+                data.pop("tokens", None)
+        for section_name, fields in _SERVICE_CREDENTIAL_FIELDS.items():
+            section = data.get(section_name)
+            if not isinstance(section, dict):
+                continue
+            section = dict(section)
+            for key in fields:
+                section.pop(key, None)
+            if section:
+                data[section_name] = section
+            else:
+                data.pop(section_name, None)
+        return data
 
-    if not data:
-        try:
-            CREDENTIALS_PATH.unlink()
-        except OSError:
-            return []
-        return labels
     try:
-        CREDENTIALS_PATH.write_text(
-            yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
-            encoding="utf-8",
-        )
-        CREDENTIALS_PATH.chmod(0o600)
-    except OSError:
+        update_private_yaml(CREDENTIALS_PATH, clear)
+    except (OSError, ValueError):
         return []
     return labels
 
@@ -292,7 +290,10 @@ def _prune_full_empty_state(npa_dir: Path) -> list[tuple[str, Path]]:
     from npa.clients.credentials import CREDENTIALS_PATH
 
     removed: list[tuple[str, Path]] = []
-    for label, path in (("config file", CONFIG_PATH), ("credentials file", CREDENTIALS_PATH)):
+    for label, path in (
+        ("config file", CONFIG_PATH),
+        ("credentials file", CREDENTIALS_PATH),
+    ):
         if not _yaml_file_is_empty(path):
             continue
         try:
@@ -339,7 +340,9 @@ def _collect_residue(*, include_sky: bool) -> list[_Residue]:
     if include_sky:
         sky_home = home / ".sky"
         if sky_home.exists():
-            residue.append(_Residue("SkyPilot state (~/.sky)", sky_home, _dir_size(sky_home)))
+            residue.append(
+                _Residue("SkyPilot state (~/.sky)", sky_home, _dir_size(sky_home))
+            )
     return residue
 
 
@@ -640,23 +643,45 @@ def cleanup_phase_model(
     ]
 
 
-def _nonterminal_jobs(sky_bin: str = "") -> tuple[list[str], str]:
-    """Return managed jobs that are still non-terminal, and any lookup problem."""
+def _nonterminal_jobs(sky_bin: str = "") -> tuple[list[str], str, str]:
+    """Return non-terminal IDs, lookup detail, and the verified queue state."""
 
     from npa.orchestration.skypilot._bin import SkyPilotNotInstalledError
-    from npa.orchestration.skypilot.cleanup import _nonterminal_job_ids
+    from npa.orchestration.skypilot.cleanup import (
+        NONTERMINAL_JOB_STATUSES,
+        _all_jobs,
+        _job_statuses,
+    )
 
     try:
-        return (
-            _nonterminal_job_ids(
-                isolated_config_dir=None, config_path=None, sky_bin=sky_bin or None
-            ),
-            "",
+        snapshot = _all_jobs(
+            isolated_config_dir=None, config_path=None, sky_bin=sky_bin or None
         )
+        nonterminal = sorted(
+            job_id
+            for job_id, status in _job_statuses(snapshot.jobs).items()
+            if status in NONTERMINAL_JOB_STATUSES
+        )
+        state = (
+            "verified_empty"
+            if snapshot.state == "verified_empty"
+            else "verified_active_jobs"
+            if nonterminal
+            else "verified_terminal_only"
+        )
+        return nonterminal, "", state
     except SkyPilotNotInstalledError:
-        return [], "SkyPilot is not installed, so managed jobs were not checked"
-    except (OSError, ValueError) as exc:
-        return [], f"could not read the managed-job queue: {exc}"
+        return (
+            [],
+            "SkyPilot is not installed, so managed jobs were not checked",
+            "unreadable_or_unverified",
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        return (
+            [],
+            f"could not read the managed-job queue: {exc}",
+            "unreadable_or_unverified",
+        )
 
 
 def _report_managed_jobs(jobs: list[str], note: str) -> None:
@@ -827,6 +852,7 @@ def cleanup_cmd(
             raise typer.BadParameter(
                 "Use either --list-receipts or --prune-receipts, not both."
             )
+        payload: dict[str, Any]
         if prune_receipts:
             if not yes:
                 raise typer.BadParameter("--prune-receipts requires --yes")
@@ -902,10 +928,15 @@ def cleanup_cmd(
             json.dumps(
                 {
                     "result": result,
-                    "local_state": "fully_cleaned" if not operational_residue else local_state,
+                    "local_state": "fully_cleaned"
+                    if not operational_residue
+                    else local_state,
                     "operational_residue_present": operational_residue,
                     "residue_present": operational_residue,
                     "verification_unresolved": verification_unresolved,
+                    "managed_job_queue_state": job_queue_state,
+                    "managed_job_queue_detail": job_note,
+                    "nonterminal_job_ids": job_ids,
                     "iam_state": iam_status,
                     "iam_verification_required": iam_partial,
                     "project_retained": iam_partial,
@@ -960,8 +991,22 @@ def cleanup_cmd(
     if skip_jobs:
         job_ids: list[str] = []
         job_note = "managed-job verification was explicitly skipped"
+        job_queue_state = "unreadable_or_unverified"
     else:
-        job_ids, job_note = _nonterminal_jobs(sky_bin)
+        job_audit = _nonterminal_jobs(sky_bin)
+        # Keep compatibility with extensions/tests that wrapped the historical
+        # two-field helper while production now reports the richer state.
+        if len(job_audit) == 3:
+            job_ids, job_note, job_queue_state = job_audit
+        else:  # pragma: no cover - compatibility shim for external wrappers
+            job_ids, job_note = job_audit
+            job_queue_state = (
+                "unreadable_or_unverified"
+                if job_note
+                else "verified_active_jobs"
+                if job_ids
+                else "verified_empty"
+            )
     if (
         not job_ids
         and job_note
@@ -994,7 +1039,11 @@ def cleanup_cmd(
             project_id=str(getattr(environment, "project_id", "") or ""),
             precheck={"skip_requested": skip_jobs},
             action={"kind": "read_only_managed_job_audit"},
-            verification={"nonterminal_job_ids": job_ids, "detail": job_note},
+            verification={
+                "queue_state": job_queue_state,
+                "nonterminal_job_ids": job_ids,
+                "detail": job_note,
+            },
             errors=[job_note] if job_note else [],
         )
     except (OSError, RuntimeError, ValueError) as exc:
@@ -1015,7 +1064,9 @@ def cleanup_cmd(
     ):
         if output_json:
             emit_json(
-                iam_status if iam_partial else ("fully_cleaned" if yes else "fully_clean"),
+                iam_status
+                if iam_partial
+                else ("fully_cleaned" if yes else "fully_clean"),
                 "fully_clean",
             )
         else:
@@ -1051,13 +1102,18 @@ def cleanup_cmd(
         else "secret-free; your tokens/config are untouched"
     )
     emit(f"Local residue after teardown ({scope}):")
-    for item in residue:
-        emit(f"  {item.label:<26} {_human(item.size):>8}  {item.path}")
-    for item in terraform_residue:
-        suffix = f" ({item.reason}; will not remove)" if not item.removable else ""
+    for residue_item in residue:
         emit(
-            f"  {item.label:<26} {_human(terraform_sizes[item.path]):>8}  "
-            f"{item.path}{suffix}"
+            f"  {residue_item.label:<26} {_human(residue_item.size):>8}  "
+            f"{residue_item.path}"
+        )
+    for tf_item in terraform_residue:
+        suffix = (
+            f" ({tf_item.reason}; will not remove)" if not tf_item.removable else ""
+        )
+        emit(
+            f"  {tf_item.label:<26} {_human(terraform_sizes[tf_item.path]):>8}  "
+            f"{tf_item.path}{suffix}"
         )
     for empty in empty_dirs:
         emit(f"  {'empty state dir':<26} {'-':>8}  {empty}")
@@ -1074,7 +1130,9 @@ def cleanup_cmd(
         emit(f"Re-run with {rerun} to remove them (or --keep-sky to leave ~/.sky).")
         emit(iam_message or _iam_note())
         if output_json:
-            emit_json(iam_status if iam_partial else "cleanup_planned", "residue_present")
+            emit_json(
+                iam_status if iam_partial else "cleanup_planned", "residue_present"
+            )
         else:
             _print_runbook(
                 cleanup_phase_model(
@@ -1117,41 +1175,41 @@ def cleanup_cmd(
         if output_json:
             emit_json("partial_cleanup", "residue_present", cleanup_failed=True)
         raise typer.Exit(code=1) from exc
-    for item in residue:
+    for residue_item in residue:
         if (
-            item.label in {"SkyPilot venv", "SkyPilot state (~/.sky)"}
+            residue_item.label in {"SkyPilot venv", "SkyPilot state (~/.sky)"}
             and not sky_audit_safe
         ):
             cleanup_failed = True
             emit(
-                f"Preserved {item.label} at {item.path}: managed jobs are active or "
+                f"Preserved {residue_item.label} at {residue_item.path}: managed jobs are active or "
                 "their terminal state could not be durably verified before local "
                 "SkyPilot state removal.",
                 err=True,
             )
             continue
         try:
-            shutil.rmtree(item.path)
+            shutil.rmtree(residue_item.path)
         except OSError as exc:
             cleanup_failed = True
             emit(
-                f"Warning: could not remove {item.label} at {item.path}: {exc}",
+                f"Warning: could not remove {residue_item.label} at {residue_item.path}: {exc}",
                 err=True,
             )
             continue
-        emit(f"Removed {item.label}: {item.path}")
-        if item.label == "SkyPilot venv":
+        emit(f"Removed {residue_item.label}: {residue_item.path}")
+        if residue_item.label == "SkyPilot venv":
             removed_bin = clear_skypilot_bin()
-    for item in terraform_residue:
-        problem = remove_terraform_residue(item)
+    for tf_item in terraform_residue:
+        problem = remove_terraform_residue(tf_item)
         if problem:
             cleanup_failed = True
             emit(
-                f"Warning: could not remove {item.label} at {item.path}: {problem}",
+                f"Warning: could not remove {tf_item.label} at {tf_item.path}: {problem}",
                 err=True,
             )
         else:
-            emit(f"Removed {item.label}: {item.path}")
+            emit(f"Removed {tf_item.label}: {tf_item.path}")
     if removed_bin:
         emit("Cleared skypilot.sky_bin from ~/.npa/config.yaml.")
     for empty in empty_dirs:
@@ -1162,7 +1220,7 @@ def cleanup_cmd(
             pass
     # Drop the now-empty agents/ and workbenches/ base dirs too in the narrow
     # scope. Full cleanup handles these plus clusters/ and ~/.npa below.
-    for base_name in (() if full else ("agents", "workbenches")):
+    for base_name in () if full else ("agents", "workbenches"):
         base = npa_dir / base_name
         try:
             if base.is_dir() and not any(base.iterdir()):
@@ -1174,14 +1232,17 @@ def cleanup_cmd(
     if full:
         cleared_credentials = _clear_full_credentials()
         if cleared_credentials:
-            emit(
-                "Removed locally stored " + ", ".join(cleared_credentials) + "."
-            )
+            emit("Removed locally stored " + ", ".join(cleared_credentials) + ".")
         if credential_labels and set(cleared_credentials) != set(credential_labels):
             cleanup_failed = True
+            missing_credentials = sorted(
+                set(credential_labels) - set(cleared_credentials)
+            )
             emit(
-                "Warning: one or more requested shared credentials could not be removed; "
-                "the credentials file was preserved for a safe retry.",
+                "Warning: requested shared credential group(s) could not be removed: "
+                + ", ".join(missing_credentials)
+                + ". Any groups reported removed above remain removed; unrelated "
+                "credential data was preserved.",
                 err=True,
             )
         pruned_state = _prune_full_empty_state(npa_dir)
@@ -1232,7 +1293,9 @@ def cleanup_cmd(
             "Non-empty/unrelated data was kept; fix the warning above and retry."
         )
     else:
-        emit(f"Freed ~{_human(total)} of local caches. Tokens and project config were kept.")
+        emit(
+            f"Freed ~{_human(total)} of local caches. Tokens and project config were kept."
+        )
     emit(iam_message or _iam_note())
     if output_json:
         result = (

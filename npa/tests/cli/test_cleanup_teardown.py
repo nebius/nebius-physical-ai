@@ -13,6 +13,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -22,8 +23,12 @@ from npa.cli.main import app
 runner = CliRunner()
 
 
-def _completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+def _completed(
+    stdout: str = "", returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=""
+    )
 
 
 # ── npa storage bucket delete ────────────────────────────────────────────────
@@ -94,15 +99,21 @@ def test_bucket_delete_schedules_a_purge_and_prunes_stale_credentials(
     assert creds_path.stat().st_mode & 0o077 == 0
 
 
-def test_bucket_delete_wait_polls_until_the_bucket_is_gone(monkeypatch, tmp_path: Path) -> None:
+def test_bucket_delete_wait_polls_until_the_bucket_is_gone(
+    monkeypatch, tmp_path: Path
+) -> None:
     """A scheduled purge is async; --wait blocks until Nebius has removed it."""
     import time as _time
 
     from npa.clients import credentials as credentials_module
     from npa.clients import nebius as nebius_module
 
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
-    monkeypatch.setattr(nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None)
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(
+        nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None
+    )
     monkeypatch.setattr(_time, "sleep", lambda _s: None)
 
     calls = {"n": 0}
@@ -117,9 +128,18 @@ def test_bucket_delete_wait_polls_until_the_bucket_is_gone(monkeypatch, tmp_path
     result = runner.invoke(
         app,
         [
-            "storage", "bucket", "delete",
-            "--name", "npa-bucket-x", "--project-id", "project-a",
-            "--ttl", "1m", "--wait", "--keep-config", "--yes",
+            "storage",
+            "bucket",
+            "delete",
+            "--name",
+            "npa-bucket-x",
+            "--project-id",
+            "project-a",
+            "--ttl",
+            "1m",
+            "--wait",
+            "--keep-config",
+            "--yes",
         ],
     )
 
@@ -130,13 +150,17 @@ def test_bucket_delete_wait_polls_until_the_bucket_is_gone(monkeypatch, tmp_path
     assert calls["n"] >= 3
 
 
-def test_bucket_delete_keeps_credentials_for_another_bucket(monkeypatch, tmp_path: Path) -> None:
+def test_bucket_delete_keeps_credentials_for_another_bucket(
+    monkeypatch, tmp_path: Path
+) -> None:
     from npa.clients import credentials as credentials_module
     from npa.clients import nebius as nebius_module
 
     creds_path = tmp_path / "credentials.yaml"
     creds_path.write_text(
-        yaml.safe_dump({"storage": {"bucket": "s3://keep-me/", "access_key_id": "AKKEEP"}})
+        yaml.safe_dump(
+            {"storage": {"bucket": "s3://keep-me/", "access_key_id": "AKKEEP"}}
+        )
     )
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(
@@ -144,15 +168,158 @@ def test_bucket_delete_keeps_credentials_for_another_bucket(monkeypatch, tmp_pat
         "get_bucket_by_name",
         lambda project_id, name: {"metadata": {"id": "bucket-other", "name": name}},
     )
-    monkeypatch.setattr(nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None)
+    monkeypatch.setattr(
+        nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None
+    )
 
     result = runner.invoke(
         app,
-        ["storage", "bucket", "delete", "--name", "other-bucket", "--project-id", "p", "--yes"],
+        [
+            "storage",
+            "bucket",
+            "delete",
+            "--name",
+            "other-bucket",
+            "--project-id",
+            "p",
+            "--yes",
+        ],
     )
 
     assert result.exit_code == 0, result.output
-    assert yaml.safe_load(creds_path.read_text())["storage"]["access_key_id"] == "AKKEEP"
+    assert (
+        yaml.safe_load(creds_path.read_text())["storage"]["access_key_id"] == "AKKEEP"
+    )
+
+
+def test_bucket_delete_requires_yes_without_a_tty_and_json_is_machine_readable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "get_bucket_by_name",
+        lambda project_id, name: {"metadata": {"id": "bucket-a", "name": name}},
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        nebius_module,
+        "delete_bucket",
+        lambda bucket_id, *, ttl="": deleted.append(bucket_id),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "storage",
+            "bucket",
+            "delete",
+            "--name",
+            "private-bucket",
+            "--project-id",
+            "project-a",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.output)["result"] == "confirmation_required"
+    assert deleted == []
+
+
+def test_storage_credential_prune_replace_failure_preserves_complete_document(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_cli
+    from npa.clients import credentials as credentials_module
+
+    path = tmp_path / "credentials.yaml"
+    original = yaml.safe_dump(
+        {
+            "tokens": {"HF_TOKEN": "hf_keep"},
+            "storage": {
+                "bucket": "s3://gone",
+                "aws_access_key_id": "AK",
+                "aws_secret_access_key": "SK",
+            },
+        }
+    )
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", path)
+    monkeypatch.setattr(
+        credentials_module.os,
+        "replace",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("replace failed")),
+    )
+
+    with pytest.raises(OSError, match="replace failed"):
+        storage_cli._prune_storage_credentials("gone")
+
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_storage_credential_prune_write_failure_preserves_complete_document(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_cli
+    from npa.clients import credentials as credentials_module
+
+    path = tmp_path / "credentials.yaml"
+    original = "storage: {bucket: s3://gone, aws_access_key_id: AK}\n"
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", path)
+    monkeypatch.setattr(
+        credentials_module,
+        "write_private_yaml",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("write failed")),
+    )
+
+    with pytest.raises(OSError, match="write failed"):
+        storage_cli._prune_storage_credentials("gone")
+
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_storage_credential_prune_refuses_symlink_destination(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_cli
+    from npa.clients import credentials as credentials_module
+
+    target = tmp_path / "real.yaml"
+    target.write_text("storage: {bucket: s3://gone, aws_access_key_id: AK}\n")
+    link = tmp_path / "credentials.yaml"
+    link.symlink_to(target)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", link)
+
+    with pytest.raises(OSError, match="symlink"):
+        storage_cli._prune_storage_credentials("gone")
+
+    assert "aws_access_key_id" in target.read_text()
+
+
+def test_storage_credential_prune_refuses_nonowned_destination(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_cli
+    from npa.clients import credentials as credentials_module
+
+    path = tmp_path / "credentials.yaml"
+    original = "storage: {bucket: s3://gone, aws_access_key_id: AK}\n"
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", path)
+    real_euid = credentials_module.os.geteuid()
+    monkeypatch.setattr(credentials_module.os, "geteuid", lambda: real_euid + 1)
+
+    with pytest.raises(PermissionError, match="not owned"):
+        storage_cli._prune_storage_credentials("gone")
+
+    assert path.read_text(encoding="utf-8") == original
 
 
 def test_bucket_delete_keeps_npa_ownership_proof_for_explicit_iam_teardown(
@@ -185,7 +352,9 @@ def test_bucket_delete_keeps_npa_ownership_proof_for_explicit_iam_teardown(
         "get_bucket_by_name",
         lambda project_id, name: {"metadata": {"id": "bucket-owned", "name": name}},
     )
-    monkeypatch.setattr(nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None)
+    monkeypatch.setattr(
+        nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None
+    )
 
     result = runner.invoke(
         app,
@@ -208,7 +377,9 @@ def test_bucket_delete_keeps_npa_ownership_proof_for_explicit_iam_teardown(
     assert saved["nebius"]["service_account_id"] == "serviceaccount-storage"
 
 
-def test_bucket_delete_clears_terraform_state_for_that_bucket(monkeypatch, tmp_path: Path) -> None:
+def test_bucket_delete_clears_terraform_state_for_that_bucket(
+    monkeypatch, tmp_path: Path
+) -> None:
     """The Terraform remote-state S3 keys for a deleted bucket are secrets too.
 
     They live in config.yaml (`projects.<alias>.terraform_state`), a separate
@@ -221,7 +392,9 @@ def test_bucket_delete_clears_terraform_state_for_that_bucket(monkeypatch, tmp_p
 
     creds_path = tmp_path / "credentials.yaml"
     creds_path.write_text(
-        yaml.safe_dump({"storage": {"bucket": "s3://npa-bucket-dead/", "aws_access_key_id": "AK"}})
+        yaml.safe_dump(
+            {"storage": {"bucket": "s3://npa-bucket-dead/", "aws_access_key_id": "AK"}}
+        )
     )
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
 
@@ -241,7 +414,10 @@ def test_bucket_delete_clears_terraform_state_for_that_bucket(monkeypatch, tmp_p
                     },
                     "other": {
                         "project_id": "project-b",
-                        "terraform_state": {"bucket": "npa-bucket-live", "access_key": "KEEP"},
+                        "terraform_state": {
+                            "bucket": "npa-bucket-live",
+                            "access_key": "KEEP",
+                        },
                     },
                 }
             }
@@ -253,11 +429,22 @@ def test_bucket_delete_clears_terraform_state_for_that_bucket(monkeypatch, tmp_p
         "get_bucket_by_name",
         lambda project_id, name: {"metadata": {"id": "bucket-dead", "name": name}},
     )
-    monkeypatch.setattr(nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None)
+    monkeypatch.setattr(
+        nebius_module, "delete_bucket", lambda bucket_id, *, ttl="": None
+    )
 
     result = runner.invoke(
         app,
-        ["storage", "bucket", "delete", "--name", "npa-bucket-dead", "--project-id", "project-a", "--yes"],
+        [
+            "storage",
+            "bucket",
+            "delete",
+            "--name",
+            "npa-bucket-dead",
+            "--project-id",
+            "project-a",
+            "--yes",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -268,7 +455,9 @@ def test_bucket_delete_clears_terraform_state_for_that_bucket(monkeypatch, tmp_p
     assert "remote-state" in result.output
 
 
-def test_configure_forget_project_removes_the_stanza(monkeypatch, tmp_path: Path) -> None:
+def test_configure_forget_project_removes_the_stanza(
+    monkeypatch, tmp_path: Path
+) -> None:
     """`npa configure --forget-project` is the inverse of writing a stanza."""
     from npa.clients import config as config_module
 
@@ -278,7 +467,10 @@ def test_configure_forget_project_removes_the_stanza(monkeypatch, tmp_path: Path
             {
                 "default_project": "gone",
                 "projects": {
-                    "gone": {"project_id": "project-a", "terraform_state": {"access_key": "AK"}},
+                    "gone": {
+                        "project_id": "project-a",
+                        "terraform_state": {"access_key": "AK"},
+                    },
                     "keep": {"project_id": "project-b"},
                 },
             }
@@ -296,7 +488,9 @@ def test_configure_forget_project_removes_the_stanza(monkeypatch, tmp_path: Path
     assert saved["default_project"] == "keep"
 
 
-def test_configure_forget_project_is_quiet_when_absent(monkeypatch, tmp_path: Path) -> None:
+def test_configure_forget_project_is_quiet_when_absent(
+    monkeypatch, tmp_path: Path
+) -> None:
     from npa.clients import config as config_module
 
     config_path = tmp_path / "config.yaml"
@@ -307,22 +501,64 @@ def test_configure_forget_project_is_quiet_when_absent(monkeypatch, tmp_path: Pa
 
     assert result.exit_code == 0, result.output
     assert "nothing to remove" in result.output
-    assert yaml.safe_load(config_path.read_text())["projects"]["keep"]["project_id"] == "p"
+    assert (
+        yaml.safe_load(config_path.read_text())["projects"]["keep"]["project_id"] == "p"
+    )
 
 
-def test_bucket_delete_reports_a_missing_bucket_without_failing(monkeypatch, tmp_path: Path) -> None:
+def test_bucket_delete_reports_a_missing_bucket_without_failing(
+    monkeypatch, tmp_path: Path
+) -> None:
     from npa.clients import credentials as credentials_module
     from npa.clients import nebius as nebius_module
 
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
-    monkeypatch.setattr(nebius_module, "get_bucket_by_name", lambda project_id, name: None)
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(
+        nebius_module, "get_bucket_by_name", lambda project_id, name: None
+    )
 
     result = runner.invoke(
-        app, ["storage", "bucket", "delete", "--name", "gone", "--project-id", "p", "--yes"]
+        app,
+        ["storage", "bucket", "delete", "--name", "gone", "--project-id", "p", "--yes"],
     )
 
     assert result.exit_code == 0, result.output
     assert "does not exist" in result.output
+
+
+def test_bucket_delete_missing_bucket_still_requires_confirmation_before_local_prune(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+
+    credentials_path = tmp_path / "credentials.yaml"
+    original = "storage: {bucket: s3://gone, aws_access_key_id: AK}\n"
+    credentials_path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+    monkeypatch.setattr(
+        nebius_module, "get_bucket_by_name", lambda project_id, name: None
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "storage",
+            "bucket",
+            "delete",
+            "--name",
+            "gone",
+            "--project-id",
+            "p",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.output)["result"] == "confirmation_required"
+    assert credentials_path.read_text(encoding="utf-8") == original
 
 
 def test_delete_bucket_client_passes_ttl() -> None:
@@ -337,7 +573,15 @@ def test_delete_bucket_client_passes_ttl() -> None:
     finally:
         nebius_module._run = original  # type: ignore[assignment]
 
-    assert calls[0] == ["storage", "bucket", "delete", "--id", "bucket-abc", "--ttl", "1m"]
+    assert calls[0] == [
+        "storage",
+        "bucket",
+        "delete",
+        "--id",
+        "bucket-abc",
+        "--ttl",
+        "1m",
+    ]
     assert calls[1] == ["storage", "bucket", "delete", "--id", "bucket-def"]
 
 
@@ -388,23 +632,38 @@ def test_agent_cleanup_keeps_alias_parent_with_a_sibling() -> None:
 # ── agent IAM leftovers ──────────────────────────────────────────────────────
 
 
-def _iam_stubs(monkeypatch, *, sa_id: str = "serviceaccount-agent", keys=("accesskey-1",)):
+def _iam_stubs(
+    monkeypatch, *, sa_id: str = "serviceaccount-agent", keys=("accesskey-1",)
+):
     from npa.clients import nebius as nebius_module
 
     monkeypatch.setattr(
-        nebius_module, "get_service_account_id_by_name", lambda project_id, name: sa_id or None
+        nebius_module,
+        "get_service_account_id_by_name",
+        lambda project_id, name, **kwargs: sa_id or None,
     )
     monkeypatch.setattr(
         nebius_module,
         "list_access_keys_for_service_account",
-        lambda project_id, account: [
-            {"id": key, "name": "npa-agent-access-key", "state": "ACTIVE"} for key in keys
+        lambda project_id, account, **kwargs: [
+            {"id": key, "name": "npa-agent-access-key", "state": "ACTIVE"}
+            for key in keys
         ],
     )
-    deleted: list[str] = []
-    monkeypatch.setattr(nebius_module, "delete_access_key", lambda key_id: deleted.append(key_id))
     monkeypatch.setattr(
-        nebius_module, "delete_service_account", lambda account_id: deleted.append(account_id)
+        nebius_module, "_run_json", lambda *args, **kwargs: {"items": []}
+    )
+    monkeypatch.setattr(
+        nebius_module, "get_compute_instance_identity", lambda *args, **kwargs: None
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        nebius_module, "delete_access_key", lambda key_id: deleted.append(key_id)
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "delete_service_account",
+        lambda account_id: deleted.append(account_id),
     )
     return deleted
 
@@ -458,10 +717,71 @@ def test_agent_iam_purge_keeps_an_account_other_agents_use(monkeypatch) -> None:
     )
 
     assert deleted == []
-    assert any("2 other agent(s)" in line for line in lines)
+    assert any("2 other local agent record(s)" in line for line in lines)
 
 
-def test_agent_destroy_keep_iam_names_the_delete_commands(monkeypatch, tmp_path: Path) -> None:
+def test_agent_iam_purge_protects_same_project_peer_missing_from_local_config(
+    monkeypatch,
+) -> None:
+    from npa.cli.agent_iam import report_agent_iam
+    from npa.clients import nebius as nebius_module
+
+    deleted = _iam_stubs(monkeypatch)
+    monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "_run_json",
+        lambda *args, **kwargs: {
+            "items": [
+                {
+                    "metadata": {"id": "instance-peer", "name": "agent-peer"},
+                    "spec": {
+                        "account": {"service_account": {"id": "serviceaccount-agent"}}
+                    },
+                }
+            ]
+        },
+    )
+    lines: list[str] = []
+
+    report_agent_iam(
+        project_id="project-a", remaining_agents=0, purge=True, on_status=lines.append
+    )
+
+    assert deleted == []
+    assert any("agent-peer (instance-peer)" in line for line in lines)
+
+
+def test_agent_iam_purge_fails_closed_when_provider_inventory_is_forbidden(
+    monkeypatch,
+) -> None:
+    from npa.cli.agent_iam import report_agent_iam
+    from npa.clients import nebius as nebius_module
+
+    deleted = _iam_stubs(monkeypatch)
+    monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "_run_json",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            nebius_module.NebiusError("RBAC forbidden")
+        ),
+    )
+    lines: list[str] = []
+
+    report_agent_iam(
+        project_id="project-a", remaining_agents=0, purge=True, on_status=lines.append
+    )
+
+    assert deleted == []
+    assert any(
+        "inventory is unresolved" in line and "RBAC forbidden" in line for line in lines
+    )
+
+
+def test_agent_destroy_keep_iam_names_the_delete_commands(
+    monkeypatch, tmp_path: Path
+) -> None:
     """With --keep-iam the account survives, so say exactly how to remove it.
 
     (Purging is the default since the cleanup report; see
@@ -480,7 +800,13 @@ def test_agent_destroy_keep_iam_names_the_delete_commands(monkeypatch, tmp_path:
                         "project_id": "project-a",
                         "tenant_id": "tenant-a",
                         "region": "eu-north1",
-                        "agents": {"agent": {"public_ip": "203.0.113.50", "project_id": "project-a"}},
+                        "agents": {
+                            "agent": {
+                                "public_ip": "203.0.113.50",
+                                "project_id": "project-a",
+                                "instance_id": "instance-agent",
+                            }
+                        },
                     }
                 },
             }
@@ -488,10 +814,14 @@ def test_agent_destroy_keep_iam_names_the_delete_commands(monkeypatch, tmp_path:
     )
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
     monkeypatch.setattr(agent_module, "_destroy_agent_terraform", lambda *a, **k: None)
-    monkeypatch.setattr(agent_module, "_cleanup_agent_local_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agent_module, "_cleanup_agent_local_files", lambda *a, **k: None
+    )
     _iam_stubs(monkeypatch)
 
-    result = runner.invoke(app, ["agent", "destroy", "--project", "prod", "--yes", "--keep-iam"])
+    result = runner.invoke(
+        app, ["agent", "destroy", "--project", "prod", "--yes", "--keep-iam"]
+    )
 
     assert result.exit_code == 0, result.output
     assert "destroyed: prod/agent" in result.output
@@ -502,7 +832,9 @@ def test_agent_destroy_keep_iam_names_the_delete_commands(monkeypatch, tmp_path:
     assert "nebius iam service-account delete" not in result.output
 
 
-def test_agent_destroy_purge_iam_removes_the_account(monkeypatch, tmp_path: Path) -> None:
+def test_agent_destroy_purge_iam_removes_the_account(
+    monkeypatch, tmp_path: Path
+) -> None:
     from npa.cli import agent as agent_module
     from npa.clients import config as config_module
 
@@ -514,7 +846,13 @@ def test_agent_destroy_purge_iam_removes_the_account(monkeypatch, tmp_path: Path
                 "projects": {
                     "prod": {
                         "project_id": "project-a",
-                        "agents": {"agent": {"public_ip": "203.0.113.50", "project_id": "project-a"}},
+                        "agents": {
+                            "agent": {
+                                "public_ip": "203.0.113.50",
+                                "project_id": "project-a",
+                                "instance_id": "instance-agent",
+                            }
+                        },
                     }
                 },
             }
@@ -522,7 +860,9 @@ def test_agent_destroy_purge_iam_removes_the_account(monkeypatch, tmp_path: Path
     )
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
     monkeypatch.setattr(agent_module, "_destroy_agent_terraform", lambda *a, **k: None)
-    monkeypatch.setattr(agent_module, "_cleanup_agent_local_files", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agent_module, "_cleanup_agent_local_files", lambda *a, **k: None
+    )
     deleted = _iam_stubs(monkeypatch)
     monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
     monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
@@ -542,16 +882,24 @@ def test_agent_iam_is_quiet_when_nothing_is_left(monkeypatch) -> None:
     _iam_stubs(monkeypatch, sa_id="")
     lines: list[str] = []
 
-    assert report_agent_iam(
-        project_id="project-a", remaining_agents=0, purge=True, on_status=lines.append
-    ) == []
+    assert (
+        report_agent_iam(
+            project_id="project-a",
+            remaining_agents=0,
+            purge=True,
+            on_status=lines.append,
+        )
+        == []
+    )
     assert lines == []
 
 
 # ── npa cluster down without tfvars ──────────────────────────────────────────
 
 
-def test_down_reads_project_settings_from_npa_config(monkeypatch, tmp_path: Path) -> None:
+def test_down_reads_project_settings_from_npa_config(
+    monkeypatch, tmp_path: Path
+) -> None:
     """`provision-if-absent` exports the TF_VARs; a bare `down` had none."""
     from npa.clients import config as config_module
 
@@ -620,7 +968,9 @@ def test_down_reads_project_settings_from_npa_config(monkeypatch, tmp_path: Path
     assert destroy_env["TF_VAR_region"] == "us-central1"
 
 
-def test_down_uses_a_placeholder_key_when_the_machine_has_none(monkeypatch, tmp_path: Path) -> None:
+def test_down_uses_a_placeholder_key_when_the_machine_has_none(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Teardown must not be blocked by a missing SSH key; the value is irrelevant."""
     monkeypatch.delenv("NPA_SSH_PUBLIC_KEY", raising=False)
     args = tf_mod._ssh_public_key_var_args({}, {}, allow_placeholder=True)
@@ -635,7 +985,9 @@ def test_down_uses_a_placeholder_key_when_the_machine_has_none(monkeypatch, tmp_
         tf_mod._ssh_public_key_var_args({}, {})
 
 
-def test_cluster_destroy_points_at_the_terraform_teardown(monkeypatch, tmp_path: Path) -> None:
+def test_cluster_destroy_points_at_the_terraform_teardown(
+    monkeypatch, tmp_path: Path
+) -> None:
     """The API delete leaves the Terraform-managed network running."""
     from npa.cli.cluster import destroy as destroy_module
 
@@ -645,7 +997,11 @@ def test_cluster_destroy_points_at_the_terraform_teardown(monkeypatch, tmp_path:
     monkeypatch.chdir(tmp_path)
 
     lines: list[str] = []
-    monkeypatch.setattr(destroy_module.typer, "echo", lambda message="", **kwargs: lines.append(str(message)))
+    monkeypatch.setattr(
+        destroy_module.typer,
+        "echo",
+        lambda message="", **kwargs: lines.append(str(message)),
+    )
 
     destroy_module._warn_terraform_leftovers("npa-cluster")
 
@@ -654,12 +1010,18 @@ def test_cluster_destroy_points_at_the_terraform_teardown(monkeypatch, tmp_path:
     assert "npa cluster down" in joined
 
 
-def test_cluster_destroy_is_quiet_without_terraform_state(monkeypatch, tmp_path: Path) -> None:
+def test_cluster_destroy_is_quiet_without_terraform_state(
+    monkeypatch, tmp_path: Path
+) -> None:
     from npa.cli.cluster import destroy as destroy_module
 
     monkeypatch.chdir(tmp_path)
     lines: list[str] = []
-    monkeypatch.setattr(destroy_module.typer, "echo", lambda message="", **kwargs: lines.append(str(message)))
+    monkeypatch.setattr(
+        destroy_module.typer,
+        "echo",
+        lambda message="", **kwargs: lines.append(str(message)),
+    )
 
     destroy_module._warn_terraform_leftovers("npa-cluster")
 
@@ -674,7 +1036,13 @@ def test_down_does_not_override_explicit_tfvars(monkeypatch, tmp_path: Path) -> 
         yaml.safe_dump(
             {
                 "default_project": "p",
-                "projects": {"p": {"project_id": "project-config", "tenant_id": "t", "region": "r"}},
+                "projects": {
+                    "p": {
+                        "project_id": "project-config",
+                        "tenant_id": "t",
+                        "region": "r",
+                    }
+                },
             }
         )
     )
@@ -707,11 +1075,17 @@ def test_down_does_not_override_explicit_tfvars(monkeypatch, tmp_path: Path) -> 
         lambda *_args, **_kwargs: Path("/tmp/npa-test-terraform-cache"),
     )
     monkeypatch.setattr(
-        tf_mod, "_run_stream", lambda args, **kwargs: envs.append(dict(kwargs.get("env") or {})) or _completed()
+        tf_mod,
+        "_run_stream",
+        lambda args, **kwargs: (
+            envs.append(dict(kwargs.get("env") or {})) or _completed()
+        ),
     )
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
 
-    result = runner.invoke(app, ["cluster", "down", "--terraform-dir", str(tf_dir), "--force"])
+    result = runner.invoke(
+        app, ["cluster", "down", "--terraform-dir", str(tf_dir), "--force"]
+    )
 
     assert result.exit_code == 0, result.output
     env = envs[-1]

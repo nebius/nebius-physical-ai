@@ -331,7 +331,7 @@ def _endpoint_for_region(region: str) -> str:
     return f"https://storage.{reg}.nebius.cloud"
 
 
-def _normalize_pasted_secret(value: str) -> str:
+def _normalize_pasted_secret(value: str, *, strip_auth_wrapper: bool = True) -> str:
     """Clean a pasted credential: drop wrapping quotes and auth prefixes.
 
     Users routinely paste a token copied from a curl example or a password
@@ -342,14 +342,15 @@ def _normalize_pasted_secret(value: str) -> str:
     # Unwrap matching surrounding quotes (may wrap a "Bearer ..." string).
     if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
         text = text[1:-1].strip()
-    # Drop a pasted "Authorization:" header label.
-    if text.lower().startswith("authorization:"):
-        text = text.split(":", 1)[1].strip()
-    # Drop a leading auth scheme (Bearer/Token), case-insensitively.
-    for scheme in ("bearer ", "token "):
-        if text.lower().startswith(scheme):
-            text = text[len(scheme) :].strip()
-            break
+    if strip_auth_wrapper:
+        # Drop a pasted "Authorization:" header label.
+        if text.lower().startswith("authorization:"):
+            text = text.split(":", 1)[1].strip()
+        # Drop a leading auth scheme (Bearer/Token), case-insensitively.
+        for scheme in ("bearer ", "token "):
+            if text.lower().startswith(scheme):
+                text = text[len(scheme) :].strip()
+                break
     # Unwrap again in case the scheme was inside the quotes.
     if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
         text = text[1:-1].strip()
@@ -357,14 +358,18 @@ def _normalize_pasted_secret(value: str) -> str:
 
 
 def _gb_to_bytes(value: str) -> int:
-    """Parse a GB amount into bytes; non-negative or invalid means unlimited (0)."""
+    """Parse GiB into bytes; invalid uses the recommended cap, <=0 disables it."""
+    from decimal import Decimal, InvalidOperation, ROUND_DOWN
+
     try:
-        gb = float(str(value).strip())
-    except (TypeError, ValueError):
-        gb = float(RECOMMENDED_BUCKET_SIZE_GB)
+        gb = Decimal(str(value).strip())
+        if not gb.is_finite():
+            raise InvalidOperation
+    except (InvalidOperation, TypeError, ValueError):
+        gb = Decimal(str(RECOMMENDED_BUCKET_SIZE_GB))
     if gb <= 0:
         return 0
-    return int(gb * 1024**3)
+    return int((gb * Decimal(1024**3)).to_integral_value(rounding=ROUND_DOWN))
 
 
 def _as_bucket_uri(name: str) -> str:
@@ -1308,15 +1313,21 @@ def _run_interactive_configure(
             typer.echo("Enter existing S3 credentials (or press Enter to leave blank).")
     if storage is None:
         storage = {
-            "aws_access_key_id": ask(
-                "S3 access key id (AWS_ACCESS_KEY_ID)",
-                default=existing_credentials.s3_access_key_id,
-                secret=True,
+            "aws_access_key_id": _normalize_pasted_secret(
+                ask(
+                    "S3 access key id (AWS_ACCESS_KEY_ID)",
+                    default=existing_credentials.s3_access_key_id,
+                    secret=True,
+                ),
+                strip_auth_wrapper=False,
             ),
-            "aws_secret_access_key": ask(
-                "S3 secret access key (AWS_SECRET_ACCESS_KEY)",
-                default=existing_credentials.s3_secret_access_key,
-                secret=True,
+            "aws_secret_access_key": _normalize_pasted_secret(
+                ask(
+                    "S3 secret access key (AWS_SECRET_ACCESS_KEY)",
+                    default=existing_credentials.s3_secret_access_key,
+                    secret=True,
+                ),
+                strip_auth_wrapper=False,
             ),
             "endpoint_url": ask(
                 "S3 endpoint URL",

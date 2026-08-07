@@ -19,6 +19,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     assert_no_unresolved_placeholders,
     normalize_resources,
+    plan_image_pull_secrets,
     render_skypilot_yaml,
     resolve_task_image,
     tool_image_key,
@@ -255,7 +256,25 @@ def test_kubernetes_private_image_references_the_refreshed_pull_secret(
     )
     task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
 
-    assert task["config"]["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [{"name": "npa-nebius-registry"}]
+    assert task["config"]["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
+        {"name": "npa-nebius-registry"}
+    ]
+
+
+def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
+    spec = load_spec(NPA_SPECS / "nurec-reconstruct.yaml")
+    plan = build_plan(spec, run_id="demo")
+
+    authorities = plan_image_pull_secrets(
+        spec,
+        plan.steps,
+        run_id="demo",
+        options=SkypilotRenderOptions(),
+    )
+
+    assert authorities["nvcr.io/nvidia/nre/nre-ga:26.04"] == (
+        "ngc-nvcr-imagepullsecret",
+    )
 
 
 def test_tool_image_key_prefix_match() -> None:
@@ -291,11 +310,15 @@ def test_render_token_factory_uses_env_aws_endpoint(
     try:
         docs = [
             doc
-            for doc in yaml.safe_load_all(prepared.skypilot_yaml_path.read_text(encoding="utf-8"))
+            for doc in yaml.safe_load_all(
+                prepared.skypilot_yaml_path.read_text(encoding="utf-8")
+            )
             if doc is not None
         ]
         assert "image_id" not in docs[1]["resources"]
-        assert docs[1]["envs"]["AWS_ENDPOINT_URL"] == ("https://storage.us-central1.nebius.cloud")
+        assert docs[1]["envs"]["AWS_ENDPOINT_URL"] == (
+            "https://storage.us-central1.nebius.cloud"
+        )
         assert docs[1]["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/npa"
     finally:
         prepared.temp_dir.cleanup()
@@ -354,7 +377,9 @@ def test_render_token_factory_caption_cpu_and_secret_hint(
         assert "NEBIUS_TOKEN_FACTORY_KEY" in prepared.secret_env_hints
         docs = [
             doc
-            for doc in yaml.safe_load_all(prepared.skypilot_yaml_path.read_text(encoding="utf-8"))
+            for doc in yaml.safe_load_all(
+                prepared.skypilot_yaml_path.read_text(encoding="utf-8")
+            )
             if doc is not None
         ]
         assert docs[0]["execution"] == "serial"
@@ -393,7 +418,9 @@ def test_render_token_factory_sets_npa_src_s3_uri(
     try:
         docs = [
             doc
-            for doc in yaml.safe_load_all(prepared.skypilot_yaml_path.read_text(encoding="utf-8"))
+            for doc in yaml.safe_load_all(
+                prepared.skypilot_yaml_path.read_text(encoding="utf-8")
+            )
             if doc is not None
         ]
         assert "image_id" not in docs[1]["resources"]
@@ -520,7 +547,9 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
     receipt = load_submission_state("default", "npa-submit-1")
     assert receipt["launch"]["sky_job_id"] == "42"
     assert receipt["workflow"]["name"] == "vlm-eval-single"
-    assert receipt["workflow"]["run_prefix_uri"] == ("s3://example-bucket/runs/npa-submit-1/vlm-eval")
+    assert receipt["workflow"]["run_prefix_uri"] == (
+        "s3://example-bucket/runs/npa-submit-1/vlm-eval"
+    )
     assert receipt["workflow"]["manifest_uri"].endswith("/npa-workflow/manifest.json")
     assert receipt["workflow"]["steps"][0]["state"] == "score-rollouts"
 
@@ -610,7 +639,9 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
     assert "image_id: docker:cr.example.invalid/reg/npa-cosmos:" in result.output
 
 
-def test_workbench_workflow_submit_npa_var_merges_config(mocker, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_workbench_workflow_submit_npa_var_merges_config(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     captured: dict[str, object] = {}
 

@@ -219,12 +219,14 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     assert "16 allocatable GPUs" in result.output
 
 
-def test_up_quota_blocker_runs_before_any_terraform_command(
-    monkeypatch, tmp_path: Path
+@pytest.mark.parametrize(
+    "blocking_quota", ["compute.instance.count", "compute.disk.count"]
+)
+def test_up_default_shape_quota_blocker_runs_before_terraform_apply(
+    monkeypatch, tmp_path: Path, blocking_quota: str
 ) -> None:
     from npa import provisioning_preflight
     from npa.provisioning_preflight import (
-        INSTANCE_QUOTA,
         ExistingCapacity,
         QuotaObservation,
     )
@@ -249,8 +251,8 @@ def test_up_quota_blocker_runs_before_any_terraform_command(
         lambda _tenant, _region, names: {
             name: QuotaObservation(
                 name=name,
-                used=10 if name == INSTANCE_QUOTA else 0,
-                limit=10 if name == INSTANCE_QUOTA else 100,
+                used=10 if name == blocking_quota else 0,
+                limit=10 if name == blocking_quota else 100,
                 state="known",
             )
             for name in names
@@ -281,7 +283,7 @@ def test_up_quota_blocker_runs_before_any_terraform_command(
     )
 
     assert result.exit_code != 0
-    assert "compute.instance.count" in result.output
+    assert blocking_quota in result.output
     assert terraform_calls == []
 
 
@@ -721,6 +723,22 @@ def test_preflight_instance_count_quota_passes_with_headroom(monkeypatch) -> Non
         {"gpu_nodes_count": 2, "cpu_nodes_count": 1, "tenant_id": "t", "region": "r"},
         {},
     )
+
+
+def test_preflight_instance_count_quota_counts_no_tfvars_defaults(monkeypatch) -> None:
+    from npa.clients import nebius as nebius_module
+
+    monkeypatch.setattr(
+        nebius_module, "get_compute_instance_quota", lambda _t, _r: (0, 1)
+    )
+
+    with pytest.raises(Exception) as excinfo:  # typer.BadParameter
+        tf_mod._preflight_instance_count_quota(
+            {"tenant_id": "tenant-x", "region": "us-central1"}, {}
+        )
+
+    assert "needs 2 compute instance" in str(excinfo.value)
+    assert "1 GPU + 1 CPU" in str(excinfo.value)
 
 
 def test_preflight_instance_count_quota_noop_when_unreadable(monkeypatch) -> None:
@@ -1686,6 +1704,30 @@ def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(
     apply_call = _find_call(stream_calls, "terraform", "apply", "-auto-approve")
     assert apply_call is not None
     assert not any(arg.startswith("ssh_public_key=") for arg in apply_call)
+
+
+def test_read_tfvars_keeps_complete_multiline_object_assignment(tmp_path: Path) -> None:
+    tf_dir = tmp_path / "terraform"
+    tf_dir.mkdir()
+    (tf_dir / "terraform.tfvars").write_text(
+        """
+ssh_public_key = {
+  path = "~/.ssh/custom.pub"
+  metadata = {
+    owner = "operator"
+  }
+}
+region = "eu-north1"
+""",
+        encoding="utf-8",
+    )
+
+    values = tf_mod._read_tfvars(tf_dir)
+
+    assert values["ssh_public_key"].startswith("{")
+    assert 'owner = "operator"' in values["ssh_public_key"]
+    assert values["ssh_public_key"].rstrip().endswith("}")
+    assert values["region"] == "eu-north1"
 
 
 def test_up_explains_a_missing_ssh_public_key(monkeypatch, tmp_path: Path) -> None:

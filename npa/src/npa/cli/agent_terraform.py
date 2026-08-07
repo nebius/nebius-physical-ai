@@ -389,17 +389,25 @@ def _cleanup_orphan_agent_instances(
         payload = _run_json(
             ["compute", "instance", "list", "--parent-id", project_id, "--all"]
         )
-    except NebiusError:
-        return
+    except NebiusError as exc:
+        raise ProvisionerError(
+            f"Exact orphan inventory is unresolved; no by-name deletion ran: {exc}"
+        ) from exc
     items = payload.get("items", [])
     if not isinstance(items, list):
-        return
+        raise ProvisionerError(
+            "Provider returned a schema-invalid exact orphan instance inventory"
+        )
     for item in items:
         if not isinstance(item, dict):
-            continue
+            raise ProvisionerError(
+                "Provider returned a non-object item in exact orphan inventory"
+            )
         meta = item.get("metadata", {})
         if not isinstance(meta, dict):
-            continue
+            raise ProvisionerError(
+                "Provider returned an orphan inventory item without metadata"
+            )
         if str(meta.get("name", "")).strip() != instance_name:
             continue
         labels = meta.get("labels", {})
@@ -415,12 +423,36 @@ def _cleanup_orphan_agent_instances(
             continue
         instance_id = str(meta.get("id", "")).strip()
         if not instance_id:
-            continue
+            raise ProvisionerError(
+                f"Provider returned exact owned orphan {instance_name!r} without an "
+                "immutable instance ID; no deletion ran"
+            )
         try:
-            _run(["compute", "instance", "delete", instance_id], check=False)
-            typer.echo(f"  Deleted orphan agent instance {instance_id}")
-        except NebiusError:
-            continue
+            _run(["compute", "instance", "delete", instance_id], check=True)
+            after = _run_json(
+                ["compute", "instance", "list", "--parent-id", project_id, "--all"]
+            )
+        except NebiusError as exc:
+            raise ProvisionerError(
+                f"Provider rejected or could not verify orphan deletion for exact "
+                f"instance {instance_id}: {exc}"
+            ) from exc
+        remaining = after.get("items", [])
+        if not isinstance(remaining, list):
+            raise ProvisionerError(
+                "Provider returned a schema-invalid instance inventory after deletion"
+            )
+        if any(
+            isinstance(candidate, dict)
+            and str((candidate.get("metadata") or {}).get("id") or "").strip()
+            == instance_id
+            for candidate in remaining
+        ):
+            raise ProvisionerError(
+                f"Provider accepted deletion for orphan instance {instance_id}, but "
+                "post-delete inventory still reports it present"
+            )
+        typer.echo(f"  Verified deleted orphan agent instance {instance_id}")
 
 
 def _destroy_agent_terraform(

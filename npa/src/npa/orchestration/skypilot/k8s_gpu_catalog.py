@@ -92,9 +92,15 @@ def _normalize(name: str) -> str:
     return re.sub(r"[^0-9a-z]+", "", str(name or "").casefold())
 
 
-def _is_subsequence(needle: str, haystack: str) -> bool:
-    iterator = iter(haystack)
-    return all(char in iterator for char in needle)
+_EXPLICIT_ACCELERATOR_ALIASES = (
+    frozenset(
+        {
+            "rtx6000",
+            "rtxpro6000",
+            "rtxpro6000blackwellserveredition",
+        }
+    ),
+)
 
 
 def parse_kubernetes_gpu_catalog(
@@ -178,9 +184,7 @@ def discover_kubernetes_gpu_catalog(
     output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
-        raise KubernetesGpuCatalogError(
-            f"`{' '.join(cmd)}` failed: {detail}"
-        )
+        raise KubernetesGpuCatalogError(f"`{' '.join(cmd)}` failed: {detail}")
     return parse_kubernetes_gpu_catalog(output, context=context)
 
 
@@ -211,7 +215,11 @@ def kubernetes_allocatable_gpu_count(
             return None
         payload = json.loads(result.stdout or "{}")
         return sum(
-            int(((item.get("status") or {}).get("allocatable") or {}).get("nvidia.com/gpu", 0))
+            int(
+                ((item.get("status") or {}).get("allocatable") or {}).get(
+                    "nvidia.com/gpu", 0
+                )
+            )
             for item in payload.get("items", [])
         )
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -268,7 +276,9 @@ def wait_for_kubernetes_accelerators(
         try:
             catalog = get_catalog()
             resolved = {
-                accelerator: resolve_kubernetes_accelerator(accelerator, catalog=catalog)
+                accelerator: resolve_kubernetes_accelerator(
+                    accelerator, catalog=catalog
+                )
                 for accelerator in requested
             }
         except PermanentlyUnsatisfiableAcceleratorError:
@@ -330,26 +340,28 @@ def context_from_infra(infra: str) -> str:
     value = str(infra or "").strip()
     for prefix in ("k8s/", "kubernetes/"):
         if value.startswith(prefix):
-            return value[len(prefix):].strip()
+            return value[len(prefix) :].strip()
     return ""
 
 
-def _candidate_names(request: AcceleratorRequest, catalog: KubernetesGpuCatalog) -> list[str]:
-    """Return catalog names matching ``request``, strongest match tier first."""
+def _candidate_names(
+    request: AcceleratorRequest, catalog: KubernetesGpuCatalog
+) -> list[str]:
+    """Return exact-normalized or explicitly registered catalog aliases."""
 
     names = list(catalog.quantities_by_accelerator)
-    exact = [name for name in names if name.casefold() == request.name.casefold()]
-    if exact:
-        return exact
     wanted = _normalize(request.name)
     if not wanted:
         return []
-    prefixed = [name for name in names if _normalize(name).startswith(wanted)]
-    if prefixed:
-        return prefixed
-    # `RTX6000` (Nebius node label) must still reach
-    # `RTXPRO-6000-BLACKWELL-SERVER-EDITION` (GPU-feature-discovery label).
-    return [name for name in names if _is_subsequence(wanted, _normalize(name))]
+    exact = [name for name in names if _normalize(name) == wanted]
+    if exact:
+        return exact
+    alias_group = next(
+        (group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group), None
+    )
+    if alias_group is None:
+        return []
+    return [name for name in names if _normalize(name) in alias_group]
 
 
 def resolve_kubernetes_accelerator(
@@ -376,6 +388,8 @@ def resolve_kubernetes_accelerator(
         raise UnsatisfiableAcceleratorError(
             f"Accelerator {request.name!r} is not advertised by this cluster. "
             f"Available: {catalog.format_available()}. "
+            "NPA does not auto-select prefix or fuzzy candidates because a nearby "
+            "product can have materially different capacity and cost. "
             f"Suggested action: export NPA_WORKFLOW_GPU_ACCELERATOR=<name>:<qty> "
             "using one of the names above."
         )

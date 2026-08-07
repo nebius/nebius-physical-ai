@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
@@ -508,6 +509,47 @@ def test_storage_service_account_list_not_found_reconciles_absent_account(
     assert not credentials_path.exists()
 
 
+def test_storage_service_account_list_not_found_requires_confirmation_to_prune(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import nebius as nebius_module
+
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path)
+    identities = iter(
+        [
+            nebius_module.ServiceAccountIdentity(
+                "serviceaccount-storage",
+                "lerobot-training",
+                "project-a",
+                "tenant-a",
+                "",
+            ),
+            None,
+        ]
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_identity",
+        lambda *_args, **_kwargs: next(identities),
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "list_access_keys_for_service_account",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            nebius_module.NebiusError("NotFound: service account is absent")
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.output)["result"] == "confirmation_required"
+    assert credentials_path.exists()
+
+
 def test_storage_service_account_access_key_not_found_is_idempotent(
     monkeypatch, tmp_path
 ) -> None:
@@ -605,6 +647,28 @@ def test_storage_service_account_already_absent_is_idempotent(
     assert result.exit_code == 0, result.output
     assert "is already absent" in result.output
     assert not credentials_path.exists()
+
+
+def test_absent_service_account_requires_confirmation_before_local_record_prune(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import nebius as nebius_module
+
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_identity",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.output)["result"] == "confirmation_required"
+    assert credentials_path.exists()
 
 
 def test_storage_service_account_reports_local_marker_cleanup_failure(
@@ -714,6 +778,113 @@ def test_missing_ownership_provider_failure_is_partial(monkeypatch, tmp_path) ->
     assert result.exit_code == 2
     assert "provider/auth verification failed" in result.output
     assert "nothing was deleted" in result.output
+
+
+def test_bucket_first_interlock_fails_closed_when_credentials_are_unreadable(
+    monkeypatch, tmp_path
+) -> None:
+    _seed_owned_account(monkeypatch, tmp_path)
+    deleted = _stub_iam(monkeypatch)
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(
+        credentials_module,
+        "load_credentials",
+        lambda **kwargs: (_ for _ in ()).throw(
+            credentials_module.CredentialStoreError(
+                "malformed", credentials_module.CREDENTIALS_PATH, "invalid YAML"
+            )
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert result.exit_code == 2
+    assert "delete-bucket-first interlock" in result.output
+    assert "Nothing was deleted" in result.output
+    assert deleted == []
+
+
+def test_bucket_first_interlock_unreadable_json_is_typed_and_machine_readable(
+    monkeypatch, tmp_path
+) -> None:
+    _seed_owned_account(monkeypatch, tmp_path)
+    deleted = _stub_iam(monkeypatch)
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(
+        credentials_module,
+        "load_credentials",
+        lambda **kwargs: (_ for _ in ()).throw(
+            credentials_module.CredentialStoreError(
+                "unreadable", credentials_module.CREDENTIALS_PATH, "permission denied"
+            )
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "storage",
+            "service-account",
+            "delete",
+            "--project",
+            "prod",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.output)
+    assert payload["result"] == "bucket_interlock_unresolved"
+    assert payload["verification_unresolved"] is True
+    assert payload["mutated"] is False
+    assert deleted == []
+
+
+def test_stale_residue_id_does_not_override_exact_owned_record(
+    monkeypatch, tmp_path
+) -> None:
+    _seed_owned_account(monkeypatch, tmp_path)
+    _stub_iam(monkeypatch)
+    from npa.clients import config as config_module
+
+    config = yaml.safe_load(config_module.CONFIG_PATH.read_text())
+    config["projects"]["prod"]["storage_iam_verification_required"] = {
+        "schema_version": "npa.storage-iam-residue.v2",
+        "status": "verification_failed",
+        "service_account_id": "serviceaccount-stale",
+        "candidate_service_account_ids": ["serviceaccount-stale"],
+    }
+    config_module.CONFIG_PATH.write_text(yaml.safe_dump(config))
+
+    result = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--dry-run"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "serviceaccount-storage" in result.output
+    assert "Conflicting exact" not in result.output
+    assert (
+        "storage_iam_verification_required"
+        in yaml.safe_load(config_module.CONFIG_PATH.read_text())["projects"]["prod"]
+    )
+
+    deletion = runner.invoke(
+        app,
+        ["storage", "service-account", "delete", "--project", "prod", "--yes"],
+    )
+
+    assert deletion.exit_code == 0, deletion.output
+    assert (
+        "storage_iam_verification_required"
+        not in yaml.safe_load(config_module.CONFIG_PATH.read_text())["projects"]["prod"]
+    )
 
 
 def test_owned_account_provider_verification_failure_preserves_provenance(

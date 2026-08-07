@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 import json
 from pathlib import Path
+import subprocess
 from urllib.error import URLError
 from urllib.parse import urlparse
 
@@ -443,3 +444,214 @@ def test_missing_media_tools_fails_before_staging(
             storage_client=storage,
         )
     assert storage.s3.uploads == []
+
+
+def _ffprobe_payload(**stream_overrides) -> str:
+    stream = {
+        "codec_name": "h264",
+        "profile": "High",
+        "width": 1280,
+        "height": 720,
+        "pix_fmt": "yuv420p",
+        "avg_frame_rate": "16/1",
+        "nb_frames": "93",
+    }
+    stream.update(stream_overrides)
+    return json.dumps(
+        {
+            "streams": [stream],
+            "format": {"format_name": "mov,mp4", "duration": "5.8125"},
+        }
+    )
+
+
+def test_real_probe_parser_derives_missing_frame_count_from_valid_bounded_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=_ffprobe_payload(nb_frames="N/A"), stderr=""
+        ),
+    )
+
+    media = dfi.probe_video(tmp_path / "capture.mp4")
+
+    assert media["frame_count"] == 93
+    assert media["frame_rate"] == "16/1"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "format_patch", "field"),
+    [
+        ({"width": None}, {}, "width"),
+        ({"avg_frame_rate": "0/0"}, {}, "avg_frame_rate"),
+        ({"avg_frame_rate": "not-a-rate"}, {}, "avg_frame_rate"),
+        ({"nb_frames": "N/A", "avg_frame_rate": "1000000000/1"}, {}, "nb_frames"),
+        ({}, {"duration": "not-a-duration"}, "duration"),
+    ],
+)
+def test_real_probe_parser_wraps_every_numeric_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    overrides: dict,
+    format_patch: dict,
+    field: str,
+) -> None:
+    payload = json.loads(_ffprobe_payload(**overrides))
+    payload["format"].update(format_patch)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    with pytest.raises(dfi.PaidfInputError, match=field):
+        dfi.probe_video(tmp_path / "capture.mp4")
+
+
+def test_retry_refuses_cross_version_conditioning_byte_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    h264_video: Path,
+    fake_media_pipeline: None,
+) -> None:
+    storage = FakeStorage()
+    build = {"version": "ffmpeg-a"}
+
+    def derive(source: Path, output: Path) -> dict:
+        output.write_bytes(build["version"].encode() + b":" + source.read_bytes())
+        return {
+            "name": "ffmpeg",
+            "version": build["version"],
+            "arguments": ["<source-by-sha256>"],
+        }
+
+    monkeypatch.setattr(dfi, "_derive_conditioning", derive)
+    dfi.prepare_paidf_input(
+        run_id="paidf-version-drift",
+        bucket="artifacts",
+        input_video=h264_video,
+        storage_client=storage,
+    )
+    uploads = list(storage.s3.uploads)
+    build["version"] = "ffmpeg-b"
+
+    with pytest.raises(dfi.PaidfInputError, match="ffmpeg/libx264 changed"):
+        dfi.prepare_paidf_input(
+            run_id="paidf-version-drift",
+            bucket="artifacts",
+            input_video=h264_video,
+            storage_client=storage,
+        )
+
+    assert storage.s3.uploads == uploads
+
+
+def test_local_input_provenance_never_persists_operator_directory(
+    h264_video: Path, fake_media_pipeline: None
+) -> None:
+    storage = FakeStorage()
+
+    result = dfi.prepare_paidf_input(
+        run_id="paidf-safe-local-ref",
+        bucket="artifacts",
+        input_video=h264_video,
+        storage_client=storage,
+    )
+
+    assert result.provenance["source_ref"] == h264_video.name
+    assert str(h264_video.parent) not in json.dumps(result.provenance)
+
+
+def test_interrupted_commit_reuses_exact_artifacts_and_writes_marker_last(
+    h264_video: Path, fake_media_pipeline: None
+) -> None:
+    class InterruptingS3(FakeS3):
+        fail_once = True
+
+        def upload_file(self, path: str, bucket: str, key: str, ExtraArgs=None) -> None:
+            if key.endswith("provenance.json") and self.fail_once:
+                self.fail_once = False
+                raise RuntimeError("interrupted marker upload")
+            super().upload_file(path, bucket, key, ExtraArgs=ExtraArgs)
+
+    storage = FakeStorage()
+    storage.s3 = InterruptingS3()
+    with pytest.raises(dfi.PaidfInputError, match="interrupted marker upload"):
+        dfi.prepare_paidf_input(
+            run_id="paidf-interrupted",
+            bucket="artifacts",
+            input_video=h264_video,
+            storage_client=storage,
+        )
+    completed_artifact_uploads = len(storage.s3.uploads)
+
+    result = dfi.prepare_paidf_input(
+        run_id="paidf-interrupted",
+        bucket="artifacts",
+        input_video=h264_video,
+        storage_client=storage,
+    )
+
+    assert result.reused is False
+    assert len(storage.s3.uploads) == completed_artifact_uploads + 1
+    assert storage.s3.uploads[-1][1].endswith("provenance.json")
+
+
+@pytest.mark.parametrize(
+    "missing_leaf", ["conditioning.mp4", "conditioning-frame-0004.png"]
+)
+def test_committed_retry_repairs_only_a_missing_verified_artifact(
+    h264_video: Path, fake_media_pipeline: None, missing_leaf: str
+) -> None:
+    storage = FakeStorage()
+    run_id = "paidf-repair-" + missing_leaf.replace(".", "-")
+    dfi.prepare_paidf_input(
+        run_id=run_id,
+        bucket="artifacts",
+        input_video=h264_video,
+        storage_client=storage,
+    )
+    prefix = f"physical-ai-data-factory/{run_id}/input/"
+    storage.s3.objects.pop(("artifacts", prefix + missing_leaf))
+    storage.s3.metadata.pop(("artifacts", prefix + missing_leaf), None)
+    before = len(storage.s3.uploads)
+
+    result = dfi.prepare_paidf_input(
+        run_id=run_id,
+        bucket="artifacts",
+        input_video=h264_video,
+        storage_client=storage,
+    )
+
+    assert result.reused is True
+    assert storage.s3.uploads[before:] == [("artifacts", prefix + missing_leaf)]
+
+
+def test_artifacts_without_commit_marker_gain_only_the_marker_on_same_byte_retry(
+    h264_video: Path, fake_media_pipeline: None
+) -> None:
+    storage = FakeStorage()
+    run_id = "paidf-marker-repair"
+    dfi.prepare_paidf_input(
+        run_id=run_id,
+        bucket="artifacts",
+        input_video=h264_video,
+        storage_client=storage,
+    )
+    prefix = f"physical-ai-data-factory/{run_id}/input/"
+    storage.s3.objects.pop(("artifacts", prefix + "provenance.json"))
+    storage.s3.metadata.pop(("artifacts", prefix + "provenance.json"), None)
+    before = len(storage.s3.uploads)
+
+    dfi.prepare_paidf_input(
+        run_id=run_id,
+        bucket="artifacts",
+        input_video=h264_video,
+        storage_client=storage,
+    )
+
+    assert storage.s3.uploads[before:] == [("artifacts", prefix + "provenance.json")]

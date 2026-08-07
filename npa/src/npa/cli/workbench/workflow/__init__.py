@@ -851,6 +851,7 @@ def submit_cmd(
             ),
             assume_decision=assume_decision,
             enabled=preflight_images and not plan_only,
+            infra=infra,
         )
         # Validate and stage the selected PAIDF input before staging the NPA
         # source. Invalid media, inaccessible input, and provenance conflicts
@@ -1925,13 +1926,14 @@ def _preflight_submit_images(
     options: SkypilotRenderOptions,
     assume_decision: str,
     enabled: bool,
+    infra: str = "",
 ) -> None:
     """Fail before the run starts when a step's image cannot actually be pulled.
 
-    Only Nebius registry images are treated as blocking: those are the ones the
-    credentials this submit injects are authoritative for. Anything else is
-    reported so the operator sees it, but a third-party registry that needs its
-    own in-pod credentials must not block submit.
+    Authority is resolved per registry and execution path. An exact operator-side
+    manifest fetch proves the pull directly; a Kubernetes path may instead prove a
+    declared docker-config imagePullSecret for that registry. If neither authority
+    is verified, every registry fails closed with a path-specific remedy.
     """
 
     if not enabled:
@@ -1939,7 +1941,11 @@ def _preflight_submit_images(
 
     from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-    from npa.orchestration.npa_workflow.skypilot_render import plan_images
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        plan_image_pull_secrets,
+        plan_images,
+    )
+    from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
     from npa.orchestration.skypilot.registry_preflight import (
         check_image_pulls_with_credentials,
     )
@@ -1949,13 +1955,21 @@ def _preflight_submit_images(
         run_id = f"{spec.name}-preflight"
         plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
         images = plan_images(spec, plan.steps, run_id=run_id, options=options)
+        pull_secrets_by_image = plan_image_pull_secrets(
+            spec, plan.steps, run_id=run_id, options=options
+        )
     except NpaWorkflowError:
         # Planning problems are reported by the submit path itself with better context.
         return
     if not images:
         return
 
-    checks = check_image_pulls_with_credentials(images, mint=True)
+    checks = check_image_pulls_with_credentials(
+        images,
+        mint=True,
+        pull_secrets_by_image=pull_secrets_by_image,
+        context=context_from_infra(infra),
+    )
     blocking = []
     for check in checks:
         if check.ok:
@@ -5279,6 +5293,7 @@ def preflight_images_cmd(
     from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.skypilot_render import (
         SkypilotRenderOptions,
+        plan_image_pull_secrets,
         plan_images,
     )
     from npa.orchestration.skypilot.registry_preflight import (
@@ -5302,11 +5317,18 @@ def preflight_images_cmd(
     run_id = f"{spec.name}-preflight"
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     images = plan_images(spec, plan.steps, run_id=run_id, options=options)
+    pull_secrets_by_image = plan_image_pull_secrets(
+        spec, plan.steps, run_id=run_id, options=options
+    )
     if not images:
         typer.echo("images: none pinned by this spec")
         return
 
-    checks = check_image_pulls_with_credentials(images, mint=True)
+    checks = check_image_pulls_with_credentials(
+        images,
+        mint=True,
+        pull_secrets_by_image=pull_secrets_by_image,
+    )
     if json_output:
         typer.echo(
             json.dumps(
@@ -5317,6 +5339,9 @@ def preflight_images_cmd(
                         "http_status": check.http_status,
                         "detail": check.detail,
                         "remedy": check.remedy,
+                        "operator_status": check.operator_status,
+                        "target_status": check.target_status,
+                        "authority": check.authority,
                     }
                     for check in checks
                 ],

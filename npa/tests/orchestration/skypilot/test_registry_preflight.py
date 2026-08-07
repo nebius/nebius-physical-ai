@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import subprocess
 import urllib.parse
 
 import pytest
@@ -12,6 +14,7 @@ from npa.orchestration.skypilot.registry_preflight import (
     check_image_pulls_with_credentials,
     parse_image_reference,
     resolve_registry_credentials,
+    verify_kubernetes_pull_secret,
 )
 
 
@@ -31,7 +34,13 @@ CHALLENGE = {
 class FakeRegistry:
     """A Docker Registry v2 endpoint with a scriptable manifest response."""
 
-    def __init__(self, *, manifest_status: int, manifest_body: bytes = b"", token_status: int = 200):
+    def __init__(
+        self,
+        *,
+        manifest_status: int,
+        manifest_body: bytes = b"",
+        token_status: int = 200,
+    ):
         self.manifest_status = manifest_status
         self.manifest_body = manifest_body
         self.token_status = token_status
@@ -42,17 +51,30 @@ class FakeRegistry:
         if "/v2/token/" in url:
             if self.token_status >= 400:
                 body = json.dumps(
-                    {"errors": [{"code": "UNAUTHORIZED", "message": "authentication required"}]}
+                    {
+                        "errors": [
+                            {
+                                "code": "UNAUTHORIZED",
+                                "message": "authentication required",
+                            }
+                        ]
+                    }
                 ).encode()
                 return self.token_status, {}, body
-            return self.token_status, {}, json.dumps({"token": "scoped-bearer"}).encode()
+            return (
+                self.token_status,
+                {},
+                json.dumps({"token": "scoped-bearer"}).encode(),
+            )
         if "Authorization" not in headers:
             return 401, dict(CHALLENGE), b""
         return self.manifest_status, {}, self.manifest_body
 
 
 def _error_body(code: str, message: str) -> bytes:
-    return json.dumps({"errors": [{"code": code, "message": message, "detail": None}]}).encode()
+    return json.dumps(
+        {"errors": [{"code": code, "message": message, "detail": None}]}
+    ).encode()
 
 
 def test_parse_splits_registry_repository_and_tag() -> None:
@@ -84,7 +106,9 @@ def test_parse_rejects_an_unqualified_reference(image: str) -> None:
 def test_a_pullable_image_completes_the_bearer_exchange() -> None:
     registry = FakeRegistry(manifest_status=200, manifest_body=b"{}")
 
-    check = check_image_pull(IMAGE, username="iam", password="iam-token", fetcher=registry)
+    check = check_image_pull(
+        IMAGE, username="iam", password="iam-token", fetcher=registry
+    )
 
     assert check.ok is True
     assert check.status == "ok"
@@ -99,10 +123,14 @@ def test_a_pullable_image_completes_the_bearer_exchange() -> None:
 def test_a_403_is_reported_as_forbidden_with_the_pull_permission_remedy() -> None:
     registry = FakeRegistry(
         manifest_status=403,
-        manifest_body=_error_body("DENIED", "requested access to the resource is denied"),
+        manifest_body=_error_body(
+            "DENIED", "requested access to the resource is denied"
+        ),
     )
 
-    check = check_image_pull(IMAGE, username="iam", password="iam-token", fetcher=registry)
+    check = check_image_pull(
+        IMAGE, username="iam", password="iam-token", fetcher=registry
+    )
 
     assert check.ok is False
     assert check.status == "forbidden"
@@ -119,7 +147,9 @@ def test_a_missing_tag_is_reported_as_not_found_not_as_a_permission_problem() ->
         manifest_body=_error_body("MANIFEST_UNKNOWN", "manifest unknown"),
     )
 
-    check = check_image_pull(IMAGE, username="iam", password="iam-token", fetcher=registry)
+    check = check_image_pull(
+        IMAGE, username="iam", password="iam-token", fetcher=registry
+    )
 
     assert check.status == "not_found"
     assert TAG in check.remedy
@@ -128,7 +158,9 @@ def test_a_missing_tag_is_reported_as_not_found_not_as_a_permission_problem() ->
 def test_rejected_credentials_are_reported_as_unauthorized() -> None:
     registry = FakeRegistry(manifest_status=200, token_status=401)
 
-    check = check_image_pull(IMAGE, username="iam", password="stale-token", fetcher=registry)
+    check = check_image_pull(
+        IMAGE, username="iam", password="stale-token", fetcher=registry
+    )
 
     assert check.status == "unauthorized"
     assert check.http_status == 401
@@ -154,11 +186,15 @@ def test_token_challenge_preserves_existing_realm_query_parameters() -> None:
         if "/token" in url:
             return 200, {}, json.dumps({"token": "anon"}).encode()
         if "Authorization" not in headers:
-            return 401, {
-                "www-authenticate": (
-                    'Bearer realm="https://ghcr.io/token?client_id=npa",service="ghcr.io"'
-                )
-            }, b""
+            return (
+                401,
+                {
+                    "www-authenticate": (
+                        'Bearer realm="https://ghcr.io/token?client_id=npa",service="ghcr.io"'
+                    )
+                },
+                b"",
+            )
         return 200, {}, b"{}"
 
     check = check_image_pull(
@@ -195,9 +231,7 @@ def test_an_unparsable_reference_does_not_raise() -> None:
 def test_render_includes_the_remedy() -> None:
     registry = FakeRegistry(manifest_status=403)
 
-    rendered = check_image_pull(
-        IMAGE, password="iam-token", fetcher=registry
-    ).render()
+    rendered = check_image_pull(IMAGE, password="iam-token", fetcher=registry).render()
 
     assert "forbidden (HTTP 403)" in rendered
     assert "Suggested action:" in rendered
@@ -206,7 +240,9 @@ def test_render_includes_the_remedy() -> None:
 def test_each_distinct_image_is_checked_once() -> None:
     registry = FakeRegistry(manifest_status=200, manifest_body=b"{}")
 
-    checks = check_image_pulls([IMAGE, IMAGE, "", f"{REGISTRY}/other/repo:1"], password="t", fetcher=registry)
+    checks = check_image_pulls(
+        [IMAGE, IMAGE, "", f"{REGISTRY}/other/repo:1"], password="t", fetcher=registry
+    )
 
     assert [check.image for check in checks] == [IMAGE, f"{REGISTRY}/other/repo:1"]
 
@@ -245,7 +281,13 @@ class AnonymousRegistry:
             self.token_auth_headers = dict(headers)
             return 200, {}, json.dumps({"token": "anon"}).encode()
         if "Authorization" not in headers:
-            return 401, {"www-authenticate": 'Bearer realm="https://ghcr.io/token",service="ghcr.io"'}, b""
+            return (
+                401,
+                {
+                    "www-authenticate": 'Bearer realm="https://ghcr.io/token",service="ghcr.io"'
+                },
+                b"",
+            )
         return 200, {}, b"{}"
 
 
@@ -327,3 +369,113 @@ def test_a_private_registry_that_refuses_an_anonymous_token_still_says_so() -> N
 
     assert check.status == "no_credentials"
     assert "SKYPILOT_DOCKER_PASSWORD" in check.remedy
+
+
+def _docker_secret_result(registry: str, *, name: str = "pull-secret"):
+    config = base64.b64encode(
+        json.dumps({"auths": {registry: {"auth": "redacted-test-value"}}}).encode()
+    ).decode()
+    payload = {
+        "metadata": {"name": name},
+        "type": "kubernetes.io/dockerconfigjson",
+        "data": {".dockerconfigjson": config},
+    }
+    return subprocess.CompletedProcess(
+        ["kubectl"], 0, stdout=json.dumps(payload), stderr=""
+    )
+
+
+@pytest.mark.parametrize(
+    "registry",
+    ["ghcr.io", "123456789012.dkr.ecr.us-east-1.amazonaws.com", "oci.example.test"],
+)
+def test_verified_target_pull_secret_can_satisfy_private_foreign_registry(
+    registry: str,
+) -> None:
+    image = f"{registry}/team/private:1"
+
+    def operator_unreachable(url, headers, timeout):  # noqa: ANN001
+        raise OSError("operator route blocked")
+
+    checks = check_image_pulls_with_credentials(
+        [image],
+        mint=False,
+        fetcher=operator_unreachable,
+        pull_secret_names=("pull-secret",),
+        context="target-context",
+        secret_runner=lambda *args, **kwargs: _docker_secret_result(registry),
+    )
+
+    assert checks[0].ok
+    assert checks[0].operator_status == "unreachable"
+    assert checks[0].target_status == "verified_pull_secret"
+    assert checks[0].authority == "kubernetes_image_pull_secret"
+    assert "redacted-test-value" not in checks[0].render()
+
+
+def test_missing_or_rbac_denied_pull_secret_is_not_target_pull_proof() -> None:
+    image = "ghcr.io/team/private:1"
+
+    def operator_unreachable(url, headers, timeout):  # noqa: ANN001
+        raise OSError("operator route blocked")
+
+    checks = check_image_pulls_with_credentials(
+        [image],
+        mint=False,
+        fetcher=operator_unreachable,
+        pull_secret_names=("missing-secret",),
+        secret_runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr="forbidden: cannot get secret"
+        ),
+    )
+
+    assert checks[0].status == "target_pull_unverified"
+    assert checks[0].target_status == "unverified"
+    assert "forbidden" in checks[0].detail
+
+
+def test_invalid_pull_secret_reference_runs_no_kubectl() -> None:
+    called = False
+
+    def runner(cmd, **kwargs):  # noqa: ANN001
+        nonlocal called
+        called = True
+        raise AssertionError("kubectl ran")
+
+    verified, detail = verify_kubernetes_pull_secret(
+        "ghcr.io", ("../../secret",), runner=runner
+    )
+
+    assert verified is False
+    assert "invalid secret reference" in detail
+    assert called is False
+
+
+def test_target_secret_with_wrong_registry_is_unverified() -> None:
+    verified, detail = verify_kubernetes_pull_secret(
+        "ghcr.io",
+        ("pull-secret",),
+        runner=lambda *args, **kwargs: _docker_secret_result("oci.example.test"),
+    )
+
+    assert verified is False
+    assert "does not cover registry ghcr.io" in detail
+
+
+def test_target_secret_with_empty_auth_entry_is_unverified() -> None:
+    config = base64.b64encode(json.dumps({"auths": {"ghcr.io": {}}}).encode()).decode()
+    payload = {
+        "type": "kubernetes.io/dockerconfigjson",
+        "data": {".dockerconfigjson": config},
+    }
+
+    verified, detail = verify_kubernetes_pull_secret(
+        "ghcr.io",
+        ("pull-secret",),
+        runner=lambda *args, **kwargs: subprocess.CompletedProcess(
+            ["kubectl"], 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    assert verified is False
+    assert "contains no usable credential fields" in detail

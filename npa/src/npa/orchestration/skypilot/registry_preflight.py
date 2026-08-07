@@ -21,7 +21,8 @@ import base64
 from dataclasses import dataclass
 import json
 import re
-from typing import Any, Callable
+import subprocess
+from typing import Any, Callable, Mapping
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -52,7 +53,9 @@ class ImageReference:
 
     @property
     def manifest_url(self) -> str:
-        return f"https://{self.registry}/v2/{self.repository}/manifests/{self.reference}"
+        return (
+            f"https://{self.registry}/v2/{self.repository}/manifests/{self.reference}"
+        )
 
     @property
     def pull_scope(self) -> str:
@@ -68,6 +71,9 @@ class ImagePullCheck:
     http_status: int | None = None
     detail: str = ""
     remedy: str = ""
+    operator_status: str = ""
+    target_status: str = "unverified"
+    authority: str = "operator"
 
     @property
     def ok(self) -> bool:
@@ -200,7 +206,9 @@ def check_image_pull(
         )
 
     if status == 401:
-        challenge = _parse_www_authenticate(response_headers.get("www-authenticate", ""))
+        challenge = _parse_www_authenticate(
+            response_headers.get("www-authenticate", "")
+        )
         realm = challenge.get("realm", "")
         if not realm:
             return ImagePullCheck(
@@ -225,7 +233,9 @@ def check_image_pull(
         # caller, so "no credentials" is not the same as "cannot pull". Ask the
         # token endpoint before concluding anything.
         token_headers = (
-            {"Authorization": _basic_auth(username or "iam", password)} if password else {}
+            {"Authorization": _basic_auth(username or "iam", password)}
+            if password
+            else {}
         )
         try:
             token_status, _, token_body = fetch(token_url, token_headers, timeout)
@@ -294,7 +304,8 @@ def check_image_pull(
             image=reference.raw,
             status="forbidden",
             http_status=status,
-            detail=detail or "registry authenticated the credentials but refused the pull",
+            detail=detail
+            or "registry authenticated the credentials but refused the pull",
             remedy=(
                 f"grant this run's identity pull access to {reference.repository} in "
                 f"{reference.registry}. Being able to list tags is a different permission "
@@ -367,7 +378,10 @@ def _server_side_copy_hint(reference: ImageReference) -> str:
     """
 
     try:
-        from npa.deploy.images import backup_container_registry, primary_container_registry
+        from npa.deploy.images import (
+            backup_container_registry,
+            primary_container_registry,
+        )
     except Exception:  # noqa: BLE001 - the hint must never be what fails
         return ""
     target = f"{reference.registry}/{reference.repository}:{reference.reference}"
@@ -475,8 +489,13 @@ def check_image_pulls_with_credentials(
     mint: bool = True,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     fetcher: Fetcher | None = None,
+    pull_secret_names: tuple[str, ...] = (),
+    pull_secrets_by_image: Mapping[str, tuple[str, ...]] | None = None,
+    namespace: str = "default",
+    context: str = "",
+    secret_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> list[ImagePullCheck]:
-    """Check images with credentials scoped to each image's registry host."""
+    """Check operator or declared in-cluster pull authority for each registry."""
 
     seen: list[str] = []
     for image in images:
@@ -485,26 +504,191 @@ def check_image_pulls_with_credentials(
             seen.append(value)
     checks: list[ImagePullCheck] = []
     for image in seen:
+        image_secret_names = (
+            tuple((pull_secrets_by_image or {}).get(image, ()))
+            if pull_secrets_by_image is not None
+            else pull_secret_names
+        )
         try:
             host = parse_image_reference(image).registry
             username, password = resolve_registry_credentials(host, mint=mint)
         except (RegistryPreflightError, RuntimeError) as exc:
-            checks.append(
-                ImagePullCheck(
-                    image=image,
-                    status="no_credentials",
-                    detail=str(exc),
-                    remedy="configure credentials for this registry and retry",
-                )
+            operator_check = ImagePullCheck(
+                image=image,
+                status="no_credentials",
+                detail=str(exc),
+                remedy="configure credentials for this registry and retry",
             )
-            continue
-        checks.append(
-            check_image_pull(
+            try:
+                host = parse_image_reference(image).registry
+            except RegistryPreflightError:
+                checks.append(operator_check)
+                continue
+        else:
+            operator_check = check_image_pull(
                 image,
                 username=username,
                 password=password,
                 timeout=timeout,
                 fetcher=fetcher,
             )
+        if operator_check.ok:
+            checks.append(
+                ImagePullCheck(
+                    **{
+                        **operator_check.__dict__,
+                        "operator_status": "verified",
+                        "target_status": "satisfied_by_operator_credential",
+                        "authority": "operator",
+                    }
+                )
+            )
+            continue
+        verified, detail = verify_kubernetes_pull_secret(
+            host,
+            image_secret_names,
+            namespace=namespace,
+            context=context,
+            timeout=timeout,
+            runner=secret_runner,
+        )
+        if verified:
+            checks.append(
+                ImagePullCheck(
+                    image=image,
+                    status="ok",
+                    detail=(
+                        f"operator-side manifest check was {operator_check.status}; "
+                        f"target pull authority verified: {detail}"
+                    ),
+                    operator_status=operator_check.status,
+                    target_status="verified_pull_secret",
+                    authority="kubernetes_image_pull_secret",
+                )
+            )
+            continue
+        remedy = operator_check.remedy
+        target_remedy = (
+            f"declare a valid imagePullSecret for {host} in namespace "
+            f"{namespace!r} and make it readable in context {context or '<current>'!r}"
+        )
+        checks.append(
+            ImagePullCheck(
+                image=operator_check.image,
+                status=(
+                    "target_pull_unverified"
+                    if image_secret_names
+                    else operator_check.status
+                ),
+                http_status=operator_check.http_status,
+                detail=(
+                    f"operator-side check: {operator_check.status}"
+                    + (f" ({operator_check.detail})" if operator_check.detail else "")
+                    + f"; target pull authority unverified: {detail}"
+                ),
+                remedy=f"{remedy}; {target_remedy}" if remedy else target_remedy,
+                operator_status=operator_check.status,
+                target_status="unverified",
+                authority="none",
+            )
         )
     return checks
+
+
+_KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$")
+
+
+def verify_kubernetes_pull_secret(
+    registry: str,
+    secret_names: tuple[str, ...],
+    *,
+    namespace: str = "default",
+    context: str = "",
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> tuple[bool, str]:
+    """Verify a declared docker-config secret covers ``registry`` without leaking it."""
+
+    host = _registry_host(registry)
+    if not secret_names:
+        return False, "no imagePullSecret is declared for this execution path"
+    if not _KUBERNETES_NAME_RE.fullmatch(namespace):
+        return False, f"invalid Kubernetes namespace reference {namespace!r}"
+    execute = runner or subprocess.run
+    failures: list[str] = []
+    for name in secret_names:
+        if not _KUBERNETES_NAME_RE.fullmatch(name):
+            failures.append(f"invalid secret reference {name!r}")
+            continue
+        command = ["kubectl"]
+        if context:
+            command.extend(["--context", context])
+        command.extend(["--namespace", namespace, "get", "secret", name, "-o", "json"])
+        try:
+            result = execute(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            failures.append(f"{name}: Kubernetes inventory unavailable ({exc})")
+            continue
+        if result.returncode != 0:
+            detail = (
+                result.stderr or result.stdout or f"exit {result.returncode}"
+            ).strip()
+            failures.append(f"{name}: Kubernetes rejected the secret lookup ({detail})")
+            continue
+        try:
+            secret = json.loads(result.stdout or "{}")
+            secret_type = str(secret.get("type") or "")
+            encoded = str((secret.get("data") or {}).get(".dockerconfigjson") or "")
+            docker_config = json.loads(base64.b64decode(encoded, validate=True))
+            auths = docker_config.get("auths")
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            failures.append(
+                f"{name}: invalid docker-config secret ({type(exc).__name__})"
+            )
+            continue
+        if secret_type != "kubernetes.io/dockerconfigjson" or not isinstance(
+            auths, dict
+        ):
+            failures.append(f"{name}: not a kubernetes.io/dockerconfigjson secret")
+            continue
+        matching_entries = [
+            entry
+            for registry_name, entry in auths.items()
+            if _registry_host(str(registry_name)) == host
+        ]
+        if not matching_entries:
+            failures.append(f"{name}: docker config does not cover registry {host}")
+            continue
+        if not any(
+            _docker_auth_entry_has_credential(entry) for entry in matching_entries
+        ):
+            failures.append(
+                f"{name}: docker config covers registry {host} but contains no "
+                "usable credential fields"
+            )
+            continue
+        return True, f"secret {namespace}/{name} covers registry {host}"
+    return False, "; ".join(failures) or "no declared secret could be verified"
+
+
+def _docker_auth_entry_has_credential(entry: Any) -> bool:
+    """Whether one Docker config auth entry contains nonempty pull credentials."""
+
+    if not isinstance(entry, dict):
+        return False
+    if any(
+        str(entry.get(key) or "").strip()
+        for key in ("auth", "identitytoken", "registrytoken")
+    ):
+        return True
+    return bool(
+        str(entry.get("username") or "").strip()
+        and str(entry.get("password") or "").strip()
+    )

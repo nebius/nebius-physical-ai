@@ -28,7 +28,12 @@ def _seed_residue() -> tuple[Path, Path, Path, Path]:
     (sky_home / "db").write_text("y" * 2048)
     empty_alias = npa / "agents" / "test-rtx"
     empty_alias.mkdir(parents=True)
-    return npa / "skypilot-venv", npa / "terraform-plugin-cache", home / ".sky", empty_alias
+    return (
+        npa / "skypilot-venv",
+        npa / "terraform-plugin-cache",
+        home / ".sky",
+        empty_alias,
+    )
 
 
 def _seed_project_config() -> None:
@@ -53,7 +58,9 @@ def test_cleanup_reports_residue_without_removing(monkeypatch) -> None:
     sky_venv, tf_cache, sky_home, empty_alias = _seed_residue()
     # A persisted sky_bin should be reported but not touched without --yes.
     config_module.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    config_module.CONFIG_PATH.write_text(yaml.safe_dump({"skypilot": {"sky_bin": "/x/sky"}}))
+    config_module.CONFIG_PATH.write_text(
+        yaml.safe_dump({"skypilot": {"sky_bin": "/x/sky"}})
+    )
 
     result = runner.invoke(app, ["cleanup"])
 
@@ -63,7 +70,12 @@ def test_cleanup_reports_residue_without_removing(monkeypatch) -> None:
     assert "~/.sky" in result.output
     assert "Re-run with --yes" in result.output
     # Nothing removed in report mode.
-    assert sky_venv.exists() and tf_cache.exists() and sky_home.exists() and empty_alias.exists()
+    assert (
+        sky_venv.exists()
+        and tf_cache.exists()
+        and sky_home.exists()
+        and empty_alias.exists()
+    )
 
 
 def test_cleanup_yes_removes_local_caches_but_keeps_tokens(monkeypatch) -> None:
@@ -72,7 +84,9 @@ def test_cleanup_yes_removes_local_caches_but_keeps_tokens(monkeypatch) -> None:
 
     sky_venv, tf_cache, sky_home, empty_alias = _seed_residue()
     config_module.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    config_module.CONFIG_PATH.write_text(yaml.safe_dump({"skypilot": {"sky_bin": "/x/sky"}}))
+    config_module.CONFIG_PATH.write_text(
+        yaml.safe_dump({"skypilot": {"sky_bin": "/x/sky"}})
+    )
     credentials_module.CREDENTIALS_PATH.write_text(
         yaml.safe_dump({"tokens": {"HF_TOKEN": "hf_keep"}})
     )
@@ -88,7 +102,12 @@ def test_cleanup_yes_removes_local_caches_but_keeps_tokens(monkeypatch) -> None:
     # sky_bin cleared from config; tokens untouched.
     saved_config = yaml.safe_load(config_module.CONFIG_PATH.read_text()) or {}
     assert "sky_bin" not in saved_config.get("skypilot", {})
-    assert yaml.safe_load(credentials_module.CREDENTIALS_PATH.read_text())["tokens"]["HF_TOKEN"] == "hf_keep"
+    assert (
+        yaml.safe_load(credentials_module.CREDENTIALS_PATH.read_text())["tokens"][
+            "HF_TOKEN"
+        ]
+        == "hf_keep"
+    )
 
 
 def test_cleanup_keep_sky_leaves_dot_sky(monkeypatch) -> None:
@@ -102,12 +121,52 @@ def test_cleanup_keep_sky_leaves_dot_sky(monkeypatch) -> None:
     assert sky_home.exists()  # ~/.sky preserved
 
 
+def test_cleanup_unreadable_queue_preserves_sky_state_but_continues_unrelated_cleanup(
+    monkeypatch,
+) -> None:
+    sky_venv, tf_cache, sky_home, _empty = _seed_residue()
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_nonterminal_jobs",
+        lambda sky_bin: ([], "could not read the managed-job queue: RBAC denied"),
+    )
+
+    result = runner.invoke(app, ["cleanup", "--yes", "--json"])
+
+    assert result.exit_code == 1
+    payload = __import__("json").loads(result.output)
+    assert payload["managed_job_queue_state"] == "unreadable_or_unverified"
+    assert payload["verification_unresolved"] is True
+    assert sky_venv.exists() and sky_home.exists()
+    assert not tf_cache.exists()
+
+
+def test_cleanup_json_distinguishes_terminal_only_queue_from_verified_empty(
+    monkeypatch,
+) -> None:
+    _seed_residue()
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_nonterminal_jobs",
+        lambda sky_bin: ([], "", "verified_terminal_only"),
+    )
+
+    result = runner.invoke(app, ["cleanup", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = __import__("json").loads(result.output)
+    assert payload["managed_job_queue_state"] == "verified_terminal_only"
+    assert payload["nonterminal_job_ids"] == []
+
+
 def test_cleanup_iam_note_names_the_storage_service_account(monkeypatch) -> None:
     from npa.clients import credentials as credentials_module
 
     credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     credentials_module.CREDENTIALS_PATH.write_text(
-        yaml.safe_dump({"nebius": {"service_account_id": "serviceaccount-lerobot-training"}})
+        yaml.safe_dump(
+            {"nebius": {"service_account_id": "serviceaccount-lerobot-training"}}
+        )
     )
 
     result = runner.invoke(app, ["cleanup"])
@@ -178,7 +237,9 @@ def test_cleanup_full_reports_credentials_without_removing_them() -> None:
     assert saved["tokens"]["HF_TOKEN"] == "hf_remove"
 
 
-def test_cleanup_full_yes_removes_known_tokens_but_preserves_unrelated_credentials() -> None:
+def test_cleanup_full_yes_removes_known_tokens_but_preserves_unrelated_credentials() -> (
+    None
+):
     from npa.clients import credentials as credentials_module
 
     credentials_module.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -227,7 +288,13 @@ def test_cleanup_full_yes_removes_only_empty_npa_owned_tree() -> None:
     assert not config_module.CONFIG_PATH.exists()
     assert not credentials_module.CREDENTIALS_PATH.exists()
     assert npa_dir.is_dir()
-    assert {path.name for path in npa_dir.iterdir()} == {"teardown-receipts"}
+    # The hardened private-YAML writer intentionally retains its owner-only
+    # serialization lock even after the empty credential document is pruned.
+    assert {path.name for path in npa_dir.iterdir()} == {
+        "credentials.yaml.lock",
+        "teardown-receipts",
+    }
+    assert (npa_dir / "credentials.yaml.lock").stat().st_mode & 0o777 == 0o600
     assert "Retained audit receipts" in result.output
 
 
@@ -244,7 +311,9 @@ def test_cleanup_full_preserves_nonempty_config_and_cluster_data() -> None:
 
     assert result.exit_code == 0, result.output
     assert cluster_file.exists()
-    assert yaml.safe_load(config_module.CONFIG_PATH.read_text()) == {"custom": {"keep": True}}
+    assert yaml.safe_load(config_module.CONFIG_PATH.read_text()) == {
+        "custom": {"keep": True}
+    }
     assert npa_dir.exists()
 
 
@@ -292,9 +361,7 @@ def test_cleanup_full_reports_a_credential_removal_failure(monkeypatch) -> None:
     assert credentials_module.CREDENTIALS_PATH.exists()
 
 
-def _seed_legacy_source_terraform_cache(
-    monkeypatch, tmp_path: Path
-) -> Path:
+def _seed_legacy_source_terraform_cache(monkeypatch, tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
     terraform_dir = repo / "deploy" / "cluster"
@@ -317,15 +384,11 @@ def test_cleanup_full_removes_only_validated_source_terraform_cache(
     assert "Legacy source-checkout Terraform cache" in report.output
     assert cache.exists()
 
-    cleanup = runner.invoke(
-        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
-    )
+    cleanup = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
     assert cleanup.exit_code == 0, cleanup.output
     assert not cache.exists()
 
-    subsequent = runner.invoke(
-        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
-    )
+    subsequent = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
     assert subsequent.exit_code == 0, subsequent.output
     assert "No local NPA/SkyPilot residue" in subsequent.output
 
@@ -342,9 +405,7 @@ def test_cleanup_failure_keeps_terraform_residue_visible_on_the_next_run(
         lambda _item: "filesystem busy",
     )
 
-    failed = runner.invoke(
-        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
-    )
+    failed = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
     assert failed.exit_code == 1, failed.output
     assert "filesystem busy" in failed.output
     assert cache.exists()
@@ -384,9 +445,7 @@ def test_cleanup_full_reports_owned_storage_iam_as_partial(
         ),
     )
 
-    result = runner.invoke(
-        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
-    )
+    result = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
 
     assert result.exit_code == 2, result.output
     assert "verified present" in result.output
@@ -423,9 +482,7 @@ def test_cleanup_full_distinguishes_provider_verification_failure(
         ),
     )
 
-    result = runner.invoke(
-        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
-    )
+    result = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
 
     assert result.exit_code == 2, result.output
     assert "provider/auth verification failure" in result.output
@@ -453,11 +510,11 @@ def test_cleanup_full_prunes_provenance_after_verified_absence(
             }
         )
     )
-    monkeypatch.setattr(nebius_module, "get_service_account_identity", lambda *_args, **_kwargs: None)
-
-    result = runner.invoke(
-        app, ["cleanup", "--full", "--yes", "--skip-jobs"]
+    monkeypatch.setattr(
+        nebius_module, "get_service_account_identity", lambda *_args, **_kwargs: None
     )
+
+    result = runner.invoke(app, ["cleanup", "--full", "--yes", "--skip-jobs"])
 
     assert result.exit_code == 0, result.output
     assert "verified absence" in result.output
@@ -503,8 +560,10 @@ def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(
     assert first.exit_code == second.exit_code == 2
     first_payload = json.loads(first.output)
     second_payload = json.loads(second.output)
-    assert first_payload["result"] == second_payload["result"] == (
-        "locally_clean_cloud_iam_unresolved"
+    assert (
+        first_payload["result"]
+        == second_payload["result"]
+        == ("locally_clean_cloud_iam_unresolved")
     )
     assert first_payload["iam_verification_required"] is True
     assert second_payload["project_retained"] is True
@@ -535,9 +594,12 @@ def test_cleanup_full_json_repeats_monotonically_while_iam_is_unresolved(
     )
     config = yaml.safe_load(config_module.CONFIG_PATH.read_text())
     assert "prod" in config["projects"]
-    assert config["projects"]["prod"]["storage_iam_verification_required"][
-        "service_account_id"
-    ] == "serviceaccount-storage"
+    assert (
+        config["projects"]["prod"]["storage_iam_verification_required"][
+            "service_account_id"
+        ]
+        == "serviceaccount-storage"
+    )
 
     monkeypatch.setattr(
         nebius_module, "get_service_account_identity", lambda *_args, **_kwargs: None

@@ -130,7 +130,9 @@ def test_force_restage_uploads_the_same_content_address_once_more(
 
     first = ensure_npa_source(bucket="my-bucket", source_root=root, client=client)
     first_upload_count = len(client.uploads)
-    forced = ensure_npa_source(bucket="my-bucket", source_root=root, client=client, force=True)
+    forced = ensure_npa_source(
+        bucket="my-bucket", source_root=root, client=client, force=True
+    )
 
     assert forced.uri == first.uri
     assert forced.fingerprint == first.fingerprint
@@ -175,12 +177,81 @@ def test_iter_source_files_prefers_the_git_index(tmp_path: Path) -> None:
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
     # Untracked local state of exactly the kind .gitignore keeps out of the repo.
     (root / "terraform.tfvars").write_text('iam_token = "secret"\n', encoding="utf-8")
-    (root / "credentials.yaml").write_text("tokens: {HF_TOKEN: hf_x}\n", encoding="utf-8")
+    (root / "credentials.yaml").write_text(
+        "tokens: {HF_TOKEN: hf_x}\n", encoding="utf-8"
+    )
     (root / "scratch.py").write_text("print('local')\n", encoding="utf-8")
 
     files = {path.as_posix() for path in iter_source_files(root)}
 
     assert files == {"pyproject.toml", "src/npa/__init__.py", "src/npa/cli.py"}
+
+
+def test_git_index_filter_rejects_tracked_secrets_symlinks_and_gitlinks(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    root = _fake_package(tmp_path / "npa")
+    outside = tmp_path / "outside.pem"
+    outside.write_text("private-key-material", encoding="utf-8")
+    (root / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+    (root / "tracked.pem").write_text("private-key-material", encoding="utf-8")
+    (root / "terraform.tfstate.backup").write_text("{}", encoding="utf-8")
+    (root / "linked.txt").symlink_to(outside)
+    for args in (
+        ["init", "-q"],
+        ["config", "user.email", "test@example.com"],
+        ["config", "user.name", "test"],
+        [
+            "add",
+            "pyproject.toml",
+            "src",
+            ".env",
+            "tracked.pem",
+            "terraform.tfstate.backup",
+            "linked.txt",
+        ],
+    ):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000,0123456789012345678901234567890123456789,vendor/submodule",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    files = {path.as_posix() for path in iter_source_files(root)}
+
+    assert files == {"pyproject.toml", "src/npa/__init__.py", "src/npa/cli.py"}
+
+
+def test_git_index_filter_applies_denials_to_a_staged_rename(tmp_path: Path) -> None:
+    import subprocess
+
+    root = _fake_package(tmp_path / "npa")
+    candidate = root / "src" / "npa" / "notes.txt"
+    candidate.write_text("private-key-material\n", encoding="utf-8")
+    for args in (
+        ["init", "-q"],
+        ["config", "user.email", "test@example.com"],
+        ["config", "user.name", "test"],
+        ["add", "pyproject.toml", "src"],
+        ["mv", "src/npa/notes.txt", "src/npa/operator.pem"],
+    ):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    files = {path.as_posix() for path in iter_source_files(root)}
+
+    assert "src/npa/notes.txt" not in files
+    assert "src/npa/operator.pem" not in files
 
 
 def test_iter_source_files_walk_fallback_skips_secrets(tmp_path: Path) -> None:
@@ -201,7 +272,9 @@ def test_stage_npa_source_wraps_upload_failures(tmp_path: Path) -> None:
 
     class FailingClient:
         def upload_file(self, local_file: str, bucket_uri: str) -> str:
-            raise RuntimeError("An error occurred (AccessDenied) when calling PutObject")
+            raise RuntimeError(
+                "An error occurred (AccessDenied) when calling PutObject"
+            )
 
     root = _fake_package(tmp_path / "npa")
 
@@ -212,7 +285,9 @@ def test_stage_npa_source_wraps_upload_failures(tmp_path: Path) -> None:
     assert "s3://my-bucket/npa-src/npa/" in str(excinfo.value)
 
 
-def test_stage_npa_source_wraps_storage_configuration_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stage_npa_source_wraps_storage_configuration_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """An unconfigured endpoint is a staging error, not an unexpected crash."""
     from npa.orchestration.npa_workflow import src_staging
 
@@ -237,7 +312,9 @@ def test_stage_npa_source_requires_a_bucket(tmp_path: Path) -> None:
 
 def test_stage_npa_source_rejects_a_non_package_root(tmp_path: Path) -> None:
     with pytest.raises(SrcStagingError, match="does not look like the npa package"):
-        stage_npa_source(bucket="my-bucket", source_root=tmp_path, client=FakeStorageClient())
+        stage_npa_source(
+            bucket="my-bucket", source_root=tmp_path, client=FakeStorageClient()
+        )
 
 
 def test_find_npa_package_root_locates_this_checkout() -> None:
@@ -252,7 +329,9 @@ def test_find_npa_package_root_raises_without_a_source_tree(tmp_path: Path) -> N
     orphan.parent.mkdir(parents=True)
     orphan.write_text("", encoding="utf-8")
 
-    with pytest.raises(SrcStagingError, match="Could not locate the npa package source"):
+    with pytest.raises(
+        SrcStagingError, match="Could not locate the npa package source"
+    ):
         find_npa_package_root(orphan)
 
 
@@ -274,15 +353,22 @@ def test_stage_src_command_prints_the_export_line(mocker) -> None:
         return_value="s3://unit-bucket/npa-src/npa/fingerprint/",
     )
 
-    result = runner.invoke(app, ["workbench", "workflow", "stage-src", "--bucket", "unit-bucket"])
+    result = runner.invoke(
+        app, ["workbench", "workflow", "stage-src", "--bucket", "unit-bucket"]
+    )
 
     assert result.exit_code == 0, result.output
     assert "npa_src_s3_uri: s3://unit-bucket/npa-src/npa/fingerprint/" in result.output
-    assert "export NPA_SRC_S3_URI=s3://unit-bucket/npa-src/npa/fingerprint/" in result.output
+    assert (
+        "export NPA_SRC_S3_URI=s3://unit-bucket/npa-src/npa/fingerprint/"
+        in result.output
+    )
     assert staged.call_args.kwargs["bucket"] == "unit-bucket"
     from npa.clients.config import CONFIG_PATH
 
-    assert "src_s3_uri: s3://unit-bucket/npa-src/npa/fingerprint/" in (CONFIG_PATH.read_text(encoding="utf-8"))
+    assert "src_s3_uri: s3://unit-bucket/npa-src/npa/fingerprint/" in (
+        CONFIG_PATH.read_text(encoding="utf-8")
+    )
 
 
 def test_invalid_persisted_source_reports_exact_verification_and_restage() -> None:
@@ -306,13 +392,19 @@ def test_invalid_persisted_source_reports_exact_verification_and_restage() -> No
     assert "npa workbench workflow stage-src --bucket unit-bucket" in message
 
 
-def test_submit_rejects_malformed_explicit_source_before_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_submit_rejects_malformed_explicit_source_before_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from npa.orchestration.npa_workflow import first_run_state
 
     state_root = tmp_path / "workflow-runs"
     monkeypatch.setattr(first_run_state, "DEFAULT_ROOT", state_root)
     monkeypatch.setenv("NPA_SRC_S3_URI", "not-an-s3-uri")
-    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    spec = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "physical-ai-data-factory.yaml"
+    )
 
     result = runner.invoke(
         app,
@@ -344,7 +436,9 @@ def test_stage_src_command_requires_a_bucket() -> None:
     assert "No bucket to stage into" in result.output
 
 
-def test_plan_only_stage_src_plans_without_uploading(mocker, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plan_only_stage_src_plans_without_uploading(
+    mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`submit --stage-src --plan-only` is strictly read-only."""
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
@@ -352,7 +446,11 @@ def test_plan_only_stage_src_plans_without_uploading(mocker, monkeypatch: pytest
         "npa.orchestration.npa_workflow.src_staging.stage_npa_source",
         return_value="s3://real-bucket/npa-src/npa/",
     )
-    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    spec = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "physical-ai-data-factory.yaml"
+    )
 
     result = runner.invoke(
         app,
@@ -382,7 +480,11 @@ def test_plan_only_stage_src_can_describe_a_placeholder_bucket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
-    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    spec = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "physical-ai-data-factory.yaml"
+    )
 
     result = runner.invoke(
         app,
@@ -418,7 +520,11 @@ def test_real_submit_stages_source_before_first_durable_run_state(
     from npa.orchestration.npa_workflow.first_run_state import RunPreparation
     from npa.workflows.data_factory_input import PreparedPaidfInput
 
-    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    spec = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "physical-ai-data-factory.yaml"
+    )
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
     stage = mocker.patch(
@@ -429,7 +535,9 @@ def test_real_submit_stages_source_before_first_durable_run_state(
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
     mocker.patch(
         "npa.workflows.data_factory_input.prepare_paidf_input",
-        return_value=PreparedPaidfInput(selection="input_uri", provenance={}, reused=True),
+        return_value=PreparedPaidfInput(
+            selection="input_uri", provenance={}, reused=True
+        ),
     )
     persist_calls: list[bool] = []
 
@@ -437,7 +545,9 @@ def test_real_submit_stages_source_before_first_durable_run_state(
         persist_calls.append(bool(kwargs.get("persist")))
         if kwargs.get("persist"):
             raise RuntimeError("stop after staging")
-        return RunPreparation(run_id="stage-demo", generated_new=False, state_path="unused")
+        return RunPreparation(
+            run_id="stage-demo", generated_new=False, state_path="unused"
+        )
 
     mocker.patch(
         "npa.orchestration.npa_workflow.first_run_state.prepare_run",
@@ -469,10 +579,16 @@ def test_real_submit_stages_source_before_first_durable_run_state(
     assert persist_calls == [False, True]
 
 
-def test_source_upload_failure_precedes_durable_run_state(monkeypatch: pytest.MonkeyPatch, mocker) -> None:
+def test_source_upload_failure_precedes_durable_run_state(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
     from npa.orchestration.npa_workflow.first_run_state import RunPreparation
 
-    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    spec = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "physical-ai-data-factory.yaml"
+    )
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
@@ -485,7 +601,9 @@ def test_source_upload_failure_precedes_durable_run_state(monkeypatch: pytest.Mo
 
     def prepare(**kwargs):
         persist_calls.append(bool(kwargs.get("persist")))
-        return RunPreparation(run_id="upload-failure", generated_new=False, state_path="unused")
+        return RunPreparation(
+            run_id="upload-failure", generated_new=False, state_path="unused"
+        )
 
     mocker.patch(
         "npa.orchestration.npa_workflow.first_run_state.prepare_run",
@@ -517,11 +635,17 @@ def test_source_upload_failure_precedes_durable_run_state(monkeypatch: pytest.Mo
     persist_source.assert_not_called()
 
 
-def test_input_preflight_failure_prevents_source_upload_and_run_state(monkeypatch: pytest.MonkeyPatch, mocker) -> None:
+def test_input_preflight_failure_prevents_source_upload_and_run_state(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
     from npa.orchestration.npa_workflow.first_run_state import RunPreparation
     from npa.workflows.data_factory_input import PaidfInputError
 
-    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    spec = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "physical-ai-data-factory.yaml"
+    )
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
@@ -534,7 +658,9 @@ def test_input_preflight_failure_prevents_source_upload_and_run_state(monkeypatc
 
     def prepare(**kwargs):
         persist_calls.append(bool(kwargs.get("persist")))
-        return RunPreparation(run_id="invalid-input", generated_new=False, state_path="unused")
+        return RunPreparation(
+            run_id="invalid-input", generated_new=False, state_path="unused"
+        )
 
     mocker.patch(
         "npa.orchestration.npa_workflow.first_run_state.prepare_run",
@@ -656,7 +782,9 @@ def test_storage_client_prefers_explicit_values(
     from npa.orchestration.npa_workflow import src_staging
 
     def _must_not_load(*_a, **_k):
-        raise AssertionError("saved credentials must not be read when all values are given")
+        raise AssertionError(
+            "saved credentials must not be read when all values are given"
+        )
 
     monkeypatch.setattr("npa.clients.credentials.load_credentials", _must_not_load)
     captured: dict = {}

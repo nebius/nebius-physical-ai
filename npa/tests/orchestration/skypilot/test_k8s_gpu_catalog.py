@@ -60,7 +60,9 @@ def test_parse_reads_per_context_requestable_quantities() -> None:
 
 
 def test_parse_can_scope_to_one_context() -> None:
-    catalog = parse_kubernetes_gpu_catalog(LIVE_OUTPUT, context="npa-workbench-eu-north1")
+    catalog = parse_kubernetes_gpu_catalog(
+        LIVE_OUTPUT, context="npa-workbench-eu-north1"
+    )
 
     assert set(catalog.quantities_by_accelerator) == {"H100"}
     assert catalog.context == "npa-workbench-eu-north1"
@@ -113,7 +115,9 @@ def test_two_gpus_per_task_is_rejected_on_single_gpu_nodes() -> None:
     assert "at most 1" in message
     assert "single node" in message
     assert "Adding nodes does not help" in message
-    assert "NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in message
+    assert (
+        "NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in message
+    )
 
 
 def test_a_non_offered_quantity_lists_what_is_offered() -> None:
@@ -134,7 +138,7 @@ def test_an_unknown_accelerator_lists_the_available_ones() -> None:
     assert "H100" in str(excinfo.value)
 
 
-def test_an_ambiguous_match_refuses_to_guess() -> None:
+def test_adjacent_products_are_not_treated_as_ambiguous_aliases() -> None:
     catalog = KubernetesGpuCatalog(
         quantities_by_accelerator={
             "H100-NVL": frozenset({1}),
@@ -145,7 +149,35 @@ def test_an_ambiguous_match_refuses_to_guess() -> None:
     with pytest.raises(UnsatisfiableAcceleratorError) as excinfo:
         resolve_kubernetes_accelerator("H100:1", catalog=catalog)
 
-    assert "more than one" in str(excinfo.value)
+    assert "does not auto-select prefix or fuzzy candidates" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("requested", "advertised"),
+    [("A10:1", "A100"), ("L40:1", "L40S"), ("H100:1", "H100NVL")],
+)
+def test_unique_adjacent_product_never_silently_changes_cost_or_capacity(
+    requested: str, advertised: str
+) -> None:
+    catalog = KubernetesGpuCatalog(
+        quantities_by_accelerator={advertised: frozenset({1})}
+    )
+
+    with pytest.raises(UnsatisfiableAcceleratorError) as excinfo:
+        resolve_kubernetes_accelerator(requested, catalog=catalog)
+
+    assert advertised in str(excinfo.value)
+    assert "does not auto-select" in str(excinfo.value)
+
+
+def test_case_and_punctuation_normalization_is_exact() -> None:
+    catalog = KubernetesGpuCatalog(
+        quantities_by_accelerator={"H100-SXM": frozenset({1})}
+    )
+
+    result = resolve_kubernetes_accelerator("h100_sxm:1", catalog=catalog)
+
+    assert result.resolved == "H100-SXM:1"
 
 
 def test_an_empty_catalog_blames_the_gpu_operator() -> None:
@@ -231,8 +263,13 @@ def test_readiness_waits_after_kubernetes_allocatable_until_skypilot_labels() ->
     )
 
     assert result["RTXPRO6000:1"].resolved.endswith(":1")
-    assert any("Kubernetes allocatable=1; SkyPilot discovery=pending" in item for item in messages)
-    assert messages[-1].startswith("GPU readiness: Kubernetes allocatable=1; SkyPilot discovery=ready")
+    assert any(
+        "Kubernetes allocatable=1; SkyPilot discovery=pending" in item
+        for item in messages
+    )
+    assert messages[-1].startswith(
+        "GPU readiness: Kubernetes allocatable=1; SkyPilot discovery=ready"
+    )
 
 
 def test_readiness_timeout_is_clear_and_preserves_capacity() -> None:

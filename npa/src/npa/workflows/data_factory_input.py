@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 from importlib import resources
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -292,7 +293,10 @@ def prepare_paidf_input(
                     f"--input-video does not exist or is not a file: {requested_source}"
                 )
             requested_meta = _user_source_metadata(
-                source_ref=str(requested_source), transport="local_file"
+                # Provenance is portable and may be shared with workers/reviewers;
+                # never persist the operator's absolute local directory.
+                source_ref=requested_source.name,
+                transport="local_file",
             )
         elif selection == "object_uri":
             requested_source = tmp / "requested-source.mp4"
@@ -359,7 +363,11 @@ def prepare_paidf_input(
         conditioning = tmp / "conditioning.mp4"
         frames_dir = tmp / "frames"
         frames_dir.mkdir()
-        _derive_conditioning(requested_source, conditioning)
+        ffmpeg_contract = _derive_conditioning(requested_source, conditioning) or {
+            "name": "ffmpeg",
+            "version": "unreported",
+            "arguments": _conditioning_arguments(),
+        }
         conditioning_media = probe_video(conditioning)
         frames = _extract_conditioning_frames(conditioning, frames_dir)
         derivation = {
@@ -374,11 +382,17 @@ def prepare_paidf_input(
             "sha256": _sha256(conditioning),
             "byte_size": conditioning.stat().st_size,
             "media": conditioning_media,
+            "tool": ffmpeg_contract,
             "staged_uri": f"{base_uri}conditioning.mp4",
             "frame_derivation": {
                 "kind": "derived_conditioning_frames",
                 "count": len(frames),
                 "staged_uri_pattern": f"{base_uri}conditioning-frame-%04d.png",
+                "tool": {
+                    "name": "ffmpeg",
+                    "version": str(ffmpeg_contract.get("version") or "unreported"),
+                    "arguments": _frame_extraction_arguments(),
+                },
                 "items": [
                     {"name": frame.name, "sha256": _sha256(frame)} for frame in frames
                 ],
@@ -392,10 +406,10 @@ def prepare_paidf_input(
         )
 
         if existing:
-            # The committed record is immutable. Derived artifacts may be repaired
-            # deterministically from the verified source, but provenance is reused.
+            # Different ffmpeg/libx264 builds can produce different bytes from
+            # the same source. Never stage those bytes beneath frozen provenance.
+            _assert_existing_derivation_matches(existing, derivation)
             provenance = dict(existing)
-            derivation = dict(provenance.get("derivation") or derivation)
         _stage_file(
             storage_client,
             requested_source,
@@ -443,39 +457,55 @@ def probe_video(path: Path) -> dict[str, Any]:
         "json",
         str(path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PaidfInputError(
+            f"video validation could not run ffprobe for {path.name}: {exc}. "
+            "Install FFmpeg and verify the input locally before retrying."
+        ) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "unknown ffprobe error").strip()
-        raise PaidfInputError(f"video validation failed for {path}: {detail}")
+        raise PaidfInputError(f"video validation failed for {path.name}: {detail}")
     try:
         payload = json.loads(result.stdout)
         stream = payload["streams"][0]
         fmt = payload["format"]
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         raise PaidfInputError(
-            f"video validation found no readable video stream in {path}"
+            f"video validation found no readable video stream in {path.name}"
         ) from exc
     formats = {
         part.strip().lower() for part in str(fmt.get("format_name") or "").split(",")
     }
     codec = str(stream.get("codec_name") or "").lower()
-    width = int(stream.get("width") or 0)
-    height = int(stream.get("height") or 0)
-    duration = float(fmt.get("duration") or 0.0)
+    width = _ffprobe_positive_int("width", stream.get("width"), path)
+    height = _ffprobe_positive_int("height", stream.get("height"), path)
+    duration = _ffprobe_positive_float("duration", fmt.get("duration"), path)
+    frame_rate_raw = str(stream.get("avg_frame_rate") or "").strip()
+    frame_rate = _ffprobe_frame_rate(frame_rate_raw, path)
     if "mp4" not in formats:
         raise PaidfInputError(
-            f"unsupported video container for {path}: expected MP4, got "
+            f"unsupported video container for {path.name}: expected MP4, got "
             f"{fmt.get('format_name') or 'unknown'}"
         )
     if codec not in SUPPORTED_CODECS:
         raise PaidfInputError(
-            f"unsupported video codec for {path}: expected H.264, got {codec or 'unknown'}. "
+            f"unsupported video codec for {path.name}: expected H.264, got {codec or 'unknown'}. "
             "Transcode with ffmpeg -i INPUT -c:v libx264 -pix_fmt yuv420p OUTPUT.mp4"
         )
-    if width <= 0 or height <= 0 or duration <= 0:
-        raise PaidfInputError(
-            f"invalid video shape/duration for {path}: {width}x{height}, {duration}s"
-        )
+    frame_count_raw = stream.get("nb_frames")
+    try:
+        frame_count = _ffprobe_positive_int("nb_frames", frame_count_raw, path)
+    except PaidfInputError:
+        derived = duration * frame_rate
+        if not math.isfinite(derived) or derived < 1 or derived > 100_000_000:
+            raise PaidfInputError(
+                f"ffprobe field nb_frames is {frame_count_raw!r} for {path.name}, and "
+                "a safe bounded frame count cannot be derived from duration and "
+                "avg_frame_rate. Re-encode the MP4 with explicit timestamps/frame rate."
+            ) from None
+        frame_count = max(1, int(round(derived)))
     return {
         "container": "mp4",
         "codec": codec,
@@ -483,13 +513,13 @@ def probe_video(path: Path) -> dict[str, Any]:
         "width": width,
         "height": height,
         "duration_seconds": duration,
-        "frame_rate": str(stream.get("avg_frame_rate") or ""),
-        "frame_count": int(stream.get("nb_frames") or 0),
+        "frame_rate": frame_rate_raw,
+        "frame_count": frame_count,
         "pixel_format": str(stream.get("pix_fmt") or ""),
     }
 
 
-def _derive_conditioning(source: Path, output: Path) -> None:
+def _derive_conditioning(source: Path, output: Path) -> dict[str, Any]:
     vf = (
         f"fps={CONDITIONING_FPS},"
         "scale=1280:720:force_original_aspect_ratio=decrease,"
@@ -518,6 +548,95 @@ def _derive_conditioning(source: Path, output: Path) -> None:
         str(output),
     ]
     _run_ffmpeg(command, "derive the PAIDF conditioning clip")
+    return {
+        "name": "ffmpeg",
+        "version": _ffmpeg_version(),
+        "arguments": _conditioning_arguments(),
+    }
+
+
+def _conditioning_arguments() -> list[str]:
+    """Stable path-free ffmpeg arguments that determine derived clip bytes."""
+
+    return [
+        "-stream_loop",
+        "-1",
+        "-i",
+        "<source-by-sha256>",
+        "-vf",
+        (
+            f"fps={CONDITIONING_FPS},"
+            "scale=1280:720:force_original_aspect_ratio=decrease,"
+            "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"
+        ),
+        "-frames:v",
+        str(CONDITIONING_FRAME_COUNT),
+        "-an",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "<conditioning-by-sha256>",
+    ]
+
+
+def _ffmpeg_version() -> str:
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-version"], capture_output=True, text=True, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unreported"
+    first_line = (result.stdout or result.stderr or "").splitlines()
+    return first_line[0].strip()[:240] if first_line else "unreported"
+
+
+def _ffprobe_positive_int(field: str, value: Any, path: Path) -> int:
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise PaidfInputError(
+            f"ffprobe field {field} is {value!r} for {path.name}; expected a positive "
+            "integer. Re-encode the MP4 or inspect it with `ffprobe -show_streams`."
+        ) from None
+    if parsed <= 0:
+        raise PaidfInputError(
+            f"ffprobe field {field} is {value!r} for {path.name}; expected a positive "
+            "integer. Re-encode the MP4 or inspect it with `ffprobe -show_streams`."
+        )
+    return parsed
+
+
+def _ffprobe_positive_float(field: str, value: Any, path: Path) -> float:
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        parsed = 0.0
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise PaidfInputError(
+            f"ffprobe field {field} is {value!r} for {path.name}; expected a finite "
+            "positive number. Re-encode the MP4 with valid timestamps."
+        )
+    return parsed
+
+
+def _ffprobe_frame_rate(value: str, path: Path) -> float:
+    from fractions import Fraction
+
+    try:
+        parsed = float(Fraction(value))
+    except (ValueError, ZeroDivisionError):
+        parsed = 0.0
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise PaidfInputError(
+            f"ffprobe field avg_frame_rate is {value!r} for {path.name}; expected a "
+            "positive rational such as 30/1. Re-encode with an explicit frame rate."
+        )
+    return parsed
 
 
 def _extract_conditioning_frames(conditioning: Path, output_dir: Path) -> list[Path]:
@@ -546,6 +665,21 @@ def _extract_conditioning_frames(conditioning: Path, output_dir: Path) -> list[P
             f"expected {CONDITIONING_FRAMES}"
         )
     return frames
+
+
+def _frame_extraction_arguments() -> list[str]:
+    interval = max(1, CONDITIONING_FRAME_COUNT // CONDITIONING_FRAMES)
+    return [
+        "-i",
+        "<conditioning-by-sha256>",
+        "-vf",
+        f"select=not(mod(n\\,{interval}))",
+        "-vsync",
+        "vfr",
+        "-frames:v",
+        str(CONDITIONING_FRAMES),
+        "<frame-pattern>",
+    ]
 
 
 def _run_ffmpeg(command: list[str], action: str) -> None:
@@ -789,6 +923,52 @@ def _assert_existing_matches(
         )
 
 
+def _assert_existing_derivation_matches(
+    existing: dict[str, Any], derived: dict[str, Any]
+) -> None:
+    """Require every recomputed artifact byte hash to match committed provenance."""
+
+    committed = existing.get("derivation")
+    if not isinstance(committed, dict):
+        raise PaidfInputError(
+            "committed PAIDF provenance has no derivation contract; use a new --run-id"
+        )
+    expected_clip = str(committed.get("sha256") or "")
+    actual_clip = str(derived.get("sha256") or "")
+    expected_frames = committed.get("frame_derivation")
+    actual_frames = derived.get("frame_derivation")
+    expected_items = (
+        expected_frames.get("items") if isinstance(expected_frames, dict) else None
+    )
+    actual_items = (
+        actual_frames.get("items") if isinstance(actual_frames, dict) else None
+    )
+    expected_hashes = {
+        str(item.get("name") or ""): str(item.get("sha256") or "")
+        for item in (expected_items or [])
+        if isinstance(item, dict)
+    }
+    actual_hashes = {
+        str(item.get("name") or ""): str(item.get("sha256") or "")
+        for item in (actual_items or [])
+        if isinstance(item, dict)
+    }
+    if (
+        not expected_clip
+        or expected_clip != actual_clip
+        or not expected_hashes
+        or expected_hashes != actual_hashes
+    ):
+        committed_tool = committed.get("tool")
+        current_tool = derived.get("tool")
+        raise PaidfInputError(
+            "run input is immutable: recomputed conditioning bytes differ from the "
+            "committed provenance (for example, because ffmpeg/libx264 changed). "
+            f"Committed tool={committed_tool!r}; current tool={current_tool!r}. "
+            "Use a new --run-id instead of mixing artifact builds."
+        )
+
+
 def _read_provenance(client: Any, base_uri: str) -> dict[str, Any] | None:
     bucket, key = _split_s3(f"{base_uri}provenance.json")
     try:
@@ -891,11 +1071,11 @@ def _stage_file(
             client.s3.download_file(bucket, key, str(existing))
             if _sha256(existing) == digest:
                 return
-        if immutable_source:
-            raise PaidfInputError(
-                f"refusing to overwrite an existing canonical user source at {uri}; "
-                "use a new --run-id"
-            )
+        role = "canonical user source" if immutable_source else "derived artifact"
+        raise PaidfInputError(
+            f"refusing to overwrite an existing PAIDF {role} with different bytes at "
+            f"{uri}; use a new --run-id"
+        )
     try:
         client.s3.upload_file(
             str(local),

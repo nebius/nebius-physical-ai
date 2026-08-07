@@ -297,7 +297,9 @@ def test_auth_malformed_and_ambiguous_records_remain_failures() -> None:
     assert any("Unauthorized" in error for error in assessment.errors)
 
 
-def test_partial_multijob_cleanup_aggregates_failure_and_continues(monkeypatch) -> None:
+def test_partial_multijob_cleanup_aggregates_failure_and_preserves_cluster(
+    monkeypatch,
+) -> None:
     calls: list[str] = []
 
     def cleanup(job_id: str, *args, **kwargs) -> CleanupResult:
@@ -310,8 +312,10 @@ def test_partial_multijob_cleanup_aggregates_failure_and_continues(monkeypatch) 
     monkeypatch.setattr(
         cleanup_module,
         "sky_down",
-        lambda *args, **kwargs: CleanupResult(
-            resources_removed=["paidf-runtime:already-absent"]
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError(
+                "the shared cluster must remain while any exact job is unverified"
+            )
         ),
     )
 
@@ -321,5 +325,5 @@ def test_partial_multijob_cleanup_aggregates_failure_and_continues(monkeypatch) 
     )
 
     assert calls == ["501", "502"]
-    assert result.resources_removed == ["job:501", "paidf-runtime:already-absent"]
+    assert result.resources_removed == ["job:501"]
     assert result.errors == ["PermissionDenied cancelling exact job 502"]

@@ -11,7 +11,7 @@ markers, and explicit operator-attested recovery for legacy NPA-created accounts
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypedDict
+from typing import Any, NoReturn, TypedDict
 
 import typer
 
@@ -495,14 +495,15 @@ def _observe_storage_iam(
     if context.account_id:
         candidates.add(context.account_id)
     marker = storage_iam_residue(context.alias) if context.alias else {}
-    marker_id = str(marker.get("service_account_id", "") or "").strip()
-    if marker_id:
-        candidates.add(marker_id)
-    marker_candidates = marker.get("candidate_service_account_ids")
-    if isinstance(marker_candidates, list):
-        candidates.update(
-            str(item).strip() for item in marker_candidates if str(item).strip()
-        )
+    if record is None:
+        marker_id = str(marker.get("service_account_id", "") or "").strip()
+        if marker_id:
+            candidates.add(marker_id)
+        marker_candidates = marker.get("candidate_service_account_ids")
+        if isinstance(marker_candidates, list):
+            candidates.update(
+                str(item).strip() for item in marker_candidates if str(item).strip()
+            )
     if len(candidates) > 1:
         return _StorageIamObservation(
             outcome="verification_failed",
@@ -623,7 +624,13 @@ def _persist_storage_iam_observation(observation: _StorageIamObservation) -> Non
         )
         return
     if observation.verified_absent:
-        clear_storage_iam_residue(alias, account_id=observation.account_id)
+        # An immutable NPA creation record is authoritative over an older
+        # project residue marker. Collapse that historical marker even when it
+        # names a stale candidate; unowned evidence retains the exact-ID guard.
+        clear_storage_iam_residue(
+            alias,
+            account_id="" if observation.ownership == "npa" else observation.account_id,
+        )
         return
     status = (
         "present_owned"
@@ -699,10 +706,29 @@ def _record_storage_iam_teardown(
     )
 
 
-def _partial_cleanup(message: str) -> None:
+def _partial_cleanup(
+    message: str,
+    *,
+    output_json: bool = False,
+    payload: dict[str, Any] | None = None,
+) -> NoReturn:
     """Report an operator-actionable partial cleanup with stable exit semantics."""
 
-    typer.echo(f"Partial cleanup: {message}", err=True)
+    if output_json:
+        import json
+
+        document = dict(payload or {})
+        document.update(
+            {
+                "result": str(document.get("result") or "partial_cleanup"),
+                "message": message,
+                "mutated": False,
+                "verification_unresolved": True,
+            }
+        )
+        typer.echo(json.dumps(document, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"Partial cleanup: {message}", err=True)
     raise typer.Exit(code=2)
 
 
@@ -972,8 +998,6 @@ def delete_service_account_cmd(
     """
 
     import json
-    import sys
-
     from npa.clients.config import ConfigError
     from npa.clients.credentials import load_credentials
     from npa.clients.nebius import (
@@ -994,9 +1018,14 @@ def delete_service_account_cmd(
             service_account_id=service_account_id,
         )
         observation = _observe_storage_iam(context)
-        _persist_storage_iam_observation(observation)
+        # Preserve the established reconciliation behavior of --dry-run: it may
+        # refresh/clear the non-secret residue journal, but never deletes cloud
+        # IAM or the immutable ownership record. A mutating verified-absence
+        # path defers even that journal collapse until confirmation.
+        if dry_run or not observation.verified_absent:
+            _persist_storage_iam_observation(observation)
     except ConfigError as exc:
-        _partial_cleanup(str(exc))
+        _partial_cleanup(str(exc), output_json=output_json)
     payload = _observation_dict(observation)
     if not output_json:
         typer.echo(f"identity_source: {context.identity_source}")
@@ -1016,19 +1045,51 @@ def delete_service_account_cmd(
         )
     if observation.verified_absent:
         payload["result"] = "already_absent"
-        _record_storage_iam_teardown(
-            observation,
-            terminal_state="verified_absent",
-            action="none",
+        record, _note = _storage_service_account_record()
+        from npa.clients.config import storage_iam_residue
+
+        has_residue_marker = bool(context.alias and storage_iam_residue(context.alias))
+        should_prune_record = bool(
+            not dry_run
+            and observation.account_id
+            and record is not None
+            and record.account_id == observation.account_id
         )
-        if not dry_run and observation.account_id:
-            record, _note = _storage_service_account_record()
-            if record is not None and record.account_id == observation.account_id:
+        should_mutate_local_state = bool(
+            not dry_run and (should_prune_record or has_residue_marker)
+        )
+        if should_mutate_local_state:
+            from npa.cli.destructive import require_destructive_confirmation
+
+            require_destructive_confirmation(
+                yes=yes,
+                prompt=(
+                    "Remove the stale local ownership record for provider-verified "
+                    f"absent service account {observation.account_id}?"
+                ),
+                output_json=output_json,
+                payload=payload,
+            )
+            try:
+                _persist_storage_iam_observation(observation)
+            except ConfigError as exc:
+                _partial_cleanup(str(exc), output_json=output_json, payload=payload)
+            if record is not None:
                 if not _remove_storage_service_account_record(record.account_id):
                     _partial_cleanup(
                         "the account is verified absent, but its stale local ownership "
-                        "record could not be removed; fix file permissions and retry."
+                        "record could not be removed; fix file permissions and retry.",
+                        output_json=output_json,
+                        payload=payload,
                     )
+        if not dry_run:
+            _record_storage_iam_teardown(
+                observation,
+                terminal_state="verified_absent",
+                action="remove_verified_absent_local_evidence"
+                if should_mutate_local_state
+                else "none",
+            )
         if output_json:
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         else:
@@ -1058,8 +1119,20 @@ def delete_service_account_cmd(
 
     try:
         credentials = load_credentials(environ={})
-    except Exception:  # noqa: BLE001 - IAM teardown can still use the ownership record
-        credentials = None
+    except Exception as exc:  # noqa: BLE001 - fail closed on credential uncertainty
+        message = (
+            "could not verify the delete-bucket-first interlock because the saved "
+            f"credential/config store is unreadable or invalid: {exc}. Nothing was deleted."
+        )
+        _partial_cleanup(
+            message,
+            output_json=output_json,
+            payload={
+                **payload,
+                "result": "bucket_interlock_unresolved",
+                "interlock": "delete_bucket_first",
+            },
+        )
     configured_bucket = str(getattr(credentials, "s3_bucket", "") or "").strip()
     if configured_bucket:
         raise typer.BadParameter(
@@ -1081,27 +1154,62 @@ def delete_service_account_cmd(
             # proof that the service account disappeared. Re-run the same exact
             # identity resolver before changing any ownership/residue state.
             recheck = _observe_storage_iam(context)
-            _persist_storage_iam_observation(recheck)
             if not recheck.verified_absent:
                 _partial_cleanup(
                     "access-key inventory returned NotFound, but an immediate exact "
-                    "service-account recheck did not prove absence; nothing was deleted."
+                    "service-account recheck did not prove absence; nothing was deleted.",
+                    output_json=output_json,
+                    payload=payload,
                 )
-            typer.echo(
-                f"Verified absence: NPA-owned service account {record.name} "
-                f"({record.account_id}) is already absent."
-            )
-            _record_storage_iam_teardown(
-                recheck,
-                terminal_state="verified_absent",
-                action="none",
-            )
-            if not dry_run and not _remove_storage_service_account_record(
-                record.account_id
-            ):
-                _partial_cleanup(
-                    "the account is verified absent, but its stale local ownership "
-                    "record could not be removed; fix file permissions and retry."
+            recheck_payload = _observation_dict(recheck)
+            recheck_payload["result"] = "already_absent"
+            if dry_run:
+                try:
+                    _persist_storage_iam_observation(recheck)
+                except ConfigError as marker_exc:
+                    _partial_cleanup(
+                        str(marker_exc),
+                        output_json=output_json,
+                        payload=recheck_payload,
+                    )
+            else:
+                from npa.cli.destructive import require_destructive_confirmation
+
+                require_destructive_confirmation(
+                    yes=yes,
+                    prompt=(
+                        "Remove stale local ownership evidence for provider-verified "
+                        f"absent service account {record.account_id}?"
+                    ),
+                    output_json=output_json,
+                    payload=recheck_payload,
+                )
+                try:
+                    _persist_storage_iam_observation(recheck)
+                except ConfigError as marker_exc:
+                    _partial_cleanup(
+                        str(marker_exc),
+                        output_json=output_json,
+                        payload=recheck_payload,
+                    )
+                if not _remove_storage_service_account_record(record.account_id):
+                    _partial_cleanup(
+                        "the account is verified absent, but its stale local ownership "
+                        "record could not be removed; fix file permissions and retry.",
+                        output_json=output_json,
+                        payload=recheck_payload,
+                    )
+                _record_storage_iam_teardown(
+                    recheck,
+                    terminal_state="verified_absent",
+                    action="remove_verified_absent_local_evidence",
+                )
+            if output_json:
+                typer.echo(json.dumps(recheck_payload, indent=2, sort_keys=True))
+            else:
+                typer.echo(
+                    f"Verified absence: NPA-owned service account {record.name} "
+                    f"({record.account_id}) is already absent."
                 )
             return
         _partial_cleanup(
@@ -1132,19 +1240,17 @@ def delete_service_account_cmd(
         )
         return
 
-    if not yes:
-        prompt = (
+    from npa.cli.destructive import require_destructive_confirmation
+
+    require_destructive_confirmation(
+        yes=yes,
+        prompt=(
             f"Delete NPA-owned service account {record.name} ({record.account_id}) "
             f"and {len(key_ids)} access key(s)?"
-        )
-        if not sys.stdin.isatty():
-            typer.echo(
-                f"{prompt} Re-run with --yes, or use --dry-run to inspect the plan."
-            )
-            raise typer.Exit(code=1)
-        if not typer.confirm(prompt, default=False):
-            typer.echo("Aborted.")
-            raise typer.Exit(code=1)
+        ),
+        output_json=output_json,
+        payload=payload,
+    )
 
     failed = False
     profile_kwargs = {"profile": context.profile} if context.profile else {}
@@ -1180,9 +1286,7 @@ def delete_service_account_cmd(
                 from npa.clients.config import clear_storage_iam_residue
 
                 if context.alias:
-                    clear_storage_iam_residue(
-                        context.alias, account_id=record.account_id
-                    )
+                    clear_storage_iam_residue(context.alias, account_id="")
             except ConfigError as marker_exc:
                 failed = True
                 typer.echo(
@@ -1225,7 +1329,7 @@ def delete_service_account_cmd(
             from npa.clients.config import clear_storage_iam_residue
 
             if context.alias:
-                clear_storage_iam_residue(context.alias, account_id=record.account_id)
+                clear_storage_iam_residue(context.alias, account_id="")
         except ConfigError as exc:
             failed = True
             typer.echo(
@@ -1546,10 +1650,11 @@ def delete_bucket_cmd(
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Skip the confirmation prompt."
     ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit a machine-readable confirmation refusal."
+    ),
 ) -> None:
     """Delete an object-storage bucket npa provisioned, contents and versions included."""
-    import sys
-
     from npa.clients.config import resolve_environment
     from npa.clients.credentials import load_credentials
     from npa.clients.nebius import NebiusError, delete_bucket, get_bucket_by_name
@@ -1586,6 +1691,18 @@ def delete_bucket_cmd(
                 f"Could not list buckets in {resolved_project}: {exc}"
             ) from exc
         if item is None:
+            if prune_config:
+                from npa.cli.destructive import require_destructive_confirmation
+
+                require_destructive_confirmation(
+                    yes=yes,
+                    prompt=(
+                        f"Remove saved local credentials/state for provider-verified "
+                        f"absent bucket {bucket_name!r}?"
+                    ),
+                    output_json=output_json,
+                    payload={"bucket_id": "", "bucket_name": bucket_name},
+                )
             typer.echo(
                 f"Bucket {bucket_name!r} does not exist in project {resolved_project}."
             )
@@ -1614,12 +1731,14 @@ def delete_bucket_cmd(
         )
 
     target = f"{bucket_name or resolved_id} ({resolved_id})"
-    if not yes and sys.stdin.isatty():
-        if not typer.confirm(
-            f"Delete bucket {target} and everything in it?", default=False
-        ):
-            typer.echo("Aborted.")
-            raise typer.Exit(code=1)
+    from npa.cli.destructive import require_destructive_confirmation
+
+    require_destructive_confirmation(
+        yes=yes,
+        prompt=f"Delete bucket {target} and everything in it?",
+        output_json=output_json,
+        payload={"bucket_id": resolved_id, "bucket_name": bucket_name},
+    )
 
     iam_alias, iam_marker = _begin_bucket_iam_cleanup_tombstone(
         project, resolved_project, bucket_name
@@ -1799,10 +1918,28 @@ def _prune_local_state(bucket_name: str) -> None:
     ``projects.<alias>.terraform_state``). A bucket delete that cleaned only the
     former left live-looking HMAC keys for the deleted bucket in config.yaml.
     """
-    _prune_storage_credentials(bucket_name)
-    from npa.clients.config import CONFIG_PATH, clear_terraform_state_for_bucket
+    try:
+        _prune_storage_credentials(bucket_name)
+    except (OSError, ValueError) as exc:
+        _partial_cleanup(
+            f"bucket deletion/absence was recorded, but the atomic credential rewrite "
+            f"failed and the prior credential document was left intact: {exc}. Fix "
+            "the credential path/permissions and retry local cleanup."
+        )
+    from npa.clients.config import (
+        CONFIG_PATH,
+        ConfigError,
+        clear_terraform_state_for_bucket,
+    )
 
-    cleared = clear_terraform_state_for_bucket(bucket_name)
+    try:
+        cleared = clear_terraform_state_for_bucket(bucket_name)
+    except (ConfigError, OSError) as exc:
+        _partial_cleanup(
+            f"bucket deletion/absence was recorded and matching S3 credentials were "
+            f"pruned, but Terraform backend state could not be rewritten: {exc}. "
+            "Retry local cleanup after fixing config permissions."
+        )
     if cleared:
         typer.echo(
             f"Removed the Terraform remote-state keys for {bucket_name} from "
@@ -1849,56 +1986,53 @@ def _prune_storage_credentials(bucket_name: str) -> None:
     separate lifecycle: its ID and any NPA ownership proof remain until the
     explicit ownership-gated service-account teardown confirms it is gone.
     """
-    from npa.clients.credentials import CREDENTIALS_PATH, load_credentials
+    from copy import deepcopy
 
-    try:
-        credentials = load_credentials(environ={})
-    except Exception:  # noqa: BLE001
-        return
-    saved_bucket = _bucket_name_from_uri(
-        str(getattr(credentials, "s3_bucket", "") or "")
-    )
-    if not saved_bucket or saved_bucket != bucket_name:
-        return
-    if not CREDENTIALS_PATH.exists():
-        return
-    import yaml
-
-    try:
-        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return
-    if not isinstance(data, dict):
-        return
+    from npa.clients.credentials import CREDENTIALS_PATH, update_private_yaml
 
     removed: list[str] = []
-    for section_key in _STORAGE_SECTION_KEYS:
-        section = data.get(section_key)
-        if not isinstance(section, dict):
-            continue
-        for key in _STORAGE_SECRET_KEYS:
-            if section.get(key) not in (None, ""):
-                section.pop(key, None)
-                removed.append(key)
-        if section:
-            data[section_key] = section
-        else:
-            data.pop(section_key, None)
+
+    def prune(existing: dict[str, Any]) -> dict[str, Any]:
+        data = deepcopy(existing)
+        saved_bucket = ""
+        for section_key in _STORAGE_SECTION_KEYS:
+            section = data.get(section_key)
+            if not isinstance(section, dict):
+                continue
+            for bucket_key in ("bucket", "checkpoint_bucket", "s3_bucket"):
+                candidate = _bucket_name_from_uri(str(section.get(bucket_key) or ""))
+                if candidate:
+                    saved_bucket = candidate
+                    break
+            if saved_bucket:
+                break
+        if saved_bucket != bucket_name:
+            return data
+        for section_key in _STORAGE_SECTION_KEYS:
+            section = data.get(section_key)
+            if not isinstance(section, dict):
+                continue
+            section = dict(section)
+            for key in _STORAGE_SECRET_KEYS:
+                if section.get(key) not in (None, ""):
+                    section.pop(key, None)
+                    removed.append(key)
+            if section:
+                data[section_key] = section
+            else:
+                data.pop(section_key, None)
+        return data
 
     # Never prune the nebius section here. Even an unproven legacy ID is useful
     # evidence for an operator, while still being categorically insufficient for
     # NPA to delete it. Coupling IAM evidence to bucket cleanup was what made the
     # documented bucket -> service-account order unverifiable after step one.
 
+    if not CREDENTIALS_PATH.exists():
+        return
+    update_private_yaml(CREDENTIALS_PATH, prune)
     if not removed:
         return
-    # Rewrite the file verbatim: write_credentials_file deep-merges and cannot
-    # drop keys.
-    CREDENTIALS_PATH.write_text(
-        yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
-        encoding="utf-8",
-    )
-    CREDENTIALS_PATH.chmod(0o600)
     unique_removed = list(dict.fromkeys(removed))
     typer.echo(
         f"Removed the saved S3 {', '.join(unique_removed)} for {bucket_name} from "

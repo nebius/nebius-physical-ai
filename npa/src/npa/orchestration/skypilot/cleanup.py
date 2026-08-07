@@ -24,6 +24,8 @@ from npa.orchestration.skypilot.controller import (
     DEFAULT_CONTROLLER_BACKEND,
     ControllerBackend,
 )
+from npa.orchestration.skypilot.json_output import queue_rows_from_output
+from npa.orchestration.skypilot.workflow_state import redact_text
 
 
 @dataclass
@@ -72,6 +74,23 @@ _IN_PROGRESS_JOBS_MARKERS = ("in-progress managed jobs", "in progress managed jo
 
 class InvalidRunIdError(ValueError):
     """Raised when a run id is unsafe for SkyPilot cleanup matching."""
+
+
+class JobQueueUnreadableError(RuntimeError):
+    """Raised when managed-job absence cannot be authoritatively verified."""
+
+
+@dataclass(frozen=True)
+class JobQueueSnapshot:
+    """Verified or unreadable state returned by the shared queue inventory."""
+
+    state: str
+    jobs: tuple[dict[str, Any], ...] = ()
+    detail: str = ""
+
+    @property
+    def readable(self) -> bool:
+        return self.state in {"verified_empty", "verified_jobs"}
 
 
 def sky_down(
@@ -297,19 +316,27 @@ def cleanup_jobs_controller(
     # Unrelated controller rows are deliberately ignored; they are neither
     # targets nor cleanup results for this exact project/context transaction.
     if controller_clusters:
-        pending = _nonterminal_job_ids(
-            isolated_config_dir=isolated_config_dir,
-            config_path=config_path,
-            sky_bin=sky_bin,
-        )
-        if pending:
-            wait_for_jobs_terminal(
-                pending,
+        try:
+            pending = _nonterminal_job_ids(
                 isolated_config_dir=isolated_config_dir,
                 config_path=config_path,
                 sky_bin=sky_bin,
-                timeout=job_drain_timeout,
             )
+            if pending:
+                wait_for_jobs_terminal(
+                    pending,
+                    isolated_config_dir=isolated_config_dir,
+                    config_path=config_path,
+                    sky_bin=sky_bin,
+                    timeout=job_drain_timeout,
+                )
+        except JobQueueUnreadableError as exc:
+            cleanup.errors.append(
+                f"managed-job queue is unreadable/unverified; controller and "
+                f"local SkyPilot state were preserved: {exc}"
+            )
+            _record_controller_result(identity, cleanup, "verification_failed")
+            return cleanup
     if not remote_pods:
         # The exact context (or the provider itself) proves remote absence.  It is
         # now safe to converge matching local metadata.
@@ -587,13 +614,20 @@ def cleanup_launched_workflow(
                 f"managed job {cleaned_job_id} could not be re-verified after the "
                 f"cancel failure: {convergence.removeprefix('unavailable:')}"
             )
-    drained, still_running = wait_for_jobs_terminal(
-        [cleaned_job_id],
-        isolated_config_dir=isolated_config_dir,
-        config_path=config_path,
-        sky_bin=sky_bin,
-        timeout=job_drain_timeout,
-    )
+    try:
+        drained, still_running = wait_for_jobs_terminal(
+            [cleaned_job_id],
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+            timeout=job_drain_timeout,
+        )
+    except JobQueueUnreadableError as exc:
+        cleanup.errors.append(
+            "managed-job queue is unreadable/unverified after cancellation; "
+            f"the run cluster was preserved: {exc}"
+        )
+        return cleanup
     if not drained:
         cleanup.errors.append(
             "managed job(s) "
@@ -614,6 +648,11 @@ def cleanup_launched_workflow(
                 f"managed job {cleaned_job_id} cancellation could not be verified as "
                 f"terminal/absent: {detail or convergence}"
             )
+    if cleanup.errors:
+        # `sky down` updates local cluster/controller handles as part of remote
+        # teardown. Preserve those recovery handles until the queue proves the
+        # exact job terminal or absent.
+        return cleanup
     if teardown_cluster:
         cleanup.extend(
             sky_down(
@@ -667,6 +706,10 @@ def cleanup_launched_workflows(
             )
             continue
         cleanup.extend(result)
+    if cleanup.errors:
+        # All jobs share this run cluster. One unverified drain makes cluster
+        # teardown unsafe even when other exact jobs converged successfully.
+        return cleanup
     cleanup.extend(
         sky_down(
             cluster or run_id,
@@ -726,12 +769,20 @@ def cleanup_all_for_run(
     _validate_run_id(run_id)
     cleanup = CleanupResult()
     cancelled: list[str] = []
-    for job in _matching_jobs(
-        run_id,
-        isolated_config_dir=isolated_config_dir,
-        config_path=config_path,
-        sky_bin=sky_bin,
-    ):
+    try:
+        matching_jobs = _matching_jobs(
+            run_id,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
+        )
+    except JobQueueUnreadableError as exc:
+        cleanup.errors.append(
+            "managed-job queue is unreadable/unverified; run clusters and local "
+            f"SkyPilot state were preserved: {exc}"
+        )
+        return cleanup
+    for job in matching_jobs:
         if str(job.get("status", "")).upper() in NONTERMINAL_JOB_STATUSES:
             job_id = str(job.get("job_id") or job.get("id"))
             cleanup.extend(
@@ -747,21 +798,29 @@ def cleanup_all_for_run(
     # `sky jobs cancel` returns as soon as cancellation is scheduled, so tearing
     # down immediately races the controller.
     if cancelled:
-        drained, still_running = wait_for_jobs_terminal(
-            cancelled,
-            isolated_config_dir=isolated_config_dir,
-            config_path=config_path,
-            sky_bin=sky_bin,
-            timeout=job_drain_timeout,
-        )
+        try:
+            drained, still_running = wait_for_jobs_terminal(
+                cancelled,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin,
+                timeout=job_drain_timeout,
+            )
+        except JobQueueUnreadableError as exc:
+            cleanup.errors.append(
+                "managed-job queue became unreadable/unverified after cancellation; "
+                f"run clusters and local SkyPilot state were preserved: {exc}"
+            )
+            return cleanup
         if not drained:
             cleanup.errors.append(
                 "managed job(s) "
                 + ", ".join(still_running)
                 + f" were still non-terminal {job_drain_timeout}s after cancel; "
-                "teardown continued, but `sky down` of the jobs controller may refuse "
-                "until they finish cancelling."
+                "run clusters and their local recovery handles were preserved until "
+                "the queue verifies those jobs terminal or absent."
             )
+            return cleanup
 
     for pattern in cluster_name_patterns_for_run(run_id):
         cleanup.extend(
@@ -880,8 +939,8 @@ def wait_for_jobs_terminal(
 ) -> tuple[bool, list[str]]:
     """Block until the given managed jobs are terminal.
 
-    Returns ``(drained, still_running)``. A queue that cannot be read is treated
-    as drained: cleanup is best-effort and must not stall on a broken controller.
+    Returns ``(drained, still_running)``. An unreadable queue raises
+    :class:`JobQueueUnreadableError`; callers must preserve recoverable state.
     """
 
     wanted = {str(job_id).strip() for job_id in job_ids if str(job_id).strip()}
@@ -890,16 +949,14 @@ def wait_for_jobs_terminal(
     deadline = time.monotonic() + max(timeout, 0)
     still_running: list[str] = []
     while True:
-        jobs, readable = _all_jobs(
+        snapshot = _all_jobs(
             isolated_config_dir=isolated_config_dir,
             config_path=config_path,
             sky_bin=sky_bin,
         )
-        if not readable:
-            return True, []
         still_running = [
             job_id
-            for job_id, status in _job_statuses(jobs).items()
+            for job_id, status in _job_statuses(snapshot.jobs).items()
             if job_id in wanted and status in NONTERMINAL_JOB_STATUSES
         ]
         if not still_running:
@@ -932,16 +989,14 @@ def _nonterminal_job_ids(
     config_path: Path | None,
     sky_bin: SkyBin,
 ) -> list[str]:
-    jobs, readable = _all_jobs(
+    snapshot = _all_jobs(
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
         sky_bin=sky_bin,
     )
-    if not readable:
-        return []
     return sorted(
         job_id
-        for job_id, status in _job_statuses(jobs).items()
+        for job_id, status in _job_statuses(snapshot.jobs).items()
         if status in NONTERMINAL_JOB_STATUSES
     )
 
@@ -951,7 +1006,7 @@ def _all_jobs(
     isolated_config_dir: Path | None,
     config_path: Path | None,
     sky_bin: SkyBin,
-) -> tuple[list[dict[str, Any]], bool]:
+) -> JobQueueSnapshot:
     runtime_config = resolve_config(
         sky_bin=sky_bin,
         global_config_path=config_path,
@@ -965,20 +1020,33 @@ def _all_jobs(
         "--output",
         "json",
     ]
-    result = _run(
-        cmd,
-        isolated_config_dir=runtime_config.isolated_config_dir,
-        config_path=runtime_config.global_config_path,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        return [], False
     try:
-        payload = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError:
-        return [], False
-    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
-    return [job for job in (jobs or []) if isinstance(job, dict)], True
+        result = _run(
+            cmd,
+            isolated_config_dir=runtime_config.isolated_config_dir,
+            config_path=runtime_config.global_config_path,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise JobQueueUnreadableError(
+            "managed-job queue command failed: " + redact_text(str(exc))
+        ) from exc
+    if result.returncode != 0:
+        detail = _command_detail(result)
+        raise JobQueueUnreadableError(
+            "managed-job queue command was rejected or unreachable: "
+            + redact_text(detail)
+        )
+    jobs = queue_rows_from_output(result.stdout)
+    if jobs is None:
+        raise JobQueueUnreadableError(
+            "managed-job queue returned empty, malformed, ambiguous, or "
+            "schema-invalid JSON"
+        )
+    return JobQueueSnapshot(
+        state="verified_jobs" if jobs else "verified_empty",
+        jobs=tuple(jobs),
+    )
 
 
 def _matching_jobs(
@@ -988,32 +1056,11 @@ def _matching_jobs(
     config_path: Path | None,
     sky_bin: SkyBin,
 ) -> list[dict[str, Any]]:
-    runtime_config = resolve_config(
-        sky_bin=sky_bin,
-        global_config_path=config_path,
+    jobs = _all_jobs(
         isolated_config_dir=isolated_config_dir,
-    )
-    cmd = [
-        str(ensure_skypilot_version(runtime_config.sky_bin)),
-        "jobs",
-        "queue",
-        "--all",
-        "--output",
-        "json",
-    ]
-    result = _run(
-        cmd,
-        isolated_config_dir=runtime_config.isolated_config_dir,
-        config_path=runtime_config.global_config_path,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        return []
-    try:
-        payload = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError:
-        return []
-    jobs = payload if isinstance(payload, list) else payload.get("jobs", [])
+        config_path=config_path,
+        sky_bin=sky_bin,
+    ).jobs
     patterns = {run_id, run_tag(run_id), _sanitize_name(run_id)}
     matched = []
     for job in jobs or []:
@@ -1173,18 +1220,25 @@ def _down_jobs_controller(
         # A job that finished cancelling between our poll and this call still
         # trips the guard; drain once more and retry rather than reporting a
         # failure the operator can only fix by waiting and rerunning.
-        pending = _nonterminal_job_ids(
-            isolated_config_dir=isolated_config_dir,
-            config_path=config_path,
-            sky_bin=sky_bin,
-        )
-        drained, still_running = wait_for_jobs_terminal(
-            pending,
-            isolated_config_dir=isolated_config_dir,
-            config_path=config_path,
-            sky_bin=sky_bin,
-            timeout=job_drain_timeout,
-        )
+        try:
+            pending = _nonterminal_job_ids(
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin,
+            )
+            drained, still_running = wait_for_jobs_terminal(
+                pending,
+                isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin,
+                timeout=job_drain_timeout,
+            )
+        except JobQueueUnreadableError as exc:
+            cleanup.errors.append(
+                "managed-job queue is unreadable/unverified; controller teardown "
+                f"was not retried and local SkyPilot state must be preserved: {exc}"
+            )
+            return cleanup
         if drained:
             cleanup.commands.append(cmd)
             result = _run(
@@ -1259,8 +1313,10 @@ def _cloned_skypilot_state(source_root: Path | None) -> Iterator[Path]:
 
 
 def _controller_name_from_pod(item: dict[str, Any]) -> str:
-    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-    labels = metadata.get("labels") if isinstance(metadata.get("labels"), dict) else {}
+    raw_metadata = item.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_labels = metadata.get("labels")
+    labels: dict[str, Any] = raw_labels if isinstance(raw_labels, dict) else {}
     searchable = [
         str(labels.get("skypilot-cluster") or ""),
         str(labels.get("ray.io/cluster") or ""),
@@ -1312,15 +1368,18 @@ def _kubernetes_controller_pods(
         payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
         return [], "kubectl get pods returned non-json output"
+    raw_items = payload.get("items", []) if isinstance(payload, dict) else []
+    items = raw_items if isinstance(raw_items, list) else []
     matches: list[tuple[str, str, str]] = []
-    for item in payload.get("items", []):
+    for item in items:
         if not isinstance(item, dict):
             continue
         controller = _controller_name_from_pod(item)
         if not controller:
             continue
-        metadata = (
-            item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        raw_metadata = item.get("metadata")
+        metadata: dict[str, Any] = (
+            raw_metadata if isinstance(raw_metadata, dict) else {}
         )
         matches.append(
             (

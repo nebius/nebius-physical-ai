@@ -1448,15 +1448,61 @@ def _read_tfvars(terraform_dir: Path) -> dict[str, Any]:
     ]:
         if not path.exists():
             continue
-        for line in path.read_text().splitlines():
-            match = re.match(
-                r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*(?:#.*)?$", line
-            )
-            if not match:
-                continue
-            key, raw_value = match.groups()
+        for key, raw_value in _tfvar_assignments(path.read_text(encoding="utf-8")):
             values[key] = _parse_tfvar_scalar(raw_value)
     return values
+
+
+def _tfvar_assignments(document: str) -> list[tuple[str, str]]:
+    """Read complete top-level HCL assignments, including multiline objects/maps."""
+
+    assignments: list[tuple[str, str]] = []
+    key = ""
+    parts: list[str] = []
+    depth = 0
+    quote = ""
+    escaped = False
+    for raw_line in document.splitlines():
+        line = raw_line
+        if not key:
+            match = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", line)
+            if not match:
+                continue
+            key, value = match.groups()
+            parts = [value]
+        else:
+            parts.append(line)
+        for character in parts[-1]:
+            if escaped:
+                escaped = False
+                continue
+            if quote and character == "\\":
+                escaped = True
+                continue
+            if character in {'"', "'"}:
+                if not quote:
+                    quote = character
+                elif quote == character:
+                    quote = ""
+                continue
+            if quote:
+                continue
+            if character == "#":
+                break
+            if character in "[{(":
+                depth += 1
+            elif character in "]})":
+                depth -= 1
+        if not quote and depth <= 0:
+            value = "\n".join(parts).strip()
+            value = re.sub(r"\s+#.*$", "", value).strip()
+            assignments.append((key, value))
+            key = ""
+            parts = []
+            depth = 0
+    if key:
+        assignments.append((key, "\n".join(parts).strip()))
+    return assignments
 
 
 def _apply_capacity_block_group_env(
@@ -1733,19 +1779,21 @@ def _string_var_args(key: str, value: str) -> list[str]:
 def _preflight_instance_count_quota(
     tfvars: dict[str, Any], env: dict[str, str]
 ) -> None:
-    """Predict a ``compute.instance.count`` shortfall before any apply.
+    """Compatibility diagnostic using the canonical resolved topology.
 
-    A cluster needs one VM per node (GPU + CPU). Under a tight tenant instance
-    quota — the reported ``compute.instance.count = 2`` — the default shape (an
-    agent, a CPU node and two GPU nodes) cannot fit, and Terraform only surfaces
-    it after creating the network/subnet. Compute the requirement against the
-    live quota (usage counts a running agent VM, so the agent-vs-GPUs tradeoff is
-    captured automatically) and refuse up front. Best-effort: an unreadable quota
-    or missing tenant/region never blocks the apply.
+    Direct ``cluster up`` uses :func:`_preflight_whole_path_capacity`; this
+    retained helper shares its default resolver so callers cannot accidentally
+    model a no-tfvars cluster as zero nodes.
     """
-    gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 0) or 0)
-    cpu_nodes = int(_tfvar_value(tfvars, env, "cpu_nodes_count", 0) or 0)
-    required = gpu_nodes + cpu_nodes
+    from npa.provisioning_preflight import resolve_topology
+
+    topology = resolve_topology(
+        gpu_nodes=int(_tfvar_value(tfvars, env, "gpu_nodes_count", -1) or 0),
+        cpu_nodes=int(_tfvar_value(tfvars, env, "cpu_nodes_count", -1) or 0),
+    )
+    gpu_nodes = topology.new_gpu_nodes
+    cpu_nodes = topology.new_cpu_nodes
+    required = topology.required_instances
     if required <= 0:
         return
     tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip()
