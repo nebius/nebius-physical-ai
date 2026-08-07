@@ -20,15 +20,17 @@ from .npa_workflow_live_helpers import (
     live_credential_markers,
     materialize_live_spec,
     parse_json_payload,
+    resolve_spec_path,
 )
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("NPA_INTEGRATION_E2E") != "1",
-    reason="Set NPA_INTEGRATION_E2E=1 to run live NPA workflow spec checks.",
-)
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(
+        os.environ.get("NPA_INTEGRATION_E2E") != "1",
+        reason="Set NPA_INTEGRATION_E2E=1 to run live NPA workflow spec checks.",
+    ),
+]
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
 RUNNER = CliRunner()
 
 
@@ -41,7 +43,7 @@ def forbidden_markers() -> list[str]:
 def test_live_npa_workflow_specs_plan(name: str, forbidden_markers: list[str]) -> None:
     """Ensure golden specs load and expand on the operator machine."""
 
-    spec = load_spec(SPECS / name)
+    spec = load_spec(resolve_spec_path(name))
     validate_spec(spec)
     assume = assume_decision_for(name) or "promote_checkpoint"
     plan = build_plan(spec, run_id="live-spec-check", assume_decision=assume)
@@ -56,7 +58,7 @@ def test_live_npa_workflow_cli_validate_and_plan(
 ) -> None:
     """Exercise validate-spec / plan-spec / run-spec --plan-only on live creds."""
 
-    path = SPECS / name
+    path = resolve_spec_path(name)
     validate = RUNNER.invoke(app, ["workbench", "workflow", "validate-spec", str(path), "--json"])
     payload = parse_json_payload(validate, forbidden_markers)
     assert payload["status"] == "valid"
@@ -99,7 +101,7 @@ def test_live_dynamic_specs_loop_back_plan(
     name: str,
     forbidden_markers: list[str],
 ) -> None:
-    path = SPECS / name
+    path = resolve_spec_path(name)
     plan = RUNNER.invoke(
         app,
         [
@@ -123,7 +125,7 @@ def test_live_golden_scheduler_json_no_leak(
     name: str,
     forbidden_markers: list[str],
 ) -> None:
-    path = SPECS / name
+    path = resolve_spec_path(name)
     args = [
         "workbench",
         "workflow",

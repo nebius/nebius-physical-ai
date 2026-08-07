@@ -5269,11 +5269,15 @@ def _maybe_toolground_chat_reply(
             if authored.get("runnable") and authored.get("matched_tool_refs"):
                 draft = authored
         if draft is None:
+            infra_context = _agent_k8s_backends()
+            s3_context = _agent_s3_settings()
             draft = generate_workflow_draft(
                 user_text=user_text,
                 intent=intent,
+                bucket=str(s3_context.get("bucket") or ""),
                 tool_refs=frozenset(TOOL_REFS),
                 capabilities={{"tool_refs": list(TOOL_REFS)}},
+                infrastructure=infra_context,
             )
         yaml_text = str(draft.get("yaml") or "").strip()
         validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {{}}
@@ -5285,7 +5289,13 @@ def _maybe_toolground_chat_reply(
         _save_state(state)
         apis_used.extend(["workflows/draft", "workflows/validate", "workflows/plan"])
         if not runnable:
-            fail_reason = str(validation.get("error") or plan.get("error") or "validate+plan gate did not pass")
+            context_errors = draft.get("context_errors") if isinstance(draft.get("context_errors"), list) else []
+            fail_reason = str(
+                validation.get("error")
+                or plan.get("error")
+                or ("; ".join(str(item) for item in context_errors) if context_errors else "")
+                or "validate+plan gate did not pass"
+            )
             reply = (
                 "**Could not generate runnable workflow YAML yet.**\\n"
                 f"- **reason**: `{{fail_reason}}`\\n"
@@ -5301,6 +5311,7 @@ def _maybe_toolground_chat_reply(
             plan=plan,
             runnable=runnable,
             dropped_stages_note=drop_note,
+            warnings=draft.get("warnings") if isinstance(draft.get("warnings"), list) else [],
         )
         return reply, _dedupe(apis_used), suggested_apis, yaml_text, validation, intent
     if intent in {{

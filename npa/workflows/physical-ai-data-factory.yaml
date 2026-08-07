@@ -60,6 +60,7 @@ config:
 
   # --- Augmentation + grading knobs (Stage 1 + Evaluate loop) ---
   n_augmentations: "2"            # augmented variants sampled per source video
+  augment_subject: "the input robot clips"  # included in sampled Cosmos prompts
   refinement_iterations: "2"      # max evaluate/validate passes before promote
   grade_threshold: "0.5"          # min Cosmos Evaluator score to promote (else loop_back)
   default_decision: promote_checkpoint
@@ -144,9 +145,16 @@ states:
       per-run config manifest that drives the augment stage.
     resources: cpu
     run:
-      shell: >
-        python3 -c "from npa.workflows.data_factory_stages import generate_configs;
-        generate_configs('{{config.configs_uri}}', '{{config.n_augmentations}}', '{{run.id}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import generate_configs;
+          generate_configs(*sys.argv[1:])
+        - "{{config.configs_uri}}"
+        - "{{config.n_augmentations}}"
+        - "{{run.id}}"
+        - "{{config.augment_subject}}"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1

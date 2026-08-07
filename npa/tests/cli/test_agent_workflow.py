@@ -15,11 +15,13 @@ from npa.cli.agent_chat import (
 from npa.cli.agent_workflow import (
     choose_workflow_template,
     extract_data_factory_params,
+    extract_sim2real_params,
     generate_data_factory_yaml,
     generate_isaac_byof_yaml,
     generate_gpu_cross_region_yaml,
     generate_rl_policy_training_yaml,
     generate_sim2real_loop_gate_yaml,
+    generate_sim2real_staged_yaml,
     generate_sim2real_two_step_yaml,
     generate_token_factory_gate_yaml,
     generate_vlm_rl_loop_yaml,
@@ -170,6 +172,19 @@ def test_match_create_workflow_intent() -> None:
     assert match_chat_intent("generate npa.workflow YAML for sim2real") == "create_workflow"
 
 
+def test_two_step_sim2real_request_propagates_supported_parameters() -> None:
+    draft = generate_workflow_draft(
+        user_text="create a 2-step sim2real workflow with 5000 environments, seed 9, and 2 GPUs",
+        intent="create_workflow",
+        bucket="bucket",
+    )
+    assert draft["template"] == "two-step"
+    spec = yaml.safe_load(draft["yaml"])
+    assert spec["config"]["env_count"] == "5000"
+    assert spec["config"]["envgen_seed"] == "9"
+    assert spec["resources"]["gpu"]["accelerators"] == "RTXPRO6000:2"
+
+
 def test_create_workflow_grounded_reply_includes_yaml_fence() -> None:
     state: dict = {}
     reply = build_grounded_reply("create_workflow", state, ["workbench.cosmos2.transfer"])
@@ -199,6 +214,7 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
         "attribute-verify",
         "quality-gate",
         "annotate-augmented",
+        "cosmos-curate",
         "curate",
         "visualize",
         "finalize",
@@ -209,6 +225,7 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
     tool_refs = [step.get("tool_ref") for step in plan["steps"]]
     assert "workbench.cosmos2.transfer_execute" in tool_refs
     assert "workbench.token_factory.caption" in tool_refs
+    assert "workbench.cosmos_curate.curate" in tool_refs
     assert generated["config"]["trigger_uri"] == generated["config"]["input_uri"]
     assert "supported video" in generated["states"]["augment"]["description"].lower()
 
@@ -243,6 +260,122 @@ def test_data_factory_yaml_reflects_requested_fanout_and_gpus() -> None:
     assert cd["config"]["n_augmentations"] == "8"
     assert cd["config"]["variant_parallelism"] == "4"
     assert cd["resources"]["gpu"]["accelerators"] == "RTXPRO6000:4"
+
+
+def test_data_factory_subject_is_an_argv_value_not_shell_source() -> None:
+    workflow = generate_data_factory_yaml(
+        user_text="augment the worker's robot clips and fan out 2 scenarios"
+    )
+    spec = yaml.safe_load(workflow)
+    run = spec["states"]["generate-configs"]["run"]
+    assert "shell" not in run
+    assert spec["config"]["augment_subject"] == "worker's robot clips"
+    assert run["argv"][-1] == "{{config.augment_subject}}"
+    plan = plan_workflow_yaml_text(workflow, run_id="subject-safe")
+    argv = next(step for step in plan["steps"] if step["state"] == "generate-configs")["argv"]
+    assert argv[-1] == "worker's robot clips"
+
+
+def test_data_factory_chat_propagates_quality_and_curator_knobs() -> None:
+    params = extract_data_factory_params(
+        "create PAIDF with 3 refinement iterations, grade threshold 80%, "
+        "clip length 5 and minimum clip length 2, max images 12"
+    )
+    assert params["refinement_iterations"] == 3
+    assert params["grade_threshold"] == 0.8
+    assert params["curator_clip_len_s"] == 5
+    assert params["curator_min_clip_len_s"] == 2
+    data = yaml.safe_load(generate_data_factory_yaml(user_text=(
+        "create PAIDF with 3 refinement iterations, grade threshold 80%, "
+        "clip length 5 and minimum clip length 2, max images 12"
+    )))
+    assert data["config"]["refinement_iterations"] == "3"
+    assert data["config"]["grade_threshold"] == "0.8"
+    assert data["config"]["curator_clip_len_s"] == "5"
+    assert data["config"]["curator_min_clip_len_s"] == "2"
+    assert data["config"]["max_images"] == "12"
+
+
+def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
+    prompt = (
+        "create a sim-to-real workflow for UR5e with Genesis, 12000 environments, "
+        "train fraction 75%, 4 inner iterations, 2 outer iterations, 6 rollouts, "
+        "10 steps per rollout, 12 held-out envs, success threshold 82%, seed 7"
+    )
+    params = extract_sim2real_params(prompt)
+    assert params == {
+        "inner_iterations": 4,
+        "outer_iterations": 2,
+        "rollout_count": 6,
+        "steps_per_rollout": 10,
+        "heldout_env_count": 12,
+        "env_count": 12000,
+        "seed": 7,
+        "success_threshold": 0.82,
+        "train_fraction": 0.75,
+        "sim_backend": "genesis",
+        "robot_preset": "ur5e",
+    }
+    workflow = generate_sim2real_staged_yaml(user_text=prompt)
+    spec = yaml.safe_load(workflow)
+    assert spec["apiVersion"] == "npa.workflow/v0.0.1"
+    assert spec["config"]["env_count"] == "12000"
+    assert spec["config"]["success_threshold"] == "0.82"
+    assert spec["config"]["sim_backend"] == "genesis"
+    assert spec["states"]["run-sim2real"]["toolRef"] == "workbench.sim2real.run"
+    validation = validate_workflow_yaml_text(workflow)
+    assert validation["ok"] is True
+    plan = plan_workflow_yaml_text(workflow, run_id="sim-chat")
+    assert plan["ok"] is True
+    argv = plan["steps"][0]["argv"]
+    assert argv[argv.index("--env-count") + 1] == "12000"
+    assert argv[argv.index("--threshold") + 1] == "0.82"
+
+
+def test_workflow_draft_uses_configured_infrastructure_without_inventing() -> None:
+    infra = {
+        "project": "customer-project",
+        "has_infra": True,
+        "configured": [{
+            "cluster_name": "customer-cluster",
+            "context": "customer-context",
+            "gpu_profile": "rtxpro",
+            "raw": {"gpu_accelerator": "RTXPRO6000"},
+        }],
+    }
+    draft = generate_workflow_draft(
+        user_text="create sim2real workflow with 2 GPUs and 5000 environments",
+        intent="create_workflow",
+        bucket="customer-bucket",
+        infrastructure=infra,
+    )
+    assert draft["template"] == "sim2real-staged"
+    assert draft["runnable"] is True
+    spec = yaml.safe_load(draft["yaml"])
+    assert spec["config"]["bucket"] == "customer-bucket"
+    assert spec["resources"]["gpu"]["accelerators"] == "RTXPRO6000:2"
+    assert spec["resources"]["gpu"]["deployIfAbsent"] == {
+        "clusterName": "customer-cluster",
+        "context": "customer-context",
+        "project": "customer-project",
+        "skipS3": True,
+    }
+
+
+def test_workflow_draft_rejects_unavailable_or_non_rt_accelerator() -> None:
+    infra = {
+        "project": "p",
+        "has_infra": True,
+        "configured": [{"raw": {"gpu_accelerator": "H100"}}],
+    }
+    draft = generate_workflow_draft(
+        user_text="create an Isaac sim2real workflow on RTX PRO 6000",
+        intent="create_workflow",
+        bucket="bucket",
+        infrastructure=infra,
+    )
+    assert draft["runnable"] is False
+    assert any("not the configured profile" in error for error in draft["context_errors"])
 
 
 def test_default_data_factory_uses_four_gpus() -> None:
@@ -631,7 +764,7 @@ def test_generate_rl_policy_training_yaml_plan() -> None:
 def test_generate_workflow_yaml_dispatcher() -> None:
     two_step = generate_workflow_yaml("two-step")
     assert "sim2real-two-step" in two_step
-    assert "apiVersion: npa.workflow/v0.0.1-beta" in two_step
+    assert "apiVersion: npa.workflow/v0.0.1" in two_step
     vlm_rl = generate_workflow_yaml("vlm-rl-loop")
     assert "sim2real-vlm-rl" in vlm_rl
     gate = generate_workflow_yaml("token-factory-gate")
@@ -774,6 +907,8 @@ def test_match_vlm_rl_workflow_intent() -> None:
     assert match_chat_intent("create a VLM-RL loop workflow") == "create_vlm_rl_workflow"
     assert match_chat_intent("generate a sim2real vlm rl pipeline") == "create_vlm_rl_workflow"
     assert match_chat_intent("build a workflow with outer loop and inner loop gate") == "create_vlm_rl_workflow"
+    assert match_chat_intent("create sim-to-real YAML for Franka with 5000 environments") == "create_vlm_rl_workflow"
+    assert match_chat_intent("create a sim2real workflow with a success threshold") == "create_vlm_rl_workflow"
 
 
 def test_match_gate_workflow_intent() -> None:
@@ -786,7 +921,7 @@ def test_create_vlm_rl_workflow_grounded_reply() -> None:
     state: dict = {}
     reply = build_grounded_reply("create_vlm_rl_workflow", state, [])
     assert "```yaml" in reply
-    assert "sim2real-vlm-rl" in reply
+    assert "sim2real-staged" in reply
     assert "VLM-RL" in reply
     assert "GET /api" not in reply
 

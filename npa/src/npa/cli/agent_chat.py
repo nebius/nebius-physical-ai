@@ -41,6 +41,14 @@ def goal_requests_catalog_composition(user_text: str) -> bool:
     text = str(user_text or "").strip().lower()
     if not text:
         return False
+    # These named blueprints have dedicated contract-aware generators. Sending
+    # them through generic catalog composition can select legacy demo/stub
+    # toolRefs and loses their runtime parameter schemas.
+    if re.search(
+        r"\b(?:paidf|physical[\s-]?ai[\s-]?data[\s-]?factory|sim2real|sim[\s-]?to[\s-]?real|sim\s*[- ]?2\s*[- ]?real)\b",
+        text,
+    ):
+        return False
     if "workbench." in text or re.search(r"\btool\s*refs?\b", text):
         return True
     if "->" in text or "→" in text or re.search(r"\bthen\b", text):
@@ -192,6 +200,12 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         re.compile(
             r"\b(?:create|generate|build|make|draft|compose|write)\b"
             r".{0,120}\b(?:vlm[_\s-]?rl|vlm\s+rl|rl[_\s-]?vlm)\b"
+            r"|\b(?:create|generate|build|make|draft|compose|write|author)\b"
+            r".{0,100}\b(?:sim2real|sim[\s-]?to[\s-]?real|sim\s*[- ]?2\s*[- ]?real)\b"
+            r".{0,100}\b(?:workflow|yaml|spec|pipeline)\b"
+            r"|\b(?:create|generate|build|make|draft|compose|write|author)\b"
+            r".{0,100}\b(?:workflow|yaml|spec|pipeline)\b"
+            r".{0,100}\b(?:sim2real|sim[\s-]?to[\s-]?real|sim\s*[- ]?2\s*[- ]?real)\b"
             r"|\b(?:vlm[_\s-]?rl|rl[_\s-]?vlm)\b.{0,120}\b(?:workflow|yaml|spec|loop)\b"
             r"|\b(?:outer|inner)\b.{0,80}\b(?:loop|iteration)\b.{0,120}\b(?:workflow|yaml|spec)\b"
             r"|\b(?:outer\s+loop|inner\s+loop)\b.{0,80}\b(?:gate|decision|promote)\b"
@@ -704,6 +718,33 @@ def match_chat_intent(user_text: str) -> str | None:
         return "find_artifacts"
     if _success_gated_watch_request(lowered):
         return "watch_sim"
+    # Explicit loop/decision-gate requests remain on the composable loop-gate
+    # template; the broader sim-to-real authoring rule below is intentionally
+    # reserved for staged pipeline requests without that qualifier.
+    if re.search(
+        r"\b(?:create|generate|build|make|draft|compose|write|author)\b"
+        r".{0,120}\b(?:sim2real|sim[\s-]?to[\s-]?real|sim\s*[- ]?2\s*[- ]?real)\b"
+        r".{0,80}\b(?:loop[\s_-]?gate|decision[\s_-]?gate)\b",
+        lowered,
+        re.IGNORECASE,
+    ):
+        return "create_loop_gate_workflow"
+    if re.search(
+        r"\b(?:create|generate|build|make|draft|compose|write|author)\b"
+        r".{0,80}\b(?:2[\s-]?step|two[\s-]?step)\b"
+        r".{0,80}\b(?:sim2real|sim[\s-]?to[\s-]?real|sim\s*[- ]?2\s*[- ]?real)\b",
+        lowered,
+        re.IGNORECASE,
+    ):
+        return "create_workflow"
+    if re.search(
+        r"\b(?:create|generate|build|make|draft|compose|write|author)\b"
+        r".{0,100}\bnpa[.\s-]?workflow\b.{0,100}"
+        r"\b(?:sim2real|sim[\s-]?to[\s-]?real|sim\s*[- ]?2\s*[- ]?real)\b",
+        lowered,
+        re.IGNORECASE,
+    ):
+        return "create_workflow"
     # Keep watch intent precedence over load-franka whenever the user asks to
     # monitor/retry the rerun view (especially with SUCCESS gating language).
     if (
