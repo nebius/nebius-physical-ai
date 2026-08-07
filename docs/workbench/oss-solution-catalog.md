@@ -155,31 +155,27 @@ collectives during the shared generation.
 | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted (live validated) | `byof-wan22-multigpu-e2e-20260806T024353Z`: official four-rank `torchrun generate.py` path on one 4×B200 node; NCCL, T5/DiT FULL_SHARD FSDP, Ulysses size 4 |
 | `wan2.2_distributed_rank_topology_validation` | accepted (live validated) | same run: ranks/local ranks 0–3 mapped to four unique GPU hashes; each rank recorded NCCL sum 10/10, 480 Ulysses attention calls, 1,920 all-to-all calls, three upstream barriers, and the observed final barrier |
 | `wan2.2_decoded_mp4_validation` (distributed run) | accepted (live validated) | same run: all 17 H.264 frames decoded at 24 fps; 634,523 bytes, spatial stddev 46.9864, pixel range 255, mean temporal delta 0.731357, SHA-256 `ae77b119…09389` |
+| `wan2.2_verified_rerun_recording` | accepted (live artifact verified) | accepted distributed MP4 plus summary/topology/runtime/rank JSONs embedded as video + static evidence; uploaded RRD is 825,197 bytes, SHA-256 `b6e0065b…4092`; local, remote, and live-agent parse/hash/entity checks passed |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | official unified-model capability and a real optional S3-image code path exist, but no separate live input/output evidence |
 | `wan2.2_t2v_a14b` / `wan2.2_i2v_a14b` | deferred | separate MoE checkpoints and materially different GPU contract; not in this image gate |
 | `wan2.2_s2v_14b` | deferred | separate speech/audio inputs and checkpoint |
 | `wan2.2_animate_14b` | deferred | separate character-animation inputs and checkpoint |
 | `wan2.2_fine_tuning` | deferred | pinned official source does not expose a TI2V training entrypoint |
-| `bellboy_private_action_prediction` as stock Wan | rejected | action prediction is not an upstream Wan 2.2 capability |
-| `bellboy_private_action_prediction` as customer BYOF | deferred | private repo/ref, entrypoint, checkpoint, action schema, data authorization, predictions artifact, and held-out evaluator are not supplied |
+| stock Wan action prediction | rejected | action prediction is not an upstream Wan 2.2 capability |
 
 The single-GPU primary JSON is `wan2_2_ti2v_5b_text_to_video.json`. The
 distributed workflow emits `wan2_2_ti2v_5b_multigpu.json`,
 `wan2_2_multigpu_topology.json`, four per-rank JSON files,
 `wan2_2_multigpu_runtime_inventory.json`, and
-`wan2_2_ti2v_5b_multigpu.mp4`. The generic BYOF runner uploads every artifact,
-and the MP4 renders in the NPA agent's existing video viewer. The accepted
+`wan2_2_ti2v_5b_multigpu.mp4`. The successful BYOF path then publishes
+`wan2_2_ti2v_5b_multigpu.rrd` and its verified manifest. The recording embeds
+the exact MP4 and exposes the real run evidence in the NPA agent's Rerun viewer. The accepted
 distributed run used the same immutable private image bytes as the single-GPU
 run (digest `sha256:2baaa063…cbb3`) and independently proved its baked
 `sm_100` support at run time. These live capability results do not by
-themselves authorize public image publication.
-
-Bellboy's episode/action boundary is a separate, honest workflow composition in
-`bellboy-wan2.2-e2e.yaml`; stock Wan records episode lineage and accepts only a
-prompt plus optional context image. It does not consume actions, train on the
-episodes, or emit action predictions. See
-[`wan2.2-bellboy.md`](wan2.2-bellboy.md) for the versioned S3 manifest,
-held-out-real evaluation boundary, licensing layers, and private-fork contract.
+themselves authorize public image publication. See
+[`wan2.2.md`](wan2.2.md) for the workflow, RRD, licensing, and validation
+contracts.
 
 ## First-class Workbench tools (not BYOF)
 

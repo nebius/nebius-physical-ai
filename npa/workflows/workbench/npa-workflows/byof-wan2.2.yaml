@@ -11,14 +11,15 @@ metadata:
     PRO 6000 Blackwell,
     writes an MP4, decodes every frame, rejects corrupt or uniform output, and
     publishes the video plus machine-readable evidence to the run's S3 prefix.
+    After the GPU smoke succeeds, the BYOF runner builds and verifies a Rerun
+    recording containing the exact MP4 and the real run evidence.
     The hard gate is stock text-to-video only; image conditioning has a real
     optional code path but remains pending its own live input/output evidence.
 
 config:
   bucket: example-bucket
-  prompt: "A hotel service robot gripper approaches a closed wooden room door in a well-lit hotel corridor, fixed wide-angle camera."
+  prompt: "A red sailboat crosses a sunlit ocean while seabirds circle above, cinematic wide shot."
   context_image_uri: ""
-  episode_manifest_uri: ""
 
   repo_url: "https://github.com/Wan-Video/Wan2.2.git"
   # Reviewed official upstream commit from 2026-03-17 (immutable, not main).
@@ -61,7 +62,6 @@ config:
     set -euo pipefail
     export WAN22_PROMPT="{{config.prompt}}"
     export WAN22_CONTEXT_IMAGE_URI="{{config.context_image_uri}}"
-    export WAN22_EPISODE_MANIFEST_URI="{{config.episode_manifest_uri}}"
     export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
     /opt/byof/.venv/bin/python - <<'PY'
     from __future__ import annotations
@@ -412,7 +412,6 @@ config:
         "prompt": prompt,
         "seed": seed,
         "context_image_uri": os.environ.get("WAN22_CONTEXT_IMAGE_URI", ""),
-        "episode_manifest_uri": os.environ.get("WAN22_EPISODE_MANIFEST_URI", ""),
         "requested": {
             "width": requested_width,
             "height": requested_height,
@@ -458,7 +457,7 @@ config:
             "wan2.2_s2v_14b",
             "wan2.2_animate_14b",
             "wan2.2_fine_tuning",
-            "bellboy_private_action_prediction",
+            "wan2.2_action_prediction",
         ],
     }
     (out_dir / artifact_name).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -486,6 +485,8 @@ config:
   artifact_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_ti2v_5b_text_to_video.json"
   inventory_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_runtime_inventory.json"
   video_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_ti2v_5b.mp4"
+  rrd_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_ti2v_5b.rrd"
+  rrd_manifest_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_ti2v_5b_rrd_manifest.json"
 
 resources:
   gpu:
@@ -515,4 +516,8 @@ states:
         schema: npa.workbench.byof.wan2_2_runtime_inventory.v1
       - uri: "{{config.video_uri}}"
         schema: video/mp4
+      - uri: "{{config.rrd_uri}}"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.rrd_manifest_uri}}"
+        schema: npa.workbench.wan2_2.rerun_manifest.v1
     terminal: true

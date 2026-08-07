@@ -333,11 +333,10 @@ non-uniform-content gates.
 
 Deferred: TI2V image-to-video until its own live input/output evidence; T2V and
 I2V A14B, S2V-14B, Animate-14B, and official training as separate contracts.
-Stock Wan action prediction is rejected as an upstream claim. Bellboy's private
-action-conditioned fork is a deferred customer BYOF extension requiring its
-own repo/ref, entrypoint, checkpoint, action schema, predictions artifact, and
-held-out real-episode evaluator. See `skills/tools/wan2-2/SKILL.md` and
-`docs/workbench/wan2.2-bellboy.md`.
+Stock Wan action prediction is rejected as an upstream claim. Successful Wan
+runs are postprocessed into a verified Rerun recording that embeds the exact
+MP4 alongside static run evidence; see `skills/tools/wan2-2/SKILL.md` and
+`docs/workbench/wan2.2.md`.
 
 ### Multi-GPU solutions
 

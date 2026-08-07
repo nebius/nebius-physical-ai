@@ -25,6 +25,7 @@ from npa.workflows.byof.live import (
     resolve_skypilot_bin,
     skypilot_config_for_project,
 )
+from npa.workflows.wan_rerun import MULTI_GPU_LAYOUT
 
 from .npa_workflow_live_helpers import live_bucket
 from .test_byof_wan22_live_e2e import (
@@ -32,6 +33,7 @@ from .test_byof_wan22_live_e2e import (
     _parse_last_json_blob,
     _read_s3_json,
     _s3_client,
+    _verify_published_rrd,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -328,3 +330,16 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
     assert float(observed["max_spatial_std"]) >= 1.0
     assert int(observed["pixel_range"]) >= 4
     assert float(observed["mean_temporal_abs_delta"]) > 0.001
+    manifest = _verify_published_rrd(
+        s3,
+        bucket=out_bucket,
+        key_prefix=key_prefix,
+        layout=MULTI_GPU_LAYOUT,
+        run_id=run_id,
+        video_path=video_path,
+        expected_frame_count=17,
+        expected_fps=float(observed["fps"]),
+        expected_rank_count=4,
+        tmp_path=tmp_path,
+    )
+    assert manifest["variant"] == "multigpu"

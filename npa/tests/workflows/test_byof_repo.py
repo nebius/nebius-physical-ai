@@ -403,6 +403,107 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert env["AWS_ACCESS_KEY_ID"] == "key"
 
 
+def test_main_publishes_verified_wan_rrd_after_success(monkeypatch, capsys) -> None:
+    module = _load_module()
+    published: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+    monkeypatch.setattr(module, "_refresh_registry_pull_secrets", lambda *_args: None)
+    monkeypatch.setattr(module, "_live_runner_env", lambda *_args: {})
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout='{"status":"success"}\n', stderr=""
+        ),
+    )
+
+    def fake_publish(uri: str, *, variant: str, project: str | None):
+        published.update(uri=uri, variant=variant, project=project)
+        return {"status": "verified", "capability": "wan2.2_verified_rerun_recording"}
+
+    monkeypatch.setattr(module, "publish_wan_rrd_from_s3", fake_publish)
+    rc = module.main(
+        [
+            "--run-id",
+            "wan-generic-run",
+            "--skip-build",
+            "--workload",
+            "solution-smoke",
+            "--solution-name",
+            "wan2.2-multigpu",
+            "--capability-name",
+            "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
+            "--smoke-artifact-name",
+            "wan2_2_ti2v_5b_multigpu.json",
+            "--output-root",
+            "s3://example/wan2.2-multigpu",
+            "--project",
+            "wan-project",
+        ]
+    )
+
+    assert rc == 0
+    assert published == {
+        "uri": "s3://example/wan2.2-multigpu/wan-generic-run/",
+        "variant": "multigpu",
+        "project": "wan-project",
+    }
+    output = capsys.readouterr().out
+    assert '"wan_rrd": {' in output
+    assert '"capability": "wan2.2_verified_rerun_recording"' in output
+
+
+def test_main_fails_closed_when_wan_rrd_publication_fails(monkeypatch, capsys) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+    monkeypatch.setattr(module, "_refresh_registry_pull_secrets", lambda *_args: None)
+    monkeypatch.setattr(module, "_live_runner_env", lambda *_args: {})
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout='{"status":"success"}\n', stderr=""
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "publish_wan_rrd_from_s3",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("RRD verify failed")),
+    )
+
+    rc = module.main(
+        [
+            "--run-id",
+            "wan-generic-run",
+            "--skip-build",
+            "--workload",
+            "solution-smoke",
+            "--solution-name",
+            "wan2.2",
+            "--capability-name",
+            "wan2.2_ti2v_5b_text_to_video",
+            "--smoke-artifact-name",
+            "wan2_2_ti2v_5b_text_to_video.json",
+            "--output-root",
+            "s3://example/wan2.2",
+        ]
+    )
+
+    assert rc == 1
+    output = capsys.readouterr().out
+    assert '"status": "failed"' in output
+    assert '"error": "RRD verify failed"' in output
+
+
 def test_base_image_candidates_ubuntu_profile_default() -> None:
     module = _load_module()
     candidates = module._base_image_candidates(

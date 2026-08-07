@@ -92,6 +92,28 @@ def test_setup_for_an_unrelated_tool_ref_has_no_extra() -> None:
     assert "[sonic]" not in setup
 
 
+@pytest.mark.parametrize("solution", ["wan2.2", "wan2.2-multigpu"])
+def test_setup_for_wan_byof_installs_viz_extra(solution: str) -> None:
+    setup = render_setup_for_tool(
+        "workbench.byof.repo",
+        config={"solution_name": solution},
+        options=SkypilotRenderOptions(),
+    )
+
+    assert "npa[viz]" in setup
+    assert_no_unresolved_placeholders(setup)
+
+
+def test_setup_for_other_byof_does_not_install_viz_extra() -> None:
+    setup = render_setup_for_tool(
+        "workbench.byof.repo",
+        config={"solution_name": "open-dreamer"},
+        options=SkypilotRenderOptions(),
+    )
+
+    assert "npa[viz]" not in setup
+
+
 @pytest.mark.parametrize("spec_name", ["sonic-export.yaml", "sonic-eval.yaml", "sonic-train.yaml"])
 def test_shipped_sonic_specs_render_with_the_extra_and_no_placeholders(
     spec_name: str, monkeypatch: pytest.MonkeyPatch

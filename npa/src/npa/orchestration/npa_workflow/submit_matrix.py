@@ -647,8 +647,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         notes=(
             "BYOF Wan 2.2 TI2V-5B candidate. Plan-only in the shared matrix: "
-            "the real pushed-image RTX PRO generation, decoded MP4, topology, and "
-            "S3 evidence gate is test_byof_wan22_live_e2e.py."
+            "the real pushed-image RTX PRO generation, decoded MP4, verified RRD, "
+            "and S3 evidence gate is test_byof_wan22_live_e2e.py."
         ),
     ),
     SubmitLiveCase(
@@ -658,19 +658,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes=(
             "Runnable four-B200 Wan 2.2 TI2V-5B torchrun stage. The dedicated "
             "live E2E additionally verifies immutable-image reuse, all four NCCL "
-            "ranks, FULL_SHARD T5/DiT, Ulysses collectives, S3 topology JSON, and "
-            "the decoded H.264 MP4."
-        ),
-    ),
-    SubmitLiveCase(
-        "bellboy-wan2.2-e2e.yaml",
-        "multi",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        plan_only=True,
-        notes=(
-            "Bellboy composition is plan-only in the shared matrix because it "
-            "requires operator-owned train and heldout episode manifests plus "
-            "the separately gated real Wan RTX PRO BYOF build."
+            "ranks, FULL_SHARD T5/DiT, Ulysses collectives, S3 topology JSON, "
+            "decoded H.264 MP4, and the remotely verified RRD manifest."
         ),
     ),
     SubmitLiveCase(

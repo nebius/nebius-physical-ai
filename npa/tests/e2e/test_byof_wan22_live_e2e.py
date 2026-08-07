@@ -18,6 +18,7 @@ retry exercises the pushed image without rebuilding it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -35,6 +36,13 @@ from npa.workflows.byof.live import (
     resolve_byof_kubernetes_target,
     resolve_skypilot_bin,
     skypilot_config_for_project,
+)
+from npa.workflows.wan_rerun import (
+    RRD_CAPABILITY,
+    RRD_MANIFEST_SCHEMA,
+    SINGLE_GPU_LAYOUT,
+    WanRunLayout,
+    verify_wan_rrd,
 )
 
 from .npa_workflow_live_helpers import live_bucket
@@ -163,6 +171,55 @@ def _decode_mp4(path: Path) -> dict[str, object]:
     streams = payload.get("streams") or []
     assert len(streams) == 1, payload
     return streams[0]
+
+
+def _verify_published_rrd(
+    s3,
+    *,
+    bucket: str,
+    key_prefix: str,
+    layout: WanRunLayout,
+    run_id: str,
+    video_path: Path,
+    expected_frame_count: int,
+    expected_fps: float,
+    expected_rank_count: int,
+    tmp_path: Path,
+) -> dict[str, object]:
+    rrd_key = key_prefix + layout.rrd_filename
+    manifest_key = key_prefix + layout.manifest_filename
+    rrd_head = s3.head_object(Bucket=bucket, Key=rrd_key)
+    manifest_head = s3.head_object(Bucket=bucket, Key=manifest_key)
+    assert rrd_head["ContentLength"] > video_path.stat().st_size
+    assert manifest_head["ContentLength"] > 0
+
+    rrd_path = tmp_path / layout.rrd_filename
+    s3.download_file(bucket, rrd_key, str(rrd_path))
+    manifest = _read_s3_json(s3, bucket, manifest_key)
+    rrd_sha256 = hashlib.sha256(rrd_path.read_bytes()).hexdigest()
+    verification = verify_wan_rrd(
+        rrd_path,
+        source_video_path=video_path,
+        expected_frame_count=expected_frame_count,
+        expected_fps=expected_fps,
+        expected_rank_count=expected_rank_count,
+    )
+    assert manifest["schema"] == RRD_MANIFEST_SCHEMA
+    assert manifest["status"] == "verified"
+    assert manifest["capability"] == RRD_CAPABILITY
+    assert manifest["run_id"] == run_id
+    assert manifest["rrd"]["size_bytes"] == rrd_head["ContentLength"]
+    assert manifest["rrd"]["sha256"] == rrd_sha256
+    assert manifest["video"]["source_sha256"] == hashlib.sha256(
+        video_path.read_bytes()
+    ).hexdigest()
+    assert manifest["video"]["embedded_sha256"] == manifest["video"][
+        "source_sha256"
+    ]
+    assert manifest["verification"]["remote_size_and_sha256_match"] is True
+    assert manifest["verification"]["remote_rrd_parse"] == "passed"
+    assert verification["rerun_cli_verify"] == "passed"
+    return manifest
 
 
 def test_wan22_spec_plans_the_real_pinned_rtxpro_workload() -> None:
@@ -410,3 +467,16 @@ def test_wan22_live_rtxpro_build_push_generate_and_decode(
     assert int(stream["nb_read_frames"]) == 17
     numerator, denominator = (int(part) for part in stream["avg_frame_rate"].split("/"))
     assert denominator > 0 and numerator / denominator > 0
+    manifest = _verify_published_rrd(
+        s3,
+        bucket=out_bucket,
+        key_prefix=key_prefix,
+        layout=SINGLE_GPU_LAYOUT,
+        run_id=run_id,
+        video_path=video_path,
+        expected_frame_count=17,
+        expected_fps=float(observed["fps"]),
+        expected_rank_count=0,
+        tmp_path=tmp_path,
+    )
+    assert manifest["variant"] == "single-gpu"

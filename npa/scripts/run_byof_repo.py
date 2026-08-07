@@ -18,6 +18,7 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import container_image_for_tool
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
+from npa.workflows.wan_rerun import layout_for_solution, publish_wan_rrd_from_s3
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
@@ -518,6 +519,22 @@ def main(argv: list[str] | None = None) -> int:
             if run_proc.stderr:
                 sys.stderr.write(run_proc.stderr)
             summary["run"] = _parse_last_json(run_proc.stdout) or {"status": "submitted"}
+            wan_rrd_layout = layout_for_solution(args.solution_name)
+            if wan_rrd_layout is not None:
+                if args.workload != "solution-smoke":
+                    raise RuntimeError(
+                        "Wan RRD postprocessing requires the solution-smoke workload"
+                    )
+                if not args.output_root.strip():
+                    raise RuntimeError(
+                        "Wan RRD postprocessing requires an explicit S3 output root"
+                    )
+                run_prefix_uri = f"{args.output_root.rstrip('/')}/{args.run_id}/"
+                summary["wan_rrd"] = publish_wan_rrd_from_s3(
+                    run_prefix_uri,
+                    variant=wan_rrd_layout.variant,
+                    project=args.project or None,
+                )
         else:
             summary["run"] = {"skipped": True}
         summary["status"] = "ok"

@@ -40,3 +40,8 @@ Selection lives in `npa/src/npa/workflows/byof/live.py::resolve_byof_resource_ya
 If you find yourself chaining stages, that is a workflow: author an
 `npa.workflow/v0.0.1` spec under `npa/workflows/workbench/npa-workflows/` instead.
 `npa/tests/guardrails/test_byof_profiles.py` keeps these files single-task.
+
+The Wan profiles upload the GPU smoke outputs normally. Once that job succeeds,
+the outer BYOF runner uses `npa.workflows.wan_rerun` to build and publish the
+verified RRD and manifest from the uploaded artifacts; the resource profile
+does not duplicate that postprocessing logic.

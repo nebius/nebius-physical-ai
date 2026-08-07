@@ -1,24 +1,22 @@
 ---
 name: wan2-2
-description: Use when packaging, running, reviewing, or extending the Alibaba Wan 2.2 TI2V-5B BYOF solution, its video artifacts, or the Bellboy real-robot workflow boundary.
+description: Use when packaging, running, reviewing, or extending the Alibaba Wan 2.2 TI2V-5B BYOF solution, its official video artifacts, or its verified Rerun evidence.
 ---
 
-# Wan 2.2 BYOF and Bellboy workflow
+# Wan 2.2 Workbench support
 
-Use this skill for the public Wan 2.2 registry candidate and the Bellboy-shaped
-episode/video workflow. Read these files before changing behavior:
+Use this skill for the public Wan 2.2 registry candidate and its verified video
+evidence. Read these files before changing behavior:
 
 - `npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml`
 - `npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml`
-- `npa/workflows/workbench/npa-workflows/bellboy-wan2.2-e2e.yaml`
-- `npa/src/npa/workflows/bellboy_wan.py`
-- `docs/workbench/wan2.2-bellboy.md`
-- `docs/workbench/bellboy-episode-manifest-v1.schema.json`
+- `npa/src/npa/workflows/wan_rerun.py`
+- `docs/workbench/wan2.2.md`
 
 Also load `byof-onboard`, `oss-solution-registry-onboard`,
 `author-npa-workflow`, `real-components`, `solution-licensing`, `gpu-selection`,
-`nebius-infra`, `testing-conventions`, and `agent-visual-feedback` when their
-surfaces are involved.
+`nebius-infra`, `testing-conventions`, `npa-agent`, and
+`agent-visual-feedback` when their surfaces are involved.
 
 ## Ground truth
 
@@ -27,51 +25,45 @@ surfaces are involved.
 - Official model: `Wan-AI/Wan2.2-TI2V-5B`, pinned to
   `921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
 - TI2V-5B is a stock generative-video model supporting text and image inputs.
-- The accepted-candidate hard gate is text-to-video plus decoded MP4
-  validation. Run `byof-wan22-e2e-20260805T191659Z` satisfied it on a real RTX
-  PRO 6000 Blackwell (`sm_120`).
-- The accepted distributed hard gate is a single shared generation through the
-  pinned official `torchrun generate.py` path, not replicas or a visibility
-  probe. Run `byof-wan22-multigpu-e2e-20260806T024353Z` satisfied it on one
-  node with four B200s (`sm_100`), world size 4, NCCL, T5 and DiT FULL_SHARD
-  FSDP, and Ulysses size 4.
+- Run `byof-wan22-e2e-20260805T191659Z` accepted the real single-GPU text-to-video
+  path on RTX PRO 6000 Blackwell (`sm_120`).
+- Run `byof-wan22-multigpu-e2e-20260806T024353Z` accepted one shared official
+  generation on four B200s (`sm_100`) with world size 4, NCCL, T5 and DiT
+  FULL_SHARD FSDP, and Ulysses size 4.
 - I2V, A14B, speech-to-video, Animate, and training are separate capabilities.
-  Do not infer acceptance from the T2V smoke.
-- Stock Wan does not predict robot actions. Bellboy's action head and
-  action-conditioned model are a private extension, not an upstream claim.
-- The Cosmos3 image's run-time Wan VAE download is not a full Wan integration.
+- Stock Wan does not predict robot actions. Never claim that it is
+  action-conditioned.
 
 For changing facts, use only the official Wan repository, official Wan-AI model
 cards, and primary framework documentation.
 
 ## Packaging contract
 
-Use `workbench.byof.repo` and `solution-smoke`; do not add a fake Wan toolRef.
-Keep the repo and all model inputs immutable. The image may contain pinned
-source and dependencies but no checkpoint weights, credentials, customer data,
-or private code. The final runtime must remain non-root, with `/opt/byof` and
-its venv world-readable/executable.
+Use `workbench.byof.repo`; do not add a fake Wan toolRef. Keep the repo and all
+model inputs immutable. The image may contain pinned source and dependencies but
+no checkpoint weights, credentials, private code, or user data. The runtime
+must remain non-root, with `/opt/byof` and its venv readable and executable.
 
-Route the checked-in baseline to one RTX PRO 6000 Blackwell Server Edition
-(`sm_120`). It uses the official PyTorch 2.7.1 CUDA 12.8 wheel line, asserts
-that `torch.cuda.get_arch_list()` contains `sm_120`, and executes the upstream
-PyTorch SDPA fallback rather than FlashAttention. Record the observed device,
-compute capability, driver, CUDA, torch version, arch list, and a finite SDPA
-probe in both runtime evidence artifacts.
+The single-GPU baseline requests one RTX PRO 6000 Blackwell (`sm_120`), uses the
+official PyTorch 2.7.1 CUDA 12.8 wheel line, and binds pinned Wan attention to
+native PyTorch SDPA instead of FlashAttention. Record the device, compute
+capability, driver, CUDA, torch version, compiled arch list, and finite SDPA
+probe.
 
-Route the dedicated distributed spec through
-`byof-solution-smoke-wan22-b200-4gpu.yaml`, which requests `B200:4` in one pod.
-Use exactly four ranks: it is the smallest topology documented by the pinned
-official TI2V-5B efficiency path, and 24 attention heads divide evenly by four.
-Invoke `/opt/byof/.venv/bin/torchrun --standalone --nnodes=1
---nproc_per_node=4 generate.py` with `--dit_fsdp --t5_fsdp --ulysses_size 4`.
-Fail closed unless every rank proves NCCL initialization/all-reduce, its unique
-local CUDA device, both FULL_SHARD wrappers, live Ulysses distributed-attention
-and all-to-all calls, the upstream final barrier, and `sm_100`/compute
-capability 10.0. Rank zero may save the MP4 only through the upstream path;
-every rank must finish before topology evidence is accepted.
+The distributed spec uses `byof-solution-smoke-wan22-b200-4gpu.yaml` and exactly
+four ranks. Invoke the official path with:
 
-The smoke must call the real native `wan.WanTI2V` generator and write:
+```text
+/opt/byof/.venv/bin/torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+  generate.py --dit_fsdp --t5_fsdp --ulysses_size 4
+```
+
+Fail closed unless every rank proves NCCL initialization/all-reduce, a unique
+local B200, T5 and DiT FULL_SHARD wrappers, live Ulysses distributed-attention
+and all-to-all calls, the upstream final barrier, observer terminal
+synchronization, and compute capability 10.0 with `sm_100` support.
+
+The single-GPU smoke writes:
 
 - `wan2_2_ti2v_5b.mp4`
 - `wan2_2_ti2v_5b_text_to_video.json`
@@ -85,64 +77,55 @@ The distributed smoke additionally writes:
 - `wan2_2_multigpu_runtime_inventory.json`
 - `wan2_2_multigpu_rank_0.json` through `wan2_2_multigpu_rank_3.json`
 
-It must decode every frame and fail on invalid dimensions/count/fps, a corrupt
-or empty container, an implausibly small file, or uniform/blank content. Keep
-`capabilities_exercised` exact and `deferred` empty for the hard-gated T2V run.
-If `context_image_uri` is set, also change the declared capability, named smoke
-artifact, and workflow output URI to their image-to-video values. The smoke
-must fail closed when the input mode and declarations disagree.
+Decode every frame and fail on invalid dimensions/count/FPS, a corrupt or empty
+container, an implausibly small file, or uniform content. Keep
+`capabilities_exercised` exact and `deferred` empty for hard-gated runs.
 
-All files under `$NPA_SMOKE_OUTPUT_DIR` are uploaded by the existing BYOF
-runner. The agent artifact browser renders the `.mp4` in its video viewer; do
-not add an RRD unless there are synchronized comparison streams.
+## Rerun evidence contract
 
-## Bellboy contract
+Every successful named Wan solution smoke is postprocessed by
+`npa.workflows.wan_rerun`. The postprocessor runs after the existing BYOF S3
+upload and must fail the parent command if source validation, RRD generation,
+local parsing, `rerun rrd verify`, upload, S3 byte verification, remote parsing,
+or manifest verification fails.
 
-`npa.bellboy.episode_manifest.v1` references customer S3 objects for:
+Use Rerun SDK `0.31.4`, matching the agent-compatible `npa[viz]` extra. Embed
+the exact MP4 at `/wan2_2/video/asset`, log one timestamped
+`VideoFrameReference` per decoded frame at `/wan2_2/video/frame`, and use the
+`video_time` duration timeline. Static JSON facts belong in the summary,
+validation, runtime, distributed, rank, and metric entities; do not invent a
+time series.
 
-- gripper-mounted wide-angle RGB video/frames and timestamps;
-- executed actions and timestamps under an explicit action schema;
-- joint state and timestamps;
-- task, timing, outcome, failure, and corrective-retry lineage;
-- train/validation/heldout split.
+The distributed filenames are:
 
-The public workflow may record the manifest as lineage and use an optional
-context image for stock Wan. It must not claim that stock Wan consumes action
-sequences, trains on episodes, or evaluates robot task success.
+- `wan2_2_ti2v_5b_multigpu.rrd`
+- `wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
 
-The held-out boundary report intentionally leaves the action release gate
-unsatisfied. A customer extension requires a private repo URL and immutable
-ref, real entrypoint/smoke, exact action schema, authorized data, immutable
-checkpoint URI, action-prediction artifact, and held-out real-episode evaluator.
+The manifest must contain source object URIs plus ETags, byte sizes, and
+SHA-256 values; RRD URI/hash/size/version/entities; embedded-video identity;
+and local plus remote verification. Only a successfully uploaded and remotely
+verified manifest may name `wan2.2_verified_rerun_recording`.
 
 ## Capability status
 
 | Capability | Status |
 | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted; live validated on RTX PRO 6000 Blackwell by `byof-wan22-e2e-20260805T191659Z` |
-| `wan2.2_decoded_mp4_validation` | accepted; same run decoded 17 1280x704 frames at 24 fps and passed non-uniform-content gates |
-| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted; `byof-wan22-multigpu-e2e-20260806T024353Z` used one node and 4×B200 (`sm_100`), world size 4, NCCL, T5/DiT FULL_SHARD FSDP, and Ulysses size 4 |
-| `wan2.2_distributed_rank_topology_validation` | accepted; same run recorded four unique GPU hashes, ranks 0–3, NCCL sum 10/10, 480 Ulysses attention calls, 1,920 all-to-all calls, and terminal barriers on every rank |
-| `wan2.2_decoded_mp4_validation` (distributed run) | accepted; same run decoded 17 H.264 1280x704 frames at 24 fps; 634,523 bytes, spatial stddev 46.9864, pixel range 255, temporal delta 0.731357, SHA-256 `ae77b119…09389` |
+| `wan2.2_ti2v_5b_text_to_video` | accepted; real RTX PRO run |
+| `wan2.2_decoded_mp4_validation` | accepted; 17 decoded 1280×704 frames at 24 fps |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted; real 4×B200 official path |
+| `wan2.2_distributed_rank_topology_validation` | accepted; four unique ranks/devices and collective/barrier evidence |
+| `wan2.2_verified_rerun_recording` | accepted only with the uploaded verified RRD manifest |
 | `wan2.2_ti2v_5b_image_to_video` | deferred |
 | A14B / S2V / Animate | deferred |
-| official TI2V fine-tuning | deferred; no pinned-source training entrypoint |
+| official TI2V fine-tuning | deferred; no pinned-source entrypoint |
 | stock Wan action prediction | rejected as an upstream capability |
-| Bellboy private action prediction | deferred customer extension |
-
-The accepted T2V/MP4 capabilities met the pushed-image
-NPA/SkyPilot/Kubernetes gate and have their named JSON, runtime inventory, and
-decoded MP4 evidence in S3. Do not infer acceptance for any deferred capability
-or treat capability acceptance alone as authorization for public publication.
 
 ## Licensing
 
-Track four layers separately: official source, baked OS/dependencies, run-time
-model/tokenizer, and customer data/private checkpoints. Apache-2.0 declarations
-for source/model do not classify the built image. Before publication, inspect
-the S3 runtime inventory emitted from inside the pulled image, classify the
-actual installed package set, and scan for unexpected restricted payloads. The
-inventory's large-checkpoint scan must be empty. Do not add this dynamic BYOF
+Track official source, baked dependencies, run-time model/tokenizer, and data
+separately. Source/model declarations do not classify a built image. Before
+public publication, inspect the emitted runtime inventory and the built image;
+keep model/tokenizer acquisition at run time. Do not add this dynamic BYOF
 candidate to the first-class packaging contract before image promotion.
 
 ## Validation
@@ -157,20 +140,14 @@ npa/.venv/bin/npa workbench workflow plan-spec \
 npa/.venv/bin/npa workbench workflow validate-spec \
   npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
 npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml --run-id wan22-multigpu-plan
-npa/.venv/bin/npa workbench workflow validate-spec \
-  npa/workflows/workbench/npa-workflows/bellboy-wan2.2-e2e.yaml
-npa/.venv/bin/npa workbench workflow plan-spec \
-  npa/workflows/workbench/npa-workflows/bellboy-wan2.2-e2e.yaml --run-id bellboy-wan22-plan
-npa/.venv/bin/python -m pytest npa/tests/workflows/test_bellboy_wan.py -q
+  npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml \
+  --run-id wan22-multigpu-plan
+npa/.venv/bin/python -m pytest npa/tests/workflows/test_wan_rerun.py -q
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_byof_solution_smokes.py -q
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
 npa/.venv/bin/python -m pytest npa/tests/smoke/test_all_workflow_yamls.py -q
 ```
 
-The live tests are `npa/tests/e2e/test_byof_wan22_live_e2e.py` and
-`npa/tests/e2e/test_byof_wan22_multigpu_live_e2e.py`. Run them only through
-their explicit operator gates. The recorded acceptance runs are
-`byof-wan22-e2e-20260805T191659Z` and
-`byof-wan22-multigpu-e2e-20260806T024353Z`; future compatibility changes
-require fresh live evidence rather than inference from either run.
+The gated live tests are `npa/tests/e2e/test_byof_wan22_live_e2e.py` and
+`npa/tests/e2e/test_byof_wan22_multigpu_live_e2e.py`. Future compatibility
+changes require fresh live evidence rather than inference from an older run.

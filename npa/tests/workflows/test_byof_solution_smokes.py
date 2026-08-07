@@ -220,8 +220,10 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
     assert "wan2.2_ti2v_5b_image_to_video (pending separate live" in smoke
     assert "Wan input mode and declared BYOF contract disagree" in smoke
     assert "wan2_2_ti2v_5b_image_to_video.json" in smoke
-    assert '"bellboy_private_action_prediction"' in smoke
+    assert '"wan2.2_action_prediction"' in smoke
     assert "action_prediction" not in str(config["capability_name"])
+    assert config["rrd_uri"].endswith("wan2_2_ti2v_5b.rrd")
+    assert config["rrd_manifest_uri"].endswith("wan2_2_ti2v_5b_rrd_manifest.json")
 
 
 def test_wan22_zero_wait_reaches_the_terminal_state_without_a_hidden_cap() -> None:
@@ -263,3 +265,7 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
     assert '"weights_baked": False' in smoke
     assert payload["resources"]["gpu"]["accelerators"] == "B200:4"
     assert payload["resources"]["gpu"]["memory"] == "256Gi"
+    assert config["rrd_uri"].endswith("wan2_2_ti2v_5b_multigpu.rrd")
+    assert config["rrd_manifest_uri"].endswith(
+        "wan2_2_ti2v_5b_multigpu_rrd_manifest.json"
+    )

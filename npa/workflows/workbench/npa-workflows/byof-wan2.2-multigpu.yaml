@@ -9,11 +9,13 @@ metadata:
     NCCL, FULL_SHARD FSDP for T5 and DiT, and DeepSpeed Ulysses sequence
     parallelism. Rank zero writes the MP4 only after the shared generation;
     all ranks then cross the upstream final barrier and emit sanitized
-    topology evidence. Weights remain runtime-fetched and are never baked.
+    topology evidence. The successful BYOF path then publishes a verified Rerun
+    recording that embeds the exact MP4 with the real summary, topology,
+    runtime, and per-rank evidence. Weights remain runtime-fetched and are never baked.
 
 config:
   bucket: example-bucket
-  prompt: "A hotel service robot gripper approaches a closed wooden room door in a well-lit hotel corridor, fixed wide-angle camera."
+  prompt: "A red sailboat crosses a sunlit ocean while seabirds circle above, cinematic wide shot."
 
   repo_url: "https://github.com/Wan-Video/Wan2.2.git"
   repo_ref: "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
@@ -413,7 +415,7 @@ config:
         "runtime": {"torch": torch.__version__, "torch_cuda": torch.version.cuda, "torch_cuda_arch_list": torch.cuda.get_arch_list(), "driver_versions": sorted(set(value.strip() for value in driver if value.strip())), "nccl_version": topology["rank_evidence"][0]["nccl_version"]},
         "capabilities_exercised": capabilities,
         "deferred": [],
-        "not_claimed": ["wan2.2_ti2v_5b_image_to_video", "wan2.2_action_prediction", "wan2.2_training", "bellboy_private_action_prediction"],
+        "not_claimed": ["wan2.2_ti2v_5b_image_to_video", "wan2.2_action_prediction", "wan2.2_training"],
     }
     required = set(capabilities)
     if required != set(result["capabilities_exercised"]) or result["deferred"]:
@@ -454,6 +456,8 @@ config:
   topology_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_multigpu_topology.json"
   inventory_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_multigpu_runtime_inventory.json"
   video_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_ti2v_5b_multigpu.mp4"
+  rrd_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_ti2v_5b_multigpu.rrd"
+  rrd_manifest_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_ti2v_5b_multigpu_rrd_manifest.json"
 
 resources:
   gpu:
@@ -484,4 +488,8 @@ states:
         schema: npa.workbench.byof.wan2_2_multigpu_runtime_inventory.v1
       - uri: "{{config.video_uri}}"
         schema: video/mp4
+      - uri: "{{config.rrd_uri}}"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.rrd_manifest_uri}}"
+        schema: npa.workbench.wan2_2.rerun_manifest.v1
     terminal: true

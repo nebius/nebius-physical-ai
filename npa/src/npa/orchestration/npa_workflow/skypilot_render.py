@@ -1150,6 +1150,13 @@ def render_setup_for_tool(
     extra = tool_pip_extra(tool_ref)
     if extra:
         parts.append(render_pip_extra_setup(extra))
+    if tool_ref == "workbench.byof.repo" and str(
+        config.get("solution_name") or ""
+    ).strip().lower() in {"wan2.2", "wan2.2-multigpu"}:
+        # The BYOF runner postprocesses successful official Wan runs into a
+        # verified RRD. Keep the generic toolRef while installing its optional
+        # recording dependency only for the Wan solution contracts.
+        parts.append(render_pip_extra_setup("viz"))
     parts.append(render_pip_requirements_setup(tool_pip_requirements(tool_ref)))
     backend = str(config.get("vlm_backend") or "").strip().lower()
     if tool_ref.startswith("workbench.vlm_eval") and backend in {"self-hosted", "self_hosted"}:
