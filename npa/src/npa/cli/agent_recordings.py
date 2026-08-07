@@ -29,6 +29,12 @@ RUN_ENTITY_MARKERS: tuple[bytes, ...] = (
     b"/scores",
     b"/signals",
     b"outer_loop",
+    # Factual GR00T training-telemetry recordings. The GR00T workflow emits
+    # these run-scoped entities after validating the checkpoint, distributed
+    # evidence, optimizer step, and finite loss. They are not present in the
+    # stock Franka scene recording.
+    b"metrics/loss",
+    b"run/provenance",
     # Neural-reconstruction (NuRec/NRE) run entities: rig-offset novel views
     # rendered from the trained Gaussians, NRE's validation renders, and the
     # Gaussian quality summary. None of these appear in the stock demo recording.
