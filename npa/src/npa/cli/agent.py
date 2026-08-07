@@ -3665,56 +3665,6 @@ def _apply_loaded_artifact(
     return sim_viz
 
 
-def _apply_content_artifact(
-    *,
-    state: dict,
-    run_id: str,
-    key: str,
-    bucket: str,
-    s3_uri: str,
-    render: str,
-) -> dict:
-    # Select a non-recording artifact without staging its S3 bytes locally.
-    now = _now_iso()
-    sim_viz = dict(DEFAULT_SIM_VIZ)
-    current = state.get("sim_viz")
-    if isinstance(current, dict):
-        sim_viz.update(current)
-    query = (
-        f"run_id={{quote(run_id, safe='')}}&key={{quote(key, safe='')}}&"
-        f"bucket={{quote(bucket, safe='')}}"
-    )
-    content_url = f"/api/artifacts/content?{{query}}"
-    download_url = f"{{content_url}}&download=true"
-    previewable = render in {{"json", "text", "image", "video"}}
-    sim_viz.update(
-        {{
-            "run_id": run_id,
-            "active_run_id": run_id,
-            "stage": "artifact-selected",
-            "rrd_uri": "",
-            "rerun_iframe_url": "/rerun/",
-            "rerun_ready": False,
-            "artifact_uri": s3_uri,
-            "artifact_key": key,
-            "artifact_render": render,
-            "artifact_preview_url": content_url if previewable else "",
-            "artifact_download_url": download_url,
-            "preview_status": "artifact_preview" if previewable else "download_only",
-            "visualization_note": (
-                f"Selected {{render}} artifact for secure same-origin preview."
-                if previewable
-                else "Binary/download-only artifact selected; metadata is shown without rendering bytes."
-            ),
-            "rrd_updated_at": now,
-            "mode": "static",
-        }}
-    )
-    state["sim_viz"] = sim_viz
-    _record_sim_viz_run(state, sim_viz)
-    _save_state(state)
-    return sim_viz
-
 _RERUN_RESTART_MIN_INTERVAL_S = 8.0
 _last_rerun_restart_monotonic = 0.0
 

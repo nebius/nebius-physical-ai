@@ -1413,10 +1413,14 @@ describe("NPA agent UI with mocked APIs", () => {
       const api = win.__NPA_AGENT_TEST__;
       const iframe = win.document.getElementById("rerunFrame");
       expect(win.document.documentElement.outerHTML).to.include("ensureRerunCaptureBridge");
-      const bridge = api.ensureRerunCaptureBridge(iframe);
+      // The iframe may still have a stream created before setMode painted the
+      // content frame. Match the production quality-capture path by restarting
+      // the bridge after that paint, then allow the video track to become live.
+      const bridge = api.ensureRerunCaptureBridge(iframe, { forceRestart: true });
       expect(bridge, "capture bridge").to.exist;
       expect(bridge.video).to.exist;
-      const grabbed = await api.grabFromRerunCaptureBridge(3000);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const grabbed = await api.grabFromRerunCaptureBridge(5000);
       expect(grabbed).to.match(/^data:image\/jpeg/);
       // Capture must succeed even if we ignore sync blank gates (the live WebGL failure mode).
       const quality = await api.waitForQualityRerunFrame(4000);
