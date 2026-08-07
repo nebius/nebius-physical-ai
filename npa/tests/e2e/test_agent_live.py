@@ -116,6 +116,43 @@ def test_agent_health_and_session(ctx: AgentLiveContext) -> None:
     assert isinstance(payload.get("chat_history", []), list)
 
 
+def test_agent_effective_access_contract(ctx: AgentLiveContext) -> None:
+    response = ctx.get("/api/access?refresh=true")
+    response.raise_for_status()
+    payload = response.json()
+
+    assert payload.get("ok") is True
+    assert payload.get("apiVersion") == "npa.agent.access/v1"
+    assert payload.get("status") in {"available", "partial", "denied", "unavailable"}
+    assert payload.get("scope") in {"tenant", "partial_tenant", "single_project"}
+    assert isinstance(payload.get("identity"), dict)
+    assert isinstance(payload.get("projects"), list)
+    assert isinstance(payload.get("capabilities"), dict)
+
+    forbidden_keys = {
+        "access_key",
+        "access_key_id",
+        "auth_password",
+        "credential",
+        "iam_token",
+        "password",
+        "secret",
+        "secret_key",
+        "token",
+    }
+
+    def _assert_non_secret_shape(value: object) -> None:
+        if isinstance(value, dict):
+            assert forbidden_keys.isdisjoint(value)
+            for child in value.values():
+                _assert_non_secret_shape(child)
+        elif isinstance(value, list):
+            for child in value:
+                _assert_non_secret_shape(child)
+
+    _assert_non_secret_shape(payload)
+
+
 def test_agent_sim_assets_and_catalog(ctx: AgentLiveContext) -> None:
     assets = ctx.get("/api/sim-assets")
     assets.raise_for_status()

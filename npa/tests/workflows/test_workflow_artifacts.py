@@ -12,10 +12,14 @@ from npa.workflows.artifacts import (
     build_fiftyone_dataset,
     download_s3_uri,
     find_run_artifacts,
+    find_run_artifact_page,
+    list_all_run_prefixes,
     list_all_runs,
     list_artifacts,
+    list_artifacts_page,
     list_run_categories,
     list_runs,
+    list_runs_at_prefix_across_buckets,
     render_hint_for_object,
     select_preferred_artifact,
 )
@@ -473,6 +477,25 @@ class _PrefixAwareS3:
 
         return _P()
 
+    def list_objects_v2(
+        self,
+        *,
+        Bucket=None,  # noqa: N803
+        Prefix="",  # noqa: N803
+        MaxKeys=1000,  # noqa: N803
+        ContinuationToken="",  # noqa: N803
+    ):
+        del Bucket
+        matching = [_obj(key, ts=ts) for key, ts in self._keys if key.startswith(Prefix)]
+        start = int(ContinuationToken or 0)
+        end = min(start + int(MaxKeys), len(matching))
+        truncated = end < len(matching)
+        return {
+            "Contents": matching[start:end],
+            "IsTruncated": truncated,
+            "NextContinuationToken": str(end) if truncated else "",
+        }
+
 
 _LAYOUT = [
     ("checkpoints/sim2real-b/run-a/reports/sim2real.rrd", "2026-07-01T00:00:00+00:00"),
@@ -541,6 +564,25 @@ def test_list_all_runs_surfaces_root_level_runs() -> None:
     # Root-level runs are discovered alongside checkpoints runs, newest first.
     assert ids[0] == "scenario-gen-smoke-1"
     assert set(ids) == {"scenario-gen-smoke-1", "paidf-1", "paidf-root-1", "run-a", "default"}
+
+
+def test_lightweight_prefix_index_discovers_runs_without_object_summaries() -> None:
+    page = list_all_run_prefixes(
+        "bucket",
+        base_prefix="checkpoints",
+        limit=50,
+        s3=_PrefixAwareS3(_MULTI_ROOT_LAYOUT),
+    )
+
+    assert {item.run_id for item in page.runs} == {
+        "scenario-gen-smoke-1",
+        "paidf-1",
+        "paidf-root-1",
+        "run-a",
+        "default",
+    }
+    assert all(item.summary_complete is False for item in page.runs)
+    assert all(item.artifact_count == 0 for item in page.runs)
 
 
 def test_find_run_artifacts_locates_root_level_run() -> None:
@@ -627,6 +669,118 @@ def test_list_all_runs_contains_search_across_roots() -> None:
     ]
     page = list_all_runs("bucket", base_prefix="checkpoints", limit=3, contains="rtxpro-staged", s3=_PrefixAwareS3(layout))
     assert [r.run_id for r in page.runs] == ["rtxpro-staged-2x2-old"]
+
+
+def test_exact_search_finds_flat_root_run_in_mixed_layout() -> None:
+    run_id = "mixed-flat-run-20300101t010203z"
+    layout = _MULTI_ROOT_LAYOUT + [
+        (f"{run_id}/eval/report.json", "2026-08-06T01:50:00+00:00"),
+        (f"{run_id}/eval/rollout.mp4", "2026-08-06T01:51:00+00:00"),
+        (f"{run_id}/checkpoints/policy.ckpt", "2026-08-06T01:52:00+00:00"),
+        (f"{run_id}/checkpoints/metrics.json", "2026-08-06T01:53:00+00:00"),
+        (f"{run_id}/logs/train.log", "2026-08-06T01:54:00+00:00"),
+        (f"{run_id}/raw/future-format.blobx", "2026-08-06T01:55:00+00:00"),
+    ]
+    s3 = _PrefixAwareS3(layout)
+
+    page = list_all_runs(
+        "bucket",
+        base_prefix="checkpoints",
+        limit=50,
+        contains=run_id,
+        s3=s3,
+    )
+
+    assert [item.run_id for item in page.runs] == [run_id]
+    assert page.runs[0].artifact_count == 6
+    assert "eval" not in [item.run_id for item in page.runs]
+    assert "checkpoints" not in [item.run_id for item in page.runs]
+    artifacts = find_run_artifacts("bucket", base_prefix="checkpoints", run_id=run_id, s3=s3)
+    assert len(artifacts) == 6
+    unknown = next(item for item in artifacts if item.key.endswith(".blobx"))
+    assert unknown.render == "download"
+    assert unknown.inline is False
+
+    lightweight = list_all_run_prefixes(
+        "bucket",
+        base_prefix="checkpoints",
+        limit=50,
+        contains=run_id,
+        s3=s3,
+    )
+    assert [item.run_id for item in lightweight.runs] == [run_id]
+    assert lightweight.runs[0].summary_complete is False
+
+    resolved_prefix, artifact_page = find_run_artifact_page(
+        "bucket",
+        base_prefix="checkpoints",
+        run_id=run_id,
+        s3=s3,
+    )
+    assert resolved_prefix == ""
+    assert len(artifact_page.artifacts) == 6
+    assert artifact_page.truncated is False
+
+
+def test_artifact_pages_preserve_unknown_formats_and_cursor() -> None:
+    run_id = "paged-run"
+    s3 = _PrefixAwareS3(
+        [
+            (f"category/{run_id}/a.json", "2030-01-01T00:00:01+00:00"),
+            (f"category/{run_id}/b.futureblob", "2030-01-01T00:00:02+00:00"),
+            (f"category/{run_id}/c.mp4", "2030-01-01T00:00:03+00:00"),
+        ]
+    )
+
+    first = list_artifacts_page(
+        "bucket",
+        run_id,
+        prefix="category",
+        page_size=2,
+        s3=s3,
+    )
+    second = list_artifacts_page(
+        "bucket",
+        run_id,
+        prefix="category",
+        cursor=first.next_cursor,
+        page_size=2,
+        s3=s3,
+    )
+
+    assert first.truncated is True
+    assert first.next_cursor
+    assert second.truncated is False
+    combined = [*first.artifacts, *second.artifacts]
+    unknown = next(item for item in combined if item.key.endswith(".futureblob"))
+    assert unknown.render == "download"
+    assert unknown.inline is False
+
+
+def test_explicit_prefix_discovery_searches_all_accessible_project_buckets() -> None:
+    class MultiBucketS3:
+        def get_paginator(self, name: str):
+            assert name == "list_objects_v2"
+
+            class Paginator:
+                def paginate(self, **kwargs):
+                    bucket = kwargs["Bucket"]
+                    prefix = kwargs["Prefix"]
+                    yield {"Contents": [_obj(f"{prefix}run-{bucket}/report.json")]}
+
+            return Paginator()
+
+    page = list_runs_at_prefix_across_buckets(
+        ["bucket-a", "bucket-b"],
+        prefix="category/",
+        bucket_projects={"bucket-a": "project-a", "bucket-b": "project-b"},
+        s3=MultiBucketS3(),
+    )
+
+    assert {(run.bucket, run.project_id) for run in page.runs} == {
+        ("bucket-a", "project-a"),
+        ("bucket-b", "project-b"),
+    }
 
 
 def test_list_runs_cached_serves_fresh_then_refreshes_when_stale(monkeypatch) -> None:
@@ -729,9 +883,18 @@ def test_list_all_runs_across_buckets_merges_and_tags(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(A, "list_all_runs", fake_all)
-    page = A.list_all_runs_across_buckets(["b1", "b2"], base_prefix="", limit=50, exclude=None, contains="", s3=object())
-    tagged = {(r.bucket, r.run_id) for r in page.runs}
-    assert ("b1", "run-b1") in tagged and ("b2", "run-b2") in tagged
+    page = A.list_all_runs_across_buckets(
+        ["b1", "b2"],
+        base_prefix="",
+        limit=50,
+        exclude=None,
+        contains="",
+        bucket_projects={"b1": "project-a", "b2": "project-b"},
+        s3=object(),
+    )
+    tagged = {(r.bucket, r.project_id, r.run_id) for r in page.runs}
+    assert ("b1", "project-a", "run-b1") in tagged
+    assert ("b2", "project-b", "run-b2") in tagged
     assert page.total_runs == 2
 
 

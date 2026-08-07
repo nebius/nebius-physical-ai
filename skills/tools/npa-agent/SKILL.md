@@ -222,10 +222,56 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
 
 ### Artifact-first discovery + load
 
-- `GET /api/artifacts/runs?prefix=&limit=100` discovers run prefixes from storage.
-- `GET /api/artifacts/run/{run_id}` lists **all** artifacts for that run with `render` hints.
+- `GET /api/artifacts/runs?prefix=&limit=100` discovers run prefixes from every
+  project bucket with verified effective list access.
+- `GET /api/artifacts/run/{run_id}` returns an S3-native artifact page with
+  `render` hints. Follow `next_cursor` with the returned `resolved_prefix` and
+  `bucket` (as `resource_bucket`) until `truncated=false`; the UI exposes this
+  as **Load next artifact page** so large runs do not block the backend.
 - `POST /api/sim-viz/load-artifact` loads an explicit artifact (`s3_uri` or `run_id` + `key`).
 - Unknown types are still listed and selectable (`render="download"` fallback).
+
+### `GET /api/access`
+
+Returns the non-secret effective access report used by artifact discovery and
+the UI's **Agent access** panel:
+
+```json
+{
+  "apiVersion": "npa.agent.access/v1",
+  "identity": {
+    "tenant_id": "<tenant-id>",
+    "deployment_project_id": "<project-id>",
+    "deployment_project_name": "<project-alias>"
+  },
+  "status": "partial",
+  "scope": "partial_tenant",
+  "projects": []
+}
+```
+
+Effective access is evaluated in layers: list projects visible under the tenant,
+list object-storage resources separately for each project, then verify S3 list
+and read access without writing. A denied/unavailable project remains in the
+report and does not hide accessible projects. If tenant/project listing is not
+permitted, the configured deployment project and bucket retain legacy
+single-project behavior and the report explains the limitation. Use
+`GET /api/access?refresh=true` after IAM changes.
+`npa agent verify-live` validates this schema and the matching UI wiring on a
+bootstrapped VM.
+
+The VM service account therefore needs tenant project-list visibility,
+per-project `storage bucket list`, and S3 `ListBucket`/`GetObject` for projects
+that should be searchable. `npa agent deploy` continues to request the existing
+tenant editors-group membership when the operator can manage IAM; when that is
+not possible, bootstrap reuses available credentials and the access report shows
+their actual narrower reach.
+
+Tenant-wide access is read-only at the agent product boundary. Workflow submit,
+artifact writes and deletion remain scoped to the deployment project. An
+arbitrary caller-supplied S3 URI is still limited to configured buckets. The
+only cross-project exception is an exact object key selected from a requested
+discovered run; it is verified against effective bucket access before loading.
 
 ### `GET /api/sim-viz/rrd-blob`
 

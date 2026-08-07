@@ -315,6 +315,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
 
     paths = {getattr(route, "path", "") for route in module.app.routes}
     for expected in (
+        "/access",
         "/foxglove/config",
         "/foxglove/status",
         "/foxglove/load-artifact",
@@ -322,6 +323,33 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "/foxglove/live",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
+
+    report = module.discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="project-test",
+        fallback_buckets=[],
+        list_projects=lambda _tenant: [
+            {"metadata": {"id": "project-test", "name": "Project Test"}}
+        ],
+        list_buckets=lambda _project: [],
+        probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+        now=lambda: "2026-08-06T23:30:00+00:00",
+    )
+    monkeypatch.setattr(module, "_agent_access_report", lambda *, refresh=False: report)
+    access_payload = module.agent_access(refresh=True)
+    assert access_payload["apiVersion"] == "npa.agent.access/v1"
+    assert access_payload["identity"]["tenant_id"] == "tenant-test"
+    assert access_payload["projects"][0]["id"] == "project-test"
+
+    secret = "do-not-return-this-credential"
+
+    def _fail_access(*, refresh=False):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(module, "_agent_access_report", _fail_access)
+    failed = module.agent_access()
+    assert failed.status_code == 503
+    assert secret.encode() not in failed.body
 
 
 def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):

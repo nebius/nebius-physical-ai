@@ -55,17 +55,18 @@ def test_staged_agent_source_is_readable_by_unprivileged_runtime(
 
 
 def _agent_source() -> str:
-    """agent.py plus the nginx site policy split out of it.
+    """agent.py plus source modules embedded or split out of it.
 
-    The site body moved to ``npa/src/npa/cli/agent_site.py`` to keep the monolith
-    under its size ratchet, so source-scanning assertions must see both files.
+    Source-scanning assertions must include the nginx policy and effective-access
+    runtime that the bootstrap embeds into the generated backend.
     """
     from npa.cli import agent as agent_module
+    from npa.cli import agent_access_runtime as agent_access_runtime_module
     from npa.cli import agent_site as agent_site_module
 
     return "\n".join(
         Path(module.__file__).read_text(encoding="utf-8")
-        for module in (agent_module, agent_site_module)
+        for module in (agent_module, agent_access_runtime_module, agent_site_module)
     )
 
 
@@ -660,7 +661,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     # Multi-bucket discovery: the agent searches every accessible bucket (never
     # relies on copying a run into one bucket).
     assert "def _agent_s3_buckets(" in source
-    assert "list_accessible_buckets" in source
+    assert "accessible_artifact_buckets(_agent_access_report())" in source
     assert "list_runs_cached_multi" in source
     assert "find_run_artifacts_across_buckets" in source
     # Modern refresh + iOS/desktop friendliness (cascade override layer):
@@ -1342,6 +1343,24 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             )
         if url_s.endswith("/api/session"):
             return _Resp({"chat_history": [], "selection": {}})
+        if url_s.endswith("/api/access"):
+            return _Resp(
+                {
+                    "ok": True,
+                    "apiVersion": "npa.agent.access/v1",
+                    "status": "available",
+                    "scope": "single_project",
+                    "identity": {
+                        "tenant_id": "tenant-id",
+                        "deployment_project_id": "project-id",
+                        "deployment_project_name": "default",
+                    },
+                    "capabilities": {},
+                    "projects": [],
+                    "errors": [],
+                    "refreshed_at": "2026-08-06T23:30:00+00:00",
+                }
+            )
         if url_s.endswith("/api/sim-viz/status"):
             params = _kwargs.get("params") or {}
             run_id = str(params.get("run_id") or "")
@@ -1373,6 +1392,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
                 '<body>'
                 '<div id="tabMain"></div><div id="tabRerun"></div>'
+                '<div id="agentAccessPanel"></div><button id="agentAccessRefresh"></button>'
+                '<script>function refreshAccess(){ fetch("/api/access"); }</script>'
                 '<div id="stagesPanel"><h3>Stages</h3>'
                 '<div class="stages-run-picker">'
                 '<select id="stagesRunSelect"></select>'
@@ -1764,6 +1785,17 @@ def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert "npa-agent-bootstrap-{secrets.token_hex" in source
+
+
+def test_rrd_publish_uses_request_unique_atomic_temp_path() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    publish = source.split("def _publish_rrd_recording", 1)[1].split(
+        "def _safe_artifact_key", 1
+    )[0]
+    assert "secrets.token_hex(6)" in publish
+    assert 'with_suffix(".rrd.tmp")' not in publish
 
 
 def test_bootstrap_installs_boto3_for_artifact_endpoints() -> None:

@@ -110,6 +110,7 @@ UI_BUTTON_IDS = (
     "loadRunData",
     "artifactRefreshRuns",
     "artifactLoadRunArtifacts",
+    "agentAccessRefresh",
 )
 
 UI_WIRING_MARKERS = (
@@ -120,6 +121,7 @@ UI_WIRING_MARKERS = (
     'id="tabMain"',
     'id="tabRerun"',
     'id="stagesPanel"',
+    'id="agentAccessPanel"',
     "<h3>Stages</h3>",
     "initNpaAgentUi",
     "DOMContentLoaded",

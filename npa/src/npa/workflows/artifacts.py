@@ -115,12 +115,31 @@ class Artifact:
 
 
 @dataclass(frozen=True)
+class ArtifactListPage:
+    artifacts: list[Artifact]
+    truncated: bool
+    next_cursor: str
+    page_size: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifacts": [item.to_dict() for item in self.artifacts],
+            "count": len(self.artifacts),
+            "truncated": self.truncated,
+            "next_cursor": self.next_cursor,
+            "page_size": self.page_size,
+        }
+
+
+@dataclass(frozen=True)
 class RunSummary:
     run_id: str
     last_modified: str
     artifact_count: int
     has_viewable: bool
     bucket: str = ""
+    project_id: str = ""
+    summary_complete: bool = True
     # When the run STARTED (its id-encoded submit time, or the earliest artifact
     # write as a fallback) — distinct from last_modified (newest artifact write).
     started_at: str = ""
@@ -133,6 +152,8 @@ class RunSummary:
             "artifact_count": self.artifact_count,
             "has_viewable": self.has_viewable,
             "bucket": self.bucket,
+            "project_id": self.project_id,
+            "summary_complete": self.summary_complete,
         }
 
 
@@ -438,6 +459,40 @@ def list_all_runs(
     if not categories:
         # Flat layout: run_ids sit directly under the root.
         return list_runs(bucket, prefix=base_prefix, limit=limit, contains=contains, s3=s3)
+    # A bucket can mix ``<category>/<run>/...`` and ``<run>/<stage>/...`` at
+    # the same root. Structurally, an arbitrary category and an arbitrary run
+    # cannot be distinguished from object keys alone. For an exact server-side
+    # run search we do have that missing signal: inspect both flat roots and, on
+    # an exact match, treat that parent as the run instead of treating its stage
+    # children (for example ``eval`` and ``checkpoints``) as run ids.
+    needle = str(contains or "").strip().lower()
+    exact_flat: list[RunSummary] = []
+    exact_parent_prefixes: set[str] = set()
+    if needle:
+        seen_flat: set[tuple[str, str]] = set()
+        for flat_prefix in (str(base_prefix or "").strip().strip("/"), ""):
+            flat_page = list_runs(
+                bucket,
+                prefix=flat_prefix,
+                limit=max(limit, 1),
+                contains=contains,
+                s3=s3,
+            )
+            for run in flat_page.runs:
+                if run.run_id.lower() != needle:
+                    continue
+                identity = (flat_prefix, run.run_id)
+                if identity in seen_flat:
+                    continue
+                seen_flat.add(identity)
+                exact_flat.append(run)
+                exact_parent_prefixes.add(
+                    "/".join(part for part in (flat_prefix, run.run_id) if part)
+                )
+        if exact_parent_prefixes:
+            categories = [
+                category for category in categories if category.strip("/") not in exact_parent_prefixes
+            ]
     # Each category's run listing is an independent, I/O-bound S3 pagination, so
     # scanning them concurrently turns the whole discovery from O(sum of categories)
     # sequential round-trips into ~O(slowest category) wall time. This is the main
@@ -452,7 +507,7 @@ def list_all_runs(
         except ArtifactDiscoveryError:
             return []
 
-    best: dict[str, RunSummary] = {}
+    best: dict[str, RunSummary] = {item.run_id: item for item in exact_flat}
     max_workers = min(len(categories), 16)
     if max_workers <= 1:
         results = [_runs_for_category(categories[0])] if categories else []
@@ -470,6 +525,144 @@ def list_all_runs(
     if len(runs) > limit:
         runs = runs[:limit]
     return RunListPage(runs=runs, truncated=truncated, total_runs=total, limit=limit)
+
+
+def list_run_prefixes(
+    bucket: str,
+    *,
+    prefix: str = "",
+    limit: int = 50,
+    contains: str = "",
+    s3=None,
+) -> RunListPage:
+    """Discover immediate run directories without walking their objects.
+
+    S3 ``CommonPrefixes`` makes cold agent discovery proportional to the number
+    of run directories rather than the number of artifacts. Object counts and
+    render hints remain intentionally unknown until the selected run is listed.
+    """
+    if limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    parent = str(prefix or "").strip().strip("/")
+    needle = str(contains or "").strip().lower()
+    summaries: list[RunSummary] = []
+    for child in list_run_categories(bucket, base_prefix=parent, s3=s3):
+        run_id = child.rsplit("/", 1)[-1].strip()
+        if not run_id or (needle and needle not in run_id.lower()):
+            continue
+        started_at = _run_started_at(run_id, "")
+        summaries.append(
+            RunSummary(
+                run_id=run_id,
+                last_modified=started_at,
+                started_at=started_at,
+                artifact_count=0,
+                has_viewable=False,
+                summary_complete=False,
+            )
+        )
+    summaries.sort(
+        key=lambda item: (item.started_at, item.run_id),
+        reverse=True,
+    )
+    total = len(summaries)
+    return RunListPage(
+        runs=summaries[:limit],
+        truncated=total > limit,
+        total_runs=total,
+        limit=limit,
+    )
+
+
+def list_all_run_prefixes(
+    bucket: str,
+    *,
+    base_prefix: str = "",
+    limit: int = 50,
+    exclude: "set[str] | None" = None,
+    contains: str = "",
+    s3=None,
+) -> RunListPage:
+    """Discover run directory names across mixed category/root layouts."""
+    if limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    categories = discovery_categories(
+        bucket,
+        base_prefix=base_prefix,
+        exclude=exclude,
+        s3=s3,
+    )
+    if not categories:
+        return list_run_prefixes(
+            bucket,
+            prefix=base_prefix,
+            limit=limit,
+            contains=contains,
+            s3=s3,
+        )
+
+    needle = str(contains or "").strip().lower()
+    exact_flat: list[RunSummary] = []
+    parents: list[str] = []
+    for category in categories:
+        leaf = category.rsplit("/", 1)[-1].strip()
+        if needle and leaf.lower() == needle:
+            started_at = _run_started_at(leaf, "")
+            exact_flat.append(
+                RunSummary(
+                    run_id=leaf,
+                    last_modified=started_at,
+                    started_at=started_at,
+                    artifact_count=0,
+                    has_viewable=False,
+                    summary_complete=False,
+                )
+            )
+        else:
+            parents.append(category)
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _runs_for_parent(parent: str) -> list[RunSummary]:
+        try:
+            return list_run_prefixes(
+                bucket,
+                prefix=parent,
+                limit=limit,
+                contains=contains,
+                s3=s3,
+            ).runs
+        except ArtifactDiscoveryError:
+            return []
+
+    max_workers = min(len(parents), 16)
+    if max_workers <= 1:
+        results = [_runs_for_parent(parents[0])] if parents else []
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(_runs_for_parent, parents))
+
+    best: dict[str, RunSummary] = {item.run_id: item for item in exact_flat}
+    for runs in results:
+        for run in runs:
+            current = best.get(run.run_id)
+            if current is None or run.started_at > current.started_at:
+                best[run.run_id] = run
+    ordered = sorted(
+        best.values(),
+        key=lambda item: (item.started_at, item.run_id),
+        reverse=True,
+    )
+    return RunListPage(
+        runs=ordered[:limit],
+        truncated=len(ordered) > limit,
+        total_runs=len(ordered),
+        limit=limit,
+    )
 
 
 # --- Multi-bucket discovery ---------------------------------------------------
@@ -523,6 +716,8 @@ def list_all_runs_across_buckets(
     limit: int = 50,
     exclude: "set[str] | None" = None,
     contains: str = "",
+    bucket_projects: "dict[str, str] | None" = None,
+    lightweight: bool = False,
     s3=None,
 ) -> RunListPage:
     """Discover runs across every accessible bucket, latest-first.
@@ -540,12 +735,25 @@ def list_all_runs_across_buckets(
 
     def _runs_for_bucket(bucket: str) -> "tuple[str, list[RunSummary], int]":
         try:
-            page = list_all_runs(
-                bucket, base_prefix=base_prefix, limit=limit, exclude=exclude, contains=contains, s3=s3
+            discover = list_all_run_prefixes if lightweight else list_all_runs
+            page = discover(
+                bucket,
+                base_prefix=base_prefix,
+                limit=limit,
+                exclude=exclude,
+                contains=contains,
+                s3=s3,
             )
         except (ArtifactDiscoveryError, ClientError, BotoCoreError):
             return bucket, [], 0
-        tagged = [dataclass_replace(run, bucket=bucket) for run in page.runs]
+        tagged = [
+            dataclass_replace(
+                run,
+                bucket=bucket,
+                project_id=str((bucket_projects or {}).get(bucket) or ""),
+            )
+            for run in page.runs
+        ]
         return bucket, tagged, page.total_runs
 
     from concurrent.futures import ThreadPoolExecutor
@@ -568,6 +776,68 @@ def list_all_runs_across_buckets(
     if len(ordered) > limit:
         ordered = ordered[:limit]
     return RunListPage(runs=ordered, truncated=truncated, total_runs=total, limit=limit)
+
+
+def list_runs_at_prefix_across_buckets(
+    buckets: "list[str] | tuple[str, ...]",
+    *,
+    prefix: str,
+    limit: int = 50,
+    contains: str = "",
+    bucket_projects: "dict[str, str] | None" = None,
+    lightweight: bool = False,
+    s3=None,
+) -> RunListPage:
+    """List one run-parent prefix across every accessible bucket."""
+    if limit <= 0:
+        raise ArtifactDiscoveryError("limit must be > 0")
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    bucket_list = [str(bucket).strip() for bucket in buckets if str(bucket).strip()]
+    if not bucket_list:
+        return RunListPage(runs=[], truncated=False, total_runs=0, limit=limit)
+
+    def _runs_for_bucket(bucket: str) -> "tuple[list[RunSummary], int]":
+        try:
+            discover = list_run_prefixes if lightweight else list_runs
+            page = discover(bucket, prefix=prefix, limit=limit, contains=contains, s3=s3)
+        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+            return [], 0
+        tagged = [
+            dataclass_replace(
+                run,
+                bucket=bucket,
+                project_id=str((bucket_projects or {}).get(bucket) or ""),
+            )
+            for run in page.runs
+        ]
+        return tagged, page.total_runs
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    max_workers = min(len(bucket_list), 8)
+    if max_workers <= 1:
+        results = [_runs_for_bucket(bucket_list[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(_runs_for_bucket, bucket_list))
+
+    merged: dict[tuple[str, str], RunSummary] = {}
+    total = 0
+    for runs, bucket_total in results:
+        total += int(bucket_total or 0)
+        for run in runs:
+            merged[(run.bucket, run.run_id)] = run
+    ordered = sorted(
+        merged.values(), key=lambda item: (item.last_modified, item.run_id), reverse=True
+    )
+    truncated = len(ordered) > limit
+    return RunListPage(
+        runs=ordered[:limit],
+        truncated=truncated,
+        total_runs=total,
+        limit=limit,
+    )
 
 
 def _s3_cache_identity(s3) -> str:
@@ -597,14 +867,17 @@ def list_runs_cached_multi(
     buckets: "list[str] | tuple[str, ...]",
     *,
     base_prefix: str = "",
+    prefix: str = "",
     limit: int = 50,
     exclude: "set[str] | None" = None,
     contains: str = "",
+    bucket_projects: "dict[str, str] | None" = None,
+    lightweight: bool = False,
     s3=None,
     ttl: "float | None" = None,
     refresh_sync: bool = False,
 ) -> RunListPage:
-    """TTL + stale-while-revalidate wrapper over :func:`list_all_runs_across_buckets`."""
+    """Cache generic or explicit-prefix discovery across accessible buckets."""
     # DEFAULT_RUN_LIST_TTL is defined below this block; resolve at call time.
     if ttl is None:
         ttl = DEFAULT_RUN_LIST_TTL
@@ -614,14 +887,34 @@ def list_runs_cached_multi(
         _s3_cache_identity(s3),
         bucket_list,
         base_prefix,
+        prefix,
         int(limit),
         tuple(sorted(exclude or ())),
         str(contains or ""),
+        tuple(sorted((bucket_projects or {}).items())),
+        bool(lightweight),
     )
 
     def _compute() -> RunListPage:
+        if prefix:
+            return list_runs_at_prefix_across_buckets(
+                list(bucket_list),
+                prefix=prefix,
+                limit=limit,
+                contains=contains,
+                bucket_projects=bucket_projects,
+                lightweight=lightweight,
+                s3=s3,
+            )
         return list_all_runs_across_buckets(
-            list(bucket_list), base_prefix=base_prefix, limit=limit, exclude=exclude, contains=contains, s3=s3
+            list(bucket_list),
+            base_prefix=base_prefix,
+            limit=limit,
+            exclude=exclude,
+            contains=contains,
+            bucket_projects=bucket_projects,
+            lightweight=lightweight,
+            s3=s3,
         )
 
     now = time.monotonic()
@@ -663,7 +956,12 @@ def find_run_artifacts_across_buckets(
         if not name:
             continue
         try:
-            artifacts = find_run_artifacts(name, base_prefix=base_prefix, run_id=run_id, s3=s3)
+            artifacts = find_run_artifacts(
+                name,
+                base_prefix=base_prefix,
+                run_id=run_id,
+                s3=s3,
+            )
         except (ArtifactDiscoveryError, ClientError, BotoCoreError):
             continue
         if artifacts:
@@ -796,13 +1094,28 @@ def find_run_artifacts(bucket: str, *, base_prefix: str, run_id: str, s3=None) -
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
     categories = discovery_categories(bucket, base_prefix=base_prefix, s3=s3)
-    for category in categories:
-        artifacts = list_artifacts(bucket, run_id, prefix=category, s3=s3)
-        if artifacts:
-            return artifacts
     # Flat fallbacks: run directly under the base root, or at the bucket root.
-    for flat_prefix in (base_prefix, ""):
-        artifacts = list_artifacts(bucket, run_id, prefix=flat_prefix, s3=s3)
+    candidates: list[str] = []
+    for prefix in [*categories, base_prefix, ""]:
+        normalized = str(prefix or "").strip().strip("/")
+        if normalized not in candidates:
+            candidates.append(normalized)
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _find(prefix: str) -> list[Artifact]:
+        try:
+            return list_artifacts(bucket, run_id, prefix=prefix, s3=s3)
+        except ArtifactDiscoveryError:
+            return []
+
+    max_workers = min(len(candidates), 16)
+    if max_workers <= 1:
+        results = [_find(candidates[0])] if candidates else []
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(_find, candidates))
+    for artifacts in results:
         if artifacts:
             return artifacts
     return []
@@ -845,6 +1158,129 @@ def list_artifacts(
         raise ArtifactDiscoveryError(f"failed to list artifacts under s3://{bucket}/{scope}: {exc}") from exc
     artifacts.sort(key=lambda item: (item.last_modified, item.key), reverse=True)
     return artifacts
+
+
+def list_artifacts_page(
+    bucket: str,
+    run_id: str,
+    *,
+    prefix: str = "",
+    cursor: str = "",
+    page_size: int = 1000,
+    s3=None,
+) -> ArtifactListPage:
+    """Return one native S3 page for a run without materializing the whole run."""
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    normalized_prefix = _normalize_prefix(prefix)
+    run_prefix = _normalize_prefix(validate_run_id(run_id))
+    scope = f"{normalized_prefix}{run_prefix}"
+    size = max(1, min(int(page_size), 1000))
+    kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": scope, "MaxKeys": size}
+    if str(cursor or "").strip():
+        kwargs["ContinuationToken"] = str(cursor).strip()
+    try:
+        response = s3.list_objects_v2(**kwargs)
+    except (ClientError, BotoCoreError) as exc:
+        raise ArtifactDiscoveryError(
+            f"failed to list artifact page under s3://{bucket}/{scope}: {exc}"
+        ) from exc
+    artifacts: list[Artifact] = []
+    for item in response.get("Contents", []) or []:
+        key = str(item.get("Key") or "")
+        if not key:
+            continue
+        render = render_hint_for_object(key=key)
+        artifacts.append(
+            Artifact(
+                run_id=run_id,
+                key=key,
+                s3_uri=f"s3://{bucket}/{key}",
+                size=int(item.get("Size") or 0),
+                last_modified=_to_iso8601(item.get("LastModified")),
+                render=render,
+                inline=is_inline_render(render),
+            )
+        )
+    artifacts.sort(key=lambda item: (item.last_modified, item.key), reverse=True)
+    return ArtifactListPage(
+        artifacts=artifacts,
+        truncated=bool(response.get("IsTruncated")),
+        next_cursor=str(response.get("NextContinuationToken") or ""),
+        page_size=size,
+    )
+
+
+def find_run_artifact_page(
+    bucket: str,
+    *,
+    base_prefix: str,
+    run_id: str,
+    page_size: int = 1000,
+    s3=None,
+) -> tuple[str, ArtifactListPage]:
+    """Locate a run and return its first artifact page plus parent prefix."""
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    categories = discovery_categories(bucket, base_prefix=base_prefix, s3=s3)
+    candidates: list[str] = []
+    for prefix in [*categories, base_prefix, ""]:
+        normalized = str(prefix or "").strip().strip("/")
+        if normalized not in candidates:
+            candidates.append(normalized)
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _find(prefix: str) -> ArtifactListPage:
+        try:
+            return list_artifacts_page(
+                bucket,
+                run_id,
+                prefix=prefix,
+                page_size=page_size,
+                s3=s3,
+            )
+        except ArtifactDiscoveryError:
+            return ArtifactListPage([], False, "", page_size)
+
+    max_workers = min(len(candidates), 16)
+    if max_workers <= 1:
+        results = [_find(candidates[0])] if candidates else []
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(_find, candidates))
+    for prefix, page in zip(candidates, results):
+        if page.artifacts:
+            return prefix, page
+    return "", ArtifactListPage([], False, "", page_size)
+
+
+def find_run_artifact_page_across_buckets(
+    buckets: "list[str] | tuple[str, ...]",
+    *,
+    base_prefix: str,
+    run_id: str,
+    page_size: int = 1000,
+    s3=None,
+) -> tuple[str, str, ArtifactListPage]:
+    """Locate a run's first artifact page across accessible buckets."""
+    for bucket in buckets:
+        name = str(bucket or "").strip()
+        if not name:
+            continue
+        try:
+            prefix, page = find_run_artifact_page(
+                name,
+                base_prefix=base_prefix,
+                run_id=run_id,
+                page_size=page_size,
+                s3=s3,
+            )
+        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+            continue
+        if page.artifacts:
+            return name, prefix, page
+    return "", "", ArtifactListPage([], False, "", page_size)
 
 
 def select_preferred_artifact(artifacts: list[Artifact]) -> Artifact | None:

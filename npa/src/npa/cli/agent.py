@@ -37,6 +37,7 @@ from npa.clients.network import (
 )
 from npa.clients.ssh import SSHClient, SSHError
 from npa.agent_backend.shipping import render_shipped_backend_install
+from npa.cli.agent_access import ACCESS_SCHEMA, ACCESS_STATES
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
@@ -72,7 +73,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026073001"
+AGENT_UI_VERSION = "2026080601"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -249,6 +250,8 @@ _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
 _AGENT_BACKEND_SHIP = "__NPA_AGENT_BACKEND_SHIP__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
+_AGENT_ACCESS_EMBED = "__NPA_AGENT_ACCESS_EMBED__"
+_AGENT_ACCESS_RUNTIME_EMBED = "__NPA_AGENT_ACCESS_RUNTIME_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
@@ -336,6 +339,25 @@ def _embedded_agent_artifacts_source() -> str:
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
     return raw
+
+
+def _embedded_agent_access_file(filename: str) -> str:
+    """Return an access module embedded into the remote agent backend."""
+    import re
+
+    path = Path(__file__).with_name(filename)
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_access_source() -> str:
+    return _embedded_agent_access_file("agent_access.py")
+
+
+def _embedded_agent_access_runtime_source() -> str:
+    return _embedded_agent_access_file("agent_access_runtime.py")
 
 
 def _embedded_agent_provenance_source() -> str:
@@ -1774,6 +1796,8 @@ def _bootstrap_agent_stack(
     agent_backend_ship_script = render_shipped_backend_install()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
+    agent_access_source = _embedded_agent_access_source()
+    agent_access_runtime_source = _embedded_agent_access_runtime_source()
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
@@ -2473,6 +2497,7 @@ def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> 
     try:
         s3, settings = _agent_s3_client()
         artifacts = []
+        run_bucket = settings["bucket"]
         # Fast path: honor the artifact prefix the run was discovered under.
         if prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
@@ -2482,8 +2507,8 @@ def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> 
         # workflow shows its real artifact-backed stages, not the sim2real
         # "not_run" template.
         if not artifacts:
-            artifacts = find_run_artifacts(
-                settings["bucket"],
+            run_bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
                 run_id=validate_run_id(run_id),
                 s3=s3,
@@ -2503,7 +2528,7 @@ def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> 
     # each step's state, exact command (argv), returncode, status, loop iteration.
     # This is the authoritative "logs of each stage" surface (the artifact-derived
     # stages below cover "artifacts of each stage").
-    workflow_steps = _workflow_run_steps(s3, settings["bucket"], keys)
+    workflow_steps = _workflow_run_steps(s3, run_bucket, keys)
     workflow_stage_defs = _workflow_stage_defs_from_state(state)
     overlay_unmatched = run_owns_workflow_stage_overlay(state, run_id)
     stages = build_artifact_backed_stages(
@@ -2897,7 +2922,7 @@ def _publish_rrd_recording(source: Path) -> Path:
     if not source.is_file():
         return RECORDING_PATH
     RECORDING_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = RECORDING_PATH.with_suffix(".rrd.tmp")
+    tmp = RECORDING_PATH.with_name(f"{{RECORDING_PATH.name}}.{{secrets.token_hex(6)}}.tmp")
     shutil.copy2(source, tmp)
     tmp.replace(RECORDING_PATH)
     return RECORDING_PATH
@@ -2991,42 +3016,7 @@ def _agent_s3_client():
     return client, settings
 
 
-def _agent_s3_buckets(s3, settings) -> list:
-    # Every bucket the agent can access — so runs are discoverable regardless of
-    # which bucket a workflow wrote to (never rely on copying runs into one
-    # bucket). Primary (configured) bucket first, then optional configured extras
-    # (NPA_AGENT_S3_BUCKETS), then everything ListBuckets returns.
-    # NOTE: use only for discovery. Operator-supplied s3_uri must use
-    # _configured_agent_s3_buckets / _assert_s3_uri_in_agent_bucket instead.
-    primary = str(settings.get("bucket") or "")
-    override = str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip()
-    extra = [b.strip() for b in override.split(",") if b.strip()] if override else []
-    try:
-        buckets = list_accessible_buckets(s3, primary=primary, extra=extra)
-    except Exception:
-        buckets = [primary] if primary else []
-    return buckets or ([primary] if primary else [])
-
-
-def _configured_agent_s3_buckets(settings) -> set:
-    return configured_agent_s3_buckets(
-        str((settings or {{}}).get("bucket") or ""),
-        str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip(),
-    )
-
-
-def _assert_s3_uri_in_agent_bucket(uri: str, settings) -> None:
-    # Bucket-only gate (configured primary + explicit NPA_AGENT_S3_BUCKETS).
-    # Prefix is intentionally not enforced: runs live under multiple category
-    # roots inside the same configured bucket.
-    ok, reason = s3_uri_in_configured_buckets(
-        uri,
-        primary=str((settings or {{}}).get("bucket") or ""),
-        extras_csv=str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip(),
-        prefix="",
-    )
-    if not ok:
-        raise HTTPException(status_code=400, detail=reason or "s3_uri bucket is not the configured agent bucket")
+{_AGENT_ACCESS_RUNTIME_EMBED}
 
 
 def _chat_memory_tenant() -> str:
@@ -3934,6 +3924,7 @@ def _agent_system_prompt() -> str:
         "workflows, sim assets, and Sim2Real runs. Be concise and actionable.",
         "",
         "Agent HTTP APIs on this VM (same-origin relative paths; nginx proxies /api/):",
+        "- GET /api/access — tenant identity, project-by-project effective access, and searchable resources",
         "- GET /api/sim-assets, /api/sim-assets/selection, /api/sim-assets/cameras",
         "- GET /api/sim-viz/status — active run + .rrd URI for the Rerun iframe at /rerun/",
         "- GET /api/sim-viz/recordings — list available .rrd recording files for quick viewer switching",
@@ -4135,6 +4126,8 @@ from agent_backend import trace as _agent_tracing
 {_AGENT_WORKFLOW_EMBED}
 
 {_AGENT_ARTIFACTS_EMBED}
+
+{_AGENT_ACCESS_EMBED}
 
 def _workflow_draft_from_state(state: dict) -> dict:
     draft = state.get("workflow_draft", {{}})
@@ -6705,6 +6698,12 @@ def agent_trace_analyze(payload: dict):
 def health():
     return {{"ok": True, "tool_refs": len(TOOL_REFS)}}
 
+
+@app.get("/access")
+def agent_access(refresh: bool = False):
+    return _agent_access_api_response(refresh)
+
+
 @app.get("/models")
 def models(refresh: bool = False):
     return {{
@@ -7042,8 +7041,12 @@ def sim_viz_load_run(payload: dict | None = None):
     # show "Non-RRD artifact loaded" even when reports/sim2real.rrd exists.
     if requested_rrd_uri:
         s3, _settings = _agent_s3_client()
-        _assert_s3_uri_in_agent_bucket(requested_rrd_uri, _settings)
-        bucket, key = parse_s3_uri(requested_rrd_uri)
+        bucket, key, _authorized_run = _authorize_agent_artifact_uri(
+            s3=s3,
+            settings=_settings,
+            uri=requested_rrd_uri,
+            run_id=run_id,
+        )
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
         download_s3_uri(requested_rrd_uri, local_path, s3=s3)
@@ -7073,8 +7076,8 @@ def sim_viz_load_run(payload: dict | None = None):
         # Generic fallback: find the run across all category folders under the run
         # root so a mismatched/absent prefix does not hide a mountable .rrd.
         if not artifacts:
-            artifacts = find_run_artifacts(
-                settings["bucket"],
+            _run_bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
                 run_id=validate_run_id(run_id),
                 s3=s3,
@@ -7176,6 +7179,10 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
     # are still findable by name from the "Find run" box.
     try:
         s3, settings = _agent_s3_client()
+        access_report = _agent_access_report()
+        access_diagnostics = _agent_access_diagnostics(access_report)
+        bucket_projects = artifact_bucket_projects(access_report)
+        buckets = _agent_s3_buckets(s3, settings)
         query = str(q or "").strip()
         if prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
@@ -7183,15 +7190,17 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
             # page load; walking a category's objects each time made the UI show
             # "no runs" for seconds. The cache serves a warm result instantly and
             # refreshes in the background, so only the first load pays the S3 walk.
-            page = list_runs_cached(
-                settings["bucket"],
+            page = list_runs_cached_multi(
+                buckets,
                 prefix=effective_prefix,
                 base_prefix=settings.get("prefix", ""),
                 limit=limit,
                 contains=query,
+                bucket_projects=bucket_projects,
+                lightweight=True,
                 s3=s3,
             )
-            return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, **page.to_dict()}}
+            return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, "summary_mode": "prefixes", "access": access_diagnostics, **page.to_dict()}}
         # No user prefix: discover runs generically across ALL bucket roots.
         # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
         # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
@@ -7202,16 +7211,17 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
         base = settings.get("prefix", "")
         # Discover across EVERY accessible bucket (not just the configured one), so
         # a run is visible no matter which bucket its workflow wrote to.
-        buckets = _agent_s3_buckets(s3, settings)
         page = list_runs_cached_multi(
             buckets,
             base_prefix=base,
             limit=limit,
             exclude=_discovery_exclude_roots(),
             contains=query,
+            bucket_projects=bucket_projects,
+            lightweight=True,
             s3=s3,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
+        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "prefix": base, "base_prefix": base, "query": query, "summary_mode": "prefixes", "access": access_diagnostics, **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -7219,22 +7229,57 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
 
 
 @app.get("/artifacts/run/{{run_id:path}}")
-def artifacts_for_run(run_id: str, prefix: str = ""):
+def artifacts_for_run(
+    run_id: str,
+    prefix: str = "",
+    cursor: str = "",
+    resolved_prefix: str = "",
+    resource_bucket: str = "",
+):
     try:
         normalized_run = validate_run_id(run_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         s3, settings = _agent_s3_client()
+        access_report = _agent_access_report()
+        bucket_projects = artifact_bucket_projects(access_report)
         effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        artifacts = []
+        page = ArtifactListPage([], False, "", 1000)
+        artifact_prefix = ""
         run_bucket = settings["bucket"]
-        if prefix:
-            artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3)
+        if cursor or resolved_prefix or resource_bucket:
+            if not (resolved_prefix and resource_bucket):
+                raise HTTPException(
+                    status_code=400,
+                    detail="resolved_prefix and resource_bucket are required for continuation",
+                )
+            if resource_bucket not in _agent_s3_buckets(s3, settings):
+                raise HTTPException(
+                    status_code=400,
+                    detail="artifact bucket is outside effective agent access",
+                )
+            artifact_prefix = str(resolved_prefix).strip().strip("/")
+            run_bucket = str(resource_bucket).strip()
+            page = list_artifacts_page(
+                run_bucket,
+                normalized_run,
+                prefix=artifact_prefix,
+                cursor=cursor,
+                s3=s3,
+            )
+        elif prefix:
+            artifact_prefix = effective_prefix
+            page = list_artifacts_page(
+                settings["bucket"],
+                normalized_run,
+                prefix=effective_prefix,
+                s3=s3,
+            )
         # Generic fallback: locate the run across EVERY accessible bucket and its
         # category folders (no hardcoded workflow path, no single-bucket assumption).
-        if not artifacts:
-            run_bucket, artifacts = find_run_artifacts_across_buckets(
+        if not page.artifacts and not cursor:
+            run_bucket, artifact_prefix, page = find_run_artifact_page_across_buckets(
                 _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
                 run_id=normalized_run,
@@ -7242,16 +7287,18 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
             )
             if not run_bucket:
                 run_bucket = settings["bucket"]
-        preferred = select_preferred_artifact(artifacts)
+        preferred = select_preferred_artifact(page.artifacts)
         return {{
             "ok": True,
             "bucket": run_bucket,
+            "project_id": str(bucket_projects.get(run_bucket) or ""),
             "prefix": effective_prefix,
+            "resolved_prefix": artifact_prefix,
             "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
-            "count": len(artifacts),
-            "artifacts": [item.to_dict() for item in artifacts],
             "preferred": preferred.to_dict() if preferred else None,
+            "access": _agent_access_diagnostics(access_report),
+            **page.to_dict(),
         }}
     except HTTPException:
         raise
@@ -7375,23 +7422,29 @@ def artifacts_run_provenance(run_id: str, prefix: str = ""):
     try:
         s3, settings = _agent_s3_client()
         artifacts = []
+        run_bucket = settings["bucket"]
         if prefix:
             artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3)
         if not artifacts:
-            artifacts = find_run_artifacts(settings["bucket"], base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3)
+            run_bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings),
+                base_prefix=settings.get("prefix", ""),
+                run_id=normalized_run,
+                s3=s3,
+            )
         keys = [str(a.key or "") for a in artifacts]
 
         def _read_json(key: str):
             if not key:
                 return None
             try:
-                body = s3.get_object(Bucket=settings["bucket"], Key=key)["Body"].read()
+                body = s3.get_object(Bucket=run_bucket, Key=key)["Body"].read()
                 return json.loads(body)
             except Exception:
                 return None
 
         prov = build_run_provenance(keys, run_id=normalized_run, read_json=_read_json)
-        return {{"ok": True, "run_id": normalized_run, **prov}}
+        return {{"ok": True, "run_id": normalized_run, "bucket": run_bucket, **prov}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -7441,26 +7494,30 @@ def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket
     try:
         s3, settings = _agent_s3_client()
         if requested_uri:
-            obj_bucket, obj_key = parse_s3_uri(requested_uri)
-            # Restrict caller-supplied URIs to the configured agent bucket(s) only
-            # (never ListBuckets / every credential-readable bucket).
-            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
-            uri = requested_uri
+            obj_bucket, obj_key, _authorized_run = _authorize_agent_artifact_uri(
+                s3=s3,
+                settings=settings,
+                uri=requested_uri,
+                run_id=str(run_id or "").strip(),
+            )
+            uri = f"s3://{{obj_bucket}}/{{obj_key}}"
         else:
             obj_key = _safe_artifact_key(requested_key)
-            obj_bucket = requested_bucket or settings["bucket"]
-            if not requested_bucket and str(run_id or "").strip():
-                try:
-                    rb, _arts = find_run_artifacts_across_buckets(
-                        _agent_s3_buckets(s3, settings),
-                        base_prefix=settings.get("prefix", ""),
-                        run_id=validate_run_id(run_id),
-                        s3=s3,
+            if str(run_id or "").strip():
+                obj_bucket, obj_key, _authorized_run = _resolve_accessible_run_artifact(
+                    s3=s3,
+                    settings=settings,
+                    run_id=run_id,
+                    key=obj_key,
+                    bucket=requested_bucket,
+                )
+            else:
+                obj_bucket = requested_bucket or settings["bucket"]
+                if obj_bucket not in _configured_agent_s3_buckets(settings):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="artifact bucket is not a configured agent bucket",
                     )
-                    if rb:
-                        obj_bucket = rb
-                except Exception:
-                    pass
             uri = f"s3://{{obj_bucket}}/{{obj_key}}"
         local_path = RECORDINGS_DIR / _artifact_filename(obj_key)
         download_s3_uri(uri, local_path, s3=s3)
@@ -7487,29 +7544,22 @@ def sim_viz_load_artifact(payload: dict | None = None):
     try:
         s3, settings = _agent_s3_client()
         if requested_uri:
-            bucket, key = parse_s3_uri(requested_uri)
-            # Configured agent bucket only — blocks arbitrary-bucket exfil.
-            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
-            run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
+            bucket, key, authorized_run = _authorize_agent_artifact_uri(
+                s3=s3,
+                settings=settings,
+                uri=requested_uri,
+                run_id=requested_run,
+            )
+            run_guess = str(authorized_run or _run_id_for_key(key, ""))
             run_id = validate_run_id(run_guess) if run_guess else "artifact"
-            s3_uri = requested_uri
+            s3_uri = f"s3://{{bucket}}/{{key}}"
         else:
-            run_id = validate_run_id(requested_run)
-            key = _safe_artifact_key(requested_key)
-            # Resolve the run's bucket across all accessible buckets so a run in a
-            # non-primary bucket still loads (no copy required).
-            bucket = settings["bucket"]
-            try:
-                rb, _arts = find_run_artifacts_across_buckets(
-                    _agent_s3_buckets(s3, settings),
-                    base_prefix=settings.get("prefix", ""),
-                    run_id=run_id,
-                    s3=s3,
-                )
-                if rb:
-                    bucket = rb
-            except Exception:
-                pass
+            bucket, key, run_id = _resolve_accessible_run_artifact(
+                s3=s3,
+                settings=settings,
+                run_id=requested_run,
+                key=requested_key,
+            )
             s3_uri = f"s3://{{bucket}}/{{key}}"
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
@@ -8555,6 +8605,8 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_BACKEND_SHIP, agent_backend_ship_script)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
+        .replace(_AGENT_ACCESS_EMBED, agent_access_source)
+        .replace(_AGENT_ACCESS_RUNTIME_EMBED, agent_access_runtime_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)
@@ -9711,6 +9763,9 @@ def verify_live_cmd(
         'id="tabMain"',
         'id="tabRerun"',
         'id="stagesPanel"',
+        'id="agentAccessPanel"',
+        'id="agentAccessRefresh"',
+        "/api/access",
         "<h3>Stages</h3>",
         'id="stagesRunSelect"',
         'id="stagesLoadRun"',
@@ -9813,6 +9868,24 @@ def verify_live_cmd(
         _fail(f"session endpoint failed: {exc}")
     if not isinstance(session_payload, dict):
         _fail("session endpoint did not return JSON object")
+
+    try:
+        access_resp = httpx.get(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/access",
+            auth=(auth_user, auth_password),
+            timeout=5.0,
+            verify=tls_verify,
+        )
+        access_resp.raise_for_status()
+        access_payload = access_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"agent access endpoint failed: {exc}")
+    if not isinstance(access_payload, dict) or access_payload.get("apiVersion") != ACCESS_SCHEMA:
+        _fail("agent access endpoint returned an invalid schema")
+    if access_payload.get("status") not in ACCESS_STATES:
+        _fail("agent access endpoint returned an invalid status")
+    if not isinstance(access_payload.get("projects"), list):
+        _fail("agent access endpoint did not return a projects list")
 
     try:
         tools_resp = httpx.get(
