@@ -21,11 +21,12 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import tempfile
 from typing import Any
 
 
-SCHEMA_VERSION = "npa.provisioning.operation.v1"
+SCHEMA_VERSION = "npa.provisioning.operation.v2"
 TERMINAL_PHASES = frozenset({"committed", "rolled-back", "destroyed"})
 RECOVERABLE_PHASES = frozenset(
     {
@@ -174,6 +175,29 @@ def operation_contains_secret(payload: object) -> bool:
         return isinstance(value, str) and _sanitize(value, key=key) != value
 
     return contains(payload)
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _normalize_recovery_argv(
+    command: str, argv: Sequence[str] | None
+) -> tuple[list[str], str]:
+    resolved = (
+        [str(item) for item in argv] if argv is not None else shlex.split(command)
+    )
+    if operation_contains_secret(resolved):
+        raise OperationJournalError("refusing to persist secret-bearing recovery argv")
+    return resolved, shlex.join(resolved)
 
 
 def _ensure_private_root() -> Path:
@@ -327,6 +351,8 @@ class ProvisioningOperation:
         ownership_source: str = "npa-command",
         resume_command: str,
         destroy_command: str = "",
+        resume_argv: Sequence[str] | None = None,
+        destroy_argv: Sequence[str] | None = None,
     ) -> ProvisioningOperation:
         base_operation_id = deterministic_operation_id(
             command=command,
@@ -336,6 +362,12 @@ class ProvisioningOperation:
             requested_name=requested_name,
         )
         now = utc_now()
+        normalized_resume_argv, normalized_resume = _normalize_recovery_argv(
+            resume_command, resume_argv
+        )
+        normalized_destroy_argv, normalized_destroy = _normalize_recovery_argv(
+            destroy_command, destroy_argv
+        )
         generation = 0
         while True:
             operation_id = (
@@ -367,11 +399,32 @@ class ProvisioningOperation:
                             f"journal={saved!r}, request={value!r}"
                         )
                 payload = existing
+                prior_pid = int(payload.get("owner_pid") or 0)
+                if (
+                    str(payload.get("phase") or "") in RECOVERABLE_PHASES
+                    and str(payload.get("lifecycle") or "") == "running"
+                    and prior_pid != os.getpid()
+                    and not _pid_is_alive(prior_pid)
+                ):
+                    payload["lifecycle"] = "interrupted"
+                    payload.setdefault("events", []).append(
+                        {
+                            "phase": str(payload.get("phase") or "prepared"),
+                            "lifecycle": "interrupted",
+                            "error_type": "ProcessExited",
+                            "recorded_at": now,
+                        }
+                    )
                 payload["resume_count"] = int(payload.get("resume_count") or 0) + 1
                 payload["updated_at"] = now
+                payload["owner_pid"] = os.getpid()
+                payload["heartbeat_at"] = now
+                payload["lifecycle"] = "running"
                 payload["recovery_commands"] = {
-                    "resume": resume_command,
-                    "destroy": destroy_command,
+                    "resume": normalized_resume,
+                    "destroy": normalized_destroy,
+                    "resume_argv": normalized_resume_argv,
+                    "destroy_argv": normalized_destroy_argv,
                 }
             else:
                 payload = {
@@ -389,15 +442,21 @@ class ProvisioningOperation:
                     "phase": "prepared",
                     "created_at": now,
                     "updated_at": now,
+                    "owner_pid": os.getpid(),
+                    "heartbeat_at": now,
+                    "lifecycle": "running",
                     "resume_count": 0,
                     "resources": [],
                     "config_mutations": [],
                     "events": [{"phase": "prepared", "recorded_at": now}],
                     "recovery_commands": {
-                        "resume": resume_command,
-                        "destroy": destroy_command,
+                        "resume": normalized_resume,
+                        "destroy": normalized_destroy,
+                        "resume_argv": normalized_resume_argv,
+                        "destroy_argv": normalized_destroy_argv,
                     },
                     "last_error": "",
+                    "last_error_type": "",
                 }
             _write_atomic(operation.path, payload)
         return operation
@@ -405,6 +464,62 @@ class ProvisioningOperation:
     def read(self) -> dict[str, Any]:
         with _locked_operation(self.operation_id):
             return deepcopy(_read_unlocked(self.path))
+
+    def reconcile_liveness(self) -> dict[str, Any]:
+        """Atomically classify a recoverable journal whose owner process exited."""
+
+        with _locked_operation(self.operation_id):
+            payload = _read_unlocked(self.path)
+            if not payload:
+                return {}
+            phase = str(payload.get("phase") or "")
+            lifecycle = str(payload.get("lifecycle") or "")
+            owner_pid = int(payload.get("owner_pid") or 0)
+            if (
+                phase in RECOVERABLE_PHASES
+                and lifecycle == "running"
+                and owner_pid != os.getpid()
+                and not _pid_is_alive(owner_pid)
+            ):
+                now = utc_now()
+                payload["lifecycle"] = "interrupted"
+                payload["last_error_type"] = "ProcessExited"
+                payload["last_error"] = "operation owner process exited before convergence"
+                payload["updated_at"] = now
+                payload.setdefault("events", []).append(
+                    {
+                        "phase": phase,
+                        "lifecycle": "interrupted",
+                        "error_type": "ProcessExited",
+                        "recorded_at": now,
+                    }
+                )
+                _write_atomic(self.path, payload)
+            return deepcopy(payload)
+
+    def set_recovery_commands(
+        self,
+        *,
+        resume_argv: Sequence[str] | None = None,
+        destroy_argv: Sequence[str] | None = None,
+    ) -> None:
+        """Atomically replace structured non-secret recovery commands."""
+
+        with _locked_operation(self.operation_id):
+            payload = _read_unlocked(self.path)
+            commands = payload.get("recovery_commands")
+            commands = dict(commands) if isinstance(commands, dict) else {}
+            if resume_argv is not None:
+                normalized, rendered = _normalize_recovery_argv("", resume_argv)
+                commands["resume_argv"] = normalized
+                commands["resume"] = rendered
+            if destroy_argv is not None:
+                normalized, rendered = _normalize_recovery_argv("", destroy_argv)
+                commands["destroy_argv"] = normalized
+                commands["destroy"] = rendered
+            payload["recovery_commands"] = commands
+            payload["updated_at"] = utc_now()
+            _write_atomic(self.path, payload)
 
     def transition(
         self,
@@ -438,10 +553,74 @@ class ProvisioningOperation:
                 event["error"] = str(_sanitize(error))
                 payload["last_error"] = str(_sanitize(error))
             if details:
-                event["details"] = dict(details)
+                sanitized_details = _sanitize(dict(details))
+                event["details"] = sanitized_details
+                if isinstance(sanitized_details, dict) and sanitized_details.get(
+                    "error_type"
+                ):
+                    payload["last_error_type"] = str(sanitized_details["error_type"])
             payload["phase"] = cleaned
             payload["updated_at"] = now
+            payload["heartbeat_at"] = now
+            payload["owner_pid"] = os.getpid()
+            if cleaned in TERMINAL_PHASES:
+                payload["lifecycle"] = "succeeded"
+            elif cleaned in {"recovery-required", "rollback-incomplete"}:
+                payload["lifecycle"] = "failed"
+            else:
+                payload["lifecycle"] = "running"
             payload.setdefault("events", []).append(event)
+            _write_atomic(self.path, payload)
+
+    def heartbeat(self, *, details: Mapping[str, Any] | None = None) -> None:
+        """Refresh liveness without changing the operation phase."""
+
+        now = utc_now()
+        with _locked_operation(self.operation_id):
+            payload = _read_unlocked(self.path)
+            if not payload:
+                raise OperationJournalError(f"operation {self.operation_id} is missing")
+            if str(payload.get("phase") or "") in TERMINAL_PHASES:
+                return
+            payload["owner_pid"] = os.getpid()
+            payload["heartbeat_at"] = now
+            payload["lifecycle"] = "running"
+            if details:
+                payload.setdefault("events", []).append(
+                    {
+                        "phase": str(payload.get("phase") or "prepared"),
+                        "lifecycle": "heartbeat",
+                        "details": _sanitize(dict(details)),
+                        "recorded_at": now,
+                    }
+                )
+            payload["updated_at"] = now
+            _write_atomic(self.path, payload)
+
+    def interrupt(self, error: BaseException | str = "operation interrupted") -> None:
+        """Atomically retain the current recoverable phase as interrupted."""
+
+        now = utc_now()
+        error_type = type(error).__name__ if isinstance(error, BaseException) else "Interrupted"
+        message = str(error or "operation interrupted")
+        with _locked_operation(self.operation_id):
+            payload = _read_unlocked(self.path)
+            if not payload or str(payload.get("phase") or "") in TERMINAL_PHASES:
+                return
+            payload["lifecycle"] = "interrupted"
+            payload["last_error"] = str(_sanitize(message))
+            payload["last_error_type"] = error_type
+            payload["heartbeat_at"] = now
+            payload["updated_at"] = now
+            payload.setdefault("events", []).append(
+                {
+                    "phase": str(payload.get("phase") or "prepared"),
+                    "lifecycle": "interrupted",
+                    "error_type": error_type,
+                    "error": str(_sanitize(message)),
+                    "recorded_at": now,
+                }
+            )
             _write_atomic(self.path, payload)
 
     def update_identity(
@@ -725,17 +904,28 @@ class ProvisioningOperation:
         return list(dict.fromkeys(paths))
 
     def recovery_summary(self) -> dict[str, Any]:
-        payload = self.read()
+        payload = self.reconcile_liveness()
         commands = payload.get("recovery_commands")
         commands = commands if isinstance(commands, dict) else {}
         return {
             "operation_id": self.operation_id,
+            "project_alias": payload.get("project_alias", ""),
+            "project_id": payload.get("project_id", ""),
+            "tenant_id": payload.get("tenant_id", ""),
+            "region": payload.get("region", ""),
             "phase": payload.get("phase", ""),
+            "lifecycle": payload.get("lifecycle", "unknown"),
+            "heartbeat_at": payload.get("heartbeat_at", ""),
             "journal": str(self.path),
             "local_state": [str(path) for path in self.state_copies()],
             "backend": payload.get("backend", {}),
             "resume_command": commands.get("resume", ""),
             "destroy_command": commands.get("destroy", ""),
+            "resume_argv": list(commands.get("resume_argv") or []),
+            "destroy_argv": list(commands.get("destroy_argv") or []),
+            "last_error_type": payload.get("last_error_type", ""),
+            "last_error": payload.get("last_error", ""),
+            "resources": list(payload.get("resources") or []),
         }
 
     def commit(self) -> None:
@@ -808,7 +998,7 @@ def list_operations(
     for path in sorted(root.glob("*/journal.json")):
         operation = ProvisioningOperation(path.parent.name)
         try:
-            payload = operation.read()
+            payload = operation.reconcile_liveness()
         except OperationJournalError:
             continue
         if project_alias and payload.get("project_alias") != project_alias:
@@ -861,6 +1051,9 @@ def operation_context(
         token = _CURRENT_OPERATION.set(operation)
         try:
             yield operation
+        except (KeyboardInterrupt, SystemExit) as exc:
+            operation.interrupt(exc)
+            raise
         finally:
             _CURRENT_OPERATION.reset(token)
 

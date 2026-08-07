@@ -46,6 +46,10 @@ def _successful_storage_probe(monkeypatch):
         "discover_existing_capacity",
         lambda **_kwargs: ExistingCapacity(),
     )
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_controller_owner",
+        lambda *_args, **_kwargs: None,
+    )
 
 
 def _write_runtime(tmp_path: Path, monkeypatch) -> None:

@@ -18,13 +18,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
+import time
 from typing import Any
 
 import yaml
@@ -774,28 +776,97 @@ def _delete_exact_pdb(
     context: str,
     kubeconfig: str,
     runner: Runner | None,
+    sleeper: Callable[[float], None] = time.sleep,
+    on_status: Callable[[str], None] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     path = (
         f"/apis/policy/v1/namespaces/{blocker.namespace}/"
         f"poddisruptionbudgets/{blocker.name}"
     )
-    cmd = ["kubectl", "--context", context, "delete", "--raw", path, "-f", "-"]
-    payload = json.dumps(
-        {
-            "apiVersion": "v1",
-            "kind": "DeleteOptions",
-            "preconditions": {
-                "uid": blocker.uid,
-                **(
-                    {"resourceVersion": blocker.resource_version}
-                    if blocker.resource_version
-                    else {}
-                ),
-            },
-        }
-    )
-    return _run_kubectl_mutation(
-        cmd, kubeconfig=kubeconfig, input_text=payload, runner=runner
+    current = blocker
+    for _attempt in range(3):
+        get_cmd = ["kubectl", "--context", context, "get", "--raw", path]
+        fetched = _run_kubectl_mutation(
+            get_cmd, kubeconfig=kubeconfig, input_text="", runner=runner
+        )
+        if _absence_result(fetched):
+            return fetched
+        if fetched.returncode != 0:
+            return fetched
+        try:
+            live = json.loads(fetched.stdout or "{}")
+            metadata = _as_dict(live.get("metadata"))
+            live_spec = _as_dict(live.get("spec"))
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            return subprocess.CompletedProcess(
+                get_cmd,
+                2,
+                stdout="",
+                stderr="exact PDB refetch returned invalid JSON; PDB preserved",
+            )
+        live_uid = str(metadata.get("uid") or "")
+        live_version = str(metadata.get("resourceVersion") or "")
+        if live_uid != blocker.uid:
+            return subprocess.CompletedProcess(
+                get_cmd,
+                2,
+                stdout="",
+                stderr="exact PDB UID changed during teardown; replacement preserved",
+            )
+        if (
+            str(metadata.get("namespace") or blocker.namespace) != blocker.namespace
+            or str(metadata.get("name") or blocker.name) != blocker.name
+            or live_spec != dict(blocker.spec or {})
+            or _string_dict(metadata.get("labels")) != dict(blocker.labels)
+            or _string_dict(metadata.get("annotations")) != dict(blocker.annotations)
+        ):
+            return subprocess.CompletedProcess(
+                get_cmd,
+                2,
+                stdout="",
+                stderr="exact PDB changed after preview; allowlist eligibility was not re-established",
+            )
+        current = replace(blocker, resource_version=live_version)
+        cmd = ["kubectl", "--context", context, "delete", "--raw", path, "-f", "-"]
+        payload = json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "DeleteOptions",
+                "preconditions": {
+                    "uid": current.uid,
+                    **(
+                        {"resourceVersion": current.resource_version}
+                        if current.resource_version
+                        else {}
+                    ),
+                },
+            }
+        )
+        result = _run_kubectl_mutation(
+            cmd, kubeconfig=kubeconfig, input_text=payload, runner=runner
+        )
+        detail = _mutation_detail(result).lower()
+        if result.returncode == 0 or _absence_result(result):
+            return result
+        if "conflict" not in detail and "409" not in detail:
+            return result
+        if _attempt == 2:
+            break
+        message = (
+            f"PDB {blocker.namespace}/{blocker.name}: conflict on attempt "
+            f"{_attempt + 1}/3; refetching exact identity/version"
+        )
+        if on_status is not None:
+            on_status(message)
+        else:
+            sys.stderr.write(message + "\n")
+            sys.stderr.flush()
+        sleeper(0.25 * (2**_attempt))
+    return subprocess.CompletedProcess(
+        ["kubectl", "--context", context, "delete", "--raw", path],
+        2,
+        stdout="",
+        stderr="exact PDB changed repeatedly; retry budget exhausted and PDB preserved",
     )
 
 

@@ -141,6 +141,39 @@ def test_cleanup_unreadable_queue_preserves_sky_state_but_continues_unrelated_cl
     assert not tf_cache.exists()
 
 
+def test_cleanup_explicit_skip_is_not_failure_and_preserves_unattested_sky() -> None:
+    sky_venv, tf_cache, sky_home, _empty = _seed_residue()
+
+    result = runner.invoke(app, ["cleanup", "--yes", "--skip-jobs", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = __import__("json").loads(result.output)
+    assert payload["managed_job_queue_state"] == "SKIPPED_BY_OPERATOR"
+    assert payload["result"] == "completed_with_preserved_sky"
+    assert payload["verification_unresolved"] is True
+    assert sky_venv.exists() and sky_home.exists()
+    assert not tf_cache.exists()
+
+
+def test_project_cleanup_preserves_global_runtime_and_provider_cache(
+    monkeypatch,
+) -> None:
+    sky_venv, tf_cache, _sky_home, _empty = _seed_residue()
+    _seed_project_config()
+    monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda _sky_bin: ([], ""))
+
+    result = runner.invoke(
+        app, ["cleanup", "--project", "prod", "--keep-sky", "--yes", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = __import__("json").loads(result.output)
+    assert payload["preserved_shared_runtime"] is True
+    assert sky_venv.is_dir()
+    assert tf_cache.is_dir()
+    assert payload["removed_bytes"] == 0
+
+
 def test_cleanup_json_distinguishes_terminal_only_queue_from_verified_empty(
     monkeypatch,
 ) -> None:

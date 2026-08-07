@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -40,6 +41,10 @@ class CleanupResult:
     receipt_id: str = ""
     verified: bool = False
     no_op: bool = False
+    project_alias: str = ""
+    project_id: str = ""
+    cluster_id: str = ""
+    context: str = ""
 
     @property
     def ok(self) -> bool:
@@ -188,6 +193,14 @@ def cleanup_jobs_controller(
             cleanup.outcome = "unsafe"
             return cleanup
         cleanup.identity_source = receipt_identity.source
+        cleanup.project_alias = str(receipt_identity.get("project_alias") or "")
+        cleanup.project_id = str(receipt_identity.get("project_id") or "")
+        cleanup.cluster_id = str(receipt_identity.get("cluster_id") or "")
+        cleanup.context = str(
+            receipt_identity.get("context")
+            or receipt_identity.get("controller_context")
+            or ""
+        )
         if receipt_identity.receipt_is_terminal:
             cleanup.outcome = "already_absent"
             cleanup.verified = True
@@ -211,6 +224,18 @@ def cleanup_jobs_controller(
             cleanup.outcome = "unsafe"
             return cleanup
         if cluster_receipt_identity.receipt_is_terminal:
+            cleanup.project_alias = str(
+                cluster_receipt_identity.get("project_alias") or cleanup.project_alias
+            )
+            cleanup.project_id = str(
+                cluster_receipt_identity.get("project_id") or cleanup.project_id
+            )
+            cleanup.cluster_id = str(
+                cluster_receipt_identity.get("cluster_id") or cleanup.cluster_id
+            )
+            cleanup.context = str(
+                cluster_receipt_identity.get("context") or cleanup.context
+            )
             cleanup.outcome = "already_absent"
             cleanup.verified = True
             cleanup.no_op = True
@@ -244,6 +269,10 @@ def cleanup_jobs_controller(
         return cleanup
 
     identity_fields = identity.receipt_identity()
+    cleanup.project_alias = str(identity.project_alias or "")
+    cleanup.project_id = str(identity.project_id or "")
+    cleanup.cluster_id = str(identity.cluster_id or "")
+    cleanup.context = str(identity.context or "")
     try:
         record_teardown_event(
             phase="controller",
@@ -1434,16 +1463,44 @@ def _run(
         ]
     env = sky_environment(isolated_config_dir)
     env.update(env_extra or {})
-    return subprocess.run(
-        effective_cmd,
-        env=env,
-        text=True,
-        input=input_text,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
+    from npa.progress import WaitProgress
+
+    operation = " ".join(
+        [Path(effective_cmd[0]).name, *effective_cmd[1:3]]
+    ).replace(" --config", "")
+    progress = WaitProgress(f"SkyPilot subprocess ({operation})")
+    progress.start(f"attempt=1 timeout={timeout}s")
+    stop = threading.Event()
+
+    def report_wait() -> None:
+        while not stop.wait(progress.interval):
+            progress.tick("attempt=1 state=running")
+
+    reporter = threading.Thread(
+        target=report_wait, name="npa-skypilot-progress", daemon=True
     )
+    reporter.start()
+    outcome = "failed"
+    try:
+        result = subprocess.run(
+            effective_cmd,
+            env=env,
+            text=True,
+            input=input_text,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+        outcome = "completed" if result.returncode == 0 else "failed"
+        return result
+    except subprocess.TimeoutExpired:
+        outcome = "timed_out"
+        raise
+    finally:
+        stop.set()
+        reporter.join(timeout=1)
+        progress.finish(outcome, "attempt=1")
 
 
 def sky_environment(isolated_config_dir: Path | None = None) -> dict[str, str]:

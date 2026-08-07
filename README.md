@@ -263,8 +263,13 @@ fi
 `provision-if-absent` now reconciles and write-probes S3 before it considers
 Kubernetes; interrupted configuration resumes from owner-only provenance in
 `~/.npa/credentials.yaml`. It never launches the cluster while required storage
-is missing. Readiness is not reported until SkyPilot, not just Kubernetes, sees
-the requested accelerator. If this operation created the cluster, a later
+is missing. Agent preflight separately probes the exact Terraform state object
+and a conditional sibling under its exact prefix, so a generic writable-bucket
+success cannot hide state-key `403`/list failures. Saved Object Storage HMAC
+credentials—not the Nebius CLI IAM token—are then supplied to every Terraform
+init/plan/apply/state/output/destroy process and never placed in argv or recovery
+receipts. Readiness reports Kubernetes Ready/allocatable capacity, product-label
+readiness, and SkyPilot discovery as separate evidence layers. If this operation created the cluster, a later
 readiness failure rolls back only that new cluster; pre-existing shared storage,
 configuration, credentials, and clusters are preserved. The command above asks for exactly one `cpu-d3` / `8vcpu-32gb` CPU
 node and one `gpu-rtx6000` / `1gpu-24vcpu-218gb` RTX PRO 6000 node. On-demand is
@@ -540,6 +545,14 @@ tombstone containing immutable service-account/access-key IDs, ownership
 evidence, and the storage creation outcome. That provenance survives until the
 exact IAM identity is deleted or verified absent.
 
+For one project-scoped plan, use `npa destroy --project <alias> --all`; it is
+read-only unless `--yes` is supplied. Execution journals the immutable project
+identity and the complete phase plan, continues independent cleanup when one
+phase fails, and blocks dependent phases rather than guessing. It does not
+delete the Nebius project itself (`--delete-project` reports that unsupported
+phase explicitly). The individual commands below remain the exact recovery
+surface for a partial run.
+
 Storage IAM results are explicit: verified absence/deletion exits 0; missing
 trustworthy ownership or a provider/auth verification failure reports
 `Partial cleanup` and exits 2. A project-scoped, non-secret
@@ -609,6 +622,16 @@ the remote-absence checkpoint, and only then converges local SkyPilot metadata.
 Authentication, RBAC, connectivity, stale, mismatched, or ambiguous identity
 preserves local state for an exact retry; an unrelated current context or stale
 SkyPilot profile is never a fallback.
+
+The shared controller also has one global immutable owner. Bind it explicitly
+with `npa skypilot bind-controller --project <alias> --context <context>` (or
+pass `--bind-controller` on the first workflow submission). Cross-project use is
+refused. `--rebind` is allowed only after the managed-job queue is proven
+terminal; changing an alias for the same project/cluster IDs is not a rebind.
+When an agent fails before its final config record is written, `npa agent status
+--project <alias> --name <name> --json` reads the operation journal instead. It
+reports the typed partial state, exact created-resource IDs and current provider
+evidence, plus structured NPA-only resume/destroy commands without credentials.
 
 Reconciliation verifies the immutable ID, expected name, project, tenant, and
 selected CLI profile, then records a non-secret operator/when/reason attestation.

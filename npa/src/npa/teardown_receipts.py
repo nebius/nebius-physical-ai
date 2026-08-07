@@ -510,13 +510,85 @@ def record_teardown_event(
     return path
 
 
-def list_teardown_receipts() -> list[dict[str, Any]]:
+def list_teardown_receipts(
+    *,
+    project_alias: str = "",
+    project_id: str = "",
+    legacy: str = "include",
+) -> list[dict[str, Any]]:
+    """List receipts with explicit project and legacy-identity semantics.
+
+    ``legacy`` is ``include`` (backward-compatible all-receipts view), ``exclude``
+    (safe project-scoped view), or ``only`` (operator audit of unscoped history).
+    """
+
+    if legacy not in {"include", "exclude", "only"}:
+        raise ValueError("legacy receipt selector must be include, exclude, or only")
     root = receipt_root()
     if not root.is_dir():
         return []
     receipts: list[dict[str, Any]] = []
     for path in sorted(root.glob("*.json")):
-        payload = _read(path)
+        try:
+            payload = _read(path)
+        except TeardownReceiptError:
+            if project_alias or project_id or legacy == "exclude":
+                continue
+            receipts.append(
+                {
+                    "schema_version": "unreadable",
+                    "receipt_id": path.stem,
+                    "path": str(path),
+                    "project_alias": "",
+                    "project_id": "",
+                    "operational_status": "unresolved",
+                    "audit_only": True,
+                    "unresolved_actions": ["inspect unreadable receipt"],
+                    "updated_at": "",
+                }
+            )
+            continue
+        receipt_alias = str(payload.get("project_alias") or "")
+        receipt_project_id = str(payload.get("project_id") or "")
+        identity = payload.get("identity")
+
+        def collect(mapping: object, key: str) -> set[str]:
+            found: set[str] = set()
+            if isinstance(mapping, Mapping):
+                for item_key, value in mapping.items():
+                    if str(item_key) == key and isinstance(value, str) and value:
+                        found.add(value)
+                    elif isinstance(value, (Mapping, list)):
+                        found.update(collect(value, key))
+            elif isinstance(mapping, list):
+                for value in mapping:
+                    found.update(collect(value, key))
+            return found
+
+        subject_project_ids = collect(identity, "project_id") | ({receipt_project_id} if receipt_project_id else set())
+        subject_aliases = collect(identity, "project_alias") | ({receipt_alias} if receipt_alias else set())
+        is_legacy = not subject_aliases and not subject_project_ids
+        if legacy == "only" and not is_legacy:
+            continue
+        if legacy == "exclude" and is_legacy:
+            continue
+        if project_id and project_id not in subject_project_ids:
+            continue
+        if project_alias and not project_id and project_alias not in subject_aliases:
+            continue
+        unresolved = [
+            f"{event.get('phase', 'unknown')}:{event.get('resource', 'unknown')}"
+            for event in payload.get("events") or []
+            if isinstance(event, dict)
+            and str(event.get("terminal_state") or "") not in TERMINAL_STATES
+        ]
+        payload["subject"] = {
+            "project_ids": sorted(subject_project_ids),
+            "project_aliases": sorted(subject_aliases),
+        }
+        payload["audit_only"] = True
+        payload["operational_status"] = "unresolved" if unresolved else "terminal"
+        payload["unresolved_actions"] = unresolved
         payload["path"] = str(path)
         receipts.append(payload)
     return sorted(

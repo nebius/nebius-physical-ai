@@ -76,6 +76,17 @@ def _successful_storage_probe(monkeypatch):
         ),
     )
     monkeypatch.setattr(
+        storage_validation,
+        "probe_terraform_backend",
+        lambda **_kwargs: StorageProbeResult(
+            True,
+            "new_state_prefix_valid",
+            "Exact Terraform backend prefix verified.",
+            cleanup_attempted=True,
+            cleanup_succeeded=True,
+        ),
+    )
+    monkeypatch.setattr(
         "npa.cli.agent.resolve_project_storage",
         lambda *_args, **_kwargs: SimpleNamespace(
             checkpoint_bucket="s3://configured-bucket/artifacts",

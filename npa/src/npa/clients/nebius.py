@@ -181,15 +181,17 @@ def _run_json(args: list[str], *, check: bool = True) -> dict[str, Any]:
     raw = _run(args + ["--format", "json"], check=check)
     if not raw:
         return {}
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+    from npa.clients.json_output import parse_single_json_document
+
+    parsed = parse_single_json_document(raw)
+    if not isinstance(parsed, dict):
         # JSONDecodeError retains the complete source document on ``exc.doc``.
         # Never let malformed secret-bearing responses (for example get-secret)
         # escape through an exception, traceback, logger, or serialized error.
         raise NebiusError(
             f"nebius {' '.join(args[:3])} returned invalid JSON"
         ) from None
+    return parsed
 
 
 _SENSITIVE_FIELD_NAMES = frozenset(
@@ -832,14 +834,15 @@ def _normalize_bucket_name(value: str) -> str:
     return cleaned.split("/", 1)[0]
 
 
-def _saved_service_account_id() -> str:
+def _saved_service_account_id(project_id: str = "") -> str:
     import os
 
     from npa.clients.credentials import CREDENTIALS_PATH
 
     env_value = os.environ.get("NPA_SERVICE_ACCOUNT_ID", "").strip()
     if env_value:
-        return env_value
+        env_project = os.environ.get("NPA_SERVICE_ACCOUNT_PROJECT_ID", "").strip()
+        return env_value if not project_id or env_project == project_id else ""
     if not CREDENTIALS_PATH.exists():
         return ""
     try:
@@ -853,6 +856,11 @@ def _saved_service_account_id() -> str:
         return ""
     nebius = loaded.get("nebius", {})
     if isinstance(nebius, dict):
+        saved_project = str(
+            nebius.get("service_account_project_id", "") or ""
+        ).strip()
+        if project_id and saved_project != project_id:
+            return ""
         return str(nebius.get("service_account_id", "") or "").strip()
     return ""
 
@@ -1764,10 +1772,10 @@ def resolve_service_account_id(
 ) -> str:
     """Resolve a service-account id from config or best-effort IAM lookups."""
 
-    saved = _saved_service_account_id()
+    project = str(project_id or "").strip()
+    saved = _saved_service_account_id(project)
     if saved:
         return saved
-    project = str(project_id or "").strip()
     if not project:
         return ""
     for name in names:

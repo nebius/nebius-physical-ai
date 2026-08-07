@@ -8,9 +8,11 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -22,6 +24,12 @@ from typing import Any, Iterator
 # PermissionDenied / Unauthenticated even though the CLI works. Strip these keys
 # from the Terraform subprocess env so the fresh `-var iam_token` is always used.
 _IAM_TOKEN_ENV_KEYS = ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN")
+_AWS_BACKEND_ENV_KEYS = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN",
+)
 
 
 class ProvisionerError(Exception):
@@ -58,6 +66,86 @@ class StatePushError(TerraformBackendError):
 
 class StatePullError(TerraformBackendError):
     pass
+
+
+@dataclass(frozen=True, repr=False)
+class TerraformBackendContext:
+    """Secret-bearing credentials bound to one initialized Terraform directory."""
+
+    access_key: str = ""
+    secret_key: str = ""
+    session_token: str = ""
+    endpoint: str = ""
+    region: str = ""
+    addressing_style: str = "path"
+
+    @classmethod
+    def from_mapping(cls, values: dict[str, str]) -> TerraformBackendContext:
+        return cls(
+            access_key=str(values.get("access_key", "") or ""),
+            secret_key=str(values.get("secret_key", "") or ""),
+            session_token=str(values.get("session_token", "") or ""),
+            endpoint=str(values.get("endpoint", "") or ""),
+            region=str(values.get("region", "") or ""),
+            addressing_style=str(values.get("addressing_style", "path") or "path"),
+        )
+
+    def environment(self) -> dict[str, str]:
+        result: dict[str, str] = {}
+        if self.access_key:
+            result["AWS_ACCESS_KEY_ID"] = self.access_key
+        if self.secret_key:
+            result["AWS_SECRET_ACCESS_KEY"] = self.secret_key
+        if self.session_token:
+            result["AWS_SESSION_TOKEN"] = self.session_token
+        return result
+
+    def safe_identity(self) -> dict[str, str]:
+        """Return only non-secret fields suitable for receipts and diagnostics."""
+
+        return {
+            "endpoint": self.endpoint,
+            "region": self.region,
+            "addressing_style": self.addressing_style,
+            "credential_source": "project_saved" if self.access_key else "none",
+        }
+
+
+_BACKEND_CONTEXTS: dict[Path, TerraformBackendContext] = {}
+
+
+def _context_key(tf_dir: str | Path) -> Path:
+    return Path(tf_dir).expanduser().resolve()
+
+
+def _set_backend_context(tf_dir: str | Path, context: TerraformBackendContext | None) -> None:
+    key = _context_key(tf_dir)
+    if context is None:
+        _BACKEND_CONTEXTS.pop(key, None)
+    else:
+        _BACKEND_CONTEXTS[key] = context
+
+
+def _backend_context(tf_dir: str | Path) -> TerraformBackendContext | None:
+    return _BACKEND_CONTEXTS.get(_context_key(tf_dir))
+
+
+def _uses_remote_s3_backend(tf_dir: str | Path) -> bool:
+    backend_file = Path(tf_dir) / "backend.tf"
+    try:
+        return 'backend "s3"' in backend_file.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def _redact_backend_secrets(message: str, context: TerraformBackendContext | None) -> str:
+    cleaned = str(message or "")
+    if context is None:
+        return cleaned
+    for value in (context.access_key, context.secret_key, context.session_token):
+        if value:
+            cleaned = cleaned.replace(value, "<redacted>")
+    return cleaned
 
 
 _BUNDLED_TF_DIR = Path(__file__).parent / "terraform"
@@ -157,14 +245,28 @@ def _run(
     cmd = [tf] + args
     environment = _tf_env(cwd)
     environment.update(env_overrides or {})
+    backend_context = _backend_context(cwd)
+    if args and args[0] != "init" and _uses_remote_s3_backend(cwd) and backend_context is None:
+        raise BackendAuthenticationError(
+            "Terraform S3 backend credentials unavailable for this initialized work directory; "
+            "run the project-scoped NPA init/reconfigure path before state access."
+        )
+    if backend_context is not None:
+        # Explicit project-scoped credentials win over unrelated shell/tmux/CI
+        # AWS variables and over any accidental call-site override.
+        for key in _AWS_BACKEND_ENV_KEYS:
+            environment.pop(key, None)
+        environment.update(backend_context.environment())
     kwargs: dict[str, Any] = {
         "cwd": str(cwd),
         "text": True,
         "env": environment,
     }
 
-    if stream and args and args[0] == "destroy":
-        return _run_destroy_stream(cmd, cwd=Path(cwd), env=kwargs["env"])
+    if stream and args and args[0] in {"apply", "destroy"}:
+        return _run_destroy_stream(
+            cmd, cwd=Path(cwd), env=kwargs["env"], backend_context=backend_context
+        )
 
     if capture:
         kwargs["capture_output"] = True
@@ -175,6 +277,10 @@ def _run(
         kwargs["capture_output"] = True
 
     result = subprocess.run(cmd, **kwargs)
+    if result.stdout and capture:
+        result.stdout = _redact_backend_secrets(result.stdout, backend_context)
+    if result.stderr:
+        result.stderr = _redact_backend_secrets(result.stderr, backend_context)
     if stream and result.stderr:
         sys.stderr.write(result.stderr)
         sys.stderr.flush()
@@ -206,7 +312,11 @@ def _filter_destroy_output_line(line: str) -> str:
 
 
 def _run_destroy_stream(
-    cmd: list[str], *, cwd: Path, env: dict[str, str]
+    cmd: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    backend_context: TerraformBackendContext | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Stream Terraform destroy while filtering only deprecated output aliases."""
 
@@ -225,8 +335,9 @@ def _run_destroy_stream(
     def _pump_stdout() -> None:
         assert process.stdout is not None
         for line in process.stdout:
-            stdout_lines.append(line)
-            visible = _filter_destroy_output_line(line)
+            safe_line = _redact_backend_secrets(line, backend_context)
+            stdout_lines.append(safe_line)
+            visible = _filter_destroy_output_line(safe_line)
             if visible:
                 sys.stdout.write(visible)
                 sys.stdout.flush()
@@ -234,8 +345,9 @@ def _run_destroy_stream(
     def _pump_stderr() -> None:
         assert process.stderr is not None
         for line in process.stderr:
-            stderr_lines.append(line)
-            sys.stderr.write(line)
+            safe_line = _redact_backend_secrets(line, backend_context)
+            stderr_lines.append(safe_line)
+            sys.stderr.write(safe_line)
             sys.stderr.flush()
 
     threads = [
@@ -492,64 +604,101 @@ def init(
     backend_env: dict[str, str] = {}
     if disable_backend:
         args.append("-backend=false")
-    elif backend_config or force_reconfigure:
+        _set_backend_context(tf_dir, None)
+    elif backend_config is not None:
         args.append("-reconfigure")
-        resolved_backend = backend_config or {}
-        access_key = str(resolved_backend.get("access_key", "") or "")
-        secret_key = str(resolved_backend.get("secret_key", "") or "")
-        if access_key:
-            backend_env["AWS_ACCESS_KEY_ID"] = access_key
-        if secret_key:
-            backend_env["AWS_SECRET_ACCESS_KEY"] = secret_key
-    delay = backoff_seconds
-    for attempt in range(1, max(1, retries) + 1):
-        try:
-            if backend_config:
-                _run(args, cwd=tf_dir, capture=True, env_overrides=backend_env)
-            else:
-                _run(args, cwd=tf_dir, capture=True)
-            lock_after = lock_file.read_bytes()
-            if lock_after != lock_before:
-                raise ProvisionerError(
-                    f"Terraform changed {lock_file} despite -lockfile=readonly. NPA "
-                    "stopped before apply; restore and review the tracked lock."
-                )
-            return
-        except ProvisionerError as exc:
-            try:
-                lock_after = lock_file.read_bytes()
-            except OSError:
-                lock_after = b""
-            if lock_after != lock_before:
-                raise ProvisionerError(
-                    f"Terraform changed {lock_file} despite -lockfile=readonly. NPA "
-                    "stopped before apply; restore and review the tracked lock."
-                ) from exc
-            lowered = str(exc).lower()
-            if any(
-                marker in lowered
-                for marker in (
-                    "doesn't match any of the checksums",
-                    "does not match any of the checksums",
-                    "checksum mismatch",
-                )
-            ):
-                raise ProvisionerError(
-                    "Terraform provider checksum verification failed. NPA kept "
-                    f"{lock_file} immutable and will not bypass verification. Verify "
-                    "the registry/mirror, then regenerate all supported platform hashes "
-                    f"with `terraform -chdir={tf_dir} providers lock -platform=...` "
-                    "in a clean reviewed checkout and inspect the exact diff."
-                ) from exc
-            if attempt >= retries or not _looks_transient_init_failure(str(exc)):
-                raise _classify_backend_error(str(exc), action="init/reconfigure") from exc
-            sys.stderr.write(
-                f"  terraform init attempt {attempt}/{retries} hit a transient "
-                f"registry/network error; retrying in {delay:.0f}s...\n"
+        backend_context = TerraformBackendContext.from_mapping(backend_config)
+        if _uses_remote_s3_backend(tf_dir) and (
+            not backend_context.access_key or not backend_context.secret_key
+        ):
+            _set_backend_context(tf_dir, None)
+            raise BackendAuthenticationError(
+                "Terraform S3 backend credentials unavailable; restore the exact "
+                "project-saved Object Storage HMAC credentials before init/apply/destroy."
             )
-            sys.stderr.flush()
-            sleep(delay)
-            delay *= 2
+        _set_backend_context(tf_dir, backend_context)
+        backend_env.update(backend_context.environment())
+    elif force_reconfigure:
+        args.append("-reconfigure")
+        _set_backend_context(tf_dir, None)
+    else:
+        # A local init must not inherit a remote backend context if a long-lived
+        # NPA process later reuses the same work directory.
+        _set_backend_context(tf_dir, None)
+    delay = backoff_seconds
+    attempts = max(1, retries)
+    attempt = 1
+    checksum_retry_used = False
+    isolated_cache: tempfile.TemporaryDirectory[str] | None = None
+    try:
+        while attempt <= attempts:
+            try:
+                retry_env = dict(backend_env)
+                if isolated_cache is not None:
+                    retry_env["TF_PLUGIN_CACHE_DIR"] = isolated_cache.name
+                if retry_env:
+                    _run(args, cwd=tf_dir, capture=True, env_overrides=retry_env)
+                else:
+                    _run(args, cwd=tf_dir, capture=True)
+                lock_after = lock_file.read_bytes()
+                if lock_after != lock_before:
+                    raise ProvisionerError(
+                        f"Terraform changed {lock_file} despite -lockfile=readonly. NPA "
+                        "stopped before apply; restore and review the tracked lock."
+                    )
+                return
+            except ProvisionerError as exc:
+                try:
+                    lock_after = lock_file.read_bytes()
+                except OSError:
+                    lock_after = b""
+                if lock_after != lock_before:
+                    raise ProvisionerError(
+                        f"Terraform changed {lock_file} despite -lockfile=readonly. NPA "
+                        "stopped before apply; restore and review the tracked lock."
+                    ) from exc
+                lowered = str(exc).lower()
+                checksum_failure = any(
+                    marker in lowered
+                    for marker in (
+                        "doesn't match any of the checksums",
+                        "does not match any of the checksums",
+                        "checksum mismatch",
+                    )
+                )
+                if checksum_failure and not checksum_retry_used:
+                    checksum_retry_used = True
+                    isolated_cache = tempfile.TemporaryDirectory(prefix="npa-tf-plugin-cache-")
+                    Path(isolated_cache.name).chmod(0o700)
+                    attempts += 1
+                    attempt += 1
+                    sys.stderr.write(
+                        "  terraform init found an invalid cached provider; retrying once "
+                        "with an isolated empty cache while keeping the lock file read-only...\n"
+                    )
+                    sys.stderr.flush()
+                    continue
+                if checksum_failure:
+                    raise ProvisionerError(
+                        "Terraform provider checksum verification failed. NPA kept "
+                        f"{lock_file} immutable and will not bypass verification. Verify "
+                        "the registry/mirror, then regenerate all supported platform hashes "
+                        f"with `terraform -chdir={tf_dir} providers lock -platform=...` "
+                        "in a clean reviewed checkout and inspect the exact diff."
+                    ) from exc
+                if attempt >= attempts or not _looks_transient_init_failure(str(exc)):
+                    raise _classify_backend_error(str(exc), action="init/reconfigure") from exc
+                sys.stderr.write(
+                    f"  terraform init attempt {attempt}/{attempts} hit a transient "
+                    f"registry/network error; retrying in {delay:.0f}s...\n"
+                )
+                sys.stderr.flush()
+                sleep(delay)
+                delay *= 2
+                attempt += 1
+    finally:
+        if isolated_cache is not None:
+            isolated_cache.cleanup()
 
 
 def plan(

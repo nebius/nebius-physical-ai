@@ -30,6 +30,24 @@ request in the workflow YAML when that is acceptable for the workload.
 
 Category for follow-up: platform.
 
+## Writable S3 But Terraform State Returns 403
+
+Symptom: an ordinary object-storage health check passes, while Terraform fails
+to read or list its remote state prefix.
+
+Root cause: Nebius API/IAM authentication and Object Storage HMAC credentials
+are separate. A root-level write probe also does not prove access to Terraform's
+exact state object and prefix.
+
+Mitigation: use the project-scoped agent preflight/deploy path. NPA HEADs/GETs
+the exact state object, validates an isolated conditional sibling in the same
+prefix, and carries the resolved HMAC environment through init, plan, apply,
+state, output, rollback, and destroy. It fails before resource creation when the
+contract is missing or forbidden. Do not broaden IAM merely to compensate for a
+dropped subprocess environment.
+
+Category for follow-up: platform.
+
 ## Registry Pull Secret Expires Silently
 
 Symptom: the task pod fails to pull the Workbench image with a registry

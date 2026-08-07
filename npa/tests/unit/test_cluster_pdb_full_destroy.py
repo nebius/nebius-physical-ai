@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
@@ -38,6 +39,25 @@ def _inventory(*blockers: DisruptionBlocker) -> DrainInventory:
     )
 
 
+def _live_pdb_get(cmd: list[str]) -> subprocess.CompletedProcess[str] | None:
+    if "get" not in cmd:
+        return None
+    name = cmd[-1].rstrip("/").rsplit("/", 1)[-1]
+    blocker = _blocker(name)
+    payload = {
+        "metadata": {
+            "name": blocker.name,
+            "namespace": blocker.namespace,
+            "uid": blocker.uid,
+            "resourceVersion": blocker.resource_version,
+            "labels": dict(blocker.labels),
+            "annotations": dict(blocker.annotations),
+        },
+        "spec": blocker.spec,
+    }
+    return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+
+
 @pytest.mark.parametrize(
     "name", ["cilium-operator", "coredns", "coredns-autoscaler", "metrics-server"]
 )
@@ -46,6 +66,9 @@ def test_full_destroy_relaxes_each_exact_system_blocker(name: str) -> None:
 
     def runner(cmd, **kwargs):  # noqa: ANN001
         calls.append(cmd)
+        fetched = _live_pdb_get(cmd)
+        if fetched is not None:
+            return fetched
         if "create" in cmd:
             return subprocess.CompletedProcess(
                 cmd, 1, stdout="", stderr="Cannot evict pod: disruption budget"
@@ -72,6 +95,9 @@ def test_mixed_user_and_system_blockers_never_mutate_user_workloads() -> None:
 
     def runner(cmd, **kwargs):  # noqa: ANN001
         calls.append(cmd)
+        fetched = _live_pdb_get(cmd)
+        if fetched is not None:
+            return fetched
         return subprocess.CompletedProcess(
             cmd,
             1 if "create" in cmd else 0,
@@ -170,6 +196,9 @@ def test_failed_destroy_restores_the_exact_snapshot() -> None:
 
     def runner(cmd, **kwargs):  # noqa: ANN001
         calls.append((cmd, str(kwargs.get("input") or "")))
+        fetched = _live_pdb_get(cmd)
+        if fetched is not None:
+            return fetched
         if "create" in cmd:
             return subprocess.CompletedProcess(
                 cmd, 1, stdout="", stderr="disruption budget"
@@ -197,6 +226,9 @@ def test_failed_destroy_restores_the_exact_snapshot() -> None:
 
 def test_restore_failure_is_reported_with_original_cause() -> None:
     def runner(cmd, **kwargs):  # noqa: ANN001
+        fetched = _live_pdb_get(cmd)
+        if fetched is not None:
+            return fetched
         if "create" in cmd:
             return subprocess.CompletedProcess(
                 cmd, 1, stdout="", stderr="disruption budget"

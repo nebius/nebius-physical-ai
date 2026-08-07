@@ -30,6 +30,8 @@ def _ensure_terraform_state_bucket(
     access_key: str = "",
     secret_key: str = "",
     region: str = "",
+    project_alias: str = "",
+    agent_name: str = "default",
 ) -> None:
     """Verify the configured backend immediately before Terraform mutation."""
 
@@ -51,10 +53,16 @@ def _ensure_terraform_state_bucket(
             "NPA preserved configuration and will not silently recreate or adopt it."
         )
     if all((endpoint, access_key, secret_key)):
-        from npa.clients.storage_validation import probe_storage_write
+        from npa.clients.storage_validation import (
+            probe_terraform_backend,
+            terraform_backend_fingerprint,
+            terraform_state_key,
+        )
 
-        probe = probe_storage_write(
+        backend_key = terraform_state_key(project_alias or project, agent_name)
+        probe = probe_terraform_backend(
             bucket=bucket,
+            state_key=backend_key,
             endpoint_url=endpoint,
             access_key_id=access_key,
             secret_access_key=secret_key,
@@ -64,6 +72,26 @@ def _ensure_terraform_state_bucket(
             raise NebiusError(
                 "Terraform backend write/read/delete probe failed immediately before "
                 f"apply: {probe.summary}"
+            )
+        operation = current_operation()
+        if operation is not None:
+            operation.update_identity(
+                backend={
+                    "bucket": bucket,
+                    "endpoint": endpoint,
+                    "region": region,
+                    "state_key": backend_key,
+                    "addressing_style": "path",
+                    "credential_source": "project_resolver",
+                    "config_fingerprint": terraform_backend_fingerprint(
+                        bucket=bucket,
+                        state_key=backend_key,
+                        endpoint_url=endpoint,
+                        access_key_id=access_key,
+                        secret_access_key=secret_key,
+                        region=region,
+                    ),
+                }
             )
 
 
@@ -90,6 +118,7 @@ def _persist_agent_project_config(
             secret_fields=[
                 f"projects.{project}.terraform_state.access_key",
                 f"projects.{project}.terraform_state.secret_key",
+                f"projects.{project}.terraform_state.session_token",
             ],
         )
     agent_module.write_config(
@@ -104,6 +133,9 @@ def _persist_agent_project_config(
                         "endpoint": merged_vars.get("s3_endpoint", ""),
                         "access_key": merged_vars.get("nebius_api_key", ""),
                         "secret_key": merged_vars.get("nebius_secret_key", ""),
+                        "session_token": merged_vars.get("s3_session_token", ""),
+                        "region": region,
+                        "addressing_style": "path",
                     },
                 }
             }
@@ -143,6 +175,10 @@ def _apply_agent_terraform(
         backend_config={
             "access_key": merged_vars.get("nebius_api_key", ""),
             "secret_key": merged_vars.get("nebius_secret_key", ""),
+            "session_token": merged_vars.get("s3_session_token", ""),
+            "region": env_region,
+            "endpoint": merged_vars.get("s3_endpoint", ""),
+            "addressing_style": "path",
         },
     )
     tf_vars = {
@@ -357,6 +393,11 @@ def _resolve_destroy_tf_vars(
         "nebius_secret_key": str(
             (backend_override or {}).get("secret_key")
             or getattr(state, "secret_key", "")
+            or ""
+        ),
+        "s3_session_token": str(
+            (backend_override or {}).get("session_token")
+            or getattr(state, "session_token", "")
             or ""
         ),
         "s3_bucket": str(
@@ -587,6 +628,9 @@ def _destroy_agent_terraform(
     backend_secret = str(
         backend.get("secret_key") or getattr(state, "secret_key", "") or ""
     )
+    backend_session = str(
+        backend.get("session_token") or getattr(state, "session_token", "") or ""
+    )
     have_remote_backend = bool(backend_bucket and backend_access and backend_secret)
     if not have_local_state and not have_remote_backend:
         if operation is None:
@@ -612,7 +656,14 @@ def _destroy_agent_terraform(
     if have_remote_backend:
         provisioner.init(
             tf_dir=tf_dir,
-            backend_config={"access_key": backend_access, "secret_key": backend_secret},
+            backend_config={
+                "access_key": backend_access,
+                "secret_key": backend_secret,
+                "session_token": backend_session,
+                "endpoint": backend_endpoint,
+                "region": region,
+                "addressing_style": "path",
+            },
         )
         if copies and not provisioner.state_list(tf_dir):
             provisioner.state_push(copies[0], tf_dir)

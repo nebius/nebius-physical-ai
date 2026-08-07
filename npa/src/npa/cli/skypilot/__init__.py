@@ -12,7 +12,9 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -221,6 +223,12 @@ def status_cmd(
         help=f"SkyPilot venv path. Defaults to {VENV_PATH_ENV} or ~/.npa/skypilot-venv.",
     ),
     bin_path: bool = typer.Option(False, "--bin-path", help="Print only the resolved sky binary path."),
+    project: str = typer.Option(
+        "", "--project", help="Project alias for immutable controller verification."
+    ),
+    context: str = typer.Option(
+        "", "--context", help="Kubernetes context for immutable controller verification."
+    ),
 ) -> None:
     """Report the isolated SkyPilot runtime status."""
 
@@ -249,7 +257,37 @@ def status_cmd(
         _fail(kubernetes_client_remedy(state.kubernetes_version))
         return
 
-    result = _run_no_raise([str(state.sky_bin), "check"])
+    try:
+        from npa.controller_ownership import (
+            ControllerOwner,
+            verify_controller_owner,
+            verify_recorded_controller_owner,
+        )
+
+        owner: ControllerOwner | None
+        if project or context:
+            if not project or not context:
+                raise ValueError(
+                    "Controller verification requires both --project and --context."
+                )
+            owner = verify_controller_owner(project, context)
+        else:
+            owner = verify_recorded_controller_owner()
+    except (OSError, RuntimeError, ValueError) as exc:
+        _fail(str(exc))
+        return
+    typer.echo(
+        "controller_owner: "
+        + (
+            f"{owner.project_alias}/{owner.context}/{owner.cluster_id}"
+            if owner is not None
+            else "unbound"
+        )
+    )
+
+    result = _run_observable(
+        [str(state.sky_bin), "check"], label="SkyPilot status check"
+    )
     summary = _summarize_completed_process(result)
     typer.echo(f"sky_check: {summary}")
 
@@ -314,8 +352,9 @@ def cleanup_controller_cmd(
 
     from npa.orchestration.skypilot.cleanup import cleanup_jobs_controller
 
+    payload: dict[str, Any]
     try:
-        cleanup_kwargs: dict[str, object] = {
+        cleanup_kwargs: dict[str, Any] = {
             "project": project,
             "context": context,
             "sky_bin": sky_bin or None,
@@ -350,7 +389,29 @@ def cleanup_controller_cmd(
             "receipt_id": getattr(result, "receipt_id", ""),
             "verified": getattr(result, "verified", result.ok),
             "no_op": getattr(result, "no_op", not result.resources_removed),
+            "project_alias": getattr(result, "project_alias", project),
+            "project_id": getattr(result, "project_id", project_id),
+            "cluster_id": getattr(result, "cluster_id", cluster_id),
+            "context": getattr(result, "context", context),
         }
+    if payload["outcome"] in {"cleaned", "already_absent"} and (
+        payload.get("project_alias") or payload.get("project_id")
+    ):
+        try:
+            from npa.controller_ownership import clear_controller_owner
+
+            clear_controller_owner(
+                str(payload.get("project_alias") or ""),
+                project_id=str(payload.get("project_id") or ""),
+                cluster_id=str(payload.get("cluster_id") or ""),
+                context=str(payload.get("context") or ""),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            payload["outcome"] = "verification_failed"
+            payload["errors"].append(
+                "controller cleanup succeeded but the exact local ownership record "
+                f"could not be cleared: {exc}"
+            )
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -368,6 +429,61 @@ def cleanup_controller_cmd(
             typer.echo(f"Controller cleanup warning: {error}", err=True)
     if payload["outcome"] == "verification_failed":
         raise typer.Exit(code=2)
+
+
+@app.command("bind-controller")
+def bind_controller_cmd(
+    project: str = typer.Option("", "--project", help="Exact NPA project alias."),
+    context: str = typer.Option(..., "--context", help="Exact NPA Kubernetes context."),
+    rebind: bool = typer.Option(
+        False,
+        "--rebind",
+        help="Replace a different owner only after the managed-job queue is terminal.",
+    ),
+    sky_bin: str = typer.Option("", "--sky-bin", help="Pinned SkyPilot executable."),
+    output_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Bind the shared jobs controller to one immutable project/cluster identity."""
+
+    from npa.controller_ownership import (
+        ClusterOwnerIdentityMismatchError,
+        bind_controller_owner,
+        resolve_controller_candidate,
+    )
+
+    try:
+        candidate = resolve_controller_candidate(project, context)
+        if rebind:
+            from npa.orchestration.skypilot.cleanup import (
+                NONTERMINAL_JOB_STATUSES,
+                _all_jobs,
+                _job_statuses,
+            )
+
+            snapshot = _all_jobs(
+                isolated_config_dir=None,
+                config_path=None,
+                sky_bin=sky_bin or None,
+            )
+            active = sorted(
+                job_id
+                for job_id, status in _job_statuses(snapshot.jobs).items()
+                if status in NONTERMINAL_JOB_STATUSES
+            )
+            if active:
+                raise ClusterOwnerIdentityMismatchError(
+                    "Controller rebind refused while managed jobs are non-terminal: "
+                    + ", ".join(active)
+                )
+        owner = bind_controller_owner(candidate, allow_rebind=rebind)
+    except (OSError, RuntimeError, ValueError) as exc:
+        _fail(str(exc))
+        return
+    payload = owner.to_dict()
+    if output_json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"controller_owner: {owner.project_alias}/{owner.context}/{owner.cluster_id}")
 
 
 @app.command("verify")
@@ -418,7 +534,12 @@ def verify_cmd(
         return
 
     check_env = _verify_kube_env(kubeconfig=kubeconfig, cluster=cluster)
-    result = _run_no_raise([str(state.sky_bin), "check"], env=check_env)
+    result = _run_observable(
+        [str(state.sky_bin), "check"],
+        label="SkyPilot verification",
+        env=check_env,
+        emit_progress=output_format != "json",
+    )
     backend = controller_backend.strip().lower()
     if backend not in {"kubernetes", "nebius"}:
         _fail("--controller-backend must be kubernetes or nebius")
@@ -700,7 +821,10 @@ def _ensure_pip(state: VenvState) -> None:
 
 
 def _install_package(state: VenvState, package_spec: str) -> None:
-    result = _run_no_raise([str(state.python_bin), "-m", "pip", "install", package_spec])
+    result = _run_observable(
+        [str(state.python_bin), "-m", "pip", "install", package_spec],
+        label="SkyPilot bootstrap package install",
+    )
     if result.returncode == 0:
         # SkyPilot 0.12.2 declares click<8.2, but pip can still resolve a newer
         # Click that breaks `sky launch --docker` flag parsing (backend_name=False).
@@ -849,6 +973,49 @@ def _run_no_raise(
         return subprocess.CompletedProcess(cmd, 127, stdout="", stderr=str(exc))
     except OSError as exc:
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=str(exc))
+
+
+def _run_observable(
+    cmd: list[str],
+    *,
+    label: str,
+    env: dict[str, str] | None = None,
+    emit_progress: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Run a potentially long subprocess with sanitized periodic stderr progress."""
+
+    from npa.progress import WaitProgress
+
+    progress = WaitProgress(
+        label,
+        emit=(
+            (lambda message: typer.echo(message, err=True))
+            if emit_progress
+            else (lambda _message: None)
+        ),
+    )
+    progress.start("attempt=1 state=starting")
+    stop = threading.Event()
+
+    def report_wait() -> None:
+        while not stop.wait(progress.interval):
+            progress.tick("attempt=1 state=running")
+
+    reporter = threading.Thread(
+        target=report_wait, name="npa-skypilot-cli-progress", daemon=True
+    )
+    reporter.start()
+    result: subprocess.CompletedProcess[str] | None = None
+    try:
+        result = _run_no_raise(cmd, env=env)
+        return result
+    finally:
+        stop.set()
+        reporter.join(timeout=1)
+        progress.finish(
+            "completed" if result is not None and result.returncode == 0 else "failed",
+            "attempt=1",
+        )
 
 
 def _summarize_completed_process(result: subprocess.CompletedProcess[str]) -> str:

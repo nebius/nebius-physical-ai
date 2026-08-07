@@ -181,7 +181,9 @@ def _agent_token_factory_result(tf_key: str | None = None) -> CheckResult:
     )
 
 
-def _agent_storage_result(project: str = "", region: str = "") -> CheckResult:
+def _agent_storage_result(
+    project: str = "", region: str = "", name: str = "default"
+) -> CheckResult:
     """Exercise the exact writable-storage decision used by agent deployment."""
 
     from npa.cli.agent import (
@@ -201,6 +203,31 @@ def _agent_storage_result(project: str = "", region: str = "") -> CheckResult:
             project_alias=project,
             emit_status=False,
         )
+        from npa.clients.storage_validation import (
+            probe_terraform_backend,
+            terraform_state_key,
+        )
+
+        exact_values = (
+            str(credentials.get("s3_bucket", "")),
+            str(credentials.get("s3_endpoint", "")),
+            str(credentials.get("nebius_api_key", "")),
+            str(credentials.get("nebius_secret_key", "")),
+        )
+        # Production resolution is all-or-error. The conditional preserves the
+        # small mapping contract used by injected callers while never treating a
+        # partially resolved real configuration as deployable.
+        if all(exact_values):
+            probe = probe_terraform_backend(
+                bucket=exact_values[0],
+                state_key=terraform_state_key(project, name),
+                endpoint_url=exact_values[1],
+                access_key_id=exact_values[2],
+                secret_access_key=exact_values[3],
+                region=resolved_region,
+            )
+            if not probe.ok:
+                raise AgentStorageCredentialError(probe.summary)
     except AgentStorageCredentialError as exc:
         return CheckResult(
             name="writable_s3",
@@ -227,8 +254,8 @@ def _agent_storage_result(project: str = "", region: str = "") -> CheckResult:
         name="writable_s3",
         status=PASS,
         summary=(
-            "Deployment credential path selected health-verified writable storage "
-            f"({credentials['s3_bucket']})."
+            "Deployment credential path selected and verified the exact Terraform backend object "
+            f"contract ({credentials['s3_bucket']})."
         ),
     )
 

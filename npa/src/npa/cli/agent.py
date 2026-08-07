@@ -894,7 +894,7 @@ def _resolve_agent_service_account_id(
     return ""
 
 
-def _persist_agent_service_account_id(service_account_id: str) -> None:
+def _persist_agent_service_account_id(service_account_id: str, project_id: str = "") -> None:
     """Write discovered SA id into ~/.npa/credentials.yaml when missing."""
     sa_id = str(service_account_id or "").strip()
     if not sa_id:
@@ -902,9 +902,17 @@ def _persist_agent_service_account_id(service_account_id: str) -> None:
     from npa.clients.credentials import write_credentials_file
     from npa.clients.nebius import _saved_service_account_id
 
-    if _saved_service_account_id() == sa_id:
+    exact_project = str(project_id or "").strip()
+    if _saved_service_account_id(exact_project) == sa_id:
         return
-    write_credentials_file({"nebius": {"service_account_id": sa_id}})
+    write_credentials_file(
+        {
+            "nebius": {
+                "service_account_id": sa_id,
+                "service_account_project_id": exact_project,
+            }
+        }
+    )
 
 
 def _creds_from_terraform_state(project_alias: str, record: dict[str, Any]) -> dict[str, str] | None:
@@ -8272,13 +8280,41 @@ def _transactional_agent_command(command: str):
                 project_id = project_id or saved.project_id
                 tenant_id = tenant_id or saved.tenant_id
                 region = saved.region or region
-            resume = f"{command} --project {project} --name {name}"
-            if project_id:
-                resume += f" --project-id {project_id}"
-            if tenant_id:
-                resume += f" --tenant-id {tenant_id}"
-            if region:
-                resume += f" --region {region}"
+            resume_argv = shlex.split(command) + ["--project", project, "--name", name]
+            for argument, flag, effective in (
+                ("project_id", "--project-id", project_id),
+                ("tenant_id", "--tenant-id", tenant_id),
+                ("region", "--region", region),
+                ("ssh_user", "--ssh-user", bound.arguments.get("ssh_user")),
+                ("ssh_public_key_path", "--ssh-public-key-path", bound.arguments.get("ssh_public_key_path")),
+                ("agent_port", "--agent-port", bound.arguments.get("agent_port")),
+                ("backend_port", "--backend-port", bound.arguments.get("backend_port")),
+                ("rerun_port", "--rerun-port", bound.arguments.get("rerun_port")),
+                ("llm_model", "--llm-model", bound.arguments.get("llm_model")),
+                ("foxglove_embed_src", "--foxglove-embed-src", bound.arguments.get("foxglove_embed_src")),
+                ("foxglove_org_slug", "--foxglove-org-slug", bound.arguments.get("foxglove_org_slug")),
+                ("foxglove_live_url", "--foxglove-live-url", bound.arguments.get("foxglove_live_url")),
+            ):
+                if argument in bound.arguments and effective not in (None, ""):
+                    resume_argv.extend([flag, str(effective)])
+            for model in _coerce_cli_list(bound.arguments.get("llm_models")):
+                resume_argv.extend(["--llm-models", str(model)])
+            from npa.provisioning_journal import operation_contains_secret
+
+            for tf_value in _coerce_cli_list(bound.arguments.get("tf_var")):
+                if operation_contains_secret([str(tf_value)]):
+                    raise ValueError(
+                        "Secret-shaped --tf-var values cannot be persisted in a crash-safe "
+                        "recovery plan; use the supported credential store instead."
+                    )
+                resume_argv.extend(["--tf-var", str(tf_value)])
+            if bool(bound.arguments.get("no_public_https")):
+                resume_argv.append("--no-public-https")
+            if "wait_ssh" in bound.arguments:
+                resume_argv.append("--wait-ssh" if bool(bound.arguments.get("wait_ssh")) else "--no-wait-ssh")
+            destroy_argv = [
+                "npa", "agent", "destroy", "--project", project, "--name", name, "--yes",
+            ]
             operation = ProvisioningOperation.prepare(
                 command=command,
                 project_alias=project,
@@ -8288,8 +8324,29 @@ def _transactional_agent_command(command: str):
                 resource_type="agent",
                 requested_name=name,
                 ownership_source="agent-cli",
-                resume_command=resume,
-                destroy_command=(f"npa agent destroy --project {project} --name {name} --yes"),
+                resume_command="",
+                destroy_command="",
+                resume_argv=resume_argv,
+                destroy_argv=destroy_argv,
+            )
+            exact_destroy_argv = [
+                "npa",
+                "agent",
+                "destroy",
+                "--operation-id",
+                operation.operation_id,
+                "--name",
+                name,
+                "--yes",
+            ]
+            if project_id:
+                exact_destroy_argv.extend(["--project-id", project_id])
+            if tenant_id:
+                exact_destroy_argv.extend(["--tenant-id", tenant_id])
+            if region:
+                exact_destroy_argv.extend(["--region", region])
+            operation.set_recovery_commands(
+                resume_argv=resume_argv, destroy_argv=exact_destroy_argv
             )
             with operation_context(operation):
                 try:
@@ -8309,7 +8366,11 @@ def _transactional_agent_command(command: str):
                         "rollback-incomplete",
                         "rolled-back",
                     }:
-                        operation.transition("recovery-required", error=str(exc))
+                        operation.transition(
+                            "recovery-required",
+                            error=str(exc),
+                            details={"error_type": type(exc).__name__},
+                        )
                     typer.echo(emit_recovery_summary(operation), err=True)
                     raise
                 phase = str(operation.read().get("phase") or "")
@@ -8479,7 +8540,7 @@ def deploy_cmd(
     # bootstrap below.
     tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
     prereq_results = _agent_hard_prereq_results(ssh_public_key_path)
-    prereq_results.append(_agent_storage_result(project))
+    prereq_results.append(_agent_storage_result(project, env_region, name))
     tf_key_result = _agent_token_factory_result(tf_api_key)
     for result in prereq_results:
         if result.status == "FAIL":
@@ -8504,11 +8565,28 @@ def deploy_cmd(
             project_alias=project,
         )
         if operation is not None:
+            from npa.clients.storage_validation import (
+                terraform_backend_fingerprint,
+                terraform_state_key,
+            )
+
+            backend_key = terraform_state_key(project, name)
             operation.update_identity(
                 backend={
                     "bucket": str(configured_storage.get("s3_bucket", "")),
                     "endpoint": str(configured_storage.get("s3_endpoint", "")),
                     "region": env_region,
+                    "state_key": backend_key,
+                    "addressing_style": "path",
+                    "credential_source": "project_resolver",
+                    "config_fingerprint": terraform_backend_fingerprint(
+                        bucket=str(configured_storage.get("s3_bucket", "")),
+                        state_key=backend_key,
+                        endpoint_url=str(configured_storage.get("s3_endpoint", "")),
+                        access_key_id=str(configured_storage.get("nebius_api_key", "")),
+                        secret_access_key=str(configured_storage.get("nebius_secret_key", "")),
+                        region=env_region,
+                    ),
                 }
             )
             operation.record_resource(
@@ -8601,6 +8679,8 @@ def deploy_cmd(
             access_key=str(merged_vars.get("nebius_api_key", "")),
             secret_key=str(merged_vars.get("nebius_secret_key", "")),
             region=env_region,
+            project_alias=project,
+            agent_name=name,
         )
     except NebiusError as exc:
         _fail(f"Unable to provision Terraform state bucket: {exc}")
@@ -9202,7 +9282,7 @@ def bootstrap_cmd(
     updated["ssh_key_path"] = ssh_key_path
     if service_account_id:
         updated["service_account_id"] = service_account_id
-        _persist_agent_service_account_id(service_account_id)
+        _persist_agent_service_account_id(service_account_id, project_id)
     if s3_bucket and s3_access_key and s3_secret_key:
         updated["credentials"] = _credentials_block_from_storage(
             service_account_id=service_account_id,
@@ -9231,7 +9311,15 @@ def status_cmd(
     project = _resolve_project_alias(project)
     record = _agent_record(project, name)
     if not record:
-        _fail(f"Agent config not found for {project}/{name}")
+        from npa.agent_status import partial_agent_status
+
+        payload = partial_agent_status(project, name)
+        if output_json:
+            typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            for key, value in payload.items():
+                typer.echo(f"{key}: {value}")
+        return
     try:
         auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
     except ValueError as exc:

@@ -17,6 +17,7 @@ silently removed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,8 @@ class _Residue:
     label: str
     path: Path
     size: int
+    device: int
+    inode: int
 
 
 @dataclass(frozen=True)
@@ -335,15 +338,68 @@ def _collect_residue(*, include_sky: bool) -> list[_Residue]:
         ("SkyPilot venv", npa_dir / "skypilot-venv"),
         ("Terraform provider cache", npa_dir / "terraform-plugin-cache"),
     ):
-        if path.exists():
-            residue.append(_Residue(label, path, _dir_size(path)))
+        if path.exists() and not path.is_symlink():
+            try:
+                identity = path.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            residue.append(
+                _Residue(label, path, _dir_size(path), identity.st_dev, identity.st_ino)
+            )
     if include_sky:
         sky_home = home / ".sky"
-        if sky_home.exists():
-            residue.append(
-                _Residue("SkyPilot state (~/.sky)", sky_home, _dir_size(sky_home))
-            )
+        if sky_home.exists() and not sky_home.is_symlink():
+            sky_identity: os.stat_result | None
+            try:
+                sky_identity = sky_home.stat(follow_symlinks=False)
+            except OSError:
+                sky_identity = None
+            if sky_identity is not None:
+                residue.append(
+                    _Residue(
+                        "SkyPilot state (~/.sky)",
+                        sky_home,
+                        _dir_size(sky_home),
+                        sky_identity.st_dev,
+                        sky_identity.st_ino,
+                    )
+                )
     return residue
+
+
+def _remove_exact_residue(item: _Residue) -> str:
+    """Remove only the inode inventoried by this cleanup run."""
+
+    import shutil
+    from uuid import uuid4
+
+    try:
+        current = item.path.stat(follow_symlinks=False)
+        home = Path.home().resolve()
+        parent = item.path.parent.resolve()
+    except OSError as exc:
+        return f"identity recheck failed: {exc}"
+    if item.path.is_symlink() or not parent.is_relative_to(home):
+        return "target is a symlink or escaped the operator home"
+    if (current.st_dev, current.st_ino) != (item.device, item.inode):
+        return "target inode changed after inventory"
+    quarantine = item.path.parent / f".npa-cleanup-{item.inode}-{uuid4().hex}"
+    try:
+        item.path.rename(quarantine)
+        moved = quarantine.stat(follow_symlinks=False)
+        if (moved.st_dev, moved.st_ino) != (item.device, item.inode):
+            if not os.path.lexists(item.path):
+                quarantine.rename(item.path)
+            return "target inode changed during atomic quarantine"
+        if quarantine.is_dir():
+            shutil.rmtree(quarantine)
+        else:
+            quarantine.unlink()
+    except OSError as exc:
+        return str(exc)
+    if os.path.lexists(quarantine) or os.path.lexists(item.path):
+        return "exact path was only partially removed or replaced during deletion"
+    return ""
 
 
 def _storage_iam_full_check(
@@ -796,6 +852,14 @@ def cleanup_cmd(
         "--skip-jobs",
         help="Do not query the SkyPilot managed-job queue.",
     ),
+    attest_no_active_jobs: bool = typer.Option(
+        False,
+        "--attest-no-active-jobs",
+        help=(
+            "With --skip-jobs, explicitly attest no active jobs after exact project "
+            "terminal/no-submission evidence is verified."
+        ),
+    ),
     sky_bin: str = typer.Option(
         "",
         "--sky-bin",
@@ -833,8 +897,6 @@ def cleanup_cmd(
     exits 2 when IAM is present/unverified or provider verification fails.
     """
     import json
-    import shutil
-
     from npa.cli.cluster.terraform_runtime import (
         collect_terraform_residue,
         remove_terraform_residue,
@@ -846,6 +908,20 @@ def cleanup_cmd(
         prune_teardown_receipts,
         record_teardown_event,
     )
+    receipt_alias = project
+    receipt_project_id = ""
+    if project:
+        try:
+            from npa.clients.config import resolve_environment
+
+            environment = resolve_environment(project)
+            receipt_project_id = (
+                str(environment.project_id or "") if environment is not None else ""
+            )
+        except Exception:  # noqa: BLE001 - exact immutable ID is valid for receipt audit
+            if list_receipts and project.startswith("project-"):
+                receipt_alias = ""
+                receipt_project_id = project
 
     if list_receipts or prune_receipts:
         if list_receipts and prune_receipts:
@@ -866,7 +942,11 @@ def cleanup_cmd(
                 "retention_days": receipt_retention_days,
             }
         else:
-            receipts = list_teardown_receipts()
+            receipts = list_teardown_receipts(
+                project_alias=receipt_alias,
+                project_id=receipt_project_id,
+                legacy="exclude" if project else "include",
+            )
             payload = {
                 "result": "receipts_listed",
                 "retention": (
@@ -901,10 +981,15 @@ def cleanup_cmd(
         if not output_json:
             typer.echo(message, err=err)
 
+    removed_total = 0
+    shared_runtime_preserved = False
+
     def emit_json(
         result: str, local_state: str, *, cleanup_failed: bool = False
     ) -> None:
-        receipt_phases = latest_phase_states(project_alias=project)
+        receipt_phases = latest_phase_states(
+            project_alias=receipt_alias, project_id=receipt_project_id
+        )
         phases = cleanup_phase_model(
             jobs=job_ids,
             jobs_note=job_note,
@@ -921,9 +1006,19 @@ def cleanup_cmd(
             for event in receipt_phases.values()
         )
         verification_unresolved = bool(
-            iam_partial or job_note or cleanup_failed or unresolved_receipts
+            iam_partial
+            or job_note
+            or job_queue_state == "SKIPPED_BY_OPERATOR"
+            or cleanup_failed
+            or unresolved_receipts
         )
-        retained_receipts = len(list_teardown_receipts())
+        retained_receipts = len(
+            list_teardown_receipts(
+                project_alias=receipt_alias,
+                project_id=receipt_project_id,
+                legacy="exclude" if project else "include",
+            )
+        )
         typer.echo(
             json.dumps(
                 {
@@ -941,12 +1036,13 @@ def cleanup_cmd(
                     "iam_verification_required": iam_partial,
                     "project_retained": iam_partial,
                     "cleanup_failed": cleanup_failed,
-                    "removed_bytes": total if yes else 0,
+                    "removed_bytes": removed_total,
                     "iam_detail": iam_message,
                     "phases": [item.to_dict() for item in phases],
                     "retained_audit_receipts": retained_receipts,
                     "audit_receipts_retained": bool(retained_receipts),
                     "audit_receipts_are_operational_residue": False,
+                    "preserved_shared_runtime": shared_runtime_preserved,
                 },
                 indent=2,
                 sort_keys=True,
@@ -973,7 +1069,9 @@ def cleanup_cmd(
             iam_ownership_state,
         ) = _storage_iam_full_check(project, prune_verified_absence=yes)
 
-    prior_phases = latest_phase_states(project_alias=project)
+    prior_phases = latest_phase_states(
+        project_alias=receipt_alias, project_id=receipt_project_id
+    )
     prior_workflow = prior_phases.get("workflow_audit") or prior_phases.get("workflow")
     prior_workflow_state = str((prior_workflow or {}).get("terminal_state") or "")
     prior_workflow_terminal = prior_workflow_state in {
@@ -988,10 +1086,28 @@ def cleanup_cmd(
     sky_operational_state_present = any(
         item.label in {"SkyPilot venv", "SkyPilot state (~/.sky)"} for item in residue
     )
+    attestation_safe = False
+    if attest_no_active_jobs:
+        if not skip_jobs or not project or not receipt_project_id:
+            raise typer.BadParameter(
+                "--attest-no-active-jobs requires --skip-jobs and an exact configured project."
+            )
+        if not prior_workflow_terminal:
+            raise typer.BadParameter(
+                "No terminal/not-submitted project workflow receipt supports this attestation."
+            )
+        from npa.controller_ownership import controller_owner
+
+        owner = controller_owner()
+        if owner is not None and owner.project_id != receipt_project_id:
+            raise typer.BadParameter(
+                "The shared SkyPilot controller is owned by a different immutable project."
+            )
+        attestation_safe = True
     if skip_jobs:
         job_ids: list[str] = []
-        job_note = "managed-job verification was explicitly skipped"
-        job_queue_state = "unreadable_or_unverified"
+        job_note = ""
+        job_queue_state = "SKIPPED_BY_OPERATOR"
     else:
         job_audit = _nonterminal_jobs(sky_bin)
         # Keep compatibility with extensions/tests that wrapped the historical
@@ -1031,6 +1147,11 @@ def cleanup_cmd(
             terminal_state=(
                 "verified_absent"
                 if not job_ids and not job_note
+                and not skip_jobs
+                else "operator_attested"
+                if attestation_safe
+                else "skipped_by_operator"
+                if skip_jobs
                 else "active"
                 if job_ids
                 else "verification_failed"
@@ -1043,6 +1164,7 @@ def cleanup_cmd(
                 "queue_state": job_queue_state,
                 "nonterminal_job_ids": job_ids,
                 "detail": job_note,
+                "operator_attestation": attestation_safe,
             },
             errors=[job_note] if job_note else [],
         )
@@ -1051,7 +1173,13 @@ def cleanup_cmd(
             (job_note + "; ") if job_note else ""
         ) + f"durable managed-job audit receipt failed: {exc}"
     if not output_json:
-        _report_managed_jobs(job_ids, job_note)
+        if skip_jobs:
+            typer.echo(
+                "Managed jobs: SKIPPED_BY_OPERATOR"
+                + (" (explicit terminal-evidence attestation accepted)" if attestation_safe else "")
+            )
+        else:
+            _report_managed_jobs(job_ids, job_note)
 
     terraform_sizes = {item.path: _dir_size(item.path) for item in terraform_residue}
     total = sum(item.size for item in residue) + sum(terraform_sizes.values())
@@ -1079,10 +1207,16 @@ def cleanup_cmd(
                     iam_state=iam_status,
                     iam_ownership_state=iam_ownership_state,
                     local_state="fully_clean",
-                    receipt_phases=latest_phase_states(project_alias=project),
+                    receipt_phases=latest_phase_states(
+                        project_alias=receipt_alias, project_id=receipt_project_id
+                    ),
                 )
             )
-            receipts = list_teardown_receipts()
+            receipts = list_teardown_receipts(
+                project_alias=receipt_alias,
+                project_id=receipt_project_id,
+                legacy="exclude" if project else "include",
+            )
             if receipts:
                 typer.echo(
                     f"Retained audit receipts: {len(receipts)} non-secret file(s); "
@@ -1141,7 +1275,9 @@ def cleanup_cmd(
                     iam_state=iam_status,
                     iam_ownership_state=iam_ownership_state,
                     local_state="residue_present",
-                    receipt_phases=latest_phase_states(project_alias=project),
+                    receipt_phases=latest_phase_states(
+                        project_alias=receipt_alias, project_id=receipt_project_id
+                    ),
                 )
             )
         if iam_partial:
@@ -1150,7 +1286,8 @@ def cleanup_cmd(
 
     removed_bin = False
     cleanup_failed = False
-    sky_audit_safe = not job_ids and not job_note
+    sky_audit_safe = (not skip_jobs and not job_ids and not job_note) or attestation_safe
+    sky_preserved_by_skip = False
     try:
         record_teardown_event(
             phase="local_cleanup",
@@ -1177,19 +1314,42 @@ def cleanup_cmd(
         raise typer.Exit(code=1) from exc
     for residue_item in residue:
         if (
+            project
+            and not full
+            and residue_item.label
+            in {"SkyPilot venv", "Terraform provider cache"}
+        ):
+            shared_runtime_preserved = True
+            emit(
+                f"Preserved shared {residue_item.label} at {residue_item.path}: "
+                "project-scoped cleanup does not own global runtime/cache state."
+            )
+            continue
+        if (
             residue_item.label in {"SkyPilot venv", "SkyPilot state (~/.sky)"}
             and not sky_audit_safe
         ):
-            cleanup_failed = True
+            sky_preserved_by_skip = sky_preserved_by_skip or skip_jobs
+            if not skip_jobs:
+                cleanup_failed = True
             emit(
                 f"Preserved {residue_item.label} at {residue_item.path}: managed jobs are active or "
                 "their terminal state could not be durably verified before local "
                 "SkyPilot state removal.",
                 err=True,
             )
+            if skip_jobs and not attest_no_active_jobs and project:
+                emit(
+                    "Follow-up after exact terminal evidence: "
+                    f"npa cleanup --project {project} --include-sky --skip-jobs "
+                    "--attest-no-active-jobs --yes",
+                    err=True,
+                )
             continue
         try:
-            shutil.rmtree(residue_item.path)
+            problem = _remove_exact_residue(residue_item)
+            if problem:
+                raise OSError(problem)
         except OSError as exc:
             cleanup_failed = True
             emit(
@@ -1197,11 +1357,14 @@ def cleanup_cmd(
                 err=True,
             )
             continue
+        removed_total += residue_item.size
         emit(f"Removed {residue_item.label}: {residue_item.path}")
         if residue_item.label == "SkyPilot venv":
             removed_bin = clear_skypilot_bin()
     for tf_item in terraform_residue:
         problem = remove_terraform_residue(tf_item)
+        if not problem and os.path.lexists(tf_item.path):
+            problem = "exact Terraform residue path still exists after removal"
         if problem:
             cleanup_failed = True
             emit(
@@ -1209,6 +1372,7 @@ def cleanup_cmd(
                 err=True,
             )
         else:
+            removed_total += terraform_sizes[tf_item.path]
             emit(f"Removed {tf_item.label}: {tf_item.path}")
     if removed_bin:
         emit("Cleared skypilot.sky_bin from ~/.npa/config.yaml.")
@@ -1267,6 +1431,8 @@ def cleanup_cmd(
             verification={
                 "remaining_terraform_count": len(collect_terraform_residue()),
                 "sky_state_preserved": not sky_audit_safe,
+                "shared_runtime_preserved": shared_runtime_preserved,
+                "managed_job_verification": job_queue_state,
             },
             errors=(["local cleanup incomplete"] if cleanup_failed else []),
         )
@@ -1284,17 +1450,17 @@ def cleanup_cmd(
     emit("")
     if full and not cleanup_failed and not iam_partial:
         emit(
-            f"Freed ~{_human(total)} of local caches. Known shared credentials and "
+            f"Freed {_human(removed_total)} of local caches. Known shared credentials and "
             "empty NPA-owned state were removed; non-empty/unrelated data was kept."
         )
     elif full:
         emit(
-            f"Freed ~{_human(total)} of local caches, but full local cleanup was incomplete. "
+            f"Freed {_human(removed_total)} of local caches, but full local cleanup was incomplete. "
             "Non-empty/unrelated data was kept; fix the warning above and retry."
         )
     else:
         emit(
-            f"Freed ~{_human(total)} of local caches. Tokens and project config were kept."
+            f"Freed {_human(removed_total)} of local caches. Tokens and project config were kept."
         )
     emit(iam_message or _iam_note())
     if output_json:
@@ -1303,11 +1469,17 @@ def cleanup_cmd(
             if iam_partial
             else "partial_local_cleanup"
             if cleanup_failed
+            else "completed_with_preserved_sky"
+            if sky_preserved_by_skip
             else "fully_cleaned"
         )
         emit_json(
             result,
-            "partial_local_cleanup" if cleanup_failed else "fully_cleaned",
+            "partial_local_cleanup"
+            if cleanup_failed
+            else "preserved_shared_sky"
+            if sky_preserved_by_skip
+            else "fully_cleaned",
             cleanup_failed=cleanup_failed,
         )
     else:
@@ -1320,10 +1492,16 @@ def cleanup_cmd(
                 local_state=(
                     "partial_local_cleanup" if cleanup_failed else "fully_cleaned"
                 ),
-                receipt_phases=latest_phase_states(project_alias=project),
+                receipt_phases=latest_phase_states(
+                    project_alias=receipt_alias, project_id=receipt_project_id
+                ),
             )
         )
-        receipts = list_teardown_receipts()
+        receipts = list_teardown_receipts(
+            project_alias=receipt_alias,
+            project_id=receipt_project_id,
+            legacy="exclude" if project else "include",
+        )
         if receipts:
             typer.echo(
                 f"Retained audit receipts: {len(receipts)} non-secret file(s); "

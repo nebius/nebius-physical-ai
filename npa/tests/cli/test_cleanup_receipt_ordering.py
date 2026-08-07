@@ -58,9 +58,14 @@ def test_verified_job_audit_is_durable_before_skypilot_state_removal(
     monkeypatch.setattr(cleanup_cli, "_nonterminal_jobs", lambda sky_bin: ([], ""))
     real_rmtree = shutil.rmtree
     observed: list[str] = []
+    tracked_identities = {
+        (sky.stat().st_dev, sky.stat().st_ino),
+        (venv.stat().st_dev, venv.stat().st_ino),
+    }
 
     def guarded_rmtree(path: Path) -> None:
-        if Path(path) in {sky, venv}:
+        identity = Path(path).stat(follow_symlinks=False)
+        if (identity.st_dev, identity.st_ino) in tracked_identities:
             observed.append(
                 teardown_receipts.latest_phase_states()["workflow_audit"][
                     "terminal_state"

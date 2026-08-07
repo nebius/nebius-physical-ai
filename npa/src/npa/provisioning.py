@@ -45,6 +45,71 @@ class ProvisionIfAbsentResult:
         return asdict(self)
 
 
+def _provision_recovery_argv(
+    arguments: dict[str, Any],
+    *,
+    alias: str,
+    cluster_name: str,
+    context: str,
+    kubeconfig: Path,
+) -> list[str]:
+    """Serialize every effective, non-secret topology option for exact resume."""
+
+    argv = [
+        "npa",
+        "provision-if-absent",
+        "--cluster-name",
+        cluster_name,
+        "--context",
+        context,
+        "--kubeconfig",
+        str(kubeconfig),
+        "--timeout",
+        str(int(arguments.get("timeout") or 120)),
+        "--gpu-nodes",
+        str(int(arguments.get("gpu_nodes", -1))),
+        "--cpu-nodes",
+        str(int(arguments.get("cpu_nodes", -1))),
+        "--gpu-readiness-timeout",
+        str(float(arguments.get("gpu_readiness_timeout") or 600.0)),
+        "--gpu-readiness-poll-interval",
+        str(float(arguments.get("gpu_readiness_poll_interval") or 10.0)),
+        "--output-format",
+        str(arguments.get("output_format") or "text"),
+    ]
+    if alias:
+        argv.extend(["--project", alias])
+    terraform_dir = arguments.get("terraform_dir")
+    if terraform_dir:
+        argv.extend(["--terraform-dir", str(terraform_dir)])
+    for key, flag in (
+        ("cpu_platform", "--cpu-platform"),
+        ("cpu_preset", "--cpu-preset"),
+        ("gpu_platform", "--gpu-platform"),
+        ("gpu_preset", "--gpu-preset"),
+        ("accelerator", "--accelerator"),
+        ("sky_bin", "--sky-bin"),
+    ):
+        value = str(arguments.get(key) or "")
+        if value:
+            argv.extend([flag, value])
+    for key, enabled, disabled in (
+        ("validate", "--validate", "--skip-validate"),
+        ("sky_smoke", "--sky-smoke", "--skip-sky-smoke"),
+    ):
+        argv.append(enabled if bool(arguments.get(key)) else disabled)
+    if bool(arguments.get("skip_k8s")):
+        argv.append("--skip-k8s")
+    if bool(arguments.get("skip_s3")):
+        argv.append("--skip-s3")
+    if bool(arguments.get("dry_run")):
+        argv.append("--dry-run")
+    preemptible = arguments.get("preemptible")
+    if preemptible is not None:
+        argv.append("--preemptible" if bool(preemptible) else "--on-demand")
+    return argv
+
+
 def _transactional_provision(function):
     signature = inspect.signature(function)
 
@@ -87,11 +152,31 @@ def _transactional_provision(function):
         requested_name = (
             _bucket_name(storage.checkpoint_bucket) if skip_k8s else cluster_name
         )
-        resume = "npa provision-if-absent"
-        if alias:
-            resume += f" --project {alias}"
-        if skip_k8s:
-            resume += " --skip-k8s"
+        resume_argv = _provision_recovery_argv(
+            dict(bound.arguments),
+            alias=alias,
+            cluster_name=cluster_name,
+            context=context,
+            kubeconfig=Path(kubeconfig),
+        )
+        destroy_argv = (
+            [
+                "npa",
+                "cluster",
+                "down",
+                "--project",
+                alias,
+                "--context",
+                context,
+                "--kubeconfig",
+                str(kubeconfig),
+                "--timeout",
+                str(int(bound.arguments.get("timeout") or 120)),
+                "--force",
+            ]
+            if not skip_k8s
+            else []
+        )
         operation = ProvisioningOperation.prepare(
             command="npa provision-if-absent",
             project_alias=alias,
@@ -106,12 +191,10 @@ def _transactional_provision(function):
             resource_type=resource_type,
             requested_name=requested_name or resource_type,
             ownership_source="provision-if-absent",
-            resume_command=resume,
-            destroy_command=(
-                f"npa cluster down --project {alias} --context {cluster_name} --force"
-                if not skip_k8s
-                else ""
-            ),
+            resume_command="",
+            destroy_command="",
+            resume_argv=resume_argv,
+            destroy_argv=destroy_argv,
         )
         operation.record_preflight_plan(plan.to_dict())
         with operation_context(operation):
@@ -132,7 +215,11 @@ def _transactional_provision(function):
                         "rolled-back",
                         "rollback-incomplete",
                     }:
-                        operation.transition("recovery-required", error=str(exc))
+                        operation.transition(
+                            "recovery-required",
+                            error=str(exc),
+                            details={"error_type": type(exc).__name__},
+                        )
                 sys.stderr.write(emit_recovery_summary(operation) + "\n")
                 raise
             if result.status == "partial":
@@ -196,6 +283,7 @@ def provision_if_absent(
     gpu_readiness_timeout: float = 600.0,
     gpu_readiness_poll_interval: float = 10.0,
     sky_bin: str = "",
+    output_format: str = "text",
     _resolved_plan=None,
 ) -> ProvisionIfAbsentResult:
     """Ensure configured S3 and Kubernetes exist without deleting resources."""
@@ -371,6 +459,7 @@ def provision_if_absent(
 
     requested_accelerator = str(accelerator or "").strip()
     if requested_accelerator and k8s_ready and not skip_k8s and not dry_run:
+        from npa.controller_ownership import verify_controller_owner
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
             KubernetesGpuCatalogError,
             wait_for_kubernetes_accelerators,
@@ -379,13 +468,23 @@ def provision_if_absent(
         previous_kubeconfig = os.environ.get("KUBECONFIG")
         os.environ["KUBECONFIG"] = str(kubeconfig_path)
         try:
+            verify_controller_owner(alias, context)
+
+            def report_gpu_status(message: str) -> None:
+                actions.append(f"gpu:{message}")
+                sys.stderr.write(message.rstrip() + "\n")
+                sys.stderr.flush()
+                operation = current_operation()
+                if operation is not None:
+                    operation.heartbeat(details={"gpu_readiness": message})
+
             wait_for_kubernetes_accelerators(
                 [requested_accelerator],
                 context=context,
                 sky_bin=sky_bin or None,
                 timeout=gpu_readiness_timeout,
                 poll_interval=gpu_readiness_poll_interval,
-                on_status=lambda message: actions.append(f"gpu:{message}"),
+                on_status=report_gpu_status,
             )
         except (KubernetesGpuCatalogError, ValueError) as exc:
             gpu_readiness = "timeout"

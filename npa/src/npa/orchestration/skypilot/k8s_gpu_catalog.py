@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import json
 import re
 import subprocess
 import time
@@ -68,6 +69,132 @@ class KubernetesGpuCatalog:
     def max_per_node(self, name: str) -> int:
         quantities = self.quantities_by_accelerator.get(name) or frozenset()
         return max(quantities) if quantities else 0
+
+
+@dataclass(frozen=True)
+class KubernetesGpuInventory:
+    """Provider-independent Kubernetes GPU readiness evidence."""
+
+    context: str
+    ready_nodes: int
+    eligible_gpu_nodes: int
+    capacity: int
+    allocatable: int
+    products: tuple[str, ...]
+    node_labels: dict[str, dict[str, str]]
+    error: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        product = (
+            self.products[0]
+            if len(self.products) == 1
+            else "multiple"
+            if self.products
+            else "unknown/unlabeled"
+        )
+        return {
+            "context": self.context,
+            "ready_nodes": self.ready_nodes,
+            "eligible_gpu_nodes": self.eligible_gpu_nodes,
+            "capacity": self.capacity,
+            "allocatable": self.allocatable,
+            "allocatable_gpus": self.allocatable,
+            "products": list(self.products),
+            "accelerator_product": product,
+            "label_readiness": "ready"
+            if self.products or self.allocatable == 0
+            else "blocked_missing_product_label",
+            "node_labels": self.node_labels,
+            "error": self.error,
+        }
+
+
+def discover_kubernetes_gpu_inventory(
+    *,
+    context: str = "",
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> KubernetesGpuInventory:
+    """Read Ready/schedulable nodes, GPU quantities, and raw product labels."""
+
+    cmd = ["kubectl"]
+    if context:
+        cmd.extend(["--context", context])
+    cmd.extend(["get", "nodes", "-o", "json"])
+    execute = runner or subprocess.run
+    try:
+        result = execute(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            return KubernetesGpuInventory(
+                context, 0, 0, 0, 0, (), {}, "kubectl node inventory failed"
+            )
+        payload = json.loads(result.stdout or "{}")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return KubernetesGpuInventory(
+            context, 0, 0, 0, 0, (), {}, "kubectl node inventory unavailable"
+        )
+    ready_nodes = 0
+    eligible_nodes = 0
+    capacity = 0
+    allocatable = 0
+    products: set[str] = set()
+    labels_by_node: dict[str, dict[str, str]] = {}
+    for item in payload.get("items", []):
+        metadata = item.get("metadata") or {}
+        spec = item.get("spec") or {}
+        status = item.get("status") or {}
+        ready = any(
+            condition.get("type") == "Ready" and condition.get("status") == "True"
+            for condition in status.get("conditions") or []
+            if isinstance(condition, dict)
+        )
+        if ready:
+            ready_nodes += 1
+        blocked = bool(spec.get("unschedulable")) or any(
+            str(taint.get("effect") or "") in {"NoSchedule", "NoExecute"}
+            and str(taint.get("key") or "") not in {"nvidia.com/gpu"}
+            for taint in spec.get("taints") or []
+            if isinstance(taint, dict)
+        )
+        node_allocatable = int(
+            (status.get("allocatable") or {}).get("nvidia.com/gpu", 0)
+        )
+        node_capacity = int((status.get("capacity") or {}).get("nvidia.com/gpu", 0))
+        raw_labels = {
+            str(key): str(value)
+            for key, value in (metadata.get("labels") or {}).items()
+            if "gpu" in str(key).casefold() or "accelerator" in str(key).casefold()
+        }
+        name = str(metadata.get("name") or "")
+        if name:
+            labels_by_node[name] = raw_labels
+        if ready and not blocked and node_allocatable > 0:
+            eligible_nodes += 1
+            allocatable += node_allocatable
+            capacity += node_capacity
+            for key, value in raw_labels.items():
+                if key in {
+                    "nvidia.com/gpu.product",
+                    "nebius.com/gpu",
+                    "node.kubernetes.io/instance-type",
+                } or "product" in key.casefold():
+                    if value:
+                        products.add(value)
+    return KubernetesGpuInventory(
+        context=context,
+        ready_nodes=ready_nodes,
+        eligible_gpu_nodes=eligible_nodes,
+        capacity=capacity,
+        allocatable=allocatable,
+        products=tuple(sorted(products)),
+        node_labels=labels_by_node,
+    )
 
 
 @dataclass(frozen=True)
@@ -195,35 +322,8 @@ def kubernetes_allocatable_gpu_count(
 ) -> int | None:
     """Return Kubernetes' allocatable GPU total, or ``None`` when unavailable."""
 
-    import json
-
-    cmd = ["kubectl"]
-    if context:
-        cmd.extend(["--context", context])
-    cmd.extend(["get", "nodes", "-o", "json"])
-    execute = runner or subprocess.run
-    try:
-        result = execute(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        if result.returncode != 0:
-            return None
-        payload = json.loads(result.stdout or "{}")
-        return sum(
-            int(
-                ((item.get("status") or {}).get("allocatable") or {}).get(
-                    "nvidia.com/gpu", 0
-                )
-            )
-            for item in payload.get("items", [])
-        )
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return None
+    inventory = discover_kubernetes_gpu_inventory(context=context, runner=runner)
+    return None if inventory.error else inventory.allocatable
 
 
 def wait_for_kubernetes_accelerators(
@@ -266,7 +366,12 @@ def wait_for_kubernetes_accelerators(
     attempt = 0
     while True:
         attempt += 1
-        count = get_allocatable()
+        inventory = (
+            discover_kubernetes_gpu_inventory(context=context)
+            if allocatable is None
+            else None
+        )
+        count = inventory.allocatable if inventory is not None and not inventory.error else get_allocatable()
         if on_status:
             shown = "unknown" if count is None else str(count)
             on_status(
@@ -274,6 +379,20 @@ def wait_for_kubernetes_accelerators(
                 "SkyPilot discovery=pending"
             )
         try:
+            required = max(
+                parse_accelerator_request(accelerator).quantity
+                for accelerator in requested
+            )
+            if count is not None and count < required:
+                raise UnsatisfiableAcceleratorError(
+                    f"Kubernetes has {count} eligible allocatable GPU(s), but the "
+                    f"request needs at least {required}."
+                )
+            if inventory is not None and inventory.allocatable > 0 and not inventory.products:
+                raise UnsatisfiableAcceleratorError(
+                    "Kubernetes GPU capacity is Ready and allocatable, but accelerator product "
+                    "labels are missing; wait for GPU Feature Discovery/NFD before SkyPilot use."
+                )
             catalog = get_catalog()
             resolved = {
                 accelerator: resolve_kubernetes_accelerator(

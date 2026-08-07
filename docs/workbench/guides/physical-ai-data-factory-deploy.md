@@ -448,6 +448,17 @@ agent code change) without reprovisioning:
 npa agent bootstrap --project <alias> --name <agent-name>
 ```
 
+Before IAM or VM creation, agent deploy probes the exact Terraform backend
+object. An absent state key is healthy only when a random conditional sibling in
+the same prefix can be created, listed, read, deleted, and verified absent; an
+existing state must also be readable Terraform JSON. The same project-scoped S3
+HMAC credentials are passed by environment to every later Terraform state
+command. Nebius CLI authentication is not a substitute for those HMAC keys.
+After a partial first install, `npa agent status --project <alias> --name
+<agent-name> --json` shows the durable journal, exact created resources, typed
+provider verification, and credential-free recovery argv even when no final
+agent config exists.
+
 > **Deploying from behind a VPN/firewall?** `setup`/`fresh-setup` finish by
 > SSHing into the new VM to wait for cloud-init. If this machine cannot reach the
 > VM's public `tcp/22` (corporate VPN / split-tunnel often block it), the deploy
@@ -745,7 +756,17 @@ POST /api/sim-viz/load-artifact   # {"run_id":"<run-id>","key":"reports/sim2real
 ## 8. Tear everything down
 
 Cleanup has three owners — the agent VM, the cluster, and the storage/IAM that
-`npa configure` provisioned — and each needs its own command. In order:
+`npa configure` provisioned. Preview the unified, project-scoped teardown first;
+add `--yes` only after reviewing the immutable identities and commands:
+
+```bash
+npa destroy --project "$PROJECT" --all --json
+npa destroy --project "$PROJECT" --all --yes --json
+```
+
+The orchestrator journals every phase, continues phases that are independent of
+a failure, and leaves blocked phases with exact recovery commands. It never
+silently deletes the Nebius project itself. The equivalent recovery sequence is:
 
 First, see what exists:
 
@@ -862,6 +883,14 @@ Notes:
   context, cross-checks stable cluster/project identity, proves remote controller
   absence, writes a durable checkpoint, and only then removes matching local
   metadata. Any auth/RBAC/connectivity/identity uncertainty preserves local state.
+  Before the first submit, bind the global controller owner with `npa skypilot
+  bind-controller --project "$PROJECT" --context <context>` or use submit's
+  `--bind-controller`. A different project is rejected, and explicit `--rebind`
+  still requires a terminal managed-job queue.
+- **Shared local runtime is not project residue.** The unified project destroy
+  preserves the global SkyPilot venv, Terraform provider cache, credentials, and
+  unrelated `~/.sky` state. An explicitly broader standalone cleanup remains a
+  separate operator choice.
 - **Retained audit evidence is not residue.** Managed jobs are audited and
   receipted before SkyPilot state is removed. Versioned non-secret receipts under
   `~/.npa/teardown-receipts/` survive project/config cleanup, so repeat cleanup

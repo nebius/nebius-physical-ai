@@ -22,6 +22,7 @@ Options
     2).
 --project  <str>  Scope per-alias state and the --full read-only storage-IAM check to this NPA project alias.
 --skip-jobs  Do not query the SkyPilot managed-job queue.
+--attest-no-active-jobs  With --skip-jobs, explicitly attest no active jobs after exact project terminal/no-submission evidence is verified.
 --sky-bin  <str>  SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution.
 --json  Emit a machine-readable final cleanup result.
 --list-receipts  List retained non-secret teardown audit receipts and exit.
@@ -39,6 +40,7 @@ Options
 | `--full` | Broaden --yes to also remove locally saved HF, Token Factory, and NGC credentials, validated NPA Terraform residue, and empty config/known ~/.npa state. Also read-only verifies recorded storage IAM; an unverified/present account makes cleanup partial (exit 2). |
 | `--project` | <str>  Scope per-alias state and the --full read-only storage-IAM check to this NPA project alias. |
 | `--skip-jobs` | Do not query the SkyPilot managed-job queue. |
+| `--attest-no-active-jobs` | With --skip-jobs, explicitly attest no active jobs after exact project terminal/no-submission evidence is verified. |
 | `--sky-bin` | <str>  SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN or PATH resolution. |
 | `--json` | Emit a machine-readable final cleanup result. |
 | `--list-receipts` | List retained non-secret teardown audit receipts and exit. |

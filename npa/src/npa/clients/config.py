@@ -138,6 +138,9 @@ class TerraformStateConfig:
     endpoint: str = ""
     access_key: str = ""
     secret_key: str = ""
+    session_token: str = ""
+    region: str = ""
+    addressing_style: str = "path"
 
 
 @dataclass
@@ -1338,6 +1341,9 @@ def resolve_terraform_state(project: str | None = None) -> TerraformStateConfig:
         endpoint=str(state.get("endpoint", "") or ""),
         access_key=str(state.get("access_key", "") or ""),
         secret_key=str(state.get("secret_key", "") or ""),
+        session_token=str(state.get("session_token", "") or ""),
+        region=str(state.get("region", "") or ""),
+        addressing_style=str(state.get("addressing_style", "path") or "path"),
     )
 
 

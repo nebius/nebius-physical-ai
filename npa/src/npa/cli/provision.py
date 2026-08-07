@@ -128,6 +128,7 @@ def provision_if_absent_cmd(
         gpu_readiness_timeout=gpu_readiness_timeout,
         gpu_readiness_poll_interval=gpu_readiness_poll_interval,
         sky_bin=sky_bin,
+        output_format=output_format.value,
     )
     payload = result.to_dict()
     if output_format == OutputFormat.json:

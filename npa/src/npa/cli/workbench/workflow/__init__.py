@@ -49,7 +49,9 @@ class ControllerBackendOption(str, Enum):
 
 
 def _fail(msg: str, code: int = 1) -> None:
-    console.print(f"[red]Error:[/red] {msg}")
+    # Operational recovery commands and status phrases must remain copyable and
+    # machine-observable even when Rich detects a narrow non-interactive console.
+    console.print(f"[red]Error:[/red] {msg}", soft_wrap=True)
     raise typer.Exit(code)
 
 
@@ -414,6 +416,11 @@ def submit_cmd(
         False,
         "--require-controller-up/--skip-controller-health-guard",
         help="Before submit, require an existing SkyPilot jobs-controller with status UP.",
+    ),
+    bind_controller: bool = typer.Option(
+        False,
+        "--bind-controller",
+        help="Explicitly bind an unowned shared controller to this NPA project/context.",
     ),
     s3_endpoint: str = typer.Option(
         "",
@@ -1031,6 +1038,23 @@ def submit_cmd(
                 "context from `kubectl config get-contexts`."
             )
             return
+        if infra_context and not plan_only:
+            from npa.controller_ownership import (
+                ClusterOwnerIdentityMismatchError,
+                bind_controller_owner,
+                resolve_controller_candidate,
+                verify_controller_owner,
+            )
+
+            try:
+                if bind_controller is True:
+                    bind_controller_owner(
+                        resolve_controller_candidate(project, infra_context)
+                    )
+                verify_controller_owner(project, infra_context)
+            except ClusterOwnerIdentityMismatchError as exc:
+                _fail(str(exc))
+                return
         npa_render_options = SkypilotRenderOptions(
             registry=_resolve_submit_registry(registry, project),
             image_overrides=image_overrides,
@@ -5361,6 +5385,9 @@ def preflight_images_cmd(
 
 @app.command("gpus")
 def gpus_cmd(
+    project: str = typer.Option(
+        "", "--project", help="Project alias used to verify shared-controller ownership."
+    ),
     cluster: str = typer.Option(
         "",
         "--cluster",
@@ -5395,11 +5422,14 @@ def gpus_cmd(
         KubernetesGpuCatalogError,
         UnsatisfiableAcceleratorError,
         discover_kubernetes_gpu_catalog,
+        discover_kubernetes_gpu_inventory,
         resolve_kubernetes_accelerator,
         spec_accelerators,
     )
 
-    resolved_context = context.strip() or os.environ.get("KUBECONTEXT", "").strip()
+    resolved_context = (
+        context.strip() or os.environ.get("KUBECONTEXT", "").strip() or cluster.strip()
+    )
     env_backup: str | None = None
     if cluster.strip():
         from npa.cluster.state import kubeconfig_file
@@ -5410,13 +5440,36 @@ def gpus_cmd(
             return
         env_backup = os.environ.get("KUBECONFIG")
         os.environ["KUBECONFIG"] = str(kubeconfig)
+    inventory = discover_kubernetes_gpu_inventory(context=resolved_context)
+    sky_error = ""
+    if resolved_context:
+        try:
+            from npa.controller_ownership import (
+                verify_controller_owner,
+                verify_recorded_controller_owner,
+            )
+
+            if isinstance(project, str) and project.strip():
+                verify_controller_owner(project, resolved_context)
+            else:
+                owner = verify_recorded_controller_owner()
+                if owner is not None and owner.context != resolved_context:
+                    raise RuntimeError(
+                        "Shared controller owner context does not match requested GPU context."
+                    )
+        except (OSError, RuntimeError, ValueError) as exc:
+            sky_error = str(exc)
     try:
+        if sky_error:
+            raise KubernetesGpuCatalogError(sky_error)
         catalog = discover_kubernetes_gpu_catalog(
             context=resolved_context, sky_bin=sky_bin or None
         )
     except KubernetesGpuCatalogError as exc:
-        _fail(str(exc))
-        return
+        sky_error = str(exc)
+        from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
+
+        catalog = KubernetesGpuCatalog({}, context=resolved_context)
     finally:
         if cluster.strip():
             if env_backup is None:
@@ -5447,6 +5500,8 @@ def gpus_cmd(
             json.dumps(
                 {
                     "context": catalog.context,
+                    "kubernetes": inventory.to_dict(),
+                    "skypilot_error": sky_error,
                     "accelerators": {
                         name: sorted(quantities)
                         for name, quantities in catalog.quantities_by_accelerator.items()
@@ -5457,10 +5512,27 @@ def gpus_cmd(
                 sort_keys=True,
             )
         )
+        if sky_error:
+            raise typer.Exit(code=2)
         return
 
+    typer.echo(
+        "kubernetes: "
+        f"ready_nodes={inventory.ready_nodes} "
+        f"eligible_gpu_nodes={inventory.eligible_gpu_nodes} "
+        f"capacity={inventory.capacity} allocatable_gpus={inventory.allocatable} "
+        f"accelerator_product={','.join(inventory.products) or 'unknown/unlabeled'}"
+    )
+    if inventory.allocatable > 0 and not inventory.products:
+        typer.echo(
+            "label_readiness: blocked_missing_product_label (wait for GPU Feature Discovery/NFD)",
+            err=True,
+        )
     if catalog.is_empty:
         typer.echo("accelerators: none advertised")
+        if sky_error:
+            typer.echo(f"skypilot_error: {sky_error}", err=True)
+            raise typer.Exit(code=2)
         return
     typer.echo(f"context: {catalog.context or 'all'}")
     for name in sorted(catalog.quantities_by_accelerator, key=str.casefold):

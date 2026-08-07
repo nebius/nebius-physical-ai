@@ -1764,8 +1764,12 @@ def delete_bucket_cmd(
             typer.echo(f"Bucket {target} is already {pending}.")
             verified_gone = False
             if wait:
-                verified_gone = _wait_for_bucket_gone(
-                    resolved_project, bucket_name, target, wait_timeout
+                verified_gone = _call_bucket_waiter(
+                    resolved_project,
+                    bucket_name,
+                    target,
+                    wait_timeout,
+                    bucket_id=resolved_id,
                 )
             from npa.teardown_receipts import record_teardown_event
 
@@ -1779,9 +1783,12 @@ def delete_bucket_cmd(
                 action={"kind": "scheduled_bucket_purge"},
                 verification={"bucket_absent": verified_gone},
             )
-            if prune_config and bucket_name:
+            if prune_config and bucket_name and (not wait or verified_gone):
                 _prune_local_state(bucket_name)
-            _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
+            if not wait or verified_gone:
+                _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
+            if wait and not verified_gone:
+                raise typer.Exit(code=2)
             return
         raise typer.BadParameter(f"Bucket delete failed: {message}") from exc
 
@@ -1791,8 +1798,12 @@ def delete_bucket_cmd(
         typer.echo(f"Bucket {target} deleted.")
     verified_gone = not str(ttl or "").strip()
     if wait:
-        verified_gone = _wait_for_bucket_gone(
-            resolved_project, bucket_name, target, wait_timeout
+        verified_gone = _call_bucket_waiter(
+            resolved_project,
+            bucket_name,
+            target,
+            wait_timeout,
+            bucket_id=resolved_id,
         )
     from npa.teardown_receipts import record_teardown_event
 
@@ -1809,13 +1820,42 @@ def delete_bucket_cmd(
         },
         verification={"bucket_absent": verified_gone},
     )
-    if prune_config and bucket_name:
+    if prune_config and bucket_name and (not wait or verified_gone):
         _prune_local_state(bucket_name)
-    _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
+    if not wait or verified_gone:
+        _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
+    if wait and not verified_gone:
+        raise typer.Exit(code=2)
+
+
+def _call_bucket_waiter(
+    project_id: str,
+    bucket_name: str,
+    target: str,
+    timeout: int,
+    *,
+    bucket_id: str,
+) -> bool:
+    """Call the identity-aware waiter while preserving old injected test hooks."""
+
+    import inspect
+
+    parameters = inspect.signature(_wait_for_bucket_gone).parameters
+    if "bucket_id" not in parameters:
+        result = _wait_for_bucket_gone(project_id, bucket_name, target, timeout)
+        return True if result is None else bool(result)
+    return _wait_for_bucket_gone(
+        project_id, bucket_name, target, timeout, bucket_id=bucket_id
+    )
 
 
 def _wait_for_bucket_gone(
-    project_id: str, bucket_name: str, target: str, timeout: int
+    project_id: str,
+    bucket_name: str,
+    target: str,
+    timeout: int,
+    *,
+    bucket_id: str = "",
 ) -> bool:
     """Poll until *bucket_name* no longer exists (a scheduled purge is async).
 
@@ -1826,21 +1866,45 @@ def _wait_for_bucket_gone(
     import time
 
     from npa.clients.nebius import NebiusError, get_bucket_by_name
+    from npa.progress import WaitProgress
 
     if not project_id or not bucket_name:
         typer.echo("--wait skipped: no project/bucket name to poll.")
         return False
     deadline = time.monotonic() + max(1, int(timeout))
     typer.echo(f"Waiting up to {timeout}s for {bucket_name} to be purged...")
+    progress = WaitProgress(
+        "bucket deletion",
+        monotonic=time.monotonic,
+        emit=lambda message: typer.echo(message, err=True),
+    )
+    progress.start(f"id={bucket_id or 'unknown'} name={bucket_name}")
     while time.monotonic() < deadline:
         try:
             item = get_bucket_by_name(project_id, bucket_name)
         except NebiusError:
-            # Transient list failure: keep waiting rather than declaring done.
-            item = {"metadata": {"name": bucket_name}}
+            typer.echo(
+                f"Bucket {target} deletion could not be verified because provider "
+                "inventory was forbidden or unavailable; it was not reported gone.",
+                err=True,
+            )
+            progress.finish("verification_failed")
+            return False
         if item is None:
             typer.echo(f"Bucket {target} is gone.")
+            progress.finish("verified_absent")
             return True
+        live_id = str((item.get("metadata") or {}).get("id") or "")
+        if bucket_id and live_id and live_id != bucket_id:
+            typer.echo(
+                f"Bucket id {bucket_id} is gone; name {bucket_name!r} now belongs to "
+                f"a different bucket id ({live_id}) and was left untouched; name reuse "
+                "is not authoritative absence for this wait contract.",
+                err=True,
+            )
+            progress.finish("verification_failed", "name_reused=true")
+            return False
+        progress.tick("provider_state=present")
         time.sleep(5)
     state = _scheduled_deletion_state(project_id, bucket_name) or "still present"
     overdue = _purge_is_overdue(project_id, bucket_name)
@@ -1853,12 +1917,14 @@ def _wait_for_bucket_gone(
             "wait. The name stays reserved until Nebius clears it; raise it with Nebius "
             "support if it does not resolve."
         )
+        progress.finish("timed_out", "purge_overdue=true")
         return False
     typer.echo(
         f"Bucket {bucket_name} is {state} after {timeout}s "
         "(a scheduled purge can take longer than the wait); it will be removed by "
         "Nebius. Re-run with a larger --wait-timeout to keep watching."
     )
+    progress.finish("timed_out", f"provider_state={state}")
     return False
 
 

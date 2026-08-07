@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import inspect
+import json
 import logging
 import os
 import shlex
@@ -80,6 +81,123 @@ app.command("uninstall", rich_help_panel="Setup")(_uninstall_cmd)
 app.add_typer(soperator_app, name="soperator", rich_help_panel="Platform utilities")
 app.add_typer(viz_app, name="viz", rich_help_panel="Platform utilities")
 app.add_typer(workflow_shim_app, name="workflow", hidden=True)
+
+
+@app.command("destroy", rich_help_panel="Platform utilities")
+def destroy_project_cmd(
+    project: str = typer.Option(
+        ..., "--project", help="Exact configured project alias."
+    ),
+    all_resources: bool = typer.Option(
+        False,
+        "--all",
+        help="Required acknowledgement to plan the full project lifecycle.",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Execute the rendered plan."),
+    delete_project: bool = typer.Option(
+        False,
+        "--delete-project",
+        help="Report provider project-deletion support (currently plan-only/unsupported).",
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Plan or execute project-scoped teardown through guarded NPA commands."""
+
+    if not all_resources:
+        raise typer.BadParameter("Full project teardown requires --all.")
+    from npa.project_destroy import build_project_destroy_plan, execute_project_destroy
+
+    phases = build_project_destroy_plan(project, delete_project=delete_project)
+    if not yes:
+        payload = {
+            "status": "plan_only",
+            "changed": False,
+            "project": project,
+            "phases": [phase.to_dict() for phase in phases],
+        }
+        if output_json:
+            typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            typer.echo(f"Project teardown plan for {project} (no changes):")
+            for phase in phases:
+                typer.echo(f"  {phase.name}: {phase.detail}")
+                for command in phase.commands:
+                    typer.echo("    " + shlex.join(command))
+        return
+
+    from npa.clients.config import resolve_environment
+
+    environment = resolve_environment(project)
+    if environment is None or not environment.project_id:
+        raise typer.BadParameter(
+            f"Project {project!r} has no immutable project identity; refusing teardown."
+        )
+    operation = ProvisioningOperation.prepare(
+        command="npa destroy",
+        project_alias=project,
+        project_id=environment.project_id,
+        tenant_id=environment.tenant_id,
+        region=environment.region,
+        resource_type="project-teardown",
+        requested_name=project,
+        ownership_source="project-destroy-cli",
+        resume_command="",
+        resume_argv=[
+            "npa",
+            "destroy",
+            "--project",
+            project,
+            "--all",
+            "--yes",
+            "--json",
+        ],
+    )
+    operation.record_preflight_plan(
+        {
+            "project_alias": project,
+            "project_id": environment.project_id,
+            "tenant_id": environment.tenant_id,
+            "region": environment.region,
+            "topology": {"phases": [phase.to_dict() for phase in phases]},
+            "decision": "execute",
+        }
+    )
+    try:
+        with operation_context(operation):
+            operation.transition("mutating")
+            result = execute_project_destroy(
+                project,
+                phases,
+                on_phase=lambda phase: operation.heartbeat(details={"phase": phase}),
+            )
+            if result["status"] == "success":
+                operation.transition("state-durable")
+                operation.commit()
+            else:
+                operation.transition(
+                    "recovery-required",
+                    error="one or more independent teardown phases remain",
+                    details={"error_type": "PartialProjectTeardown"},
+                )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as exc:
+        journal_phase = str(operation.read().get("phase") or "")
+        if journal_phase not in {"recovery-required", "rollback-incomplete"}:
+            operation.transition(
+                "recovery-required",
+                error=str(exc),
+                details={"error_type": type(exc).__name__},
+            )
+        raise
+    if output_json:
+        typer.echo(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        typer.echo(f"status: {result['status']}")
+        for phase in result["phases"]:
+            typer.echo(f"{phase['phase']}: {phase['status']}")
+    if result["status"] != "success":
+        raise typer.Exit(code=2)
 
 
 DEFAULT_REGION = "eu-north1"
