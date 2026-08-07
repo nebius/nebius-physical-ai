@@ -656,9 +656,9 @@ class SkyPilotWaveExecutor:
 
         names = self._job_ids_by_name(job_name)
         if names:
-            if parsed and parsed in names:
-                return parsed
             resolved = names[0]
+            if parsed == resolved:
+                return parsed
             if parsed:
                 self._log(
                     f"wave {attempt.key}: launch output reported job_id={parsed}, but "
