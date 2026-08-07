@@ -59,9 +59,14 @@ def test_artifact_backed_stages_skip_unrelated_draft_overlay() -> None:
     """Historical capture runs must not inherit an unrelated workflow draft as pending."""
     source = AGENT_MODULE.read_text(encoding="utf-8")
     stages_mod = (AGENT_MODULE.parent / "agent_stages.py").read_text(encoding="utf-8")
+    runtime_mod = (AGENT_MODULE.parent / "agent_stage_runtime.py").read_text(
+        encoding="utf-8"
+    )
     assert "def run_owns_workflow_stage_overlay" in stages_mod
     assert "def build_artifact_backed_stages" in stages_mod
     assert "_AGENT_STAGES_EMBED" in source
-    assert "overlay_unmatched = run_owns_workflow_stage_overlay(state, run_id)" in source
-    assert "build_artifact_backed_stages(" in source
+    assert (
+        "overlay_unmatched=run_owns_workflow_stage_overlay(state, run_id)" in runtime_mod
+    )
+    assert "build_artifact_backed_stages(" in runtime_mod
     assert "Historical capture runs must not inherit" in stages_mod

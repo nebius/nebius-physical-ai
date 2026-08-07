@@ -895,9 +895,18 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "preferred and preferred.render == \"rerun\"" in source
     assert "held-out simulation camera stream" in source
     assert "reference proxy context" in source
-    assert "def _artifact_backed_run_details" in source
-    assert "def _workflow_stage_defs_from_state" in source
-    assert "Derived stage timeline from" in source
+    from npa.cli import agent as agent_module
+
+    stage_runtime = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
+    )
+    assert "def _artifact_backed_run_details" in stage_runtime
+    assert "def _workflow_stage_defs_from_state" in stage_runtime
+    assert "artifact presence does not establish execution success" in source
+    assert "npa.stage-evidence/v1" in source
+    assert "runDetailsRequestId" in source
+    assert "runDetailsAbortController" in source
+    assert "execution status unavailable" in source
     assert "Never let a sparse update erase richer artifact fields from load-run" in source
     assert "Read-only: do not _record/_save here" in source
     assert 'Always use the stock demo run id and clear any prior media-artifact preview' in source
@@ -1124,7 +1133,10 @@ def test_default_run_discovery_is_generic_not_hardcoded() -> None:
     assert "exclude=_discovery_exclude_roots()" in source
     assert "AGENT_DEFAULT_WORKFLOW_PREFIXES" not in source
     # Per-run lookup falls back to a generic cross-category, cross-bucket find.
-    assert "find_run_artifacts_across_buckets(" in source
+    runtime = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
+    )
+    assert "find_run_artifacts_across_buckets(" in runtime
 
 
 def test_run_details_resolves_run_generically_by_id() -> None:
@@ -1134,9 +1146,12 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     """
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
+    )
     # Backend resolves the run generically across categories (no prefix needed).
-    assert "def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = \"\")" in source
+    assert "def _artifact_backed_run_details(" in source
+    assert "resource_bucket: str = \"\"" in source
     assert "find_run_artifacts(" in source
     # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
@@ -1145,6 +1160,9 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     assert 'entry.source_type === "artifact_storage"' in ui
     assert "loadArtifactsForSelectedRun(chosen, null, entry)" in ui
     assert "prefix: artifactPrefixValue()" not in ui
+    assert 'params.set("resource_bucket", resourceBucket)' in ui
+    assert 'params.set("resolved_prefix", resolvedPrefix)' in ui
+    assert '"stages succeeded"' not in ui
 
 
 def test_bootstrap_chat_has_scroll_to_bottom_button() -> None:
@@ -2352,7 +2370,9 @@ def test_run_details_surface_per_stage_workflow_logs() -> None:
     from the npa.workflow run manifest so operators can view logs of each stage."""
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
+    )
     assert "def _workflow_run_steps(" in source
     assert "/npa-workflow/manifest.json" in source
     assert '"workflow_steps": workflow_steps' in source

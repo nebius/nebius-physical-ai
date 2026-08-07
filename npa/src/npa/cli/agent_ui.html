@@ -1158,9 +1158,14 @@
       .stage-status.running { background: #fef3c7; color: #92400e; }
       .stage-status.queued { background: #eef6fc; color: #1e4b6b; }
       .stage-status.pending { background: #eef6fc; color: #3d5a6e; }
+      .stage-status.skipped { background: #f3e8ff; color: #6b21a8; }
       .stage-status.not_run { background: #f8fafc; color: #4b6476; border: 1px solid var(--border); }
+      .stage-status.observed_output { background: #e6fffb; color: #115e59; border: 1px solid #99f6e4; }
+      .stage-status.status_unavailable { background: #fff; color: #64748b; border: 1px solid var(--border); }
       .stage-label { font-weight: 700; color: var(--text); }
       .stage-summary { color: var(--muted); margin-top: 2px; line-height: 1.35; }
+      .stage-evidence { color: #52697a; margin-top: 4px; font-size: 11px; line-height: 1.35; }
+      .stage-evidence code { font-size: 10px; }
       .stage-item.is-selected { background: #eff6ff; box-shadow: inset 3px 0 0 #2563eb; }
       .stage-detail:empty { display: none; }
       .stage-detail {
@@ -5964,6 +5969,11 @@
       let autoLoadedPreferredKey = "";
       let runSearchRequestId = 0;
       let artifactLoadRequestId = 0;
+      let artifactListRequestId = 0;
+      let artifactListAbortController = null;
+      let runDetailsRequestId = 0;
+      let runDetailsAbortController = null;
+      let activeRunResourceScope = null;
       let activeArtifactBrowseScope = null;
       // Load the whole run list into the picker by default so every run shows
       // without the operator having to guess a search fragment. The server still
@@ -6168,8 +6178,20 @@
         return mergedRunsCache.find((item) => String(item.run_id || "") === rid) || null;
       }
       function clearVisibleRunState(message) {
+        artifactLoadRequestId += 1;
+        artifactListRequestId += 1;
+        if (artifactListAbortController) {
+          artifactListAbortController.abort();
+          artifactListAbortController = null;
+        }
+        runDetailsRequestId += 1;
+        if (runDetailsAbortController) {
+          runDetailsAbortController.abort();
+          runDetailsAbortController = null;
+        }
         activeRunId = "";
         activeRunEntryKey = "";
+        activeRunResourceScope = null;
         autoLoadedPreferredKey = "";
         activeArtifactRender = "";
         currentLichtblickSimViz = null;
@@ -6332,11 +6354,24 @@
         }
         const query = params.toString();
         const context = requestContext && typeof requestContext === "object" ? requestContext : {};
-        const data = await apiJson(
-          "/api/artifacts/run/" + encodeURIComponent(runId) + (query ? "?" + query : ""),
-          context.signal ? { signal: context.signal } : undefined
-        );
-        if (context.isCurrent && !context.isCurrent()) return false;
+        const listRequestId = ++artifactListRequestId;
+        if (artifactListAbortController) artifactListAbortController.abort();
+        const localController = context.signal ? null : new AbortController();
+        artifactListAbortController = localController;
+        const signal = context.signal || (localController && localController.signal);
+        const requestIsCurrent = () => listRequestId === artifactListRequestId &&
+          activeRunId === runId && (!context.isCurrent || context.isCurrent());
+        let data = null;
+        try {
+          data = await apiJson(
+            "/api/artifacts/run/" + encodeURIComponent(runId) + (query ? "?" + query : ""),
+            signal ? { signal } : undefined
+          );
+        } catch (err) {
+          if (!requestIsCurrent() || (signal && signal.aborted)) return false;
+          throw err;
+        }
+        if (!requestIsCurrent()) return false;
         if (previous.length) {
           const merged = new Map(previous.map((item) => [String((item && item.s3_uri) || (item && item.key) || ""), item]));
           for (const item of (Array.isArray(data.artifacts) ? data.artifacts : [])) {
@@ -6347,6 +6382,19 @@
         const list = document.getElementById("artifactList");
         if (!list) return false;
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
+        activeRunResourceScope = {
+          run_id: runId,
+          bucket: String(data.bucket || (entry && entry.bucket) || ""),
+          project_id: String(data.project_id || (entry && entry.project_id) || ""),
+          resolved_prefix: String(data.resolved_prefix || ""),
+        };
+        const detailOptions = {
+          entry,
+          resourceBucket: activeRunResourceScope.bucket,
+          projectId: activeRunResourceScope.project_id,
+          resolvedPrefix: activeRunResourceScope.resolved_prefix,
+          preserveOnError: true,
+        };
         if (!artifacts.length) {
           const prov = document.getElementById("artifactProvenance");
           if (prov) prov.innerHTML = "";
@@ -6358,6 +6406,7 @@
             "<p>This run may predate S3 upload support, may belong to a destroyed VM, or may have used a different artifact prefix.</p>" +
             "<p>Discovery scope: <code>" + escapeHtml(String((data.access && data.access.scope) || data.prefix || "single_project")) + "</code>" +
             (unavailable.length ? " · unavailable projects: " + escapeHtml(unavailable.join(", ")) : "") + "</p>";
+          await loadRunDetails(runId, detailOptions);
           return true;
         }
         renderArtifactDerivedRunDetails(runId, artifacts);
@@ -6369,6 +6418,7 @@
           list.innerHTML =
             "<p>No artifacts for <code>" + escapeHtml(runId) + "</code> at the selected Stage/Type.</p>" +
             "<p>Clear the Stage and Type filters to show all " + String(artifacts.length) + " artifacts.</p>";
+          await loadRunDetails(runId, detailOptions);
           return true;
         }
         const counts = artifacts.reduce((acc, item) => {
@@ -6487,37 +6537,15 @@
             run_id: runId,
             key: String(preferred.key || "").trim(),
             s3_uri: String(preferred.s3_uri || "").trim(),
-          }, context);
-          renderArtifactDerivedRunDetails(runId, artifacts);
-        } else {
-          renderArtifactDerivedRunDetails(runId, artifacts);
+          }, signal ? { signal } : undefined);
         }
+        if (!requestIsCurrent()) return false;
+        await loadRunDetails(runId, detailOptions);
+        if (artifactListAbortController === localController) artifactListAbortController = null;
         return true;
       }
       function renderArtifactDerivedRunDetails(runId, artifacts) {
         const list = Array.isArray(artifacts) ? artifacts : [];
-        const keys = list.map((item) => String(item.key || ""));
-        const hasAny = (patterns) => countMatching(patterns) > 0;
-        function countMatching(patterns) {
-          return keys.filter((key) => patterns.some((pattern) => pattern && key.includes(pattern))).length;
-        }
-        function artifactStageKey(key) {
-          const runMarker = "/" + runId + "/";
-          let scoped = String(key || "");
-          const idx = scoped.indexOf(runMarker);
-          if (idx >= 0) {
-            scoped = scoped.slice(idx + runMarker.length);
-          } else if (runId && scoped.startsWith(runId + "/")) {
-            // Empty-prefix keys carry the run id as the leading segment.
-            scoped = scoped.slice(String(runId).length + 1);
-          }
-          const parts = scoped.split("/").filter(Boolean);
-          const first = parts[0] || "artifacts";
-          if (first === "reports") return "reports";
-          if (first === "eval" && parts[1]) return "eval/" + parts[1];
-          if (["actions", "vlm_eval", "training_signal", "envs"].includes(first) && parts[1]) return first + "/" + parts[1];
-          return first;
-        }
         function artifactStageLabel(stageKey) {
           const labels = {
             "stage_01_trigger": "Trigger",
@@ -6538,39 +6566,63 @@
           return cleaned.slice(0, 1).toUpperCase() + cleaned.slice(1);
         }
         const grouped = new Map();
-        for (const key of keys) {
-          const stageKey = artifactStageKey(key);
+        const wrapper = runStageWrapper(list, runId);
+        for (const item of list) {
+          const stageKey = deriveArtifactStage(String((item && item.key) || ""), runId, wrapper);
           grouped.set(stageKey, (grouped.get(stageKey) || 0) + 1);
         }
         const stages = Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([stageKey, count]) => {
+          const reason = String(count) + " artifact" + (count === 1 ? " was" : "s were") +
+            " observed under `" + stageKey + "`; execution status is unavailable.";
           return {
+            evidence_version: "npa.stage-evidence/v1",
             id: stageKey.replace(/[^a-zA-Z0-9._-]+/g, "-"),
             stage_key: stageKey,
             label: artifactStageLabel(stageKey),
-            status: "succeeded",
-            summary: String(count) + " artifact" + (count === 1 ? "" : "s") + " found under `" + stageKey + "`.",
+            status: "observed_output",
+            status_label: "Observed output",
+            artifact_count: count,
+            evidence_type: "artifact_observation",
+            evidence_source: "artifact_listing",
+            authority: "observed",
+            confidence: "high",
+            diagnostic_reason: reason,
+            evidence: {
+              type: "artifact_observation", source: "artifact_listing", authority: "observed",
+              confidence: "high", reason, observed_at: "",
+            },
+            summary: reason,
           };
         });
-        const reportReady = hasAny(["reports/sim2real-report.json"]);
-        const rrdReady = hasAny(["reports/sim2real.rrd"]);
         const now = new Date().toISOString();
         renderRunDetails({
           run: {
             run_id: runId,
-            status: reportReady ? "completed" : "artifact-backed",
-            result: rrdReady ? "rerun_ready" : "artifacts_listed",
+            source_type: "artifact_storage",
+            source_label: "S3 artifacts",
+            status: "status_unavailable",
+            status_label: "Status unavailable",
+            result: "artifacts_available",
             updated_at: now,
             stages,
+            stage_summary: {
+              evidence_version: "npa.stage-evidence/v1",
+              text: String(stages.length) + " observed group" + (stages.length === 1 ? "" : "s") +
+                " · execution status unavailable",
+              displayed_stage_count: stages.length,
+              observed_stage_count: stages.length,
+              authoritative_stage_count: 0,
+              execution_status_available: false,
+              succeeded_count: 0,
+              failed_count: 0,
+              not_run_count: 0,
+            },
             logs: [
               {
                 timestamp: now,
                 level: "info",
-                message: "Derived stage timeline from " + String(list.length) + " S3 artifacts.",
-              },
-              {
-                timestamp: now,
-                level: rrdReady ? "info" : "warn",
-                message: rrdReady ? "Run-specific Rerun recording is available." : "Rerun recording not found in listed artifacts.",
+                message: "Observed " + String(list.length) +
+                  " S3 artifacts; artifact presence does not establish execution success.",
               },
             ],
           },
@@ -7204,13 +7256,16 @@
         return loadWorkflowHistoryRun(chosen);
       }
       function normalizeStageStatus(value) {
-        const raw = String(value || "pending").trim().toLowerCase();
+        const raw = String(value || "status_unavailable").trim().toLowerCase();
         if (["succeeded", "success", "done", "complete", "completed"].includes(raw)) return "succeeded";
         if (["failed", "error", "blocked"].includes(raw)) return "failed";
-        if (["running", "active", "submitted"].includes(raw)) return "running";
+        if (["running", "active", "in_progress", "in-progress"].includes(raw)) return "running";
         if (["queued"].includes(raw)) return "queued";
-        if (["not_run", "not-run", "skipped", "not launched", "not_launched"].includes(raw)) return "not_run";
-        return "pending";
+        if (["pending", "planned", "submitted", "created", "waiting"].includes(raw)) return "pending";
+        if (["skipped", "skip"].includes(raw)) return "skipped";
+        if (["not_run", "not-run", "not run", "not launched", "not_launched"].includes(raw)) return "not_run";
+        if (["observed_output", "observed-output", "artifacts_available", "artifacts available"].includes(raw)) return "observed_output";
+        return "status_unavailable";
       }
       function formatStageStatusLabel(statusClass) {
         const labels = {
@@ -7219,9 +7274,42 @@
           running: "Running",
           queued: "Queued",
           pending: "Pending",
+          skipped: "Skipped",
           not_run: "Not run",
+          observed_output: "Observed output",
+          status_unavailable: "Status unavailable",
         };
-        return labels[statusClass] || String(statusClass || "Pending");
+        return labels[statusClass] || String(statusClass || "Status unavailable");
+      }
+      function conservativeStageSummary(run, stages) {
+        const supplied = run && run.stage_summary && typeof run.stage_summary === "object"
+          ? run.stage_summary
+          : null;
+        if (supplied && String(supplied.text || "").trim()) return String(supplied.text);
+        const rows = Array.isArray(stages) ? stages : [];
+        if (!rows.length) return "No stage evidence available";
+        const counts = new Map();
+        let observed = 0;
+        for (const stage of rows) {
+          const status = normalizeStageStatus(stage && stage.status);
+          counts.set(status, (counts.get(status) || 0) + 1);
+          if (Number((stage && stage.artifact_count) || 0) > 0) observed += 1;
+        }
+        const execution = ["succeeded", "failed", "running", "queued", "pending", "skipped", "not_run"]
+          .reduce((total, key) => total + (counts.get(key) || 0), 0);
+        if (!execution && observed) {
+          return String(observed) + " observed group" + (observed === 1 ? "" : "s") +
+            " · execution status unavailable";
+        }
+        const labels = {
+          succeeded: "succeeded", failed: "failed", running: "running", queued: "queued",
+          pending: "pending", skipped: "skipped", not_run: "not run",
+          observed_output: "observed output", status_unavailable: "status unavailable",
+        };
+        return Object.keys(labels)
+          .filter((key) => counts.get(key))
+          .map((key) => String(counts.get(key)) + " " + labels[key])
+          .join(" · ");
       }
       async function showStageDetail(runId, stageKey, stageLabel) {
         const host = document.getElementById("stageDetail");
@@ -7230,9 +7318,18 @@
         if (host) host.innerHTML = '<p class="hint">Describing <strong>' + escapeHtml(label) + '</strong>…</p>';
         let data = null;
         try {
+          const entry = preferredRunEntry(rid) || {};
+          const scope = activeRunResourceScope && activeRunResourceScope.run_id === rid
+            ? activeRunResourceScope
+            : entry;
+          const params = new URLSearchParams();
+          params.set("stage_key", String(stageKey || ""));
+          if (scope.bucket) params.set("resource_bucket", String(scope.bucket));
+          if (scope.project_id) params.set("project_id", String(scope.project_id));
+          if (scope.resolved_prefix) params.set("resolved_prefix", String(scope.resolved_prefix));
           data = await loadJson(
             "/api/artifacts/stage/" + encodeURIComponent(rid) +
-            "?stage_key=" + encodeURIComponent(String(stageKey || ""))
+            "?" + params.toString()
           );
         } catch (err) {
           if (host) host.innerHTML = '<p class="preview-error">Stage inspect failed: ' +
@@ -7357,10 +7454,16 @@
         if (!summary || !stagesHost || !logHost) return;
         const runId = String(run.run_id || "");
         const result = String(run.result || "pending");
-        const status = String(run.status || "idle");
+        const status = String(run.status_label || run.status || "Status unavailable");
         const updatedAt = String(run.updated_at || run.submitted_at || "");
+        const sourceLabel = String(run.source_label || run.source_type || "");
+        const projectId = String(run.project_id || "");
+        const bucket = String(run.bucket || "");
         summary.innerHTML =
           '<span class="pill">run <strong>' + escapeHtml(runId || "none") + '</strong></span>' +
+          (sourceLabel ? '<span class="pill">source <strong>' + escapeHtml(sourceLabel) + '</strong></span>' : "") +
+          (projectId ? '<span class="pill">project <strong>' + escapeHtml(projectId) + '</strong></span>' : "") +
+          (bucket ? '<span class="pill">bucket <strong>' + escapeHtml(bucket) + '</strong></span>' : "") +
           '<span class="pill">status <strong>' + escapeHtml(status) + '</strong></span>' +
           '<span class="pill">result <strong>' + escapeHtml(result) + '</strong></span>' +
           '<span class="pill">updated <strong>' + escapeHtml(updatedAt || "-") + '</strong></span>';
@@ -7378,14 +7481,26 @@
             activateMainTab("rerun").catch((err) => console.warn("open rerun from stages failed", err));
           });
         } else {
-          const succeeded = stages.filter((stage) => normalizeStageStatus(stage.status) === "succeeded").length;
           const activeIdx = stages.findIndex((stage) => ["running", "queued"].includes(normalizeStageStatus(stage.status)));
-          const progress = '<div class="stage-progress">' + String(succeeded) + "/" + String(stages.length) + " stages succeeded</div>";
+          const progress = '<div class="stage-progress">' + escapeHtml(conservativeStageSummary(run, stages)) + "</div>";
           stagesHost.innerHTML = progress + stages.map((stage, idx) => {
             const statusClass = normalizeStageStatus(stage.status);
-            const statusLabel = formatStageStatusLabel(statusClass);
+            const statusLabel = String(stage.status_label || formatStageStatusLabel(statusClass));
             const label = String(stage.label || stage.id || "");
             const stageSummary = String(stage.summary || "");
+            const evidence = (stage.evidence && typeof stage.evidence === "object") ? stage.evidence : {};
+            const evidenceSource = String(stage.evidence_source || evidence.source || "");
+            const authority = String(stage.authority || evidence.authority || "unknown");
+            const confidence = String(stage.confidence || evidence.confidence || "unknown");
+            const artifactCount = Number(stage.artifact_count || 0);
+            const reason = String(stage.diagnostic_reason || evidence.reason || "");
+            const evidenceBits = [];
+            if (evidenceSource) evidenceBits.push("source " + evidenceSource);
+            evidenceBits.push(authority);
+            if (confidence && confidence !== "unknown") evidenceBits.push(confidence + " confidence");
+            if (artifactCount) evidenceBits.push(String(artifactCount) + " artifact" + (artifactCount === 1 ? "" : "s"));
+            const evidenceHtml = '<div class="stage-evidence" title="' + escapeHtml(reason) + '">Evidence: ' +
+              escapeHtml(evidenceBits.join(" · ")) + (reason ? " · " + escapeHtml(reason) : "") + "</div>";
             const active = idx === activeIdx ? " is-active" : "";
             const stageKey = String(stage.stage_key || "");
             const clickable = stageKey
@@ -7396,7 +7511,8 @@
               '<div class="stage-item' + active + '"' + clickable + '>' +
               '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusLabel) + '</span>' +
               '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
-              '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div></div>' +
+              '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div>' +
+              evidenceHtml + '</div>' +
               '</div>'
             );
           }).join("");
@@ -7439,20 +7555,39 @@
             }).join("\n")
           : "No log entries yet.";
       }
-      async function loadRunDetails(runId) {
+      async function loadRunDetails(runId, options) {
         const target = String(runId || activeRunId || "").trim();
-        // No prefix needed: the server resolves the run by id across the whole
-        // run root and returns its real artifact-backed stages.
+        const opts = options && typeof options === "object" ? options : {};
+        const entry = opts.entry || preferredRunEntry(target) || {};
+        const params = new URLSearchParams();
+        const resourceBucket = String(opts.resourceBucket || entry.bucket || "").trim();
+        const projectId = String(opts.projectId || entry.project_id || "").trim();
+        const resolvedPrefix = String(opts.resolvedPrefix || "").trim();
+        if (resourceBucket) params.set("resource_bucket", resourceBucket);
+        if (projectId) params.set("project_id", projectId);
+        if (resolvedPrefix) params.set("resolved_prefix", resolvedPrefix);
+        const query = params.toString();
         const path = target
-          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target)
+          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target) + (query ? "?" + query : "")
           : "/api/workflows/sim2real/status";
+        const requestId = ++runDetailsRequestId;
+        if (runDetailsAbortController) runDetailsAbortController.abort();
+        const controller = new AbortController();
+        runDetailsAbortController = controller;
         try {
-          const data = await loadJson(path);
+          const data = await apiJson(path, { signal: controller.signal });
+          if (requestId !== runDetailsRequestId || (target && activeRunId !== target)) return null;
           renderRunDetails(data);
           return data.run || data;
         } catch (err) {
+          if (requestId !== runDetailsRequestId || controller.signal.aborted || (target && activeRunId !== target)) {
+            return null;
+          }
+          if (opts.preserveOnError) return null;
           renderRunDetails({ run: { run_id: target, status: "unknown", result: "unavailable", logs: [{ timestamp: new Date().toISOString(), level: "error", message: String(err && err.message ? err.message : err) }], stages: [] } });
           return null;
+        } finally {
+          if (requestId === runDetailsRequestId) runDetailsAbortController = null;
         }
       }
       async function loadWorkflowHistoryRun(runId) {

@@ -201,6 +201,14 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#tabMain").click();
     cy.get("#runSummary").should("contain.text", runId);
     cy.get("#stageList .stage-item").should("have.length.greaterThan", 0);
+    cy.get("#stageList .stage-evidence").should("have.length.greaterThan", 0);
+    cy.get("#stageList .stage-status").each(($status) => {
+      expect(String($status.text()).trim()).to.match(/^(Observed output|Status unavailable)$/);
+    });
+    cy.get("#stageList").should("not.contain.text", "Not run");
+    cy.get("#stageList").should("not.contain.text", "Succeeded");
+    cy.get("#stageList").should("not.contain.text", "Failed");
+    cy.get("#stageList .stage-progress").should("contain.text", "execution status unavailable");
 
     cy.get("#tabRerun").click();
     cy.get("#artifactPrefix").clear().type("no-such-run-for-stale-state-check", { delay: 0 });
@@ -412,13 +420,17 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
     cy.get("#stageList", { timeout: 30000 }).within(() => {
-      cy.contains("Trigger").should("be.visible");
-      cy.contains("Held-out eval").should("be.visible");
-      cy.contains("Reports / visualization").should("be.visible");
-      cy.contains("Succeeded").should("be.visible");
+      cy.get(".stage-item").should("have.length.greaterThan", 0);
+      cy.get(".stage-evidence").should("have.length.greaterThan", 0);
+      cy.get(".stage-status").each(($status) => {
+        expect(String($status.text()).trim()).to.match(
+          /^(Succeeded|Failed|Running|Skipped|Not run|Pending|Submitted|Observed output|Status unavailable)$/
+        );
+      });
     });
-    cy.get("#runSummary").should("contain.text", runId).and("contain.text", "completed");
-    cy.get("#runLog").should("contain.text", "Derived stage timeline");
+    cy.get("#runSummary").should("contain.text", runId);
+    cy.get("#stageList .stage-progress").invoke("text").should("not.match", /\d+\/\d+ stages succeeded/i);
+    cy.get("#runLog").should("contain.text", "does not establish execution success");
     cy.get("#tabRerun").click();
     cy.get("#renderedDataSummary", { timeout: 30000 }).should("contain.text", "rerun").and("contain.text", "sim2real.rrd");
     cy.get("#renderedDataSummary").should("contain.text", "held-out simulation camera");

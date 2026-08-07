@@ -234,6 +234,30 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
 - `POST /api/sim-viz/load-artifact` loads an explicit artifact (`s3_uri` or `run_id` + `key`).
 - Unknown types are still listed and selectable (`render="download"` fallback).
 
+### Stage evidence contract
+
+`GET /api/workflows/sim2real/runs/{run_id}` and the matching status endpoint
+return `npa.stage-evidence/v1` rows. Pass the discovered `project_id`,
+`resource_bucket`, and `resolved_prefix` when selecting a cross-project run;
+stage-detail requests preserve the same verified scope.
+
+- Explicit workflow manifests, durable status records, reports, and agent event
+  state may establish `Succeeded`, `Failed`, `Running`, `Skipped`, `Pending`, or
+  `Not run`, with authoritative provenance.
+- Artifact presence establishes only `Observed output`; missing output establishes
+  neither an attempt nor an outcome. `Not run` requires an authoritative graph or
+  status record that says so.
+- Artifact-only runs show only observed logical groups and use summaries such as
+  `6 observed groups · execution status unavailable`. Never attach the canonical
+  Sim2Real graph to an unrelated run or report `N/M succeeded` without a grounded
+  denominator and explicit success evidence.
+- Unknown artifact layouts remain visible. The local Franka fixture is labeled as
+  demo evidence and must be cleared before another run is rendered. Browser loads
+  abort and generation-check stale detail requests so a prior graph cannot return.
+- Each row exposes status label, evidence type/source, authority/confidence,
+  diagnostic reason, timestamps, and artifact count. Inline artifact JSON is
+  recursively credential-redacted before it is returned to the UI.
+
 ### `GET /api/access`
 
 Returns the non-secret effective access report used by artifact discovery and

@@ -324,6 +324,41 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
 
+    command_secret = "workflow-command-secret-must-not-escape"
+    public_steps = module._workflow_run_steps(
+        [
+            {
+                "key": "runs/example/npa-workflow/manifest.json",
+                "payload": {
+                    "steps": [
+                        {
+                            "state": "publish",
+                            "status": "ok",
+                            "returncode": 0,
+                            "argv": [
+                                "tool",
+                                "--api-key",
+                                command_secret,
+                                f"AWS_SECRET_ACCESS_KEY={command_secret}",
+                                "--output",
+                                "s3://safe-bucket/result.json",
+                            ],
+                            "outputs": [
+                                {
+                                    "uri": "https://objects.example/result?token="
+                                    + command_secret
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        ]
+    )
+    assert command_secret not in str(public_steps)
+    assert "<redacted>" in public_steps[0]["command"]
+    assert public_steps[0]["output_uri"] == "https://objects.example/result"
+
     report = module.discover_agent_access(
         tenant_id="tenant-test",
         deployment_project_id="project-test",
@@ -374,6 +409,102 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     with pytest.raises(module.HTTPException) as exc_info:
         module.artifacts_runs(resource_bucket="caller-bucket", project_id="project-test")
     assert exc_info.value.status_code == 403
+
+    # The exact same access boundary feeds the stage-evidence endpoint. An
+    # artifact-only run exposes observed groups, never a Sim2Real template or
+    # fabricated execution success/not-run status.
+    artifacts = [
+        module.Artifact(
+            run_id="foreign-run-1",
+            key=f"foreign/foreign-run-1/{stage}/output-{index}.bin",
+            s3_uri=f"s3://bucket-test/foreign/foreign-run-1/{stage}/output-{index}.bin",
+            size=10,
+            last_modified="2026-08-07T00:00:00Z",
+            render="download",
+            inline=False,
+        )
+        for index, stage in enumerate(("capture", "train", "evaluate"), start=1)
+    ]
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(module, "find_run_artifacts", lambda *_args, **_kwargs: artifacts)
+    details = module._sim2real_run_details(
+        {
+            "latest_submit": {},
+            "sim_viz": {},
+            "sim_viz_runs": {},
+            "sim2real_runs": {},
+            "workflow_draft": {},
+        },
+        run_id="foreign-run-1",
+        resource_bucket="bucket-test",
+        project_id="project-test",
+    )
+    assert details["project_id"] == "project-test"
+    assert details["bucket"] == "bucket-test"
+    assert details["stage_summary"]["text"] == (
+        "3 observed groups · execution status unavailable"
+    )
+    assert {stage["status"] for stage in details["stages"]} == {"observed_output"}
+    assert details["stage_summary"]["succeeded_count"] == 0
+    assert details["stage_summary"]["not_run_count"] == 0
+    assert all(stage["evidence_source"] == "artifact_listing" for stage in details["stages"])
+
+    # Stage inspection keeps the selected resource boundary and recursively
+    # redacts credential-bearing JSON fields before they reach the browser.
+    marker = "credential-value-must-not-escape"
+    config_artifact = module.Artifact(
+        run_id="foreign-run-1",
+        key="foreign/foreign-run-1/configs/manifest.json",
+        s3_uri="s3://bucket-test/foreign/foreign-run-1/configs/manifest.json",
+        size=128,
+        last_modified="2026-08-07T00:00:00Z",
+        render="json",
+        inline=True,
+    )
+
+    class _Body:
+        def read(self):
+            return (
+                b'{"api_key":"credential-value-must-not-escape",'
+                b'"nested":{"password":"credential-value-must-not-escape"},'
+                b'"safe":"visible"}'
+            )
+
+    class _S3:
+        def get_object(self, **_kwargs):
+            return {"Body": _Body()}
+
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (_S3(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(
+        module, "find_run_artifacts", lambda *_args, **_kwargs: [config_artifact]
+    )
+    inspected = module.artifacts_stage(
+        "foreign-run-1",
+        stage_key="configs",
+        resource_bucket="bucket-test",
+        project_id="project-test",
+    )
+    assert inspected["bucket"] == "bucket-test"
+    assert inspected["project_id"] == "project-test"
+    assert inspected["count"] == 1
+    assert marker not in str(inspected)
+    assert "visible" in str(inspected)
+    with pytest.raises(module.HTTPException) as detail_exc:
+        module.artifacts_stage(
+            "foreign-run-1",
+            stage_key="configs",
+            resource_bucket="caller-bucket",
+            project_id="project-test",
+        )
+    assert detail_exc.value.status_code == 403
 
     secret = "do-not-return-this-credential"
 

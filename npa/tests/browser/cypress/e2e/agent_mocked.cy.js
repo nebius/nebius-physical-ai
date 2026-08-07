@@ -1,4 +1,5 @@
 import {
+  ARTIFACT_ONLY_RUN_ID,
   COMPLEX_WORKFLOW_YAML,
   DF_INPUT_ONLY_RUN_ID,
   DF_MOCK_RUN_ID,
@@ -54,6 +55,74 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#stageList").should("contain.text", "Running");
     cy.get("#runLog").should("contain.text", "generic workflow stages active");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
+  });
+
+  it("renders artifact-only groups without fabricated outcomes and clears demo state", () => {
+    // First render the isolated local fixture so the switch proves its graph is
+    // cleared before the storage-backed response arrives.
+    cy.get("#stagesRunInput").clear().type("franka-demo");
+    cy.get("#stagesLoadRun").click();
+    cy.wait("@loadFranka");
+    cy.get("#stageList").should("contain.text", "Local Franka demo");
+
+    cy.get("#stagesRunInput").clear().type(ARTIFACT_ONLY_RUN_ID);
+    cy.get("#stagesLoadRun").click();
+    cy.wait("@artifactOnlyList");
+    cy.wait("@runDetails");
+
+    cy.get("#runSummary").should("contain.text", ARTIFACT_ONLY_RUN_ID);
+    cy.get("#runSummary").should("contain.text", "S3 artifacts");
+    cy.get("#stageList .stage-item").should("have.length", 6);
+    cy.get("#stageList .stage-progress").should(
+      "have.text",
+      "6 observed groups · execution status unavailable",
+    );
+    cy.get("#stageList .stage-status").each(($status) => {
+      expect($status.text()).to.eq("Observed output");
+    });
+    cy.get("#stageList").should("not.contain.text", "Not run");
+    cy.get("#stageList").should("not.contain.text", "Succeeded");
+    cy.get("#stageList").should("not.contain.text", "Local Franka demo");
+    cy.get("#stageList .stage-evidence").should("have.length", 6);
+    cy.get("#stageList .stage-evidence").first().should("contain.text", "artifact_listing");
+    cy.get("#stageList .stage-evidence").first().should("contain.text", "observed");
+  });
+
+  it("blocks a stale stage response from restoring the previous run graph", () => {
+    const slowRun = "submitted-run";
+    const fastRun = "cosmos-reason-run";
+    cy.intercept("GET", `/api/workflows/sim2real/runs/${slowRun}*`, (req) => {
+      req.reply({
+        delay: 600,
+        body: {
+          run: {
+            run_id: slowRun,
+            status: "running",
+            stages: [{ id: "stale-stage", label: "Stale stage", status: "running" }],
+            logs: [],
+          },
+        },
+      });
+    }).as("slowRunDetails");
+    cy.intercept("GET", `/api/workflows/sim2real/runs/${fastRun}*`, {
+      run: {
+        run_id: fastRun,
+        status: "running",
+        stages: [{ id: "current-stage", label: "Current stage", status: "running" }],
+        logs: [],
+      },
+    }).as("fastRunDetails");
+
+    cy.get("#stagesRunInput").clear().type(slowRun);
+    cy.get("#stagesLoadRun").click();
+    cy.wait(40);
+    cy.get("#stagesRunInput").clear().type(fastRun);
+    cy.get("#stagesLoadRun").click();
+    cy.wait("@fastRunDetails");
+    cy.wait(800);
+    cy.get("#runSummary").should("contain.text", fastRun);
+    cy.get("#stageList").should("contain.text", "Current stage");
+    cy.get("#stageList").should("not.contain.text", "Stale stage");
   });
 
   it("keeps Stages generic after drafting a non-Sim2Real workflow YAML", () => {
@@ -130,7 +199,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#agentAccessActionResult")
       .should("be.visible")
       .and("contain.text", "List complete")
-      .and("contain.text", "2 runs")
+      .and("contain.text", "3 runs")
       .and("contain.text", "project-a")
       .and("contain.text", "project-artifacts")
       .and("contain.text", NON_STOCK_RUN_ID);

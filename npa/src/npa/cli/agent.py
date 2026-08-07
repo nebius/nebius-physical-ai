@@ -258,6 +258,7 @@ _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
 _AGENT_STATE_EMBED = "__NPA_AGENT_STATE_EMBED__"
 _AGENT_S3_GUARD_EMBED = "__NPA_AGENT_S3_GUARD_EMBED__"
 _AGENT_STAGES_EMBED = "__NPA_AGENT_STAGES_EMBED__"
+_AGENT_STAGE_RUNTIME_EMBED = "__NPA_AGENT_STAGE_RUNTIME_EMBED__"
 _AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
@@ -267,6 +268,17 @@ def _embedded_agent_stages_source() -> str:
     import re
 
     path = Path(__file__).with_name("agent_stages.py")
+    raw = path.read_text(encoding="utf-8")
+    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
+    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
+    return raw
+
+
+def _embedded_agent_stage_runtime_source() -> str:
+    """Return agent_stage_runtime.py source embedded into the backend."""
+    import re
+
+    path = Path(__file__).with_name("agent_stage_runtime.py")
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
@@ -1804,6 +1816,7 @@ def _bootstrap_agent_stack(
     agent_state_source = _embedded_agent_state_source()
     agent_s3_guard_source = _embedded_agent_s3_guard_source()
     agent_stages_source = _embedded_agent_stages_source()
+    agent_stage_runtime_source = _embedded_agent_stage_runtime_source()
     agent_provenance_source = _embedded_agent_provenance_source()
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
@@ -2374,30 +2387,51 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
 
 def _default_sim2real_run_details(run_id: str, *, submitted_at: str = "", selection: dict | None = None) -> dict:
     stages = []
-    for index, (stage_id, label) in enumerate(SIM2REAL_STAGE_TEMPLATE):
+    for stage_id, label in SIM2REAL_STAGE_TEMPLATE:
         stages.append(
-            {{
-                "id": stage_id,
-                "label": label,
-                "status": "not_run",
-                "started_at": "",
-                "finished_at": "",
-                "summary": "Not launched by the agent UI submit endpoint.",
-            }}
+            stage_evidence_record(
+                stage_id=stage_id,
+                label=label,
+                status="not_run",
+                status_label="Not run",
+                raw_status="not_run",
+                evidence_type="workflow_status",
+                evidence_source="agent_sim2real_submit_record",
+                authority="authoritative",
+                confidence="high",
+                reason="The agent submit record explicitly says this stage was not launched.",
+                summary="Not launched by the agent UI submit endpoint.",
+            )
         )
     if stages:
-        stages[0]["status"] = "succeeded"
-        stages[0]["started_at"] = submitted_at
-        stages[0]["finished_at"] = submitted_at
-        stages[0]["summary"] = "Agent accepted the Sim2Real submit request."
+        stages[0] = stage_evidence_record(
+            stage_id="submit",
+            label="Submit request",
+            status="succeeded",
+            status_label="Succeeded",
+            raw_status="accepted",
+            evidence_type="event_log",
+            evidence_source="agent_sim2real_submit_record",
+            authority="authoritative",
+            confidence="high",
+            reason="The agent accepted and durably recorded this Sim2Real submit request.",
+            started_at=submitted_at,
+            finished_at=submitted_at,
+            observed_at=submitted_at,
+            summary="Agent accepted the Sim2Real submit request.",
+        )
     return {{
         "run_id": run_id,
+        "source_type": "workflow_history",
+        "source_label": "Workflow history",
+        "workflow_name": "sim2real-staged-loop",
         "status": "submitted",
         "result": "recorded_not_launched",
         "submitted_at": submitted_at,
         "updated_at": submitted_at or _now_iso(),
         "selection": selection if isinstance(selection, dict) else {{}},
         "stages": stages,
+        "stage_summary": summarize_stage_evidence(stages),
         "logs": [
             {{
                 "timestamp": submitted_at or _now_iso(),
@@ -2434,225 +2468,6 @@ def _merge_sim2real_run_details(base: dict, update: dict | None) -> dict:
             else:
                 merged[key] = value
     return merged
-
-
-def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[str]]]:
-    draft = _workflow_draft_from_state(state)
-    stages: list[tuple[str, str, list[str]]] = []
-    plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {{}}
-    for source in (plan.get("steps"), plan.get("states"), draft.get("states")):
-        if not isinstance(source, list):
-            continue
-        for item in source:
-            if isinstance(item, dict):
-                raw_id = str(item.get("state") or item.get("id") or item.get("name") or "").strip()
-                label = str(item.get("label") or item.get("description") or raw_id).strip() or raw_id
-            else:
-                raw_id = str(item or "").strip()
-                label = raw_id
-            if not raw_id:
-                continue
-            stage_id = _slug(raw_id, fallback="stage")
-            patterns = [raw_id, raw_id.replace("_", "-"), raw_id.replace("-", "_")]
-            if (stage_id, label, patterns) not in stages:
-                stages.append((stage_id, label, patterns))
-        if stages:
-            break
-    return stages
-
-
-def _workflow_run_steps(s3, bucket: str, keys: list) -> list:
-    # Read the npa.workflow run manifest (<run>/npa-workflow/manifest.json) and
-    # return per-stage execution records: state, command, returncode, status,
-    # iteration, output_uri. Empty list when the run was not scheduler-driven.
-    manifest_key = ""
-    for key in keys:
-        if str(key).endswith("/npa-workflow/manifest.json"):
-            manifest_key = str(key)
-            break
-    if not manifest_key:
-        return []
-    try:
-        body = s3.get_object(Bucket=bucket, Key=manifest_key)["Body"].read()
-        manifest = json.loads(body)
-    except Exception:
-        return []
-    out = []
-    for step in manifest.get("steps", []) if isinstance(manifest, dict) else []:
-        if not isinstance(step, dict):
-            continue
-        argv = step.get("argv") or []
-        command = " ".join(str(a) for a in argv) if isinstance(argv, list) else str(argv)
-        outputs = step.get("outputs") or []
-        output_uri = ""
-        if isinstance(outputs, list) and outputs and isinstance(outputs[0], dict):
-            output_uri = str(outputs[0].get("uri") or "")
-        out.append(
-            {{
-                "stage": str(step.get("state") or ""),
-                "status": str(step.get("status") or ""),
-                "returncode": step.get("returncode"),
-                "iteration": step.get("iteration"),
-                "command": command[:2000],
-                "output_uri": output_uri,
-            }}
-        )
-    return out
-
-
-def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> dict | None:
-    if not run_id:
-        return None
-    try:
-        s3, settings = _agent_s3_client()
-        artifacts = []
-        run_bucket = settings["bucket"]
-        # Fast path: honor the artifact prefix the run was discovered under.
-        if prefix:
-            effective_prefix = _artifact_discovery_prefix(settings, prefix)
-            artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
-        # Generic fallback: locate the run across ALL category folders under the
-        # single run root (no hardcoded workflow path), so a run stored under any
-        # workflow shows its real artifact-backed stages, not the sim2real
-        # "not_run" template.
-        if not artifacts:
-            run_bucket, artifacts = find_run_artifacts_across_buckets(
-                _agent_s3_buckets(s3, settings),
-                base_prefix=settings.get("prefix", ""),
-                run_id=validate_run_id(run_id),
-                s3=s3,
-            )
-    except Exception:
-        return None
-    if not artifacts:
-        return None
-    keys = [str(item.key or "") for item in artifacts]
-    # Prefix (root/category) the run was actually found under, derived from the
-    # real keys so stage extraction strips <root>/<category>/<run_id>/ correctly
-    # regardless of which category held the run (works for both the prefix and
-    # generic-find paths).
-    marker = "/" + str(run_id) + "/"
-    effective_prefix = keys[0].split(marker, 1)[0] if marker in keys[0] else settings.get("prefix", "")
-    # Real per-stage execution record written by the npa.workflow scheduler:
-    # each step's state, exact command (argv), returncode, status, loop iteration.
-    # This is the authoritative "logs of each stage" surface (the artifact-derived
-    # stages below cover "artifacts of each stage").
-    workflow_steps = _workflow_run_steps(s3, run_bucket, keys)
-    workflow_stage_defs = _workflow_stage_defs_from_state(state)
-    overlay_unmatched = run_owns_workflow_stage_overlay(state, run_id)
-    stages = build_artifact_backed_stages(
-        keys,
-        run_id=run_id,
-        prefix=effective_prefix,
-        workflow_stage_defs=workflow_stage_defs,
-        overlay_unmatched=overlay_unmatched,
-    )
-    report_ready = any(key.endswith("/reports/sim2real-report.json") or key.endswith("/reports/report.json") for key in keys)
-    rrd_ready = any(key.endswith(".rrd") for key in keys)
-    preferred = select_preferred_artifact(artifacts)
-    report_note = ""
-    report_artifact = next((item for item in artifacts if item.key.endswith("/reports/sim2real-report.json")), None)
-    if report_artifact:
-        local_report = RECORDINGS_DIR / (_artifact_filename(report_artifact.key) + ".json")
-        try:
-            download_s3_uri(report_artifact.s3_uri, local_report, s3=s3)
-            report = json.loads(local_report.read_text(encoding="utf-8"))
-            viz = report.get("visualization") if isinstance(report.get("visualization"), dict) else {{}}
-            decision = report.get("outer_loop", {{}}).get("latest_decision", {{}}) if isinstance(report.get("outer_loop"), dict) else {{}}
-            source = str(viz.get("source") or "").strip()
-            success_rate = decision.get("success_rate")
-            if source or success_rate is not None:
-                report_note = (
-                    "Report summary: visualization source="
-                    + (source or "unknown")
-                    + (f", success_rate={{success_rate}}" if success_rate is not None else "")
-                    + "."
-                )
-        except Exception:
-            report_note = ""
-    return {{
-        "run_id": run_id,
-        "status": "completed" if report_ready else "artifact-backed",
-        "result": "rerun_ready" if rrd_ready else "artifacts_available",
-        "submitted_at": "",
-        "updated_at": max((str(item.last_modified or "") for item in artifacts), default=_now_iso()),
-        "selection": {{}},
-        "stages": stages,
-        "workflow_steps": workflow_steps,
-        "logs": [
-            {{
-                "timestamp": _now_iso(),
-                "level": "info",
-                "message": f"Derived stage timeline from {{len(artifacts)}} S3 artifacts.",
-            }},
-            *[
-                {{
-                    "timestamp": _now_iso(),
-                    "level": "info" if str(step.get("status") or "") in ("ok", "succeeded", "") and (step.get("returncode") in (0, None)) else "error",
-                    "message": (
-                        f"[{{step.get('stage') or '?'}}"
-                        + (f" #{{step.get('iteration')}}" if step.get("iteration") not in (None, "") else "")
-                        + f"] rc={{step.get('returncode')}} ({{step.get('status') or 'n/a'}}) $ {{step.get('command') or ''}}"
-                    ),
-                }}
-                for step in workflow_steps
-            ],
-            {{
-                "timestamp": _now_iso(),
-                "level": "info" if rrd_ready else "warn",
-                "message": (
-                    f"Preferred viewable artifact: {{preferred.key}}"
-                    if preferred
-                    else "No preferred viewable artifact found."
-                ),
-            }},
-            {{
-                "timestamp": _now_iso(),
-                "level": "info",
-                "message": report_note or "No structured run report summary was available.",
-            }},
-        ],
-        "artifacts": [item.to_dict() for item in artifacts[:25]],
-    }}
-
-
-def _sim2real_run_details(state: dict, run_id: str = "", prefix: str = "") -> dict:
-    latest = state.get("latest_submit", {{}})
-    if not isinstance(latest, dict):
-        latest = {{}}
-    sim_viz = state.get("sim_viz", {{}})
-    if not isinstance(sim_viz, dict):
-        sim_viz = {{}}
-    resolved_run_id = str(run_id or latest.get("run_id") or sim_viz.get("run_id") or state.get("active_run_id") or "").strip()
-    history = state.get("sim_viz_runs") if isinstance(state.get("sim_viz_runs"), dict) else {{}}
-    recorded = history.get(resolved_run_id) if isinstance(history.get(resolved_run_id), dict) else {{}}
-    local_demo = local_demo_run_details(state, resolved_run_id, recorded, _now_iso())
-    if local_demo:
-        return local_demo
-    details_map = state.get("sim2real_runs")
-    if not isinstance(details_map, dict):
-        details_map = {{}}
-    existing = details_map.get(resolved_run_id, {{}}) if resolved_run_id else {{}}
-    submitted_at = str(latest.get("submitted_at") or sim_viz.get("rrd_updated_at") or "")
-    selection = latest.get("selection") if isinstance(latest.get("selection"), dict) else {{}}
-    details = _default_sim2real_run_details(resolved_run_id, submitted_at=submitted_at, selection=selection)
-    details = _merge_sim2real_run_details(details, existing if isinstance(existing, dict) else {{}})
-    artifact_details = _artifact_backed_run_details(state, resolved_run_id, prefix=prefix)
-    if artifact_details:
-        details = _merge_sim2real_run_details(details, artifact_details)
-    stage = str(sim_viz.get("stage") or details.get("status") or "submitted").strip()
-    if stage and not artifact_details:
-        details["status"] = stage
-    if sim_viz.get("rrd_uri"):
-        if str(details.get("result") or "") not in {"completed", "failed", "running", "rerun_ready"}:
-            details["result"] = "recording_available"
-        for item in details.get("stages", []):
-            if isinstance(item, dict) and item.get("id") == "stage_14_rerun_viz":
-                item["status"] = "succeeded"
-                item["summary"] = "Rerun recording is available."
-    elif resolved_run_id:
-        details["result"] = "recorded_not_launched"
-    return details
 
 
 def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
@@ -4110,6 +3925,8 @@ def _chat_with_resilience(
 
 {_AGENT_STAGES_EMBED}
 
+{_AGENT_STAGE_RUNTIME_EMBED}
+
 {_AGENT_PROVENANCE_EMBED}
 
 import sys as _npa_sys
@@ -4462,17 +4279,34 @@ def _mark_stage(details: dict, stage_id: str, status: str, summary: str = "") ->
     stages = details.get("stages")
     if not isinstance(stages, list):
         stages = _default_sim2real_run_details(str(details.get("run_id") or ""), submitted_at=str(details.get("submitted_at") or "")).get("stages", [])
+    normalized, status_label = normalize_explicit_stage_status(status)
     for item in stages:
         if isinstance(item, dict) and item.get("id") == stage_id:
-            item["status"] = status
-            if status == "running" and not item.get("started_at"):
+            item["status"] = normalized
+            item["status_label"] = status_label
+            item["raw_status"] = str(status or "")
+            item["evidence"] = {{
+                "type": "event_log",
+                "source": "agent_sim2real_runner",
+                "authority": "authoritative",
+                "confidence": "high",
+                "reason": summary or f"The agent Sim2Real runner reported '{{status}}'.",
+                "observed_at": _now_iso(),
+            }}
+            item["evidence_type"] = "event_log"
+            item["evidence_source"] = "agent_sim2real_runner"
+            item["authority"] = "authoritative"
+            item["confidence"] = "high"
+            item["diagnostic_reason"] = str(item["evidence"]["reason"])
+            if normalized == "running" and not item.get("started_at"):
                 item["started_at"] = _now_iso()
-            if status in {{"succeeded", "failed"}}:
+            if normalized in {{"succeeded", "failed", "skipped", "not_run"}}:
                 item["finished_at"] = _now_iso()
             if summary:
                 item["summary"] = summary
             break
     details["stages"] = stages
+    details["stage_summary"] = summarize_stage_evidence(stages)
 
 
 def _sim2real_agent_command(run_id: str, output_dir: Path) -> list[str]:
@@ -7305,8 +7139,44 @@ def artifacts_for_run(
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
+_SENSITIVE_ARTIFACT_INFO_KEY = re.compile(
+    r"(?i)(?:authorization|credential|password|passwd|private[_-]?key|secret|token|api[_-]?key|access[_-]?key)"
+)
+_SENSITIVE_ARTIFACT_INFO_VALUE = re.compile(
+    r"(?i)(?:authorization\\s*:|bearer\\s+|password\\s*=|secret\\s*=|token\\s*=|api[_-]?key\\s*=|access[_-]?key\\s*=)"
+)
+
+
+def _public_artifact_info(value, depth: int = 0):
+    # Artifact metadata may contain operator-authored config. Preserve its shape
+    # for inspection while never reflecting credential-bearing fields or values.
+    if depth > 8:
+        return "<truncated>"
+    if isinstance(value, dict):
+        return {{
+            str(key): (
+                "<redacted>"
+                if _SENSITIVE_ARTIFACT_INFO_KEY.search(str(key))
+                else _public_artifact_info(item, depth + 1)
+            )
+            for key, item in value.items()
+        }}
+    if isinstance(value, list):
+        return [_public_artifact_info(item, depth + 1) for item in value[:100]]
+    if isinstance(value, str) and _SENSITIVE_ARTIFACT_INFO_VALUE.search(value):
+        return "<redacted>"
+    return value
+
+
 @app.get("/artifacts/stage/{{run_id:path}}")
-def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
+def artifacts_stage(
+    run_id: str,
+    stage_key: str = "",
+    prefix: str = "",
+    resource_bucket: str = "",
+    project_id: str = "",
+    resolved_prefix: str = "",
+):
     # Describe one pipeline stage and return its artifacts + inlined info/config
     # JSON so an operator can click a stage and manually inspect it (grounded in
     # the run's real S3 objects, no LLM call).
@@ -7318,20 +7188,58 @@ def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
         s3, settings = _agent_s3_client()
         artifacts = []
         run_bucket = settings["bucket"]
-        if prefix:
+        access_report = _agent_access_report()
+        bucket_projects = artifact_bucket_projects(access_report)
+        if resource_bucket:
+            allowed_buckets, _selected_scope = _agent_artifact_list_scope(
+                access_report, resource_bucket, project_id
+            )
+            run_bucket = str(resource_bucket).strip()
+            if run_bucket not in allowed_buckets:
+                raise HTTPException(
+                    status_code=403,
+                    detail="artifact bucket is outside effective agent access",
+                )
+            exact_prefix = str(resolved_prefix or "").strip().strip("/")
+            if any(part in {{"", ".", ".."}} for part in exact_prefix.split("/")):
+                if exact_prefix:
+                    raise HTTPException(status_code=400, detail="invalid resolved artifact prefix")
+            if exact_prefix:
+                artifacts = list_artifacts(
+                    run_bucket, normalized_run, prefix=exact_prefix, s3=s3
+                )
+            if not artifacts:
+                artifacts = find_run_artifacts(
+                    run_bucket,
+                    base_prefix=settings.get("prefix", ""),
+                    run_id=normalized_run,
+                    s3=s3,
+                )
+        elif prefix:
             artifacts = list_artifacts(
                 settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
             )
-        if not artifacts:
+        if not artifacts and not resource_bucket:
             run_bucket, artifacts = find_run_artifacts_across_buckets(
                 _agent_s3_buckets(s3, settings), base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
             )
             if not run_bucket:
                 run_bucket = settings["bucket"]
         wanted = str(stage_key or "").strip()
+        keys = [str(item.key or "") for item in artifacts]
+        marker = "/" + normalized_run + "/"
+        effective_prefix = (
+            keys[0].split(marker, 1)[0]
+            if keys and marker in keys[0]
+            else settings.get("prefix", "")
+        )
+        wrapper = run_stage_wrapper(keys, normalized_run, effective_prefix)
         stage_arts = [
             a for a in artifacts
-            if not wanted or _artifact_stage_key(str(a.key or ""), normalized_run) == wanted
+            if not wanted
+            or artifact_stage_key(
+                str(a.key or ""), normalized_run, effective_prefix, wrapper
+            ) == wanted
         ]
         label = _stage_label(wanted)
         description = _stage_description(wanted, label, len(stage_arts))
@@ -7348,12 +7256,15 @@ def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
             rel = k.split("/" + normalized_run + "/", 1)[-1]
             try:
                 body = s3.get_object(Bucket=run_bucket, Key=k)["Body"].read()
-                info[rel] = json.loads(body)
+                info[rel] = _public_artifact_info(json.loads(body))
             except Exception:
                 continue
         return {{
             "ok": True,
             "run_id": normalized_run,
+            "project_id": str(bucket_projects.get(run_bucket) or project_id or ""),
+            "bucket": run_bucket,
+            "resolved_prefix": effective_prefix,
             "stage_key": wanted,
             "label": label,
             "description": description,
@@ -7819,11 +7730,24 @@ def get_sim_assets_selection():
     return selection
 
 @app.get("/workflows/sim2real/status")
-def sim2real_status(run_id: str = "", prefix: str = ""):
+def sim2real_status(
+    run_id: str = "",
+    prefix: str = "",
+    resource_bucket: str = "",
+    project_id: str = "",
+    resolved_prefix: str = "",
+):
     state = _load_state()
     latest = state.get("latest_submit", {{}})
     sim_viz = state.get("sim_viz", {{}})
-    details = _sim2real_run_details(state, run_id=run_id, prefix=prefix)
+    details = _sim2real_run_details(
+        state,
+        run_id=run_id,
+        prefix=prefix,
+        resource_bucket=resource_bucket,
+        project_id=project_id,
+        resolved_prefix=resolved_prefix,
+    )
     return {{
         "ok": True,
         "latest_submit": latest if isinstance(latest, dict) else {{}},
@@ -7834,9 +7758,22 @@ def sim2real_status(run_id: str = "", prefix: str = ""):
     }}
 
 @app.get("/workflows/sim2real/runs/{{run_id:path}}")
-def sim2real_run_detail(run_id: str, prefix: str = ""):
+def sim2real_run_detail(
+    run_id: str,
+    prefix: str = "",
+    resource_bucket: str = "",
+    project_id: str = "",
+    resolved_prefix: str = "",
+):
     state = _load_state()
-    details = _sim2real_run_details(state, run_id=run_id, prefix=prefix)
+    details = _sim2real_run_details(
+        state,
+        run_id=run_id,
+        prefix=prefix,
+        resource_bucket=resource_bucket,
+        project_id=project_id,
+        resolved_prefix=resolved_prefix,
+    )
     if not str(details.get("run_id") or "").strip():
         raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
     return {{"ok": True, "run": details}}
@@ -8612,6 +8549,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_STATE_EMBED, agent_state_source)
         .replace(_AGENT_S3_GUARD_EMBED, agent_s3_guard_source)
         .replace(_AGENT_STAGES_EMBED, agent_stages_source)
+        .replace(_AGENT_STAGE_RUNTIME_EMBED, agent_stage_runtime_source)
         .replace(_AGENT_PROVENANCE_EMBED, agent_provenance_source)
         .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
     )

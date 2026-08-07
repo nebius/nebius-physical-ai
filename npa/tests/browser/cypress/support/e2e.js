@@ -253,6 +253,69 @@ const JSON_ONLY_ARTIFACTS = [
   },
 ];
 
+const ARTIFACT_ONLY_RUN_ID = "artifact-observation-run";
+const ARTIFACT_ONLY_ARTIFACTS = [
+  ["capture", "frame.png", "image"],
+  ["capture", "metadata.json", "json"],
+  ["dataset", "records.parquet", "download"],
+  ["training", "checkpoint.bin", "download"],
+  ["evaluation", "metrics.json", "json"],
+  ["visualization", "preview.rrd", "rerun"],
+  ["novel-layout", "future-format.xyz", "download"],
+].map(([stage, name, render]) => ({
+  key: `tenant-runs/${ARTIFACT_ONLY_RUN_ID}/${stage}/${name}`,
+  s3_uri: `s3://project-artifacts/tenant-runs/${ARTIFACT_ONLY_RUN_ID}/${stage}/${name}`,
+  render,
+  inline: render !== "download",
+  size: 512,
+}));
+
+const ARTIFACT_ONLY_RUN_DETAILS = {
+  run: {
+    run_id: ARTIFACT_ONLY_RUN_ID,
+    source_type: "artifact_storage",
+    source_label: "S3 artifacts",
+    project_id: "project-a",
+    bucket: "project-artifacts",
+    status: "status_unavailable",
+    status_label: "Status unavailable",
+    result: "artifacts_available",
+    updated_at: "2026-08-07T00:00:00Z",
+    stages: [...new Set(ARTIFACT_ONLY_ARTIFACTS.map((item) => item.key.split("/")[2]))].map((stage) => {
+      const count = ARTIFACT_ONLY_ARTIFACTS.filter((item) => item.key.split("/")[2] === stage).length;
+      const reason = `${count} artifact${count === 1 ? " was" : "s were"} observed; execution status is unavailable.`;
+      return {
+        evidence_version: "npa.stage-evidence/v1",
+        id: stage,
+        stage_key: stage,
+        label: stage.replaceAll("-", " "),
+        status: "observed_output",
+        status_label: "Observed output",
+        artifact_count: count,
+        evidence_type: "artifact_observation",
+        evidence_source: "artifact_listing",
+        authority: "observed",
+        confidence: "high",
+        diagnostic_reason: reason,
+        evidence: { type: "artifact_observation", source: "artifact_listing", authority: "observed", confidence: "high", reason },
+        summary: reason,
+      };
+    }),
+    stage_summary: {
+      evidence_version: "npa.stage-evidence/v1",
+      text: "6 observed groups · execution status unavailable",
+      displayed_stage_count: 6,
+      observed_stage_count: 6,
+      authoritative_stage_count: 0,
+      execution_status_available: false,
+      succeeded_count: 0,
+      failed_count: 0,
+      not_run_count: 0,
+    },
+    logs: [{ timestamp: "2026-08-07T00:00:00Z", level: "info", message: "Artifact observations only." }],
+  },
+};
+
 // A Physical AI Data Factory run whose artifacts span every pipeline stage and
 // whose augment is a REAL Cosmos Transfer 2.5 GPU render — used to exercise the
 // per-stage provenance panel (counts, click-to-filter, honest engine banner).
@@ -794,6 +857,16 @@ function installAgentApiMocks() {
         last_modified: "2026-07-10T12:00:00Z",
       },
       {
+        run_id: ARTIFACT_ONLY_RUN_ID,
+        source_type: "artifact_storage",
+        source_label: "S3 artifacts",
+        bucket: "project-artifacts",
+        project_id: "project-a",
+        has_viewable: true,
+        artifact_count: ARTIFACT_ONLY_ARTIFACTS.length,
+        last_modified: "2026-07-09T00:00:00Z",
+      },
+      {
         run_id: "mock-run",
         source_type: "artifact_storage",
         source_label: "S3 artifacts",
@@ -848,6 +921,15 @@ function installAgentApiMocks() {
     artifacts: JSON_ONLY_ARTIFACTS,
     preferred: JSON_ONLY_ARTIFACTS[0],
   })).as("jsonOnlyArtifactList");
+  cy.intercept("GET", `/api/artifacts/run/${ARTIFACT_ONLY_RUN_ID}*`, json({
+    run_id: ARTIFACT_ONLY_RUN_ID,
+    bucket: "project-artifacts",
+    project_id: "project-a",
+    resolved_prefix: "tenant-runs",
+    count: ARTIFACT_ONLY_ARTIFACTS.length,
+    artifacts: ARTIFACT_ONLY_ARTIFACTS,
+    preferred: null,
+  })).as("artifactOnlyList");
   cy.intercept("GET", "/api/artifacts/run/mock-run*", json({
     run_id: "mock-run",
     prefix: "sim2real-b",
@@ -939,6 +1021,10 @@ function installAgentApiMocks() {
     }
     if (runId === NON_STOCK_RUN_ID) {
       req.reply(json(NON_STOCK_RUN_DETAILS));
+      return;
+    }
+    if (runId === ARTIFACT_ONLY_RUN_ID) {
+      req.reply(json(ARTIFACT_ONLY_RUN_DETAILS));
       return;
     }
     if (runId === "cosmos-reason-run") {
@@ -1064,6 +1150,8 @@ Cypress.Commands.add("visitLiveAgent", () => {
 });
 
 export {
+  ARTIFACT_ONLY_ARTIFACTS,
+  ARTIFACT_ONLY_RUN_ID,
   ASSETS,
   CAMERAS,
   COMPLEX_WORKFLOW_YAML,
