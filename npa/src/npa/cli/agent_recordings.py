@@ -67,6 +67,11 @@ _SAFE_RUN_ID_RE = re.compile(r"[^A-Za-z0-9._:-]")
 #: scan it belongs with, and keeps the agent module off its size ratchet.
 PIPELINE_RECORDING_SUFFIX = "/reports/sim2real.rrd"
 NEURAL_RECONSTRUCTION_APP_ID = "neural-reconstruction"
+GROOT_TRAINING_RECORDING_SUFFIXES = (
+    "/reports/groot-training.rrd",
+    "/reports/groot-training.mcap",
+)
+GROOT_TRAINING_CAMERA_LABEL = "camera"
 
 #: Preview entity and viewer note for a NuRec run. A reconstruction has no
 #: held-out-simulation camera, so the generic Sim2Real note would be actively
@@ -102,6 +107,12 @@ def is_neural_reconstruction_recording(key: str) -> bool:
     return is_pipeline_recording(key) and (
         NEURAL_RECONSTRUCTION_APP_ID + "/"
     ) in str(key or "")
+
+
+def is_groot_training_recording(key: str) -> bool:
+    """True for the factual GR00T training-telemetry RRD or MCAP."""
+    normalized = str(key or "")
+    return normalized.endswith(GROOT_TRAINING_RECORDING_SUFFIXES)
 
 
 def recording_has_run_entities(data: bytes | None) -> bool:
