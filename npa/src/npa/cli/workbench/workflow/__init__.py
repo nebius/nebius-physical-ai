@@ -738,6 +738,17 @@ def _run_npa_workflow_runtime(
         _fail(str(exc))
         return
 
+    submitted_yaml = yaml_path.read_bytes()
+    if config_overrides:
+        import yaml
+
+        source = yaml.safe_load(submitted_yaml)
+        if not isinstance(source, dict) or not isinstance(source.get("config"), dict):
+            _fail("npa.workflow source has no config mapping for --var overrides")
+            return
+        source["config"].update(config_overrides)
+        submitted_yaml = yaml.safe_dump(source, sort_keys=False).encode("utf-8")
+
     options = RuntimeOptions(
         poll_seconds=poll_seconds,
         max_wait_seconds=max_wait_seconds,
@@ -758,6 +769,7 @@ def _run_npa_workflow_runtime(
             render_options=render_options,
             options=options,
             assume_decision=assume_decision,
+            workflow_yaml=submitted_yaml,
             logger=lambda message: typer.echo(f"[runtime] {message}", err=True),
         )
     except NpaWorkflowError as exc:

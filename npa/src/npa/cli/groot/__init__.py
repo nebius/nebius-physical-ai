@@ -125,6 +125,10 @@ from npa.workbench.training_config import (
     render_overrides,
     shell_env_exports,
 )
+from npa.cli.groot.training_evidence import (
+    render_distributed_probe,
+    render_training_manifest_script,
+)
 
 app = typer.Typer(
     name="groot",
@@ -1670,8 +1674,10 @@ def _build_finetune_command(
     tag = _normalize_embodiment_tag(robot_embodiment)
     if num_gpus > 1:
         launcher = f"uv run --no-sync torchrun --nproc_per_node={num_gpus} --master_port=29500 gr00t/experiment/launch_finetune.py"
+        probe_launcher = f"uv run --no-sync torchrun --nproc_per_node={num_gpus} --master_port=29501 /tmp/npa_groot_distributed_probe.py"
     else:
         launcher = "uv run python gr00t/experiment/launch_finetune.py"
+        probe_launcher = "uv run python /tmp/npa_groot_distributed_probe.py"
     nccl_env = ""
     if num_gpus > 1 and nccl_transport == NcclTransport.socket.value:
         nccl_env = f"""\
@@ -1703,6 +1709,32 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
     training_env = shell_env_exports(training.env())
     model_revision = HF_MODEL_REVISIONS.get(base_model.split("@", 1)[0], "")
     manifest_path = f"{output_dir}/{GROOT_FINETUNE_MANIFEST}"
+    probe_script = render_distributed_probe(output_dir)
+    manifest_script = render_training_manifest_script(
+        output_dir=output_dir,
+        manifest_path=manifest_path,
+        manifest_fields={
+            "schema": "npa.groot.finetune.v1",
+            "status": "completed",
+            "run_id": run_id,
+            "groot_model_version": GROOT_MODEL_VERSION,
+            "groot_runtime_version": GROOT_RUNTIME_VERSION,
+            "nccl_runtime_version": GROOT_NCCL_RUNTIME_VERSION,
+            "groot_repo_ref": GROOT_REPO_REF,
+            "base_model": base_model,
+            "base_model_revision": model_revision,
+            "robot_embodiment": tag,
+            "num_gpus": num_gpus,
+            "nccl_transport": nccl_transport,
+            "global_batch_size": global_batch_size,
+            "max_steps": max_steps,
+            "data_path": input_path,
+            "checkpoint_uri": output_path,
+            "training_log_uri": output_path.rstrip("/") + "/training.log",
+            "distributed_evidence_uri": output_path.rstrip("/")
+            + "/npa_groot_distributed_evidence.json",
+        },
+    )
     script = f"""\
 set -euo pipefail
 cd {GROOT_REPO}
@@ -1726,39 +1758,20 @@ modality_config_arg=()
 if [ -n "$modality_config_path" ]; then
   modality_config_arg=(--modality-config-path "$modality_config_path")
 fi
+mkdir -p {shlex.quote(output_dir)}
+cat > /tmp/npa_groot_distributed_probe.py <<'PY'
+{probe_script}
+PY
+{probe_launcher}
 {launcher} \
   --base-model-path {shlex.quote(resolved_base)} \
   --dataset-path {shlex.quote(dataset_dir)} \
   --embodiment-tag {shlex.quote(tag)} \
   --num-gpus {num_gpus} \
   --output-dir {shlex.quote(output_dir)} \
-  "${{modality_config_arg[@]}}"{train_args}
+  "${{modality_config_arg[@]}}"{train_args} 2>&1 | tee {shlex.quote(output_dir)}/training.log
 {GROOT_VENV}/bin/python - <<'PY'
-import json
-from pathlib import Path
-
-manifest = {{
-    "schema": "npa.groot.finetune.v1",
-    "status": "completed",
-    "run_id": {run_id!r},
-    "groot_model_version": {GROOT_MODEL_VERSION!r},
-    "groot_runtime_version": {GROOT_RUNTIME_VERSION!r},
-    "nccl_runtime_version": {GROOT_NCCL_RUNTIME_VERSION!r},
-    "groot_repo_ref": {GROOT_REPO_REF!r},
-    "base_model": {base_model!r},
-    "base_model_revision": {model_revision!r},
-    "robot_embodiment": {tag!r},
-    "num_gpus": {num_gpus},
-    "nccl_transport": {nccl_transport!r},
-    "global_batch_size": {global_batch_size!r},
-    "max_steps": {max_steps!r},
-    "data_path": {input_path!r},
-    "checkpoint_uri": {output_path!r},
-}}
-target = Path({manifest_path!r})
-target.parent.mkdir(parents=True, exist_ok=True)
-target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
-print(f"NPA_GROOT_FINETUNE_MANIFEST {{target}}")
+{manifest_script}
 PY
 {upload_cmd}
 echo NPA_GROOT_FINETUNE_COMPLETE

@@ -43,6 +43,20 @@ def test_groot_workflow_defaults_to_validated_real_eight_gpu_n1_7_training() -> 
     step = plan.steps[0]
 
     assert spec.name == "groot-1-7-finetune"
+    assert [item.state for item in plan.steps] == [
+        "finetune",
+        "validate",
+        "emit_mcap",
+        "emit_rrd",
+        "publish",
+    ]
+    assert [item.tool_ref for item in plan.steps] == [
+        "workbench.groot.finetune",
+        "workflow.groot.validate",
+        "workflow.groot.emit_mcap",
+        "workflow.groot.emit_rrd",
+        "workflow.groot.publish",
+    ]
     assert spec.config["base_model"] == DEFAULT_MODEL
     assert GROOT_MODEL_VERSION == "1.7"
     assert GROOT_RUNTIME_VERSION == "0.1.0"
@@ -75,7 +89,9 @@ def test_groot_workflow_defaults_to_validated_real_eight_gpu_n1_7_training() -> 
 @pytest.mark.parametrize("gpu_count", [1, 2, 3, 4, 8])
 def test_groot_workflow_gpu_count_reaches_plan_scheduler_and_render(
     gpu_count: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source/npa")
     prepared = prepare_npa_workflow_for_submit(
         SPEC_PATH,
         run_id=f"groot-{gpu_count}gpu",
@@ -104,6 +120,13 @@ def test_groot_workflow_gpu_count_reaches_plan_scheduler_and_render(
         assert scheduler["tasks"][0]["resources"]["accelerators"] == (
             expected_accelerators
         )
+        assert [task["name"] for task in scheduler["tasks"]] == [
+            "finetune",
+            "validate",
+            "emit_mcap",
+            "emit_rrd",
+            "publish",
+        ]
 
         documents = [
             doc
@@ -113,11 +136,20 @@ def test_groot_workflow_gpu_count_reaches_plan_scheduler_and_render(
             if doc
         ]
         task = documents[1]
+        assert len(documents) == 6
         assert task["resources"]["accelerators"] == expected_accelerators
         assert f"--num-gpus {gpu_count}" in task["run"]
         assert "--nccl-transport socket" in task["run"]
         assert f"--global-batch-size {gpu_count}" in task["run"]
         assert f"--run-id groot-{gpu_count}gpu" in task["run"]
+        for document in documents[2:]:
+            assert "python3 -m npa.workflows.groot_visualization" in document["run"]
+        assert "groot_visualization validate" in documents[2]["run"]
+        assert "groot_visualization emit-mcap" in documents[3]["run"]
+        assert "groot_visualization emit-rrd" in documents[4]["run"]
+        assert "groot_visualization publish" in documents[5]["run"]
+        assert "av>=12,<17" in documents[2]["setup"]
+        assert "[viz]" in documents[4]["setup"]
     finally:
         prepared.temp_dir.cleanup()
 

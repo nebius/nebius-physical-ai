@@ -70,6 +70,8 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
     "workbench.sonic": "sonic",
+    "workflow.groot.emit_rrd": "viz",
+    "workflow.groot.publish": "viz",
 }
 
 #: toolRef prefix -> third-party pip requirements the tool shells out to, with the executable
@@ -83,6 +85,7 @@ TOOL_REF_PIP_EXTRAS: dict[str, str] = {
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "workflow.groot.validate": (("python:av", "av>=12,<17"),),
     "workbench.cosmos.fetch": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
     "workbench.cosmos.check": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
     "workbench.lerobot.policy_train": (

@@ -3,7 +3,15 @@
 Use the checked-in `groot-1-7-finetune.yaml` workflow to fine-tune NVIDIA GR00T
 N1.7 on a GR00T-format LeRobot dataset. The workflow runs NVIDIA's real
 `gr00t/experiment/launch_finetune.py` from the `npa-groot:0.1.0` image; it is
-not a manifest-only training substitute.
+not a manifest-only training substitute. Its serial stage graph is:
+
+```text
+finetune -> validate -> emit_mcap -> emit_rrd -> publish
+```
+
+The RRD is derived from the inspected MCAP to preserve semantic parity. These
+recordings visualize factual training telemetry and representative frames from
+the real dataset used by the run; they are not policy-rollout evaluation.
 
 ## Reproducible contract
 
@@ -18,7 +26,10 @@ The workbench image and command pin and verify:
 The trainer writes `npa_groot_finetune_manifest.json` beside the uploaded
 checkpoints after successful training. It records those pins, the run ID,
 embodiment, GPU count, batch size, training steps, input dataset, and output
-URI.
+URI. It also records per-rank/world-size evidence, distinct visible GPU UUIDs,
+an NCCL all-reduce result, a finite training loss, optimizer-step evidence,
+and actual checkpoint object/byte counts. The `validate` stage fails before
+visualization if any required evidence or uploaded checkpoint is incomplete.
 
 For single-node hosts where NCCL peer-to-peer and shared-memory transports are
 not viable, the workflow exposes `nccl_transport=socket`. This sets
@@ -47,8 +58,8 @@ npa workbench workflow submit "$SPEC" \
   --plan-only
 ```
 
-The plan must show both `accelerators: H100:8` and `--num-gpus 8`. Inside the
-stage, the GR00T command converts counts above one to
+The plan must show both `accelerators: H100:8` and `--num-gpus 8` on `finetune`,
+followed by four CPU stages. Inside the trainer stage, the GR00T command converts counts above one to
 `torchrun --nproc_per_node=8` and still passes upstream `--num-gpus 8`.
 
 ## Submit training
@@ -112,7 +123,24 @@ With the default prefix, checkpoints and provenance are under:
 ```text
 s3://<bucket>/groot-1-7-finetune/<run-id>/checkpoints/
 s3://<bucket>/groot-1-7-finetune/<run-id>/checkpoints/npa_groot_finetune_manifest.json
+s3://<bucket>/groot-1-7-finetune/<run-id>/reports/visualization-source/manifest.json
+s3://<bucket>/groot-1-7-finetune/<run-id>/reports/groot-training.mcap
+s3://<bucket>/groot-1-7-finetune/<run-id>/reports/groot-training.rrd
+s3://<bucket>/groot-1-7-finetune/<run-id>/reports/visualization-manifest.json
+s3://<bucket>/groot-1-7-finetune/<run-id>/workflow.yaml
 ```
+
+MCAP uses `foxglove.CompressedImage` on `/camera`, `foxglove.Log` on
+`/log`, and factual numeric values under `/metrics/*`. RRD contains native
+encoded-image, text-log, scalar-series, and provenance entities on the
+`mcap_time` timeline. Dataset frames have no asserted robot capture clock:
+both recordings and the final manifest label them `dataset/synthetic-fps`,
+record the source video object and FPS, and set `is_robot_capture_time=false`.
+
+The terminal `publish` stage downloads and independently parses both recording
+formats. It succeeds only after their run IDs, schemas/topics, Rerun identity,
+timeline/entities, provenance, nonzero sizes, and the exact submitted workflow
+artifact have all passed validation.
 
 If `prefix` or `checkpoint_uri` is overridden, use those resolved locations
 and pass the corresponding parent prefix to `workflow list`.

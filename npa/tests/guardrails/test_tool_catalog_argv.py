@@ -51,6 +51,10 @@ NON_CLI_ARGV = frozenset(
         "workbench.sim2real_envgen.split",
         "workbench.sim2real_envgen.actions",
         "workbench.isaac_lab.capture_frames",
+        "workflow.groot.emit_mcap",
+        "workflow.groot.emit_rrd",
+        "workflow.groot.publish",
+        "workflow.groot.validate",
     }
 )
 
@@ -69,6 +73,10 @@ AUDITED_ELSEWHERE = frozenset(
         "workbench.lerobot.policy_rollout",
         "workbench.lerobot.policy_train",
         "workbench.token_factory.triage",
+        "workflow.groot.emit_mcap",
+        "workflow.groot.emit_rrd",
+        "workflow.groot.publish",
+        "workflow.groot.validate",
     }
 )
 

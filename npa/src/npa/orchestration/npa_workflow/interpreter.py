@@ -920,6 +920,8 @@ def _with_resources(record: dict[str, Any], step: PlanStep) -> dict[str, Any]:
     record.setdefault("resources", step.resources)
     if not record.get("resources_profile"):
         record["resources_profile"] = dict(step.resources_profile)
+    record.setdefault("inputs", [dict(item) for item in step.inputs])
+    record.setdefault("outputs", [dict(item) for item in step.outputs])
     return record
 
 

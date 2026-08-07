@@ -26,7 +26,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from npa.workbench.lichtblick import compressed_image_message
 
@@ -326,6 +326,7 @@ def write_run_mcap(
     run_id: str = "",
     camera_topic_prefix: str = "/camera",
     metrics_topic_prefix: str = "/metrics",
+    metadata: Mapping[str, str] | None = None,
 ) -> McapSummary:
     """Write an MCAP recording from real run artifacts and return a summary."""
     Writer = _require_mcap()
@@ -344,9 +345,23 @@ def write_run_mcap(
         frame_list, metric_list, log_list
     )
 
+    metadata_payload = {
+        str(key): str(value)
+        for key, value in dict(metadata or {}).items()
+        if str(key).strip() and value is not None
+    }
+    metadata_payload.update(
+        {
+            "producer": "npa workbench foxglove convert-run",
+            "run_id": str(run_id or ""),
+            "timestamps": metadata_payload.get("timestamps", "synthetic-fps"),
+            "fps": str(rate),
+        }
+    )
+
     summary = McapSummary(
         output=str(output),
-        timestamps="synthetic-fps",
+        timestamps=metadata_payload["timestamps"],
         fps=rate,
     )
 
@@ -499,19 +514,14 @@ def write_run_mcap(
                 last_ns = max(last_ns, timestamp_ns)
                 log_sequence += 1
 
-        writer.add_metadata(
-            name="npa",
-            data={
-                "producer": "npa workbench foxglove convert-run",
-                "run_id": str(run_id or ""),
-                # Be explicit: these are not sensor capture times.
-                "timestamps": "synthetic-fps",
-                "fps": str(rate),
+        metadata_payload.update(
+            {
                 "frames": str(summary.frames),
                 "metrics": str(summary.metrics),
                 "logs": str(summary.logs),
-            },
+            }
         )
+        writer.add_metadata(name="npa", data=metadata_payload)
         writer.finish()
 
     if summary.frames + summary.metrics + summary.logs == 0:

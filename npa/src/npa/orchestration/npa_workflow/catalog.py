@@ -668,7 +668,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.sim2real.finalize": ToolEntry(
         name="workbench.sim2real.finalize",
         description="Finalize run artifacts (workflow stub).",
-        argv_template=["echo", "finalize run {{run.id}} -> {{config.finalize_report_uri}}"],
+        argv_template=[
+            "echo",
+            "finalize run {{run.id}} -> {{config.finalize_report_uri}}",
+        ],
         stub=True,
     ),
     "workbench.byof.repo": ToolEntry(
@@ -1144,7 +1147,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
                 "set -euo pipefail; "
                 "for udf in has_person has_rider person_bbox_area_pct dhash is_duplicate; do "
                 "npa workbench lancedb backfill "
-                "--udf \"$udf\" "
+                '--udf "$udf" '
                 "--table {{config.lance_table}} "
                 "--lance-uri {{config.lance_uri}} "
                 "--batch-size 512 "
@@ -1402,7 +1405,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.fiftyone.launch_app": ToolEntry(
         name="workbench.fiftyone.launch_app",
         description="Launch FiftyOne App for pipeline review (workflow stub).",
-        argv_template=["echo", "fiftyone review run {{run.id}} lance {{config.lance_uri}}"],
+        argv_template=[
+            "echo",
+            "fiftyone review run {{run.id}} lance {{config.lance_uri}}",
+        ],
         stub=True,
     ),
     "workbench.token_factory.caption": ToolEntry(
@@ -1677,6 +1683,91 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.save_steps}}",
             "--save-total-limit",
             "{{config.save_total_limit}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workflow.groot.validate": ToolEntry(
+        name="workflow.groot.validate",
+        description=(
+            "Validate GR00T checkpoint, distributed, optimizer, loss, and dataset evidence "
+            "before creating a factual visualization source bundle."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.groot_visualization",
+            "validate",
+            "--training-manifest-uri",
+            "{{config.training_manifest_uri}}",
+            "--data-uri",
+            "{{config.data_uri}}",
+            "--output-uri",
+            "{{config.visualization_source_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--gpu-count",
+            "{{config.gpu_count}}",
+            "--max-frames",
+            "{{config.visualization_max_frames}}",
+        ],
+    ),
+    "workflow.groot.emit_mcap": ToolEntry(
+        name="workflow.groot.emit_mcap",
+        description="Write and inspect real Foxglove-schema MCAP training telemetry.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.groot_visualization",
+            "emit-mcap",
+            "--source-manifest-uri",
+            "{{config.visualization_source_uri}}",
+            "--output-uri",
+            "{{config.mcap_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--fps",
+            "{{config.visualization_fps}}",
+        ],
+    ),
+    "workflow.groot.emit_rrd": ToolEntry(
+        name="workflow.groot.emit_rrd",
+        description=(
+            "Convert the validated MCAP into native Rerun archetypes and verify the RRD."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.groot_visualization",
+            "emit-rrd",
+            "--mcap-uri",
+            "{{config.mcap_uri}}",
+            "--output-uri",
+            "{{config.rrd_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workflow.groot.publish": ToolEntry(
+        name="workflow.groot.publish",
+        description=(
+            "Terminal gate that independently inspects MCAP and RRD and publishes their index."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.groot_visualization",
+            "publish",
+            "--source-manifest-uri",
+            "{{config.visualization_source_uri}}",
+            "--mcap-uri",
+            "{{config.mcap_uri}}",
+            "--rrd-uri",
+            "{{config.rrd_uri}}",
+            "--workflow-uri",
+            "{{config.workflow_uri}}",
+            "--output-uri",
+            "{{config.visualization_manifest_uri}}",
             "--run-id",
             "{{run.id}}",
         ],

@@ -36,6 +36,10 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.mjlab.eval` | `npa workbench mjlab eval` | `config.motion_uri`, `config.checkpoint_uri` | `config.mjlab_uri` | no |
 | `workbench.sonic.train` | `npa workbench sonic train` | `config.checkpoint_uri`, `config.data_uri` | training checkpoint | no |
 | `workbench.groot.finetune` | `npa workbench groot finetune --runtime local` | GR00T-format LeRobot dataset at `config.data_uri`, pinned N1.7 base model, positive `config.gpu_count` | vendor checkpoints + `npa_groot_finetune_manifest.json` at `config.checkpoint_uri` | no |
+| `workflow.groot.validate` | `npa.workflows.groot_visualization.validate_visualization_source` | training manifest, uploaded checkpoint prefix, real LeRobot dataset | validated source manifest, redacted log, factual metrics, decoded dataset frames | no |
+| `workflow.groot.emit_mcap` | `npa.workflows.groot_visualization.emit_mcap` | validated GR00T visualization source | inspected Foxglove-schema `groot-training.mcap` | no |
+| `workflow.groot.emit_rrd` | `npa.workflows.groot_visualization.emit_rrd` | validated `groot-training.mcap` | inspected native-archetype `groot-training.rrd` | no |
+| `workflow.groot.publish` | `npa.workflows.groot_visualization.publish_visualizations` | source manifest, MCAP, RRD, exact workflow YAML | terminal `visualization-manifest.json` artifact index | no |
 | `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` | `config.onnx_uri` | no |
 | `workbench.sonic.eval` | `npa workbench sonic eval` | `config.onnx_uri` | eval report | no |
 | `workbench.lerobot.policy_rollout` | `python3 -m npa.workbench.lerobot.policy_container eval` | `config.policy_checkpoint`, `config.rollout_episodes` | rendered episodes under `config.rollouts_uri` | no |

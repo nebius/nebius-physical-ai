@@ -177,6 +177,31 @@ def test_convert_run_directory_round_trip(tmp_path: Path) -> None:
     assert len(set(timestamps)) > 1
 
 
+def test_write_run_mcap_preserves_explicit_timestamp_provenance(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    log = tmp_path / "training.log"
+    log.write_text("optimizer step complete\n", encoding="utf-8")
+    output = tmp_path / "training.mcap"
+
+    summary = write_run_mcap(
+        output=output,
+        logs=[LogInput(path=log, name="groot")],
+        run_id="groot-run",
+        metadata={
+            "timestamps": "dataset/synthetic-fps",
+            "dataset_source_uri": "s3://fixture/data/episode.mp4",
+            "is_robot_capture_time": "false",
+        },
+    )
+    info = summarize_mcap(output)
+
+    assert summary.timestamps == "dataset/synthetic-fps"
+    assert info.metadata["npa"]["run_id"] == "groot-run"
+    assert info.metadata["npa"]["timestamps"] == "dataset/synthetic-fps"
+    assert info.metadata["npa"]["is_robot_capture_time"] == "false"
+    assert info.metadata["npa"]["dataset_source_uri"].endswith("episode.mp4")
+
+
 def test_write_run_mcap_reports_unreadable_inputs(tmp_path: Path) -> None:
     pytest.importorskip("mcap")
     root = _run_fixture(tmp_path, frames=1)

@@ -1334,6 +1334,10 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     assert "export NCCL_CUMEM_HOST_ENABLE=0" in cmd
     assert "nvidia-nccl-cu12==2.30.7" in cmd
     assert "NPA_GROOT_NCCL_TRANSPORT socket" in cmd
+    assert "npa_groot_distributed_probe.py" in cmd
+    assert "dist.all_reduce" in cmd
+    assert "--query-gpu=uuid" in cmd
+    assert "npa_groot_distributed_evidence.json" in cmd
     assert "gr00t/experiment/launch_finetune.py" in cmd
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B --revision 2fc962b973bccdd5d8ce4f67cc63b264d6886495" in cmd
     assert f"--base-model-path {GROOT_DATA_MOUNT}/models/nvidia--GR00T-N1.7-3B" in cmd
@@ -1353,6 +1357,12 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     assert f'"groot_model_version": {GROOT_MODEL_VERSION!r}' in script
     assert '"run_id": \'groot-run-2gpu\'' in script
     assert '"nccl_transport": \'socket\'' in script
+    assert '"world_size": int(evidence.get("world_size") or 0)' in script
+    assert '"distinct_gpu_count": int(evidence.get("distinct_gpu_count") or 0)' in script
+    assert '"collective_ok": evidence.get("collective_ok") is True' in script
+    assert '"optimizer_step_ok": optimizer_step_ok' in script
+    assert '"loss_finite": loss_finite' in script
+    assert "training.log" in script
     assert GROOT_FINETUNE_MANIFEST in cmd
     assert "upload_file" in cmd
 
@@ -1470,6 +1480,7 @@ def test_groot_finetune_local_runtime_uses_real_two_gpu_launcher(mocker) -> None
     command = local.call_args.args[0]
     script = shlex.split(command)[2]
     assert "uv run --no-sync torchrun --nproc_per_node=2" in command
+    assert "--master_port=29501 /tmp/npa_groot_distributed_probe.py" in command
     assert "export NCCL_P2P_DISABLE=1" in command
     assert "export NCCL_SHM_DISABLE=1" in command
     assert "--num-gpus 2" in command
