@@ -147,7 +147,12 @@ def nebius_cli_env(base: "Mapping[str, str] | None" = None) -> dict[str, str]:
     the current process environment is used.
     """
     env = dict(base) if base is not None else os.environ.copy()
-    reuse = env.get(_REUSE_IAM_TOKEN_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+    reuse = env.get(_REUSE_IAM_TOKEN_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     if not reuse:
         env.pop("NEBIUS_IAM_TOKEN", None)
         env.pop("NEBIUS_IAM_TOKEN_FILE", None)
@@ -462,9 +467,7 @@ def list_projects_in_tenant(tenant_id: str) -> list[dict[str, str]]:
     if not tenant:
         return []
     try:
-        data = _run_json(
-            ["iam", "project", "list", "--parent-id", tenant, "--all"]
-        )
+        data = _run_json(["iam", "project", "list", "--parent-id", tenant, "--all"])
     except Exception:
         return []
     projects: list[dict[str, str]] = []
@@ -539,7 +542,9 @@ def get_project_tenant_id(project_id: str) -> str:
     project itself rather than silently skipping discovery.
     """
     metadata = _get_project(project_id).get("metadata", {}) or {}
-    return str(metadata.get("parent_id", "") or metadata.get("parentId", "") or "").strip()
+    return str(
+        metadata.get("parent_id", "") or metadata.get("parentId", "") or ""
+    ).strip()
 
 
 def get_project_name(project_id: str) -> str:
@@ -551,6 +556,26 @@ def get_project_name(project_id: str) -> str:
     """
     metadata = _get_project(project_id).get("metadata", {}) or {}
     return str(metadata.get("name", "") or "").strip()
+
+
+def list_quota_allowances(tenant_id: str) -> dict[str, Any]:
+    """Return one provider quota snapshot for *tenant_id*.
+
+    Unlike the historical per-quota best-effort helpers, this API preserves
+    provider/RBAC/malformed failures.  Mutation preflights must fail closed, and
+    cannot distinguish "plenty of quota" from "the query was denied" if errors
+    are normalized to ``(None, None)`` here.
+    """
+
+    tenant = str(tenant_id or "").strip()
+    if not tenant:
+        raise NebiusError("tenant_id is required to list quota allowances")
+    payload = _run_json(
+        ["quotas", "quota-allowance", "list", "--parent-id", tenant, "--all"]
+    )
+    if not isinstance(payload.get("items"), list):
+        raise NebiusError("quota allowance response is malformed: items is not a list")
+    return payload
 
 
 def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int | None]:
@@ -591,7 +616,9 @@ def get_public_ipv4_quota(tenant_id: str, region: str) -> tuple[int | None, int 
     return (None, None)
 
 
-def get_compute_instance_quota(tenant_id: str, region: str) -> tuple[int | None, int | None]:
+def get_compute_instance_quota(
+    tenant_id: str, region: str
+) -> tuple[int | None, int | None]:
     """Return ``(usage, limit)`` for the tenant compute-instance quota in *region*.
 
     Nebius meters VMs via the ``compute.instance.count`` quota allowance; a tenant
@@ -635,7 +662,9 @@ def get_compute_instance_quota(tenant_id: str, region: str) -> tuple[int | None,
     return region_less if region_less is not None else (None, None)
 
 
-def discover_container_registry(project_id: str, *, preferred_region: str = "eu-north1") -> str:
+def discover_container_registry(
+    project_id: str, *, preferred_region: str = "eu-north1"
+) -> str:
     """Best-effort container registry URL for *project_id*, or "".
 
     Returns ``<registry_fqdn>/<registry-id>`` (matching the
@@ -716,7 +745,9 @@ def is_permission_denied(message: str) -> bool:
 
 def _is_not_found(message: str) -> bool:
     lowered = message.lower()
-    return "notfound" in lowered or "not found" in lowered or "resourcenotfound" in lowered
+    return (
+        "notfound" in lowered or "not found" in lowered or "resourcenotfound" in lowered
+    )
 
 
 def is_not_found(message: str) -> bool:
@@ -898,11 +929,17 @@ def ensure_service_account(
     """
     # Try to find existing.
     try:
-        data = _run_json([
-            "iam", "service-account", "get-by-name",
-            "--parent-id", project_id,
-            "--name", name,
-        ])
+        data = _run_json(
+            [
+                "iam",
+                "service-account",
+                "get-by-name",
+                "--parent-id",
+                project_id,
+                "--name",
+                name,
+            ]
+        )
         sa_id = data.get("metadata", {}).get("id", "")
         if sa_id:
             return sa_id
@@ -930,12 +967,19 @@ def ensure_service_account(
         # Not found — create below.
 
     try:
-        data = _run_json([
-            "iam", "service-account", "create",
-            "--parent-id", project_id,
-            "--name", name,
-            "--description", description,
-        ])
+        data = _run_json(
+            [
+                "iam",
+                "service-account",
+                "create",
+                "--parent-id",
+                project_id,
+                "--name",
+                name,
+                "--description",
+                description,
+            ]
+        )
     except NebiusError as exc:
         if _is_permission_denied(str(exc)) and allow_saved_fallback:
             saved = _saved_service_account_id()
@@ -955,31 +999,49 @@ def ensure_service_account(
 
 def ensure_editors_membership(tenant_id: str, sa_id: str) -> None:
     """Add the service account to the tenant's *editors* group."""
-    group_data = _run_json([
-        "iam", "group", "get-by-name",
-        "--parent-id", tenant_id,
-        "--name", "editors",
-    ])
+    group_data = _run_json(
+        [
+            "iam",
+            "group",
+            "get-by-name",
+            "--parent-id",
+            tenant_id,
+            "--name",
+            "editors",
+        ]
+    )
     group_id = group_data.get("metadata", {}).get("id", "")
     if not group_id:
         raise NebiusError(f"Could not find editors group in tenant {tenant_id}")
 
     # Check membership.
-    members_data = _run_json([
-        "iam", "group-membership", "list-members",
-        "--parent-id", group_id,
-        "--page-size", "1000",
-    ])
+    members_data = _run_json(
+        [
+            "iam",
+            "group-membership",
+            "list-members",
+            "--parent-id",
+            group_id,
+            "--page-size",
+            "1000",
+        ]
+    )
     memberships = members_data.get("memberships", [])
     for m in memberships:
         if m.get("spec", {}).get("member_id") == sa_id:
             return  # Already a member.
 
-    _run([
-        "iam", "group-membership", "create",
-        "--parent-id", group_id,
-        "--member-id", sa_id,
-    ])
+    _run(
+        [
+            "iam",
+            "group-membership",
+            "create",
+            "--parent-id",
+            group_id,
+            "--member-id",
+            sa_id,
+        ]
+    )
 
 
 # ── Access keys ──────────────────────────────────────────────────────────
@@ -990,11 +1052,7 @@ def ensure_editors_membership(tenant_id: str, sa_id: str) -> None:
 # with one scalar JSONPath projection per allowlisted field. Keeping optional
 # fields out of a shared range projection is important: the provider exits
 # non-zero when even one heterogeneous list item omits a projected field.
-_ACCESS_KEY_LIST_JSONPATH = (
-    "jsonpath={range .items[*]}"
-    '{.metadata.id}{"\\n"}'
-    "{end}"
-)
+_ACCESS_KEY_LIST_JSONPATH = 'jsonpath={range .items[*]}{.metadata.id}{"\\n"}{end}'
 
 _ACCESS_KEY_METADATA_FIELDS = {
     "id": ".metadata.id",
@@ -1104,11 +1162,14 @@ def _missing_access_key_field_error(message: str, jsonpath: str) -> bool:
     ):
         return False
     leaf = re.escape(jsonpath.rsplit(".", 1)[-1])
-    return re.search(
-        rf"\b{leaf}\b.{{0,80}}\b(?:is\s+not\s+found|missing|null|nil|no\s+value)\b",
-        safe,
-        re.IGNORECASE,
-    ) is not None
+    return (
+        re.search(
+            rf"\b{leaf}\b.{{0,80}}\b(?:is\s+not\s+found|missing|null|nil|no\s+value)\b",
+            safe,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _access_key_metadata_scalar(
@@ -1271,9 +1332,8 @@ def _find_active_access_key(
         spec = item.get("spec", {})
         account = spec.get("account", {})
         # The SA ID can live under different JSON paths depending on API version.
-        item_sa_id = (
-            account.get("service_account", {}).get("id", "")
-            or account.get("service_account_id", "")
+        item_sa_id = account.get("service_account", {}).get("id", "") or account.get(
+            "service_account_id", ""
         )
         if item_sa_id != sa_id:
             continue
@@ -1309,10 +1369,9 @@ def ensure_access_key(
 
     Reuses an existing key when possible; creates a new one otherwise.
     """
-    existing = (
-        _find_active_access_key(project_id, sa_id, key_name=key_name)
-        or _find_active_access_key(project_id, sa_id)
-    )
+    existing = _find_active_access_key(
+        project_id, sa_id, key_name=key_name
+    ) or _find_active_access_key(project_id, sa_id)
     if existing:
         key_id = existing["metadata"]["id"]
         # Retrieve the AWS access key ID.
@@ -1320,7 +1379,9 @@ def ensure_access_key(
         aws_access_key = get_data.get("status", {}).get("aws_access_key_id", "")
         # Try to retrieve the secret (works for keys where the secret is stored).
         try:
-            secret_data = _run_json(["iam", "v2", "access-key", "get-secret", "--id", key_id])
+            secret_data = _run_json(
+                ["iam", "v2", "access-key", "get-secret", "--id", key_id]
+            )
             aws_secret_key = secret_data.get("secret", "")
         except NebiusError:
             aws_secret_key = ""
@@ -1333,14 +1394,25 @@ def ensure_access_key(
     # Terraform remote-state objects for workbenches that still need destroy.
     create_name = key_name
     if existing:
-        create_name = f"{key_name}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-    create_data = _run_json([
-        "iam", "v2", "access-key", "create",
-        "--parent-id", project_id,
-        "--name", create_name,
-        "--account-service-account-id", sa_id,
-        "--description", description,
-    ])
+        create_name = (
+            f"{key_name}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+        )
+    create_data = _run_json(
+        [
+            "iam",
+            "v2",
+            "access-key",
+            "create",
+            "--parent-id",
+            project_id,
+            "--name",
+            create_name,
+            "--account-service-account-id",
+            sa_id,
+            "--description",
+            description,
+        ]
+    )
     new_key_id = create_data.get("metadata", {}).get("id", "")
     if not new_key_id:
         raise NebiusError("Access key creation did not return an ID")
@@ -1351,11 +1423,15 @@ def ensure_access_key(
     get_data = _run_json(["iam", "v2", "access-key", "get", "--id", new_key_id])
     aws_access_key = get_data.get("status", {}).get("aws_access_key_id", "")
 
-    secret_data = _run_json(["iam", "v2", "access-key", "get-secret", "--id", new_key_id])
+    secret_data = _run_json(
+        ["iam", "v2", "access-key", "get-secret", "--id", new_key_id]
+    )
     aws_secret_key = secret_data.get("secret", "")
 
     if not aws_access_key or not aws_secret_key:
-        raise NebiusError("Failed to retrieve AWS-compatible credentials from new access key")
+        raise NebiusError(
+            "Failed to retrieve AWS-compatible credentials from new access key"
+        )
 
     return aws_access_key, aws_secret_key
 
@@ -1398,11 +1474,16 @@ def _list_project_buckets(project_id: str) -> list[dict[str, Any]]:
     reported ``False`` for a real bucket and ``npa configure`` wrongly prompted to
     create a new one.
     """
-    data = _run_json([
-        "storage", "bucket", "list",
-        "--parent-id", project_id,
-        "--all",
-    ])
+    data = _run_json(
+        [
+            "storage",
+            "bucket",
+            "list",
+            "--parent-id",
+            project_id,
+            "--all",
+        ]
+    )
     items = data.get("items", [])
     return items if isinstance(items, list) else []
 
@@ -1460,11 +1541,17 @@ def ensure_bucket(
 
     storage_class = normalize_bucket_storage_class(default_storage_class)
     args = [
-        "storage", "bucket", "create",
-        "--name", bucket_name,
-        "--parent-id", project_id,
-        "--versioning-policy", "enabled",
-        "--default-storage-class", storage_class,
+        "storage",
+        "bucket",
+        "create",
+        "--name",
+        bucket_name,
+        "--parent-id",
+        project_id,
+        "--versioning-policy",
+        "enabled",
+        "--default-storage-class",
+        storage_class,
     ]
     if max_size_bytes > 0:
         args += ["--max-size-bytes", str(max_size_bytes)]
@@ -1615,7 +1702,9 @@ def bootstrap_environment(
         )
         if fallback is None:
             raise
-        _status("Reusing saved object-storage credentials (bucket provisioning skipped).")
+        _status(
+            "Reusing saved object-storage credentials (bucket provisioning skipped)."
+        )
         return _with_storage_account_ownership(fallback)
 
     _status("Setting up access key for S3...")
@@ -1648,7 +1737,9 @@ def bootstrap_environment(
         )
         if fallback is None:
             raise
-        _status("Reusing saved object-storage credentials (access-key provisioning skipped).")
+        _status(
+            "Reusing saved object-storage credentials (access-key provisioning skipped)."
+        )
         return _with_storage_account_ownership(fallback)
 
     s3_endpoint = f"https://storage.{region}.nebius.cloud"
@@ -1903,10 +1994,9 @@ def list_access_keys_for_service_account(
     keys: list[dict[str, str]] = []
     for item in items:
         account = (item.get("spec", {}) or {}).get("account", {}) or {}
-        item_sa_id = (
-            (account.get("service_account", {}) or {}).get("id", "")
-            or account.get("service_account_id", "")
-        )
+        item_sa_id = (account.get("service_account", {}) or {}).get(
+            "id", ""
+        ) or account.get("service_account_id", "")
         if item_sa_id != sa_id:
             continue
         metadata = item.get("metadata", {}) or {}
@@ -2000,7 +2090,9 @@ def bootstrap_agent_environment(
             # needs the VM-attached service-account identity now; do not revisit
             # access-key inventory or create a second S3 key.
             if on_status:
-                on_status("Reusing health-verified configured object-storage credentials.")
+                on_status(
+                    "Reusing health-verified configured object-storage credentials."
+                )
                 on_status("Setting up the VM-attached npa-agent service account...")
 
             def _record_created_agent_account(account_id: str) -> None:
@@ -2078,5 +2170,7 @@ def bootstrap_agent_environment(
 
         mark_agent_iam_status(project_id, "complete")
         if on_status:
-            on_status("Reusing saved object-storage credentials (npa-agent provisioning skipped).")
+            on_status(
+                "Reusing saved object-storage credentials (npa-agent provisioning skipped)."
+            )
         return fallback

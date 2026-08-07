@@ -256,8 +256,8 @@ and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
 | `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | inspect with `npa skypilot status`, then (after all workflows are terminal) run `npa skypilot cleanup-controller --yes`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
 | `Kube context '<name>' ... is not available` | no cluster for that context: neither your kubeconfig nor `~/.npa/clusters/<name>/` has it | provision one (`npa provision-if-absent --project <alias>`, and read its warnings — it now exits non-zero when it could not) or point `KUBECONFIG` at the cluster you want; `kubectl config get-contexts` lists what is resolvable |
 | A cluster is RUNNING in the console but npa has no kubeconfig for it (interrupted provision) | `up` writes the kubeconfig only after apply finishes | `npa cluster kubeconfig --cluster-name <name> --project <alias>` adopts it (writes the kubeconfig + cluster state), or `npa cluster up` again to resume, or `npa cluster down --force` to remove it |
-| `GPU quota is insufficient ...` before apply | the tenant's `compute.instance.gpu.<model>` allowance cannot cover the node group | raise the quota, or use the preemptible pool the message reports (`gpu_nodes_preemptible = true`), or pick a smaller preset/another platform |
-| `Nebius refused node group ...` mid-apply | the platform rejected the node group (quota/capacity) after apply began; npa cancels rather than retrying to the Terraform timeout | fix the quota/capacity as above, then `npa cluster up` again to resume, or `npa cluster down --force` to remove the half-created cluster |
+| `blocked` quota rows before apply | one or more exact hard quotas (instance, boot disk, public IP, or GPU) cannot cover the cumulative topology | read each row's `used + required = required_limit` arithmetic and reduce the topology or ask the tenant operator to resolve the named allowance; preemptible nodes still consume the hard instance, disk, and public-IP quotas |
+| `Nebius refused node group ...` mid-apply | the provider changed after the green preflight or rejected a create | NPA rolls back only this operation's newly created Terraform stack. If the journal says `rollback-incomplete`, use its exact recovery command; pre-existing clusters/storage/credentials are preserved. |
 | `npa cluster status` reports `DEGRADED` with `provider_state: RUNNING` and a non-ready node group | the control plane is up while that node group was never provisioned | the same quota/capacity fix; the cluster bills while it exists, so tear it down (`npa cluster down --force`) if you cannot get the nodes |
 | `npa cluster status` reports `VERIFICATION_UNAVAILABLE` and a DNS/RBAC/auth code | the configured cluster's current provider/API state could not be verified | run the printed NPA retry command after fixing the typed cause; `npa cluster status --cached` is an explicit last-known-only view, not evidence the cluster is healthy |
 | `Context <name> not found ... Available contexts: []` (from SkyPilot) | an older npa left `KUBECONFIG` unset for a cluster it had provisioned | upgrade npa: `submit --infra k8s/<context>` now prepends `~/.npa/clusters/<context>/kubeconfig` itself. For `kubectl`/bare `sky`, `export KUBECONFIG=~/.npa/clusters/<context>/kubeconfig` |
@@ -657,12 +657,16 @@ npa workbench workflow submit "$SPEC" \
   --run-id "$(date -u +paidf-4gpu-%Y%m%dt%H%M%sz)" \
   --var bucket=<your-artifact-bucket> \
   --var n_augmentations=4 \
-  --stage-src \
   --assume-decision promote_checkpoint \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
+
+When no valid `NPA_SRC_S3_URI` or image override is supplied, real submit
+automatically stages the current content-addressed NPA source and reuses that
+verified prefix on retry. Add `--stage-src` only to force a provenance-checked
+restage.
 
 If your cluster advertises a different product name for the same GPU (e.g.
 `RTXPRO-6000-BLACKWELL-SERVER-EDITION`), pass that exact name:

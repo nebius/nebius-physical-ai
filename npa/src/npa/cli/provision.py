@@ -24,15 +24,29 @@ class OutputFormat(str, Enum):
 
 @app.callback(invoke_without_command=True)
 def provision_if_absent_cmd(
-    project: str = typer.Option("", "--project", help="Project alias from ~/.npa/config.yaml."),
-    cluster_name: str = typer.Option("npa-cluster", "--cluster-name", help="Cluster profile/context name."),
-    terraform_dir: Path | None = typer.Option(None, "--terraform-dir", help="Terraform cluster directory."),
-    kubeconfig: Path | None = typer.Option(None, "--kubeconfig", help="Dedicated kubeconfig path."),
+    project: str = typer.Option(
+        "", "--project", help="Project alias from ~/.npa/config.yaml."
+    ),
+    cluster_name: str = typer.Option(
+        "npa-cluster", "--cluster-name", help="Cluster profile/context name."
+    ),
+    terraform_dir: Path | None = typer.Option(
+        None, "--terraform-dir", help="Terraform cluster directory."
+    ),
+    kubeconfig: Path | None = typer.Option(
+        None, "--kubeconfig", help="Dedicated kubeconfig path."
+    ),
     context_name: str = typer.Option("", "--context", help="Kubeconfig context name."),
-    skip_k8s: bool = typer.Option(False, "--skip-k8s", help="Do not ensure Kubernetes."),
+    skip_k8s: bool = typer.Option(
+        False, "--skip-k8s", help="Do not ensure Kubernetes."
+    ),
     skip_s3: bool = typer.Option(False, "--skip-s3", help="Do not ensure S3."),
-    validate: bool = typer.Option(True, "--validate/--skip-validate", help="Run post-apply Kubernetes validation."),
-    sky_smoke: bool = typer.Option(False, "--sky-smoke/--skip-sky-smoke", help="Run a SkyPilot GPU smoke task."),
+    validate: bool = typer.Option(
+        True, "--validate/--skip-validate", help="Run post-apply Kubernetes validation."
+    ),
+    sky_smoke: bool = typer.Option(
+        False, "--sky-smoke/--skip-sky-smoke", help="Run a SkyPilot GPU smoke task."
+    ),
     gpu_nodes: int = typer.Option(
         -1,
         "--gpu-nodes",
@@ -59,12 +73,17 @@ def provision_if_absent_cmd(
         None,
         "--preemptible/--on-demand",
         help=(
-            "Run the GPU node group as preemptible, matching `npa cluster up`. Often the "
-            "only way to get several GPUs; a reclaim stops them mid-run."
+            "Run the GPU node group as preemptible, matching `npa cluster up`. "
+            "This changes the capacity pool but not hard instance/disk/IP quotas; "
+            "a reclaim stops the node mid-run."
         ),
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Resolve settings and print intended actions only."),
-    timeout: int = typer.Option(120, "--timeout", help="Terraform apply timeout in minutes."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Resolve settings and print intended actions only."
+    ),
+    timeout: int = typer.Option(
+        120, "--timeout", help="Terraform apply timeout in minutes."
+    ),
     accelerator: str = typer.Option(
         "",
         "--accelerator",
@@ -81,7 +100,9 @@ def provision_if_absent_cmd(
         help="Seconds between SkyPilot GPU discovery checks.",
     ),
     sky_bin: str = typer.Option("", "--sky-bin", help="Pinned SkyPilot executable."),
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """Provision S3 and Kubernetes only when they are absent."""
     result = provision_if_absent(
@@ -133,8 +154,9 @@ def provision_if_absent_cmd(
             typer.echo(
                 f"For kubectl / sky in this shell: export KUBECONFIG={result.kubeconfig_path}"
             )
-    if result.status != "ok":
+    if not dry_run and result.status not in {"ok", "ready"}:
         # Exiting 0 on a partial run made the follow-up submit the place where the
         # missing cluster surfaced, long after the command that was supposed to
-        # create it "succeeded".
+        # create it "succeeded". A read-only plan is different: blocked/unknown
+        # is truthful output and still means plan rendering itself succeeded.
         raise typer.Exit(code=1)

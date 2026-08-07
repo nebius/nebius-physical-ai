@@ -21,6 +21,76 @@ if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
     from npa.workflows.sim2real_health import CheckResult
 
 
+def _agent_check_whole_path_capacity(
+    project_id: str,
+    tenant_id: str,
+    fallback_region: str,
+    *,
+    agent_exists: bool = False,
+):
+    """Apply the shared VM+disk+public-IP plan before agent mutation."""
+
+    from npa.clients.nebius import get_project_region
+    from npa.provisioning_preflight import build_whole_path_plan, resolve_topology
+
+    region = (get_project_region(project_id) or str(fallback_region or "")).strip()
+    plan = build_whole_path_plan(
+        project_alias="",
+        project_id=project_id,
+        tenant_id=tenant_id,
+        region=region,
+        topology=resolve_topology(
+            agent_requested=True,
+            agent_exists=agent_exists,
+            cpu_nodes=0,
+            gpu_nodes=0,
+        ),
+        mutation=True,
+    )
+    plan.assert_mutation_ready()
+    return plan
+
+
+def _agent_whole_path_capacity_result(
+    project_id: str,
+    tenant_id: str,
+    fallback_region: str,
+    *,
+    agent_exists: bool = False,
+) -> "CheckResult":
+    """Render the deploy gate through the health/preflight result contract."""
+
+    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
+
+    try:
+        plan = _agent_check_whole_path_capacity(
+            project_id,
+            tenant_id,
+            fallback_region,
+            agent_exists=agent_exists,
+        )
+    except Exception as exc:  # noqa: BLE001 - same fail-closed resolver as deploy
+        return CheckResult(
+            name="whole_path_capacity",
+            status=FAIL,
+            summary=f"Whole-path agent capacity is blocked: {exc}",
+            remedy=(
+                "Resolve the exact project/tenant/region or quota diagnostic, then "
+                "rerun `npa agent preflight`."
+            ),
+        )
+    topology = plan.topology
+    return CheckResult(
+        name="whole_path_capacity",
+        status=PASS,
+        summary=(
+            "Whole-path agent capacity is ready: "
+            f"instances={topology.required_instances}, disks={topology.required_disks}, "
+            f"public_ips={topology.required_public_ips}."
+        ),
+    )
+
+
 def _agent_public_ip_quota_result() -> "CheckResult":
     """Public-IPv4 quota check (FAIL): deploy needs one free public IP.
 

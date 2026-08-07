@@ -137,8 +137,14 @@ def prepare_run(
     new_run_id: str = "",
     state_root: Path | None = None,
     legacy_path: Path | None = None,
+    persist: bool = True,
 ) -> RunPreparation:
-    """Generate a fresh ID, or record an explicitly requested resume ID."""
+    """Generate a fresh ID, optionally recording the requested identity.
+
+    ``persist=False`` is the plan/preflight path.  It performs no mkdir, lock-file
+    creation or state write, so a rejected submit cannot look like a submitted
+    run to later status/cancel commands.
+    """
 
     stable_project, alias, identity_source = resolve_project_identity(project)
     path = state_path(
@@ -153,19 +159,12 @@ def prepare_run(
             f"legacy run-id state exists at {legacy}; it is not project/workflow scoped "
             "and was not reused or deleted"
         )
-    with _locked(path):
+
+    def _prepare(
+        existing: dict[str, Any],
+    ) -> tuple[str, bool, dict[str, Any] | None, dict[str, Any]]:
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat().replace("+00:00", "Z")
-        existing: dict[str, Any] = {}
-        if path.exists():
-            try:
-                loaded = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise RuntimeError(
-                    f"scoped run state is unreadable: {path}: {exc}"
-                ) from exc
-            if isinstance(loaded, dict):
-                existing = loaded
         previous_run = None
         if existing.get("run_id"):
             previous_run = {
@@ -224,7 +223,25 @@ def prepare_run(
                 else "UNVERIFIED"
             ),
         }
-        _atomic_write(path, payload)
+        return run_id, generated, previous_run, payload
+
+    def _read_existing() -> dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"scoped run state is unreadable: {path}: {exc}"
+            ) from exc
+        return loaded if isinstance(loaded, dict) else {}
+
+    if not persist:
+        run_id, generated, previous_run, _payload = _prepare(_read_existing())
+    else:
+        with _locked(path):
+            run_id, generated, previous_run, payload = _prepare(_read_existing())
+            _atomic_write(path, payload)
     return RunPreparation(
         run_id=run_id,
         generated_new=generated,

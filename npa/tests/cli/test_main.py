@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from importlib.metadata import version
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -544,6 +545,71 @@ def test_configure_show_env_emits_shell_assignments(monkeypatch, tmp_path) -> No
     assert "hf_secret" not in result.output
     assert "AKTEST" not in result.output
     assert "Credential setup" not in result.output
+
+
+def test_configure_show_env_is_eval_safe_in_clean_subprocess(tmp_path) -> None:
+    """Machine stdout stays shell-only even when credential diagnostics exist."""
+
+    import os
+    import subprocess
+
+    import yaml
+
+    home = tmp_path / "home with spaces"
+    npa_dir = home / ".npa"
+    npa_dir.mkdir(parents=True)
+    (npa_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "project alias",
+                "projects": {
+                    "project alias": {
+                        "project_id": "project-1",
+                        "tenant_id": "tenant-1",
+                        "region": "eu-north1",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (npa_dir / "credentials.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "storage": {
+                    "bucket": "s3://bucket/with-prefix/",
+                    "endpoint_url": "https://storage.eu-north1.nebius.cloud",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (npa_dir / "credentials.yaml").chmod(0o600)
+    cli = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "npa"
+    stderr_path = tmp_path / "stderr.txt"
+    script = (
+        'set -eu; output="$("$NPA_TEST_BIN" configure --show --env 2>"$NPA_TEST_ERR")"; '
+        'eval "$output"; test "$NPA_PROJECT_ALIAS" = "project alias"; '
+        'test "$NPA_BUCKET" = bucket; printf "%s" "$output"'
+    )
+    env = {
+        "HOME": str(home),
+        "PATH": os.environ["PATH"],
+        "NPA_TEST_BIN": str(cli),
+        "NPA_TEST_ERR": str(stderr_path),
+        "HF_TOKEN": "hf_never-print-this",
+    }
+    completed = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-c", script],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Credential environment sources detected" not in completed.stdout
+    assert "hf_never-print-this" not in completed.stdout
+    assert "Credential environment sources detected" in stderr_path.read_text()
 
 
 def test_configure_show_env_scopes_kube_context_to_configured_project(

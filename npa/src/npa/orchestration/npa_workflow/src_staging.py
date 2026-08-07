@@ -83,7 +83,9 @@ def find_npa_package_root(start: Path | None = None) -> Path:
 
     here = (start or Path(__file__)).resolve()
     for candidate in here.parents:
-        if (candidate / "pyproject.toml").is_file() and (candidate / "src" / "npa").is_dir():
+        if (candidate / "pyproject.toml").is_file() and (
+            candidate / "src" / "npa"
+        ).is_dir():
             return candidate
     raise SrcStagingError(
         "Could not locate the npa package source (no pyproject.toml with src/npa "
@@ -113,7 +115,15 @@ def _git_tracked_files(root: Path) -> list[Path] | None:
 
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--exclude-standard"],
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "-z",
+                "--cached",
+                "--exclude-standard",
+            ],
             capture_output=True,
             text=True,
             timeout=60,
@@ -208,7 +218,10 @@ def verify_staged_source(
             f"{exc}. Safely restage with `npa workbench workflow stage-src "
             f"--bucket {bucket}`."
         ) from exc
-    if not isinstance(payload, dict) or payload.get("schema_version") != SOURCE_MANIFEST_SCHEMA:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != SOURCE_MANIFEST_SCHEMA
+    ):
         raise SrcStagingError(
             f"Source verification failed for {uri}: {SOURCE_MANIFEST_NAME} has an "
             f"unsupported schema. Safely restage with `npa workbench workflow "
@@ -271,6 +284,7 @@ def ensure_npa_source(
     client: Any | None = None,
     on_status: Callable[[str], None] | None = None,
     max_workers: int = 8,
+    force: bool = False,
 ) -> SourceStageResult:
     """Return a verified source prefix, uploading it exactly once when absent.
 
@@ -278,7 +292,9 @@ def ensure_npa_source(
     favor of *prefix*, so the destination is predictable).
     """
 
-    bucket_name = str(bucket or "").strip().removeprefix("s3://").strip("/").split("/", 1)[0]
+    bucket_name = (
+        str(bucket or "").strip().removeprefix("s3://").strip("/").split("/", 1)[0]
+    )
     if not bucket_name:
         raise SrcStagingError(
             "A bucket is required to stage the npa source. Pass --bucket "
@@ -288,7 +304,9 @@ def ensure_npa_source(
 
     root = source_root or find_npa_package_root()
     if not (root / "pyproject.toml").is_file():
-        raise SrcStagingError(f"{root} does not look like the npa package (no pyproject.toml)")
+        raise SrcStagingError(
+            f"{root} does not look like the npa package (no pyproject.toml)"
+        )
 
     files = list(iter_source_files(root))
     if not files:
@@ -309,24 +327,27 @@ def ensure_npa_source(
                 "--s3-endpoint / AWS_* env vars)."
             ) from exc
 
-    try:
-        verify_staged_source(
-            destination,
-            client=client,
-            expected_fingerprint=fingerprint,
-        )
-    except SrcStagingError as exc:
-        if on_status:
-            on_status(f"source cache miss ({exc}); staging {root} -> {destination}")
-    else:
-        if on_status:
-            on_status(f"reusing verified staged source {destination}")
-        return SourceStageResult(
-            uri=destination,
-            fingerprint=fingerprint,
-            file_count=len(files),
-            reused=True,
-        )
+    if not force:
+        try:
+            verify_staged_source(
+                destination,
+                client=client,
+                expected_fingerprint=fingerprint,
+            )
+        except SrcStagingError as exc:
+            if on_status:
+                on_status(f"source cache miss ({exc}); staging {root} -> {destination}")
+        else:
+            if on_status:
+                on_status(f"reusing verified staged source {destination}")
+            return SourceStageResult(
+                uri=destination,
+                fingerprint=fingerprint,
+                file_count=len(files),
+                reused=True,
+            )
+    elif on_status:
+        on_status(f"force-restaging {root} -> {destination}")
 
     # ~950 small objects: serial PUTs make this a minute-plus of latency, so
     # upload with a small pool. Order does not matter (the worker syncs the
@@ -352,13 +373,17 @@ def ensure_npa_source(
             "fingerprint": fingerprint,
             "file_count": len(files),
         }
-        descriptor, raw_manifest = tempfile.mkstemp(prefix="npa-source-", suffix=".json")
+        descriptor, raw_manifest = tempfile.mkstemp(
+            prefix="npa-source-", suffix=".json"
+        )
         manifest_path = Path(raw_manifest)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
                 json.dump(manifest, handle, sort_keys=True)
                 handle.write("\n")
-            client.upload_file(str(manifest_path), f"{destination}{SOURCE_MANIFEST_NAME}")
+            client.upload_file(
+                str(manifest_path), f"{destination}{SOURCE_MANIFEST_NAME}"
+            )
         finally:
             manifest_path.unlink(missing_ok=True)
         verify_staged_source(

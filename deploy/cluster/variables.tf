@@ -61,9 +61,9 @@ variable "cpu_nodes_platform" {
 }
 
 variable "cpu_nodes_preset" {
-  description = "CPU-only node preset. Must fit the SkyPilot managed-jobs controller AND one CPU stage at the same time: the controller parks ~4 vCPU / 16Gi on the CPU pool for the life of the run, and the Physical AI Data Factory asks for cpus=4 / memory=16Gi on top of that. An 8vcpu-32gb node holds the controller but then cannot schedule the stage, which reads as an opaque PENDING once GPU nodes are gone."
+  description = "CPU-only node preset. The default matches the documented first-run / Physical AI Data Factory topology."
   type        = string
-  default     = "16vcpu-64gb"
+  default     = "8vcpu-32gb"
 }
 
 variable "gpu_nodes_count" {
@@ -85,7 +85,7 @@ variable "gpu_nodes_preset" {
 }
 
 variable "gpu_nodes_preemptible" {
-  description = "Run the GPU node group on preemptible VMs. Off by default (preemptible nodes can be reclaimed at any time), but it draws on a different capacity pool: when the tenant's on-demand GPU quota is exhausted (`npa cluster up` reports the quota and what `nebius capacity resource-advice list` says is free), this is often the only way to get a GPU node."
+  description = "Run the GPU node group on preemptible VMs. Off by default; preemptible capacity does not bypass hard tenant instance, disk, or public-IP quotas."
   type        = bool
   default     = false
 }

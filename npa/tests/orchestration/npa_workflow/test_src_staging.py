@@ -14,6 +14,7 @@ from npa.orchestration.npa_workflow.src_staging import (
     DEFAULT_SRC_PREFIX,
     SOURCE_MANIFEST_NAME,
     SrcStagingError,
+    ensure_npa_source,
     find_npa_package_root,
     iter_source_files,
     resolve_src_uri_from_env,
@@ -119,9 +120,41 @@ def test_stage_npa_source_reuses_committed_content_address(tmp_path: Path) -> No
 
     assert second == first
     assert client.uploads == first_uploads
+
+
+def test_force_restage_uploads_the_same_content_address_once_more(
+    tmp_path: Path,
+) -> None:
+    root = _fake_package(tmp_path / "npa")
+    client = FakeStorageClient()
+
+    first = ensure_npa_source(bucket="my-bucket", source_root=root, client=client)
+    first_upload_count = len(client.uploads)
+    forced = ensure_npa_source(bucket="my-bucket", source_root=root, client=client, force=True)
+
+    assert forced.uri == first.uri
+    assert forced.fingerprint == first.fingerprint
+    assert forced.reused is False
+    assert len(client.uploads) == first_upload_count * 2
+
+
+def test_changed_source_invalidates_the_cached_provenance(tmp_path: Path) -> None:
+    root = _fake_package(tmp_path / "npa")
+    client = FakeStorageClient()
+
+    first = ensure_npa_source(bucket="my-bucket", source_root=root, client=client)
+    (root / "src" / "npa" / "cli.py").write_text("x = 2\n", encoding="utf-8")
+    second = ensure_npa_source(bucket="my-bucket", source_root=root, client=client)
+
+    assert second.uri != first.uri
+    assert second.fingerprint != first.fingerprint
+    assert second.reused is False
     manifest = json.loads(
         client.objects[
-            ("my-bucket", f"{first.removeprefix('s3://my-bucket/')}{SOURCE_MANIFEST_NAME}")
+            (
+                "my-bucket",
+                f"{first.uri.removeprefix('s3://my-bucket/')}{SOURCE_MANIFEST_NAME}",
+            )
         ]
     )
     assert manifest["file_count"] == 3
@@ -179,9 +212,7 @@ def test_stage_npa_source_wraps_upload_failures(tmp_path: Path) -> None:
     assert "s3://my-bucket/npa-src/npa/" in str(excinfo.value)
 
 
-def test_stage_npa_source_wraps_storage_configuration_failures(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_stage_npa_source_wraps_storage_configuration_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An unconfigured endpoint is a staging error, not an unexpected crash."""
     from npa.orchestration.npa_workflow import src_staging
 
@@ -206,9 +237,7 @@ def test_stage_npa_source_requires_a_bucket(tmp_path: Path) -> None:
 
 def test_stage_npa_source_rejects_a_non_package_root(tmp_path: Path) -> None:
     with pytest.raises(SrcStagingError, match="does not look like the npa package"):
-        stage_npa_source(
-            bucket="my-bucket", source_root=tmp_path, client=FakeStorageClient()
-        )
+        stage_npa_source(bucket="my-bucket", source_root=tmp_path, client=FakeStorageClient())
 
 
 def test_find_npa_package_root_locates_this_checkout() -> None:
@@ -245,9 +274,7 @@ def test_stage_src_command_prints_the_export_line(mocker) -> None:
         return_value="s3://unit-bucket/npa-src/npa/fingerprint/",
     )
 
-    result = runner.invoke(
-        app, ["workbench", "workflow", "stage-src", "--bucket", "unit-bucket"]
-    )
+    result = runner.invoke(app, ["workbench", "workflow", "stage-src", "--bucket", "unit-bucket"])
 
     assert result.exit_code == 0, result.output
     assert "npa_src_s3_uri: s3://unit-bucket/npa-src/npa/fingerprint/" in result.output
@@ -255,9 +282,7 @@ def test_stage_src_command_prints_the_export_line(mocker) -> None:
     assert staged.call_args.kwargs["bucket"] == "unit-bucket"
     from npa.clients.config import CONFIG_PATH
 
-    assert "src_s3_uri: s3://unit-bucket/npa-src/npa/fingerprint/" in (
-        CONFIG_PATH.read_text(encoding="utf-8")
-    )
+    assert "src_s3_uri: s3://unit-bucket/npa-src/npa/fingerprint/" in (CONFIG_PATH.read_text(encoding="utf-8"))
 
 
 def test_invalid_persisted_source_reports_exact_verification_and_restage() -> None:
@@ -281,6 +306,37 @@ def test_invalid_persisted_source_reports_exact_verification_and_restage() -> No
     assert "npa workbench workflow stage-src --bucket unit-bucket" in message
 
 
+def test_submit_rejects_malformed_explicit_source_before_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from npa.orchestration.npa_workflow import first_run_state
+
+    state_root = tmp_path / "workflow-runs"
+    monkeypatch.setattr(first_run_state, "DEFAULT_ROOT", state_root)
+    monkeypatch.setenv("NPA_SRC_S3_URI", "not-an-s3-uri")
+    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(spec),
+            "--run-id",
+            "invalid-explicit-source",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--var",
+            "bucket=real-bucket",
+            "--no-deploy-if-absent",
+            "--plan-only",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "NPA_SRC_S3_URI must be an s3:// URI" in result.output
+    assert not state_root.exists()
+
+
 def test_stage_src_command_requires_a_bucket() -> None:
     result = runner.invoke(app, ["workbench", "workflow", "stage-src"])
 
@@ -288,21 +344,15 @@ def test_stage_src_command_requires_a_bucket() -> None:
     assert "No bucket to stage into" in result.output
 
 
-def test_submit_stage_src_sets_the_source_uri(
-    mocker, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`submit --stage-src` uploads and satisfies the npa-source prerequisite."""
+def test_plan_only_stage_src_plans_without_uploading(mocker, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`submit --stage-src --plan-only` is strictly read-only."""
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
     staged = mocker.patch(
         "npa.orchestration.npa_workflow.src_staging.stage_npa_source",
         return_value="s3://real-bucket/npa-src/npa/",
     )
-    spec = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "physical-ai-data-factory.yaml"
-    )
+    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
 
     result = runner.invoke(
         app,
@@ -323,20 +373,16 @@ def test_submit_stage_src_sets_the_source_uri(
     )
 
     assert result.exit_code == 0, result.output
-    assert staged.call_args.kwargs["bucket"] == "real-bucket"
+    staged.assert_not_called()
     assert "NPA_SRC_S3_URI is unset" not in result.output
     assert "s3://real-bucket/npa-src/npa/" in result.output
 
 
-def test_submit_stage_src_refuses_a_placeholder_bucket(
+def test_plan_only_stage_src_can_describe_a_placeholder_bucket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
-    spec = (
-        Path(__file__).resolve().parents[3]
-        / "workflows"
-        / "physical-ai-data-factory.yaml"
-    )
+    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
 
     result = runner.invoke(
         app,
@@ -354,8 +400,168 @@ def test_submit_stage_src_refuses_a_placeholder_bucket(
         ],
     )
 
+    assert result.exit_code == 0, result.output
+    assert "source: planned" in result.output
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected_force"),
+    [((), False), (("--stage-src",), True)],
+    ids=["automatic", "force-restage"],
+)
+def test_real_submit_stages_source_before_first_durable_run_state(
+    extra: tuple[str, ...],
+    expected_force: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker,
+) -> None:
+    from npa.orchestration.npa_workflow.first_run_state import RunPreparation
+    from npa.workflows.data_factory_input import PreparedPaidfInput
+
+    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
+    monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
+    stage = mocker.patch(
+        "npa.cli.workbench.workflow._stage_npa_src_for_submit",
+        return_value="s3://real-bucket/npa-src/npa/" + "a" * 64 + "/",
+    )
+    mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
+    mocker.patch(
+        "npa.workflows.data_factory_input.prepare_paidf_input",
+        return_value=PreparedPaidfInput(selection="input_uri", provenance={}, reused=True),
+    )
+    persist_calls: list[bool] = []
+
+    def prepare(**kwargs):
+        persist_calls.append(bool(kwargs.get("persist")))
+        if kwargs.get("persist"):
+            raise RuntimeError("stop after staging")
+        return RunPreparation(run_id="stage-demo", generated_new=False, state_path="unused")
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.first_run_state.prepare_run",
+        side_effect=prepare,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(spec),
+            "--run-id",
+            "stage-demo",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--var",
+            "bucket=real-bucket",
+            "--no-deploy-if-absent",
+            *extra,
+        ],
+    )
+
     assert result.exit_code == 1
-    assert "--stage-src needs a real bucket" in result.output
+    assert "stop after staging" in result.output
+    stage.assert_called_once()
+    assert stage.call_args.kwargs["force"] is expected_force
+    assert persist_calls == [False, True]
+
+
+def test_source_upload_failure_precedes_durable_run_state(monkeypatch: pytest.MonkeyPatch, mocker) -> None:
+    from npa.orchestration.npa_workflow.first_run_state import RunPreparation
+
+    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
+    mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
+    mocker.patch(
+        "npa.orchestration.npa_workflow.src_staging.stage_npa_source",
+        side_effect=SrcStagingError("synthetic upload failed"),
+    )
+    persist_source = mocker.patch("npa.clients.config.persist_workflow_src_s3_uri")
+    persist_calls: list[bool] = []
+
+    def prepare(**kwargs):
+        persist_calls.append(bool(kwargs.get("persist")))
+        return RunPreparation(run_id="upload-failure", generated_new=False, state_path="unused")
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.first_run_state.prepare_run",
+        side_effect=prepare,
+    )
+    input_upload = mocker.patch("npa.workflows.data_factory_input.prepare_paidf_input")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(spec),
+            "--run-id",
+            "upload-failure",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--var",
+            "bucket=real-bucket",
+            "--no-deploy-if-absent",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "synthetic upload failed" in result.output
+    assert persist_calls == [False]
+    input_upload.assert_called_once()
+    persist_source.assert_not_called()
+
+
+def test_input_preflight_failure_prevents_source_upload_and_run_state(monkeypatch: pytest.MonkeyPatch, mocker) -> None:
+    from npa.orchestration.npa_workflow.first_run_state import RunPreparation
+    from npa.workflows.data_factory_input import PaidfInputError
+
+    spec = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
+    mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
+    stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
+    mocker.patch(
+        "npa.workflows.data_factory_input.prepare_paidf_input",
+        side_effect=PaidfInputError("invalid H.264 input"),
+    )
+    persist_calls: list[bool] = []
+
+    def prepare(**kwargs):
+        persist_calls.append(bool(kwargs.get("persist")))
+        return RunPreparation(run_id="invalid-input", generated_new=False, state_path="unused")
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.first_run_state.prepare_run",
+        side_effect=prepare,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(spec),
+            "--run-id",
+            "invalid-input",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--var",
+            "bucket=real-bucket",
+            "--no-deploy-if-absent",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "invalid H.264 input" in result.output
+    assert persist_calls == [False]
+    stage.assert_not_called()
 
 
 def test_stage_npa_source_uploads_in_parallel_without_losing_files(
@@ -410,7 +616,12 @@ def test_storage_client_falls_back_to_saved_credentials(
 
     from npa.orchestration.npa_workflow import src_staging
 
-    for var in ("AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+    for var in (
+        "AWS_ENDPOINT_URL",
+        "NEBIUS_S3_ENDPOINT",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(
         "npa.clients.credentials.load_credentials",
@@ -439,7 +650,9 @@ def test_storage_client_falls_back_to_saved_credentials(
     }
 
 
-def test_storage_client_prefers_explicit_values(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_storage_client_prefers_explicit_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from npa.orchestration.npa_workflow import src_staging
 
     def _must_not_load(*_a, **_k):

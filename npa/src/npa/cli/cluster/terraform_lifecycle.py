@@ -18,7 +18,13 @@ from typing import Any, Callable
 import typer
 
 from npa.cli._typer_defaults import resolve_typer_defaults
-from npa.cluster.state import ClusterState, kubeconfig_file, save_cluster_state, utc_now_iso
+from npa.cluster.state import (
+    ClusterState,
+    kubeconfig_file,
+    load_cluster_state,
+    save_cluster_state,
+    utc_now_iso,
+)
 from npa.provisioning_journal import (
     ProvisioningOperation,
     current_operation,
@@ -84,15 +90,34 @@ def _transactional_cluster_up(function):
                 f"--terraform-dir {tf_dir} --force"
             ),
         )
+        state_existed_before = any(
+            candidate.is_file()
+            for candidate in (tf_dir / "terraform.tfstate", tf_dir / "errored.tfstate")
+        )
         with operation_context(operation):
             operation.transition("mutating")
             try:
                 result = function(*args, **kwargs)
             except BaseException as exc:
-                for candidate in (tf_dir / "errored.tfstate", tf_dir / "terraform.tfstate"):
+                for candidate in (
+                    tf_dir / "errored.tfstate",
+                    tf_dir / "terraform.tfstate",
+                ):
                     if candidate.is_file():
                         operation.preserve_state_file(candidate, name=candidate.stem)
-                operation.transition("recovery-required", error=str(exc))
+                rolled_back = _rollback_fresh_cluster_apply(
+                    operation,
+                    state_existed_before=state_existed_before,
+                    terraform_dir=tf_dir,
+                    project=project,
+                    context=context,
+                    timeout_minutes=int(bound.arguments.get("timeout") or 120),
+                )
+                if not rolled_back and operation.read().get("phase") not in {
+                    "rollback-incomplete",
+                    "rolled-back",
+                }:
+                    operation.transition("recovery-required", error=str(exc))
                 typer.echo(emit_recovery_summary(operation), err=True)
                 raise
             state_path = tf_dir / "terraform.tfstate"
@@ -104,6 +129,58 @@ def _transactional_cluster_up(function):
             return result
 
     return wrapped
+
+
+def _rollback_fresh_cluster_apply(
+    operation: ProvisioningOperation,
+    *,
+    state_existed_before: bool,
+    terraform_dir: Path,
+    project: str,
+    context: str,
+    timeout_minutes: int,
+) -> bool:
+    """Destroy only state first created during this failed direct apply."""
+
+    if operation.read().get("phase") == "rolled-back":
+        return True
+    if state_existed_before:
+        return False
+    state_candidates = (
+        terraform_dir / "terraform.tfstate",
+        terraform_dir / "errored.tfstate",
+    )
+    if not any(candidate.is_file() for candidate in state_candidates):
+        return False
+    operation.record_resource(
+        resource_type="terraform_cluster_stack",
+        requested_name=context,
+        ownership="created_by_this_operation",
+        ownership_source="fresh-terraform-state-after-green-preflight",
+        project_id=str(operation.read().get("project_id") or ""),
+    )
+    operation.transition("rolling-back")
+    try:
+        down_cmd(
+            terraform_dir=terraform_dir,
+            project=project,
+            receipt="",
+            project_id=str(operation.read().get("project_id") or ""),
+            tenant_id=str(operation.read().get("tenant_id") or ""),
+            region=str(operation.read().get("region") or ""),
+            cluster_id="",
+            context_name=context,
+            keep_local_state=False,
+            force=True,
+            timeout=max(60, timeout_minutes * 60),
+            kubeconfig=None,
+            output_json=False,
+        )
+    except BaseException as rollback_exc:
+        operation.transition("rollback-incomplete", error=str(rollback_exc))
+        return False
+    operation.transition("rolled-back")
+    return True
 
 
 @resolve_typer_defaults
@@ -200,7 +277,9 @@ def up_cmd(
         "--validation-timeout",
         help="Post-apply Kubernetes validation timeout in minutes.",
     ),
-    timeout: int = typer.Option(120, "--timeout", help="Terraform apply timeout in minutes."),
+    timeout: int = typer.Option(
+        120, "--timeout", help="Terraform apply timeout in minutes."
+    ),
 ) -> None:
     """Create or update the Terraform-managed NPA Kubernetes cluster."""
 
@@ -229,9 +308,7 @@ def up_cmd(
         _apply_string_override(tfvars, key, value)
     if preemptible is not None:
         tfvars["gpu_nodes_preemptible"] = bool(preemptible)
-    context = context_name.strip() or str(
-        tfvars.get("cluster_name") or "npa-cluster"
-    )
+    context = context_name.strip() or str(tfvars.get("cluster_name") or "npa-cluster")
 
     with isolated_terraform_data_dir(tf_dir, context) as terraform_data:
         env = _terraform_env(nebius_bin)
@@ -243,10 +320,10 @@ def up_cmd(
         _preflight_terraform_version(terraform_bin)
         _apply_project_tf_vars(env, project, tfvars)
         _guard_tfvars_iam_token(tf_dir, tfvars)
+        _preflight_whole_path_capacity(tfvars, env, context=context)
         _terraform_init(terraform_bin, tf_dir, env)
         _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
         _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
-        _preflight_instance_count_quota(tfvars, env)
         _preflight_filestore_quota(nebius_bin, tfvars, env)
         _preflight_gpu_capacity(nebius_bin, tfvars, env)
 
@@ -280,6 +357,13 @@ def up_cmd(
         # cancel the apply when the platform reports a refusal retrying cannot fix.
         watcher = _NodeGroupWatcher(nebius_bin, tfvars, env)
         watcher.start()
+        state_existed_before_apply = any(
+            candidate.is_file()
+            for candidate in (
+                tf_dir / "terraform.tfstate",
+                tf_dir / "errored.tfstate",
+            )
+        )
         try:
             _run_stream(
                 apply_args,
@@ -288,13 +372,28 @@ def up_cmd(
                 timeout=timeout * 60,
                 cancel=lambda: watcher.fatal_reason,
             )
-        except (
-            typer.BadParameter,
-            KeyboardInterrupt,
-            subprocess.TimeoutExpired,
-        ) as exc:
+        except BaseException as exc:
             watcher.stop()
-            _echo_apply_recovery(tf_dir, tfvars, isinstance(exc, KeyboardInterrupt))
+            typer.echo(f"terraform apply error: {exc}", err=True)
+            operation = current_operation()
+            rolled_back = False
+            if operation is not None:
+                for candidate in (
+                    tf_dir / "errored.tfstate",
+                    tf_dir / "terraform.tfstate",
+                ):
+                    if candidate.is_file():
+                        operation.preserve_state_file(candidate, name=candidate.stem)
+                rolled_back = _rollback_fresh_cluster_apply(
+                    operation,
+                    state_existed_before=state_existed_before_apply,
+                    terraform_dir=tf_dir,
+                    project=project,
+                    context=context,
+                    timeout_minutes=timeout,
+                )
+            if not rolled_back:
+                _echo_apply_recovery(tf_dir, tfvars, isinstance(exc, KeyboardInterrupt))
             raise
         finally:
             watcher.stop()
@@ -316,7 +415,9 @@ def up_cmd(
                 provider_id=cluster_id,
                 ownership="created_by_this_operation",
                 ownership_source="terraform-output-and-state",
-                project_id=str(tfvars.get("parent_id") or env.get("TF_VAR_parent_id") or ""),
+                project_id=str(
+                    tfvars.get("parent_id") or env.get("TF_VAR_parent_id") or ""
+                ),
             )
             for resource_type, requested_name in (
                 ("network", f"{cluster_name}-network"),
@@ -337,10 +438,9 @@ def up_cmd(
                 )
             cpu_count = int(_tfvar_value(tfvars, env, "cpu_nodes_count", 0) or 0)
             gpu_count = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 0) or 0)
-            node_groups = (
-                ([f"{cluster_name}-ng-cpu"] if cpu_count else [])
-                + [f"{cluster_name}-ng-gpu-{index}" for index in range(gpu_count)]
-            )
+            node_groups = ([f"{cluster_name}-ng-cpu"] if cpu_count else []) + [
+                f"{cluster_name}-ng-gpu-{index}" for index in range(gpu_count)
+            ]
             for requested_name in node_groups:
                 operation.record_resource(
                     resource_type="managed_kubernetes_node_group",
@@ -379,9 +479,7 @@ def up_cmd(
                 f"default StorageClass {validation['default_storage_class']}"
             )
         if sky_smoke:
-            _run_skypilot_smoke(
-                kubeconfig_path, context, cluster_name, sky_gpus
-            )
+            _run_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_gpus)
 
 
 def down_cmd(
@@ -401,7 +499,9 @@ def down_cmd(
     project_id: str = typer.Option("", "--project-id", help="Exact Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Exact Nebius tenant ID."),
     region: str = typer.Option("", "--region", help="Exact Nebius region."),
-    cluster_id: str = typer.Option("", "--cluster-id", help="Exact immutable cluster ID."),
+    cluster_id: str = typer.Option(
+        "", "--cluster-id", help="Exact immutable cluster ID."
+    ),
     context_name: str = typer.Option(
         "",
         "--context",
@@ -413,7 +513,9 @@ def down_cmd(
         help="Leave ~/.npa/clusters/<context>/ in place after the destroy succeeds.",
     ),
     force: bool = typer.Option(False, "--force", help="Skip confirmation."),
-    timeout: int = typer.Option(120, "--timeout", help="Terraform destroy timeout in minutes."),
+    timeout: int = typer.Option(
+        120, "--timeout", help="Terraform destroy timeout in minutes."
+    ),
     kubeconfig: Path | None = typer.Option(
         None,
         "--kubeconfig",
@@ -423,7 +525,9 @@ def down_cmd(
             "then the ambient KUBECONFIG."
         ),
     ),
-    output_json: bool = typer.Option(False, "--json", help="Emit a machine-readable result."),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit a machine-readable result."
+    ),
 ) -> None:
     """Destroy the Terraform-managed NPA cluster: cloud resources and local state.
 
@@ -453,8 +557,12 @@ def down_cmd(
     saved = resolve_environment(alias) if alias else None
     live = {
         "project_alias": alias,
-        "project_id": str(getattr(saved, "project_id", "") or tfvars.get("parent_id") or ""),
-        "tenant_id": str(getattr(saved, "tenant_id", "") or tfvars.get("tenant_id") or ""),
+        "project_id": str(
+            getattr(saved, "project_id", "") or tfvars.get("parent_id") or ""
+        ),
+        "tenant_id": str(
+            getattr(saved, "tenant_id", "") or tfvars.get("tenant_id") or ""
+        ),
         "region": str(getattr(saved, "region", "") or tfvars.get("region") or ""),
         "context": context_name.strip() or str(tfvars.get("cluster_name") or ""),
     }
@@ -489,7 +597,9 @@ def down_cmd(
         resource_type="cluster",
         requested_name=preview_context,
     )
-    recovery_operation = recovery_operations[0] if len(recovery_operations) == 1 else None
+    recovery_operation = (
+        recovery_operations[0] if len(recovery_operations) == 1 else None
+    )
     has_evidence = has_destroy_evidence(
         tf_dir,
         preview_context,
@@ -583,7 +693,19 @@ def down_cmd(
                     "nothing to do. Terraform was not invoked."
                 )
                 if output_json:
-                    typer.echo(json.dumps({**cleanup_identity.to_dict(), "outcome": "already_absent", "verified": True, "no_op": True, "message": message}, indent=2, sort_keys=True))
+                    typer.echo(
+                        json.dumps(
+                            {
+                                **cleanup_identity.to_dict(),
+                                "outcome": "already_absent",
+                                "verified": True,
+                                "no_op": True,
+                                "message": message,
+                            },
+                            indent=2,
+                            sort_keys=True,
+                        )
+                    )
                 else:
                     typer.echo(f"identity_source: {cleanup_identity.source}")
                     typer.echo(message)
@@ -609,7 +731,9 @@ def down_cmd(
     terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
     _preflight_provider_lock(tf_dir)
-    if not force and not typer.confirm(f"Destroy Terraform-managed cluster in {tf_dir}?"):
+    if not force and not typer.confirm(
+        f"Destroy Terraform-managed cluster in {tf_dir}?"
+    ):
         raise typer.Exit(1)
     confirmed_full_destroy = True
     _preflight_terraform_version(terraform_bin)
@@ -899,7 +1023,16 @@ def kubeconfig_cmd(
         )
 
     result = _run_capture(
-        [nebius_bin, "mk8s", "cluster", "list", "--parent-id", resolved_project, "--format", "json"],
+        [
+            nebius_bin,
+            "mk8s",
+            "cluster",
+            "list",
+            "--parent-id",
+            resolved_project,
+            "--format",
+            "json",
+        ],
         env=env,
     )
     matches = [
@@ -1018,7 +1151,9 @@ def _require_bin(binary: str) -> str:
     raise typer.BadParameter(f"Required executable not found: {binary}")
 
 
-def _apply_project_tf_vars(env: dict[str, str], project: str, tfvars: dict[str, Any]) -> None:
+def _apply_project_tf_vars(
+    env: dict[str, str], project: str, tfvars: dict[str, Any]
+) -> None:
     """Fill TF_VAR_parent_id/tenant_id/region from ``~/.npa/config.yaml``.
 
     `npa provision-if-absent` exports these before calling `up`, so a cluster
@@ -1029,7 +1164,11 @@ def _apply_project_tf_vars(env: dict[str, str], project: str, tfvars: dict[str, 
     """
     missing = [
         key
-        for key, var in (("parent_id", "TF_VAR_parent_id"), ("tenant_id", "TF_VAR_tenant_id"), ("region", "TF_VAR_region"))
+        for key, var in (
+            ("parent_id", "TF_VAR_parent_id"),
+            ("tenant_id", "TF_VAR_tenant_id"),
+            ("region", "TF_VAR_region"),
+        )
         if key not in tfvars and not str(env.get(var, "") or "").strip()
     ]
     if not missing:
@@ -1052,7 +1191,9 @@ def _apply_project_tf_vars(env: dict[str, str], project: str, tfvars: dict[str, 
             env[var] = value
             resolved.append(f"{key}={value}")
     if resolved:
-        typer.echo(f"Using saved project settings from ~/.npa/config.yaml: {', '.join(resolved)}")
+        typer.echo(
+            f"Using saved project settings from ~/.npa/config.yaml: {', '.join(resolved)}"
+        )
 
 
 def _terraform_env(nebius_bin: str) -> dict[str, str]:
@@ -1073,7 +1214,9 @@ def _terraform_env(nebius_bin: str) -> dict[str, str]:
         return env
     env.pop("TF_VAR_iam_token", None)
     env.pop("NEBIUS_IAM_TOKEN", None)
-    token = _run_capture([nebius_bin, "iam", "get-access-token"], env=env).stdout.strip()
+    token = _run_capture(
+        [nebius_bin, "iam", "get-access-token"], env=env
+    ).stdout.strip()
     env["TF_VAR_iam_token"] = token
     env["NEBIUS_IAM_TOKEN"] = token
     return env
@@ -1115,9 +1258,7 @@ def _run_stream(
         if capture_output and safe_stdout:
             typer.echo(safe_stdout, nl=not safe_stdout.endswith("\n"))
         if capture_output and safe_stderr:
-            typer.echo(
-                safe_stderr, err=True, nl=not safe_stderr.endswith("\n")
-            )
+            typer.echo(safe_stderr, err=True, nl=not safe_stderr.endswith("\n"))
         if result.returncode != 0:
             detail = ""
             if capture_output:
@@ -1151,7 +1292,9 @@ def _run_stream(
         raise typer.BadParameter(f"Cancelled `{' '.join(args[:2])}`: {reason}")
     if returncode != 0:
         raise typer.BadParameter(f"Command failed ({returncode}): {' '.join(args)}")
-    return subprocess.CompletedProcess(args=args, returncode=returncode, stdout="", stderr="")
+    return subprocess.CompletedProcess(
+        args=args, returncode=returncode, stdout="", stderr=""
+    )
 
 
 def _stop_process(process: subprocess.Popen[str]) -> None:
@@ -1196,7 +1339,9 @@ def _run_capture(
     if check and result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         suffix = f": {detail}" if detail else ""
-        raise typer.BadParameter(f"Command failed ({result.returncode}): {' '.join(args)}{suffix}")
+        raise typer.BadParameter(
+            f"Command failed ({result.returncode}): {' '.join(args)}{suffix}"
+        )
     return result
 
 
@@ -1297,11 +1442,16 @@ def _preflight_provider_lock(terraform_dir: Path) -> str:
 
 def _read_tfvars(terraform_dir: Path) -> dict[str, Any]:
     values: dict[str, Any] = {}
-    for path in [terraform_dir / "terraform.tfvars", *sorted(terraform_dir.glob("*.auto.tfvars"))]:
+    for path in [
+        terraform_dir / "terraform.tfvars",
+        *sorted(terraform_dir.glob("*.auto.tfvars")),
+    ]:
         if not path.exists():
             continue
         for line in path.read_text().splitlines():
-            match = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*(?:#.*)?$", line)
+            match = re.match(
+                r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*(?:#.*)?$", line
+            )
             if not match:
                 continue
             key, raw_value = match.groups()
@@ -1309,7 +1459,9 @@ def _read_tfvars(terraform_dir: Path) -> dict[str, Any]:
     return values
 
 
-def _apply_capacity_block_group_env(env: dict[str, str], capacity_block_group: str) -> None:
+def _apply_capacity_block_group_env(
+    env: dict[str, str], capacity_block_group: str
+) -> None:
     value = capacity_block_group.strip()
     if value:
         env["TF_VAR_capacity_block_group"] = value
@@ -1342,7 +1494,10 @@ def _ssh_public_key_var_args(
     value is irrelevant to tearing resources down, and a teardown must not be
     blocked by a missing key on the machine doing the cleanup.
     """
-    if "ssh_public_key" in tfvars or str(env.get("TF_VAR_ssh_public_key", "") or "").strip():
+    if (
+        "ssh_public_key" in tfvars
+        or str(env.get("TF_VAR_ssh_public_key", "") or "").strip()
+    ):
         return []
     explicit = os.environ.get("NPA_SSH_PUBLIC_KEY", "").strip()
     candidates = (
@@ -1354,7 +1509,10 @@ def _ssh_public_key_var_args(
         if candidate.is_file():
             return ["-var", f'ssh_public_key={{path="{candidate}"}}']
     if allow_placeholder:
-        return ["-var", 'ssh_public_key={key="ssh-ed25519 AAAA npa-teardown-placeholder"}']
+        return [
+            "-var",
+            'ssh_public_key={key="ssh-ed25519 AAAA npa-teardown-placeholder"}',
+        ]
     searched = ", ".join(str(path) for path in candidates)
     raise typer.BadParameter(
         f"No SSH public key found for the cluster node groups (looked at {searched}). "
@@ -1369,7 +1527,9 @@ def _preflight_terraform_version(terraform_bin: str) -> None:
     version = ""
     if result.returncode == 0:
         try:
-            version = str(json.loads(result.stdout or "{}").get("terraform_version") or "")
+            version = str(
+                json.loads(result.stdout or "{}").get("terraform_version") or ""
+            )
         except json.JSONDecodeError:
             version = ""
     parsed = _parse_semver(version)
@@ -1407,7 +1567,10 @@ def _guard_tfvars_iam_token(terraform_dir: Path, tfvars: dict[str, Any]) -> None
         return
     files = ", ".join(
         str(path.name)
-        for path in [terraform_dir / "terraform.tfvars", *sorted(terraform_dir.glob("*.auto.tfvars"))]
+        for path in [
+            terraform_dir / "terraform.tfvars",
+            *sorted(terraform_dir.glob("*.auto.tfvars")),
+        ]
         if path.exists()
     )
     raise typer.BadParameter(
@@ -1418,7 +1581,9 @@ def _guard_tfvars_iam_token(terraform_dir: Path, tfvars: dict[str, Any]) -> None
     )
 
 
-def _apply_capacity_block_group_tfvars(tfvars: dict[str, Any], capacity_block_group: str) -> None:
+def _apply_capacity_block_group_tfvars(
+    tfvars: dict[str, Any], capacity_block_group: str
+) -> None:
     value = capacity_block_group.strip()
     if value:
         tfvars["capacity_block_group"] = value
@@ -1444,12 +1609,26 @@ def _guard_unmanaged_duplicate(
     env: dict[str, str],
 ) -> None:
     cluster_name = str(tfvars.get("cluster_name") or "npa-cluster")
-    project_id = str(tfvars.get("parent_id") or os.environ.get("TF_VAR_parent_id") or "")
+    project_id = str(
+        tfvars.get("parent_id") or os.environ.get("TF_VAR_parent_id") or ""
+    )
     if not project_id:
-        typer.echo("Skipping duplicate cluster preflight: parent_id is not set in tfvars or env.", err=True)
+        typer.echo(
+            "Skipping duplicate cluster preflight: parent_id is not set in tfvars or env.",
+            err=True,
+        )
         return
     result = _run_capture(
-        [nebius_bin, "mk8s", "cluster", "list", "--parent-id", project_id, "--format", "json"],
+        [
+            nebius_bin,
+            "mk8s",
+            "cluster",
+            "list",
+            "--parent-id",
+            project_id,
+            "--format",
+            "json",
+        ],
         env=env,
     )
     payload = json.loads(result.stdout or "{}")
@@ -1477,13 +1656,17 @@ def _guard_unmanaged_duplicate(
         )
 
 
-def _preflight_filestore_quota(nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str]) -> None:
+def _preflight_filestore_quota(
+    nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str]
+) -> None:
     # The Terraform default is enable_filestore = false (deploy/cluster/variables.tf),
     # so the default FTUE / PAIDF cluster needs no Shared Filesystem SSD quota. Only
     # check the quota when the shared filesystem is explicitly opted into and is being
     # created (not attached via existing_filestore).
     enable_filestore = _tfvar_bool(tfvars, env, "enable_filestore", False)
-    existing_filestore = str(_tfvar_value(tfvars, env, "existing_filestore", "") or "").strip()
+    existing_filestore = str(
+        _tfvar_value(tfvars, env, "existing_filestore", "") or ""
+    ).strip()
     if not enable_filestore or existing_filestore:
         return
     tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip()
@@ -1494,7 +1677,11 @@ def _preflight_filestore_quota(nebius_bin: str, tfvars: dict[str, Any], env: dic
             err=True,
         )
         return
-    size_gib = int(_tfvar_value(tfvars, env, "filestore_disk_size_gibibytes", _DEFAULT_FILESTORE_SIZE_GIB))
+    size_gib = int(
+        _tfvar_value(
+            tfvars, env, "filestore_disk_size_gibibytes", _DEFAULT_FILESTORE_SIZE_GIB
+        )
+    )
     requested_bytes = size_gib * _GIB
     quota = _quota_allowance(
         nebius_bin,
@@ -1543,7 +1730,9 @@ def _string_var_args(key: str, value: str) -> list[str]:
     return ["-var", f"{key}={cleaned}"] if cleaned else []
 
 
-def _preflight_instance_count_quota(tfvars: dict[str, Any], env: dict[str, str]) -> None:
+def _preflight_instance_count_quota(
+    tfvars: dict[str, Any], env: dict[str, str]
+) -> None:
     """Predict a ``compute.instance.count`` shortfall before any apply.
 
     A cluster needs one VM per node (GPU + CPU). Under a tight tenant instance
@@ -1581,14 +1770,113 @@ def _preflight_instance_count_quota(tfvars: dict[str, Any], env: dict[str, str])
     )
 
 
-def _preflight_gpu_capacity(nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str]) -> None:
+def _preflight_whole_path_capacity(
+    tfvars: dict[str, Any], env: dict[str, str], *, context: str
+) -> None:
+    """Gate direct Terraform apply with the same immutable cumulative model."""
+
+    from npa.provisioning_preflight import (
+        build_whole_path_plan,
+        discover_existing_capacity,
+        resolve_topology,
+    )
+
+    gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 1) or 0)
+    cpu_nodes = int(_tfvar_value(tfvars, env, "cpu_nodes_count", 1) or 0)
+    try:
+        cached = load_cluster_state(context)
+    except Exception:  # noqa: BLE001 - unreadable state must not imply ownership
+        cached = None
+    existing = bool(
+        cached
+        and cached.kubeconfig_path
+        and Path(cached.kubeconfig_path).expanduser().is_file()
+    )
+    requested = resolve_topology(
+        cluster_name=str(_tfvar_value(tfvars, env, "cluster_name", context) or context),
+        cpu_nodes=cpu_nodes,
+        cpu_platform=str(
+            _tfvar_value(tfvars, env, "cpu_nodes_platform", "cpu-d3") or ""
+        ),
+        cpu_preset=str(
+            _tfvar_value(tfvars, env, "cpu_nodes_preset", "8vcpu-32gb") or ""
+        ),
+        gpu_nodes=gpu_nodes,
+        gpu_platform=str(
+            _tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000") or ""
+        ),
+        gpu_preset=str(
+            _tfvar_value(tfvars, env, "gpu_nodes_preset", "1gpu-24vcpu-218gb") or ""
+        ),
+        preemptible=_tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False),
+        public_node_ips=False,
+    )
+    checks = []
+    if existing:
+        existing_cpu_nodes = requested.cpu_nodes
+        existing_gpu_nodes = requested.gpu_nodes
+    else:
+        discovered = discover_existing_capacity(
+            project_id=str(_tfvar_value(tfvars, env, "parent_id", "") or ""),
+            cluster_name=requested.cluster_name,
+            cpu_platform=requested.cpu_platform,
+            cpu_preset=requested.cpu_preset,
+            gpu_platform=requested.gpu_platform,
+            gpu_preset=requested.gpu_preset,
+        )
+        existing_cpu_nodes = min(requested.cpu_nodes, discovered.cpu_nodes)
+        existing_gpu_nodes = min(requested.gpu_nodes, discovered.gpu_nodes)
+        checks.append(discovered.check)
+    topology = resolve_topology(
+        cluster_name=requested.cluster_name,
+        cpu_nodes=requested.cpu_nodes,
+        existing_cpu_nodes=existing_cpu_nodes,
+        cpu_platform=requested.cpu_platform,
+        cpu_preset=requested.cpu_preset,
+        gpu_nodes=requested.gpu_nodes,
+        existing_gpu_nodes=existing_gpu_nodes,
+        gpu_platform=requested.gpu_platform,
+        gpu_preset=requested.gpu_preset,
+        preemptible=requested.gpu_preemptible,
+        public_node_ips=requested.public_node_ips,
+    )
+    plan = build_whole_path_plan(
+        project_alias="",
+        project_id=str(_tfvar_value(tfvars, env, "parent_id", "") or ""),
+        tenant_id=str(_tfvar_value(tfvars, env, "tenant_id", "") or ""),
+        region=str(_tfvar_value(tfvars, env, "region", "") or ""),
+        topology=topology,
+        checks=checks,
+        mutation=True,
+    )
+    operation = current_operation()
+    if operation is not None:
+        operation.record_preflight_plan(plan.to_dict())
+    try:
+        plan.assert_mutation_ready()
+    except Exception as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        "Whole-path preflight ready: "
+        f"cpu={topology.cpu_nodes}x{topology.cpu_platform}/{topology.cpu_preset}, "
+        f"gpu={topology.gpu_nodes}x{topology.gpu_platform}/{topology.gpu_preset}, "
+        f"preemptible={str(topology.gpu_preemptible).lower()}, "
+        f"new instances={topology.required_instances}, disks={topology.required_disks}."
+    )
+
+
+def _preflight_gpu_capacity(
+    nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str]
+) -> None:
     """Fail before apply when the tenant's GPU quota cannot cover the node group."""
     from npa.cli.cluster.capacity import gpu_capacity_error
 
     gpu_nodes = int(_tfvar_value(tfvars, env, "gpu_nodes_count", 0) or 0)
     if gpu_nodes <= 0:
         return
-    platform = str(_tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000") or "").strip()
+    platform = str(
+        _tfvar_value(tfvars, env, "gpu_nodes_platform", "gpu-rtx6000") or ""
+    ).strip()
     preset = str(_tfvar_value(tfvars, env, "gpu_nodes_preset", "") or "").strip()
     tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip()
     region = str(_tfvar_value(tfvars, env, "region", "") or "").strip()
@@ -1614,7 +1902,11 @@ def _preflight_gpu_capacity(nebius_bin: str, tfvars: dict[str, Any], env: dict[s
     if message:
         raise typer.BadParameter(message)
     if not preemptible and not _gpu_quota_was_readable(
-        capture, nebius_bin=nebius_bin, tenant_id=tenant_id, region=region, platform=platform
+        capture,
+        nebius_bin=nebius_bin,
+        tenant_id=tenant_id,
+        region=region,
+        platform=platform,
     ):
         # Skipping silently is what let an unreadable quota become a node group
         # that retries for hours with no explanation.
@@ -1667,7 +1959,15 @@ _TERMINAL_NODE_GROUP_MARKERS = (
 #: Status keys whose contents are diagnostics worth printing. Once one matches,
 #: every string underneath it counts: Nebius reports the real reason as
 #: ``status.events[].last_occurrence``, whose own key says nothing.
-_DIAGNOSTIC_KEY_TOKENS = ("error", "failure", "message", "condition", "reason", "state", "event")
+_DIAGNOSTIC_KEY_TOKENS = (
+    "error",
+    "failure",
+    "message",
+    "condition",
+    "reason",
+    "state",
+    "event",
+)
 
 
 def _status_texts(value: Any, *, key: str = "", inherited: bool = False) -> list[str]:
@@ -1745,7 +2045,9 @@ class _NodeGroupWatcher:
     def start(self) -> None:
         if not self._project_id:
             return
-        self._thread = threading.Thread(target=self._run, name="npa-node-group-watch", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="npa-node-group-watch", daemon=True
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -1763,7 +2065,16 @@ class _NodeGroupWatcher:
         if not cluster_id:
             return
         result = _run_capture(
-            [self._nebius_bin, "mk8s", "node-group", "list", "--parent-id", cluster_id, "--format", "json"],
+            [
+                self._nebius_bin,
+                "mk8s",
+                "node-group",
+                "list",
+                "--parent-id",
+                cluster_id,
+                "--format",
+                "json",
+            ],
             env=self._env,
             check=False,
         )
@@ -1792,7 +2103,16 @@ class _NodeGroupWatcher:
 
     def _cluster_id(self) -> str:
         result = _run_capture(
-            [self._nebius_bin, "mk8s", "cluster", "list", "--parent-id", self._project_id, "--format", "json"],
+            [
+                self._nebius_bin,
+                "mk8s",
+                "cluster",
+                "list",
+                "--parent-id",
+                self._project_id,
+                "--format",
+                "json",
+            ],
             env=self._env,
             check=False,
         )
@@ -1808,9 +2128,7 @@ class _NodeGroupWatcher:
 def _format_node_group_status(status: dict[str, Any]) -> str:
     """Summarize node-group status, keeping any failure text Nebius reports."""
     state = str(status.get("state", "") or "UNKNOWN")
-    counts = (
-        f"{status.get('ready_node_count', '?')}/{status.get('target_node_count', '?')} ready"
-    )
+    counts = f"{status.get('ready_node_count', '?')}/{status.get('target_node_count', '?')} ready"
     details = _node_group_status_details(status)
     return ", ".join([f"{state} ({counts})", *dict.fromkeys(details)])
 
@@ -1848,10 +2166,14 @@ def _instance_deletion_already_absent(event: dict[str, Any]) -> bool:
     if event_type != "computeinstancedeletionfailed":
         return False
     detail = " ".join(_status_texts(event, key="event")).lower()
-    return any(marker in detail for marker in ("notfound", "not found", "already absent"))
+    return any(
+        marker in detail for marker in ("notfound", "not found", "already absent")
+    )
 
 
-def _echo_apply_recovery(tf_dir: Path, tfvars: dict[str, Any], interrupted: bool) -> None:
+def _echo_apply_recovery(
+    tf_dir: Path, tfvars: dict[str, Any], interrupted: bool
+) -> None:
     """Say what may exist in the cloud after a failed or interrupted apply.
 
     An interrupted `cluster up` leaves a real cluster running with no local
@@ -1885,13 +2207,17 @@ def _echo_apply_recovery(tf_dir: Path, tfvars: dict[str, Any], interrupted: bool
     )
 
 
-def _tfvar_value(tfvars: dict[str, Any], env: dict[str, str], key: str, default: Any) -> Any:
+def _tfvar_value(
+    tfvars: dict[str, Any], env: dict[str, str], key: str, default: Any
+) -> Any:
     if key in tfvars:
         return tfvars[key]
     return env.get(f"TF_VAR_{key}", default)
 
 
-def _tfvar_bool(tfvars: dict[str, Any], env: dict[str, str], key: str, default: bool) -> bool:
+def _tfvar_bool(
+    tfvars: dict[str, Any], env: dict[str, str], key: str, default: bool
+) -> bool:
     """Read a boolean tfvar, treating ``TF_VAR_x`` strings the way Terraform does.
 
     ``TF_VAR_*`` values arrive as strings, and ``bool("false")`` is ``True``, so a
@@ -1961,7 +2287,9 @@ def _quota_usage(quota: dict[str, Any]) -> int:
     return int(raw_usage or 0)
 
 
-def _terraform_state_cluster_ids(terraform_bin: str, terraform_dir: Path, env: dict[str, str]) -> set[str]:
+def _terraform_state_cluster_ids(
+    terraform_bin: str, terraform_dir: Path, env: dict[str, str]
+) -> set[str]:
     result = _run_capture(
         [terraform_bin, "state", "pull"],
         cwd=terraform_dir,
@@ -1976,10 +2304,7 @@ def _terraform_state_cluster_ids(terraform_bin: str, terraform_dir: Path, env: d
         return set()
     ids: set[str] = set()
     output_cluster_id = (
-        state.get("outputs", {})
-        .get("kube_cluster", {})
-        .get("value", {})
-        .get("id")
+        state.get("outputs", {}).get("kube_cluster", {}).get("value", {}).get("id")
     )
     if output_cluster_id:
         ids.add(str(output_cluster_id))
@@ -2006,8 +2331,12 @@ def _terraform_state_cluster_ids(terraform_bin: str, terraform_dir: Path, env: d
     return ids
 
 
-def _terraform_outputs(terraform_bin: str, terraform_dir: Path, env: dict[str, str]) -> dict[str, Any]:
-    result = _run_capture([terraform_bin, "output", "-json"], cwd=terraform_dir, env=env)
+def _terraform_outputs(
+    terraform_bin: str, terraform_dir: Path, env: dict[str, str]
+) -> dict[str, Any]:
+    result = _run_capture(
+        [terraform_bin, "output", "-json"], cwd=terraform_dir, env=env
+    )
     return json.loads(result.stdout or "{}")
 
 
@@ -2018,7 +2347,9 @@ def _cluster_output(outputs: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
-def _write_kubeconfig(nebius_bin: str, cluster_id: str, kubeconfig_path: Path, context: str) -> None:
+def _write_kubeconfig(
+    nebius_bin: str, cluster_id: str, kubeconfig_path: Path, context: str
+) -> None:
     kubeconfig_path.parent.mkdir(parents=True, exist_ok=True)
     _run_stream(
         [
@@ -2045,13 +2376,16 @@ def _save_terraform_cluster_state(
     context: str,
     kubeconfig_path: Path,
 ) -> None:
-    endpoints = cluster.get("endpoints") if isinstance(cluster.get("endpoints"), dict) else {}
+    endpoints = (
+        cluster.get("endpoints") if isinstance(cluster.get("endpoints"), dict) else {}
+    )
     state = ClusterState(
         name=context,
         cluster_id=str(cluster.get("id") or ""),
         project_id=str(tfvars.get("parent_id") or ""),
         region=str(tfvars.get("region") or ""),
-        node_count=int(tfvars.get("cpu_nodes_count") or 0) + int(tfvars.get("gpu_nodes_count") or 0),
+        node_count=int(tfvars.get("cpu_nodes_count") or 0)
+        + int(tfvars.get("gpu_nodes_count") or 0),
         node_platform=str(tfvars.get("gpu_nodes_platform") or ""),
         node_preset=str(tfvars.get("gpu_nodes_preset") or ""),
         k8s_version=str(tfvars.get("k8s_version") or ""),
@@ -2092,31 +2426,47 @@ def _validate_cluster(
     )
 
 
-def _validate_cluster_once(kubectl_bin: str, kubeconfig_path: Path, tfvars: dict[str, Any]) -> dict[str, Any]:
+def _validate_cluster_once(
+    kubectl_bin: str, kubeconfig_path: Path, tfvars: dict[str, Any]
+) -> dict[str, Any]:
     env = os.environ.copy()
     env["KUBECONFIG"] = str(kubeconfig_path)
-    nodes = json.loads(_run_capture([kubectl_bin, "get", "nodes", "-o", "json"], env=env).stdout)
+    nodes = json.loads(
+        _run_capture([kubectl_bin, "get", "nodes", "-o", "json"], env=env).stdout
+    )
     ready_nodes = 0
     total_gpus = 0
     gpu_node_count = 0
     for node in nodes.get("items", []):
         conditions = node.get("status", {}).get("conditions", [])
-        if any(c.get("type") == "Ready" and c.get("status") == "True" for c in conditions):
+        if any(
+            c.get("type") == "Ready" and c.get("status") == "True" for c in conditions
+        ):
             ready_nodes += 1
-        gpu_count = int(node.get("status", {}).get("allocatable", {}).get("nvidia.com/gpu") or 0)
+        gpu_count = int(
+            node.get("status", {}).get("allocatable", {}).get("nvidia.com/gpu") or 0
+        )
         if gpu_count:
             gpu_node_count += 1
             total_gpus += gpu_count
 
     expected_gpu_nodes = int(tfvars.get("gpu_nodes_count") or 0)
-    expected_gpus = expected_gpu_nodes * _gpus_per_node(str(tfvars.get("gpu_nodes_preset") or ""))
+    expected_gpus = expected_gpu_nodes * _gpus_per_node(
+        str(tfvars.get("gpu_nodes_preset") or "")
+    )
     if expected_gpu_nodes and gpu_node_count != expected_gpu_nodes:
-        raise typer.BadParameter(f"Expected {expected_gpu_nodes} GPU nodes, found {gpu_node_count}")
+        raise typer.BadParameter(
+            f"Expected {expected_gpu_nodes} GPU nodes, found {gpu_node_count}"
+        )
     if expected_gpus and total_gpus != expected_gpus:
-        raise typer.BadParameter(f"Expected {expected_gpus} allocatable GPUs, found {total_gpus}")
+        raise typer.BadParameter(
+            f"Expected {expected_gpus} allocatable GPUs, found {total_gpus}"
+        )
 
     pods = json.loads(
-        _run_capture([kubectl_bin, "get", "pods", "-n", "gpu-operator", "-o", "json"], env=env).stdout
+        _run_capture(
+            [kubectl_bin, "get", "pods", "-n", "gpu-operator", "-o", "json"], env=env
+        ).stdout
     )
     if not pods.get("items"):
         raise typer.BadParameter("GPU Operator namespace has no pods")
@@ -2126,7 +2476,9 @@ def _validate_cluster_once(kubectl_bin: str, kubeconfig_path: Path, tfvars: dict
         if pod.get("status", {}).get("phase") not in {"Running", "Succeeded"}
     ]
     if bad_pods:
-        raise typer.BadParameter(f"GPU Operator pods are not ready: {', '.join(bad_pods)}")
+        raise typer.BadParameter(
+            f"GPU Operator pods are not ready: {', '.join(bad_pods)}"
+        )
 
     storage_classes = json.loads(
         _run_capture([kubectl_bin, "get", "storageclass", "-o", "json"], env=env).stdout
@@ -2142,8 +2494,13 @@ def _validate_cluster_once(kubectl_bin: str, kubeconfig_path: Path, tfvars: dict
     # FTUE / PAIDF shape (enable_filestore = false), the platform block-storage
     # StorageClass stays the default, so only enforce the filesystem CSI SC when
     # the shared filesystem was opted into.
-    if _shared_filesystem_requested(tfvars, dict(os.environ)) and default_sc != "csi-mounted-fs-path-sc":
-        raise typer.BadParameter(f"Expected default StorageClass csi-mounted-fs-path-sc, found {default_sc}")
+    if (
+        _shared_filesystem_requested(tfvars, dict(os.environ))
+        and default_sc != "csi-mounted-fs-path-sc"
+    ):
+        raise typer.BadParameter(
+            f"Expected default StorageClass csi-mounted-fs-path-sc, found {default_sc}"
+        )
     return {
         "ready_nodes": ready_nodes,
         "gpu_nodes": gpu_node_count,
@@ -2157,7 +2514,9 @@ def _gpus_per_node(preset: str) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _run_skypilot_smoke(kubeconfig_path: Path, context: str, cluster_name: str, sky_gpus: str) -> None:
+def _run_skypilot_smoke(
+    kubeconfig_path: Path, context: str, cluster_name: str, sky_gpus: str
+) -> None:
     sky_bin = os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
     sky = _require_bin(sky_bin)
     env = os.environ.copy()
@@ -2190,14 +2549,18 @@ def _run_skypilot_smoke(kubeconfig_path: Path, context: str, cluster_name: str, 
 
 
 def _detect_skypilot_gpu(sky: str, infra: str, env: dict[str, str]) -> str:
-    result = _run_capture([sky, "show-gpus", "--infra", infra, "--all"], env=env, timeout=300)
+    result = _run_capture(
+        [sky, "show-gpus", "--infra", infra, "--all"], env=env, timeout=300
+    )
     for line in result.stdout.splitlines():
         if "RTX" not in line.upper() or "6000" not in line:
             continue
         columns = [column for column in re.split(r"\s{2,}", line.strip()) if column]
         if columns:
             return f"{columns[0]}:1"
-    raise typer.BadParameter("Unable to auto-detect a Kubernetes GPU for SkyPilot; pass --sky-gpus")
+    raise typer.BadParameter(
+        "Unable to auto-detect a Kubernetes GPU for SkyPilot; pass --sky-gpus"
+    )
 
 
 def _sky_cluster_name(cluster_name: str) -> str:
@@ -2207,8 +2570,12 @@ def _sky_cluster_name(cluster_name: str) -> str:
 
 def _wait_for_sky_down(sky: str, cluster_name: str, env: dict[str, str]) -> None:
     for _ in range(30):
-        result = _run_capture([sky, "status", "--refresh"], env=env, timeout=120, check=False)
+        result = _run_capture(
+            [sky, "status", "--refresh"], env=env, timeout=120, check=False
+        )
         if cluster_name not in result.stdout:
             return
         time.sleep(10)
-    raise typer.BadParameter(f"SkyPilot cluster {cluster_name} still appears in sky status")
+    raise typer.BadParameter(
+        f"SkyPilot cluster {cluster_name} still appears in sky status"
+    )

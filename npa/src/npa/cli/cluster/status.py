@@ -131,6 +131,11 @@ def _emit_status(
             for row in rows
         ):
             raise typer.Exit(2)
+        states = {str(row.get("state") or "").upper() for row in rows}
+        if states & {"PARTIAL", "DEGRADED"}:
+            raise typer.Exit(3)
+        if any(state.startswith("FAILED") for state in states):
+            raise typer.Exit(1)
     except ClusterError as exc:
         typer.echo(f"Cluster status failed: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -361,6 +366,7 @@ def _row_for_cluster(
     verified_absent: bool = False,
 ) -> dict[str, Any]:
     node_count = local_state.node_count if local_state else 0
+    expected_node_count = node_count
     node_group_id = local_state.node_group_id if local_state else ""
     node_groups: list[dict[str, Any]] = []
     provider_state = remote.status if remote is not None else ""
@@ -384,6 +390,7 @@ def _row_for_cluster(
                     "nodes": group.node_count,
                     "platform": group.platform,
                     "preset": group.preset,
+                    "reason": _node_group_reason(group.raw),
                 }
                 for group in groups
             ]
@@ -396,15 +403,21 @@ def _row_for_cluster(
         if local_state is not None
         else "NOT_CONFIGURED"
     )
-    if (
-        state.upper() in {"READY", "RUNNING"}
-        and node_groups
-        and any(
-            str(group.get("state") or "").upper() not in {"READY", "RUNNING"}
-            for group in node_groups
-        )
-    ):
-        state = "DEGRADED"
+    kubeconfig_path = local_state.kubeconfig_path if local_state else ""
+    kubeconfig_available = bool(
+        kubeconfig_path and Path(kubeconfig_path).expanduser().is_file()
+    )
+    if state.upper() in {"READY", "RUNNING"}:
+        if node_groups and (
+            any(
+                str(group.get("state") or "").upper() not in {"READY", "RUNNING"}
+                for group in node_groups
+            )
+            or (expected_node_count > 0 and node_count < expected_node_count)
+        ):
+            state = "DEGRADED"
+        elif not node_groups or node_count <= 0 or not kubeconfig_available:
+            state = "PARTIAL"
     endpoint = (remote.endpoint if remote is not None else "") or (
         local_state.endpoint if local_state else ""
     )
@@ -423,13 +436,33 @@ def _row_for_cluster(
         "node_count": node_count,
         "node_group_id": node_group_id,
         "endpoint": endpoint,
-        "kubeconfig_path": local_state.kubeconfig_path if local_state else "",
+        "kubeconfig_path": kubeconfig_path,
+        "kubeconfig_available": kubeconfig_available,
         "age": _age(created_at),
         "created_at": created_at,
         "project_id": (remote.project_id if remote is not None else "")
         or (local_state.project_id if local_state else ""),
         "node_groups": node_groups,
         "provider_state": provider_state,
+        "health_state": state,
+        "failure_reasons": [
+            str(group.get("reason") or group.get("state") or "unknown")
+            for group in node_groups
+            if str(group.get("state") or "").upper() not in {"READY", "RUNNING"}
+        ]
+        + (["kubeconfig is unavailable"] if not kubeconfig_available and remote else [])
+        + (
+            ["provider reports no worker node groups"]
+            if remote and not node_groups
+            else []
+        )
+        + (
+            [
+                f"expected {expected_node_count} worker nodes, provider reports {node_count}"
+            ]
+            if remote and expected_node_count > 0 and node_count < expected_node_count
+            else []
+        ),
     }
     if local_state is not None and remote is not None:
         save_cluster_state(
@@ -485,6 +518,21 @@ def _row_for_cluster(
         retry_command=retry,
         state_key="state",
     )
+
+
+def _node_group_reason(raw: object) -> str:
+    """Extract a quota/capacity failure message without assuming one API shape."""
+
+    if not isinstance(raw, dict):
+        return ""
+    for container in (raw.get("status"), raw):
+        if not isinstance(container, dict):
+            continue
+        for key in ("error_message", "status_message", "message", "reason"):
+            value = str(container.get(key) or "").strip()
+            if value:
+                return value
+    return ""
 
 
 def _remote_region(remote: ClusterInfo | None) -> str:

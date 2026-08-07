@@ -59,7 +59,8 @@ def _cpu_profiles() -> list[tuple[str, dict]]:
     return [
         (name, profile)
         for name, profile in resources.items()
-        if isinstance(profile, dict) and not str(profile.get("accelerators", "") or "").strip()
+        if isinstance(profile, dict)
+        and not str(profile.get("accelerators", "") or "").strip()
     ]
 
 
@@ -91,25 +92,36 @@ def test_gpu_profiles_fit_the_default_gpu_preset() -> None:
 
     spec = yaml.safe_load(QUICKSTART_SPEC.read_text(encoding="utf-8")) or {}
     for name, profile in (spec.get("resources") or {}).items():
-        if not isinstance(profile, dict) or not str(profile.get("accelerators", "") or "").strip():
+        if (
+            not isinstance(profile, dict)
+            or not str(profile.get("accelerators", "") or "").strip()
+        ):
             continue
         assert float(profile.get("cpus", 0) or 0) <= vcpu - CPU_RESERVE, name
-        assert _memory_gib(profile.get("memory", "0Gi")) <= memory_gib - MEMORY_RESERVE_GIB, name
+        assert (
+            _memory_gib(profile.get("memory", "0Gi")) <= memory_gib - MEMORY_RESERVE_GIB
+        ), name
 
 
 @pytest.mark.parametrize(
     ("preset", "expected"),
-    [("8vcpu-32gb", (8.0, 32.0)), ("4vcpu-16gb", (4.0, 16.0)), ("16vcpu-64gb", (16.0, 64.0))],
+    [
+        ("8vcpu-32gb", (8.0, 32.0)),
+        ("4vcpu-16gb", (4.0, 16.0)),
+        ("16vcpu-64gb", (16.0, 64.0)),
+    ],
 )
 def test_preset_parsing(preset: str, expected: tuple[float, float]) -> None:
     assert _preset_capacity(preset) == expected
 
 
 #: What the SkyPilot managed-jobs controller parks on the CPU pool for the whole
-#: run. It is a long-lived pod, not a stage, so every CPU stage has to fit
-#: *alongside* it -- the sizing nobody had budgeted for.
-JOBS_CONTROLLER_CPUS = 4.0
-JOBS_CONTROLLER_MEMORY_GIB = 16.0
+#: run. Import the production values so this scheduling guard covers the exact
+#: topology submit renders instead of maintaining a second default.
+from npa.orchestration.skypilot.controller import (  # noqa: E402
+    DEFAULT_K8S_CONTROLLER_CPUS as JOBS_CONTROLLER_CPUS,
+    DEFAULT_K8S_CONTROLLER_MEMORY_GB as JOBS_CONTROLLER_MEMORY_GIB,
+)
 
 
 def test_the_cpu_node_fits_the_jobs_controller_and_a_stage_together() -> None:
@@ -132,7 +144,9 @@ def test_the_cpu_node_fits_the_jobs_controller_and_a_stage_together() -> None:
 
     for profile in cpu_profiles:
         needed_cpus = float(profile.get("cpus", 0) or 0) + JOBS_CONTROLLER_CPUS
-        needed_memory = _memory_gib(profile.get("memory", "0Gi")) + JOBS_CONTROLLER_MEMORY_GIB
+        needed_memory = (
+            _memory_gib(profile.get("memory", "0Gi")) + JOBS_CONTROLLER_MEMORY_GIB
+        )
         assert needed_cpus <= vcpu - CPU_RESERVE, (
             f"controller ({JOBS_CONTROLLER_CPUS} CPU) + stage ({profile.get('cpus')}) "
             f"exceeds the default CPU node ({vcpu} vCPU)"

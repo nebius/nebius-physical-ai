@@ -614,6 +614,45 @@ class ProvisioningOperation:
             payload["updated_at"] = utc_now()
             _write_atomic(self.path, payload)
 
+    def record_preflight_plan(self, plan: Mapping[str, Any]) -> None:
+        """Persist one immutable, non-secret resolved plan for deterministic resume."""
+
+        candidate = dict(plan)
+        if operation_contains_secret(candidate):
+            raise OperationJournalError(
+                "refusing to persist a secret-bearing preflight plan"
+            )
+        with _locked_operation(self.operation_id):
+            payload = _read_unlocked(self.path)
+            existing = payload.get("preflight_plan")
+            immutable_keys = (
+                "project_alias",
+                "project_id",
+                "tenant_id",
+                "region",
+                "topology",
+                "source_action",
+                "input_action",
+            )
+            if isinstance(existing, dict) and any(
+                existing.get(key) != candidate.get(key) for key in immutable_keys
+            ):
+                raise OperationIdentityError(
+                    f"operation {self.operation_id} resolved topology changed; "
+                    "resume must keep the original resource shape"
+                )
+            payload.setdefault("preflight_evaluations", []).append(
+                {
+                    "recorded_at": utc_now(),
+                    "decision": candidate.get("decision"),
+                    "quotas": candidate.get("quotas", []),
+                    "reasons": candidate.get("reasons", []),
+                }
+            )
+            payload["preflight_plan"] = candidate
+            payload["updated_at"] = utc_now()
+            _write_atomic(self.path, payload)
+
     def preserve_state_bytes(self, data: bytes, *, name: str) -> Path:
         """Atomically preserve a Terraform state copy with owner-only permissions."""
 

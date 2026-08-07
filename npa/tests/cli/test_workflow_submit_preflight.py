@@ -59,6 +59,7 @@ def _submit(*args: str):
             "preflight-demo",
             "--assume-decision",
             "promote_checkpoint",
+            "--no-deploy-if-absent",
             *args,
         ],
     )
@@ -69,11 +70,11 @@ def test_submit_lists_every_missing_prerequisite_at_once() -> None:
 
     assert result.exit_code == 1, result.output
     assert "missing prerequisites" in result.output
-    # SkyPilot CLI, npa source and the placeholder bucket, all in one report.
+    # Source is staged automatically; runtime and bucket blockers are still
+    # reported together.
     assert "SkyPilot CLI is not usable" in result.output
     assert "npa skypilot bootstrap" in result.output
-    assert "NPA_SRC_S3_URI is unset" in result.output
-    assert "--stage-src" in result.output
+    assert "NPA_SRC_S3_URI is unset" not in result.output
     assert "example-bucket" in result.output
     assert "--var bucket=<your-bucket>" in result.output
     assert "--skip-preflight" in result.output
@@ -123,6 +124,90 @@ def test_plan_only_skips_runtime_only_prerequisites(
     assert "status: PLANNED" in result.output
     # The placeholder bucket is still surfaced, as a warning not a blocker.
     assert "example-bucket" in result.output
+
+
+def test_plan_only_without_source_uri_is_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    from npa.orchestration.npa_workflow import first_run_state
+
+    state_root = tmp_path / "workflow-runs"
+    monkeypatch.setattr(first_run_state, "DEFAULT_ROOT", state_root)
+    stage = mocker.patch("npa.orchestration.npa_workflow.src_staging.stage_npa_source")
+    upload_input = mocker.patch("npa.workflows.data_factory_input.prepare_paidf_input")
+
+    result = _submit("--plan-only", "--var", "bucket=real-bucket")
+
+    assert result.exit_code == 0, result.output
+    assert "source: planned (s3://real-bucket/npa-src/npa/" in result.output
+    assert "submission_state: NOT_SUBMITTED" in result.output
+    assert not state_root.exists()
+    stage.assert_not_called()
+    upload_input.assert_not_called()
+
+
+def test_plan_only_human_output_is_compact_and_details_are_explicit() -> None:
+    compact = _submit("--plan-only", "--var", "bucket=real-bucket")
+    verbose = _submit("--plan-only", "--details", "--var", "bucket=real-bucket")
+
+    assert compact.exit_code == 0, compact.output
+    assert compact.output.count("setup:\n") == 1
+    assert "stages:\n  1. generate-configs:" in compact.output
+    assert "--- full rendered SkyPilot YAML ---" not in compact.output
+    assert "details: pass --details" in compact.output
+    assert verbose.exit_code == 0, verbose.output
+    assert verbose.output.count("setup:\n") == 1
+    assert "--- full rendered SkyPilot YAML ---" in verbose.output
+    assert "name: physical-ai-data-factory" in verbose.output
+
+
+def test_plan_only_json_retains_stable_full_details() -> None:
+    result = _submit(
+        "--plan-only",
+        "--var",
+        "bucket=real-bucket",
+        "--output-format",
+        "json",
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert list(payload) == sorted(payload)
+    assert payload["lifecycle_state"] == "PLAN_ONLY"
+    assert payload["submission_state"] == "NOT_SUBMITTED"
+    assert payload["submission_receipt"] is None
+    assert payload["preflight"]["decision"] == "unknown"
+    assert {
+        item["name"]: item["status"] for item in payload["preflight"]["checks"]
+    } == {
+        "credentials": "ready",
+        "writable_storage": "unknown",
+        "source_staging": "ready",
+    }
+    assert payload["source"]["status"] == "planned"
+    assert len(payload["plan"]["steps"]) == payload["steps"]
+    assert "setup:" in payload["skypilot_yaml"]
+
+
+def test_plan_only_never_labels_a_known_credential_blocker_ready() -> None:
+    result = _submit(
+        "--plan-only",
+        "--var",
+        "bucket=real-bucket",
+        "--secret-env",
+        "KNOWN_MISSING_TEST_SECRET",
+        "--output-format",
+        "json",
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["preflight"]["decision"] == "blocked"
+    credential = next(
+        item for item in payload["preflight"]["checks"] if item["name"] == "credentials"
+    )
+    assert credential["status"] == "blocked"
+    assert "KNOWN_MISSING_TEST_SECRET" in credential["reason"]
 
 
 def test_paidf_input_selectors_conflict_before_preflight() -> None:
@@ -241,7 +326,9 @@ def test_storage_requirement_is_derived_from_the_workflow_contract(tmp_path) -> 
     s3_spec = tmp_path / "s3.yaml"
     s3_spec.write_text("config:\n  output: s3://{{config.bucket}}/results/\n")
     local_spec = tmp_path / "local.yaml"
-    local_spec.write_text("config:\n  bucket: local-directory\n  output: /tmp/results\n")
+    local_spec.write_text(
+        "config:\n  bucket: local-directory\n  output: /tmp/results\n"
+    )
 
     assert _spec_requires_s3(s3_spec) is True
     assert _spec_requires_s3(local_spec) is False
@@ -255,12 +342,12 @@ def test_image_override_satisfies_the_npa_source_requirement(
     assert "NPA_SRC_S3_URI is unset" not in result.output
 
 
-def test_image_none_still_requires_npa_source() -> None:
-    """`--image none` pins every task to the default image, which has no npa."""
+def test_image_none_automatically_plans_npa_source_staging() -> None:
+    """`--image none` uses the automatic documented source-staging path."""
     result = _submit("--image", "none")
 
     assert result.exit_code == 1
-    assert "NPA_SRC_S3_URI is unset" in result.output
+    assert "NPA_SRC_S3_URI is unset" not in result.output
 
 
 def test_plan_spec_var_overrides_the_placeholder_bucket() -> None:
@@ -495,6 +582,53 @@ HARDENING_SPEC = (
 )
 
 
+def test_deploy_if_absent_quota_blocker_precedes_all_submit_mutation(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    from npa.provisioning_preflight import PreflightBlockedError
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
+    plan = mocker.patch(
+        "npa.orchestration.npa_workflow.deploy.plan_infra_present",
+        side_effect=PreflightBlockedError(
+            "compute.instance.count required=2 available=0 shortfall=2"
+        ),
+    )
+    storage = mocker.patch(
+        "npa.cli.workbench.workflow._submit_prerequisites",
+        side_effect=AssertionError("storage preflight reached after quota blocker"),
+    )
+    images = mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
+    stage = mocker.patch("npa.cli.workbench.workflow._stage_npa_src_for_submit")
+    ensure = mocker.patch("npa.orchestration.npa_workflow.deploy.ensure_infra_present")
+    launch = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(HARDENING_SPEC),
+            "--run-id",
+            "blocked-before-mutation",
+            "--infra",
+            "k8s/npa-cluster",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "compute.instance.count" in result.output
+    plan.assert_called_once()
+    storage.assert_not_called()
+    images.assert_not_called()
+    stage.assert_not_called()
+    ensure.assert_not_called()
+    launch.assert_not_called()
+
+
 def test_submit_preflight_skips_context_check_for_self_provisioning_specs(
     monkeypatch, tmp_path
 ) -> None:
@@ -603,10 +737,16 @@ def test_submit_fails_clearly_when_provisioning_left_no_context(
                 "accelerators": "RTXPRO6000:1",
                 "status": "partial",
                 "actions": ["s3:skipped"],
-                "warnings": ["project_id and tenant_id are required to ensure Kubernetes"],
+                "warnings": [
+                    "project_id and tenant_id are required to ensure Kubernetes"
+                ],
                 "dry_run": False,
             }
         ],
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.deploy.plan_infra_present",
+        return_value={"npa-cluster": mocker.Mock()},
     )
     # Registry pull semantics are covered independently; this test reaches the
     # post-provision context diagnostic.
@@ -649,6 +789,10 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
     ensure_infra_present = mocker.patch(
         "npa.orchestration.npa_workflow.deploy.ensure_infra_present",
         return_value=[],
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.deploy.plan_infra_present",
+        return_value={"npa-cluster": mocker.Mock()},
     )
     # Registry pull semantics are covered independently; this test reaches the
     # deploy-if-absent delegation path.

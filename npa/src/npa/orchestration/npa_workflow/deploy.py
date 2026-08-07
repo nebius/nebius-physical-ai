@@ -36,6 +36,14 @@ from typing import Any, Callable, Mapping
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
+from npa.provisioning_preflight import (
+    DEFAULT_CPU_NODES,
+    DEFAULT_CPU_PLATFORM,
+    DEFAULT_CPU_PRESET,
+    DEFAULT_GPU_NODES,
+    DEFAULT_GPU_PLATFORM,
+    DEFAULT_GPU_PRESET,
+)
 
 DEFAULT_CLUSTER_NAME = "npa-cluster"
 
@@ -54,6 +62,13 @@ class DeployTarget:
     accelerators: str = ""
     cloud: str = "kubernetes"
     skip_s3: bool = True
+    cpu_nodes: int = DEFAULT_CPU_NODES
+    cpu_platform: str = DEFAULT_CPU_PLATFORM
+    cpu_preset: str = DEFAULT_CPU_PRESET
+    gpu_nodes: int = DEFAULT_GPU_NODES
+    gpu_platform: str = DEFAULT_GPU_PLATFORM
+    gpu_preset: str = DEFAULT_GPU_PRESET
+    preemptible: bool = False
 
     @property
     def resolved_context(self) -> str:
@@ -86,15 +101,56 @@ def parse_deploy_targets(spec: NpaWorkflowSpec) -> list[DeployTarget]:
         context = ""
         project = ""
         skip_s3 = True
+        cpu_nodes = DEFAULT_CPU_NODES
+        cpu_platform = DEFAULT_CPU_PLATFORM
+        cpu_preset = DEFAULT_CPU_PRESET
+        gpu_nodes = DEFAULT_GPU_NODES
+        gpu_platform = DEFAULT_GPU_PLATFORM
+        gpu_preset = DEFAULT_GPU_PRESET
+        preemptible = False
 
         if isinstance(directive, Mapping):
-            cluster_name = str(
-                directive.get("clusterName") or directive.get("cluster_name") or cluster_name
-            ).strip() or DEFAULT_CLUSTER_NAME
+            cluster_name = (
+                str(
+                    directive.get("clusterName")
+                    or directive.get("cluster_name")
+                    or cluster_name
+                ).strip()
+                or DEFAULT_CLUSTER_NAME
+            )
             context = str(directive.get("context") or "").strip()
             project = str(directive.get("project") or "").strip()
             if "skipS3" in directive or "skip_s3" in directive:
-                skip_s3 = _coerce_bool(directive.get("skipS3", directive.get("skip_s3")))
+                skip_s3 = _coerce_bool(
+                    directive.get("skipS3", directive.get("skip_s3"))
+                )
+            cpu_nodes = int(
+                directive.get("cpuNodes", directive.get("cpu_nodes", cpu_nodes))
+            )
+            cpu_platform = str(
+                directive.get("cpuPlatform")
+                or directive.get("cpu_platform")
+                or cpu_platform
+            ).strip()
+            cpu_preset = str(
+                directive.get("cpuPreset") or directive.get("cpu_preset") or cpu_preset
+            ).strip()
+            gpu_nodes = int(
+                directive.get("gpuNodes", directive.get("gpu_nodes", gpu_nodes))
+            )
+            gpu_platform = str(
+                directive.get("gpuPlatform")
+                or directive.get("gpu_platform")
+                or gpu_platform
+            ).strip()
+            gpu_preset = str(
+                directive.get("gpuPreset") or directive.get("gpu_preset") or gpu_preset
+            ).strip()
+            preemptible = _coerce_bool(
+                directive.get(
+                    "preemptible", directive.get("gpuPreemptible", preemptible)
+                )
+            )
         elif not _coerce_bool(directive):
             continue
 
@@ -107,6 +163,13 @@ def parse_deploy_targets(spec: NpaWorkflowSpec) -> list[DeployTarget]:
                 accelerators=accelerators,
                 cloud=cloud,
                 skip_s3=skip_s3,
+                cpu_nodes=cpu_nodes,
+                cpu_platform=cpu_platform,
+                cpu_preset=cpu_preset,
+                gpu_nodes=gpu_nodes,
+                gpu_platform=gpu_platform,
+                gpu_preset=gpu_preset,
+                preemptible=preemptible,
             )
         )
     return targets
@@ -128,6 +191,14 @@ def _default_provisioner() -> Provisioner:
         gpu_readiness_timeout: float,
         gpu_readiness_poll_interval: float,
         sky_bin: str,
+        cpu_nodes: int,
+        cpu_platform: str,
+        cpu_preset: str,
+        gpu_nodes: int,
+        gpu_platform: str,
+        gpu_preset: str,
+        preemptible: bool,
+        _resolved_plan: Any = None,
     ) -> Any:
         return provision_if_absent(
             project=project,
@@ -139,6 +210,14 @@ def _default_provisioner() -> Provisioner:
             gpu_readiness_timeout=gpu_readiness_timeout,
             gpu_readiness_poll_interval=gpu_readiness_poll_interval,
             sky_bin=sky_bin,
+            cpu_nodes=cpu_nodes,
+            cpu_platform=cpu_platform,
+            cpu_preset=cpu_preset,
+            gpu_nodes=gpu_nodes,
+            gpu_platform=gpu_platform,
+            gpu_preset=gpu_preset,
+            preemptible=preemptible,
+            _resolved_plan=_resolved_plan,
         )
 
     return _provision
@@ -152,6 +231,7 @@ def ensure_infra_present(
     gpu_readiness_timeout: float = 600.0,
     gpu_readiness_poll_interval: float = 10.0,
     sky_bin: str = "",
+    resolved_plans: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Provision each unique target cluster that declares ``deployIfAbsent``.
 
@@ -171,6 +251,7 @@ def ensure_infra_present(
             continue
         seen.add(context)
         try:
+            resolved_plan = (resolved_plans or {}).get(context)
             outcome = provision(
                 project=target.project or None,
                 cluster_name=target.cluster_name,
@@ -181,6 +262,14 @@ def ensure_infra_present(
                 gpu_readiness_timeout=gpu_readiness_timeout,
                 gpu_readiness_poll_interval=gpu_readiness_poll_interval,
                 sky_bin=sky_bin,
+                cpu_nodes=target.cpu_nodes,
+                cpu_platform=target.cpu_platform,
+                cpu_preset=target.cpu_preset,
+                gpu_nodes=target.gpu_nodes,
+                gpu_platform=target.gpu_platform,
+                gpu_preset=target.gpu_preset,
+                preemptible=target.preemptible,
+                _resolved_plan=resolved_plan,
             )
         except Exception as exc:  # noqa: BLE001 - surface as workflow error
             raise NpaWorkflowError(
@@ -197,13 +286,57 @@ def ensure_infra_present(
                 "actions": list(getattr(outcome, "actions", []) or []),
                 "warnings": list(getattr(outcome, "warnings", []) or []),
                 "dry_run": dry_run,
+                "topology": (
+                    resolved_plan.topology.to_dict()
+                    if resolved_plan is not None
+                    else getattr(outcome, "preflight", {}).get("topology", {})
+                ),
+                "quotas": (
+                    [quota.to_dict() for quota in resolved_plan.quotas]
+                    if resolved_plan is not None
+                    else getattr(outcome, "preflight", {}).get("quotas", [])
+                ),
             }
         )
     return results
 
 
+def plan_infra_present(
+    targets: list[DeployTarget], *, mutation: bool
+) -> dict[str, Any]:
+    """Resolve every unique deploy target without writing state or provisioning."""
+
+    from npa.provisioning import resolve_provision_plan
+
+    plans: dict[str, Any] = {}
+    for target in targets:
+        context = target.resolved_context
+        if context in plans:
+            continue
+        plan = resolve_provision_plan(
+            project=target.project or None,
+            cluster_name=target.cluster_name,
+            context_name=context,
+            skip_k8s=False,
+            accelerator=target.accelerators,
+            cpu_nodes=target.cpu_nodes,
+            cpu_platform=target.cpu_platform,
+            cpu_preset=target.cpu_preset,
+            gpu_nodes=target.gpu_nodes,
+            gpu_platform=target.gpu_platform,
+            gpu_preset=target.gpu_preset,
+            preemptible=target.preemptible,
+            mutation=mutation,
+        )
+        if mutation:
+            plan.assert_mutation_ready()
+        plans[context] = plan
+    return plans
+
+
 __all__ = [
     "DeployTarget",
     "ensure_infra_present",
+    "plan_infra_present",
     "parse_deploy_targets",
 ]

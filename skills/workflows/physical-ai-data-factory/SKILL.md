@@ -236,7 +236,8 @@ npa workbench workflow plan-spec "$SPEC" --run-id demo \
 # Prerequisites, in order, on a fresh machine/account:
 npa provision-if-absent --project <alias>       # bucket + GPU cluster if missing
 npa skypilot bootstrap                          # persists skypilot.sky_bin
-npa workbench workflow stage-src --bucket <bucket>   # or submit --stage-src
+# Submit stages missing/outdated content-addressed NPA source automatically.
+# `stage-src` or submit `--stage-src` remains the explicit force/restage path.
 
 # Render/submit on GPUs:
 npa workbench workflow submit "$SPEC" --run-id "$(date -u +paidf-%Y%m%dt%H%M%sz)" \

@@ -28,6 +28,7 @@ def _state() -> ClusterState:
         created_at="2026-05-14T21:46:00Z",
         last_seen_state="PROVISIONING",
         last_seen_at="2026-05-14T21:50:00Z",
+        kubeconfig_path="/etc/hosts",
     )
 
 
@@ -291,7 +292,7 @@ def test_status_surfaces_a_node_group_that_never_came_up(monkeypatch) -> None:
 
     result = runner.invoke(app, ["status", "--name", "cluster-a"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 3, result.output
     assert "not RUNNING" in result.output
     assert "cluster-a-gpu-0: PROVISIONING" in result.output
     assert "gpu-rtx6000" in result.output
@@ -339,6 +340,81 @@ def test_status_stays_quiet_when_every_node_group_is_running(monkeypatch) -> Non
 
     assert result.exit_code == 0, result.output
     assert "not RUNNING" not in result.output
+
+
+def test_provider_running_with_zero_workers_and_no_kubeconfig_is_partial(
+    monkeypatch,
+) -> None:
+    class ControlPlaneOnly:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return ClusterInfo(
+                id="mk8scluster-a",
+                name=name,
+                project_id=project_id,
+                status="RUNNING",
+            )
+
+        def list_node_groups(self, cluster_id):
+            return []
+
+    local = _state()
+    local.kubeconfig_path = ""
+    local.node_count = 0
+    monkeypatch.setattr(status_mod, "MK8sClient", ControlPlaneOnly)
+    monkeypatch.setattr(status_mod, "load_cluster_state", lambda name: local)
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [local])
+    monkeypatch.setattr(status_mod, "save_cluster_state", lambda state: None)
+
+    result = runner.invoke(app, ["status", "--name", "cluster-a", "--format", "json"])
+
+    assert result.exit_code == 3
+    row = json.loads(result.output)[0]
+    assert row["provider_state"] == "RUNNING"
+    assert row["state"] == "PARTIAL"
+    assert row["node_count"] == 0
+    assert row["kubeconfig_available"] is False
+    assert "provider reports no worker node groups" in row["failure_reasons"]
+    assert "kubeconfig is unavailable" in row["failure_reasons"]
+
+
+def test_expected_second_node_group_missing_is_degraded(monkeypatch) -> None:
+    class OneGroup:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return ClusterInfo(
+                id="mk8scluster-a", name=name, project_id=project_id, status="RUNNING"
+            )
+
+        def list_node_groups(self, cluster_id):
+            return [
+                NodeGroupInfo(
+                    id="cpu-a",
+                    name="cluster-a-cpu",
+                    cluster_id=cluster_id,
+                    status="RUNNING",
+                    node_count=1,
+                )
+            ]
+
+    local = _state()
+    local.node_count = 2
+    monkeypatch.setattr(status_mod, "MK8sClient", OneGroup)
+    monkeypatch.setattr(status_mod, "load_cluster_state", lambda name: local)
+    monkeypatch.setattr(status_mod, "list_local_clusters", lambda: [local])
+    monkeypatch.setattr(status_mod, "save_cluster_state", lambda state: None)
+
+    result = runner.invoke(app, ["status", "--name", "cluster-a", "--format", "json"])
+
+    assert result.exit_code == 3
+    row = json.loads(result.output)[0]
+    assert row["state"] == "DEGRADED"
+    assert row["node_count"] == 1
+    assert "expected 2 worker nodes, provider reports 1" in row["failure_reasons"]
 
 
 @pytest.mark.parametrize(
@@ -481,7 +557,7 @@ def test_partial_node_group_provisioning_is_verified_degraded(monkeypatch) -> No
 
     result = runner.invoke(app, ["status", "--name", "cluster-a", "--format", "json"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 3, result.output
     row = json.loads(result.output)[0]
     assert row["state"] == "DEGRADED"
     assert row["provider_state"] == "RUNNING"

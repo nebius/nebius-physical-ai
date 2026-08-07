@@ -82,6 +82,9 @@ def _successful_storage_probe(monkeypatch):
             aws_secret_access_key="configured-secret-key",
         ),
     )
+    # Individual capacity tests override this. Unrelated deploy tests stub every
+    # cloud dependency and must not consult the developer machine's provider.
+    monkeypatch.setattr("npa.cli.agent._agent_check_whole_path_capacity", lambda *args, **kwargs: None)
 
 
 def _agent_source() -> str:
@@ -105,7 +108,6 @@ def _agent_source() -> str:
 def _agent_ui_bundle() -> str:
     """Agent deploy source plus rendered UI HTML (UI lives in agent_ui.html)."""
     return _agent_source() + "\n" + rendered_agent_ui_html()
-
 
 
 def test_build_agent_urls_https_default() -> None:
@@ -141,9 +143,7 @@ def test_ensure_terraform_state_bucket_preserves_missing_configuration(
     )
 
     with pytest.raises(nebius.NebiusError, match="missing.*preserved configuration"):
-        _ensure_terraform_state_bucket(
-            project_id="project-1", bucket_name="bucket-1"
-        )
+        _ensure_terraform_state_bucket(project_id="project-1", bucket_name="bucket-1")
 
     assert calls == []
 
@@ -172,7 +172,10 @@ def test_apply_agent_terraform_filters_runtime_only_s3_prefix(monkeypatch, tmp_p
 
     captured: dict[str, str] = {}
 
-    monkeypatch.setattr("npa.cli.agent.provisioner.prepare_working_dir", lambda *_args, **_kwargs: tmp_path)
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.prepare_working_dir",
+        lambda *_args, **_kwargs: tmp_path,
+    )
     monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
 
     def _apply(*, tf_dir, tf_vars):
@@ -213,9 +216,7 @@ def test_apply_agent_terraform_retries_without_sa_and_warns(monkeypatch, tmp_pat
     def _apply(*, tf_dir, tf_vars):
         calls.append(dict(tf_vars))
         if len(calls) == 1:
-            raise ProvisionerError(
-                "Error: service compute: PermissionDenied creating instance"
-            )
+            raise ProvisionerError("Error: service compute: PermissionDenied creating instance")
         return {"vm_ip": "203.0.113.50"}
 
     monkeypatch.setattr("npa.cli.agent.provisioner.apply", _apply)
@@ -243,9 +244,7 @@ def test_apply_agent_terraform_retries_without_sa_and_warns(monkeypatch, tmp_pat
     assert "self-mint" in err
 
 
-def test_apply_failure_preserves_errored_state_and_exact_recovery(
-    monkeypatch, tmp_path
-) -> None:
+def test_apply_failure_preserves_errored_state_and_exact_recovery(monkeypatch, tmp_path) -> None:
     from npa.cli.agent import _apply_agent_terraform
     from npa.deploy.provisioner import BackendBucketMissingError
     from npa.provisioning_journal import ProvisioningOperation, operation_context
@@ -261,9 +260,7 @@ def test_apply_failure_preserves_errored_state_and_exact_recovery(
     monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
     monkeypatch.setattr(
         "npa.cli.agent.provisioner.apply",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            BackendBucketMissingError("NoSuchBucket during state upload")
-        ),
+        lambda **_kwargs: (_ for _ in ()).throw(BackendBucketMissingError("NoSuchBucket during state upload")),
     )
     operation = ProvisioningOperation.prepare(
         command="npa agent deploy",
@@ -338,9 +335,7 @@ def test_retry_restores_preserved_state_before_apply(monkeypatch, tmp_path) -> N
         ownership_source="test",
         resume_command="npa agent deploy --project demo --name agent",
     )
-    operation.preserve_state_bytes(
-        b'{"version":4,"resources":[]}', name="errored"
-    )
+    operation.preserve_state_bytes(b'{"version":4,"resources":[]}', name="errored")
     operation.transition("recovery-required")
 
     with operation_context(operation):
@@ -414,7 +409,9 @@ def test_write_agent_nebius_env_omits_operator_iam_token(monkeypatch) -> None:
     assert all("agent-bootstrap" not in cmd for cmd in commands)
 
 
-def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monkeypatch) -> None:
+def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(
+    monkeypatch,
+) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True)
@@ -440,10 +437,15 @@ def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(monk
     assert resolved["nebius_api_key"] == "ak-boot"
 
 
-def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(monkeypatch) -> None:
+def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(
+    monkeypatch,
+) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
-    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **kwargs: kwargs["bucket"] == "shared-bucket")
+    monkeypatch.setattr(
+        "npa.cli.agent._storage_credentials_allow_writes",
+        lambda **kwargs: kwargs["bucket"] == "shared-bucket",
+    )
     monkeypatch.setattr(
         "npa.cli.agent.resolve_project_storage",
         lambda *_args, **_kwargs: SimpleNamespace(
@@ -496,7 +498,9 @@ def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) ->
     assert resolved["nebius_api_key"] == "ak-shared"
 
 
-def test_resolve_deploy_storage_credentials_prefers_saved_project_state(monkeypatch) -> None:
+def test_resolve_deploy_storage_credentials_prefers_saved_project_state(
+    monkeypatch,
+) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     class _TfState:
@@ -529,8 +533,13 @@ def test_resolve_deploy_storage_credentials_prefers_saved_project_state(monkeypa
     assert resolved["nebius_api_key"] == "ak-state"
 
 
-def test_resolve_deploy_storage_credentials_fails_without_writable_storage(monkeypatch) -> None:
-    from npa.cli.agent import AgentStorageCredentialError, _resolve_deploy_storage_credentials
+def test_resolve_deploy_storage_credentials_fails_without_writable_storage(
+    monkeypatch,
+) -> None:
+    from npa.cli.agent import (
+        AgentStorageCredentialError,
+        _resolve_deploy_storage_credentials,
+    )
 
     monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: False)
     monkeypatch.setattr(
@@ -590,7 +599,10 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
             region=kwargs.get("region"),
         ),
     )
-    monkeypatch.setattr("npa.clients.nebius.bootstrap_agent_environment", lambda *_args, **_kwargs: creds)
+    monkeypatch.setattr(
+        "npa.clients.nebius.bootstrap_agent_environment",
+        lambda *_args, **_kwargs: creds,
+    )
     monkeypatch.setattr("npa.cli.agent._resolve_deploy_storage_credentials", lambda **_kwargs: creds)
     monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
     monkeypatch.setattr("npa.cli.agent._ensure_terraform_state_bucket", lambda **_kwargs: None)
@@ -702,9 +714,7 @@ def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
     # Compare directives only: the block's comment names these headers to explain
     # why they are absent, so a bare substring check would match the prose.
     directives = [
-        line.strip()
-        for line in recordings_location.splitlines()
-        if line.strip() and not line.strip().startswith("#")
+        line.strip() for line in recordings_location.splitlines() if line.strip() and not line.strip().startswith("#")
     ]
     assert "auth_basic off;" in directives
     granted = [line for line in directives if "Access-Control" in line]
@@ -721,7 +731,7 @@ def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
     assert "function pinLichtblickDsToSameOrigin" in source
     assert "window.location.origin" in source
     # The iframe URL always flows through the rewrite.
-    assert "return pinLichtblickDsToSameOrigin(url) || \"/lichtblick/\";" in source
+    assert 'return pinLichtblickDsToSameOrigin(url) || "/lichtblick/";' in source
 
 
 def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() -> None:
@@ -781,7 +791,7 @@ def test_bootstrap_ui_lichtblick_autoloads_run_mcap() -> None:
     source = _agent_ui_bundle()
     assert "function ensureLichtblickForActiveRun" in source
     assert '<option value="mcap">' in source
-    assert 'ensureLichtblickForActiveRun()' in source
+    assert "ensureLichtblickForActiveRun()" in source
 
 
 def test_bootstrap_artifact_file_transcodes_ppm_to_png() -> None:
@@ -872,8 +882,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert 'id="npa-sign-in"' in source
     assert "Sign in</button>" in source
     assert "encodeURIComponent(user)" in source
-    assert "normalizedPath === \"/login-help.html\"" in source
-    assert "normalizedPath === \"/welcome\"" in source
+    assert 'normalizedPath === "/login-help.html"' in source
+    assert 'normalizedPath === "/welcome"' in source
     assert "showRerunPlaceholder" in source
     assert "rerunIframeLoaded" in source
     assert "setChatModels" in source
@@ -882,8 +892,8 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "function bindClick(" in source
     assert "function wireUi()" in source
     assert "function showToast(" in source
-    assert "id=\"statusBar\"" in source
-    assert "id=\"toastHost\"" in source
+    assert 'id="statusBar"' in source
+    assert 'id="toastHost"' in source
     assert "DOMContentLoaded" in source
     assert "initNpaAgentUi" in source
     assert 'id="chatForm"' in source
@@ -916,7 +926,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "3D Rerun viewer needs a desktop browser" in source
     assert "#panelVoxel.is-inactive { display: none; }" in source
     # Voxel51 auto-loads the latest run so the tab always shows content.
-    assert '/api/artifacts/runs?limit=1' in source
+    assert "/api/artifacts/runs?limit=1" in source
     # Multi-bucket discovery: the agent searches every accessible bucket (never
     # relies on copying a run into one bucket).
     assert "def _agent_s3_buckets(" in source
@@ -974,10 +984,10 @@ def test_bootstrap_ui_button_wiring_patterns() -> None:
     for removed_id in ("loadFrankaRerun", "applySelection", "submitWorkflow"):
         assert f'bindClick("{removed_id}"' not in source
     assert 'id="chatForm"' in source
-    assert "chatForm.addEventListener(\"submit\"" in source
-    assert "await apiJson(\"/api/chat\"" in source
-    assert "await apiJson(\"/api/sim-viz/load-franka-demo\"" in source
-    assert "await apiJson(\"/api/sim-assets/selection\"" in source
+    assert 'chatForm.addEventListener("submit"' in source
+    assert 'await apiJson("/api/chat"' in source
+    assert 'await apiJson("/api/sim-viz/load-franka-demo"' in source
+    assert 'await apiJson("/api/sim-assets/selection"' in source
     # Dead camera-preview UI helper removed (G6); endpoint may still exist server-side.
     assert "setChatBusy(false)" in source
     assert "finally {" in source.split("async function processChatQueue")[1].split("function enqueueChatJob")[0]
@@ -1017,7 +1027,9 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     for marker in AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT:
         assert marker in ui_html, f"missing no-bundle-splash marker: {marker!r}"
     assert 'Mount the viewer immediately so "Loading application bundle" starts early' not in ui_html
-    assert "rerunIframeLoaded = false" not in source.split("async function activateMainTab")[1].split("async function")[0]
+    assert (
+        "rerunIframeLoaded = false" not in source.split("async function activateMainTab")[1].split("async function")[0]
+    )
 
 
 def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
@@ -1056,7 +1068,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "Apply stock selection" not in source
     assert "Load active Sim2Real in Rerun" not in source
     assert '<label class="pill"><input id="propCube"' not in source
-    assert "class=\"panel rerun-panel rerun-stage\"" in source or 'class="panel rerun-panel rerun-stage"' in source
+    assert 'class="panel rerun-panel rerun-stage"' in source or 'class="panel rerun-panel rerun-stage"' in source
     assert ".layout-rerun {{" in source or ".layout-rerun {" in source
     assert "cameras-panel" not in source
     assert "rerun-frame-shell" in source
@@ -1091,7 +1103,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "_wait_for_rerun_web_viewer" in source
     apply_selection_source = source.split("async function applySelection")[1].split("async function submitWorkflow")[0]
     assert "await waitForRerunSuccess" in apply_selection_source
-    assert "activeArtifactRender = \"rerun\"" in apply_selection_source
+    assert 'activeArtifactRender = "rerun"' in apply_selection_source
     fetch_with_timeout_source = source.split("async function fetchWithTimeout")[1].split("async function apiJson")[0]
     assert "withMobileAuth" in fetch_with_timeout_source
     api_json_before_fetch = source.split("async function apiJson")[1].split("let resp;")[0]
@@ -1101,7 +1113,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "mountedRerunRunKey" in source
     assert "already-mounted" in source
     assert "iframe.dataset.rerunRunKey" in source
-    assert "rerunIframeLoaded && iframe && !iframe.hidden && iframe.getAttribute(\"src\")" in source
+    assert 'rerunIframeLoaded && iframe && !iframe.hidden && iframe.getAttribute("src")' in source
     for marker in AGENT_MEDIA_PREVIEW_CONTRACT:
         assert marker in source, f"missing media-preview contract marker: {marker!r}"
     assert "baselineRrdUpdatedAt" in source
@@ -1149,7 +1161,7 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "_record_sim_viz_run" in source
     assert "_wire_sim2real_run_preview" in source
     assert "Prefer a run-scoped Rerun recording over stale history entries" in source
-    assert "preferred and preferred.render == \"rerun\"" in source
+    assert 'preferred and preferred.render == "rerun"' in source
     assert "held-out simulation camera stream" in source
     assert "reference proxy context" in source
     assert "def _artifact_backed_run_details" in source
@@ -1157,14 +1169,16 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "Derived stage timeline from" in source
     assert "Never let a sparse update erase richer artifact fields from load-run" in source
     assert "Read-only: do not _record/_save here" in source
-    assert 'Always use the stock demo run id and clear any prior media-artifact preview' in source
+    assert "Always use the stock demo run id and clear any prior media-artifact preview" in source
     status_src = source.split('@app.get("/sim-viz/status")')[1].split('@app.get("/sim-viz/runs")')[0]
     assert "_save_state(state)" not in status_src
     assert "_record_sim_viz_run(state, payload)" not in status_src
     franka_src = source.split("def _wire_franka_demo")[1].split("def _wire_sim2real_run_preview")[0]
     assert '"run_id": "franka-demo"' in franka_src
     assert '"artifact_render": "rerun"' in franka_src
-    submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
+    submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[1].split(
+        "cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1
+    )[0]
     assert "_wire_sim2real_run_preview" in submit_source
     assert '"sim_viz": sim_viz' in submit_source
 
@@ -1188,13 +1202,13 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     # Every artifact must be directly downloadable: streaming download endpoint
     # + a per-artifact Download button wired to it.
     assert '@app.get("/artifacts/download")' in source
-    assert "data-action=\"download-artifact\"" in source or "data-action='download-artifact'" in source
+    assert 'data-action="download-artifact"' in source or "data-action='download-artifact'" in source
     assert "async function downloadArtifact(" in source
     assert "/api/artifacts/download?" in source
     # Clicking a stage describes it and inlines its artifacts/info/configs.
     assert '@app.get("/artifacts/stage/{{run_id:path}}")' in source
     assert "async function showStageDetail(" in source
-    assert '/api/artifacts/stage/' in source
+    assert "/api/artifacts/stage/" in source
     assert 'id="stageDetail"' in source
     assert "data-stage-label=" in source
     # Artifact-backed dataset/provenance tab. It must not present its own grid as
@@ -1231,13 +1245,13 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     )
     # Loading/viewing an artifact must NOT post a chat message anymore.
     assert 'Loaded artifact `" + String(simViz.artifact_key' not in source
-    assert 'Select a run or enter a run_id first' in source
-    assert 'No S3 artifacts found for <code>' in source
+    assert "Select a run or enter a run_id first" in source
+    assert "No S3 artifacts found for <code>" in source
     assert "Runs &amp; artifacts" in source or "Runs & artifacts" in source
     assert "latest first" in source
     assert "updateRenderedDataSummary" in source
     assert "_wait_rerun_web_viewer_healthy" in source
-    assert "await mountRerunIframeUntilSuccess(String(simViz.camera || \"workspace\"), 8, loadedRunId)" in source
+    assert 'await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId)' in source
     assert "EnvironmentFile=-/opt/npa-agent/s3.env" in source
     embedded = agent_module._embedded_agent_artifacts_source()
     assert "list_runs" in embedded
@@ -1250,7 +1264,7 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     """
     source = _agent_ui_bundle()
     # Field is a run name/ID finder, not an "Artifact prefix" path.
-    assert 'Find run (name or ID)' in source
+    assert "Find run (name or ID)" in source
     assert "type part of a run name or ID" in source
     assert "Artifact prefix" not in source
     # It filters the discovered run list client-side (no path prefix to the server).
@@ -1287,12 +1301,14 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     # Deeply-nested runs (<run>/<workflow-name>/<stage>/...) expose real stages.
     assert "function runStageWrapper(artifacts, runId)" in source
     # Stage participates in filtering and re-renders on change.
-    assert "if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;" in source
+    assert (
+        "if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;" in source
+    )
     assert '["artifactStageFilter", "artifactTypeFilter", "artifactSort"]' in source
     # Timeline stage rows are tagged and clickable to drive the stage filter.
     assert "stage_key: stageKey," in source
     assert 'data-stage-key="' in source
-    assert '.stage-item[data-stage-key]' in source
+    assert ".stage-item[data-stage-key]" in source
     # The filter's stage derivation must match the timeline/backend compound keys
     # (e.g. eval/heldout) so clicking a stage filters instead of yielding nothing.
     assert 'if (first === "eval" && parts[1]) return "eval/" + parts[1];' in source
@@ -1341,15 +1357,15 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     assert "discoveredArtifactRuns = runs;" in source
     # The run selector is a UNION of known + discovered runs (does not clobber).
     assert "mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns)" in source
-    assert "fillRunSelectOptionsRich(document.getElementById(\"runIdSelect\")" in source
+    assert 'fillRunSelectOptionsRich(document.getElementById("runIdSelect")' in source
 
 
 def test_bootstrap_run_history_uses_run_id_index() -> None:
 
     source = _agent_source()
     assert '"sim_viz_runs": []' not in source
-    assert 'if not isinstance(runs, dict):' in source
-    assert 'runs[run_id] = snapshot' in source
+    assert "if not isinstance(runs, dict):" in source
+    assert "runs[run_id] = snapshot" in source
     assert 'state["active_run_id"] = run_id' in source
     assert "Never let a sparse update erase richer artifact fields from load-run" in source
 
@@ -1402,7 +1418,7 @@ def test_run_details_resolves_run_generically_by_id() -> None:
 
     source = _agent_source()
     # Backend resolves the run generically across categories (no prefix needed).
-    assert "def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = \"\")" in source
+    assert 'def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "")' in source
     assert "find_run_artifacts(" in source
     # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
@@ -1470,7 +1486,10 @@ def test_agent_status_json(monkeypatch) -> None:
             "sim_assets_url": "https://203.0.113.50/assets/",
             "cameras_api_url": "https://203.0.113.50/assets/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
-            "llm": {"provider": "token_factory", "model": "nvidia/Cosmos3-Super-Reasoner"},
+            "llm": {
+                "provider": "token_factory",
+                "model": "nvidia/Cosmos3-Super-Reasoner",
+            },
         },
     )
     monkeypatch.setattr("npa.cli.agent._load_auth_secret", lambda _: ("npa", "secret"))
@@ -1580,6 +1599,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
     )
     monkeypatch.setattr("npa.cli.agent._load_auth_secret", lambda _: ("npa", "secret"))
     monkeypatch.setattr("npa.cli.agent._health", lambda *_args, **_kwargs: (True, 200))
+
     def _fake_http_get(url, *_args, **_kwargs):
         url_s = str(url)
         if url_s.endswith("/api/tools"):
@@ -1590,7 +1610,11 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp(
                 {
                     "cameras": [
-                        {"name": "workspace", "placement": "stock_workspace", "fov": 60.0},
+                        {
+                            "name": "workspace",
+                            "placement": "stock_workspace",
+                            "fov": 60.0,
+                        },
                         {"name": "wrist", "placement": "stock_ee_mounted", "fov": 90.0},
                     ],
                     "selected": ["workspace"],
@@ -1627,7 +1651,12 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.endswith("/api/infra/k8s"):
             return _Resp({"ok": True, "agent_npa_ready": True})
         if url_s.endswith("/api/workflows/sim2real/status"):
-            return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
+            return _Resp(
+                {
+                    "latest_submit": {"run_id": "agent-run-123"},
+                    "sim_viz": {"stage": "demo"},
+                }
+            )
         if url_s.endswith("/welcome"):
             return _Resp("<html>NPA Agent is running</html>", status_code=200)
         if url_s.endswith("/healthz"):
@@ -1638,48 +1667,48 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             html = (
                 f'<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
                 f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
-                '<body>'
+                "<body>"
                 '<div id="tabMain"></div><div id="tabRerun"></div>'
                 '<div id="stagesPanel"><h3>Stages</h3>'
                 '<div class="stages-run-picker">'
                 '<select id="stagesRunSelect"></select>'
-                '<label>Search or paste run ID</label>'
+                "<label>Search or paste run ID</label>"
                 '<input id="stagesRunInput" />'
                 '<button id="stagesLoadRun"></button></div></div>'
-                '<script>function loadSelectedRun(){} function syncRunChooserFields(){} '
-                'function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>'
+                "<script>function loadSelectedRun(){} function syncRunChooserFields(){} "
+                "function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>"
                 '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
                 '<div id="viewerPaneMedia"></div><div id="rerunBundleCover"></div>'
                 '<button id="renderModeFoxglove"></button>'
                 '<div id="viewerPaneFoxglove"><div id="foxgloveHost"></div></div>'
-                '<script>function ensureFoxgloveViewer(){} function mountFoxgloveViewer(){} '
+                "<script>function ensureFoxgloveViewer(){} function mountFoxgloveViewer(){} "
                 'fetch("/api/foxglove/config");</script>'
                 '<button id="describeVisual"></button>'
                 '<button id="chatDrawerToggle" class="chat-fab"></button>'
                 '<button id="chatDrawerClose"></button>'
                 '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
-                '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
-                'function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} '
-                'function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} '
-                'function safeHideRerunBundleCover(){} function captureVisualContext(){} '
-                'function describeVisual(){} function enqueueChatJob(){} function processChatQueue(){} '
-                'function queueChatText(){} function waitForQualityRerunFrame(){} '
-                'function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} '
-                'function pickBestIframeCanvas(){} function sampleFrameStats(){} '
-                'function openFullChatTab(){} '
-                'do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; '
-                'async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } '
+                "<script>function wireUi(){} function sendChat(){} function activateMainTab(){} "
+                "function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} "
+                "function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} "
+                "function safeHideRerunBundleCover(){} function captureVisualContext(){} "
+                "function describeVisual(){} function enqueueChatJob(){} function processChatQueue(){} "
+                "function queueChatText(){} function waitForQualityRerunFrame(){} "
+                "function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} "
+                "function pickBestIframeCanvas(){} function sampleFrameStats(){} "
+                "function openFullChatTab(){} "
+                "do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; "
+                "async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } "
                 '<button id="openFullChatTab"></button>'
-                'async function refresh(){} '
-                'handle.add_receiver(recordingUrl, false); '
+                "async function refresh(){} "
+                "handle.add_receiver(recordingUrl, false); "
                 'initNpaAgentUi; mobile-agent; history.replaceState(null, "", ""); '
-                'location.username; location.password; '
-                'Warm Rerun assets before revealing the iframe; Preparing viewer…; '
-                'Uncover without blocking mount latency; non-blank canvas; '
-                'viewer-focus; thinking-ellipsis; [npa-visual-feedback]; visual_context; '
-                'transform-origin: bottom right; '
-                'Loading video preview…; URL.createObjectURL(blob)'
-                '</script></body></html>'
+                "location.username; location.password; "
+                "Warm Rerun assets before revealing the iframe; Preparing viewer…; "
+                "Uncover without blocking mount latency; non-blank canvas; "
+                "viewer-focus; thinking-ellipsis; [npa-visual-feedback]; visual_context; "
+                "transform-origin: bottom right; "
+                "Loading video preview…; URL.createObjectURL(blob)"
+                "</script></body></html>"
             )
             return _Resp(html, status_code=200)
         return _Resp({"ok": True, "tool_ref": "tool.0", "argv_template": ["echo", "ok"]})
@@ -1748,7 +1777,12 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 }
             )
         if url_s.endswith("/api/sim-viz/load-franka-demo"):
-            return _Resp({"ok": True, "sim_viz": {"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd"}})
+            return _Resp(
+                {
+                    "ok": True,
+                    "sim_viz": {"rerun_ready": True, "rrd_uri": "/api/sim-viz/rrd"},
+                }
+            )
         if url_s.endswith("/api/sim-viz/camera-preview"):
             return _Resp({"ok": True, "entity_path": "world/camera_frustums/workspace/frustum"})
         return _Resp({"ok": True})
@@ -1819,7 +1853,10 @@ def _sample_agent_state(*, rerun_ready: bool = True, stage: str = "demo") -> dic
             "assets_uri": "",
             "props": ["cube"],
         },
-        "latest_submit": {"run_id": "agent-run-123", "submitted_at": "2025-06-25T11:00:00+00:00"},
+        "latest_submit": {
+            "run_id": "agent-run-123",
+            "submitted_at": "2025-06-25T11:00:00+00:00",
+        },
         "camera_selection": ["workspace"],
     }
 
@@ -1995,7 +2032,10 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
         backend_port=8787,
         rerun_port=9090,
         llm_model="nvidia/Cosmos3-Super-Reasoner",
-        llm_models=["nvidia/Cosmos3-Super-Reasoner", "meta-llama/Llama-3.3-70B-Instruct"],
+        llm_models=[
+            "nvidia/Cosmos3-Super-Reasoner",
+            "meta-llama/Llama-3.3-70B-Instruct",
+        ],
         tf_api_key="",
         public_https=True,
     )
@@ -2184,7 +2224,7 @@ def test_bootstrap_embed_uses_placeholder_for_agent_chat() -> None:
 
     source = _agent_source()
     assert "_AGENT_CHAT_EMBED" in source
-    assert '.replace(_AGENT_CHAT_EMBED, agent_chat_source)' in source
+    assert ".replace(_AGENT_CHAT_EMBED, agent_chat_source)" in source
     raw = agent_module._embedded_agent_chat_source()
     assert '"onboard_solution"' in raw
     assert "{0,140}" in raw
@@ -2230,10 +2270,7 @@ def test_bootstrap_chat_model_selector_defaults_to_auto_routing() -> None:
     assert "Auto (cost-aware)" in source
     # The old behaviors that defeated cost routing must be gone:
     # 1) selectedChatModel no longer hardcodes the default model as a fallback,
-    assert (
-        'return String((select && select.value) || "").trim() || "{DEFAULT_LLM_MODEL}"'
-        not in source
-    )
+    assert 'return String((select && select.value) || "").trim() || "{DEFAULT_LLM_MODEL}"' not in source
     # 2) the chat response no longer overwrites the selector (would hijack Auto).
     assert "if (select) select.value = String(data.model);" not in source
 
@@ -2278,7 +2315,9 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(monkeypatch, t
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
         lambda *a, **k: SimpleNamespace(
-            project_id=k.get("project_id"), tenant_id=k.get("tenant_id"), region=k.get("region")
+            project_id=k.get("project_id"),
+            tenant_id=k.get("tenant_id"),
+            region=k.get("region"),
         ),
     )
     monkeypatch.setattr("npa.clients.nebius.bootstrap_agent_environment", lambda *a, **k: creds)
@@ -2288,16 +2327,24 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(monkeypatch, t
     monkeypatch.setattr("npa.cli.agent._persist_agent_project_config", lambda **k: None)
     monkeypatch.setattr(
         "npa.cli.agent._apply_agent_terraform",
-        lambda **k: {"vm_ip": "203.0.113.50", "instance_id": "i-1", "ssh_key_path": "/k"},
+        lambda **k: {
+            "vm_ip": "203.0.113.50",
+            "instance_id": "i-1",
+            "ssh_key_path": "/k",
+        },
     )
     monkeypatch.setattr("npa.cli.agent._is_routable_public_ip", lambda _ip: True)
     monkeypatch.setattr("npa.cli.agent._write_auth_secret", lambda **k: tmp_path / "auth.env")
     monkeypatch.setattr(
-        "npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "nvidia/Cosmos3-Super-Reasoner")
+        "npa.cli.agent._resolve_deploy_llm_credentials",
+        lambda: ("tf-key", "nvidia/Cosmos3-Super-Reasoner"),
     )
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **k: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
-    monkeypatch.setattr("npa.cli.agent._store_agent_record", lambda project, name, rec: captured.update(rec))
+    monkeypatch.setattr(
+        "npa.cli.agent._store_agent_record",
+        lambda project, name, rec: captured.update(rec),
+    )
 
     # Satisfy the fail-fast deploy prerequisites (terraform + SSH key pair).
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
@@ -2355,17 +2402,13 @@ def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
     assert "[PASS] token_factory" in result.output
 
 
-def test_agent_preflight_invokes_exact_deploy_storage_decision(
-    monkeypatch, tmp_path
-) -> None:
+def test_agent_preflight_invokes_exact_deploy_storage_decision(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
 
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
-    monkeypatch.setattr(
-        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
-    )
+    monkeypatch.setattr(agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m"))
     calls: list[dict] = []
 
     def _resolve(**kwargs):
@@ -2450,9 +2493,7 @@ def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
     }
 
 
-def test_agent_preflight_fails_when_storage_write_probe_is_forbidden(
-    monkeypatch, tmp_path
-) -> None:
+def test_agent_preflight_fails_when_storage_write_probe_is_forbidden(monkeypatch, tmp_path) -> None:
     from npa.cli import agent as agent_module
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
@@ -2460,9 +2501,7 @@ def test_agent_preflight_fails_when_storage_write_probe_is_forbidden(
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
-    monkeypatch.setattr(
-        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
-    )
+    monkeypatch.setattr(agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m"))
     monkeypatch.setattr(
         storage_validation,
         "probe_storage_write",
@@ -2493,9 +2532,7 @@ def test_agent_status_read_only_does_not_probe_storage(monkeypatch, tmp_path) ->
     from npa.cli import agent as agent_module
     from npa.clients import storage_validation
 
-    monkeypatch.setattr(
-        agent_module, "_resolve_project_alias", lambda value: value or "demo"
-    )
+    monkeypatch.setattr(agent_module, "_resolve_project_alias", lambda value: value or "demo")
     monkeypatch.setattr(
         agent_module,
         "_agent_record",
@@ -2511,9 +2548,7 @@ def test_agent_status_read_only_does_not_probe_storage(monkeypatch, tmp_path) ->
     monkeypatch.setattr(
         storage_validation,
         "probe_storage_write",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("read-only status must not write a storage probe")
-        ),
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("read-only status must not write a storage probe")),
     )
 
     result = runner.invoke(app, ["status", "--project", "demo", "--json"])
@@ -2551,7 +2586,9 @@ def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
         lambda *a, **k: SimpleNamespace(
-            project_id=k.get("project_id"), tenant_id=k.get("tenant_id"), region=k.get("region")
+            project_id=k.get("project_id"),
+            tenant_id=k.get("tenant_id"),
+            region=k.get("region"),
         ),
     )
     monkeypatch.setattr("npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "m"))
@@ -2593,7 +2630,9 @@ def test_deploy_fails_fast_on_missing_terraform(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
         lambda *a, **k: SimpleNamespace(
-            project_id=k.get("project_id"), tenant_id=k.get("tenant_id"), region=k.get("region")
+            project_id=k.get("project_id"),
+            tenant_id=k.get("tenant_id"),
+            region=k.get("region"),
         ),
     )
     monkeypatch.setattr("npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "m"))
@@ -2634,7 +2673,9 @@ def test_deploy_warns_on_missing_token_factory_key(monkeypatch, tmp_path, capsys
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
         lambda *a, **k: SimpleNamespace(
-            project_id=k.get("project_id"), tenant_id=k.get("tenant_id"), region=k.get("region")
+            project_id=k.get("project_id"),
+            tenant_id=k.get("tenant_id"),
+            region=k.get("region"),
         ),
     )
     # No Token Factory key configured.
@@ -2857,11 +2898,7 @@ def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -
     )
     assert result.exit_code == 0, result.output
 
-    leaked = {
-        key: value
-        for key, value in captured.items()
-        if type(value).__name__ in {"OptionInfo", "ArgumentInfo"}
-    }
+    leaked = {key: value for key, value in captured.items() if type(value).__name__ in {"OptionInfo", "ArgumentInfo"}}
     assert leaked == {}, f"unresolved Typer defaults reached deploy: {sorted(leaked)}"
 
     assert captured["ssh_user"] == "ubuntu"
@@ -2896,9 +2933,7 @@ def _stub_agent_deploy_cloud_calls(monkeypatch, tmp_path):
         calls["bootstrap_environment_kwargs"] = dict(kwargs)
         return creds
 
-    monkeypatch.setattr(
-        "npa.clients.nebius.bootstrap_agent_environment", _bootstrap_environment
-    )
+    monkeypatch.setattr("npa.clients.nebius.bootstrap_agent_environment", _bootstrap_environment)
     monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
     monkeypatch.setattr("npa.clients.nebius.get_project_region", lambda _pid: "us-central1")
     monkeypatch.setattr("npa.cli.agent._resolve_deploy_storage_credentials", lambda **k: creds)
@@ -2936,9 +2971,9 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
     assert merged_vars["server_port"] == "8088"
     assert merged_vars["ssh_user"] == "ubuntu"
     assert merged_vars["extra_ingress_ports"] == "[443,9090]"
-    assert not any(
-        "OptionInfo" in str(value) for value in merged_vars.values()
-    ), f"OptionInfo leaked into terraform vars: {merged_vars}"
+    assert not any("OptionInfo" in str(value) for value in merged_vars.values()), (
+        f"OptionInfo leaked into terraform vars: {merged_vars}"
+    )
     assert calls["bootstrap_environment_kwargs"]["reuse_storage_credentials"] == {
         "service_account_id": "sa-agent",
         "nebius_api_key": "ak-agent",
@@ -2989,9 +3024,7 @@ def _wait_for_cloud_init_body() -> str:
     """
     from npa.deploy import provisioner as provisioner_module
 
-    main_tf = (Path(provisioner_module.__file__).parent / "terraform" / "main.tf").read_text(
-        encoding="utf-8"
-    )
+    main_tf = (Path(provisioner_module.__file__).parent / "terraform" / "main.tf").read_text(encoding="utf-8")
     body = main_tf[main_tf.index('resource "null_resource" "wait_for_cloud_init"') :]
     return body[: body.index("\n    EOT")]
 
@@ -3063,15 +3096,57 @@ def test_agent_deploy_failure_hint_empty_for_unrelated_errors() -> None:
     assert _agent_deploy_failure_hint("") == ""
 
 
+def test_agent_whole_path_blocker_precedes_storage_and_terraform(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    from npa.cli.agent import deploy_cmd
+    from npa.provisioning_preflight import PreflightBlockedError
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *args, **kwargs: SimpleNamespace(project_id="project-x", tenant_id="tenant-x", region="us-central1"),
+    )
+    monkeypatch.setattr("npa.clients.nebius.get_project_region", lambda _pid: "us-central1")
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_check_whole_path_capacity",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PreflightBlockedError("compute.disk.count shortfall=1")),
+    )
+    storage = mocker.patch("npa.cli.agent._agent_storage_result")
+    bootstrap = mocker.patch("npa.clients.nebius.bootstrap_agent_environment")
+    terraform = mocker.patch("npa.cli.agent._apply_agent_terraform")
+
+    with pytest.raises(Exit):
+        deploy_cmd(
+            project="fresh",
+            name="agent",
+            project_id="project-x",
+            tenant_id="tenant-x",
+            region="us-central1",
+            ssh_user="ubuntu",
+            ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
+            tf_var=[],
+            agent_port=8088,
+            backend_port=8787,
+            rerun_port=9090,
+            llm_model="model-a",
+            llm_models=[],
+            no_public_https=False,
+        )
+
+    storage.assert_not_called()
+    bootstrap.assert_not_called()
+    terraform.assert_not_called()
+
+
 def test_agent_check_public_ip_quota_fails_when_exhausted(monkeypatch) -> None:
     """Deploy aborts early with guidance when the region's public-IP quota is full."""
     from npa.cli.agent import _agent_check_public_ip_quota
     from npa.clients import nebius as nebius_module
 
     monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
-    monkeypatch.setattr(
-        nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (10, 10)
-    )
+    monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (10, 10))
 
     with pytest.raises(Exit):
         _agent_check_public_ip_quota("project-x", "tenant-x", "eu-north1")
@@ -3082,9 +3157,7 @@ def test_agent_check_public_ip_quota_passes_with_headroom(monkeypatch) -> None:
     from npa.clients import nebius as nebius_module
 
     monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "uk-south1")
-    monkeypatch.setattr(
-        nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (0, 3)
-    )
+    monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (0, 3))
 
     # Must not raise.
     _agent_check_public_ip_quota("project-x", "tenant-x", "uk-south1")
@@ -3096,9 +3169,7 @@ def test_agent_check_public_ip_quota_noop_when_quota_unknown(monkeypatch) -> Non
     from npa.clients import nebius as nebius_module
 
     monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
-    monkeypatch.setattr(
-        nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (None, None)
-    )
+    monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", lambda _tid, _region: (None, None))
 
     # Must not raise even though the region resolved.
     _agent_check_public_ip_quota("project-x", "tenant-x", "eu-north1")
@@ -3124,7 +3195,17 @@ def test_agent_public_ip_quota_result_fails_when_exhausted(monkeypatch) -> None:
     from npa.clients import config as config_module
     from npa.clients import nebius as nebius_module
 
-    monkeypatch.setattr(config_module, "list_projects", lambda: {"p": {"project_id": "project-x", "tenant_id": "tenant-x", "region": "us-central1"}})
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {
+            "p": {
+                "project_id": "project-x",
+                "tenant_id": "tenant-x",
+                "region": "us-central1",
+            }
+        },
+    )
     monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
     monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
     monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", lambda _t, _r: (10, 10))
@@ -3139,7 +3220,17 @@ def test_agent_public_ip_quota_result_passes_with_headroom(monkeypatch) -> None:
     from npa.clients import config as config_module
     from npa.clients import nebius as nebius_module
 
-    monkeypatch.setattr(config_module, "list_projects", lambda: {"p": {"project_id": "project-x", "tenant_id": "tenant-x", "region": "uk-south1"}})
+    monkeypatch.setattr(
+        config_module,
+        "list_projects",
+        lambda: {
+            "p": {
+                "project_id": "project-x",
+                "tenant_id": "tenant-x",
+                "region": "uk-south1",
+            }
+        },
+    )
     monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
     monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "uk-south1")
     monkeypatch.setattr(nebius_module, "get_public_ipv4_quota", lambda _t, _r: (0, 3))
@@ -3207,7 +3298,13 @@ def test_agent_compute_instance_quota_result_fails_on_limit_zero(monkeypatch) ->
     monkeypatch.setattr(
         config_module,
         "list_projects",
-        lambda: {"p": {"project_id": "project-x", "tenant_id": "tenant-x", "region": "us-central1"}},
+        lambda: {
+            "p": {
+                "project_id": "project-x",
+                "tenant_id": "tenant-x",
+                "region": "us-central1",
+            }
+        },
     )
     monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
     monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "us-central1")
@@ -3226,7 +3323,13 @@ def test_agent_compute_instance_quota_result_passes_with_headroom(monkeypatch) -
     monkeypatch.setattr(
         config_module,
         "list_projects",
-        lambda: {"p": {"project_id": "project-x", "tenant_id": "tenant-x", "region": "uk-south1"}},
+        lambda: {
+            "p": {
+                "project_id": "project-x",
+                "tenant_id": "tenant-x",
+                "region": "uk-south1",
+            }
+        },
     )
     monkeypatch.setattr(config_module, "default_project_name", lambda: "p")
     monkeypatch.setattr(nebius_module, "get_project_region", lambda _pid: "uk-south1")
@@ -3265,7 +3368,14 @@ def test_remove_agent_record_drops_empty_agents_key(monkeypatch, tmp_path) -> No
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         yaml.safe_dump(
-            {"projects": {"p": {"project_id": "project-x", "agents": {"agent": {"public_ip": "203.0.113.50"}}}}}
+            {
+                "projects": {
+                    "p": {
+                        "project_id": "project-x",
+                        "agents": {"agent": {"public_ip": "203.0.113.50"}},
+                    }
+                }
+            }
         )
     )
     monkeypatch.setattr(config_module, "CONFIG_PATH", cfg)
@@ -3305,8 +3415,16 @@ def test_destroy_terraform_orphan_sweep_runs_after_tf_destroy(monkeypatch, tmp_p
             "nebius_project_id": "project-x",
         },
     )
-    monkeypatch.setattr(agent_module, "_cleanup_agent_ingress", lambda *_a, **_k: calls.append("ingress"))
-    monkeypatch.setattr(agent_module, "_cleanup_orphan_agent_instances", lambda *_a, **_k: calls.append("orphan"))
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_agent_ingress",
+        lambda *_a, **_k: calls.append("ingress"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_orphan_agent_instances",
+        lambda *_a, **_k: calls.append("orphan"),
+    )
     monkeypatch.setattr(
         agent_module,
         "resolve_terraform_state",
@@ -3339,8 +3457,16 @@ def test_destroy_terraform_no_state_refuses_unguarded_name_reclaim(monkeypatch) 
             "nebius_project_id": "project-x",
         },
     )
-    monkeypatch.setattr(agent_module, "_cleanup_agent_ingress", lambda *_a, **_k: calls.append("ingress"))
-    monkeypatch.setattr(agent_module, "_cleanup_orphan_agent_instances", lambda *_a, **_k: calls.append("orphan"))
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_agent_ingress",
+        lambda *_a, **_k: calls.append("ingress"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_orphan_agent_instances",
+        lambda *_a, **_k: calls.append("orphan"),
+    )
     monkeypatch.setattr(
         agent_module,
         "resolve_terraform_state",
@@ -3372,38 +3498,26 @@ def _stub_owned_agent_destroy(monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr(agent_module, "_cleanup_agent_ingress", lambda *_a, **_k: None)
-    monkeypatch.setattr(
-        agent_module, "_cleanup_orphan_agent_instances", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr(agent_module, "_cleanup_orphan_agent_instances", lambda *_a, **_k: None)
     monkeypatch.setattr(
         agent_module,
         "resolve_terraform_state",
-        lambda _p: SimpleNamespace(
-            bucket="b", access_key="k", secret_key="s", endpoint="e"
-        ),
+        lambda _p: SimpleNamespace(bucket="b", access_key="k", secret_key="s", endpoint="e"),
     )
-    monkeypatch.setattr(
-        agent_module, "_agent_terraform_state_exists", lambda _p, _n: True
-    )
-    monkeypatch.setattr(
-        agent_module.provisioner, "prepare_working_dir", lambda *a, **k: tmp_path
-    )
+    monkeypatch.setattr(agent_module, "_agent_terraform_state_exists", lambda _p, _n: True)
+    monkeypatch.setattr(agent_module.provisioner, "prepare_working_dir", lambda *a, **k: tmp_path)
     monkeypatch.setattr(agent_module.provisioner, "init", lambda *a, **k: None)
     return agent_module
 
 
-def test_agent_destroy_recovers_default_sg_by_deleting_owned_parent_network(
-    monkeypatch, tmp_path
-) -> None:
+def test_agent_destroy_recovers_default_sg_by_deleting_owned_parent_network(monkeypatch, tmp_path) -> None:
     agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
     destroys: list[dict] = []
 
     def destroy(**kwargs):
         destroys.append(kwargs)
         if len(destroys) == 1:
-            raise agent_module.ProvisionerError(
-                "rpc error: FailedPrecondition: cannot delete default security group"
-            )
+            raise agent_module.ProvisionerError("rpc error: FailedPrecondition: cannot delete default security group")
 
     monkeypatch.setattr(agent_module.provisioner, "destroy", destroy)
     monkeypatch.setattr(
@@ -3422,22 +3536,16 @@ def test_agent_destroy_recovers_default_sg_by_deleting_owned_parent_network(
     agent_module._destroy_agent_terraform("prod", "agent", record={"instance_id": "i"})
 
     assert len(destroys) == 2
-    network_delete.assert_called_once_with(
-        ["vpc", "network", "delete", "--id", "vpcnetwork-owned"]
-    )
+    network_delete.assert_called_once_with(["vpc", "network", "delete", "--id", "vpcnetwork-owned"])
 
 
-def test_agent_destroy_preserves_unowned_network_on_default_sg_refusal(
-    monkeypatch, tmp_path
-) -> None:
+def test_agent_destroy_preserves_unowned_network_on_default_sg_refusal(monkeypatch, tmp_path) -> None:
     agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
     monkeypatch.setattr(
         agent_module.provisioner,
         "destroy",
         lambda **kwargs: (_ for _ in ()).throw(
-            agent_module.ProvisionerError(
-                "rpc error: FailedPrecondition: cannot delete default security group"
-            )
+            agent_module.ProvisionerError("rpc error: FailedPrecondition: cannot delete default security group")
         ),
     )
     monkeypatch.setattr(agent_module.provisioner, "state_list", lambda _tf_dir: [])
@@ -3445,24 +3553,18 @@ def test_agent_destroy_preserves_unowned_network_on_default_sg_refusal(
     monkeypatch.setattr("npa.clients.network.nebius._run", network_delete)
 
     with pytest.raises(agent_module.ProvisionerError) as caught:
-        agent_module._destroy_agent_terraform(
-            "prod", "agent", record={"instance_id": "i"}
-        )
+        agent_module._destroy_agent_terraform("prod", "agent", record={"instance_id": "i"})
 
     assert "reused/shared network" in str(caught.value)
     assert "npa agent destroy" in str(caught.value)
     network_delete.assert_not_called()
 
 
-def test_agent_destroy_does_not_mask_genuine_nondefault_sg_failure(
-    monkeypatch, tmp_path
-) -> None:
+def test_agent_destroy_does_not_mask_genuine_nondefault_sg_failure(monkeypatch, tmp_path) -> None:
     agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
     failures = iter(
         [
-            agent_module.ProvisionerError(
-                "FailedPrecondition: non-default security group is still in use"
-            ),
+            agent_module.ProvisionerError("FailedPrecondition: non-default security group is still in use"),
             agent_module.ProvisionerError("second destroy also failed"),
         ]
     )
@@ -3476,17 +3578,13 @@ def test_agent_destroy_does_not_mask_genuine_nondefault_sg_failure(
     monkeypatch.setattr("npa.clients.network.nebius._run", network_delete)
 
     with pytest.raises(agent_module.ProvisionerError) as caught:
-        agent_module._destroy_agent_terraform(
-            "prod", "agent", record={"instance_id": "i"}
-        )
+        agent_module._destroy_agent_terraform("prod", "agent", record={"instance_id": "i"})
 
     assert "non-default security group is still in use" in str(caught.value)
     network_delete.assert_not_called()
 
 
-def test_agent_destroy_retries_an_already_absent_security_group(
-    monkeypatch, tmp_path
-) -> None:
+def test_agent_destroy_retries_an_already_absent_security_group(monkeypatch, tmp_path) -> None:
     agent_module = _stub_owned_agent_destroy(monkeypatch, tmp_path)
     destroys = 0
 
@@ -3539,15 +3637,15 @@ def test_resolve_project_alias_prefers_the_only_configured_project(monkeypatch) 
     from npa.clients import config as config_module
 
     monkeypatch.setattr(config_module, "default_project_name", lambda: "default")
-    monkeypatch.setattr(
-        config_module, "list_projects", lambda: {"tle-workbench": {"project_id": "p-1"}}
-    )
+    monkeypatch.setattr(config_module, "list_projects", lambda: {"tle-workbench": {"project_id": "p-1"}})
 
     assert agent_module._resolve_project_alias("") == "tle-workbench"
     assert agent_module._resolve_project_alias("explicit") == "explicit"
 
 
-def test_resolve_project_alias_uses_the_configured_default_when_present(monkeypatch) -> None:
+def test_resolve_project_alias_uses_the_configured_default_when_present(
+    monkeypatch,
+) -> None:
     from npa.cli import agent as agent_module
     from npa.clients import config as config_module
 
@@ -3661,7 +3759,9 @@ def test_ssh_egress_check_can_be_disabled(monkeypatch) -> None:
     assert "skipped" in result.summary
 
 
-def test_public_ip_quota_gate_skips_an_agent_that_already_has_its_ip(monkeypatch) -> None:
+def test_public_ip_quota_gate_skips_an_agent_that_already_has_its_ip(
+    monkeypatch,
+) -> None:
     """Re-deploying an existing agent reuses its address, so require no headroom."""
     from npa.cli.agent import _agent_check_public_ip_quota
     from npa.clients import nebius as nebius_module
@@ -3670,13 +3770,13 @@ def test_public_ip_quota_gate_skips_an_agent_that_already_has_its_ip(monkeypatch
     monkeypatch.setattr(
         nebius_module,
         "get_public_ipv4_quota",
-        lambda _tid, _region: (_ for _ in ()).throw(
-            AssertionError("quota must not be queried for an existing agent")
-        ),
+        lambda _tid, _region: (_ for _ in ()).throw(AssertionError("quota must not be queried for an existing agent")),
     )
 
     # Must not raise, and must not even read the quota.
     _agent_check_public_ip_quota("project-x", "tenant-x", "us-central1", agent_exists=True)
+
+
 def test_ui_script_calls_no_undefined_local_helper() -> None:
     """Catch a helper that was deleted (or renamed) but is still called.
 
@@ -3719,6 +3819,7 @@ def test_ui_script_calls_no_undefined_local_helper() -> None:
     undefined = sorted(called - defined - allowed)
     assert not undefined, f"UI script calls undefined helper(s): {undefined}"
 
+
 def test_ui_recomputes_the_viewer_cta_once_the_iframe_mounts() -> None:
     """The "no recording yet" banner must be re-evaluated after the mount.
 
@@ -3730,14 +3831,10 @@ def test_ui_recomputes_the_viewer_cta_once_the_iframe_mounts() -> None:
     """
     from pathlib import Path
 
-    html = (
-        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
-    ).read_text(encoding="utf-8")
+    html = (Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html").read_text(encoding="utf-8")
 
     mount = html.split("rerunIframeLoaded = true;", 1)[1][:600]
-    assert "updateSimvizCta(" in mount, (
-        "the CTA must be recomputed immediately after the iframe mounts"
-    )
+    assert "updateSimvizCta(" in mount, "the CTA must be recomputed immediately after the iframe mounts"
 
 
 def test_ui_treats_a_mounted_viewer_as_proof_a_recording_exists() -> None:
@@ -3752,15 +3849,12 @@ def test_ui_treats_a_mounted_viewer_as_proof_a_recording_exists() -> None:
     """
     from pathlib import Path
 
-    html = (
-        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
-    ).read_text(encoding="utf-8")
+    html = (Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html").read_text(encoding="utf-8")
 
     assert "const mountProvesRecording = Boolean(rerunIframeLoaded && lastRerunRecordingUrl);" in html
-    assert (
-        "const ready = Boolean(status.rerun_ready || status.rrd_uri || mountProvesRecording);"
-        in html
-    ), "a mounted viewer must count towards readiness"
+    assert "const ready = Boolean(status.rerun_ready || status.rrd_uri || mountProvesRecording);" in html, (
+        "a mounted viewer must count towards readiness"
+    )
 
 
 def test_ui_viewer_banner_copy_tracks_readiness_both_ways() -> None:
@@ -3775,9 +3869,7 @@ def test_ui_viewer_banner_copy_tracks_readiness_both_ways() -> None:
     """
     from pathlib import Path
 
-    html = (
-        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
-    ).read_text(encoding="utf-8")
+    html = (Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html").read_text(encoding="utf-8")
 
     branch = html.split("const mountProvesRecording", 1)[1].split("function setRenderMode", 1)[0]
     assert "cta.textContent = ready" in branch, "the ready state needs its own copy"
@@ -3788,7 +3880,7 @@ def test_ui_viewer_banner_copy_tracks_readiness_both_ways() -> None:
 
 
 def test_ui_does_not_claim_no_recording_before_the_status_arrives() -> None:
-    """"Unknown" must not be reported as "absent".
+    """ "Unknown" must not be reported as "absent".
 
     ``updateSimvizCta`` runs before the first ``/api/sim-viz/status`` response,
     when ``lastSimVizStatus`` is still null. Treating that as "not ready" made
@@ -3799,9 +3891,7 @@ def test_ui_does_not_claim_no_recording_before_the_status_arrives() -> None:
     """
     from pathlib import Path
 
-    html = (
-        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
-    ).read_text(encoding="utf-8")
+    html = (Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html").read_text(encoding="utf-8")
 
     assert "const haveStatus = Boolean(simViz || lastSimVizStatus);" in html
     branch = html.split("const mountProvesRecording", 1)[1].split("function setRenderMode", 1)[0]

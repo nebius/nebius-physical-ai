@@ -238,6 +238,15 @@ def submit_cmd(
             "but do not submit."
         ),
     ),
+    details: bool = typer.Option(
+        False,
+        "--details/--compact",
+        help=(
+            "With --plan-only, include the complete rendered SkyPilot YAML. "
+            "The default human plan shows shared setup once and compact stage deltas; "
+            "JSON always retains full details."
+        ),
+    ),
     runtime: bool = typer.Option(
         False,
         "--runtime/--no-runtime",
@@ -568,6 +577,7 @@ def submit_cmd(
                 workflow_identity=workflow_identity,
                 resume_run=resume_run,
                 new_run_id=run_id,
+                persist=False,
             )
         except Exception as exc:
             _fail(str(exc))
@@ -576,10 +586,10 @@ def submit_cmd(
         resume = bool(resume_run or (resume and run_id))
         if prepared_identity.warning and output_format != OutputFormat.json:
             typer.echo(f"Warning: {prepared_identity.warning}", err=True)
-        if output_format != OutputFormat.json:
+        if output_format != OutputFormat.json and not plan_only:
             typer.echo(
-                ("Explicitly resuming" if resume else "Prepared fresh run")
-                + f" {resolved_run_id} (scoped state: {prepared_identity.state_path})",
+                ("Explicitly resuming" if resume else "Reserved fresh run")
+                + f" {resolved_run_id}; state will be created only after preflight",
                 err=True,
             )
     else:
@@ -598,11 +608,15 @@ def submit_cmd(
         resolve_submit_credentials,
     )
 
-    submit_credentials = resolve_submit_credentials(
-        project=project,
-        explicit_endpoint=s3_endpoint,
-        requested=secret_env,
-    )
+    try:
+        submit_credentials = resolve_submit_credentials(
+            project=project,
+            explicit_endpoint=s3_endpoint,
+            requested=secret_env,
+        )
+    except Exception as exc:
+        _fail(f"Workflow credential resolution failed: {exc}")
+        return
     s3_endpoint = submit_credentials.endpoint_url
     extra_env: dict[str, str] = dict(submit_credentials.secret_values)
     if submit_credentials.missing and not plan_only:
@@ -653,6 +667,10 @@ def submit_cmd(
         return
 
     prepared_npa = None
+    deploy_targets = []
+    resolved_deploy_plans: dict[str, object] = {}
+    source_action = "not-required"
+    planned_source_uri = ""
     if is_npa_spec:
         # One prerequisite report instead of a sequence of one-at-a-time
         # failures spread over the render, the SkyPilot resolver and the
@@ -673,24 +691,126 @@ def submit_cmd(
             "default",
             "-",
         }
+        if image_pins_all_tasks and stage_src is True:
+            _fail(
+                "--image and --stage-src conflict: an image override supplies npa "
+                "to every task, while --stage-src explicitly forces a source overlay. "
+                "Choose one source strategy."
+            )
+            return
+        try:
+            requires_npa_source = _plan_requires_npa_source(
+                yaml_path,
+                run_id=resolved_run_id,
+                assume_decision=assume_decision,
+                options=SkypilotRenderOptions(
+                    registry=_resolve_submit_registry(registry, project),
+                    image_overrides=(
+                        {"*": image}
+                        if image_pins_all_tasks
+                        else {"*": ""}
+                        if image_value_for_source in {"none", "default", "-"}
+                        else {}
+                    ),
+                    gpu_target=gpu_target,
+                    image_variant=image_variant,
+                    materialize_registry_secrets=False,
+                ),
+            )
+        except Exception as exc:
+            _fail(f"cannot resolve the workflow's source requirement: {exc}")
+            return
         bucket_for_source = str(
             s3_bucket or spec_config.get("bucket", "") or ""
         ).strip()
-        existing_source_uri = _resolve_submit_src_s3_uri(project)
+        existing_source_uri, source_origin = _resolve_submit_src_s3_uri_with_origin(
+            project
+        )
+        if (
+            requires_npa_source
+            and existing_source_uri
+            and not _valid_npa_source_uri(existing_source_uri)
+        ):
+            _fail(
+                "NPA_SRC_S3_URI must be an s3:// URI with a bucket and key prefix; "
+                "no source or run state was written."
+            )
+            return
         if existing_source_uri:
             # The renderer has a process/config resolver without a project
             # parameter. Pin the explicitly selected project's URI for this
             # invocation so a non-default project cannot inherit another
             # project's source prefix.
             os.environ["NPA_SRC_S3_URI"] = existing_source_uri
+        local_source_fingerprint = ""
+        if requires_npa_source or stage_src is True:
+            try:
+                local_source_fingerprint = _local_source_fingerprint()
+            except Exception as exc:
+                if stage_src is not False and not existing_source_uri:
+                    _fail(f"npa source staging is not feasible: {exc}")
+                    return
+        existing_fingerprint = existing_source_uri.rstrip("/").rsplit("/", 1)[-1]
+        persisted_source_is_stale = bool(
+            requires_npa_source
+            and existing_source_uri
+            and source_origin == "saved"
+            and local_source_fingerprint
+            and existing_fingerprint != local_source_fingerprint
+        )
         auto_stage_source = (
             stage_src is None
-            and not plan_only
-            and not image_pins_all_tasks
-            and not existing_source_uri
-            and not _is_placeholder_bucket(bucket_for_source)
+            and requires_npa_source
+            and (not existing_source_uri or persisted_source_is_stale)
         )
         stage_source_planned = stage_src is True or auto_stage_source
+        if image_pins_all_tasks:
+            source_action = "image-override"
+        elif stage_source_planned:
+            source_action = "planned"
+            destination_bucket = (
+                bucket_for_source
+                if not _is_placeholder_bucket(bucket_for_source)
+                else "planned-bucket"
+            )
+            planned_source_uri = (
+                f"s3://{destination_bucket}/npa-src/npa/"
+                f"{local_source_fingerprint or '<source-fingerprint>'}/"
+            )
+            if plan_only:
+                # The renderer needs the URI it would receive on real submit,
+                # but this is metadata only: no S3 or config write occurs.
+                os.environ["NPA_SRC_S3_URI"] = planned_source_uri
+        elif requires_npa_source and existing_source_uri:
+            source_action = (
+                "reuse-explicit" if source_origin == "environment" else "reuse-saved"
+            )
+        elif requires_npa_source:
+            source_action = "disabled"
+        else:
+            source_action = "not-required"
+
+        # Resolve and quota-check the exact deployIfAbsent topology before the
+        # writable-storage probe below. The probe is cleaned up, but it is still
+        # an S3 write; a known identity/quota blocker must prevent even that
+        # temporary mutation.
+        if deploy_if_absent:
+            from npa.orchestration.npa_workflow.deploy import (
+                parse_deploy_targets,
+                plan_infra_present,
+            )
+            from npa.orchestration.npa_workflow.spec import (
+                load_spec as _load_deploy_spec,
+            )
+
+            try:
+                deploy_targets = parse_deploy_targets(_load_deploy_spec(yaml_path))
+                resolved_deploy_plans = plan_infra_present(
+                    deploy_targets, mutation=not plan_only
+                )
+            except Exception as exc:  # noqa: BLE001 - normalized before all mutation
+                _fail(f"deployIfAbsent preflight failed: {exc}")
+                return
         if not skip_preflight:
             missing = _submit_prerequisites(
                 spec_config,
@@ -705,50 +825,37 @@ def submit_cmd(
                 s3_secret_access_key=getattr(
                     submit_credentials, "secret_access_key", ""
                 ),
+                requires_npa_source=requires_npa_source,
                 source_staging_planned=stage_source_planned,
             )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
                 return
-        existing_fingerprint = existing_source_uri.rstrip("/").rsplit("/", 1)[-1]
-        if (
-            not stage_source_planned
-            and not plan_only
-            and not image_pins_all_tasks
-            and re.fullmatch(r"[0-9a-f]{64}", existing_fingerprint)
-        ):
-            from npa.orchestration.npa_workflow.src_staging import (
-                _storage_client,
-                verify_staged_source,
-            )
 
-            try:
-                verify_staged_source(
-                    existing_source_uri,
-                    client=_storage_client(
-                        endpoint_url=s3_endpoint,
-                        aws_access_key_id=extra_env.get("AWS_ACCESS_KEY_ID", ""),
-                        aws_secret_access_key=extra_env.get(
-                            "AWS_SECRET_ACCESS_KEY", ""
-                        ),
-                    ),
-                    expected_fingerprint=existing_fingerprint,
-                )
-            except Exception as exc:  # noqa: BLE001
-                _fail(str(exc))
-                return
-        if stage_source_planned:
-            staged_uri = _stage_npa_src_for_submit(
-                spec_config,
-                s3_bucket=s3_bucket,
-                s3_endpoint=s3_endpoint,
-                credential_values=extra_env,
-                project=project,
-                run_id=resolved_run_id,
-            )
-            if not staged_uri:
-                return
-            os.environ["NPA_SRC_S3_URI"] = staged_uri
+        # Image reachability and the complete cumulative infrastructure plan are
+        # both read before source/input upload or any run/journal state exists.
+        image_overrides_for_preflight: dict[str, str] = {}
+        image_value_for_preflight = image.strip()
+        if image_value_for_preflight.lower() in {"none", "default", "-"}:
+            image_overrides_for_preflight["*"] = ""
+        elif image_value_for_preflight:
+            image_overrides_for_preflight["*"] = image_value_for_preflight
+        _preflight_submit_images(
+            yaml_path,
+            options=SkypilotRenderOptions(
+                registry=_resolve_submit_registry(registry, project),
+                image_overrides=image_overrides_for_preflight,
+                gpu_target=gpu_target,
+                image_variant=image_variant,
+                materialize_registry_secrets=False,
+            ),
+            assume_decision=assume_decision,
+            enabled=preflight_images and not plan_only,
+        )
+        # Validate and stage the selected PAIDF input before staging the NPA
+        # source. Invalid media, inaccessible input, and provenance conflicts
+        # therefore leave no source upload or run/controller state. The PAIDF
+        # input prefix is itself provenance-committed and restart-safe.
         if is_paidf_spec:
             from npa.workflows.data_factory_input import (
                 PaidfInputError,
@@ -787,6 +894,67 @@ def submit_cmd(
                 "true" if prepared_input.selection == "synthetic_fixture" else "false"
             )
             substitutions["seed_default_input"] = substitutions["seed_fixture"]
+
+        if (
+            not stage_source_planned
+            and not plan_only
+            and requires_npa_source
+            and re.fullmatch(r"[0-9a-f]{64}", existing_fingerprint)
+        ):
+            from npa.orchestration.npa_workflow.src_staging import (
+                _storage_client,
+                verify_staged_source,
+            )
+
+            try:
+                verify_staged_source(
+                    existing_source_uri,
+                    client=_storage_client(
+                        endpoint_url=s3_endpoint,
+                        aws_access_key_id=extra_env.get("AWS_ACCESS_KEY_ID", ""),
+                        aws_secret_access_key=extra_env.get(
+                            "AWS_SECRET_ACCESS_KEY", ""
+                        ),
+                    ),
+                    expected_fingerprint=existing_fingerprint,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _fail(str(exc))
+                return
+        if stage_source_planned and not plan_only:
+            staged_uri = _stage_npa_src_for_submit(
+                spec_config,
+                s3_bucket=s3_bucket,
+                s3_endpoint=s3_endpoint,
+                credential_values=extra_env,
+                project=project,
+                run_id=resolved_run_id,
+                force=stage_src is True,
+            )
+            if not staged_uri:
+                return
+            os.environ["NPA_SRC_S3_URI"] = staged_uri
+            source_action = "reused" if staged_uri == existing_source_uri else "staged"
+        if not plan_only:
+            # This is the first durable run-specific write.  Source/input upload
+            # failures and every whole-path preflight blocker return above it.
+            try:
+                persisted_identity = prepare_run(
+                    project=project,
+                    workflow_identity=workflow_identity,
+                    resume_run=resolved_run_id if resume else "",
+                    new_run_id="" if resume else resolved_run_id,
+                    persist=True,
+                )
+            except Exception as exc:
+                _fail(str(exc))
+                return
+            if output_format != OutputFormat.json:
+                typer.echo(
+                    f"Run identity persisted after green preflight: "
+                    f"{persisted_identity.state_path}",
+                    err=True,
+                )
         _warn_placeholder_bucket(spec_config, quiet=output_format == OutputFormat.json)
         image_overrides: dict[str, str] = {}
         # ``none`` / ``default`` clears workbench image pins so tasks use the
@@ -797,56 +965,54 @@ def submit_cmd(
         elif image_value:
             image_overrides["*"] = image_value
 
-        # Which images a run pulls depends only on the registry and the overrides,
-        # never on the cluster -- so check them before provisioning rather than
-        # after, and a registry missing the workbench images costs no GPU time.
-        _preflight_submit_images(
-            yaml_path,
-            options=SkypilotRenderOptions(
-                registry=_resolve_submit_registry(registry, project),
-                image_overrides=image_overrides,
-                gpu_target=gpu_target,
-                image_variant=image_variant,
-                materialize_registry_secrets=False,
-            ),
-            assume_decision=assume_decision,
-            enabled=preflight_images and not plan_only,
-        )
-
-        if deploy_if_absent:
+        if deploy_if_absent and deploy_targets:
             from npa.orchestration.npa_workflow.deploy import (
                 ensure_infra_present,
-                parse_deploy_targets,
-            )
-            from npa.orchestration.npa_workflow.spec import (
-                load_spec as _load_deploy_spec,
             )
 
             try:
-                deploy_targets = parse_deploy_targets(_load_deploy_spec(yaml_path))
-                if deploy_targets:
-                    for record in ensure_infra_present(
+                if not plan_only:
+                    records = ensure_infra_present(
                         deploy_targets,
-                        dry_run=plan_only,
+                        dry_run=False,
                         gpu_readiness_timeout=gpu_readiness_timeout,
                         gpu_readiness_poll_interval=gpu_readiness_poll_interval,
                         sky_bin=sky_bin,
-                    ):
+                        resolved_plans=resolved_deploy_plans,
+                    )
+                else:
+                    records = [
+                        {
+                            "profile": next(
+                                target.profile
+                                for target in deploy_targets
+                                if target.resolved_context == context
+                            ),
+                            "status": plan.decision,
+                            "context": context,
+                            "actions": [],
+                            "warnings": list(plan.reasons),
+                            "topology": plan.topology.to_dict(),
+                            "quotas": [quota.to_dict() for quota in plan.quotas],
+                        }
+                        for context, plan in resolved_deploy_plans.items()
+                    ]
+                for record in records:
+                    typer.echo(
+                        "deployIfAbsent["
+                        f"{record['profile']}]: {record['status']} "
+                        f"context={record['context']} "
+                        f"actions={','.join(record['actions']) or 'none'}",
+                        err=True,
+                    )
+                    # A `partial` outcome (no project_id, no bucket, ...) used to
+                    # print its status with the reason dropped, and the submit
+                    # carried on into a launch that could not work.
+                    for warning in record.get("warnings", []) or []:
                         typer.echo(
-                            "deployIfAbsent["
-                            f"{record['profile']}]: {record['status']} "
-                            f"context={record['context']} "
-                            f"actions={','.join(record['actions']) or 'none'}",
+                            f"deployIfAbsent[{record['profile']}]: warning: {warning}",
                             err=True,
                         )
-                        # A `partial` outcome (no project_id, no bucket, ...) used to
-                        # print its status with the reason dropped, and the submit
-                        # carried on into a launch that could not work.
-                        for warning in record.get("warnings", []) or []:
-                            typer.echo(
-                                f"deployIfAbsent[{record['profile']}]: warning: {warning}",
-                                err=True,
-                            )
             except NpaWorkflowError as exc:
                 _fail(str(exc))
                 return
@@ -926,27 +1092,114 @@ def submit_cmd(
 
         if plan_only:
             rendered = prepared_npa.skypilot_yaml_path.read_text(encoding="utf-8")
+            infrastructure = {
+                context: plan.to_dict()
+                for context, plan in resolved_deploy_plans.items()
+            }
+            plan_checks: list[dict[str, object]] = []
+            if submit_credentials.missing:
+                plan_checks.append(
+                    {
+                        "name": "credentials",
+                        "status": "blocked",
+                        "reason": (
+                            "missing requested credential names: "
+                            + ", ".join(submit_credentials.missing)
+                        ),
+                    }
+                )
+            else:
+                plan_checks.append(
+                    {
+                        "name": "credentials",
+                        "status": "ready",
+                        "reason": "requested credentials are resolvable (values redacted)",
+                    }
+                )
+            if _spec_requires_s3(yaml_path):
+                plan_checks.append(
+                    {
+                        "name": "writable_storage",
+                        "status": "unknown",
+                        "reason": (
+                            "plan-only is read-only; real submit will run the cleaned "
+                            "write/delete probe before staging or submission"
+                        ),
+                    }
+                )
+            plan_checks.append(
+                {
+                    "name": "source_staging",
+                    "status": "ready" if source_action != "disabled" else "blocked",
+                    "reason": source_action,
+                }
+            )
+            decisions = [
+                str(item.get("status") or "unknown") for item in plan_checks
+            ] + [
+                str(item.get("decision") or "unknown")
+                for item in infrastructure.values()
+            ]
+            preflight_decision = (
+                "blocked"
+                if "blocked" in decisions
+                else "unknown"
+                if "unknown" in decisions
+                else "ready"
+            )
             payload = {
                 "status": "PLANNED",
+                "lifecycle_state": "PLAN_ONLY",
+                "submission_state": "NOT_SUBMITTED",
+                "submission_receipt": None,
                 "run_id": resolved_run_id,
                 "workflow": prepared_npa.spec.name,
                 "steps": len(prepared_npa.plan.steps),
                 "secret_env_hints": list(prepared_npa.secret_env_hints),
+                "source": {
+                    "status": source_action,
+                    "uri": planned_source_uri or existing_source_uri,
+                },
+                "preflight": {
+                    "decision": preflight_decision,
+                    "checks": plan_checks,
+                },
+                "infrastructure": infrastructure,
+                "plan": prepared_npa.plan.to_dict(),
                 "skypilot_yaml": rendered,
             }
             if output_format == OutputFormat.json:
                 typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             else:
                 typer.echo("status: PLANNED")
+                typer.echo("lifecycle_state: PLAN_ONLY")
+                typer.echo("submission_state: NOT_SUBMITTED")
+                typer.echo(f"preflight_decision: {preflight_decision}")
                 typer.echo(f"run_id: {resolved_run_id}")
                 typer.echo(f"workflow: {prepared_npa.spec.name}")
                 typer.echo(f"steps: {len(prepared_npa.plan.steps)}")
+                typer.echo(
+                    "source: "
+                    + source_action
+                    + (
+                        f" ({planned_source_uri or existing_source_uri})"
+                        if planned_source_uri or existing_source_uri
+                        else ""
+                    )
+                )
+                _emit_compact_submit_plan(
+                    prepared_npa.plan,
+                    infrastructure=infrastructure,
+                )
                 if prepared_npa.secret_env_hints:
                     typer.echo(
                         "secret_env_hints: " + ",".join(prepared_npa.secret_env_hints)
                     )
-                typer.echo("---")
-                typer.echo(rendered)
+                if details:
+                    typer.echo("--- full rendered SkyPilot YAML ---")
+                    typer.echo(rendered)
+                else:
+                    typer.echo("details: pass --details (or --output-format json)")
             prepared_npa.temp_dir.cleanup()
             return
 
@@ -1530,19 +1783,116 @@ def _is_nebius_registry_image(image: str) -> bool:
 def _resolve_submit_src_s3_uri(project: str) -> str:
     """Resolve source for the selected project, with explicit env precedence."""
 
+    return _resolve_submit_src_s3_uri_with_origin(project)[0]
+
+
+def _resolve_submit_src_s3_uri_with_origin(project: str) -> tuple[str, str]:
+    """Return ``(uri, environment|saved|missing)`` without exposing credentials."""
+
     value = (
         os.environ.get("NPA_SRC_S3_URI")
         or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
         or ""
     ).strip()
     if value:
-        return value
+        return value, "environment"
     try:
         from npa.clients.config import resolve_workflow_src_s3_uri
 
-        return resolve_workflow_src_s3_uri(project or None)
+        saved = resolve_workflow_src_s3_uri(project or None)
+        return (saved, "saved") if saved else ("", "missing")
     except Exception:  # noqa: BLE001 - submit preflight reports an unset source
-        return ""
+        return "", "missing"
+
+
+def _valid_npa_source_uri(value: str) -> bool:
+    match = re.fullmatch(r"s3://([^/]+)/(.+)", str(value or "").strip())
+    return bool(match and match.group(1).strip() and match.group(2).strip("/"))
+
+
+def _local_source_fingerprint() -> str:
+    """Inspect local source provenance without uploading or writing state."""
+
+    from npa.orchestration.npa_workflow.src_staging import (
+        find_npa_package_root,
+        iter_source_files,
+        source_fingerprint,
+    )
+
+    root = find_npa_package_root()
+    files = list(iter_source_files(root))
+    if not files:
+        raise RuntimeError(f"no source files found under {root}")
+    return source_fingerprint(root, files)
+
+
+def _plan_requires_npa_source(
+    yaml_path: Path,
+    *,
+    run_id: str,
+    assume_decision: str,
+    options,
+) -> bool:
+    """Return whether any planned step lacks a resolved container image."""
+
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        build_scheduler_task,
+        resolve_task_image,
+    )
+
+    spec = load_spec(yaml_path)
+    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
+    for step in plan.steps:
+        task = build_scheduler_task(spec, step, run_id=run_id)
+        if not resolve_task_image(
+            str(task.get("tool_ref") or ""),
+            task.get("resources") or {},
+            options=options,
+        ):
+            return True
+    return False
+
+
+def _emit_compact_submit_plan(plan, *, infrastructure: Mapping[str, object]) -> None:
+    """Render shared setup once and one workflow-specific delta per stage."""
+
+    typer.echo("setup:")
+    if infrastructure:
+        for context, raw in infrastructure.items():
+            item = raw if isinstance(raw, dict) else {}
+            topology = item.get("topology") if isinstance(item, dict) else {}
+            topology = topology if isinstance(topology, dict) else {}
+            typer.echo(
+                f"  deployIfAbsent {context}: {item.get('decision', 'unknown')} "
+                f"cpu={topology.get('cpu_nodes', '?')}x"
+                f"{topology.get('cpu_platform', '?')}/{topology.get('cpu_preset', '?')} "
+                f"gpu={topology.get('gpu_nodes', '?')}x"
+                f"{topology.get('gpu_platform', '?')}/{topology.get('gpu_preset', '?')} "
+                f"preemptible={topology.get('gpu_preemptible', False)}"
+            )
+            for quota in item.get("quotas", []) if isinstance(item, dict) else []:
+                if isinstance(quota, dict):
+                    typer.echo(
+                        f"    quota {quota.get('name')}: {quota.get('status')} "
+                        f"required={quota.get('required')} available={quota.get('available')} "
+                        f"shortfall={quota.get('shortfall')}"
+                    )
+    else:
+        typer.echo("  infrastructure: existing/externally managed")
+    typer.echo("stages:")
+    previous = ""
+    for index, step in enumerate(plan.steps, 1):
+        profile = step.resources_profile or {}
+        resource_class = step.resources or "default"
+        image = str(profile.get("image_id") or profile.get("image") or "default")
+        dependency = previous or "none"
+        gate = step.loop_label or ("parallel:" + step.group if step.group else "none")
+        typer.echo(
+            f"  {index}. {step.state}: tool={step.tool_ref or 'shell'} "
+            f"resource={resource_class} image={image} depends={dependency} gate={gate}"
+        )
+        previous = step.state
 
 
 def _resolve_submit_registry(registry: str, project: str) -> str:
@@ -1791,16 +2141,13 @@ def _stage_npa_src_for_submit(
     credential_values: dict[str, str] | None = None,
     project: str = "",
     run_id: str = "workflow",
+    force: bool = False,
 ) -> str:
     """Upload once, then durably record the exact ``NPA_SRC_S3_URI``."""
     from npa.clients.config import ConfigError, persist_workflow_src_s3_uri
     from npa.orchestration.npa_workflow.src_staging import (
         SrcStagingError,
         stage_npa_source,
-    )
-    from npa.orchestration.npa_workflow.submission_state import (
-        submission_lock,
-        update_submission_state,
     )
 
     bucket = str(s3_bucket or spec_config.get("bucket", "") or "").strip()
@@ -1811,33 +2158,21 @@ def _stage_npa_src_for_submit(
         )
         return ""
     try:
-        with submission_lock(project or "default", run_id):
-            uri = stage_npa_source(
-                bucket=bucket,
-                endpoint_url=s3_endpoint,
-                aws_access_key_id=(credential_values or {}).get(
-                    "AWS_ACCESS_KEY_ID", ""
-                ),
-                aws_secret_access_key=(credential_values or {}).get(
-                    "AWS_SECRET_ACCESS_KEY", ""
-                ),
-                on_status=lambda message: typer.echo(f"  {message}", err=True),
-            )
-            persist_workflow_src_s3_uri(uri, project or None)
-            fingerprint = uri.rstrip("/").rsplit("/", 1)[-1]
-            update_submission_state(
-                project or "default",
-                run_id,
-                {
-                    "source": {
-                        "status": "verified",
-                        "uri": uri,
-                        "fingerprint": fingerprint,
-                    }
-                },
-                locked=True,
-            )
-            return uri
+        uri = stage_npa_source(
+            bucket=bucket,
+            endpoint_url=s3_endpoint,
+            aws_access_key_id=(credential_values or {}).get("AWS_ACCESS_KEY_ID", ""),
+            aws_secret_access_key=(credential_values or {}).get(
+                "AWS_SECRET_ACCESS_KEY", ""
+            ),
+            on_status=lambda message: typer.echo(f"  {message}", err=True),
+            force=force,
+        )
+        # This project-level cache is content-addressed and safe to update before
+        # the run exists.  Do not create a run submission ledger here: upload
+        # failure must leave no evidence that a managed job was reserved.
+        persist_workflow_src_s3_uri(uri, project or None)
+        return uri
     except (ConfigError, SrcStagingError) as exc:
         _fail(str(exc))
         return ""
@@ -1991,6 +2326,7 @@ def _submit_prerequisites(
     s3_endpoint: str = "",
     s3_access_key_id: str = "",
     s3_secret_access_key: str = "",
+    requires_npa_source: bool = True,
     source_staging_planned: bool = False,
 ) -> list[tuple[str, str]]:
     """Return ``[(missing, remedy)]`` for an npa.workflow submit.
@@ -2028,7 +2364,12 @@ def _submit_prerequisites(
     # every task to SkyPilot's default image, so it needs the source too.
     image_value = str(image or "").strip().lower()
     image_pins_tasks = bool(image_value) and image_value not in {"none", "default", "-"}
-    if not image_pins_tasks and not resolve_src_s3_uri() and not source_staging_planned:
+    if (
+        requires_npa_source
+        and not image_pins_tasks
+        and not resolve_src_s3_uri()
+        and not source_staging_planned
+    ):
         missing.append(
             (
                 "npa source for image-less steps (NPA_SRC_S3_URI is unset)",
@@ -2833,19 +3174,31 @@ def _manifest_pending_status(
         project=project,
         failure_threshold=startup_failure_threshold,
     )
+    launch_raw = resolution.receipt.get("launch")
+    launch_record = launch_raw if isinstance(launch_raw, dict) else {}
     if not job_id and not task_rows:
-        payload["status"] = "MANIFEST_PENDING"
+        if str(launch_record.get("status") or "").lower() == "launching":
+            payload["status"] = "PARTIAL_SUBMISSION"
+            payload["submission_state"] = "SUBMISSION_UNVERIFIED"
+        else:
+            payload["status"] = "NOT_SUBMITTED"
+            payload["lifecycle_state"] = "PLAN_ONLY"
+            payload["submission_state"] = "NOT_SUBMITTED"
     payload.update(
         {
             "run_prefix_uri": resolution.run_prefix_uri,
             "manifest_uri": resolution.manifest_uri,
-            "manifest_state": "pending",
-            "manifest_pending": True,
+            "manifest_state": ("pending" if job_id or task_rows else "absent"),
+            "manifest_pending": bool(job_id or task_rows),
             "resolution_source": resolution.source,
             "resolution_checks": resolution.checks_payload(),
             "verification": "found",
             "diagnostics": [
-                "Run found; final workflow manifest is pending.",
+                (
+                    "Run found; final workflow manifest is pending."
+                    if job_id or task_rows
+                    else "Run identity exists, but no managed-job submission evidence exists."
+                ),
                 *diagnostics,
             ],
         }
@@ -2870,23 +3223,33 @@ def _manifest_pending_status(
     elif verification_errors:
         verification_status = VERIFICATION_UNAVAILABLE
         reason = "; ".join(verification_errors)
+    elif str(payload.get("status") or "").upper() == "NOT_SUBMITTED":
+        # Exact planning/reservation evidence plus the absence of a submission
+        # receipt is the state being reported, not a failed live job query.
+        verification_status = VERIFIED
+        reason = ""
     elif job_id or resolution.managed_job is not None:
         verification_status = VERIFIED
         reason = ""
     else:
         verification_status = VERIFICATION_UNAVAILABLE
         reason = "no exact managed-job identity is available for live verification"
-    return apply_verification(
+    result = apply_verification(
         payload,
         status=verification_status,
         target=job_id or resolution.manifest_uri,
-        last_known_state=str(payload.get("status") or "MANIFEST_PENDING"),
+        last_known_state=str(payload.get("status") or "NOT_SUBMITTED"),
         last_known_at=str(resolution.receipt.get("updated_at") or ""),
         last_known_source=resolution.source or "submission_receipt",
         reason=reason,
         retry_command=retry_command,
         attempted_at=verification_now(),
     )
+    if str(payload.get("status") or "").upper() == "PARTIAL_SUBMISSION":
+        # Preserve the distinct automation state while the verification
+        # envelope explains why its managed-job identity is unavailable.
+        result["status"] = "PARTIAL_SUBMISSION"
+    return result
 
 
 def _stalled_job_blockers(
@@ -3404,6 +3767,15 @@ def status_cmd(
                     raise typer.Exit(code=1)
                 if normalized == "VERIFICATION_UNAVAILABLE":
                     raise typer.Exit(code=2)
+                if normalized in {"PARTIAL", "DEGRADED", "PARTIAL_SUBMISSION"}:
+                    raise typer.Exit(code=3)
+                if normalized in {"NOT_SUBMITTED", "PLAN_ONLY"}:
+                    raise typer.Exit(code=4)
+                if normalized.startswith("FAILED") or normalized in {
+                    "CANCELLED",
+                    "BLOCKED",
+                }:
+                    raise typer.Exit(code=1)
                 if not watch or _workflow_status_is_terminal(
                     str(result.get("status", ""))
                 ):

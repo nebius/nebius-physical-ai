@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -417,9 +418,7 @@ def _bucket_name_from_uri(bucket: str) -> str:
     return value.strip("/").split("/", 1)[0]
 
 
-def _collision_bucket_name(
-    bucket_name: str, *, tenant_id: str, project_id: str
-) -> str:
+def _collision_bucket_name(bucket_name: str, *, tenant_id: str, project_id: str) -> str:
     suffix = hashlib.sha256(
         f"{tenant_id}\0{project_id}\0{bucket_name}\0collision".encode("utf-8")
     ).hexdigest()[:8]
@@ -1642,7 +1641,7 @@ def _configured_env_lines() -> str:
     if projects:
         resolved = alias if alias in projects else next(iter(projects))
         stanza = projects.get(resolved) or {}
-        lines.append(f"NPA_PROJECT_ALIAS={resolved}")
+        lines.append(f"NPA_PROJECT_ALIAS={shlex.quote(resolved)}")
         for name, key in (
             ("NPA_PROJECT_ID", "project_id"),
             ("NPA_TENANT_ID", "tenant_id"),
@@ -1651,7 +1650,7 @@ def _configured_env_lines() -> str:
         ):
             value = str((stanza or {}).get(key, "") or "")
             if value:
-                lines.append(f"{name}={value}")
+                lines.append(f"{name}={shlex.quote(value)}")
     try:
         credentials = load_credentials(environ={})
     except Exception:  # noqa: BLE001
@@ -1659,15 +1658,18 @@ def _configured_env_lines() -> str:
     if credentials is not None:
         bucket_uri = str(credentials.s3_bucket or "")
         if bucket_uri:
-            lines.append(f"NPA_BUCKET_URI={bucket_uri}")
+            lines.append(f"NPA_BUCKET_URI={shlex.quote(bucket_uri)}")
             lines.append(
-                f"NPA_BUCKET={bucket_uri.removeprefix('s3://').strip('/').split('/', 1)[0]}"
+                "NPA_BUCKET="
+                + shlex.quote(
+                    bucket_uri.removeprefix("s3://").strip("/").split("/", 1)[0]
+                )
             )
         if credentials.s3_endpoint:
-            lines.append(f"NPA_S3_ENDPOINT={credentials.s3_endpoint}")
+            lines.append(f"NPA_S3_ENDPOINT={shlex.quote(credentials.s3_endpoint)}")
     context = _saved_kube_context()
     if context:
-        lines.append(f"NPA_KUBE_CONTEXT={context}")
+        lines.append(f"NPA_KUBE_CONTEXT={shlex.quote(context)}")
     return "\n".join(lines)
 
 
@@ -2079,23 +2081,32 @@ def _configure_impl(
         persisted = list(report["persisted"])
         typer.echo(
             "Credential environment sources detected: "
-            + (", ".join(report["detected"]) if report["detected"] else "none")
+            + (", ".join(report["detected"]) if report["detected"] else "none"),
+            err=env_output,
         )
         typer.echo(
             "Credential fields persisted (values redacted): "
             + (", ".join(persisted) if persisted else "none")
-            + f"; store={CREDENTIALS_PATH}"
+            + f"; store={CREDENTIALS_PATH}",
+            err=env_output,
         )
         for warning in report["warnings"]:
             typer.echo(f"Credential warning: {warning}", err=True)
     elif detected and interactive is not True:
-        typer.echo(f"Credential environment sources detected: {', '.join(detected)}")
+        typer.echo(
+            f"Credential environment sources detected: {', '.join(detected)}",
+            err=env_output,
+        )
         typer.echo(
             "Credential persistence: skipped. These values remain process-only; "
-            "use --save-env-credentials to make later agent/workflow commands durable."
+            "use --save-env-credentials to make later agent/workflow commands durable.",
+            err=env_output,
         )
     elif interactive is False:
-        typer.echo("Credential environment sources detected: none; persistence: none.")
+        typer.echo(
+            "Credential environment sources detected: none; persistence: none.",
+            err=env_output,
+        )
     already_written = "Environment credentials (values redacted)" if persisted else ""
     if env_output:
         # Machine-readable form first: runbooks eval this instead of asking the
@@ -2177,8 +2188,7 @@ def _transactional_configure(function):
         bound = signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
         if (
-            bool(bound.arguments.get("show"))
-            or bool(bound.arguments.get("env_output"))
+            bool(bound.arguments.get("show")) or bool(bound.arguments.get("env_output"))
         ) and not bool(bound.arguments.get("save_env_credentials")):
             return function(*args, **kwargs)
         if str(bound.arguments.get("forget_project") or "").strip():

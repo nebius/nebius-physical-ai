@@ -23,8 +23,8 @@ Options
 --cpu-preset  <str>  CPU node preset, matching `npa cluster up`.
 --gpu-platform  <str>  GPU node platform, matching `npa cluster up`.
 --gpu-preset  <str>  GPU node preset, matching `npa cluster up`.
---preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. Often the only way to get several GPUs; a reclaim stops them
-    mid-run.
+--preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard instance/disk/IP
+    quotas; a reclaim stops the node mid-run.
 --dry-run  Resolve settings and print intended actions only.
 --timeout  <int>  Terraform apply timeout in minutes. [default: 120]
 --accelerator  <str>  Requested SkyPilot accelerator (for example RTXPRO6000:1) to gate readiness.
@@ -54,7 +54,7 @@ Options
 | `--cpu-preset` | <str>  CPU node preset, matching `npa cluster up`. |
 | `--gpu-platform` | <str>  GPU node platform, matching `npa cluster up`. |
 | `--gpu-preset` | <str>  GPU node preset, matching `npa cluster up`. |
-| `--preemptible` | --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. Often the only way to get several GPUs; a reclaim stops them mid-run. |
+| `--preemptible` | --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard instance/disk/IP quotas; a reclaim stops the node mid-run. |
 | `--dry-run` | Resolve settings and print intended actions only. |
 | `--timeout` | <int>  Terraform apply timeout in minutes. [default: 120] |
 | `--accelerator` | <str>  Requested SkyPilot accelerator (for example RTXPRO6000:1) to gate readiness. |

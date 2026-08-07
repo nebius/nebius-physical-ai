@@ -28,6 +28,24 @@ def _successful_storage_probe(monkeypatch):
             cleanup_succeeded=True,
         ),
     )
+    from npa import provisioning_preflight
+    from npa.provisioning_preflight import QuotaObservation
+
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "read_provider_quotas",
+        lambda _tenant, _region, names: {
+            name: QuotaObservation(name=name, used=0, limit=100, state="known")
+            for name in names
+        },
+    )
+    from npa.provisioning_preflight import ExistingCapacity
+
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "discover_existing_capacity",
+        lambda **_kwargs: ExistingCapacity(),
+    )
 
 
 def _write_runtime(tmp_path: Path, monkeypatch) -> None:
@@ -73,7 +91,9 @@ def _write_runtime(tmp_path: Path, monkeypatch) -> None:
     )
 
 
-def test_provision_if_absent_dry_run_reports_actions(tmp_path: Path, monkeypatch) -> None:
+def test_provision_if_absent_dry_run_reports_actions(
+    tmp_path: Path, monkeypatch
+) -> None:
     _write_runtime(tmp_path, monkeypatch)
     kubeconfig = tmp_path / "missing-kubeconfig"
 
@@ -84,10 +104,55 @@ def test_provision_if_absent_dry_run_reports_actions(tmp_path: Path, monkeypatch
         dry_run=True,
     )
 
-    assert result.status == "ok"
+    assert result.status == "ready"
     assert "s3:dry-run ensure writable bucket bucket" in result.actions
-    assert "k8s:dry-run terraform apply deploy/cluster" in result.actions
+    assert any(
+        action.startswith("k8s:dry-run terraform apply deploy/cluster")
+        for action in result.actions
+    )
     assert result.storage_bucket == "s3://bucket/checkpoints/"
+
+
+def test_quota_blocker_reaches_no_storage_or_cluster_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa import provisioning_preflight
+    from npa.provisioning_preflight import (
+        INSTANCE_QUOTA,
+        PreflightBlockedError,
+        QuotaObservation,
+    )
+
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "read_provider_quotas",
+        lambda _tenant, _region, names: {
+            name: QuotaObservation(
+                name=name,
+                used=10 if name == INSTANCE_QUOTA else 0,
+                limit=10 if name == INSTANCE_QUOTA else 100,
+                state="known",
+            )
+            for name in names
+        },
+    )
+    storage_probe_calls: list[dict[str, object]] = []
+    cluster_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "npa.clients.storage_validation.probe_storage_write",
+        lambda **kwargs: storage_probe_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd",
+        lambda **kwargs: cluster_calls.append(kwargs),
+    )
+
+    with pytest.raises(PreflightBlockedError, match="compute.instance.count"):
+        provisioning.provision_if_absent(project="proj")
+
+    assert storage_probe_calls == []
+    assert cluster_calls == []
 
 
 def test_provision_if_absent_reuses_kubeconfig_and_ensures_bucket(
@@ -147,6 +212,80 @@ def test_reused_cluster_still_waits_for_skypilot_gpu_readiness(
     assert any("SkyPilot discovery=ready" in action for action in result.actions)
 
 
+def test_green_preflight_rolls_back_only_new_cluster_on_readiness_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+    from npa.provisioning_journal import current_operation
+
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "new-kubeconfig"
+
+    def create_cluster(**_kwargs) -> None:
+        operation = current_operation()
+        assert operation is not None
+        operation.transition("resource-created")
+        operation.record_resource(
+            resource_type="managed_kubernetes_cluster",
+            requested_name="npa-cluster",
+            provider_id="cluster-created-by-test-operation",
+            ownership="created_by_this_operation",
+            ownership_source="terraform-output-and-state",
+            project_id="project-1",
+        )
+
+    monkeypatch.setattr("npa.cli.cluster.terraform_lifecycle.up_cmd", create_cluster)
+    monkeypatch.setattr(
+        k8s_gpu_catalog,
+        "wait_for_kubernetes_accelerators",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            k8s_gpu_catalog.KubernetesGpuCatalogError("GPU not discoverable")
+        ),
+    )
+    down = mocker.patch("npa.cli.cluster.terraform_lifecycle.down_cmd")
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=kubeconfig,
+        accelerator="RTXPRO6000:1",
+    )
+
+    assert result.status == "partial"
+    assert result.gpu_readiness == "timeout"
+    down.assert_called_once()
+    assert down.call_args.kwargs["cluster_id"] == "cluster-created-by-test-operation"
+    assert any("rollback:removed only cluster resources" in a for a in result.actions)
+
+
+def test_readiness_failure_preserves_preexisting_cluster_and_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    _write_runtime(tmp_path, monkeypatch)
+    kubeconfig = tmp_path / "existing-kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        k8s_gpu_catalog,
+        "wait_for_kubernetes_accelerators",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            k8s_gpu_catalog.KubernetesGpuCatalogError("GPU not discoverable")
+        ),
+    )
+    down = mocker.patch("npa.cli.cluster.terraform_lifecycle.down_cmd")
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=kubeconfig,
+        accelerator="RTXPRO6000:1",
+    )
+
+    assert result.status == "partial"
+    assert kubeconfig.is_file()
+    assert result.storage_bucket == "s3://bucket/checkpoints/"
+    down.assert_not_called()
+
+
 def test_provision_if_absent_cli_exits_non_zero_on_a_partial_run(mocker) -> None:
     """Exiting 0 with warnings made the next submit the place the failure appeared."""
     from npa.cli.main import app
@@ -185,7 +324,10 @@ def test_provision_if_absent_cli_prints_the_kubeconfig_export(mocker) -> None:
     result = runner.invoke(app, ["provision-if-absent", "--project", "proj"])
 
     assert result.exit_code == 0
-    assert "export KUBECONFIG=/home/op/.npa/clusters/npa-cluster/kubeconfig" in result.output
+    assert (
+        "export KUBECONFIG=/home/op/.npa/clusters/npa-cluster/kubeconfig"
+        in result.output
+    )
 
 
 def test_provision_blocks_kubernetes_when_storage_reconciliation_fails(
@@ -235,7 +377,7 @@ def test_provision_dry_run_recognizes_interrupted_storage_setup(
         project="proj", dry_run=True, skip_k8s=True
     )
 
-    assert result.status == "ok"
+    assert result.status == "ready"
     assert "s3:dry-run reconcile writable bucket bucket" in result.actions
 
 

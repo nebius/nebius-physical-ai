@@ -10,6 +10,7 @@ from npa.cli.main import app
 from npa.orchestration.npa_workflow.deploy import (
     DeployTarget,
     ensure_infra_present,
+    plan_infra_present,
     parse_deploy_targets,
 )
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
@@ -35,7 +36,11 @@ def test_parse_targets_bool_and_mapping() -> None:
     spec = _spec(
         {
             "cpu": {"cloud": "kubernetes", "cpus": 4},
-            "gpu-a": {"cloud": "kubernetes", "accelerators": "RTXPRO6000:1", "deployIfAbsent": True},
+            "gpu-a": {
+                "cloud": "kubernetes",
+                "accelerators": "RTXPRO6000:1",
+                "deployIfAbsent": True,
+            },
             "gpu-b": {
                 "cloud": "kubernetes",
                 "accelerators": "H100:1",
@@ -53,6 +58,13 @@ def test_parse_targets_bool_and_mapping() -> None:
     assert targets["gpu-a"].cluster_name == "npa-cluster"
     assert targets["gpu-a"].resolved_context == "npa-cluster"
     assert targets["gpu-a"].skip_s3 is True
+    assert targets["gpu-a"].cpu_nodes == 1
+    assert targets["gpu-a"].cpu_platform == "cpu-d3"
+    assert targets["gpu-a"].cpu_preset == "8vcpu-32gb"
+    assert targets["gpu-a"].gpu_nodes == 1
+    assert targets["gpu-a"].gpu_platform == "gpu-rtx6000"
+    assert targets["gpu-a"].gpu_preset == "1gpu-24vcpu-218gb"
+    assert targets["gpu-a"].preemptible is False
     assert targets["gpu-b"].cluster_name == "npa-rtxpro-mk8s"
     assert targets["gpu-b"].context == "npa-rtxpro-mk8s"
     assert targets["gpu-b"].project == "default"
@@ -74,11 +86,19 @@ def test_ensure_infra_present_dedupes_by_context_and_returns_records() -> None:
 
     def fake_provisioner(**kwargs: Any) -> Any:
         calls.append(kwargs)
-        return SimpleNamespace(status="ok", actions=["k8s:ensured terraform cluster npa-rtxpro-mk8s"], warnings=[])
+        return SimpleNamespace(
+            status="ok",
+            actions=["k8s:ensured terraform cluster npa-rtxpro-mk8s"],
+            warnings=[],
+        )
 
     targets = [
-        DeployTarget(profile="gpu-a", cluster_name="npa-rtxpro-mk8s", context="npa-rtxpro-mk8s"),
-        DeployTarget(profile="gpu-b", cluster_name="npa-rtxpro-mk8s", context="npa-rtxpro-mk8s"),
+        DeployTarget(
+            profile="gpu-a", cluster_name="npa-rtxpro-mk8s", context="npa-rtxpro-mk8s"
+        ),
+        DeployTarget(
+            profile="gpu-b", cluster_name="npa-rtxpro-mk8s", context="npa-rtxpro-mk8s"
+        ),
     ]
     results = ensure_infra_present(targets, provisioner=fake_provisioner)
     # Same context => provisioned once.
@@ -87,6 +107,42 @@ def test_ensure_infra_present_dedupes_by_context_and_returns_records() -> None:
     assert results[0]["context"] == "npa-rtxpro-mk8s"
     assert results[0]["status"] == "ok"
     assert results[0]["actions"]
+    assert calls[0]["cpu_preset"] == "8vcpu-32gb"
+    assert calls[0]["gpu_preset"] == "1gpu-24vcpu-218gb"
+
+
+def test_planning_and_execution_consume_the_same_resolved_plan(monkeypatch) -> None:
+    captured: list[dict[str, Any]] = []
+    plan = SimpleNamespace(
+        decision="ready",
+        reasons=(),
+        quotas=(),
+        topology=SimpleNamespace(to_dict=lambda: {"cpu_preset": "8vcpu-32gb"}),
+        assert_mutation_ready=lambda: None,
+    )
+
+    def resolve(**kwargs):
+        captured.append(kwargs)
+        return plan
+
+    monkeypatch.setattr("npa.provisioning.resolve_provision_plan", resolve)
+    target = DeployTarget(profile="gpu")
+
+    plans = plan_infra_present([target], mutation=True)
+    provisioned: list[dict[str, Any]] = []
+    ensure_infra_present(
+        [target],
+        resolved_plans=plans,
+        provisioner=lambda **kwargs: (
+            provisioned.append(kwargs)
+            or SimpleNamespace(status="ok", actions=[], warnings=[])
+        ),
+    )
+
+    assert captured[0]["cpu_preset"] == "8vcpu-32gb"
+    assert captured[0]["gpu_preset"] == "1gpu-24vcpu-218gb"
+    assert captured[0]["mutation"] is True
+    assert provisioned[0]["_resolved_plan"] is plan
 
 
 def test_ensure_infra_present_dry_run_passthrough() -> None:
@@ -94,7 +150,11 @@ def test_ensure_infra_present_dry_run_passthrough() -> None:
 
     def fake_provisioner(**kwargs: Any) -> Any:
         seen.update(kwargs)
-        return SimpleNamespace(status="ok", actions=["k8s:dry-run terraform apply deploy/cluster"], warnings=[])
+        return SimpleNamespace(
+            status="ok",
+            actions=["k8s:dry-run terraform apply deploy/cluster"],
+            warnings=[],
+        )
 
     results = ensure_infra_present(
         [DeployTarget(profile="gpu", cluster_name="c1")],
@@ -110,7 +170,9 @@ def test_ensure_infra_present_wraps_provisioner_errors() -> None:
         raise RuntimeError("terraform exploded")
 
     with pytest.raises(NpaWorkflowError) as excinfo:
-        ensure_infra_present([DeployTarget(profile="gpu", cluster_name="c1")], provisioner=boom)
+        ensure_infra_present(
+            [DeployTarget(profile="gpu", cluster_name="c1")], provisioner=boom
+        )
     assert "deployIfAbsent failed" in str(excinfo.value)
 
 

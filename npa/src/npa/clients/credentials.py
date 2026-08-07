@@ -52,6 +52,15 @@ UK_SOUTH1_STORAGE_WARNING = (
 )
 
 
+class CredentialStoreError(ValueError):
+    """A saved credential store exists but cannot be used safely."""
+
+    def __init__(self, kind: str, path: Path, detail: str) -> None:
+        self.kind = kind
+        self.path = path
+        super().__init__(f"Saved credential store is {kind} ({path}): {detail}")
+
+
 @dataclass
 class CredentialsConfig:
     tokens: dict[str, str] = field(default_factory=dict)
@@ -96,6 +105,29 @@ def resolve_token_factory_key(tokens: Mapping[str, str]) -> str:
 def _is_readable_by_other_users(path: Path) -> bool:
     mode = path.stat().st_mode
     return bool(mode & (stat.S_IRWXG | stat.S_IRWXO))
+
+
+def _read_credentials_document(path: Path) -> dict[str, Any]:
+    """Read a credential document with explicit unreadable/malformed outcomes."""
+
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except yaml.YAMLError as exc:
+        # Parser diagnostics may repeat the offending scalar, which can itself
+        # be a secret. Preserve the typed outcome without echoing file content.
+        raise CredentialStoreError(
+            "malformed", path, "YAML could not be parsed"
+        ) from exc
+    except OSError as exc:
+        raise CredentialStoreError("unreadable", path, str(exc)) from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise CredentialStoreError(
+            "malformed", path, "top-level YAML value must be a mapping"
+        )
+    return data
 
 
 def _read_file_tokens(path: Path) -> dict[str, str]:
@@ -233,14 +265,18 @@ def _read_file_storage(path: Path) -> dict[str, str]:
         setup = data.get("storage_setup", {})
         projects = setup.get("projects", {}) if isinstance(setup, dict) else {}
         bucket_name = _first_nonempty(storage, "bucket", "s3_bucket")
-        matching_projects = [
-            str(candidate_project)
-            for candidate_project, record in projects.items()
-            if isinstance(record, dict)
-            and record.get("status") == "complete"
-            and _first_nonempty(record, "bucket_name").strip()
-            == bucket_name.removeprefix("s3://").strip("/")
-        ] if isinstance(projects, dict) else []
+        matching_projects = (
+            [
+                str(candidate_project)
+                for candidate_project, record in projects.items()
+                if isinstance(record, dict)
+                and record.get("status") == "complete"
+                and _first_nonempty(record, "bucket_name").strip()
+                == bucket_name.removeprefix("s3://").strip("/")
+            ]
+            if isinstance(projects, dict)
+            else []
+        )
         if len(matching_projects) == 1:
             recorded_project_id = matching_projects[0]
             recorded_ownership = "storage-setup-record"
@@ -305,6 +341,10 @@ def load_credentials(
     file_storage: dict[str, str] = {}
 
     if credentials_path.exists():
+        # Validate once up front so a present-but-corrupt store can never look
+        # equivalent to a genuinely missing credential. The field readers below
+        # retain their compatibility behavior for optional malformed sections.
+        _read_credentials_document(credentials_path)
         if _is_readable_by_other_users(credentials_path):
             warnings.append(PERMISSIONS_WARNING)
         file_tokens = _read_file_tokens(credentials_path)
@@ -606,10 +646,7 @@ def update_private_yaml(
     with _private_store_lock(path):
         existing: dict[str, Any] = {}
         if path.exists():
-            with path.open(encoding="utf-8") as handle:
-                loaded = yaml.safe_load(handle)
-            if isinstance(loaded, dict):
-                existing = loaded
+            existing = _read_credentials_document(path)
         updated = updater(existing)
         return write_private_yaml(path, updated)
 

@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.clients.config import SSHConfig
 from npa.clients.credentials import (
+    CredentialStoreError,
     CredentialsConfig,
     load_credentials,
     persist_supported_env_credentials,
@@ -284,6 +285,71 @@ def test_persist_partial_s3_credentials_reports_names_not_values(
     assert secret not in repr(report)
 
 
+def test_saved_environment_credentials_feed_workflow_and_agent_after_env_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Health/submit/deploy share the exact persisted credential resolver."""
+
+    from npa.cli.agent import _resolve_deploy_llm_credentials
+    from npa.cli.agent_preflight import _agent_token_factory_result
+    from npa.clients import credentials as credentials_module
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        resolve_submit_credentials,
+    )
+
+    path = tmp_path / ".npa" / "credentials.yaml"
+    saved = {
+        "HF_TOKEN": "hf_saved_test_value",
+        "NGC_API_KEY": "nvapi-saved-test-value",
+        "NEBIUS_TOKEN_FACTORY_KEY": "tf_saved_test_value",
+        "AWS_ACCESS_KEY_ID": "saved-access",
+        "AWS_SECRET_ACCESS_KEY": "saved-secret",
+        "NPA_STORAGE_ENDPOINT": "https://storage.example.invalid",
+        "NPA_CHECKPOINT_BUCKET": "s3://saved-bucket/checkpoints/",
+    }
+    persist_supported_env_credentials(path=path, environ=saved)
+    for key in saved:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", path)
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_project_storage",
+        lambda project=None: SimpleNamespace(
+            checkpoint_bucket="",
+            endpoint_url="",
+            aws_access_key_id="",
+            aws_secret_access_key="",
+        ),
+    )
+
+    workflow = resolve_submit_credentials(
+        project="isolated",
+        requested=(
+            "HF_TOKEN",
+            "NGC_API_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        environ={},
+    )
+    agent_key, _model = _resolve_deploy_llm_credentials()
+
+    assert workflow.missing == ()
+    assert workflow.secret_values == {
+        key: saved[key]
+        for key in (
+            "HF_TOKEN",
+            "NGC_API_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        )
+    }
+    assert agent_key == saved["NEBIUS_TOKEN_FACTORY_KEY"]
+    assert _agent_token_factory_result(agent_key).status == "PASS"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
 def test_persist_env_credentials_refuses_symlink_destination(tmp_path: Path) -> None:
     destination = tmp_path / "credentials.yaml"
     destination.symlink_to(tmp_path / "elsewhere.yaml")
@@ -296,7 +362,9 @@ def test_persist_env_credentials_refuses_symlink_destination(tmp_path: Path) -> 
     assert not (tmp_path / "elsewhere.yaml").exists()
 
 
-def test_private_store_preflight_does_not_create_an_absent_store(tmp_path: Path) -> None:
+def test_private_store_preflight_does_not_create_an_absent_store(
+    tmp_path: Path,
+) -> None:
     destination = tmp_path / "protected" / "credentials.yaml"
 
     assert preflight_private_yaml_store(destination) == destination
@@ -497,6 +565,38 @@ def test_load_credentials_missing_file_returns_empty(tmp_path: Path) -> None:
 
     assert resolved.tokens == {}
     assert resolved.warnings == []
+
+
+def test_load_credentials_distinguishes_malformed_store(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text("tokens: [unterminated\n", encoding="utf-8")
+
+    with pytest.raises(CredentialStoreError) as raised:
+        load_credentials(path=credentials_path, environ={})
+
+    assert raised.value.kind == "malformed"
+    assert "malformed" in str(raised.value)
+
+
+def test_load_credentials_distinguishes_unreadable_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text("{}\n", encoding="utf-8")
+    original_open = Path.open
+
+    def deny_target(path: Path, *args, **kwargs):
+        if path == credentials_path:
+            raise PermissionError("permission denied")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", deny_target)
+
+    with pytest.raises(CredentialStoreError) as raised:
+        load_credentials(path=credentials_path, environ={})
+
+    assert raised.value.kind == "unreadable"
+    assert "permission denied" in str(raised.value)
 
 
 def test_warn_if_hf_token_missing_uses_standard_message() -> None:

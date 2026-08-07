@@ -88,24 +88,18 @@ def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
 ) -> None:
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
     spec = {**SPEC}
-    spec["resources"] = {
-        "gpu": {"cloud": "kubernetes", "accelerators": "RTXPRO6000:2"}
-    }
+    spec["resources"] = {"gpu": {"cloud": "kubernetes", "accelerators": "RTXPRO6000:2"}}
     path = tmp_path / "two-gpu.yaml"
     path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
 
     with pytest.raises(Exception) as excinfo:
-        workflow_cli._resolve_submit_accelerators(
-            path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=True
-        )
+        workflow_cli._resolve_submit_accelerators(path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=True)
 
     assert excinfo.type.__name__ == "Exit"
 
 
-def test_an_explicit_env_override_is_left_alone(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
-) -> None:
+def test_an_explicit_env_override_is_left_alone(monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str) -> None:
     monkeypatch.setenv("NPA_WORKFLOW_GPU_ACCELERATOR", "H100:1")
     called = False
 
@@ -151,44 +145,41 @@ def test_an_unreachable_cluster_times_out_without_deleting_capacity(
     assert "Capacity was left running" in capsys.readouterr().err
 
 
-def test_resolution_is_skipped_when_disabled(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
-) -> None:
+def test_resolution_is_skipped_when_disabled(monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str) -> None:
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
 
     assert (
-        workflow_cli._resolve_submit_accelerators(
-            spec_path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=False
-        )
+        workflow_cli._resolve_submit_accelerators(spec_path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=False)
         == {}
     )
 
 
-def test_workflow_gpus_prints_the_export_line(
-    monkeypatch: pytest.MonkeyPatch, sky_bin: str
-) -> None:
+def test_workflow_gpus_prints_the_export_line(monkeypatch: pytest.MonkeyPatch, sky_bin: str) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
 
     result = runner.invoke(app, ["workbench", "workflow", "gpus", "--context", "npa-cluster"])
 
     assert result.exit_code == 0, result.output
-    assert (
-        "export NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-        in result.output
-    )
+    assert "export NPA_WORKFLOW_GPU_ACCELERATOR=RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in result.output
     assert "requestable per node 1" in result.output
 
 
-def test_workflow_gpus_resolves_a_spec(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
-) -> None:
+def test_workflow_gpus_resolves_a_spec(monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
 
     result = runner.invoke(
         app,
-        ["workbench", "workflow", "gpus", "--context", "npa-cluster", "--spec", str(spec_path)],
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(spec_path),
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -209,9 +200,7 @@ def _stub_pull(monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]) ->
 NEBIUS_IMAGE = "cr.us-central1.nebius.cloud/u000/npa-cosmos2-transfer:2.5.1"
 
 
-def test_a_forbidden_nebius_image_blocks_submit(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path
-) -> None:
+def test_a_forbidden_nebius_image_blocks_submit(monkeypatch: pytest.MonkeyPatch, spec_path: Path) -> None:
     _stub_pull(
         monkeypatch,
         [
@@ -226,16 +215,12 @@ def test_a_forbidden_nebius_image_blocks_submit(
     )
 
     with pytest.raises(Exception) as excinfo:
-        workflow_cli._preflight_submit_images(
-            spec_path, options=object(), assume_decision="", enabled=True
-        )
+        workflow_cli._preflight_submit_images(spec_path, options=object(), assume_decision="", enabled=True)
 
     assert excinfo.type.__name__ == "Exit"
 
 
-def test_a_third_party_registry_failure_blocks_submit(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path
-) -> None:
+def test_a_third_party_registry_failure_blocks_submit(monkeypatch: pytest.MonkeyPatch, spec_path: Path) -> None:
     _stub_pull(
         monkeypatch,
         [
@@ -249,51 +234,37 @@ def test_a_third_party_registry_failure_blocks_submit(
     )
 
     with pytest.raises(Exception) as excinfo:
-        workflow_cli._preflight_submit_images(
-            spec_path, options=object(), assume_decision="", enabled=True
-        )
+        workflow_cli._preflight_submit_images(spec_path, options=object(), assume_decision="", enabled=True)
     assert excinfo.type.__name__ == "Exit"
 
 
 def test_pullable_images_pass(
     monkeypatch: pytest.MonkeyPatch, spec_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _stub_pull(
-        monkeypatch, [ImagePullCheck(image=NEBIUS_IMAGE, status="ok", http_status=200)]
-    )
+    _stub_pull(monkeypatch, [ImagePullCheck(image=NEBIUS_IMAGE, status="ok", http_status=200)])
 
-    workflow_cli._preflight_submit_images(
-        spec_path, options=object(), assume_decision="", enabled=True
-    )
+    workflow_cli._preflight_submit_images(spec_path, options=object(), assume_decision="", enabled=True)
 
     assert "1 image(s) pullable" in capsys.readouterr().err
 
 
-def test_preflight_is_skipped_when_disabled(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path
-) -> None:
+def test_preflight_is_skipped_when_disabled(monkeypatch: pytest.MonkeyPatch, spec_path: Path) -> None:
     def explode(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202 - must not run
         raise AssertionError("preflight ran while disabled")
 
-    monkeypatch.setattr(
-        "npa.orchestration.skypilot.registry_preflight.check_image_pulls", explode
-    )
+    monkeypatch.setattr("npa.orchestration.skypilot.registry_preflight.check_image_pulls", explode)
 
-    workflow_cli._preflight_submit_images(
-        spec_path, options=object(), assume_decision="", enabled=False
-    )
+    workflow_cli._preflight_submit_images(spec_path, options=object(), assume_decision="", enabled=False)
 
 
 def test_catalog_helper_reports_max_per_node() -> None:
-    catalog = KubernetesGpuCatalog(
-        quantities_by_accelerator={"H100": frozenset({1, 2, 8})}
-    )
+    catalog = KubernetesGpuCatalog(quantities_by_accelerator={"H100": frozenset({1, 2, 8})})
 
     assert catalog.max_per_node("H100") == 8
     assert catalog.max_per_node("A100") == 0
 
 
-def test_the_image_check_runs_before_any_provisioning() -> None:
+def test_image_and_capacity_checks_run_before_any_provisioning() -> None:
     """A registry missing the workbench images must cost no cluster time.
 
     The check only needs the registry and the --image overrides, never the
@@ -303,10 +274,11 @@ def test_the_image_check_runs_before_any_provisioning() -> None:
     import inspect
 
     source = inspect.getsource(workflow_cli.submit_cmd)
-    preflight_at = source.index("_preflight_submit_images(")
-    provision_at = source.index("if deploy_if_absent:")
+    capacity_at = source.index("resolved_deploy_plans = plan_infra_present(")
+    image_at = source.index("_preflight_submit_images(")
+    mutation_at = source.index("records = ensure_infra_present(")
 
-    assert preflight_at < provision_at
+    assert capacity_at < image_at < mutation_at
 
 
 def test_a_missing_workbench_image_carries_its_build_command(
@@ -318,12 +290,20 @@ def test_a_missing_workbench_image_carries_its_build_command(
     class Missing:
         def __call__(self, url, headers, timeout):  # noqa: ANN001 - test stub
             if "Authorization" not in headers:
-                return 401, {"www-authenticate": 'Bearer realm="https://cr.x/v2/token/",service="cr.x"'}, b""
+                return (
+                    401,
+                    {"www-authenticate": 'Bearer realm="https://cr.x/v2/token/",service="cr.x"'},
+                    b"",
+                )
             if "/v2/token/" in url:
                 import json as _json
 
                 return 200, {}, _json.dumps({"token": "t"}).encode()
-            return 404, {}, b'{"errors":[{"code":"MANIFEST_UNKNOWN","message":"unknown"}]}'
+            return (
+                404,
+                {},
+                b'{"errors":[{"code":"MANIFEST_UNKNOWN","message":"unknown"}]}',
+            )
 
     check = check_image_pull(
         "cr.eu-north1.nebius.cloud/e000/npa-cosmos-curate:some-old-tag",
@@ -351,10 +331,7 @@ def test_submit_checks_the_project_registry_not_the_first_party_default(
         lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "cr.us-central1.nebius.cloud/u00proj"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == "cr.us-central1.nebius.cloud/u00proj"
 
 
 def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -366,17 +343,16 @@ def test_an_explicit_registry_still_wins(monkeypatch: pytest.MonkeyPatch) -> Non
     assert workflow_cli._resolve_submit_registry("cr.explicit/x", "p") == "cr.explicit/x"
 
 
-def test_npa_registry_env_wins_over_project_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_npa_registry_env_wins_over_project_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
     monkeypatch.setattr(
         "npa.clients.config.resolve_container_registry",
         lambda project=None: "cr.us-central1.nebius.cloud/u00proj",
     )
 
-    assert (
-        workflow_cli._resolve_submit_registry("", "test-rtx")
-        == "ghcr.io/nebius/nebius-physical-ai"
-    )
+    assert workflow_cli._resolve_submit_registry("", "test-rtx") == "ghcr.io/nebius/nebius-physical-ai"
 
 
 def test_an_unreadable_config_falls_back_to_the_render_default(

@@ -9,7 +9,7 @@ import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 from urllib.parse import urlparse
 
 from npa.clients import config as config_module
@@ -39,6 +39,7 @@ class ProvisionIfAbsentResult:
     recovery_command: str = ""
     actions: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    preflight: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -53,14 +54,39 @@ def _transactional_provision(function):
             return function(*args, **kwargs)
         bound = signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
-        if bool(bound.arguments.get("dry_run")):
-            return function(*args, **kwargs)
         requested_project = bound.arguments.get("project")
-        alias, environment, storage, _registry = _resolve_project_runtime(requested_project)
+        alias, environment, storage, _registry = _resolve_project_runtime(
+            requested_project
+        )
         cluster_name = str(bound.arguments.get("cluster_name") or "npa-cluster")
         skip_k8s = bool(bound.arguments.get("skip_k8s"))
+        context = str(bound.arguments.get("context_name") or "").strip() or cluster_name
+        kubeconfig = bound.arguments.get("kubeconfig") or kubeconfig_file(context)
+        plan = bound.arguments.get("_resolved_plan") or _build_provision_plan(
+            alias=alias,
+            environment=environment,
+            cluster_name=cluster_name,
+            kubeconfig=Path(kubeconfig),
+            context=context,
+            skip_k8s=skip_k8s,
+            dry_run=bool(bound.arguments.get("dry_run")),
+            accelerator=str(bound.arguments.get("accelerator") or ""),
+            gpu_nodes=int(bound.arguments.get("gpu_nodes", -1)),
+            cpu_nodes=int(bound.arguments.get("cpu_nodes", -1)),
+            cpu_platform=str(bound.arguments.get("cpu_platform") or ""),
+            cpu_preset=str(bound.arguments.get("cpu_preset") or ""),
+            gpu_platform=str(bound.arguments.get("gpu_platform") or ""),
+            gpu_preset=str(bound.arguments.get("gpu_preset") or ""),
+            preemptible=bound.arguments.get("preemptible"),
+        )
+        kwargs["_resolved_plan"] = plan
+        if bool(bound.arguments.get("dry_run")):
+            return function(*args, **kwargs)
+        plan.assert_mutation_ready()
         resource_type = "storage" if skip_k8s else "cluster"
-        requested_name = _bucket_name(storage.checkpoint_bucket) if skip_k8s else cluster_name
+        requested_name = (
+            _bucket_name(storage.checkpoint_bucket) if skip_k8s else cluster_name
+        )
         resume = "npa provision-if-absent"
         if alias:
             resume += f" --project {alias}"
@@ -87,25 +113,55 @@ def _transactional_provision(function):
                 else ""
             ),
         )
+        operation.record_preflight_plan(plan.to_dict())
         with operation_context(operation):
             operation.transition("mutating")
             try:
                 result = function(*args, **kwargs)
             except BaseException as exc:
+                _rollback_owned_cluster(
+                    operation,
+                    project_alias=alias,
+                    context=cluster_name,
+                    terraform_dir=bound.arguments.get("terraform_dir"),
+                    kubeconfig=bound.arguments.get("kubeconfig"),
+                    timeout=int(bound.arguments.get("timeout") or 120),
+                )
                 if operation.read().get("phase") != "recovery-required":
-                    operation.transition("recovery-required", error=str(exc))
+                    if operation.read().get("phase") not in {
+                        "rolled-back",
+                        "rollback-incomplete",
+                    }:
+                        operation.transition("recovery-required", error=str(exc))
                 sys.stderr.write(emit_recovery_summary(operation) + "\n")
                 raise
             if result.status == "partial":
-                operation.transition(
-                    "recovery-required",
-                    error="; ".join(result.warnings),
+                rolled_back = _rollback_owned_cluster(
+                    operation,
+                    project_alias=alias,
+                    context=cluster_name,
+                    terraform_dir=bound.arguments.get("terraform_dir"),
+                    kubeconfig=bound.arguments.get("kubeconfig"),
+                    timeout=int(bound.arguments.get("timeout") or 120),
                 )
+                if rolled_back:
+                    result.actions.append(
+                        "rollback:removed only cluster resources created by this operation"
+                    )
+                elif operation.read().get("phase") not in {
+                    "rolled-back",
+                    "rollback-incomplete",
+                }:
+                    operation.transition(
+                        "recovery-required",
+                        error="; ".join(result.warnings),
+                    )
             else:
                 phase = str(operation.read().get("phase") or "")
                 if phase in {"mutating", "resource-created"}:
                     operation.transition("state-durable")
-                operation.commit()
+                if phase not in {"rolled-back", "rollback-incomplete"}:
+                    operation.commit()
             summary = operation.recovery_summary()
             result.operation_id = operation.operation_id
             result.operation_journal = str(operation.path)
@@ -140,6 +196,7 @@ def provision_if_absent(
     gpu_readiness_timeout: float = 600.0,
     gpu_readiness_poll_interval: float = 10.0,
     sky_bin: str = "",
+    _resolved_plan=None,
 ) -> ProvisionIfAbsentResult:
     """Ensure configured S3 and Kubernetes exist without deleting resources."""
     alias, environment, storage, registry = _resolve_project_runtime(project)
@@ -149,6 +206,32 @@ def provision_if_absent(
     warnings: list[str] = []
     k8s_ready = False
     gpu_readiness = "not-requested"
+    plan = _resolved_plan or _build_provision_plan(
+        alias=alias,
+        environment=environment,
+        cluster_name=cluster_name,
+        kubeconfig=Path(kubeconfig_path),
+        context=context,
+        skip_k8s=skip_k8s,
+        dry_run=dry_run,
+        accelerator=accelerator,
+        gpu_nodes=gpu_nodes,
+        cpu_nodes=cpu_nodes,
+        cpu_platform=cpu_platform,
+        cpu_preset=cpu_preset,
+        gpu_platform=gpu_platform,
+        gpu_preset=gpu_preset,
+        preemptible=preemptible,
+    )
+    topology = plan.topology
+    gpu_nodes = topology.gpu_nodes
+    cpu_nodes = topology.cpu_nodes
+    cpu_platform = topology.cpu_platform
+    cpu_preset = topology.cpu_preset
+    gpu_platform = topology.gpu_platform
+    gpu_preset = topology.gpu_preset
+    preemptible = topology.gpu_preemptible
+    actions.extend(_preflight_actions(plan))
 
     storage_ready = skip_s3
     storage_bucket = storage.checkpoint_bucket
@@ -236,7 +319,11 @@ def provision_if_absent(
                 for name, count in (("gpu_nodes", gpu_nodes), ("cpu_nodes", cpu_nodes))
                 if count >= 0
             ]
-            + ([f"preemptible={str(bool(preemptible)).lower()}"] if preemptible is not None else [])
+            + (
+                [f"preemptible={str(bool(preemptible)).lower()}"]
+                if preemptible is not None
+                else []
+            )
             + [
                 f"{name}={value.strip()}"
                 for name, value in (
@@ -303,7 +390,21 @@ def provision_if_absent(
         except (KubernetesGpuCatalogError, ValueError) as exc:
             gpu_readiness = "timeout"
             warnings.append(str(exc))
-            actions.append("gpu:capacity preserved; resume readiness without reprovisioning")
+            operation = current_operation()
+            created_cluster = bool(
+                operation
+                and any(
+                    isinstance(item, dict)
+                    and item.get("resource_type") == "managed_kubernetes_cluster"
+                    and item.get("ownership") == "created_by_this_operation"
+                    for item in operation.read().get("resources", [])
+                )
+            )
+            actions.append(
+                "gpu:new cluster will be transactionally rolled back"
+                if created_cluster
+                else "gpu:pre-existing capacity preserved; resume readiness without reprovisioning"
+            )
         else:
             gpu_readiness = "ready"
             actions.append(f"gpu:SkyPilot ready for {requested_accelerator}")
@@ -317,6 +418,8 @@ def provision_if_absent(
         actions.append(f"gpu:dry-run wait for SkyPilot {requested_accelerator}")
 
     status = "ok" if not warnings and (skip_s3 or storage_ready) else "partial"
+    if dry_run:
+        status = plan.decision
     return ProvisionIfAbsentResult(
         status=status,
         project=alias,
@@ -329,7 +432,191 @@ def provision_if_absent(
         gpu_readiness=gpu_readiness,
         actions=actions,
         warnings=warnings,
+        preflight=plan.to_dict(),
     )
+
+
+def _build_provision_plan(
+    *,
+    alias: str,
+    environment: EnvironmentConfig,
+    cluster_name: str,
+    kubeconfig: Path,
+    context: str,
+    skip_k8s: bool,
+    dry_run: bool,
+    accelerator: str,
+    gpu_nodes: int,
+    cpu_nodes: int,
+    cpu_platform: str,
+    cpu_preset: str,
+    gpu_platform: str,
+    gpu_preset: str,
+    preemptible: bool | None,
+):
+    from npa.provisioning_preflight import (
+        build_whole_path_plan,
+        discover_existing_capacity,
+        resolve_topology,
+    )
+
+    cluster_exists = skip_k8s or _has_cached_kubeconfig(context, kubeconfig)
+    requested = resolve_topology(
+        cluster_name=cluster_name,
+        accelerator=accelerator,
+        cpu_nodes=0 if skip_k8s else cpu_nodes,
+        gpu_nodes=0 if skip_k8s else gpu_nodes,
+        cpu_platform=cpu_platform,
+        cpu_preset=cpu_preset,
+        gpu_platform=gpu_platform,
+        gpu_preset=gpu_preset,
+        preemptible=preemptible,
+    )
+    checks = []
+    if skip_k8s:
+        existing_cpu_nodes = existing_gpu_nodes = 0
+    elif cluster_exists:
+        existing_cpu_nodes = requested.cpu_nodes
+        existing_gpu_nodes = requested.gpu_nodes
+    else:
+        existing = discover_existing_capacity(
+            project_id=str(getattr(environment, "project_id", "") or ""),
+            cluster_name=cluster_name,
+            cpu_platform=requested.cpu_platform,
+            cpu_preset=requested.cpu_preset,
+            gpu_platform=requested.gpu_platform,
+            gpu_preset=requested.gpu_preset,
+        )
+        existing_cpu_nodes = min(requested.cpu_nodes, existing.cpu_nodes)
+        existing_gpu_nodes = min(requested.gpu_nodes, existing.gpu_nodes)
+        checks.append(existing.check)
+    topology = resolve_topology(
+        cluster_name=cluster_name,
+        accelerator=accelerator,
+        cpu_nodes=requested.cpu_nodes,
+        gpu_nodes=requested.gpu_nodes,
+        existing_cpu_nodes=existing_cpu_nodes,
+        existing_gpu_nodes=existing_gpu_nodes,
+        cpu_platform=requested.cpu_platform,
+        cpu_preset=requested.cpu_preset,
+        gpu_platform=requested.gpu_platform,
+        gpu_preset=requested.gpu_preset,
+        preemptible=requested.gpu_preemptible,
+    )
+    return build_whole_path_plan(
+        project_alias=alias,
+        project_id=str(getattr(environment, "project_id", "") or ""),
+        tenant_id=str(getattr(environment, "tenant_id", "") or ""),
+        region=str(getattr(environment, "region", "") or ""),
+        topology=topology,
+        checks=checks,
+        mutation=not dry_run,
+    )
+
+
+def resolve_provision_plan(
+    *,
+    project: str | None = None,
+    cluster_name: str = "npa-cluster",
+    kubeconfig: Path | None = None,
+    context_name: str = "",
+    skip_k8s: bool = False,
+    accelerator: str = "",
+    gpu_nodes: int = -1,
+    cpu_nodes: int = -1,
+    cpu_platform: str = "",
+    cpu_preset: str = "",
+    gpu_platform: str = "",
+    gpu_preset: str = "",
+    preemptible: bool | None = None,
+    mutation: bool = False,
+):
+    """Resolve the immutable plan without creating journals or resources."""
+
+    alias, environment, _storage, _registry = _resolve_project_runtime(project)
+    context = context_name.strip() or cluster_name
+    kubeconfig_path = kubeconfig or kubeconfig_file(context)
+    return _build_provision_plan(
+        alias=alias,
+        environment=environment,
+        cluster_name=cluster_name,
+        kubeconfig=Path(kubeconfig_path),
+        context=context,
+        skip_k8s=skip_k8s,
+        dry_run=not mutation,
+        accelerator=accelerator,
+        gpu_nodes=gpu_nodes,
+        cpu_nodes=cpu_nodes,
+        cpu_platform=cpu_platform,
+        cpu_preset=cpu_preset,
+        gpu_platform=gpu_platform,
+        gpu_preset=gpu_preset,
+        preemptible=preemptible,
+    )
+
+
+def _preflight_actions(plan) -> list[str]:
+    topology = plan.topology
+    actions = [
+        "preflight:"
+        f"{plan.decision} cpu={topology.cpu_nodes}x{topology.cpu_platform}/{topology.cpu_preset} "
+        f"gpu={topology.gpu_nodes}x{topology.gpu_platform}/{topology.gpu_preset} "
+        f"preemptible={str(topology.gpu_preemptible).lower()} disks={topology.required_disks}"
+    ]
+    actions.extend(
+        "quota:"
+        f"{quota.name}:{quota.status} required={quota.required} used={quota.used} "
+        f"limit={quota.limit} available={quota.available} shortfall={quota.shortfall}"
+        for quota in plan.quotas
+    )
+    return actions
+
+
+def _rollback_owned_cluster(
+    operation: ProvisioningOperation,
+    *,
+    project_alias: str,
+    context: str,
+    terraform_dir: Path | None,
+    kubeconfig: Path | None,
+    timeout: int,
+) -> bool:
+    """Roll back only a cluster explicitly receipted as created by this operation."""
+
+    payload = operation.read()
+    owned = [
+        item
+        for item in payload.get("resources", [])
+        if isinstance(item, dict)
+        and item.get("ownership") == "created_by_this_operation"
+        and item.get("resource_type") == "managed_kubernetes_cluster"
+    ]
+    if not owned:
+        return False
+    operation.transition("rolling-back")
+    try:
+        from npa.cli.cluster.terraform_lifecycle import down_cmd
+
+        down_cmd(
+            terraform_dir=terraform_dir,
+            project=project_alias,
+            receipt="",
+            project_id="",
+            tenant_id="",
+            region="",
+            cluster_id=str(owned[0].get("provider_id") or ""),
+            context_name=context,
+            keep_local_state=False,
+            force=True,
+            timeout=timeout,
+            kubeconfig=kubeconfig,
+            output_json=False,
+        )
+    except BaseException as exc:
+        operation.transition("rollback-incomplete", error=str(exc))
+        return False
+    operation.transition("rolled-back")
+    return True
 
 
 def _resolve_project_runtime(
@@ -337,7 +624,9 @@ def _resolve_project_runtime(
 ) -> tuple[str, EnvironmentConfig, StorageConfig, str]:
     yml = config_module._load_yaml()
     alias = config_module._resolved_project_name(yml, project)
-    environment = config_module.resolve_environment(project) or EnvironmentConfig("", "", "")
+    environment = config_module.resolve_environment(project) or EnvironmentConfig(
+        "", "", ""
+    )
     storage = config_module.resolve_project_storage(project)
     registry = config_module.resolve_container_registry(project)
     return alias, environment, storage, registry
@@ -356,7 +645,9 @@ def _has_cached_kubeconfig(context: str, kubeconfig_path: Path) -> bool:
     if kubeconfig_path.exists():
         return True
     state = load_cluster_state(context)
-    return bool(state and state.kubeconfig_path and Path(state.kubeconfig_path).exists())
+    return bool(
+        state and state.kubeconfig_path and Path(state.kubeconfig_path).exists()
+    )
 
 
 @contextmanager
@@ -398,8 +689,8 @@ def _runtime_env(
                 os.environ[key] = value
         yield
     finally:
-        for key, value in previous.items():
-            if value is None:
+        for key, previous_value in previous.items():
+            if previous_value is None:
                 os.environ.pop(key, None)
             else:
-                os.environ[key] = value
+                os.environ[key] = previous_value

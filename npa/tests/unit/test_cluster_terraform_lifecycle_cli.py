@@ -12,10 +12,15 @@ from npa.cli.cluster import terraform_lifecycle as tf_mod
 
 
 runner = CliRunner()
+_REAL_WHOLE_PATH_PREFLIGHT = tf_mod._preflight_whole_path_capacity
 
 
-def _completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+def _completed(
+    stdout: str = "", returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=""
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +42,12 @@ def _node_group_ssh_key(tmp_path_factory, monkeypatch) -> Path:
     monkeypatch.setattr(
         "npa.terraform_lock.configure_plugin_cache",
         lambda *_args, **_kwargs: Path("/tmp/npa-test-terraform-cache"),
+    )
+    # Tests in this module exercise Terraform sequencing and the legacy
+    # filestore/GPU diagnostics. The shared cumulative gate has focused tests
+    # below and in test_provisioning_preflight.py.
+    monkeypatch.setattr(
+        tf_mod, "_preflight_whole_path_capacity", lambda *_args, **_kwargs: None
     )
     return key
 
@@ -62,7 +73,9 @@ def _successful_stream(tf_dir: Path, calls: list[list[str]]):
     return run
 
 
-def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path: Path) -> None:
+def test_up_runs_terraform_writes_kubeconfig_and_validates(
+    monkeypatch, tmp_path: Path
+) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     (tf_dir / "terraform.tfvars").write_text(
@@ -72,9 +85,9 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
                 'tenant_id = "tenant-a"',
                 'region = "region-a"',
                 'cluster_name = "cluster-a"',
-                'gpu_nodes_count = 2',
+                "gpu_nodes_count = 2",
                 'gpu_nodes_preset = "8gpu-192vcpu-1744gb"',
-                'enable_filestore = true',
+                "enable_filestore = true",
                 'subnet_id = "subnet-a"',
             ]
         )
@@ -114,7 +127,9 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
                             "value": {
                                 "id": "mk8scluster-a",
                                 "name": "cluster-a",
-                                "endpoints": {"public_endpoint": "https://cluster.example"},
+                                "endpoints": {
+                                    "public_endpoint": "https://cluster.example"
+                                },
                             }
                         }
                     }
@@ -166,7 +181,9 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
     monkeypatch.setattr(tf_mod, "_require_bin", fake_require_bin)
     monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
-    monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: saved.append(state))
+    monkeypatch.setattr(
+        tf_mod, "save_cluster_state", lambda state, metadata=None: saved.append(state)
+    )
 
     result = runner.invoke(
         app,
@@ -194,9 +211,135 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
     assert "capacity_block_group=capacityblockgroup-test" in apply_call
     apply_env = stream_envs[stream_calls.index(apply_call)]
     assert apply_env["TF_VAR_capacity_block_group"] == "capacityblockgroup-test"
-    assert any(call[:4] == ["nebius", "mk8s", "cluster", "get-credentials"] for call in stream_calls)
+    assert any(
+        call[:4] == ["nebius", "mk8s", "cluster", "get-credentials"]
+        for call in stream_calls
+    )
     assert saved[-1].cluster_id == "mk8scluster-a"
     assert "16 allocatable GPUs" in result.output
+
+
+def test_up_quota_blocker_runs_before_any_terraform_command(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa import provisioning_preflight
+    from npa.provisioning_preflight import (
+        INSTANCE_QUOTA,
+        ExistingCapacity,
+        QuotaObservation,
+    )
+
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ntenant_id = "tenant-a"\n'
+        'region = "eu-north1"\ncluster_name = "cluster-a"\n'
+    )
+    monkeypatch.setattr(
+        tf_mod, "_preflight_whole_path_capacity", _REAL_WHOLE_PATH_PREFLIGHT
+    )
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "discover_existing_capacity",
+        lambda **_kwargs: ExistingCapacity(),
+    )
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "read_provider_quotas",
+        lambda _tenant, _region, names: {
+            name: QuotaObservation(
+                name=name,
+                used=10 if name == INSTANCE_QUOTA else 0,
+                limit=10 if name == INSTANCE_QUOTA else 100,
+                state="known",
+            )
+            for name in names
+        },
+    )
+    terraform_calls: list[list[str]] = []
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_stream",
+        lambda args, **_kwargs: terraform_calls.append(args),
+    )
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda args, **_kwargs: _completed(json.dumps({"terraform_version": "1.12.2"})),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "up",
+            "--terraform-dir",
+            str(tf_dir),
+            "--skip-validate",
+            "--skip-sky-smoke",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "compute.instance.count" in result.output
+    assert terraform_calls == []
+
+
+def test_failed_fresh_apply_rolls_back_only_its_new_terraform_state(
+    monkeypatch, tmp_path: Path, mocker
+) -> None:
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-a"\ntenant_id = "tenant-a"\n'
+        'region = "eu-north1"\ncluster_name = "cluster-a"\n'
+        "cpu_nodes_count = 0\ngpu_nodes_count = 0\n"
+    )
+
+    def capture(args, **_kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        raise AssertionError(args)
+
+    def stream(args, **_kwargs):
+        if args[:2] == ["terraform", "apply"]:
+            (tf_dir / "terraform.tfstate").write_text(
+                json.dumps(
+                    {
+                        "version": 4,
+                        "resources": [{"type": "nebius_vpc_v1_network", "name": "new"}],
+                    }
+                )
+            )
+            raise RuntimeError("provider race after network create")
+        return _completed()
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_capture", capture)
+    monkeypatch.setattr(tf_mod, "_run_stream", stream)
+    down = mocker.patch.object(tf_mod, "down_cmd")
+
+    result = runner.invoke(
+        app,
+        [
+            "up",
+            "--terraform-dir",
+            str(tf_dir),
+            "--skip-validate",
+            "--skip-sky-smoke",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "provider race after network create" in result.output
+    down.assert_called_once()
+    assert down.call_args.kwargs["context_name"] == "cluster-a"
 
 
 def test_up_stops_on_unmanaged_duplicate(monkeypatch, tmp_path: Path) -> None:
@@ -325,7 +468,9 @@ def test_up_allows_duplicate_managed_by_terraform_state(
     assert _find_call(stream_calls, "terraform", "apply", "-auto-approve")
 
 
-def test_up_stops_when_filestore_quota_is_too_small(monkeypatch, tmp_path: Path) -> None:
+def test_up_stops_when_filestore_quota_is_too_small(
+    monkeypatch, tmp_path: Path
+) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     (tf_dir / "terraform.tfvars").write_text(
@@ -335,8 +480,8 @@ def test_up_stops_when_filestore_quota_is_too_small(monkeypatch, tmp_path: Path)
                 'tenant_id = "tenant-a"',
                 'region = "region-a"',
                 'cluster_name = "cluster-a"',
-                'enable_filestore = true',
-                'filestore_disk_size_gibibytes = 1024',
+                "enable_filestore = true",
+                "filestore_disk_size_gibibytes = 1024",
             ]
         )
         + "\n"
@@ -370,7 +515,9 @@ def test_up_stops_when_filestore_quota_is_too_small(monkeypatch, tmp_path: Path)
     assert _find_call(stream_calls, "terraform", "apply", "-auto-approve") is None
 
 
-def test_up_skips_filestore_quota_when_disabled_by_default(monkeypatch, tmp_path: Path) -> None:
+def test_up_skips_filestore_quota_when_disabled_by_default(
+    monkeypatch, tmp_path: Path
+) -> None:
     """The default FTUE shape (no enable_filestore) applies with zero SFS quota.
 
     The Shared Filesystem quota preflight must NOT run when filestore is not
@@ -402,13 +549,19 @@ def test_up_skips_filestore_quota_when_disabled_by_default(monkeypatch, tmp_path
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
         if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
-            raise AssertionError("filestore quota must not be checked when filestore is off")
+            raise AssertionError(
+                "filestore quota must not be checked when filestore is off"
+            )
         if args[:3] == ["terraform", "output", "-json"]:
             return _completed(
                 json.dumps(
                     {
                         "kube_cluster": {
-                            "value": {"id": "mk8scluster-a", "name": "cluster-a", "endpoints": {}}
+                            "value": {
+                                "id": "mk8scluster-a",
+                                "name": "cluster-a",
+                                "endpoints": {},
+                            }
                         }
                     }
                 )
@@ -429,7 +582,9 @@ def test_up_skips_filestore_quota_when_disabled_by_default(monkeypatch, tmp_path
     assert _find_call(stream_calls, "terraform", "apply", "-auto-approve")
 
 
-def test_up_validation_accepts_block_default_sc_when_filestore_disabled(monkeypatch, tmp_path: Path) -> None:
+def test_up_validation_accepts_block_default_sc_when_filestore_disabled(
+    monkeypatch, tmp_path: Path
+) -> None:
     """With filestore off, validation does not require the filesystem CSI SC.
 
     The filesystem CSI (and its `csi-mounted-fs-path-sc` default) is only
@@ -445,7 +600,7 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(monkeypa
                 'tenant_id = "tenant-a"',
                 'region = "region-a"',
                 'cluster_name = "cluster-a"',
-                'gpu_nodes_count = 1',
+                "gpu_nodes_count = 1",
                 'gpu_nodes_preset = "1gpu-24vcpu-218gb"',
             ]
         )
@@ -461,7 +616,9 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(monkeypa
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
             return _completed('{"items":[]}')
         if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
-            return _completed(json.dumps({"spec": {"limit": "8"}, "status": {"usage": "0"}}))
+            return _completed(
+                json.dumps({"spec": {"limit": "8"}, "status": {"usage": "0"}})
+            )
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
         if args[:3] == ["terraform", "output", "-json"]:
@@ -472,7 +629,9 @@ def test_up_validation_accepts_block_default_sc_when_filestore_disabled(monkeypa
                             "value": {
                                 "id": "mk8scluster-a",
                                 "name": "cluster-a",
-                                "endpoints": {"public_endpoint": "https://cluster.example"},
+                                "endpoints": {
+                                    "public_endpoint": "https://cluster.example"
+                                },
                             }
                         }
                     }
@@ -533,7 +692,9 @@ def test_preflight_instance_count_quota_refuses_when_insufficient(monkeypatch) -
     from npa.clients import nebius as nebius_module
 
     # An agent VM is already running (usage 1) against a limit-2 tenant.
-    monkeypatch.setattr(nebius_module, "get_compute_instance_quota", lambda _t, _r: (1, 2))
+    monkeypatch.setattr(
+        nebius_module, "get_compute_instance_quota", lambda _t, _r: (1, 2)
+    )
     tfvars = {
         "gpu_nodes_count": 2,
         "cpu_nodes_count": 1,
@@ -553,9 +714,12 @@ def test_preflight_instance_count_quota_refuses_when_insufficient(monkeypatch) -
 def test_preflight_instance_count_quota_passes_with_headroom(monkeypatch) -> None:
     from npa.clients import nebius as nebius_module
 
-    monkeypatch.setattr(nebius_module, "get_compute_instance_quota", lambda _t, _r: (0, 5))
+    monkeypatch.setattr(
+        nebius_module, "get_compute_instance_quota", lambda _t, _r: (0, 5)
+    )
     tf_mod._preflight_instance_count_quota(
-        {"gpu_nodes_count": 2, "cpu_nodes_count": 1, "tenant_id": "t", "region": "r"}, {}
+        {"gpu_nodes_count": 2, "cpu_nodes_count": 1, "tenant_id": "t", "region": "r"},
+        {},
     )
 
 
@@ -568,11 +732,14 @@ def test_preflight_instance_count_quota_noop_when_unreadable(monkeypatch) -> Non
     monkeypatch.setattr(nebius_module, "get_compute_instance_quota", _boom)
     # Must not raise even though nodes are requested.
     tf_mod._preflight_instance_count_quota(
-        {"gpu_nodes_count": 8, "cpu_nodes_count": 4, "tenant_id": "t", "region": "r"}, {}
+        {"gpu_nodes_count": 8, "cpu_nodes_count": 4, "tenant_id": "t", "region": "r"},
+        {},
     )
 
 
-def test_preflight_instance_count_quota_noop_without_tenant_or_region(monkeypatch) -> None:
+def test_preflight_instance_count_quota_noop_without_tenant_or_region(
+    monkeypatch,
+) -> None:
     from npa.clients import nebius as nebius_module
 
     def _boom(_t, _r):  # pragma: no cover - must not be reached
@@ -591,7 +758,10 @@ def test_node_count_flag_overrides_tfvars_and_beats_it_with_var() -> None:
 
     tf_mod._apply_node_count_override(tfvars, "gpu_nodes_count", 0)
     assert tfvars["gpu_nodes_count"] == 0
-    assert tf_mod._node_count_var_args(tfvars, "gpu_nodes_count", 0) == ["-var", "gpu_nodes_count=0"]
+    assert tf_mod._node_count_var_args(tfvars, "gpu_nodes_count", 0) == [
+        "-var",
+        "gpu_nodes_count=0",
+    ]
 
 
 def test_node_shape_flags_override_tfvars_and_emit_explicit_vars() -> None:
@@ -619,7 +789,9 @@ def test_down_runs_terraform_destroy(monkeypatch, tmp_path: Path) -> None:
     stream_calls: list[list[str]] = []
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_capture", lambda *args, **kwargs: _completed("token-a\n"))
+    monkeypatch.setattr(
+        tf_mod, "_run_capture", lambda *args, **kwargs: _completed("token-a\n")
+    )
 
     def fake_stream(args, **kwargs):
         stream_calls.append(args)
@@ -650,7 +822,9 @@ def test_down_preview_uses_the_selected_npa_cluster_kubeconfig(
     observed: list[tuple[Path | None, str]] = []
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
-    monkeypatch.setattr(tf_mod, "_run_capture", lambda *args, **kwargs: _completed("token-a\n"))
+    monkeypatch.setattr(
+        tf_mod, "_run_capture", lambda *args, **kwargs: _completed("token-a\n")
+    )
     monkeypatch.setattr(tf_mod, "_run_stream", lambda *args, **kwargs: _completed())
     monkeypatch.setattr(
         state_module,
@@ -679,9 +853,7 @@ def test_down_preview_uses_the_selected_npa_cluster_kubeconfig(
     assert observed == [(saved_kubeconfig, "selected-cluster")]
 
 
-def test_down_with_no_cluster_is_a_true_local_noop(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_down_with_no_cluster_is_a_true_local_noop(monkeypatch, tmp_path: Path) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     (tf_dir / "terraform.tfvars").write_text('cluster_name = "never-created"\n')
@@ -695,9 +867,7 @@ def test_down_with_no_cluster_is_a_true_local_noop(
     monkeypatch.setattr(tf_mod, "_run_stream", unexpected)
     monkeypatch.setattr(tf_mod, "_run_capture", unexpected)
 
-    result = runner.invoke(
-        app, ["down", "--terraform-dir", str(tf_dir), "--force"]
-    )
+    result = runner.invoke(app, ["down", "--terraform-dir", str(tf_dir), "--force"])
 
     assert result.exit_code == 0, result.output
     assert "Nothing to do" in result.output
@@ -728,7 +898,9 @@ def test_down_checksum_mismatch_is_actionable_and_keeps_lock_immutable(
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
     monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
     monkeypatch.setattr(tf_mod, "_terraform_env", lambda _binary: {})
-    monkeypatch.setattr(tf_mod, "_report_drain_blockers", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        tf_mod, "_report_drain_blockers", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(tf_mod, "_run_stream", fake_stream)
 
     result = runner.invoke(
@@ -750,7 +922,9 @@ def test_down_checksum_mismatch_is_actionable_and_keeps_lock_immutable(
     assert all(call[:2] != ["terraform", "destroy"] for call in calls)
 
 
-def test_up_rejects_terraform_older_than_the_vendored_modules(monkeypatch, tmp_path: Path) -> None:
+def test_up_rejects_terraform_older_than_the_vendored_modules(
+    monkeypatch, tmp_path: Path
+) -> None:
     """The vendored modules need >= 1.12; an old binary must fail before init."""
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
@@ -808,7 +982,9 @@ def test_up_rejects_an_iam_token_pinned_in_tfvars(monkeypatch, tmp_path: Path) -
     assert stream_calls == []
 
 
-def test_up_stops_before_apply_when_the_gpu_quota_is_zero(monkeypatch, tmp_path: Path) -> None:
+def test_up_stops_before_apply_when_the_gpu_quota_is_zero(
+    monkeypatch, tmp_path: Path
+) -> None:
     """A GPU quota of 0 becomes QuotaFailure + a silent Terraform retry loop."""
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
@@ -838,7 +1014,9 @@ def test_up_stops_before_apply_when_the_gpu_quota_is_zero(monkeypatch, tmp_path:
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
         if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
-            return _completed(json.dumps({"spec": {"limit": "0"}, "status": {"usage": "0"}}))
+            return _completed(
+                json.dumps({"spec": {"limit": "0"}, "status": {"usage": "0"}})
+            )
         if args[:4] == ["nebius", "capacity", "resource-advice", "list"]:
             return _completed(
                 json.dumps(
@@ -883,7 +1061,9 @@ def test_up_stops_before_apply_when_the_gpu_quota_is_zero(monkeypatch, tmp_path:
     assert _find_call(stream_calls, "terraform", "apply", "-auto-approve") is None
 
 
-def test_up_skips_the_gpu_quota_gate_for_preemptible_nodes(monkeypatch, tmp_path: Path) -> None:
+def test_up_skips_the_gpu_quota_gate_for_preemptible_nodes(
+    monkeypatch, tmp_path: Path
+) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     (tf_dir / "terraform.tfvars").write_text(
@@ -912,10 +1092,14 @@ def test_up_skips_the_gpu_quota_gate_for_preemptible_nodes(monkeypatch, tmp_path
             return _completed("", returncode=1)
         if args[:3] == ["terraform", "output", "-json"]:
             return _completed(
-                json.dumps({"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}})
+                json.dumps(
+                    {"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}}
+                )
             )
         if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
-            raise AssertionError("preemptible nodes must not consult the on-demand quota")
+            raise AssertionError(
+                "preemptible nodes must not consult the on-demand quota"
+            )
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
@@ -932,7 +1116,9 @@ def test_up_skips_the_gpu_quota_gate_for_preemptible_nodes(monkeypatch, tmp_path
     assert _find_call(stream_calls, "terraform", "apply", "-auto-approve")
 
 
-def test_up_explains_what_may_exist_after_an_interrupt(monkeypatch, tmp_path: Path) -> None:
+def test_up_explains_what_may_exist_after_an_interrupt(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Ctrl-C used to leave a running cluster with no kubeconfig and no guidance."""
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
@@ -986,7 +1172,12 @@ def test_kubeconfig_cmd_adopts_a_running_cluster(monkeypatch, tmp_path: Path) ->
                     {
                         "items": [
                             {"metadata": {"name": "other", "id": "mk8scluster-other"}},
-                            {"metadata": {"name": "npa-cluster", "id": "mk8scluster-live"}},
+                            {
+                                "metadata": {
+                                    "name": "npa-cluster",
+                                    "id": "mk8scluster-live",
+                                }
+                            },
                         ]
                     }
                 )
@@ -1000,7 +1191,9 @@ def test_kubeconfig_cmd_adopts_a_running_cluster(monkeypatch, tmp_path: Path) ->
         lambda args, **kwargs: stream_calls.append(args) or _completed(),
     )
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
-    monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: saved.append(state))
+    monkeypatch.setattr(
+        tf_mod, "save_cluster_state", lambda state, metadata=None: saved.append(state)
+    )
 
     kubeconfig = tmp_path / "kubeconfig"
     result = runner.invoke(
@@ -1020,14 +1213,18 @@ def test_kubeconfig_cmd_adopts_a_running_cluster(monkeypatch, tmp_path: Path) ->
     assert "mk8scluster-live" in result.output
     assert str(kubeconfig) in result.output
     assert "--infra k8s/npa-cluster" in result.output
-    credentials = _find_call(stream_calls, "nebius", "mk8s", "cluster", "get-credentials")
+    credentials = _find_call(
+        stream_calls, "nebius", "mk8s", "cluster", "get-credentials"
+    )
     assert credentials is not None
     assert "mk8scluster-live" in credentials
     assert str(kubeconfig) in credentials
     assert saved and saved[-1].cluster_id == "mk8scluster-live"
 
 
-def test_kubeconfig_cmd_names_what_exists_when_the_cluster_is_absent(monkeypatch, tmp_path: Path) -> None:
+def test_kubeconfig_cmd_names_what_exists_when_the_cluster_is_absent(
+    monkeypatch, tmp_path: Path
+) -> None:
     def fake_capture(args, **kwargs):
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
@@ -1039,7 +1236,8 @@ def test_kubeconfig_cmd_names_what_exists_when_the_cluster_is_absent(monkeypatch
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
 
     result = runner.invoke(
-        app, ["kubeconfig", "--cluster-name", "npa-cluster", "--project-id", "project-a"]
+        app,
+        ["kubeconfig", "--cluster-name", "npa-cluster", "--project-id", "project-a"],
     )
 
     assert result.exit_code != 0
@@ -1061,7 +1259,18 @@ def test_duplicate_cluster_guard_offers_adoption(monkeypatch, tmp_path: Path) ->
             return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
             return _completed(
-                json.dumps({"items": [{"metadata": {"name": "npa-cluster", "id": "mk8scluster-live"}}]})
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {
+                                    "name": "npa-cluster",
+                                    "id": "mk8scluster-live",
+                                }
+                            }
+                        ]
+                    }
+                )
             )
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
@@ -1072,7 +1281,8 @@ def test_duplicate_cluster_guard_offers_adoption(monkeypatch, tmp_path: Path) ->
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
 
     result = runner.invoke(
-        app, ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"]
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
     )
 
     assert result.exit_code != 0
@@ -1169,19 +1379,30 @@ def test_node_group_genuine_instance_deletion_failure_stays_visible() -> None:
 
 def test_terminal_node_group_failure_detects_a_refusal() -> None:
     """QuotaFailure/no-capacity cannot be waited out; slow provisioning can."""
-    assert (
-        "QuotaFailure"
-        in tf_mod.terminal_node_group_failure(
-            {"state": "PROVISIONING", "error_message": "QuotaFailure: rtx6000 limit reached"}
-        )
+    assert "QuotaFailure" in tf_mod.terminal_node_group_failure(
+        {
+            "state": "PROVISIONING",
+            "error_message": "QuotaFailure: rtx6000 limit reached",
+        }
     )
     assert tf_mod.terminal_node_group_failure(
-        {"state": "ERROR", "conditions": "InsufficientCapacity: no capacity in this zone"}
+        {
+            "state": "ERROR",
+            "conditions": "InsufficientCapacity: no capacity in this zone",
+        }
     )
     # A group that is merely slow, or failing for another reason, is left alone.
-    assert tf_mod.terminal_node_group_failure({"state": "PROVISIONING", "ready_node_count": "0"}) == ""
+    assert (
+        tf_mod.terminal_node_group_failure(
+            {"state": "PROVISIONING", "ready_node_count": "0"}
+        )
+        == ""
+    )
     assert tf_mod.terminal_node_group_failure({"state": "RUNNING"}) == ""
-    assert tf_mod.terminal_node_group_failure({"error_message": "node not ready yet"}) == ""
+    assert (
+        tf_mod.terminal_node_group_failure({"error_message": "node not ready yet"})
+        == ""
+    )
     assert tf_mod.terminal_node_group_failure({}) == ""
 
 
@@ -1204,7 +1425,9 @@ def test_run_stream_returns_normally_when_nothing_cancels() -> None:
     assert result.returncode == 0
 
 
-def test_up_cancels_the_apply_on_a_refused_node_group(monkeypatch, tmp_path: Path) -> None:
+def test_up_cancels_the_apply_on_a_refused_node_group(
+    monkeypatch, tmp_path: Path
+) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     (tf_dir / "terraform.tfvars").write_text(
@@ -1235,7 +1458,13 @@ def test_up_cancels_the_apply_on_a_refused_node_group(monkeypatch, tmp_path: Pat
             if len(cluster_lists) == 1:
                 return _completed('{"items":[]}')
             return _completed(
-                json.dumps({"items": [{"metadata": {"name": "npa-cluster", "id": "mk8scluster-a"}}]})
+                json.dumps(
+                    {
+                        "items": [
+                            {"metadata": {"name": "npa-cluster", "id": "mk8scluster-a"}}
+                        ]
+                    }
+                )
             )
         if args[:4] == ["nebius", "mk8s", "node-group", "list"]:
             return _completed(
@@ -1260,7 +1489,9 @@ def test_up_cancels_the_apply_on_a_refused_node_group(monkeypatch, tmp_path: Pat
         if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
             # Quota reads fine and has headroom, so the preflight passes and the
             # refusal only shows up once the node group is being created.
-            return _completed(json.dumps({"spec": {"limit": "8"}, "status": {"usage": "0"}}))
+            return _completed(
+                json.dumps({"spec": {"limit": "8"}, "status": {"usage": "0"}})
+            )
         raise AssertionError(args)
 
     def fake_stream(args, **kwargs):
@@ -1291,7 +1522,8 @@ def test_up_cancels_the_apply_on_a_refused_node_group(monkeypatch, tmp_path: Pat
     monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
 
     result = runner.invoke(
-        app, ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"]
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
     )
 
     assert result.exit_code != 0
@@ -1300,7 +1532,9 @@ def test_up_cancels_the_apply_on_a_refused_node_group(monkeypatch, tmp_path: Pat
     assert "npa cluster down" in result.output
 
 
-def test_up_warns_when_the_gpu_quota_cannot_be_read(monkeypatch, tmp_path: Path) -> None:
+def test_up_warns_when_the_gpu_quota_cannot_be_read(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Skipping the check silently is what let the hang be a surprise."""
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
@@ -1331,7 +1565,9 @@ def test_up_warns_when_the_gpu_quota_cannot_be_read(monkeypatch, tmp_path: Path)
             return _completed("", returncode=1)  # e.g. PermissionDenied
         if args[:3] == ["terraform", "output", "-json"]:
             return _completed(
-                json.dumps({"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}})
+                json.dumps(
+                    {"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}}
+                )
             )
         raise AssertionError(args)
 
@@ -1341,7 +1577,8 @@ def test_up_warns_when_the_gpu_quota_cannot_be_read(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(tf_mod, "save_cluster_state", lambda state, metadata=None: None)
 
     result = runner.invoke(
-        app, ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"]
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
     )
 
     # Unreadable quota never blocks a provision, but it is no longer silent.
@@ -1386,7 +1623,9 @@ def test_up_pins_an_existing_ssh_public_key(monkeypatch, tmp_path: Path) -> None
             return _completed("", returncode=1)
         if args[:3] == ["terraform", "output", "-json"]:
             return _completed(
-                json.dumps({"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}})
+                json.dumps(
+                    {"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}}
+                )
             )
         raise AssertionError(args)
 
@@ -1406,10 +1645,14 @@ def test_up_pins_an_existing_ssh_public_key(monkeypatch, tmp_path: Path) -> None
     assert f'ssh_public_key={{path="{key}"}}' in apply_call
 
 
-def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(monkeypatch, tmp_path: Path) -> None:
+def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(
+    monkeypatch, tmp_path: Path
+) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
-    (tf_dir / "terraform.tfvars").write_text('ssh_public_key = { path = "~/.ssh/custom.pub" }\n')
+    (tf_dir / "terraform.tfvars").write_text(
+        'ssh_public_key = { path = "~/.ssh/custom.pub" }\n'
+    )
     stream_calls: list[list[str]] = []
 
     def fake_capture(args, **kwargs):
@@ -1423,7 +1666,9 @@ def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(monkeypatch, tmp_path: 
             return _completed("", returncode=1)
         if args[:3] == ["terraform", "output", "-json"]:
             return _completed(
-                json.dumps({"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}})
+                json.dumps(
+                    {"kube_cluster": {"value": {"id": "mk8scluster-a", "name": "c"}}}
+                )
             )
         raise AssertionError(args)
 
@@ -1479,16 +1724,35 @@ def test_tfvar_bool_reads_false_strings_from_the_environment() -> None:
     """TF_VAR_* values are strings and bool("false") is True."""
     env = {"TF_VAR_enable_filestore": "false"}
     assert tf_mod._tfvar_bool({}, env, "enable_filestore", True) is False
-    assert tf_mod._tfvar_bool({}, {"TF_VAR_enable_filestore": "1"}, "enable_filestore", False) is True
-    assert tf_mod._tfvar_bool({"enable_filestore": True}, {}, "enable_filestore", False) is True
+    assert (
+        tf_mod._tfvar_bool(
+            {}, {"TF_VAR_enable_filestore": "1"}, "enable_filestore", False
+        )
+        is True
+    )
+    assert (
+        tf_mod._tfvar_bool({"enable_filestore": True}, {}, "enable_filestore", False)
+        is True
+    )
     assert tf_mod._tfvar_bool({}, {}, "enable_filestore", False) is False
 
 
 def test_shared_filesystem_requested_covers_existing_filestore() -> None:
     """existing_filestore implies enable_filestore in deploy/cluster/main.tf."""
-    assert tf_mod._shared_filesystem_requested({"existing_filestore": "computefilesystem-a"}, {}) is True
+    assert (
+        tf_mod._shared_filesystem_requested(
+            {"existing_filestore": "computefilesystem-a"}, {}
+        )
+        is True
+    )
     assert tf_mod._shared_filesystem_requested({"existing_filestore": ""}, {}) is False
-    assert tf_mod._shared_filesystem_requested({}, {"TF_VAR_enable_filestore": "false"}, ) is False
+    assert (
+        tf_mod._shared_filesystem_requested(
+            {},
+            {"TF_VAR_enable_filestore": "false"},
+        )
+        is False
+    )
 
 
 def test_terraform_env_refreshes_stale_token_by_default(monkeypatch) -> None:

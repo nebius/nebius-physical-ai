@@ -95,14 +95,20 @@ use the pinned CLI's official `iam v2 project` surface instead of the console:
 TENANT_ID="tenant-id"
 PROJECT_NAME="project-name"
 REGION=eu-north1
+command -v jq >/dev/null
 
-# Creates the external project. Review the tenant/name/region before running it.
-nebius iam v2 project create --parent-id "$TENANT_ID" \
-  --name "$PROJECT_NAME" --region "$REGION" --format json
+# Optional read-only parent verification before creating anything.
+nebius iam v2 project list --parent-id "$TENANT_ID" --all --format json
 
-# Read-only discovery/verification; copy the new project's immutable ID.
-nebius iam v2 project list --parent-id "$TENANT_ID" --all --format table
-PROJECT_ID="project-id-from-the-list"
+# Creates the external project and captures its immutable ID from structured
+# output (no parsing of a human table). Review tenant/name/region first.
+PROJECT_JSON="$(nebius iam v2 project create --parent-id "$TENANT_ID" \
+  --name "$PROJECT_NAME" --region "$REGION" --format json)"
+PROJECT_ID="$(printf '%s' "$PROJECT_JSON" | jq -er '.metadata.id')"
+export PROJECT_ID
+test -n "$PROJECT_ID"
+
+# Read-only identity verification.
 nebius iam v2 project get --id "$PROJECT_ID" --format json
 
 # Bind the active CLI profile, then continue with NPA under a local alias.
@@ -258,12 +264,15 @@ fi
 Kubernetes; interrupted configuration resumes from owner-only provenance in
 `~/.npa/credentials.yaml`. It never launches the cluster while required storage
 is missing. Readiness is not reported until SkyPilot, not just Kubernetes, sees
-the requested accelerator; a timeout leaves the healthy capacity in place for
-the same command to resume. The command above asks for exactly one `cpu-d3` / `8vcpu-32gb` CPU
+the requested accelerator. If this operation created the cluster, a later
+readiness failure rolls back only that new cluster; pre-existing shared storage,
+configuration, credentials, and clusters are preserved. The command above asks for exactly one `cpu-d3` / `8vcpu-32gb` CPU
 node and one `gpu-rtx6000` / `1gpu-24vcpu-218gb` RTX PRO 6000 node. On-demand is
-the reliable default. If on-demand capacity is unavailable, rerun the same
-provision command with `--preemptible` instead of `--on-demand`; preemptible VMs
-can be reclaimed mid-run, so resume from durable S3 artifacts.
+the reliable default. Preemptible capacity is an explicit availability/cost
+choice and can be reclaimed mid-run; it does not bypass hard tenant instance,
+boot-disk, or public-IP quotas. Resume reclaimed work from durable S3 artifacts.
+Select it explicitly with `--preemptible` in place of `--on-demand`; the hard
+quota arithmetic is unchanged.
 
 **Easiest option: pull the OSS images from the public mirror instead of building them.**
 Every workbench image is published to `ghcr.io/nebius/nebius-physical-ai` and is
@@ -389,8 +398,9 @@ default. See [the PAIDF guide](docs/workbench/guides/physical-ai-data-factory.md
 for the source-code/model/media license boundary and full provenance fields.
 
 JSON and text status identify every checked source. `manifest_state: pending`
-means the run was found from its owner-only receipt, exact partial S3 prefix, or
-managed job and remains monitorable before `manifest.json` appears.
+requires exact submission evidence (a receipt/job/task identity). A reservation,
+plan, or partial staging prefix without that evidence is `NOT_SUBMITTED` /
+`PLAN_ONLY`, never `MANIFEST_PENDING`.
 `VERIFICATION_UNAVAILABLE` means S3/SkyPilot/provider verification failed and is
 never treated as absence. `NOT_FOUND` is emitted only after all applicable exact
 sources answered authoritatively; unrelated nested S3 keys are never guessed as

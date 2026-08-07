@@ -843,7 +843,7 @@ def test_exact_npa_manifest_uri_reconciles_failed_job_and_accelerator(
 
     result = runner.invoke(app, ["workbench", "workflow", "status", uri, "--json"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     payload = json.loads(result.output)
     assert payload["status"] == "FAILED"
     assert payload["manifest_uri"] == uri
@@ -1155,8 +1155,8 @@ def test_status_discovers_paidf_manifest_from_project_and_run_id(monkeypatch) ->
         ("", "NOT_FOUND", 1),
         (
             "physical-ai-data-factory/paidf-never-launched/configs/input.json",
-            "MANIFEST_PENDING",
-            0,
+            "NOT_SUBMITTED",
+            4,
         ),
     ],
     ids=["planned", "staged"],
@@ -1614,10 +1614,10 @@ def test_paidf_partial_prefix_preserves_exact_workflow_s3_uri(monkeypatch) -> No
         ],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 4, result.output
     payload = json.loads(result.output)
-    assert payload["status"] == "MANIFEST_PENDING"
-    assert payload["manifest_pending"] is True
+    assert payload["status"] == "NOT_SUBMITTED"
+    assert payload["manifest_pending"] is False
     assert payload["resolution_source"] == "explicit_workflow_s3_uri"
     assert payload["run_prefix_uri"] == exact_uri.removesuffix("/npa-workflow")
     assert payload["manifest_uri"] == f"{exact_uri}/manifest.json"
