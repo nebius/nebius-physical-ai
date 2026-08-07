@@ -73,7 +73,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026080601"
+AGENT_UI_VERSION = "2026080602"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -83,7 +83,10 @@ _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
 # silently disappear after a bootstrap drift or template edit.
 AGENT_MEDIA_PREVIEW_CONTRACT = (
     "authenticatedPreviewObjectUrl",
-    "Loading video preview…",
+    "artifactContentUrl",
+    "video.src = contentUrl",
+    "No RRD/MCAP recording; use the artifacts below",
+    "pre.textContent = String(payload.text || \"\")",
     'data-preview-url="',
     "Keep the Rerun iframe mounted under the media pane",
     'id="renderModeVideo"',
@@ -91,6 +94,9 @@ AGENT_MEDIA_PREVIEW_CONTRACT = (
     'id="viewerPaneMedia"',
     "URL.createObjectURL(blob)",
     '@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])',
+    '@app.api_route("/artifacts/content", methods=["GET", "HEAD"])',
+    "parse_http_byte_range",
+    "X-Content-Type-Options",
     "artifact_media_type(",
 )
 
@@ -250,6 +256,7 @@ _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
 _AGENT_BACKEND_SHIP = "__NPA_AGENT_BACKEND_SHIP__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
+_AGENT_ARTIFACT_CONTENT_EMBED = "__NPA_AGENT_ARTIFACT_CONTENT_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
@@ -329,7 +336,6 @@ def _embedded_agent_s3_guard_source() -> str:
 
 
 def _embedded_agent_artifacts_source() -> str:
-    """Return workflows/artifacts.py source embedded into the remote agent backend."""
     import re
 
     path = Path(__file__).resolve().parents[1] / "workflows" / "artifacts.py"
@@ -337,6 +343,12 @@ def _embedded_agent_artifacts_source() -> str:
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
     return raw
+
+
+def _embedded_agent_artifact_content_source() -> str:
+    import re
+    raw = Path(__file__).with_name("agent_artifact_content.py").read_text(encoding="utf-8")
+    return re.sub(r"^from __future__ import annotations\s*\n", "", re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL))  # noqa: E501
 
 
 def _embedded_agent_provenance_source() -> str:
@@ -1812,6 +1824,7 @@ def _bootstrap_agent_stack(
     agent_backend_ship_script = render_shipped_backend_install()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
+    agent_artifact_content_source = _embedded_agent_artifact_content_source()
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
@@ -1955,8 +1968,8 @@ from urllib.parse import quote
 
 import httpx
 import yaml
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 app = FastAPI(title="npa-agent")
 TOOL_CATALOG = {catalog_json}
@@ -3624,6 +3637,57 @@ def _apply_loaded_artifact(
             f"Loaded {{render}} artifact preview. Use the Video/Image/Data viewer tabs."
         )
     sim_viz["active_run_id"] = run_id
+    state["sim_viz"] = sim_viz
+    _record_sim_viz_run(state, sim_viz)
+    _save_state(state)
+    return sim_viz
+
+
+def _apply_content_artifact(
+    *,
+    state: dict,
+    run_id: str,
+    key: str,
+    bucket: str,
+    s3_uri: str,
+    render: str,
+) -> dict:
+    # Select a non-recording artifact without staging its S3 bytes locally.
+    now = _now_iso()
+    sim_viz = dict(DEFAULT_SIM_VIZ)
+    current = state.get("sim_viz")
+    if isinstance(current, dict):
+        sim_viz.update(current)
+    query = (
+        f"run_id={{quote(run_id, safe='')}}&key={{quote(key, safe='')}}&"
+        f"bucket={{quote(bucket, safe='')}}"
+    )
+    content_url = f"/api/artifacts/content?{{query}}"
+    download_url = f"{{content_url}}&download=true"
+    previewable = render in {{"json", "text", "image", "video"}}
+    sim_viz.update(
+        {{
+            "run_id": run_id,
+            "active_run_id": run_id,
+            "stage": "artifact-selected",
+            "rrd_uri": "",
+            "rerun_iframe_url": "/rerun/",
+            "rerun_ready": False,
+            "artifact_uri": s3_uri,
+            "artifact_key": key,
+            "artifact_render": render,
+            "artifact_preview_url": content_url if previewable else "",
+            "artifact_download_url": download_url,
+            "preview_status": "artifact_preview" if previewable else "download_only",
+            "visualization_note": (
+                f"Selected {{render}} artifact for secure same-origin preview."
+                if previewable
+                else "Binary/download-only artifact selected; metadata is shown without rendering bytes."
+            ),
+            "rrd_updated_at": now,
+            "mode": "static",
+        }}
+    )
     state["sim_viz"] = sim_viz
     _record_sim_viz_run(state, sim_viz)
     _save_state(state)
@@ -7180,7 +7244,7 @@ def sim_viz_load_run(payload: dict | None = None):
                 "input_artifact_count": role_counts["input"],
                 "metadata_artifact_count": role_counts["metadata"],
                 "preview_status": "no_previewable_recording",
-                "visualization_note": "No previewable recording; artifacts available.",
+                "visualization_note": "No RRD/MCAP recording; use the artifacts below",
                 "rrd_updated_at": _now_iso(),
             }})
             state["active_run_id"] = run_id
@@ -7312,6 +7376,30 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
+def _resolved_run_artifacts(s3, settings, run_id: str, *, prefix: str = ""):
+    normalized_run = validate_run_id(run_id)
+    effective_prefix = _artifact_discovery_prefix(settings, prefix)
+    artifacts = []
+    run_bucket = settings["bucket"]
+    if prefix:
+        artifacts = list_artifacts(
+            settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3
+        )
+    if not artifacts:
+        run_bucket, artifacts = find_run_artifacts_across_buckets(
+            _agent_s3_buckets(s3, settings),
+            base_prefix=settings.get("prefix", ""),
+            run_id=normalized_run,
+            s3=s3,
+        )
+    if not run_bucket or not artifacts:
+        raise HTTPException(status_code=404, detail="run artifacts not found in accessible S3 storage")
+    return normalized_run, run_bucket, artifacts, effective_prefix
+
+
+{_AGENT_ARTIFACT_CONTENT_EMBED}
+
+
 @app.get("/artifacts/run/{{run_id:path}}")
 def artifacts_for_run(run_id: str, prefix: str = ""):
     try:
@@ -7320,24 +7408,16 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         s3, settings = _agent_s3_client()
-        effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        artifacts = []
-        run_bucket = settings["bucket"]
-        if prefix:
-            artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3)
-        # Generic fallback: locate the run across EVERY accessible bucket and its
-        # category folders (no hardcoded workflow path, no single-bucket assumption).
-        if not artifacts:
-            run_bucket, artifacts = find_run_artifacts_across_buckets(
-                _agent_s3_buckets(s3, settings),
-                base_prefix=settings.get("prefix", ""),
-                run_id=normalized_run,
-                s3=s3,
-            )
-            if not run_bucket:
-                run_bucket = settings["bucket"]
+        normalized_run, run_bucket, artifacts, effective_prefix = _resolved_run_artifacts(
+            s3, settings, normalized_run, prefix=prefix
+        )
         preferred = select_preferred_artifact(artifacts)
         role_counts = artifact_inventory_counts(artifacts)
+        summary = build_run_summary(
+            normalized_run,
+            artifacts,
+            _summary_documents_for_run(s3, run_bucket, artifacts),
+        )
         return {{
             "ok": True,
             "bucket": run_bucket,
@@ -7351,6 +7431,9 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
             "namespaces": sorted({{item.namespace for item in artifacts if item.namespace}}),
             "artifacts": [item.to_dict() for item in artifacts],
             "preferred": preferred.to_dict() if preferred else None,
+            "summary": summary,
+            "no_recording": not bool(summary.get("has_recording")),
+            "recording_state": str(summary.get("recording_state") or ""),
         }}
     except HTTPException:
         raise
@@ -7497,84 +7580,6 @@ def artifacts_run_provenance(run_id: str, prefix: str = ""):
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
-@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])
-def artifact_file(filename: str):
-    safe_name = Path(str(filename)).name
-    if safe_name != filename:
-        raise HTTPException(status_code=400, detail="invalid artifact filename")
-    target = RECORDINGS_DIR / safe_name
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail=f"artifact file not found: {{filename}}")
-    # Browsers cannot render Netpbm (.ppm/.pgm/.pbm/.pnm), .bmp, or .tiff. Sim
-    # rollout camera frames are saved as .ppm, so transcode to PNG on the way out
-    # to make them viewable in the Rerun/Image panes and artifact previews.
-    if needs_image_transcode(safe_name):
-        try:
-            import io as _io
-
-            from PIL import Image as _Image
-
-            with _Image.open(target) as _im:
-                _buf = _io.BytesIO()
-                _im.convert("RGB").save(_buf, format="PNG")
-            return Response(content=_buf.getvalue(), media_type="image/png")
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"image transcode failed: {{exc}}") from exc
-    # artifact_media_type comes from the embedded workflows/artifacts.py module.
-    return FileResponse(str(target), media_type=artifact_media_type(safe_name))
-
-
-@app.get("/artifacts/download")
-def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket: str = ""):
-    # Direct download of ANY run artifact (every object is downloadable, not just
-    # the viewer-loadable ones). Streams the S3 object back with an attachment
-    # Content-Disposition so the browser saves it under its real filename. Unlike
-    # /sim-viz/load-artifact this does not mutate viewer state. Bucket resolves
-    # from s3_uri (preferred, bucket-qualified) > explicit bucket param > the
-    # run's bucket (resolved across all accessible buckets) > primary.
-    requested_uri = str(s3_uri or "").strip()
-    requested_key = str(key or "").strip()
-    requested_bucket = str(bucket or "").strip()
-    if not requested_uri and not requested_key:
-        raise HTTPException(status_code=400, detail="Provide s3_uri or key")
-    try:
-        s3, settings = _agent_s3_client()
-        if requested_uri:
-            obj_bucket, obj_key = parse_s3_uri(requested_uri)
-            # Restrict caller-supplied URIs to the configured agent bucket(s) only
-            # (never ListBuckets / every credential-readable bucket).
-            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
-            uri = requested_uri
-        else:
-            obj_key = _safe_artifact_key(requested_key)
-            obj_bucket = requested_bucket or settings["bucket"]
-            if not requested_bucket and str(run_id or "").strip():
-                try:
-                    rb, _arts = find_run_artifacts_across_buckets(
-                        _agent_s3_buckets(s3, settings),
-                        base_prefix=settings.get("prefix", ""),
-                        run_id=validate_run_id(run_id),
-                        s3=s3,
-                    )
-                    if rb:
-                        obj_bucket = rb
-                except Exception:
-                    pass
-            uri = f"s3://{{obj_bucket}}/{{obj_key}}"
-        local_path = RECORDINGS_DIR / _artifact_filename(obj_key)
-        download_s3_uri(uri, local_path, s3=s3)
-        leaf = Path(obj_key).name or "artifact.bin"
-        return FileResponse(
-            str(local_path),
-            media_type=artifact_media_type(leaf),
-            filename=leaf,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
-
-
 @app.post("/sim-viz/load-artifact")
 def sim_viz_load_artifact(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
@@ -7586,43 +7591,50 @@ def sim_viz_load_artifact(payload: dict | None = None):
     try:
         s3, settings = _agent_s3_client()
         if requested_uri:
-            bucket, key = parse_s3_uri(requested_uri)
-            # Configured agent bucket only — blocks arbitrary-bucket exfil.
-            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
-            run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
-            run_id = validate_run_id(run_guess) if run_guess else "artifact"
-            s3_uri = requested_uri
+            if not requested_run:
+                raise HTTPException(status_code=400, detail="run_id is required with s3_uri")
+            uri_bucket, uri_key = parse_s3_uri(requested_uri)
+            if requested_key and requested_key != uri_key:
+                raise HTTPException(status_code=400, detail="s3_uri and key do not match")
+            run_id, bucket, artifact = _resolved_artifact_for_content(
+                s3,
+                settings,
+                run_id=requested_run,
+                key=uri_key,
+                requested_bucket=uri_bucket,
+            )
         else:
-            run_id = validate_run_id(requested_run)
-            key = _safe_artifact_key(requested_key)
-            # Resolve the run's bucket across all accessible buckets so a run in a
-            # non-primary bucket still loads (no copy required).
-            bucket = settings["bucket"]
-            try:
-                rb, _arts = find_run_artifacts_across_buckets(
-                    _agent_s3_buckets(s3, settings),
-                    base_prefix=settings.get("prefix", ""),
-                    run_id=run_id,
-                    s3=s3,
-                )
-                if rb:
-                    bucket = rb
-            except Exception:
-                pass
-            s3_uri = f"s3://{{bucket}}/{{key}}"
-        local_name = _artifact_filename(key)
-        local_path = RECORDINGS_DIR / local_name
-        download_s3_uri(s3_uri, local_path, s3=s3)
-        render = render_hint_for_object(key=key)
+            run_id, bucket, artifact = _resolved_artifact_for_content(
+                s3,
+                settings,
+                run_id=requested_run,
+                key=requested_key,
+            )
+        key = str(artifact.key)
+        s3_uri = str(artifact.s3_uri)
+        render = str(artifact.render or render_hint_for_object(key=key))
         state = _load_state()
-        sim_viz = _apply_loaded_artifact(
-            state=state,
-            run_id=run_id,
-            key=key,
-            s3_uri=s3_uri,
-            render=render,
-            local_path=local_path,
-        )
+        if render in {{"rerun", "mcap"}}:
+            local_name = _artifact_filename(key)
+            local_path = RECORDINGS_DIR / local_name
+            download_s3_uri(s3_uri, local_path, s3=s3)
+            sim_viz = _apply_loaded_artifact(
+                state=state,
+                run_id=run_id,
+                key=key,
+                s3_uri=s3_uri,
+                render=render,
+                local_path=local_path,
+            )
+        else:
+            sim_viz = _apply_content_artifact(
+                state=state,
+                run_id=run_id,
+                key=key,
+                bucket=bucket,
+                s3_uri=s3_uri,
+                render=render,
+            )
         return {{"ok": True, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri}}
     except HTTPException:
         raise
@@ -8654,6 +8666,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_BACKEND_SHIP, agent_backend_ship_script)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
+        .replace(_AGENT_ARTIFACT_CONTENT_EMBED, agent_artifact_content_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)

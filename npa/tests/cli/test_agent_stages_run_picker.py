@@ -60,7 +60,7 @@ def test_artifact_run_load_is_independent_from_workflow_stage_controls() -> None
     load_fn = ui.split("async function loadRunData")[1].split("async function selectCamera")[0]
     assert "selectedArtifactRunIdFromUi()" in load_fn
     assert "await loadArtifactsForSelectedRun(runId)" in load_fn
-    assert "No previewable recording; artifacts available" in load_fn
+    assert "No RRD/MCAP recording; use the artifacts below" in load_fn
 
     stages_handler = ui.split('bindClick("stagesLoadRun"')[1].split(', "Show workflow stages"')[0]
     assert "loadRunDetails(chosen)" in stages_handler

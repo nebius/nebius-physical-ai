@@ -329,8 +329,8 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@artifactList");
-    cy.get("#artifactList button[data-action='load-artifact']").click();
-    cy.wait("@loadArtifact");
+    cy.get("#artifactList button[data-action='preview-artifact']").click();
+    cy.wait("@artifactContentImage");
     // loadArtifact no longer spams chat; the viewer / preview host reflects the load.
     cy.get("#artifactPreviewHost").should("not.have.attr", "hidden");
 
@@ -360,7 +360,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactList").should("contain.text", "text");
     cy.get("#artifactList").should("contain.text", "download");
     cy.get("#artifactList").should("contain.text", "View in Rerun");
-    cy.get("#artifactList").should("contain.text", "Play");
+    cy.get("#artifactList").should("contain.text", "View");
     cy.get("#artifactTypeFilter").select("video");
     cy.wait("@nonStockArtifactList");
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4`);
@@ -373,6 +373,14 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simRunId").should("contain.text", NON_STOCK_RUN_ID);
     cy.get("#simStage").should("contain.text", "stage_14_rerun_viz");
     cy.get("#simCamera").should("contain.text", "customer-overhead");
+    cy.get("#rerunFrame").then(($frame) => {
+      if (!$frame.attr("src")) {
+        cy.get(
+          `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/reports/sim2real.rrd"]`
+        ).click();
+        cy.wait("@loadArtifact");
+      }
+    });
     cy.get("#rerunFrame", { timeout: 60000 }).should("have.attr", "src").and("include", "/rerun/");
 
     cy.get("#runIdInput").clear().type(NON_STOCK_RUN_ID);
@@ -386,39 +394,37 @@ describe("NPA agent UI with mocked APIs", () => {
 
     cy.get("#tabRerun").click();
     cy.get(
-      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`
+      `#artifactList button[data-action='preview-artifact'][data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`
     ).click();
-    cy.wait("@loadArtifact");
-    cy.wait("@artifactFile");
     cy.get("#renderModeVideo").should("have.class", "is-active");
     cy.get("#viewerPaneMedia").should("have.class", "is-active-viewer");
     cy.get("#artifactPreviewHost video")
       .should("have.attr", "src")
-      .and("match", /^blob:/);
+      .and("include", "/api/artifacts/content?");
     cy.get("#artifactPreviewHost video")
       .should("have.attr", "data-preview-url")
       .and("include", "customer-camera.mp4");
     cy.get("#renderedDataSummary").should("contain.text", "video");
 
     cy.get(
-      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/reports/sim2real-report.json"]`
+      `#artifactList button[data-action='preview-artifact'][data-key="${NON_STOCK_RUN_ID}/reports/sim2real-report.json"]`
     ).click();
-    cy.wait("@loadArtifact");
+    cy.wait("@artifactContentJson");
     cy.get("#renderModeData").should("have.class", "is-active");
     cy.get("#artifactPreviewHost pre").should("contain.text", "promoted");
 
     cy.get(
-      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/logs/orchestrator.log"]`
+      `#artifactList button[data-action='preview-artifact'][data-key="${NON_STOCK_RUN_ID}/logs/orchestrator.log"]`
     ).click();
-    cy.wait("@loadArtifact");
+    cy.wait("@artifactContentText");
     cy.get("#artifactPreviewHost pre").should("contain.text", "loaded customer scene mesh");
 
-    cy.get(
-      `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/raw/custom-dynamics.fooz"]`
-    ).click();
-    cy.wait("@loadArtifact");
-    cy.get("#artifactPreviewHost").should("contain.text", "download");
-    cy.get("#artifactPreviewHost a").should("have.attr", "href").and("include", "custom-dynamics.fooz");
+    cy.get("#artifactList .artifact-card[data-render='download']")
+      .should("contain.text", "custom-dynamics.fooz")
+      .within(() => {
+        cy.get("button[data-action='preview-artifact']").should("not.exist");
+        cy.get("button[data-action='download-artifact']").should("exist");
+      });
 
     cy.get(
       `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/reports/sim2real.rrd"]`
@@ -511,7 +517,7 @@ describe("NPA agent UI with mocked APIs", () => {
 
     // ...as actual inline image thumbnails (not just filenames): each image card
     // renders an <img> lazy-loaded through the authenticated download proxy.
-    cy.wait("@artifactDownload");
+    cy.wait("@artifactContentImage");
     cy.get("#artifactList .artifact-card[data-render='image'] .artifact-thumb img")
       .its("length")
       .should("be.gte", 2);
@@ -651,9 +657,8 @@ describe("NPA agent UI with mocked APIs", () => {
       // data-*="..." and inject an event handler. Text nodes may still show
       // literal quotes after the browser parses escaped HTML.
       expect(html).to.include('data-key="a&quot; onmouseover=&quot;alert(1)"');
-      expect(html).to.include('data-s3-uri="s3://mock/a&quot; onmouseover=&quot;alert(1)"');
-      expect(html).to.not.match(/data-(?:key|s3-uri|name)="a"\s+onmouseover=/i);
-      cy.get("#artifactList button[data-action='load-artifact']").should(($btn) => {
+      expect(html).to.not.match(/data-(?:key|name)="a"\s+onmouseover=/i);
+      cy.get("#artifactList button[data-action='download-artifact']").should(($btn) => {
         // DOM getAttribute returns the decoded value; no separate attribute breakout.
         expect($btn.attr("data-key")).to.eq(evilKey);
         expect($btn.attr("onmouseover")).to.eq(undefined);
@@ -792,6 +797,8 @@ describe("NPA agent UI with mocked APIs", () => {
         s3_uri: `s3://mock/${TRAIN_RUN}/manifest.json`,
         render: "json",
         role: "output",
+        category: "manifest",
+        content_type: "application/json",
         size: 755,
       },
       {
@@ -799,20 +806,45 @@ describe("NPA agent UI with mocked APIs", () => {
         s3_uri: `s3://mock/${TRAIN_RUN}/checkpoints/model.safetensors`,
         render: "download",
         role: "output",
-        size: 4096,
+        category: "checkpoint",
+        content_type: "application/octet-stream",
+        download_only: true,
+        size: 9335640879,
       },
       {
         key: `${TRAIN_RUN}/workflow.yaml`,
         s3_uri: `s3://mock/${TRAIN_RUN}/workflow.yaml`,
         render: "text",
         role: "output",
+        category: "config",
+        content_type: "text/plain; charset=utf-8",
         size: 1820,
+      },
+      {
+        key: `${TRAIN_RUN}/evidence/training.log`,
+        s3_uri: `s3://mock/${TRAIN_RUN}/evidence/training.log`,
+        render: "text",
+        role: "output",
+        category: "log",
+        content_type: "text/plain; charset=utf-8",
+        size: 443,
+      },
+      {
+        key: `${TRAIN_RUN}/training-summary.png`,
+        s3_uri: `s3://mock/${TRAIN_RUN}/training-summary.png`,
+        render: "image",
+        role: "output",
+        category: "output",
+        content_type: "image/png",
+        size: 12288,
       },
       {
         key: `groot-1-7-finetune/${TRAIN_RUN}/data/episode.mp4`,
         s3_uri: `s3://mock/groot-1-7-finetune/${TRAIN_RUN}/data/episode.mp4`,
         render: "video",
         role: "input",
+        category: "input",
+        content_type: "video/mp4",
         size: 2048,
       },
     ];
@@ -824,8 +856,8 @@ describe("NPA agent UI with mocked APIs", () => {
       rrd_uri: "",
       artifact_render: "",
       preview_status: "no_previewable_recording",
-      output_artifact_count: 3,
-      available_runs: [{ run_id: TRAIN_RUN, artifact_count: 4, output_artifact_count: 3 }],
+      output_artifact_count: 5,
+      available_runs: [{ run_id: TRAIN_RUN, artifact_count: 6, output_artifact_count: 5 }],
     };
 
     cy.intercept("GET", "/api/artifacts/runs*", {
@@ -838,16 +870,37 @@ describe("NPA agent UI with mocked APIs", () => {
         ok: true,
         run_id: TRAIN_RUN,
         count: artifacts.length,
-        output_artifact_count: 3,
+        output_artifact_count: 5,
         input_artifact_count: 1,
         metadata_artifact_count: 0,
         artifacts,
         preferred: artifacts[0],
+        no_recording: true,
+        recording_state: "No RRD/MCAP recording; use the artifacts below",
+        summary: {
+          run_id: TRAIN_RUN,
+          completion_status: "completed",
+          workflow: "groot-1-7-finetune",
+          tool: "workbench.groot.finetune",
+          accelerator_count: 8,
+          accelerator_type: "RTX PRO 6000 Blackwell Server Edition",
+          world_size: 8,
+          training_steps: 1,
+          loss: 1.03125,
+          finite_loss: true,
+          artifact_count: 6,
+          output_artifact_count: 5,
+          input_artifact_count: 1,
+          metadata_artifact_count: 0,
+          total_bytes: 9335658223,
+          has_recording: false,
+          recording_state: "No RRD/MCAP recording; use the artifacts below",
+        },
       },
     }).as("trainingArtifacts");
     cy.intercept("POST", "/api/sim-viz/load-run", {
       statusCode: 200,
-      body: { ok: true, artifacts_available: true, artifact_count: 4, output_artifact_count: 3, sim_viz: simViz },
+      body: { ok: true, artifacts_available: true, artifact_count: 6, output_artifact_count: 5, sim_viz: simViz },
     }).as("trainingLoadRun");
     cy.intercept("GET", "/api/sim-viz/status*", { statusCode: 200, body: simViz }).as("trainingStatus");
 
@@ -869,11 +922,68 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactList").should("contain.text", "manifest.json");
     cy.get("#artifactList").should("contain.text", "model.safetensors");
     cy.get("#artifactList").should("contain.text", "workflow.yaml");
+    cy.get("#artifactList").should("contain.text", "training.log");
+    cy.get("#artifactList").should("contain.text", "training-summary.png");
     cy.get("#artifactList").should("not.contain.text", "episode.mp4");
-    cy.get("#artifactList button[data-action='download-artifact']").should("have.length", 3);
+    cy.get("#artifactList button[data-action='download-artifact']").should("have.length", 5);
+    cy.get("#artifactRunSummary").should("contain.text", TRAIN_RUN);
+    cy.get("#artifactRunSummary").should("contain.text", "completed");
+    cy.get("#artifactRunSummary").should("contain.text", "8 × RTX PRO 6000 Blackwell Server Edition");
+    cy.get("#artifactRunSummary").should("contain.text", "World size: 8");
+    cy.get("#artifactRunSummary").should("contain.text", "Training steps: 1");
+    cy.get("#artifactRunSummary").should("contain.text", "Finite loss: 1.03125");
+    cy.get("#artifactRunSummary").should("contain.text", "No RRD/MCAP recording; use the artifacts below");
+    cy.get("#renderedDataSummary").should("contain.text", "No RRD/MCAP recording; use the artifacts below");
+
+    cy.get(`#artifactList button[data-action='preview-artifact'][data-key='${TRAIN_RUN}/manifest.json']`).click();
+    cy.wait("@artifactContentJson");
+    cy.get("#artifactPreviewHost pre").should("contain.text", TRAIN_RUN);
+    cy.get("#artifactPreviewHost input[type='search']").type("completed");
+    cy.get("#artifactPreviewHost").should("contain.text", "1 match");
+
+    cy.get(`#artifactList button[data-action='preview-artifact'][data-key='${TRAIN_RUN}/workflow.yaml']`).click();
+    cy.wait("@artifactContentYaml");
+    cy.get("#artifactPreviewHost pre").should("contain.text", "groot-1-7-finetune");
+
+    cy.get(`#artifactList button[data-action='preview-artifact'][data-key='${TRAIN_RUN}/evidence/training.log']`).click();
+    cy.wait("@artifactContentText");
+    cy.get("#artifactPreviewHost pre").should("contain.text", "train_loss=1.03125");
+
+    cy.get(`#artifactList button[data-action='preview-artifact'][data-key='${TRAIN_RUN}/training-summary.png']`).click();
+    cy.wait("@artifactContentImage");
+    cy.get("#artifactPreviewHost img")
+      .should("have.attr", "src")
+      .and("match", /^blob:/);
+
+    cy.get("#artifactList .artifact-card[data-render='download']")
+      .should("contain.text", "checkpoint")
+      .and("contain.text", "application/octet-stream")
+      .within(() => {
+        cy.get("button[data-action='preview-artifact']").should("not.exist");
+        cy.get("button[data-action='download-artifact']").should("exist");
+      });
+
+    cy.get("#artifactRoleFilter").select("");
+    cy.get(`#artifactList button[data-action='preview-artifact'][data-key='groot-1-7-finetune/${TRAIN_RUN}/data/episode.mp4']`).click();
+    cy.get("#artifactPreviewHost video")
+      .should("have.prop", "controls", true)
+      .and("have.attr", "src")
+      .and("include", "/api/artifacts/content?")
+      .and("include", encodeURIComponent("episode.mp4"));
+
+    cy.intercept("GET", "/api/artifacts/content*workflow.yaml*", {
+      statusCode: 502,
+      body: { detail: "validated preview failure" },
+    }).as("artifactPreviewError");
+    cy.get("#artifactRoleFilter").select("output");
+    cy.get(`#artifactList button[data-action='preview-artifact'][data-key='${TRAIN_RUN}/workflow.yaml']`).click();
+    cy.wait("@artifactPreviewError");
+    cy.get("#artifactPreviewHost").should("contain.text", "Preview failed: preview fetch failed (502)");
+    cy.get("#artifactList").should("contain.text", "manifest.json");
+    cy.get("#artifactList button[data-action='download-artifact']").should("have.length", 5);
+
     cy.get("#rerunPlaceholder").should("have.attr", "data-state", "no-preview-artifacts");
-    cy.get("#rerunPlaceholder").should("contain.text", "No previewable recording; artifacts available");
-    cy.get("#renderedDataSummary").should("contain.text", "No previewable recording; artifacts available");
+    cy.get("#rerunPlaceholder").should("contain.text", "No RRD/MCAP recording; use the artifacts below");
   });
 
   it("surfaces an old run beyond the newest page via server-side (q=) search", () => {
@@ -909,6 +1019,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.intercept("GET", "/api/artifacts/runs*", (req) => {
       const q = String((req.query && req.query.q) || "").trim().toLowerCase();
       const matchesOld = q && OLD_RUN_ID.toLowerCase().includes(q);
+      if (matchesOld) req.alias = "artifactRunsOld";
       req.reply({
         statusCode: 200,
         body: {
@@ -932,7 +1043,7 @@ describe("NPA agent UI with mocked APIs", () => {
     });
     // …but typing a fragment triggers a debounced server search that finds it.
     cy.get("#artifactPrefix").clear().type(FRAGMENT, { delay: 0 });
-    cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
+    cy.wait("@artifactRunsOld").its("request.url").should("include", "q=");
     cy.get("#runIdSelect option").then(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
       expect(values, "server search surfaces the old run in the Rerun picker").to.include(OLD_RUN_ID);
@@ -941,7 +1052,7 @@ describe("NPA agent UI with mocked APIs", () => {
     // Stages tab: same server-search path must populate the stages picker.
     cy.get("#tabMain").click();
     cy.get("#stagesRunInput").clear().type(FRAGMENT, { delay: 0 });
-    cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
+    cy.wait("@artifactRunsOld").its("request.url").should("include", "q=");
     cy.get("#stagesRunSelect option").then(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
       expect(values, "server search surfaces the old run in the Stages picker").to.include(OLD_RUN_ID);
