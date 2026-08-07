@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 from importlib.metadata import version
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -552,6 +551,7 @@ def test_configure_show_env_is_eval_safe_in_clean_subprocess(tmp_path) -> None:
 
     import os
     import subprocess
+    import sys
 
     import yaml
 
@@ -585,17 +585,17 @@ def test_configure_show_env_is_eval_safe_in_clean_subprocess(tmp_path) -> None:
         encoding="utf-8",
     )
     (npa_dir / "credentials.yaml").chmod(0o600)
-    cli = Path(__file__).resolve().parents[2] / ".venv" / "bin" / "npa"
     stderr_path = tmp_path / "stderr.txt"
     script = (
-        'set -eu; output="$("$NPA_TEST_BIN" configure --show --env 2>"$NPA_TEST_ERR")"; '
+        'set -eu; output="$("$NPA_TEST_PYTHON" -m npa.cli.main configure --show --env '
+        '2>"$NPA_TEST_ERR")"; '
         'eval "$output"; test "$NPA_PROJECT_ALIAS" = "project alias"; '
         'test "$NPA_BUCKET" = bucket; printf "%s" "$output"'
     )
     env = {
         "HOME": str(home),
         "PATH": os.environ["PATH"],
-        "NPA_TEST_BIN": str(cli),
+        "NPA_TEST_PYTHON": sys.executable,
         "NPA_TEST_ERR": str(stderr_path),
         "HF_TOKEN": "hf_never-print-this",
     }
