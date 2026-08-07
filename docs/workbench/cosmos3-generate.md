@@ -46,6 +46,15 @@ This is enforced in three places: `require_model_access` refuses to launch
 inference without the token, the build fails if a checkpoint file lands in a
 layer, and `verify_env.py` re-asserts the absence of weights inside the image.
 
+Clearing the license for this repo's own gated guardrail model
+(`nvidia/Cosmos-Guardrail1`) does not clear the license for the *different*
+gated guardrail repo a vLLM-Omni serving deployment pulls
+(`nvidia/Cosmos-1.0-Guardrail`). See
+[`cosmos3-access-preflight.md`](cosmos3-access-preflight.md) for account
+setup, the two-repo table, the 401-vs-403 diagnostic for a gated-download
+failure, and the Xet download workaround for a specific Hugging Face client
+pin.
+
 Guardrails are **on** unless you pass `--no-guardrails`, and every result
 manifest records `guardrails` so a run's posture stays auditable.
 
@@ -195,6 +204,7 @@ before generation starts.
 | `mode ... conditions on an input image/video` | An `image2video` / `video2video` / `image2image` run without `--input-path`. |
 | `Found no NVIDIA driver` | The container reached real inference but has no GPU. Generation is GPU-only. |
 | `cosmos-framework produced no image/video artifact` | Inference exited 0 but wrote nothing; check the upstream log above the error for a guardrail rejection. |
+| `Unable to parse string as hex hash value` from `huggingface_hub`'s Xet client | A download failure specific to the `hf-xet 1.5.1` + `huggingface_hub 1.23.0` pin pair (`huggingface/xet-core#895`), observed on a gated guardrail-repo download. Set `HF_HUB_DISABLE_XET=1` and retry; see [`cosmos3-access-preflight.md`](cosmos3-access-preflight.md). |
 
 For access checks before a run (`gh`/HF/NGC reachability) see
 `npa workbench cosmos check`. For the un-baked, clone-at-job-time text-to-image

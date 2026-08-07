@@ -13,8 +13,11 @@ import yaml
 from npa.workbench.cosmos.generate import (
     DEFAULT_CHECKPOINT,
     GENERATE_MODES,
+    XET_AFFECTED_HF_XET_VERSION,
+    XET_AFFECTED_HUGGINGFACE_HUB_VERSION,
     Cosmos3GenerateError,
     build_generate_spec,
+    check_xet_pin,
     cosmos3_generate_available,
     generate_plan,
     require_model_access,
@@ -122,6 +125,18 @@ def test_require_model_access_demands_operator_hf_token() -> None:
     ) == {"hf_auth": "configured", "ngc_auth": "skipped"}
 
 
+def test_require_model_access_missing_token_error_names_the_401_403_diagnostic() -> None:
+    """The 401 (bad token) vs 403 (unaccepted license) split, plus a doc pointer."""
+
+    with pytest.raises(Cosmos3GenerateError) as excinfo:
+        require_model_access(checkpoint="Cosmos3-Nano", environ={})
+
+    message = str(excinfo.value)
+    assert "401" in message
+    assert "403" in message
+    assert "docs/workbench/cosmos3-access-preflight.md" in message
+
+
 def test_require_model_access_skips_token_only_when_nothing_is_fetched() -> None:
     """A staged checkpoint alone does not exempt the run.
 
@@ -200,6 +215,87 @@ def test_resolve_hf_token_honours_the_env_name_override() -> None:
     env = {"NPA_COSMOS3_HF_TOKEN_ENV": "MY_HF", "MY_HF": "token-value"}
 
     assert resolve_hf_token(env) == "token-value"
+
+
+def _version_probe_runner(versions: dict[str, str]):
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, json.dumps(versions), "")
+
+    return run
+
+
+def test_check_xet_pin_warns_only_on_the_exact_affected_pair(tmp_path: Path) -> None:
+    repo, _ = _fake_runtime(tmp_path)
+
+    warning = check_xet_pin(
+        repo,
+        runner=_version_probe_runner(
+            {
+                "huggingface_hub": XET_AFFECTED_HUGGINGFACE_HUB_VERSION,
+                "hf-xet": XET_AFFECTED_HF_XET_VERSION,
+            }
+        ),
+    )
+
+    assert "HF_HUB_DISABLE_XET=1" in warning
+    assert "xet-core#895" in warning
+    assert "docs/workbench/cosmos3-access-preflight.md" in warning
+
+
+def test_check_xet_pin_is_silent_on_a_newer_unaffected_pair(tmp_path: Path) -> None:
+    repo, _ = _fake_runtime(tmp_path)
+
+    warning = check_xet_pin(
+        repo,
+        runner=_version_probe_runner(
+            {"huggingface_hub": "1.26.0", "hf-xet": "1.6.0"}
+        ),
+    )
+
+    assert warning == ""
+
+
+def test_check_xet_pin_fails_open_when_the_probe_cannot_run(tmp_path: Path) -> None:
+    repo, _ = _fake_runtime(tmp_path)
+
+    def broken_runner(argv, **kwargs):
+        raise OSError("no such interpreter")
+
+    assert check_xet_pin(repo, runner=broken_runner) == ""
+
+
+def test_run_generate_warns_on_stderr_for_the_affected_xet_pin(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, env = _fake_runtime(tmp_path)
+    output_dir = tmp_path / "out"
+
+    def fake_runner(argv, **kwargs):
+        sample = output_dir / "npa-generate"
+        sample.mkdir(parents=True)
+        (sample / "vision.jpg").write_bytes(b"y" * 2048)
+        return subprocess.CompletedProcess(argv, 0)
+
+    import npa.workbench.cosmos.generate as generate_module
+
+    monkeypatch.setattr(
+        generate_module,
+        "check_xet_pin",
+        lambda repo, **_: (
+            "huggingface_hub 1.23.0 + hf-xet 1.5.1 is affected by "
+            "huggingface/xet-core#895. Set HF_HUB_DISABLE_XET=1 and retry."
+        ),
+    )
+    run_cosmos3_generate(
+        prompt="a robot arm",
+        output_dir=output_dir,
+        environ=env,
+        runner=fake_runner,
+    )
+
+    assert "HF_HUB_DISABLE_XET=1" in capsys.readouterr().err
 
 
 def test_availability_is_false_without_the_baked_runtime(tmp_path: Path) -> None:
