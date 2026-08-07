@@ -143,7 +143,7 @@ class WaveAttempt:
     started_at: str = ""
     ended_at: str = ""
     tasks: list[dict[str, Any]] = field(default_factory=list)
-    outputs: list[str] = field(default_factory=list)
+    outputs: list[Any] = field(default_factory=list)
     error: str = ""
     replayed: bool = False
     #: True when this wave attached to a managed job a previous driver had left in
@@ -488,7 +488,7 @@ class SkyPilotWaveExecutor:
                 group=group,
                 attempt=attempt_number,
                 started_at=utc_now(),
-                outputs=[item["uri"] for step in steps for item in step.outputs],
+                outputs=[dict(item) for step in steps for item in step.outputs],
             )
             self.attempts.append(attempt)
             try:
@@ -1422,6 +1422,7 @@ def run_workflow_runtime(
     trigger_waiter: Callable[[StateSpec, str, RunContext], dict[str, Any]]
     | None = None,
     logger: Callable[[str], None] | None = None,
+    workflow_yaml: bytes | None = None,
 ) -> RuntimeReport:
     """Drive a spec to completion through the runtime tier.
 
@@ -1435,10 +1436,10 @@ def run_workflow_runtime(
     opts = options or RuntimeOptions()
     log = logger or (lambda message: None)
 
+    store = state_store
     if executor is not None:
         ledger = executor.ledger
     else:
-        store = state_store
         if store is None:
             store = store_for_config(_resolved_config(spec, run_id), run_id=run_id)
         if store is None:
@@ -1460,6 +1461,17 @@ def run_workflow_runtime(
             api_version=spec.api_version,
             resume=opts.resume,
         )
+    if store is not None and workflow_yaml:
+        try:
+            store.write_artifact(
+                "workflow.yaml",
+                workflow_yaml,
+                content_type="application/yaml",
+            )
+        except Exception as exc:  # noqa: BLE001 - exact source is a required run artifact
+            raise NpaWorkflowError(
+                f"could not persist the exact submitted workflow YAML: {exc}"
+            ) from exc
     fingerprint = plan_fingerprint(spec, run_id=run_id, assume_decision=assume_decision)
     recorded = ledger.state.plan_fingerprint
     if opts.resume and recorded and recorded != fingerprint:

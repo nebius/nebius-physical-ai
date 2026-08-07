@@ -4,9 +4,10 @@ kind: Workflow
 metadata:
   name: groot-1-7-finetune
   description: >
-    Fine-tune NVIDIA GR00T N1.7 on a GR00T-format LeRobot dataset. The selected
-    positive GPU count controls both the SkyPilot allocation and the upstream
-    single-node torchrun world size.
+    Fine-tune NVIDIA GR00T N1.7 on a GR00T-format LeRobot dataset, validate the
+    resulting distributed/checkpoint evidence, and publish factual training
+    telemetry as independently inspectable MCAP and RRD recordings. This is not
+    a policy rollout evaluation.
 
 config:
   bucket: example-bucket
@@ -32,6 +33,14 @@ config:
 
   data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
   checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/"
+  training_manifest_uri: "{{config.checkpoint_uri}}npa_groot_finetune_manifest.json"
+  visualization_source_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/visualization-source/manifest.json"
+  mcap_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/groot-training.mcap"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/groot-training.rrd"
+  visualization_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/visualization-manifest.json"
+  workflow_uri: "s3://{{config.bucket}}/{{config.prefix}}/workflow.yaml"
+  visualization_max_frames: "8"
+  visualization_fps: "10"
   dataloader_num_workers: "8"
   max_steps: "10000"
   save_steps: "1000"
@@ -43,6 +52,10 @@ resources:
     accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
     cpus: 32
     memory: 200Gi
+  visualization-cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
 
 initial: finetune
 
@@ -55,6 +68,77 @@ states:
       - uri: "{{config.data_uri}}"
         schema: nvidia.groot.lerobot.v2
     outputs:
-      - uri: "{{config.checkpoint_uri}}npa_groot_finetune_manifest.json"
+      - uri: "{{config.training_manifest_uri}}"
         schema: npa.groot.finetune.v1
+    next: validate
+
+  validate:
+    description: >
+      Fail closed unless the manifest, checkpoint bytes, finite loss, optimizer
+      step, world size, rank evidence, and distinct GPU collective are valid;
+      then decode representative frames from the real LeRobot dataset.
+    toolRef: workflow.groot.validate
+    resources: visualization-cpu
+    inputs:
+      - uri: "{{config.training_manifest_uri}}"
+        schema: npa.groot.finetune.v1
+      - uri: "{{config.data_uri}}"
+        schema: nvidia.groot.lerobot.v2
+    outputs:
+      - uri: "{{config.visualization_source_uri}}"
+        schema: npa.groot.visualization_source.v1
+    next: emit_mcap
+
+  emit_mcap:
+    description: >
+      Emit real MCAP messages from the validated source bundle using Foxglove
+      CompressedImage and Log schemas plus factual numeric metric topics.
+    toolRef: workflow.groot.emit_mcap
+    resources: visualization-cpu
+    inputs:
+      - uri: "{{config.visualization_source_uri}}"
+        schema: npa.groot.visualization_source.v1
+    outputs:
+      - uri: "{{config.mcap_uri}}"
+        schema: mcap.v1
+    next: emit_rrd
+
+  emit_rrd:
+    description: >
+      Derive a native Rerun recording from the validated MCAP so camera, log,
+      scalar, timeline, and provenance semantics stay serially identical.
+    toolRef: workflow.groot.emit_rrd
+    resources: visualization-cpu
+    inputs:
+      - uri: "{{config.mcap_uri}}"
+        schema: mcap.v1
+    outputs:
+      - uri: "{{config.rrd_uri}}"
+        schema: rerun.rrd.v1
+    next: publish
+
+  publish:
+    description: >
+      Terminally inspect both recordings and index their checksums, provenance,
+      timestamp semantics, exact submitted workflow, and factual training evidence.
+    toolRef: workflow.groot.publish
+    resources: visualization-cpu
+    inputs:
+      - uri: "{{config.visualization_source_uri}}"
+        schema: npa.groot.visualization_source.v1
+      - uri: "{{config.mcap_uri}}"
+        schema: mcap.v1
+      - uri: "{{config.rrd_uri}}"
+        schema: rerun.rrd.v1
+      - uri: "{{config.workflow_uri}}"
+        schema: npa.workflow/v0.0.1
+    outputs:
+      - uri: "{{config.mcap_uri}}"
+        schema: mcap.v1
+      - uri: "{{config.rrd_uri}}"
+        schema: rerun.rrd.v1
+      - uri: "{{config.visualization_manifest_uri}}"
+        schema: npa.groot.visualization.v1
+      - uri: "{{config.workflow_uri}}"
+        schema: npa.workflow/v0.0.1
     terminal: true

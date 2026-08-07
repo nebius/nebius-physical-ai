@@ -445,6 +445,26 @@ def test_runtime_early_exits_when_gate_promotes_on_first_iteration(
     assert report.decisions and report.decisions[-1]["decision"] == "promote_checkpoint"
 
 
+def test_runtime_persists_exact_submitted_workflow_yaml(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    executor = _executor(spec, store=store)
+    workflow_yaml = GATE_LOOP_SPEC.encode("utf-8")
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-workflow-artifact",
+        executor=executor,
+        state_store=store,
+        options=executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=workflow_yaml,
+    )
+
+    assert report.status == "succeeded"
+    assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
+
+
 def test_runtime_runs_full_budget_when_gate_keeps_looping(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     submitter = FakeSubmitter()

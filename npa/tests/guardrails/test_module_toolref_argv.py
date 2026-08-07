@@ -35,6 +35,7 @@ PARSER_FACTORIES = {
     "npa.workflows.token_factory_triage": "build_parser",
     "npa.workbench.lerobot.policy_container": "build_parser",
     "npa.workflows.isaac_capture": "build_parser",
+    "npa.workflows.groot_visualization": "build_parser",
 }
 
 
