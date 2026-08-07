@@ -256,8 +256,8 @@ try:
             print("could not set env_cfg.seed:", repr(e), flush=True)
         try:
             torch.manual_seed(SEED); np.random.seed(SEED % (2**32))
-        except Exception:
-            pass
+        except Exception as e:
+            print("could not seed torch/numpy:", repr(e), flush=True)
         print("EVAL_SEED_APPLIED", SEED, flush=True)
     # Add a workspace camera so we can RENDER the robot/object interaction for
     # Rerun viz. Isaac Lab's "world" convention camera looks along +X; place it
@@ -313,8 +313,8 @@ try:
         try:
             for k in list(o.keys()):
                 o[k] = _to_batched(o[k])
-        except Exception:
-            pass
+        except Exception as e:
+            print("could not normalize batched observations:", repr(e), flush=True)
         return o
     def _policy_tensor(o):
         if torch.is_tensor(o):
@@ -942,8 +942,13 @@ def run_isaac_eval_job(
         try:
             failed_summary = _download_json(per_env_uri)
             failure_detail = "\nsummary=" + json.dumps(failed_summary, sort_keys=True)
-        except Exception:
-            pass
+        except Exception as summary_exc:
+            print(
+                "byo_isaac_eval: failed sibling summary was unavailable: "
+                f"{summary_exc}",
+                file=sys.stderr,
+                flush=True,
+            )
         raise SystemExit(
             f"byo_isaac_eval: eval job {job_name} failed: {terminal_detail}"
             f"{failure_detail}\n{logs.stdout}"
