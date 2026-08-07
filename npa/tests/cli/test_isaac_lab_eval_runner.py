@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import time
 
 import pytest
 
@@ -10,6 +11,7 @@ from npa.cli.isaac_lab.eval_runner import (
     apply_success_metric,
     resolve_checkpoint,
     resolve_success_metric,
+    write_eval_summary,
 )
 
 
@@ -65,6 +67,15 @@ def test_resolve_success_metric_auto(episodes, expected: str) -> None:
     assert resolve_success_metric("auto", episodes) == expected
 
 
+def test_resolve_success_metric_auto_requires_native_success_for_every_episode() -> None:
+    episodes = [
+        {"native_success": True, "min_goal_distance_m": 0.01},
+        {"native_success": None, "min_goal_distance_m": 0.20},
+    ]
+
+    assert resolve_success_metric("auto", episodes) == "goal-distance"
+
+
 def test_apply_goal_distance_and_survival_metrics() -> None:
     goal_episodes = [
         {"min_goal_distance_m": 0.04},
@@ -115,3 +126,36 @@ def test_eval_config_reads_video_environment(monkeypatch, tmp_path: Path) -> Non
     assert config.video_length == 123
     assert config.video_fps == 24
     assert config.video_dir == tmp_path / "eval" / "video"
+
+
+def test_write_eval_summary_keeps_quality_failure_separate_from_runtime(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "model.pt"
+    config = EvalConfig(
+        task="Isaac-Lift-Cube-Franka-v0",
+        checkpoint=checkpoint,
+        num_episodes=2,
+        output_dir=tmp_path / "eval",
+        success_metric="goal-distance",
+        success_distance_m=0.05,
+        min_success_rate=1.0,
+    )
+    episodes = [
+        {"reward": 1.0, "min_goal_distance_m": 0.01},
+        {"reward": 0.0, "min_goal_distance_m": 0.20},
+    ]
+
+    summary = write_eval_summary(
+        config,
+        episode_results=episodes,
+        checkpoint_file=checkpoint,
+        checkpoint_format="rsl_rl_checkpoint",
+        device="cuda:0",
+        started=time.time(),
+    )
+
+    assert summary["status"] == "success"
+    assert summary["policy_loaded"] is True
+    assert summary["success_rate"] == 0.5
+    assert summary["passed"] is False

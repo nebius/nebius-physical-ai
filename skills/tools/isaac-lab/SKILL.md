@@ -79,7 +79,9 @@ Use `--seed`, `--num-episodes`, `--max-steps-per-episode`, and
 `npa_isaac_lab_eval_summary.json` with format `npa.isaac_lab.eval.v1`; it
 records checkpoint provenance, `policy_loaded`, per-episode metrics,
 `success_rate`, and `passed`. An S3 output prefix is uploaded on both runtime
-success and failure so failed evaluations remain diagnosable.
+success and failure so failed evaluations remain diagnosable. `passed=false`
+does not turn a completed rollout into a runtime error; automation should gate
+on `passed` (the Sim2Real workflow does this in Stage 11).
 
 ## Custom Forks
 
@@ -120,6 +122,17 @@ Select with `--sim-backend`, env `NPA_SIM2REAL_SIM_BACKEND`, or the runbook
 YAML. Both backends emit the identical `npa.sim2real.heldout_eval.v1` per-env
 schema (`env_id`/`score`/`success`/`details`), so `report.json` and the
 outer-loop gate are backend-agnostic. The VLM eval (Cosmos-Reason) is unchanged.
+
+When Stage 10 has a genuine Isaac trainer checkpoint, object storage, and a
+registry-qualified Isaac image, it selects `byo_isaac_eval`. That vectorized
+adapter uses the standalone evaluator's shared `load_rsl_rl_policy`, metric,
+`npa.isaac_lab.eval.v1`, and failure-summary implementation while retaining
+generated-environment IDs/seeds and held-out camera capture. It writes
+`eval/heldout/isaac-eval-summary.json` and nests the same evidence in
+`eval/heldout/report.json`. Runtime, checkpoint, or policy-load failure aborts
+Stage 10; `passed=false` means the eval completed below its quality bar and is
+handled by the Stage 11 threshold gate. Stage 14 remains responsible for the
+run-level RRD/MCAP visualization artifacts.
 
 Asset handling mirrors the Genesis no-fallback provenance discipline:
 

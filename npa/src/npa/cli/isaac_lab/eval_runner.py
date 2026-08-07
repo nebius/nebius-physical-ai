@@ -6,6 +6,8 @@ GPU evidence aligned with the shipped evaluator instead of maintaining a
 second evaluation script.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 import json
 import logging
@@ -151,7 +153,9 @@ def resolve_success_metric(
 
     if requested != "auto":
         return requested
-    if any(item.get("native_success") is not None for item in episode_results):
+    if episode_results and all(
+        item.get("native_success") is not None for item in episode_results
+    ):
         return "native-success"
     if all(item.get("min_goal_distance_m") is not None for item in episode_results):
         return "goal-distance"
@@ -260,7 +264,128 @@ def _goal_distance(env: Any, torch: Any) -> tuple[float | None, str]:
         return None, ""
 
 
-def _write_failure(
+def load_rsl_rl_policy(
+    env: Any,
+    *,
+    task: str,
+    checkpoint_file: Path,
+    device: str,
+) -> tuple[Any, Any]:
+    """Wrap an Isaac environment and load a real RSL-RL inference policy."""
+
+    try:
+        from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+    except Exception:
+        from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
+    from rsl_rl.runners import OnPolicyRunner
+
+    agent_config = None
+    for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
+        try:
+            module = __import__(loader, fromlist=["load_cfg_from_registry"])
+            agent_config = module.load_cfg_from_registry(
+                task, "rsl_rl_cfg_entry_point"
+            )
+            break
+        except Exception as exc:
+            _LOGGER.debug(
+                "RSL-RL config loader %s did not resolve task %s",
+                loader,
+                task,
+                exc_info=exc,
+            )
+    if agent_config is None:
+        raise RuntimeError(f"no rsl_rl_cfg_entry_point registered for task {task}")
+    runner_config = (
+        agent_config.to_dict()
+        if hasattr(agent_config, "to_dict")
+        else dict(agent_config)
+    )
+    wrapped = RslRlVecEnvWrapper(env)
+    runner = OnPolicyRunner(wrapped, runner_config, log_dir=None, device=device)
+    runner.load(str(checkpoint_file))
+    return wrapped, runner.get_inference_policy(device=device)
+
+
+def write_eval_summary(
+    config: EvalConfig,
+    *,
+    episode_results: list[dict[str, Any]],
+    checkpoint_file: Path,
+    checkpoint_format: str,
+    device: str,
+    started: float,
+    captured_videos: list[str] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Apply the shared metric contract and write a successful eval summary."""
+
+    if not episode_results:
+        raise ValueError("episode_results must not be empty")
+    success_metric = resolve_success_metric(config.success_metric, episode_results)
+    apply_success_metric(
+        success_metric,
+        episode_results,
+        success_distance_m=config.success_distance_m,
+        task=config.task,
+    )
+    mean_reward = sum(float(item.get("reward", 0.0)) for item in episode_results) / len(
+        episode_results
+    )
+    distances = [
+        float(item["min_goal_distance_m"])
+        for item in episode_results
+        if item.get("min_goal_distance_m") is not None
+    ]
+    success_rate = sum(1 for item in episode_results if item["success"]) / len(
+        episode_results
+    )
+    videos = captured_videos or []
+    summary = {
+        "format": EVAL_FORMAT,
+        "status": "success",
+        "task": config.task,
+        "checkpoint": str(config.checkpoint),
+        "resolved_checkpoint": str(checkpoint_file),
+        "checkpoint_format": checkpoint_format,
+        "policy_loaded": True,
+        "num_episodes": len(episode_results),
+        "max_steps_per_episode": config.max_steps_per_episode,
+        "seed": config.seed,
+        "device": device,
+        "mean_reward": mean_reward,
+        "success_rate": success_rate,
+        "success_metric_requested": config.success_metric,
+        "success_metric": success_metric,
+        "success_distance_m": (
+            config.success_distance_m if success_metric == "goal-distance" else None
+        ),
+        "min_success_rate": config.min_success_rate,
+        # A false value means evaluation completed but missed the quality bar.
+        # Sim2Real Stage 11 owns the loop decision; runtime/policy-load failures
+        # remain non-zero and fail closed.
+        "passed": success_rate >= config.min_success_rate,
+        "mean_min_goal_distance_m": (
+            sum(distances) / len(distances) if distances else None
+        ),
+        "video": {
+            "enabled": config.capture_video,
+            "fps": config.video_fps,
+            "length_steps": config.video_length,
+            "files": videos,
+        },
+        "episodes": episode_results,
+        "duration_seconds": round(time.time() - started, 3),
+        "output_path": str(config.summary_path),
+    }
+    if extra:
+        summary.update(extra)
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    config.summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return summary
+
+
+def write_failure_summary(
     config: EvalConfig,
     *,
     stage: str,
@@ -355,45 +480,13 @@ def run_eval(config: EvalConfig) -> dict[str, Any]:
         print("ISAAC_LAB_ENV_CREATE_COMPLETE", flush=True)
 
         stage = "policy_load"
-        try:
-            try:
-                from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
-            except Exception:
-                from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper
-            from rsl_rl.runners import OnPolicyRunner
-
-            agent_config = None
-            for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
-                try:
-                    module = __import__(loader, fromlist=["load_cfg_from_registry"])
-                    agent_config = module.load_cfg_from_registry(
-                        config.task, "rsl_rl_cfg_entry_point"
-                    )
-                    break
-                except Exception as exc:
-                    _LOGGER.debug(
-                        "RSL-RL config loader %s did not resolve task %s",
-                        loader,
-                        config.task,
-                        exc_info=exc,
-                    )
-            if agent_config is None:
-                raise RuntimeError(
-                    f"no rsl_rl_cfg_entry_point registered for task {config.task}"
-                )
-            runner_config = (
-                agent_config.to_dict()
-                if hasattr(agent_config, "to_dict")
-                else dict(agent_config)
-            )
-            wrapped = RslRlVecEnvWrapper(env)
-            runner = OnPolicyRunner(wrapped, runner_config, log_dir=None, device=device)
-            runner.load(str(checkpoint_file))
-            policy = runner.get_inference_policy(device=device)
-            env = wrapped
-            print("ISAAC_LAB_EVAL_POLICY_LOADED", flush=True)
-        except Exception:
-            raise
+        env, policy = load_rsl_rl_policy(
+            env,
+            task=config.task,
+            checkpoint_file=checkpoint_file,
+            device=device,
+        )
+        print("ISAAC_LAB_EVAL_POLICY_LOADED", flush=True)
 
         stage = "rollout"
         episode_results: list[dict[str, Any]] = []
@@ -482,64 +575,20 @@ def run_eval(config: EvalConfig) -> dict[str, Any]:
             )
 
         stage = "metric_resolution"
-        success_metric = resolve_success_metric(config.success_metric, episode_results)
-        apply_success_metric(
-            success_metric,
-            episode_results,
-            success_distance_m=config.success_distance_m,
-            task=config.task,
+        summary = write_eval_summary(
+            config,
+            episode_results=episode_results,
+            checkpoint_file=checkpoint_file,
+            checkpoint_format=checkpoint_format,
+            device=device,
+            started=started,
+            captured_videos=captured_videos,
         )
-        mean_reward = sum(item["reward"] for item in episode_results) / len(
-            episode_results
-        )
-        distances = [
-            float(item["min_goal_distance_m"])
-            for item in episode_results
-            if item["min_goal_distance_m"] is not None
-        ]
-        success_rate = sum(1 for item in episode_results if item["success"]) / len(
-            episode_results
-        )
-        summary = {
-            "format": EVAL_FORMAT,
-            "status": "success",
-            "task": config.task,
-            "checkpoint": str(config.checkpoint),
-            "resolved_checkpoint": str(checkpoint_file),
-            "checkpoint_format": checkpoint_format,
-            "policy_loaded": True,
-            "num_episodes": config.num_episodes,
-            "max_steps_per_episode": config.max_steps_per_episode,
-            "seed": config.seed,
-            "device": device,
-            "mean_reward": mean_reward,
-            "success_rate": success_rate,
-            "success_metric_requested": config.success_metric,
-            "success_metric": success_metric,
-            "success_distance_m": (
-                config.success_distance_m if success_metric == "goal-distance" else None
-            ),
-            "min_success_rate": config.min_success_rate,
-            "passed": success_rate >= config.min_success_rate,
-            "mean_min_goal_distance_m": (
-                sum(distances) / len(distances) if distances else None
-            ),
-            "video": {
-                "enabled": config.capture_video,
-                "fps": config.video_fps,
-                "length_steps": config.video_length,
-                "files": captured_videos,
-            },
-            "episodes": episode_results,
-            "duration_seconds": round(time.time() - started, 3),
-            "output_path": str(config.summary_path),
-        }
-        config.summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
         print("ISAAC_LAB_EVAL_COMPLETE", flush=True)
         print(json.dumps(summary, indent=2), flush=True)
         return summary
     except Exception as exc:
-        _write_failure(
+        write_failure_summary(
             config,
             stage=stage,
             error=exc,

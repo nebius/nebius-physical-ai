@@ -866,16 +866,22 @@ def test_isaac_lab_eval_inline_script_compiles() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "policy_loaded", "expected_exit"),
-    [("success", True, 0), ("failed", False, 1)],
+    ("status", "policy_loaded", "passed", "expected_exit"),
+    [("success", True, False, 0), ("failed", False, False, 1)],
 )
 def test_isaac_lab_eval_status_check_enforces_summary(
-    tmp_path: Path, status: str, policy_loaded: bool, expected_exit: int
+    tmp_path: Path,
+    status: str,
+    policy_loaded: bool,
+    passed: bool,
+    expected_exit: int,
 ) -> None:
     from npa.cli.isaac_lab import _build_eval_status_check
 
     (tmp_path / "npa_isaac_lab_eval_summary.json").write_text(
-        json.dumps({"status": status, "policy_loaded": policy_loaded})
+        json.dumps(
+            {"status": status, "policy_loaded": policy_loaded, "passed": passed}
+        )
     )
 
     completed = subprocess.run(

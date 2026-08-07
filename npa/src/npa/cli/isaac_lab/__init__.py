@@ -1155,8 +1155,10 @@ def _build_eval_script(
         for name, value in environment.items()
     )
     future_import = "from __future__ import annotations\n"
-    if runner_source.startswith(future_import):
-        return future_import + prelude + runner_source[len(future_import) :]
+    future_offset = runner_source.find(future_import)
+    if future_offset >= 0:
+        insert_at = future_offset + len(future_import)
+        return runner_source[:insert_at] + prelude + runner_source[insert_at:]
     return prelude + runner_source
 
 
@@ -1165,7 +1167,12 @@ def _build_eval_status_check(output_dir: str) -> str:
 
     summary_path = f"{output_dir.rstrip('/')}/npa_isaac_lab_eval_summary.json"
     return f"""\
-python3 - {shlex.quote(summary_path)} <<'PYEVALSTATUS'
+NPA_EVAL_STATUS_PYTHON="$(command -v python3 || command -v python || true)"
+if [ -z "$NPA_EVAL_STATUS_PYTHON" ]; then
+  echo "ISAAC_LAB_EVAL_STATUS_FAILED no Python interpreter on PATH" >&2
+  exit 127
+fi
+"$NPA_EVAL_STATUS_PYTHON" - {shlex.quote(summary_path)} <<'PYEVALSTATUS'
 import json
 from pathlib import Path
 import sys
@@ -1182,7 +1189,11 @@ if summary.get("status") != "success" or summary.get("policy_loaded") is not Tru
         file=sys.stderr,
     )
     raise SystemExit(1)
-print("ISAAC_LAB_EVAL_STATUS_VERIFIED", flush=True)
+print(
+    "ISAAC_LAB_EVAL_STATUS_VERIFIED "
+    f"passed={{summary.get('passed')}} success_rate={{summary.get('success_rate')}}",
+    flush=True,
+)
 PYEVALSTATUS
 """
 

@@ -73,6 +73,8 @@ it never substitutes random actions. The output prefix receives
 `npa_isaac_lab_eval_summary.json` (`npa.isaac_lab.eval.v1`) with the resolved
 checkpoint, `policy_loaded`, held-out seed, per-episode reward/termination
 metrics, aggregate `success_rate`, and `passed` quality-gate result.
+Missing the requested rate leaves `status=success` with `passed=false`; only a
+runtime or policy-load failure makes the command non-zero.
 
 For manipulation and reach tasks, use `--success-metric goal-distance` with
 `--success-distance-m`; `auto` prefers a simulator-native success signal, then
