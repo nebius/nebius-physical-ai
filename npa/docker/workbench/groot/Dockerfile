@@ -250,7 +250,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
        NPA_ISAAC_VENV=/opt/isaac-lab/venv \
        NPA_ISAAC_SKIP_TORCH=0 \
        REQUIRE_TORCH_SM120=1 \
-       NPA_INSTALL_SKYPILOT_PREREQS=0 \
+       NPA_INSTALL_SKYPILOT_PREREQS=1 \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
     && chown -R ubuntu:ubuntu /opt/isaac-lab
 # common/ deliberately stays root-owned 0755: the bootstrap downloads and executes code at

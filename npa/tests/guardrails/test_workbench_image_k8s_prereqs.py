@@ -13,6 +13,7 @@ so a reviewer can see *why* the lines exist.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -44,7 +45,7 @@ def _build_text(tool: str) -> str:
 # workflows) and therefore must be schedulable in a pod. This list grows as the raw
 # SkyPilot task catalog is retired: once a tool's only workflow surface is an
 # npa.workflow spec, its image MUST be able to host a SkyPilot task.
-SKYPILOT_HOSTED_IMAGES = ("cosmos3-reason", "isaac-lab", "lerobot", "sonic")
+SKYPILOT_HOSTED_IMAGES = ("cosmos3-reason", "groot", "isaac-lab", "lerobot", "sonic")
 
 #: Images built on an Isaac base, where /isaac-sim is mode 750 owned by
 #: isaac-sim:isaac-sim and the runtime user therefore has to join that GROUP (a
@@ -110,6 +111,14 @@ def test_the_prereq_guard_is_not_satisfied_by_the_dockerfile_alone() -> None:
         "expected at least one prerequisite to live in the shared script rather than the "
         "Dockerfile; if they have all moved back, simplify this guard deliberately"
     )
+
+
+def test_groot_enables_the_shared_skypilot_prerequisite_layer() -> None:
+    """GR00T invokes the shared installer conditionally, so pin the enabled branch."""
+
+    dockerfile = (DOCKER_ROOT / "groot" / "Dockerfile").read_text(encoding="utf-8")
+    assert "NPA_INSTALL_SKYPILOT_PREREQS=1" in dockerfile
+    assert "NPA_INSTALL_SKYPILOT_PREREQS=0" not in dockerfile
 
 
 @pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
@@ -195,6 +204,7 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
 def test_in_cluster_build_script_is_executable_and_generic() -> None:
     script = Path(__file__).resolve().parents[3] / "scripts" / "build-workbench-image-in-cluster.sh"
     assert script.is_file(), script
+    assert os.access(script, os.X_OK), script
     text = script.read_text(encoding="utf-8")
     # No hardcoded registry/bucket/project identifiers.
     assert "cr.us-central1" not in text and "cr.eu-north1" not in text
