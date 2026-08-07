@@ -11,7 +11,6 @@ import secrets
 import shlex
 import shutil
 import subprocess
-import sys
 import ipaddress
 import tarfile
 import tempfile
@@ -40,7 +39,7 @@ from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/call
     _write_agent_operator_profile,
     _write_agent_s3_env,
 )
-from npa.cli.agent_iam import report_destroyed_agent_iam
+from npa.cli.agent_destroy import destroy_cmd as _destroy_cmd_impl
 from npa.cli.agent_inventory import agent_list_cmd
 from npa.cli.agent_preflight import (
     _agent_hard_prereq_results,
@@ -53,13 +52,13 @@ from npa.cli.agent_network import (
     _agent_ssh_egress_result,
 )
 from npa.cli.agent_terraform import (
-    _agent_terraform_state_exists,
+    _agent_terraform_state_exists,  # noqa: F401 - recovery hook re-export
     _apply_agent_terraform,
     _cleanup_orphan_agent_instances,  # noqa: F401 - recovery hook re-export
     _destroy_agent_terraform,
     _ensure_terraform_state_bucket,
     _persist_agent_project_config,
-    _record_agent_destroy_event,
+    _record_agent_destroy_event,  # noqa: F401 - recovery hook re-export
     _resolve_destroy_tf_vars,  # noqa: F401 - recovery hook re-export
 )
 from npa.clients.config import (
@@ -87,7 +86,6 @@ from npa.provisioning_journal import (
     ProvisioningOperation,
     current_operation,
     emit_recovery_summary,
-    list_operations,
     operation_context,
 )
 from npa.workbench.foxglove import (
@@ -9276,96 +9274,11 @@ def status_cmd(
 
 @app.command("destroy")
 @resolve_typer_defaults
-def destroy_cmd(
-    project: str = typer.Option(
-        "", "--project", help="NPA project alias (default: configured default_project)."
-    ),
-    name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
-    yes: bool = typer.Option(
-        False, "--yes", "-y", help="Skip the interactive confirmation prompt."
-    ),
-    purge_iam: bool = typer.Option(
-        True,
-        "--purge-iam/--keep-iam",
-        help=(
-            "Delete the project's npa-agent service account and its access keys "
-            "once no agent is left in the project (default). They outlive the VM "
-            "otherwise — including after a deploy that rolled back. --keep-iam "
-            "reports them instead."
-        ),
-    ),
-) -> None:
-    """Destroy agent VM/resources and remove saved config entry.
+@functools.wraps(_destroy_cmd_impl)
+def destroy_cmd(*args: Any, **kwargs: Any) -> None:
+    """Destroy agent VM/resources using exact live, receipt, or argument identity."""
 
-    Also reclaims *orphan* agents (created elsewhere, so no local record/state)
-    as long as the project is configured (``npa configure``): the deployment name
-    maps to the ``agent-{project}-{name}`` instance, whose public IP is reclaimed
-    by name and whose VPC stack is destroyed from the S3 remote state.
-    """
-    project = _resolve_project_alias(project)
-    record = _agent_record(project, name)
-    recovery_operations = list_operations(
-        project_alias=project,
-        resource_type="agent",
-        requested_name=name,
-    )
-    if not record and not _agent_terraform_state_exists(project, name) and not recovery_operations:
-        saved_env = resolve_environment(project)
-        if not (saved_env and saved_env.project_id):
-            _fail(
-                f"Agent config not found for {project}/{name}, and project "
-                f"{project!r} is not configured. Run `npa configure` (so the "
-                "project_id/tenant_id/region and S3 remote state are known), then "
-                "re-run destroy to reclaim an orphan agent."
-            )
-        typer.echo(
-            f"No local record for {project}/{name}; attempting orphan reclaim by "
-            f"instance name agent-{project}-{name} and S3 remote state.",
-            err=True,
-        )
-    elif not record and recovery_operations:
-        recovery = recovery_operations[0].recovery_summary()
-        typer.echo(
-            "No local agent record/config state is required: using exact operation "
-            f"{recovery['operation_id']} at {recovery['journal']} for recovery.",
-            err=True,
-        )
-    # Guard against tearing down the wrong agent interactively. Automation
-    # (non-TTY) and --yes proceed without prompting, so scripts are unaffected.
-    if not yes and sys.stdin.isatty():
-        if not typer.confirm(
-            f"Destroy agent {project}/{name} (VM, network, and local config)?",
-            default=False,
-        ):
-            typer.echo("Aborted.")
-            raise typer.Exit(code=1)
-    _record_agent_destroy_event(
-        project,
-        name,
-        terminal_state="in_progress",
-        record_present=bool(record),
-        terraform_state_present=_agent_terraform_state_exists(project, name),
-        purge_iam=purge_iam,
-    )
-    try:
-        _destroy_agent_terraform(project, name, record=record or None)
-    except ProvisionerError as exc:
-        try:
-            _record_agent_destroy_event(
-                project, name, terminal_state="failed", error=str(exc)
-            )
-        except (OSError, RuntimeError, ValueError):
-            pass
-        _fail(f"Terraform destroy failed: {exc}")
-    # Persist remote convergence before removing the only local deployment record.
-    _record_agent_destroy_event(project, name, terminal_state="verified_deleted")
-    if record:
-        _remove_agent_record(project, name)
-    # Drop the local auth secret + agent state dir (stale credentials otherwise
-    # linger after the VM is gone).
-    _cleanup_agent_local_files(project, name)
-    report_destroyed_agent_iam(project, name, record=record or None, purge=purge_iam)
-    typer.echo(f"destroyed: {project}/{name}")
+    _destroy_cmd_impl(*args, **kwargs)
 
 
 @app.command("verify-live")

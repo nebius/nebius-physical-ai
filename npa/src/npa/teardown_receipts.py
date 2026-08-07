@@ -19,20 +19,24 @@ from pathlib import Path
 import re
 import tempfile
 from typing import Any, Iterator
+from urllib.parse import urlparse
 
 
-SCHEMA_VERSION = "npa.teardown.receipt.v1"
+SCHEMA_VERSION = "npa.teardown.receipt.v2"
+LEGACY_SCHEMA_VERSIONS = frozenset({"npa.teardown.receipt.v1"})
 TERMINAL_STATES = frozenset(
     {
         "already_absent",
         "cancelled",
         "completed",
         "deleted",
+        "not_submitted",
         "terminal",
         "verified_absent",
         "verified_deleted",
     }
 )
+_RECEIPT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _UNSAFE_KEYS = (
     "access_key",
     "api_key",
@@ -89,6 +93,27 @@ def _journal_key(project_alias: str, project_id: str) -> str:
 
 def receipt_path(*, project_alias: str = "", project_id: str = "") -> Path:
     return receipt_root() / f"{_journal_key(project_alias, project_id)}.json"
+
+
+def receipt_path_for_id(receipt_id: str) -> Path:
+    """Resolve one opaque receipt ID without permitting arbitrary file reads."""
+
+    cleaned = str(receipt_id or "").strip()
+    if not _RECEIPT_ID_RE.fullmatch(cleaned) or cleaned in {".", ".."}:
+        raise TeardownReceiptError(
+            "receipt selector must be the opaque ID printed by `npa cleanup "
+            "--list-receipts`, not a filesystem path"
+        )
+    root = receipt_root()
+    candidate = root / f"{cleaned}.json"
+    try:
+        if candidate.parent.resolve() != root.resolve():
+            raise TeardownReceiptError("receipt selector escapes the receipt root")
+    except OSError as exc:
+        raise TeardownReceiptError(
+            f"could not resolve teardown receipt root: {exc}"
+        ) from exc
+    return candidate
 
 
 def _sanitize(value: object, *, key: str = "") -> object:
@@ -165,7 +190,11 @@ def _read(path: Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise TeardownReceiptError(f"invalid teardown receipt {path}: {exc}") from exc
-    if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
+    schema = payload.get("schema_version") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict) or schema not in {
+        SCHEMA_VERSION,
+        *LEGACY_SCHEMA_VERSIONS,
+    }:
         raise TeardownReceiptError(
             f"invalid teardown receipt {path}: unsupported schema"
         )
@@ -174,7 +203,197 @@ def _read(path: Path) -> dict[str, Any]:
         raise TeardownReceiptError(
             f"invalid teardown receipt {path}: events must be a list"
         )
+    # Normalize additively in memory. The next append durably migrates v1 to v2.
+    payload["schema_version"] = SCHEMA_VERSION
+    payload.setdefault("identity", {})
     return payload
+
+
+def load_teardown_receipt(receipt_id: str) -> dict[str, Any]:
+    """Load one receipt by opaque ID, rejecting paths and symlinks."""
+
+    path = receipt_path_for_id(receipt_id)
+    payload = _read(path)
+    if not payload:
+        raise TeardownReceiptError(f"teardown receipt {receipt_id!r} was not found")
+    if str(payload.get("receipt_id") or "") != str(receipt_id).strip():
+        raise TeardownReceiptError(
+            f"teardown receipt {receipt_id!r} has a mismatched embedded ID"
+        )
+    return payload
+
+
+_IDENTITY_SECRET_KEYS = (
+    "access_key",
+    "api_key",
+    "credential",
+    "iam_token",
+    "password",
+    "presigned",
+    "private_key",
+    "secret",
+    "token",
+)
+
+
+def _clean_identity(value: object, *, key: str = "") -> object:
+    """Validate recovery identity instead of silently redacting it."""
+
+    lowered = key.lower()
+    if any(marker in lowered for marker in _IDENTITY_SECRET_KEYS):
+        raise TeardownReceiptError(
+            f"refusing to persist secret-shaped cleanup identity field {key!r}"
+        )
+    if isinstance(value, Mapping):
+        return {
+            str(name): _clean_identity(item, key=str(name))
+            for name, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_clean_identity(item, key=key) for item in value]
+    if isinstance(value, Path):
+        value = str(value)
+    if isinstance(value, str):
+        for pattern in _SECRET_PATTERNS[:-1]:
+            if pattern.search(value):
+                raise TeardownReceiptError(
+                    f"refusing to persist secret-shaped cleanup identity field {key!r}"
+                )
+        if "://" in value:
+            parsed = urlparse(value)
+            if parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise TeardownReceiptError(
+                    "cleanup identity URLs must not contain credentials, query strings, "
+                    "or fragments"
+                )
+        return value
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)
+
+
+def _merge_identity(
+    existing: object, incoming: object, *, path: str = "identity"
+) -> object:
+    if existing in (None, "", {}, []):
+        return incoming
+    if incoming in (None, "", {}, []):
+        return existing
+    if isinstance(existing, Mapping) and isinstance(incoming, Mapping):
+        mapping_merged = dict(existing)
+        for key, value in incoming.items():
+            mapping_merged[str(key)] = _merge_identity(
+                mapping_merged.get(str(key)), value, path=f"{path}.{key}"
+            )
+        return mapping_merged
+    if isinstance(existing, list) and isinstance(incoming, list):
+        list_merged = list(existing)
+        seen = {json.dumps(item, sort_keys=True, default=str) for item in list_merged}
+        for item in incoming:
+            marker = json.dumps(item, sort_keys=True, default=str)
+            if marker not in seen:
+                if isinstance(item, Mapping):
+                    identity_key = next(
+                        (
+                            key
+                            for key in (
+                                "agent_name",
+                                "context",
+                                "run_id",
+                                "operation_id",
+                            )
+                            if item.get(key) not in (None, "")
+                        ),
+                        "",
+                    )
+                    if identity_key:
+                        matches = [
+                            index
+                            for index, saved in enumerate(list_merged)
+                            if isinstance(saved, Mapping)
+                            and saved.get(identity_key) == item.get(identity_key)
+                        ]
+                        if len(matches) > 1:
+                            raise TeardownReceiptError(
+                                f"ambiguous cleanup identity at {path} for "
+                                f"{identity_key}={item.get(identity_key)!r}"
+                            )
+                        if matches:
+                            index = matches[0]
+                            list_merged[index] = _merge_identity(
+                                list_merged[index],
+                                item,
+                                path=f"{path}[{identity_key}]",
+                            )
+                            seen.add(
+                                json.dumps(
+                                    list_merged[index], sort_keys=True, default=str
+                                )
+                            )
+                            continue
+                list_merged.append(item)
+                seen.add(marker)
+        return list_merged
+    if existing != incoming:
+        raise TeardownReceiptError(
+            f"immutable cleanup identity conflict at {path}: {existing!r} != {incoming!r}"
+        )
+    return existing
+
+
+def _root_identity(
+    identity: Mapping[str, Any], *, phase: str, resource: str
+) -> dict[str, Any]:
+    """Canonicalize resource identity so one project receipt can hold many resources."""
+
+    root = dict(identity)
+    resource_fields: tuple[str, ...] = ()
+    collection = ""
+    if phase == "agent":
+        collection = "agents"
+        resource_fields = (
+            "agent_name",
+            "instance_id",
+            "operation_id",
+            "service_account_id",
+        )
+    elif phase in {"cluster", "controller"}:
+        collection = "clusters"
+        resource_fields = (
+            "context",
+            "controller_context",
+            "cluster_id",
+            "cluster_name",
+            "kubeconfig_path",
+        )
+    elif phase == "workflow":
+        collection = "workflows"
+        resource_fields = (
+            "run_id",
+            "workflow_s3_uri",
+            "sky_job_id",
+            "submission_status",
+        )
+    elif phase == "storage_iam":
+        collection = "storage_iam"
+        resource_fields = ("service_account_id", "ownership")
+    scoped = {
+        key: root.pop(key)
+        for key in resource_fields
+        if root.get(key) not in (None, "", [], {})
+    }
+    if collection in {"agents", "clusters", "workflows"} and scoped:
+        identity_key = {
+            "agents": "agent_name",
+            "clusters": "context",
+            "workflows": "run_id",
+        }[collection]
+        scoped.setdefault(identity_key, resource)
+        root[collection] = _merge_identity(root.get(collection, []), [scoped])
+    elif collection == "storage_iam" and scoped:
+        existing = root.get(collection, {})
+        root[collection] = _merge_identity(existing, scoped)
+    return root
 
 
 def _write_atomic(path: Path, payload: Mapping[str, Any]) -> None:
@@ -218,6 +437,7 @@ def record_teardown_event(
     action: Mapping[str, Any] | str | None = None,
     verification: Mapping[str, Any] | None = None,
     errors: Sequence[str] = (),
+    identity: Mapping[str, Any] | None = None,
 ) -> Path:
     """Append one crash-safe teardown transaction event.
 
@@ -232,6 +452,10 @@ def record_teardown_event(
     if not cleaned_phase or not cleaned_resource:
         raise ValueError("teardown receipt phase and resource are required")
     now = utc_now()
+    cleaned_identity_value = _clean_identity(dict(identity or {}))
+    if not isinstance(cleaned_identity_value, Mapping):  # pragma: no cover - defensive
+        raise TeardownReceiptError("cleanup identity must be a mapping")
+    cleaned_identity = dict(cleaned_identity_value)
     event = _sanitize(
         {
             "phase": cleaned_phase,
@@ -247,6 +471,8 @@ def record_teardown_event(
             "recorded_at": now,
         }
     )
+    if isinstance(event, dict):
+        event["identity"] = cleaned_identity
     path = receipt_path(project_alias=project_alias, project_id=project_id)
     with _locked_root():
         payload = _read(path)
@@ -258,6 +484,7 @@ def record_teardown_event(
                 "updated_at": now,
                 "project_alias": str(project_alias or ""),
                 "project_id": str(project_id or ""),
+                "identity": {},
                 "events": [],
             }
         if str(payload.get("project_id") or "") not in {"", str(project_id or "")}:
@@ -268,6 +495,13 @@ def record_teardown_event(
         events.append(event)
         payload["events"] = events
         payload["updated_at"] = now
+        payload["schema_version"] = SCHEMA_VERSION
+        durable_identity = _root_identity(
+            cleaned_identity, phase=cleaned_phase, resource=cleaned_resource
+        )
+        payload["identity"] = _merge_identity(
+            payload.get("identity", {}), durable_identity
+        )
         if project_alias and not payload.get("project_alias"):
             payload["project_alias"] = project_alias
         if project_id and not payload.get("project_id"):

@@ -258,14 +258,19 @@ def _record_agent_destroy_event(
     terraform_state_present: bool | None = None,
     purge_iam: bool | None = None,
     error: str = "",
+    identity: dict[str, Any] | None = None,
+    project_id: str = "",
+    identity_source: str = "live_configuration",
 ) -> None:
     """Persist agent destroy evidence outside the removable project record."""
 
     from npa.teardown_receipts import record_teardown_event
 
-    environment = resolve_environment(project)
+    environment = resolve_environment(project) if project else None
+    exact_project_id = str(project_id or getattr(environment, "project_id", "") or "")
     precheck: dict[str, object] = {
-        "identity_resolved": bool(getattr(environment, "project_id", ""))
+        "identity_resolved": bool(exact_project_id),
+        "identity_source": identity_source,
     }
     if record_present is not None:
         precheck["local_record_present"] = record_present
@@ -279,7 +284,8 @@ def _record_agent_destroy_event(
         resource=name,
         terminal_state=terminal_state,
         project_alias=project,
-        project_id=str(getattr(environment, "project_id", "") or ""),
+        project_id=exact_project_id,
+        identity=identity,
         precheck=precheck,
         action=action,
         verification={
@@ -423,17 +429,25 @@ def _destroy_agent_terraform(
     *,
     record: dict[str, Any] | None = None,
     rollback_operation: bool = False,
+    operation_id: str = "",
+    project_id: str = "",
 ) -> None:
     """Destroy one exact state/journal-owned agent dependency graph."""
 
     from npa.cli import agent as agent_module
     from npa.cli.agent_network import destroy_with_default_security_group_recovery
 
-    operations = list_operations(
-        project_alias=project,
-        resource_type="agent",
-        requested_name=name,
-    )
+    if operation_id:
+        from npa.provisioning_journal import load_operation
+
+        operations = [load_operation(operation_id)]
+    else:
+        operations = list_operations(
+            project_alias=project,
+            project_id=project_id,
+            resource_type="agent",
+            requested_name=name,
+        )
     nonterminal_operations = [
         candidate
         for candidate in operations
@@ -454,10 +468,29 @@ def _destroy_agent_terraform(
         )
     operation = candidate_operations[0] if candidate_operations else None
     operation_payload = operation.read() if operation is not None else {}
+    if operation is not None and (
+        str(operation_payload.get("resource_type") or "") != "agent"
+        or str(operation_payload.get("requested_name") or "") != name
+    ):
+        raise ProvisionerError(
+            "The selected operation journal does not own this exact agent name; "
+            "no resources were changed."
+        )
+    journal_alias = str(operation_payload.get("project_alias") or "")
+    if project and journal_alias and project != journal_alias:
+        raise ProvisionerError(
+            "Agent recovery identity mismatch: the selected operation journal "
+            "belongs to a different project alias. No resources were changed."
+        )
     backend = operation_payload.get("backend")
     backend = dict(backend) if isinstance(backend, dict) else {}
     journal_project_id = str(operation_payload.get("project_id", "") or "")
     record_project_id = str((record or {}).get("project_id", "") or "")
+    if project_id and journal_project_id and project_id != journal_project_id:
+        raise ProvisionerError(
+            "Agent recovery identity mismatch: --project-id and the exact operation "
+            "journal name different Nebius projects. No resources were changed."
+        )
     if (
         journal_project_id
         and record_project_id

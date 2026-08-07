@@ -269,6 +269,8 @@ and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
 | A stage remains `PENDING` | the exact scheduler/pod/event reason may be accelerator/capacity, image pull, storage, init/crash, or backoff | run `npa workbench workflow status <run> --project <alias> --json`, then its stage `log_command`; if diagnostics are unavailable, fix the reported DNS/RBAC/controller cause rather than guessing |
 | `status: VERIFICATION_UNAVAILABLE` | an S3/provider/auth/SkyPilot check failed, so absence cannot be established | fix the reported source; if project storage selection is the problem, retry with `--workflow-s3-uri s3://<bucket>/physical-ai-data-factory/<run>/npa-workflow` |
 | `status: NOT_FOUND` with every applicable source listed as checked/absent | no receipt, exact canonical PAIDF object, exact managed job, or ordinary workflow manifest exists for that ID | verify the project alias/run ID; cancellation remains an idempotent no-op for this conclusively absent run |
+| cancel reports `NOT_SUBMITTED` | the owner-only durable ledger is still planned/reserved/staged and contains no workflow, stage, controller, or job launch identity | no provider dependency is required; the repeat-safe cancellation no-op exits 0 |
+| cancel reports `VERIFICATION_UNAVAILABLE` after local S3/SkyPilot removal | durable evidence says submission began, but no terminal receipt exists and the exact provider dependency is unavailable | restore the receipt-recorded provider context/dependency and retry; missing local tools are never treated as proof of absence |
 | provider package does not match lock checksums | the tracked lock lacks/cannot verify this operator package or a registry mirror/cache is inconsistent | upgrade NPA first. Maintainers regenerate with `terraform providers lock` for the recorded Linux/macOS platforms and review the lock diff; never delete the lock or bypass checksums |
 | agent setup reaches `access-key list` after configure already reports writable S3 | stale NPA version is redundantly reprovisioning storage credentials | upgrade NPA: setup/preflight now share the deployment credential decision and reuse the health-verified configured key without listing/creating/rotating access keys |
 
@@ -787,6 +789,21 @@ npa configure --forget-project "$PROJECT"
 #    and empty ~/.npa residue. Non-empty/unrelated local data is preserved.
 npa cleanup --full --yes --project "$PROJECT"
 ```
+
+If project configuration was already removed, take the opaque receipt ID printed
+before that rewrite and use the same NPA-only recovery surfaces:
+
+```bash
+npa agent destroy --receipt <receipt-id> --name <agent-name> --yes
+npa skypilot cleanup-controller --receipt <receipt-id> --context <context> --yes
+npa cluster down --receipt <receipt-id> --context <context> --force
+npa storage service-account delete --receipt <receipt-id> --id <exact-id> --dry-run
+npa workflow cancel <run-id> --receipt <receipt-id> --json
+```
+
+Exact flags override receipt fields, and receipt fields override live config;
+conflicts stop before action. Selectors are opaque IDs below NPA's receipt root,
+not arbitrary paths.
 
 Notes:
 

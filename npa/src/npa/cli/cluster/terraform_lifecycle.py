@@ -395,6 +395,13 @@ def down_cmd(
         "--project",
         help="NPA project alias whose saved project/tenant/region to use when tfvars omit them.",
     ),
+    receipt: str = typer.Option(
+        "", "--receipt", help="Opaque teardown receipt ID for alias-free recovery."
+    ),
+    project_id: str = typer.Option("", "--project-id", help="Exact Nebius project ID."),
+    tenant_id: str = typer.Option("", "--tenant-id", help="Exact Nebius tenant ID."),
+    region: str = typer.Option("", "--region", help="Exact Nebius region."),
+    cluster_id: str = typer.Option("", "--cluster-id", help="Exact immutable cluster ID."),
     context_name: str = typer.Option(
         "",
         "--context",
@@ -416,6 +423,7 @@ def down_cmd(
             "then the ambient KUBECONFIG."
         ),
     ),
+    output_json: bool = typer.Option(False, "--json", help="Emit a machine-readable result."),
 ) -> None:
     """Destroy the Terraform-managed NPA cluster: cloud resources and local state.
 
@@ -436,13 +444,48 @@ def down_cmd(
         isolated_terraform_data_dir,
     )
 
+    from npa.cleanup_identity import CleanupIdentityError, resolve_cleanup_identity
+    from npa.clients.config import resolve_environment
+
     tf_dir = _resolve_terraform_dir(terraform_dir)
     tfvars = _read_tfvars(tf_dir)
-    preview_context = context_name.strip() or str(
-        tfvars.get("cluster_name") or "npa-cluster"
+    alias = project.strip()
+    saved = resolve_environment(alias) if alias else None
+    live = {
+        "project_alias": alias,
+        "project_id": str(getattr(saved, "project_id", "") or tfvars.get("parent_id") or ""),
+        "tenant_id": str(getattr(saved, "tenant_id", "") or tfvars.get("tenant_id") or ""),
+        "region": str(getattr(saved, "region", "") or tfvars.get("region") or ""),
+        "context": context_name.strip() or str(tfvars.get("cluster_name") or ""),
+    }
+    try:
+        cleanup_identity = resolve_cleanup_identity(
+            explicit={
+                "project_alias": alias,
+                "project_id": project_id,
+                "tenant_id": tenant_id,
+                "region": region,
+                "cluster_id": cluster_id,
+                "context": context_name.strip(),
+                "kubeconfig_path": str(kubeconfig) if kubeconfig else "",
+            },
+            receipt_id=receipt,
+            live=live,
+            phase="cluster",
+        )
+    except (CleanupIdentityError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    preview_context = str(
+        cleanup_identity.get("context")
+        or cleanup_identity.get("cluster_name")
+        or tfvars.get("cluster_name")
+        or "npa-cluster"
     )
+    exact_project_id = str(cleanup_identity.get("project_id") or "")
+    exact_cluster_id = str(cleanup_identity.get("cluster_id") or "")
     recovery_operations = list_operations(
-        project_alias=project,
+        project_alias=alias,
+        project_id=exact_project_id,
         resource_type="cluster",
         requested_name=preview_context,
     )
@@ -495,6 +538,66 @@ def down_cmd(
                 + str(payload.get("recovery_commands", {}).get("resume", ""))
             )
     if not has_evidence:
+        if cleanup_identity.receipt_is_terminal:
+            payload = {
+                **cleanup_identity.to_dict(),
+                "outcome": "already_absent",
+                "verified": True,
+                "no_op": True,
+                "message": f"Cluster {preview_context!r} is already absent per terminal receipt evidence.",
+            }
+            if output_json:
+                typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                typer.echo(f"identity_source: {cleanup_identity.source}")
+                typer.echo(payload["message"])
+            return
+        if receipt or project_id or cluster_id:
+            if not exact_project_id or not exact_cluster_id:
+                raise typer.BadParameter(
+                    "No cluster state exists. Pass --receipt containing both exact project and "
+                    "cluster IDs, or pass --project-id and --cluster-id; Terraform was not invoked."
+                )
+            from npa.cluster.api import MK8sClient
+            from npa.cluster.exceptions import ClusterNotFoundError
+
+            try:
+                MK8sClient().get_cluster(exact_cluster_id, project_id=exact_project_id)
+            except ClusterNotFoundError:
+                from npa.teardown_receipts import record_teardown_event
+
+                record_teardown_event(
+                    phase="cluster",
+                    resource=preview_context,
+                    terminal_state="verified_absent",
+                    project_alias=alias,
+                    project_id=exact_project_id,
+                    context=preview_context,
+                    identity=cleanup_identity.values,
+                    precheck={"identity_source": cleanup_identity.source},
+                    action={"kind": "exact_provider_check", "mutation": False},
+                    verification={"provider_absence": "verified"},
+                )
+                message = (
+                    f"Provider verified exact cluster {exact_cluster_id} is absent; "
+                    "nothing to do. Terraform was not invoked."
+                )
+                if output_json:
+                    typer.echo(json.dumps({**cleanup_identity.to_dict(), "outcome": "already_absent", "verified": True, "no_op": True, "message": message}, indent=2, sort_keys=True))
+                else:
+                    typer.echo(f"identity_source: {cleanup_identity.source}")
+                    typer.echo(message)
+                return
+            except Exception as exc:
+                raise typer.BadParameter(
+                    f"Exact cluster verification is unresolved: {exc}. Terraform was not invoked."
+                ) from exc
+            raise typer.BadParameter(
+                f"Exact cluster {exact_cluster_id} is present, but no complete Terraform "
+                "state is available. Restore the receipt-recorded state/backend; Terraform "
+                "was not invoked and nothing was deleted."
+            )
+        typer.echo(f"identity_source: {cleanup_identity.source}")
         typer.echo(
             f"No Terraform-managed cluster is recorded for {preview_context!r}: "
             "no Terraform resource state/inventory or NPA kubeconfig was found. "
@@ -516,7 +619,15 @@ def down_cmd(
     with isolated_terraform_data_dir(tf_dir, preview_context) as terraform_data:
         env = _terraform_env(nebius_bin)
         env["TF_DATA_DIR"] = str(terraform_data)
-        _apply_project_tf_vars(env, project, tfvars)
+        for key, variable in (
+            ("project_id", "TF_VAR_parent_id"),
+            ("tenant_id", "TF_VAR_tenant_id"),
+            ("region", "TF_VAR_region"),
+        ):
+            tfvar_key = "parent_id" if key == "project_id" else key
+            if tfvar_key not in tfvars and cleanup_identity.get(key):
+                env[variable] = str(cleanup_identity.get(key))
+        _apply_project_tf_vars(env, alias, tfvars)
         _guard_tfvars_iam_token(tf_dir, tfvars)
         preview_kubeconfig = kubeconfig
         preview_state_issue = None
@@ -654,6 +765,7 @@ def down_cmd(
                     },
                     verification={"terraform_destroy": "failed"},
                     errors=[f"{type(exc).__name__}: {exc}"],
+                    identity=cleanup_identity.values,
                 )
             except (OSError, RuntimeError, ValueError) as receipt_exc:
                 typer.echo(
@@ -702,6 +814,7 @@ def down_cmd(
                 ),
             },
             verification={"terraform_destroy": "completed"},
+            identity=cleanup_identity.values,
         )
         if not keep_local_state:
             _clear_local_cluster_state(preview_context)

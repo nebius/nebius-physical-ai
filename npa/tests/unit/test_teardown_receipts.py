@@ -153,3 +153,99 @@ def test_prune_is_explicit_age_gated_and_preserves_uncertainty(
     assert not terminal.exists()
     assert unresolved.exists()
     assert any("unresolved/uncertain" in item for item in retained)
+
+
+def test_v2_identity_is_private_immutable_and_path_safe(
+    monkeypatch, tmp_path: Path
+) -> None:  # noqa: ANN001
+    root = _root(monkeypatch, tmp_path)
+    path = receipts.record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="in_progress",
+        project_id="project-1",
+        identity={
+            "project_id": "project-1",
+            "instance_id": "instance-1",
+            "terraform_backends": [
+                {"bucket": "state-bucket", "endpoint": "https://storage.example"}
+            ],
+        },
+    )
+
+    payload = receipts.load_teardown_receipt(path.stem)
+    assert payload["identity"]["agents"][0]["instance_id"] == "instance-1"
+    assert payload["identity"]["terraform_backends"][0]["endpoint"].startswith(
+        "https://"
+    )
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert root.stat().st_mode & 0o777 == 0o700
+    with pytest.raises(receipts.TeardownReceiptError, match="opaque ID"):
+        receipts.load_teardown_receipt("../credentials")
+    with pytest.raises(receipts.TeardownReceiptError, match="secret-shaped"):
+        receipts.record_teardown_event(
+            phase="agent",
+            resource="agent",
+            terminal_state="failed",
+            project_id="project-1",
+            identity={"access_key_secret": "must-not-persist"},
+        )
+
+
+def test_v1_receipt_loads_and_migrates_additively(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    root = _root(monkeypatch, tmp_path)
+    root.mkdir(mode=0o700)
+    path = receipts.receipt_path(project_alias="demo", project_id="project-1")
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "npa.teardown.receipt.v1",
+                "receipt_id": path.stem,
+                "project_alias": "demo",
+                "project_id": "project-1",
+                "created_at": "2026-08-01T00:00:00Z",
+                "updated_at": "2026-08-01T00:00:00Z",
+                "events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = receipts.load_teardown_receipt(path.stem)
+    assert loaded["schema_version"] == receipts.SCHEMA_VERSION
+    assert loaded["identity"] == {}
+
+    receipts.record_teardown_event(
+        phase="project_config",
+        resource="demo",
+        terminal_state="completed",
+        project_alias="demo",
+        project_id="project-1",
+        identity={"project_id": "project-1"},
+    )
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["schema_version"]
+        == receipts.SCHEMA_VERSION
+    )
+
+
+def test_one_project_receipt_keeps_multiple_resource_identities(
+    monkeypatch, tmp_path: Path
+) -> None:  # noqa: ANN001
+    _root(monkeypatch, tmp_path)
+    for name, instance_id in (("agent-a", "instance-a"), ("agent-b", "instance-b")):
+        path = receipts.record_teardown_event(
+            phase="agent",
+            resource=name,
+            terminal_state="verified_absent",
+            project_id="project-1",
+            identity={
+                "project_id": "project-1",
+                "agent_name": name,
+                "instance_id": instance_id,
+            },
+        )
+    payload = receipts.load_teardown_receipt(path.stem)
+    assert {
+        (item["agent_name"], item["instance_id"])
+        for item in payload["identity"]["agents"]
+    } == {("agent-a", "instance-a"), ("agent-b", "instance-b")}

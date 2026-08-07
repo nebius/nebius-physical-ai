@@ -208,6 +208,10 @@ def resolve_verified_cluster_identity(
     context: str = "",
     kubeconfig: Path | None = None,
     client: MK8sClient | None = None,
+    receipt: str = "",
+    project_id: str = "",
+    cluster_id: str = "",
+    cluster_name: str = "",
 ) -> VerifiedClusterIdentity:
     """Resolve and remotely verify one exact NPA cluster identity.
 
@@ -215,6 +219,107 @@ def resolve_verified_cluster_identity(
     selected NPA project and its sole matching cluster record.  Ambient kube and
     SkyPilot profiles are never candidates.
     """
+
+    if receipt or project_id or cluster_id or cluster_name:
+        from npa.cleanup_identity import CleanupIdentityError, resolve_cleanup_identity
+        from npa.clients.config import resolve_environment
+
+        environment = resolve_environment(project) if project else None
+        local_state = None
+        requested_context = str(context or "").strip()
+        if requested_context:
+            try:
+                local_state = load_cluster_state(requested_context)
+            except (OSError, ClusterStateError) as exc:
+                raise ClusterIdentityError(str(exc)) from exc
+        try:
+            recovery = resolve_cleanup_identity(
+                explicit={
+                    "project_alias": project,
+                    "project_id": project_id,
+                    "context": requested_context,
+                    "cluster_id": cluster_id,
+                    "cluster_name": cluster_name,
+                    "kubeconfig_path": str(kubeconfig) if kubeconfig else "",
+                },
+                receipt_id=receipt,
+                live={
+                    "project_alias": project,
+                    "project_id": str(getattr(environment, "project_id", "") or ""),
+                    "context": requested_context,
+                    "cluster_id": str(getattr(local_state, "cluster_id", "") or ""),
+                    "cluster_name": str(getattr(local_state, "name", "") or ""),
+                    "kubeconfig_path": str(
+                        getattr(local_state, "kubeconfig_path", "") or ""
+                    ),
+                },
+                phase="controller",
+                resource=requested_context,
+            )
+        except CleanupIdentityError as exc:
+            raise ClusterIdentityError(str(exc)) from exc
+        exact_project = str(recovery.get("project_id") or "")
+        exact_cluster = str(recovery.get("cluster_id") or "")
+        selected_context = str(
+            recovery.get("context")
+            or recovery.get("controller_context")
+            or recovery.get("cluster_name")
+            or ""
+        )
+        if not exact_project or not exact_cluster or not selected_context:
+            raise ClusterIdentityError(
+                "Alias-free controller cleanup requires exact project_id, cluster_id, "
+                "and context from --receipt or exact flags."
+            )
+        provider = client or MK8sClient()
+        try:
+            remote = provider.get_cluster(exact_cluster, project_id=exact_project)
+        except ClusterNotFoundError:
+            return VerifiedClusterIdentity(
+                project_alias=str(recovery.get("project_alias") or ""),
+                project_id=exact_project,
+                context=selected_context,
+                cluster_id=exact_cluster,
+                cluster_name=str(recovery.get("cluster_name") or selected_context),
+                kubeconfig=Path(str(recovery.get("kubeconfig_path") or "/nonexistent")),
+                cluster_absent=True,
+            )
+        except Exception as exc:
+            raise ClusterIdentityError(
+                f"Could not verify cluster {exact_cluster} in project {exact_project}: "
+                f"{type(exc).__name__}: {exc}. All controller state was preserved."
+            ) from exc
+        if local_state is None:
+            raise ClusterIdentityError(
+                "The exact cluster is present, but its NPA-owned kubeconfig/state is "
+                "unavailable. NPA will not use an ambient or unrelated context."
+            )
+        alias = str(recovery.get("project_alias") or project)
+        project_id = exact_project
+        state = local_state
+        if remote.id != exact_cluster or (
+            remote.project_id and remote.project_id != exact_project
+        ):
+            raise ClusterIdentityError(
+                "Exact receipt/provider cluster identity mismatch; no mutation was attempted."
+            )
+        saved_kubeconfig, kube_server = _load_exact_kubeconfig(selected_context, state)
+        if _endpoint_host(remote.endpoint or state.endpoint) not in {
+            "",
+            _endpoint_host(kube_server),
+        }:
+            raise ClusterIdentityError(
+                "Exact kubeconfig/provider endpoint mismatch; no mutation was attempted."
+            )
+        return VerifiedClusterIdentity(
+            project_alias=alias,
+            project_id=project_id,
+            context=selected_context,
+            cluster_id=exact_cluster,
+            cluster_name=remote.name or state.name,
+            kubeconfig=saved_kubeconfig,
+            endpoint=remote.endpoint or state.endpoint,
+        )
 
     alias, project_id = _selected_project(project)
     selected_context, state = _selected_context(context, project_id)

@@ -1776,13 +1776,15 @@ def _configured_summary() -> str:
 def _forget_project(alias: str) -> None:
     """Remove a project stanza from ~/.npa/config.yaml (the configure inverse)."""
     from npa.clients.config import ConfigError, forget_project, resolve_environment
+    from npa.cleanup_identity import project_cleanup_identity_snapshot
     from npa.teardown_receipts import record_teardown_event
 
     cleaned = alias.strip()
     environment = resolve_environment(cleaned)
     project_id = str(getattr(environment, "project_id", "") or "")
+    identity = project_cleanup_identity_snapshot(cleaned)
     # The intent/evidence lands outside config before the destructive rewrite.
-    record_teardown_event(
+    receipt_path = record_teardown_event(
         phase="project_config",
         resource=cleaned,
         terminal_state="in_progress",
@@ -1791,6 +1793,12 @@ def _forget_project(alias: str) -> None:
         precheck={"configured_project_found": environment is not None},
         action={"kind": "forget_project_configuration"},
         verification={"config_removed": False},
+        identity=identity,
+    )
+    typer.echo(
+        f"Durable cleanup identity: {receipt_path.stem}. Resume after config removal "
+        f"with `npa agent destroy --receipt {receipt_path.stem} --name <name> --yes` "
+        "or the matching cluster/storage/controller command."
     )
     try:
         forgotten = forget_project(cleaned)
@@ -1813,6 +1821,7 @@ def _forget_project(alias: str) -> None:
         precheck={"configured_project_found": bool(forgotten)},
         action={"kind": "forget_project_configuration"},
         verification={"config_removed": True},
+        identity=identity,
     )
 
 

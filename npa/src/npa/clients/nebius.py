@@ -725,6 +725,66 @@ def is_not_found(message: str) -> bool:
     return _is_not_found(message)
 
 
+@dataclass(frozen=True)
+class ComputeInstanceIdentity:
+    instance_id: str
+    name: str
+    project_id: str
+    labels: dict[str, str]
+    profile: str = ""
+
+
+def get_compute_instance_identity(
+    instance_id: str,
+    *,
+    project_id: str,
+    expected_name: str = "",
+    profile: str | None = None,
+) -> ComputeInstanceIdentity | None:
+    """Strictly verify one immutable compute instance and its project scope."""
+
+    exact_id = str(instance_id or "").strip()
+    exact_project = str(project_id or "").strip()
+    if not exact_id or not exact_project:
+        raise NebiusError("Exact instance ID and project ID are required")
+    profile_args, resolved_profile = _iam_profile_args(profile)
+    try:
+        payload = _run_json(
+            [*profile_args, "compute", "instance", "get", "--id", exact_id]
+        )
+    except NebiusError as exc:
+        if _is_not_found(str(exc)):
+            return None
+        raise
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    if not isinstance(metadata, dict):
+        raise NebiusError("Nebius returned no compute-instance metadata")
+    returned_id = str(metadata.get("id") or "").strip()
+    returned_name = str(metadata.get("name") or "").strip()
+    returned_project = str(
+        metadata.get("parent_id") or metadata.get("parentId") or ""
+    ).strip()
+    if returned_id != exact_id or not returned_name or not returned_project:
+        raise NebiusError("Nebius returned incomplete or mismatched compute identity")
+    if returned_project != exact_project:
+        raise NebiusError(
+            f"Compute instance {exact_id} belongs to {returned_project}, not {exact_project}"
+        )
+    wanted_name = str(expected_name or "").strip()
+    if wanted_name and returned_name != wanted_name:
+        raise NebiusError(
+            f"Compute instance {exact_id} has name {returned_name!r}, not {wanted_name!r}"
+        )
+    labels = metadata.get("labels")
+    return ComputeInstanceIdentity(
+        instance_id=returned_id,
+        name=returned_name,
+        project_id=returned_project,
+        labels={str(key): str(value) for key, value in dict(labels or {}).items()},
+        profile=resolved_profile,
+    )
+
+
 def _is_already_exists(message: str) -> bool:
     lowered = message.lower()
     return "alreadyexists" in lowered or "already exists" in lowered

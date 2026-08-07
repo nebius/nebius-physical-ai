@@ -17,7 +17,7 @@ fresh-setup  Initialize fresh project config and deploy a new agent from scratch
 setup  Interactively deploy an agent VM into a project you already configured.
 bootstrap  Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform).
 status  Show agent status, URLs, and health checks.
-destroy  Destroy agent VM/resources and remove saved config entry.
+destroy  Destroy agent VM/resources by exact identity; receipts need no project stanza.
 verify-live  Exit 0 only when live infra checks and tests pass.
 ```
 
@@ -38,7 +38,7 @@ verify-live  Exit 0 only when live infra checks and tests pass.
 | `setup` | Interactively deploy an agent VM into a project you already configured. |
 | `bootstrap` | Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform). |
 | `status` | Show agent status, URLs, and health checks. |
-| `destroy` | Destroy agent VM/resources and remove saved config entry. |
+| `destroy` | Destroy agent VM/resources by exact identity; receipts need no project stanza. |
 | `verify-live` | Exit 0 only when live infra checks and tests pass. |
 
 ## Examples

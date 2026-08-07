@@ -213,6 +213,10 @@ Nebius-auth, Kubernetes, or RBAC boundary. Real apply/destroy runs use an exact
 marked directory under `~/.npa/terraform-data/cluster/` as `TF_DATA_DIR` and
 remove it on every exit path. Interrupted apply records a non-secret lifecycle
 inventory immediately before apply, so a later down is not incorrectly skipped.
+After configuration removal, use `--receipt <opaque-id>` or both exact
+`--project-id` and `--cluster-id`. Verified provider absence is also a no-op;
+insufficient identity and a present cluster without recoverable owned state fail
+before binary lookup or `.terraform` creation.
 `npa cleanup --full --yes` detects/removes marked scratch and the exact validated
 legacy source cache; a failed removal stays visible on the next report.
 
@@ -265,6 +269,16 @@ needed to cancel/verify them. Receipts remain under
 not operational residue. `npa cleanup --list-receipts` lists them; only old
 receipts whose every phase is terminal can be explicitly pruned with
 `--prune-receipts --receipt-retention-days <days> --yes`.
+Receipt v2 additively retains immutable non-secret recovery identity. Exact flags
+take precedence over a receipt, which takes precedence over live config; any
+overlap conflict fails before action. `configure --forget-project` prints the
+receipt ID before removing the stanza, and every recovery command accepts that
+opaque selector rather than a receipt filesystem path.
+
+Cleanup JSON separates `operational_residue_present`,
+`audit_receipts_retained`, and `verification_unresolved`. The receipt file is
+never operational residue by itself, even when an unresolved event inside it
+correctly leaves operator action outstanding.
 
 Cloud IAM stays explicit. Configure records provenance only when its create call
 made `lerobot-training`, before the next fallible provider/configuration step.
@@ -287,6 +301,11 @@ npa storage service-account delete --project-id <project-id> --dry-run
 npa storage service-account delete --project-id <project-id> --yes
 npa cleanup --full --yes --project <alias>
 ```
+
+For alias-free journaling, also pass `--id <exact-service-account-id>` and, when
+required by scope verification, `--tenant-id`/`--profile` or a receipt. Exact
+NotFound is verified absence; auth, RBAC, network, and parse failures remain
+unresolved. NPA never recreates a project stanza merely to record the result.
 
 Category for follow-up: platform.
 

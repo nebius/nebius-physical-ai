@@ -5,6 +5,14 @@ description: "Use when running or debugging how the engine renders and submits S
 
 # SkyPilot Workflows
 
+For teardown after project/config removal, use the existing immutable teardown
+receipt (`npa skypilot cleanup-controller --receipt <id> --context <context>
+--yes`). A terminal receipt or exact provider-verified missing cluster is a no-op
+without bootstrapping SkyPilot. Otherwise cleanup stays bound to the exact
+recorded project/context and preserves local controller state until remote
+absence is independently verified. Never fall back to the current kube context
+or an unrelated SkyPilot profile.
+
 SkyPilot is the workflow **execution engine** in this repo. Argo is deprecated;
 do not add or revive Argo workflows.
 

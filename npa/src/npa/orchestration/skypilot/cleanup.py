@@ -15,8 +15,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from npa.orchestration.skypilot._bin import SkyBin, ensure_skypilot_version, resolve_config
-from npa.orchestration.skypilot.controller import DEFAULT_CONTROLLER_BACKEND, ControllerBackend
+from npa.orchestration.skypilot._bin import (
+    SkyBin,
+    ensure_skypilot_version,
+    resolve_config,
+)
+from npa.orchestration.skypilot.controller import (
+    DEFAULT_CONTROLLER_BACKEND,
+    ControllerBackend,
+)
 
 
 @dataclass
@@ -26,6 +33,11 @@ class CleanupResult:
     resources_removed: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     commands: list[list[str]] = field(default_factory=list)
+    outcome: str = "cleaned"
+    identity_source: str = "live_configuration"
+    receipt_id: str = ""
+    verified: bool = False
+    no_op: bool = False
 
     @property
     def ok(self) -> bool:
@@ -37,7 +49,13 @@ class CleanupResult:
         self.commands.extend(other.commands)
 
 
-NONTERMINAL_JOB_STATUSES = {"PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING"}
+NONTERMINAL_JOB_STATUSES = {
+    "PENDING",
+    "STARTING",
+    "RUNNING",
+    "RECOVERING",
+    "CANCELLING",
+}
 JOBS_CONTROLLER_PATTERN = "sky-jobs-controller-*"
 RUN_ID_MIN_LENGTH = 12
 _RUN_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9-]+$")
@@ -71,7 +89,12 @@ def sky_down(
         global_config_path=config_path,
         isolated_config_dir=isolated_config_dir,
     )
-    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "down", "--yes", cluster_name]
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "down",
+        "--yes",
+        cluster_name,
+    ]
     result = _run(
         cmd,
         isolated_config_dir=runtime_config.isolated_config_dir,
@@ -96,6 +119,10 @@ def cleanup_jobs_controller(
     config_path: Path | None = None,
     sky_bin: SkyBin = None,
     job_drain_timeout: int = DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS,
+    receipt: str = "",
+    project_id: str = "",
+    cluster_id: str = "",
+    cluster_name: str = "",
 ) -> CleanupResult:
     """Transactionally remove the controller for one verified NPA cluster.
 
@@ -105,15 +132,80 @@ def cleanup_jobs_controller(
     independent Kubernetes absence check succeeds.
     """
 
-    cleanup = CleanupResult()
+    cleanup = CleanupResult(
+        receipt_id=receipt,
+        identity_source=(
+            f"receipt:{receipt}"
+            if receipt
+            else "explicit_exact_arguments"
+            if project_id or cluster_id or cluster_name
+            else "live_configuration"
+        ),
+    )
     from npa.cluster.identity import (
         ClusterIdentityError,
         resolve_verified_cluster_identity,
     )
     from npa.teardown_receipts import record_teardown_event
 
+    if receipt:
+        from npa.cleanup_identity import CleanupIdentityError, resolve_cleanup_identity
+
+        try:
+            receipt_identity = resolve_cleanup_identity(
+                explicit={
+                    "project_alias": project,
+                    "project_id": project_id,
+                    "context": context,
+                    "cluster_id": cluster_id,
+                    "cluster_name": cluster_name,
+                },
+                receipt_id=receipt,
+                phase="controller",
+                resource=context,
+            )
+        except CleanupIdentityError as exc:
+            cleanup.errors.append(str(exc))
+            cleanup.outcome = "unsafe"
+            return cleanup
+        cleanup.identity_source = receipt_identity.source
+        if receipt_identity.receipt_is_terminal:
+            cleanup.outcome = "already_absent"
+            cleanup.verified = True
+            cleanup.no_op = True
+            return cleanup
+        try:
+            cluster_receipt_identity = resolve_cleanup_identity(
+                explicit={
+                    "project_alias": project,
+                    "project_id": project_id,
+                    "context": context,
+                    "cluster_id": cluster_id,
+                    "cluster_name": cluster_name,
+                },
+                receipt_id=receipt,
+                phase="cluster",
+                resource=context,
+            )
+        except CleanupIdentityError as exc:
+            cleanup.errors.append(str(exc))
+            cleanup.outcome = "unsafe"
+            return cleanup
+        if cluster_receipt_identity.receipt_is_terminal:
+            cleanup.outcome = "already_absent"
+            cleanup.verified = True
+            cleanup.no_op = True
+            return cleanup
+
     try:
-        identity = resolve_verified_cluster_identity(project=project, context=context)
+        identity = resolve_verified_cluster_identity(
+            project=project,
+            context=context,
+            receipt=receipt,
+            project_id=project_id,
+            cluster_id=cluster_id,
+            cluster_name=cluster_name,
+        )
     except ClusterIdentityError as exc:
         cleanup.errors.append(str(exc))
         try:
@@ -141,6 +233,7 @@ def cleanup_jobs_controller(
             project_alias=identity.project_alias,
             project_id=identity.project_id,
             context=identity.context,
+            identity=identity.receipt_identity(),
             precheck={"identity_verified": True, **identity_fields},
             action={"kind": "inspect_remote_controller"},
             verification={"remote_state": "pending"},
@@ -150,6 +243,13 @@ def cleanup_jobs_controller(
             f"controller transaction receipt could not be started; no remote or "
             f"local mutation was attempted: {exc}"
         )
+        return cleanup
+
+    if identity.cluster_absent:
+        cleanup.outcome = "already_absent"
+        cleanup.verified = True
+        cleanup.no_op = True
+        _record_controller_result(identity, cleanup, "verified_absent")
         return cleanup
 
     remote_pods: list[tuple[str, str, str]] = []
@@ -390,6 +490,7 @@ def _record_controller_result(
             project_alias=identity.project_alias,
             project_id=identity.project_id,
             context=identity.context,
+            identity=identity.receipt_identity(),
             precheck={"identity_verified": True, **identity.receipt_identity()},
             action={"commands": cleanup.commands},
             verification={
@@ -892,7 +993,14 @@ def _matching_jobs(
         global_config_path=config_path,
         isolated_config_dir=isolated_config_dir,
     )
-    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "jobs", "queue", "--all", "--output", "json"]
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "queue",
+        "--all",
+        "--output",
+        "json",
+    ]
     result = _run(
         cmd,
         isolated_config_dir=runtime_config.isolated_config_dir,
@@ -909,7 +1017,10 @@ def _matching_jobs(
     patterns = {run_id, run_tag(run_id), _sanitize_name(run_id)}
     matched = []
     for job in jobs or []:
-        text = " ".join(str(job.get(key, "")) for key in ("name", "job_name", "task", "job_id", "id"))
+        text = " ".join(
+            str(job.get(key, ""))
+            for key in ("name", "job_name", "task", "job_id", "id")
+        )
         if any(pattern and pattern in text for pattern in patterns):
             matched.append(job)
     return matched
@@ -942,7 +1053,13 @@ def _cancel_job(
         global_config_path=config_path,
         isolated_config_dir=isolated_config_dir,
     )
-    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "jobs", "cancel", "--yes", job_id]
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "cancel",
+        "--yes",
+        job_id,
+    ]
     result = _run(
         cmd,
         isolated_config_dir=runtime_config.isolated_config_dir,
@@ -1035,7 +1152,12 @@ def _down_jobs_controller(
         global_config_path=config_path,
         isolated_config_dir=isolated_config_dir,
     )
-    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "down", "--yes", controller_name]
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "down",
+        "--yes",
+        controller_name,
+    ]
     cleanup = CleanupResult(commands=[cmd])
     result = _run(
         cmd,
@@ -1290,7 +1412,9 @@ def _sanitize_name(value: str) -> str:
     return sanitized
 
 
-def _format_command_error(cmd: list[str], result: subprocess.CompletedProcess[str]) -> str:
+def _format_command_error(
+    cmd: list[str], result: subprocess.CompletedProcess[str]
+) -> str:
     detail = _combined_output(result) or f"exit {result.returncode}"
     return f"{' '.join(cmd)} failed: {detail}"
 

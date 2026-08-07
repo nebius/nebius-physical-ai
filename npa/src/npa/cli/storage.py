@@ -21,7 +21,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-bucket_app = typer.Typer(name="bucket", help="Object-storage buckets.", no_args_is_help=True)
+bucket_app = typer.Typer(
+    name="bucket", help="Object-storage buckets.", no_args_is_help=True
+)
 app.add_typer(bucket_app, name="bucket")
 
 service_account_app = typer.Typer(
@@ -54,6 +56,9 @@ class _StorageIamContext:
     project_id: str
     tenant_id: str
     profile: str
+    account_id: str = ""
+    identity_source: str = "live_configuration"
+    receipt_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,9 +82,15 @@ class _StorageIamObservation:
 
 @bucket_app.command("list")
 def list_buckets_cmd(
-    project: str = typer.Option("", "--project", help="NPA project alias to list buckets for."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project id to list buckets for."),
-    output_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias to list buckets for."
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project id to list buckets for."
+    ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit JSON instead of a table."
+    ),
 ) -> None:
     """List the object-storage buckets in a project, marking the configured one."""
     import json
@@ -100,11 +111,15 @@ def list_buckets_cmd(
     try:
         items = _list_project_buckets(resolved_project)
     except NebiusError as exc:
-        raise typer.BadParameter(f"Could not list buckets in {resolved_project}: {exc}") from exc
+        raise typer.BadParameter(
+            f"Could not list buckets in {resolved_project}: {exc}"
+        ) from exc
 
     configured = ""
     try:
-        configured = _bucket_name_from_uri(str(load_credentials(environ={}).s3_bucket or ""))
+        configured = _bucket_name_from_uri(
+            str(load_credentials(environ={}).s3_bucket or "")
+        )
     except Exception:  # noqa: BLE001 - listing works without readable credentials
         configured = ""
 
@@ -112,7 +127,8 @@ def list_buckets_cmd(
         {
             "name": str((item.get("metadata") or {}).get("name", "") or ""),
             "id": str((item.get("metadata") or {}).get("id", "") or ""),
-            "configured": str((item.get("metadata") or {}).get("name", "") or "") == configured,
+            "configured": str((item.get("metadata") or {}).get("name", "") or "")
+            == configured,
         }
         for item in items
     ]
@@ -176,8 +192,7 @@ def _storage_service_account_record() -> tuple[_OwnedStorageServiceAccount | Non
             managed_by == "npa-recovery-attested"
             and isinstance(recovery, dict)
             and recovery.get("schema_version") == "npa.storage-iam-recovery.v1"
-            and str(recovery.get("service_account_id", "") or "").strip()
-            == account_id
+            and str(recovery.get("service_account_id", "") or "").strip() == account_id
             and str(recovery.get("project_id", "") or "").strip() == project_id
             and str(recovery.get("reason", "") or "").strip()
             and str(recovery.get("attested_at", "") or "").strip()
@@ -192,9 +207,7 @@ def _storage_service_account_record() -> tuple[_OwnedStorageServiceAccount | Non
             and project_id
         ):
             candidates.append(
-                _OwnedStorageServiceAccount(
-                    account_id, name, project_id, source
-                )
+                _OwnedStorageServiceAccount(account_id, name, project_id, source)
             )
 
     # A complete dedicated or legacy proof remains readable across upgrades.
@@ -223,8 +236,7 @@ def _storage_service_account_record() -> tuple[_OwnedStorageServiceAccount | Non
             if not isinstance(account, dict):
                 continue
             if (
-                str(account.get("project_id", "") or "").strip()
-                != str(journal_project)
+                str(account.get("project_id", "") or "").strip() != str(journal_project)
                 or not str(account.get("attempt_id", "") or "").strip()
             ):
                 continue
@@ -241,11 +253,7 @@ def _storage_service_account_record() -> tuple[_OwnedStorageServiceAccount | Non
     unique = {(item.account_id, item.project_id) for item in candidates}
     if len(unique) == 1:
         preferred = next(
-            (
-                item
-                for item in candidates
-                if item.source == "storage_iam"
-            ),
+            (item for item in candidates if item.source == "storage_iam"),
             candidates[0],
         )
         return preferred, ""
@@ -285,10 +293,7 @@ def _remove_storage_service_account_record(account_id: str) -> bool:
     storage_iam = data.get("storage_iam")
     removed = False
     if isinstance(storage_iam, dict):
-        if (
-            str(storage_iam.get("service_account_id", "") or "").strip()
-            == account_id
-        ):
+        if str(storage_iam.get("service_account_id", "") or "").strip() == account_id:
             data.pop("storage_iam", None)
             removed = True
 
@@ -296,8 +301,7 @@ def _remove_storage_service_account_record(account_id: str) -> bool:
     if isinstance(nebius, dict):
         legacy_owned = (
             str(nebius.get("service_account_id", "") or "").strip() == account_id
-            and str(nebius.get("service_account_managed_by", "") or "").strip()
-            == "npa"
+            and str(nebius.get("service_account_managed_by", "") or "").strip() == "npa"
         )
         # A generic ID equal to the deleted storage identity is stale. If agent
         # bootstrap replaced it with a different npa-agent ID, preserve that ID.
@@ -338,8 +342,7 @@ def _remove_storage_service_account_record(account_id: str) -> bool:
                 and isinstance(account, dict)
                 and str(account.get("id", "") or "").strip() == account_id
                 and account.get("created_by") == "npa"
-                and str(account.get("project_id", "") or "").strip()
-                == str(project_id)
+                and str(account.get("project_id", "") or "").strip() == str(project_id)
             ):
                 continue
             resources = dict(resources)
@@ -400,15 +403,18 @@ def _untrusted_storage_account_ids() -> set[str]:
 
 
 def _resolve_storage_iam_context(
-    project: str = "", project_id: str = ""
+    project: str = "",
+    project_id: str = "",
+    *,
+    tenant_id: str = "",
+    profile: str = "",
+    receipt: str = "",
+    service_account_id: str = "",
 ) -> _StorageIamContext:
     """Resolve one stable alias/project/tenant/profile context for IAM calls."""
 
-    from npa.clients.config import (
-        ConfigError,
-        project_alias_for_id,
-        resolve_environment,
-    )
+    from npa.cleanup_identity import resolve_cleanup_identity
+    from npa.clients.config import ConfigError, resolve_environment
     from npa.clients.nebius_auth import nebius_profile
 
     alias = str(project or "").strip()
@@ -416,32 +422,42 @@ def _resolve_storage_iam_context(
     environment = None
     if alias:
         environment = resolve_environment(alias)
-    elif explicit_project:
-        alias = project_alias_for_id(explicit_project)
-        if alias:
-            environment = resolve_environment(alias)
-    else:
+    elif not (explicit_project or receipt):
         environment = resolve_environment(None)
         from npa.clients.config import default_project_name
 
         alias = str(default_project_name() or "").strip()
-    resolved_project = str(
-        explicit_project or getattr(environment, "project_id", "") or ""
-    ).strip()
-    configured_project = str(getattr(environment, "project_id", "") or "").strip()
-    if explicit_project and configured_project and explicit_project != configured_project:
-        raise ConfigError(
-            f"Project alias {alias!r} resolves to {configured_project}, not {explicit_project}."
-        )
+    identity = resolve_cleanup_identity(
+        explicit={
+            "project_alias": alias,
+            "project_id": explicit_project,
+            "tenant_id": tenant_id,
+            "profile": profile,
+            "service_account_id": service_account_id,
+        },
+        receipt_id=receipt,
+        live={
+            "project_alias": alias,
+            "project_id": str(getattr(environment, "project_id", "") or ""),
+            "tenant_id": str(getattr(environment, "tenant_id", "") or ""),
+            "profile": nebius_profile(),
+        },
+        phase="storage_iam",
+    )
+    resolved_project = str(identity.get("project_id") or "").strip()
     if not resolved_project:
         raise ConfigError(
             "A configured project alias or exact --project-id is required for IAM verification."
         )
+    alias = str(identity.get("project_alias") or alias).strip()
     return _StorageIamContext(
         alias=alias,
         project_id=resolved_project,
-        tenant_id=str(getattr(environment, "tenant_id", "") or "").strip(),
-        profile=nebius_profile(),
+        tenant_id=str(identity.get("tenant_id") or "").strip(),
+        profile=str(identity.get("profile") or nebius_profile()).strip(),
+        account_id=str(identity.get("service_account_id") or "").strip(),
+        identity_source=identity.source,
+        receipt_id=identity.receipt_id,
     )
 
 
@@ -476,6 +492,8 @@ def _observe_storage_iam(
         if record is not None
         else set(_untrusted_storage_account_ids())
     )
+    if context.account_id:
+        candidates.add(context.account_id)
     marker = storage_iam_residue(context.alias) if context.alias else {}
     marker_id = str(marker.get("service_account_id", "") or "").strip()
     if marker_id:
@@ -531,7 +549,9 @@ def _observe_storage_iam(
             context=context,
             account_id=candidate,
             ownership=(
-                "npa" if record is not None and record.account_id == candidate else "unverified"
+                "npa"
+                if record is not None and record.account_id == candidate
+                else "unverified"
             ),
             ownership_note=ownership_note,
             detail=str(exc),
@@ -542,7 +562,9 @@ def _observe_storage_iam(
             context=context,
             account_id=candidate,
             ownership=(
-                "npa" if record is not None and record.account_id == candidate else "unverified"
+                "npa"
+                if record is not None and record.account_id == candidate
+                else "unverified"
             ),
             ownership_note=ownership_note,
             detail="The provider authoritatively returned NotFound for the exact immutable ID.",
@@ -553,7 +575,9 @@ def _observe_storage_iam(
         account_id=identity.account_id,
         account_name=identity.name,
         ownership=(
-            "npa" if record is not None and record.account_id == identity.account_id else "unverified"
+            "npa"
+            if record is not None and record.account_id == identity.account_id
+            else "unverified"
         ),
         ownership_note=ownership_note,
         detail="Exact ID, name, project, tenant, and CLI profile context were verified.",
@@ -573,12 +597,30 @@ def _persist_storage_iam_observation(observation: _StorageIamObservation) -> Non
 
     alias = observation.context.alias
     if not alias:
-        if not observation.verified_absent:
-            raise ConfigError(
-                "A configured project alias is required to journal unresolved IAM. "
-                "Restore the project stanza or pass --project <alias>; the identity "
-                "was left untouched."
-            )
+        from npa.teardown_receipts import record_teardown_event
+
+        record_teardown_event(
+            phase="storage_iam",
+            resource=observation.account_id or "storage-iam",
+            terminal_state=(
+                "verified_absent"
+                if observation.verified_absent
+                else "verification_failed"
+            ),
+            project_id=observation.context.project_id,
+            identity={
+                "project_id": observation.context.project_id,
+                "tenant_id": observation.context.tenant_id,
+                "profile": observation.context.profile,
+                "service_account_id": observation.account_id,
+            },
+            precheck={"identity_source": observation.context.identity_source},
+            action={"kind": "exact_provider_check", "mutation": False},
+            verification={"provider_outcome": observation.outcome},
+            errors=[observation.detail]
+            if observation.outcome == "verification_failed"
+            else [],
+        )
         return
     if observation.verified_absent:
         clear_storage_iam_residue(alias, account_id=observation.account_id)
@@ -595,6 +637,8 @@ def _persist_storage_iam_observation(observation: _StorageIamObservation) -> Non
         "project_id": observation.context.project_id,
         "tenant_id": observation.context.tenant_id,
         "profile": observation.context.profile or "active",
+        "identity_source": observation.context.identity_source,
+        "receipt_id": observation.context.receipt_id,
         "service_account_id": observation.account_id,
         "service_account_name": observation.account_name,
         "ownership": observation.ownership,
@@ -638,6 +682,12 @@ def _record_storage_iam_teardown(
         terminal_state=terminal_state,
         project_alias=observation.context.alias,
         project_id=observation.context.project_id,
+        identity={
+            "project_id": observation.context.project_id,
+            "tenant_id": observation.context.tenant_id,
+            "profile": observation.context.profile,
+            "service_account_id": observation.account_id,
+        },
         precheck={
             "provider_outcome": observation.outcome,
             "ownership": observation.ownership,
@@ -886,9 +936,17 @@ def _complete_bucket_iam_cleanup_tombstone(
 
 @service_account_app.command("delete")
 def delete_service_account_cmd(
-    project: str = typer.Option("", "--project", help="NPA project alias owning the account."),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias owning the account."
+    ),
     project_id: str = typer.Option(
         "", "--project-id", help="Nebius project id owning the account."
+    ),
+    tenant_id: str = typer.Option("", "--tenant-id", help="Exact Nebius tenant ID."),
+    profile: str = typer.Option("", "--profile", help="Exact Nebius CLI profile."),
+    receipt: str = typer.Option("", "--receipt", help="Opaque teardown receipt ID."),
+    service_account_id: str = typer.Option(
+        "", "--id", help="Exact immutable storage service-account ID."
     ),
     dry_run: bool = typer.Option(
         False,
@@ -898,8 +956,12 @@ def delete_service_account_cmd(
             "untrusted/failed verification exits 2."
         ),
     ),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
-    output_json: bool = typer.Option(False, "--json", help="Emit a machine-readable result."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt."
+    ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit a machine-readable result."
+    ),
 ) -> None:
     """Delete the storage service account only when NPA recorded creating it.
 
@@ -921,13 +983,23 @@ def delete_service_account_cmd(
         is_not_found,
         list_access_keys_for_service_account,
     )
+
     try:
-        context = _resolve_storage_iam_context(project, project_id)
+        context = _resolve_storage_iam_context(
+            project,
+            project_id,
+            tenant_id=tenant_id,
+            profile=profile,
+            receipt=receipt,
+            service_account_id=service_account_id,
+        )
         observation = _observe_storage_iam(context)
         _persist_storage_iam_observation(observation)
     except ConfigError as exc:
         _partial_cleanup(str(exc))
     payload = _observation_dict(observation)
+    if not output_json:
+        typer.echo(f"identity_source: {context.identity_source}")
     if observation.outcome == "verification_failed":
         _record_storage_iam_teardown(
             observation,
@@ -1066,7 +1138,9 @@ def delete_service_account_cmd(
             f"and {len(key_ids)} access key(s)?"
         )
         if not sys.stdin.isatty():
-            typer.echo(f"{prompt} Re-run with --yes, or use --dry-run to inspect the plan.")
+            typer.echo(
+                f"{prompt} Re-run with --yes, or use --dry-run to inspect the plan."
+            )
             raise typer.Exit(code=1)
         if not typer.confirm(prompt, default=False):
             typer.echo("Aborted.")
@@ -1105,7 +1179,10 @@ def delete_service_account_cmd(
             try:
                 from npa.clients.config import clear_storage_iam_residue
 
-                clear_storage_iam_residue(context.alias, account_id=record.account_id)
+                if context.alias:
+                    clear_storage_iam_residue(
+                        context.alias, account_id=record.account_id
+                    )
             except ConfigError as marker_exc:
                 failed = True
                 typer.echo(
@@ -1147,7 +1224,8 @@ def delete_service_account_cmd(
         try:
             from npa.clients.config import clear_storage_iam_residue
 
-            clear_storage_iam_residue(context.alias, account_id=record.account_id)
+            if context.alias:
+                clear_storage_iam_residue(context.alias, account_id=record.account_id)
         except ConfigError as exc:
             failed = True
             typer.echo(
@@ -1163,23 +1241,38 @@ def delete_service_account_cmd(
 def reconcile_service_account_cmd(
     project: str = typer.Option("", "--project", help="Configured NPA project alias."),
     project_id: str = typer.Option("", "--project-id", help="Exact Nebius project ID."),
+    tenant_id: str = typer.Option("", "--tenant-id", help="Exact Nebius tenant ID."),
+    profile: str = typer.Option("", "--profile", help="Exact Nebius CLI profile."),
+    receipt: str = typer.Option("", "--receipt", help="Opaque teardown receipt ID."),
     service_account_id: str = typer.Option(
-        "", "--id", help="Exact immutable service-account ID. Defaults to saved residue evidence."
+        "",
+        "--id",
+        help="Exact immutable service-account ID. Defaults to saved residue evidence.",
     ),
     reason: str = typer.Option(
-        "", "--reason", help="Non-secret reason legacy NPA ownership is being recovered."
+        "",
+        "--reason",
+        help="Non-secret reason legacy NPA ownership is being recovered.",
     ),
     attested_by: str = typer.Option(
-        "", "--attested-by", help="Non-secret operator identity recorded in the recovery journal."
+        "",
+        "--attested-by",
+        help="Non-secret operator identity recorded in the recovery journal.",
     ),
     attest_npa_created: bool = typer.Option(
         False,
         "--attest-npa-created",
         help="Explicitly attest that the exact provider-verified identity was created by NPA.",
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Verify and show the recovery plan only."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm writing recovery provenance."),
-    output_json: bool = typer.Option(False, "--json", help="Emit a machine-readable result."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Verify and show the recovery plan only."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Confirm writing recovery provenance."
+    ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit a machine-readable result."
+    ),
 ) -> None:
     """Reconcile a legacy NPA-created storage identity without weakening deletion guards."""
 
@@ -1189,18 +1282,33 @@ def reconcile_service_account_cmd(
 
     import yaml
 
-    from npa.clients.config import ConfigError, mark_storage_iam_residue, storage_iam_residue
+    from npa.clients.config import (
+        ConfigError,
+        mark_storage_iam_residue,
+        storage_iam_residue,
+    )
     from npa.clients.credentials import CREDENTIALS_PATH, write_private_yaml
-    from npa.clients.nebius import DEFAULT_SERVICE_ACCOUNT_NAME, NebiusError, get_service_account_identity
+    from npa.clients.nebius import (
+        DEFAULT_SERVICE_ACCOUNT_NAME,
+        NebiusError,
+        get_service_account_identity,
+    )
 
     try:
-        context = _resolve_storage_iam_context(project, project_id)
+        context = _resolve_storage_iam_context(
+            project,
+            project_id,
+            tenant_id=tenant_id,
+            profile=profile,
+            receipt=receipt,
+            service_account_id=service_account_id,
+        )
     except ConfigError as exc:
         _partial_cleanup(str(exc))
-    if not context.alias or not context.tenant_id:
+    if not context.tenant_id:
         _partial_cleanup(
-            "Reconciliation requires a configured project alias with its exact tenant_id; "
-            "restore that non-secret project context before attesting ownership."
+            "Reconciliation requires the exact tenant_id from --tenant-id, a receipt, "
+            "or configured project context before attesting ownership."
         )
     marker = storage_iam_residue(context.alias) if context.alias else {}
     saved_ids = _untrusted_storage_account_ids()
@@ -1212,7 +1320,7 @@ def reconcile_service_account_cmd(
         saved_ids.update(
             str(item).strip() for item in marker_candidates if str(item).strip()
         )
-    exact_id = str(service_account_id or "").strip()
+    exact_id = str(service_account_id or context.account_id or "").strip()
     if not exact_id:
         if len(saved_ids) != 1:
             _partial_cleanup(
@@ -1259,7 +1367,9 @@ def reconcile_service_account_cmd(
         if output_json:
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         else:
-            typer.echo(f"Verified absence: {exact_id} is already absent; no reconciliation is needed.")
+            typer.echo(
+                f"Verified absence: {exact_id} is already absent; no reconciliation is needed."
+            )
         return
 
     observation = _StorageIamObservation(
@@ -1286,7 +1396,9 @@ def reconcile_service_account_cmd(
                 f"Verified exact residual {identity.name} ({identity.account_id}) in "
                 f"project {identity.project_id}, tenant {identity.tenant_id or '(provider-unset)'}."
             )
-            typer.echo("Would record operator-attested NPA recovery provenance; no IAM resource would be deleted.")
+            typer.echo(
+                "Would record operator-attested NPA recovery provenance; no IAM resource would be deleted."
+            )
             typer.echo(
                 "To attest, re-run with --reason <why> --attest-npa-created --yes; "
                 "then use `npa storage service-account delete --project "
@@ -1351,21 +1463,33 @@ def reconcile_service_account_cmd(
         _partial_cleanup(
             f"Recovery journal failed its ownership validation and deletion remains blocked: {record_error}"
         )
-    mark_storage_iam_residue(
-        context.alias,
-        {
-            "status": "reconciled_pending_delete",
-            "project_id": identity.project_id,
-            "tenant_id": identity.tenant_id,
-            "profile": identity.profile or "active",
-            "service_account_id": identity.account_id,
-            "service_account_name": identity.name,
-            "ownership": "npa-recovery-attested",
-            "reconciled_at": now,
-            "recovery_reason": reason.strip(),
-            "attested_by": operator,
-        },
-    )
+    marker_payload = {
+        "status": "reconciled_pending_delete",
+        "project_id": identity.project_id,
+        "tenant_id": identity.tenant_id,
+        "profile": identity.profile or "active",
+        "service_account_id": identity.account_id,
+        "service_account_name": identity.name,
+        "ownership": "npa-recovery-attested",
+        "reconciled_at": now,
+        "recovery_reason": reason.strip(),
+        "attested_by": operator,
+    }
+    if context.alias:
+        mark_storage_iam_residue(context.alias, marker_payload)
+    else:
+        _record_storage_iam_teardown(
+            _StorageIamObservation(
+                outcome="present",
+                context=context,
+                account_id=identity.account_id,
+                account_name=identity.name,
+                ownership="npa",
+                detail="Operator-attested recovery provenance persisted globally.",
+            ),
+            terminal_state="operator_action_remains",
+            action="record_exact_ownership_attestation",
+        )
     if output_json:
         typer.echo(json.dumps(plan, indent=2, sort_keys=True))
     else:
@@ -1381,10 +1505,18 @@ def reconcile_service_account_cmd(
 
 @bucket_app.command("delete")
 def delete_bucket_cmd(
-    name: str = typer.Option("", "--name", help="Bucket name. Defaults to the configured bucket."),
-    bucket_id: str = typer.Option("", "--id", help="Bucket resource id (skips the name lookup)."),
-    project: str = typer.Option("", "--project", help="NPA project alias holding the bucket."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project id holding the bucket."),
+    name: str = typer.Option(
+        "", "--name", help="Bucket name. Defaults to the configured bucket."
+    ),
+    bucket_id: str = typer.Option(
+        "", "--id", help="Bucket resource id (skips the name lookup)."
+    ),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias holding the bucket."
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project id holding the bucket."
+    ),
     ttl: str = typer.Option(
         DEFAULT_PURGE_TTL,
         "--ttl",
@@ -1411,7 +1543,9 @@ def delete_bucket_cmd(
     wait_timeout: int = typer.Option(
         300, "--wait-timeout", help="Max seconds to wait when --wait is set."
     ),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt."
+    ),
 ) -> None:
     """Delete an object-storage bucket npa provisioned, contents and versions included."""
     import sys
@@ -1448,9 +1582,13 @@ def delete_bucket_cmd(
         try:
             item = get_bucket_by_name(resolved_project, bucket_name)
         except NebiusError as exc:
-            raise typer.BadParameter(f"Could not list buckets in {resolved_project}: {exc}") from exc
+            raise typer.BadParameter(
+                f"Could not list buckets in {resolved_project}: {exc}"
+            ) from exc
         if item is None:
-            typer.echo(f"Bucket {bucket_name!r} does not exist in project {resolved_project}.")
+            typer.echo(
+                f"Bucket {bucket_name!r} does not exist in project {resolved_project}."
+            )
             iam_alias, iam_marker = _begin_bucket_iam_cleanup_tombstone(
                 project, resolved_project, bucket_name
             )
@@ -1471,11 +1609,15 @@ def delete_bucket_cmd(
             _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
             return
         resolved_id = str((item.get("metadata") or {}).get("id", "") or "")
-        bucket_name = bucket_name or str((item.get("metadata") or {}).get("name", "") or "")
+        bucket_name = bucket_name or str(
+            (item.get("metadata") or {}).get("name", "") or ""
+        )
 
     target = f"{bucket_name or resolved_id} ({resolved_id})"
     if not yes and sys.stdin.isatty():
-        if not typer.confirm(f"Delete bucket {target} and everything in it?", default=False):
+        if not typer.confirm(
+            f"Delete bucket {target} and everything in it?", default=False
+        ):
             typer.echo("Aborted.")
             raise typer.Exit(code=1)
 
@@ -1487,7 +1629,10 @@ def delete_bucket_cmd(
         delete_bucket(resolved_id, ttl=ttl)
     except NebiusError as exc:
         message = str(exc)
-        if "notempty" in message.replace(" ", "").lower() and not str(ttl or "").strip():
+        if (
+            "notempty" in message.replace(" ", "").lower()
+            and not str(ttl or "").strip()
+        ):
             raise typer.BadParameter(
                 f"Bucket {target} is not empty (objects or non-current versions remain). "
                 f"Re-run with --ttl {DEFAULT_PURGE_TTL} to schedule the purge."
@@ -1710,7 +1855,9 @@ def _prune_storage_credentials(bucket_name: str) -> None:
         credentials = load_credentials(environ={})
     except Exception:  # noqa: BLE001
         return
-    saved_bucket = _bucket_name_from_uri(str(getattr(credentials, "s3_bucket", "") or ""))
+    saved_bucket = _bucket_name_from_uri(
+        str(getattr(credentials, "s3_bucket", "") or "")
+    )
     if not saved_bucket or saved_bucket != bucket_name:
         return
     if not CREDENTIALS_PATH.exists():
@@ -1748,7 +1895,8 @@ def _prune_storage_credentials(bucket_name: str) -> None:
     # Rewrite the file verbatim: write_credentials_file deep-merges and cannot
     # drop keys.
     CREDENTIALS_PATH.write_text(
-        yaml.safe_dump(data, default_flow_style=False, sort_keys=False), encoding="utf-8"
+        yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
     )
     CREDENTIALS_PATH.chmod(0o600)
     unique_removed = list(dict.fromkeys(removed))

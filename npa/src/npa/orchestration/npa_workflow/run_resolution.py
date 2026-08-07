@@ -12,7 +12,10 @@ from npa.orchestration.npa_workflow.run_state import (
     paidf_artifact_prefix,
     paidf_workflow_prefix,
 )
-from npa.orchestration.npa_workflow.submission_state import inspect_submission_state
+from npa.orchestration.npa_workflow.submission_state import (
+    SCHEMA_VERSION as SUBMISSION_SCHEMA_VERSION,
+    inspect_submission_state,
+)
 from npa.orchestration.skypilot.workflow import ManagedJobEvidence, lookup_managed_job
 from npa.orchestration.skypilot.workflow_state import (
     WorkflowS3Config,
@@ -50,6 +53,7 @@ class RunResolution:
     found: bool = False
     conclusively_absent: bool = False
     verification_unavailable: bool = False
+    not_submitted: bool = False
     source: str = ""
     manifest_pending: bool = False
     manifest: dict[str, Any] | None = None
@@ -323,12 +327,16 @@ def resolve_run(
     s3_bucket: str = "",
     s3_endpoint: str = "",
     sky_bin: str = "",
+    exact_job_id: str = "",
+    allow_local_not_submitted: bool = False,
 ) -> RunResolution:
     """Resolve exactly one run using the documented deterministic precedence."""
 
     resolved_id = run_id_from_locator(run_id, workflow_s3_uri)
     ledger_project = project or "default"
-    result = RunResolution(run_id=resolved_id, project=project)
+    result = RunResolution(
+        run_id=resolved_id, project=project, job_id=exact_job_id.strip()
+    )
     explicit_uri = workflow_s3_uri or (
         run_id if str(run_id).startswith("s3://") else ""
     )
@@ -394,6 +402,31 @@ def resolve_run(
         workflow = _receipt_workflow(result.receipt)
         launch = _receipt_launch(result.receipt)
         launch_status = str(launch.get("status") or "").lower()
+        planning_status = str(
+            result.receipt.get("launch_state") or launch_status
+        ).lower()
+        launch_was_never_recorded = "launch" not in result.receipt
+        current_submission_schema = (
+            result.receipt.get("schema_version") == SUBMISSION_SCHEMA_VERSION
+        )
+        if (
+            allow_local_not_submitted
+            and current_submission_schema
+            and (
+                planning_status in {"planned", "reserved", "staged", "not_submitted"}
+                or launch_was_never_recorded
+            )
+            and not launch.get("sky_job_id")
+            and not exact_job_id
+        ):
+            result.not_submitted = True
+            result.source = "durable_submission_receipt"
+            result.checks[-1] = ResolutionCheck(
+                "durable_submission_receipt",
+                "found",
+                "durable local ledger has no launch transition; submission never began",
+            )
+            return result
         receipt_proves_run = bool(
             workflow
             or launch.get("sky_job_id")

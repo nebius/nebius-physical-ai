@@ -554,6 +554,24 @@ npa configure --forget-project <alias>
 npa cleanup --full --yes --project <alias>
 ```
 
+`configure --forget-project` durably writes and prints an opaque receipt ID
+before rewriting configuration. If teardown must resume after that point, stay
+inside NPA and select the same immutable identity explicitly:
+
+```bash
+RECEIPT=<id printed by npa configure --forget-project>
+npa agent destroy --receipt "$RECEIPT" --name <name> --yes
+npa skypilot cleanup-controller --receipt "$RECEIPT" --context <context> --yes
+npa cluster down --receipt "$RECEIPT" --context <context> --force
+npa storage service-account delete --receipt "$RECEIPT" --id <exact-id> --dry-run
+npa workflow cancel <run-id> --receipt "$RECEIPT" --json
+```
+
+Cleanup identity precedence is deterministic: exact flags, then the selected
+receipt, then live configuration. Any overlapping mismatch is unsafe and fails
+before provider or Terraform mutation; NPA never substitutes a default alias,
+current Kubernetes context, or unrelated SkyPilot profile.
+
 Every destructive phase writes a versioned, atomic, non-secret receipt under
 `~/.npa/teardown-receipts/` before deleting the local evidence needed to audit
 it. Managed jobs are checked and receipted before SkyPilot state is removed;
@@ -562,6 +580,11 @@ removal, are not operational residue, and keep completed phases from reverting
 to `unknown` on an idempotent retry. List them with `npa cleanup
 --list-receipts`; prune only old, fully terminal receipts explicitly with `npa
 cleanup --prune-receipts --receipt-retention-days <days> --yes`.
+
+JSON reports expose `operational_residue_present`, `audit_receipts_retained`,
+and `verification_unresolved` separately. A retained receipt alone never changes
+`local_state: fully_cleaned` into `residue_present`; an unresolved action recorded
+inside it remains operator action, not local operational residue.
 
 Controller cleanup has shared blast radius. It accepts only an explicit or
 unambiguously selected NPA project plus that project's exact saved context,
@@ -610,6 +633,14 @@ failed scratch cleanup and the legacy source-checkout cache. A provider checksum
 mismatch remains a hard failure: NPA keeps `.terraform.lock.hcl` read-only and
 prints a reviewed `terraform providers lock` reconciliation command rather than
 bypassing verification.
+
+With `--receipt` or exact `--project-id/--cluster-id`, the same no-state decision
+happens before Terraform: provider-verified absence exits 0, insufficient
+identity fails once with the required selectors, and a present cluster without
+recoverable owned state fails closed. Workflow cancellation reports
+`NOT_SUBMITTED` only from durable planned/reserved evidence; if submission began
+and S3 or SkyPilot verification is gone, it remains
+`VERIFICATION_UNAVAILABLE` with exit 2.
 
 For the full known-issues surface: [docs/workbench/troubleshooting/known-footguns.md](docs/workbench/troubleshooting/known-footguns.md)
 and the active operational backlog in [FIXME.md](FIXME.md).

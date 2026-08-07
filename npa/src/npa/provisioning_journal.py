@@ -715,6 +715,27 @@ class ProvisioningOperation:
                 precheck={"operation_id": self.operation_id},
                 action={"kind": "provisioning_commit"},
                 verification={"operation_journal": str(self.path)},
+                identity={
+                    "project_alias": str(payload.get("project_alias") or ""),
+                    "project_id": str(payload.get("project_id") or ""),
+                    "parent_id": str(payload.get("project_id") or ""),
+                    "tenant_id": str(payload.get("tenant_id") or ""),
+                    "region": str(payload.get("region") or ""),
+                    "operations": [
+                        {
+                            "operation_id": self.operation_id,
+                            "resource_type": str(payload.get("resource_type") or ""),
+                            "requested_name": str(payload.get("requested_name") or ""),
+                            "project_alias": str(payload.get("project_alias") or ""),
+                            "project_id": str(payload.get("project_id") or ""),
+                            "tenant_id": str(payload.get("tenant_id") or ""),
+                            "region": str(payload.get("region") or ""),
+                            "backend": dict(payload.get("backend") or {}),
+                            "resources": list(payload.get("resources") or []),
+                            "state_paths": [str(path) for path in self.state_copies()],
+                        }
+                    ],
+                },
             )
         except (OSError, RuntimeError, ValueError) as exc:
             # The operational journal is already committed.  A receipt failure is

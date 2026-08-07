@@ -21,6 +21,11 @@ For chat UX, API shapes, and Rerun iframe behavior, use `npa-agent`. For
 
 - `npa/.venv/bin/npa agent fresh-setup` — initialize project env + deploy + bootstrap
 - `npa/.venv/bin/npa agent destroy` — npa-driven teardown (ingress cleanup, TF destroy, orphan VM delete)
+- If the project stanza is already gone, resume only from the opaque receipt ID
+  printed before removal (`agent destroy --receipt <id> --name <name> --yes`) or
+  from exact `--project-id/--instance-id` provider identity. Conflicting receipt,
+  operation-journal, record, or exact identities stop before deletion; NPA never
+  performs a display-name/prefix VM sweep.
 - `npa/scripts/agent_fresh_setup_loop.sh` — destroy → fresh-setup → smoke chat (loop until success)
 - `npa/scripts/agent_mature_verify_loop.sh` — bootstrap-first mature loop (existing agents; not fresh deploy)
 

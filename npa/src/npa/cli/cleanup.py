@@ -887,11 +887,25 @@ def cleanup_cmd(
             local_state=local_state,
             receipt_phases=receipt_phases,
         )
+        from npa.teardown_receipts import TERMINAL_STATES
+
+        operational_residue = local_state not in {"fully_clean", "fully_cleaned"}
+        unresolved_receipts = any(
+            str(event.get("terminal_state") or "") not in TERMINAL_STATES
+            for event in receipt_phases.values()
+        )
+        verification_unresolved = bool(
+            iam_partial or job_note or cleanup_failed or unresolved_receipts
+        )
+        retained_receipts = len(list_teardown_receipts())
         typer.echo(
             json.dumps(
                 {
                     "result": result,
-                    "local_state": local_state,
+                    "local_state": "fully_cleaned" if not operational_residue else local_state,
+                    "operational_residue_present": operational_residue,
+                    "residue_present": operational_residue,
+                    "verification_unresolved": verification_unresolved,
                     "iam_state": iam_status,
                     "iam_verification_required": iam_partial,
                     "project_retained": iam_partial,
@@ -899,7 +913,8 @@ def cleanup_cmd(
                     "removed_bytes": total if yes else 0,
                     "iam_detail": iam_message,
                     "phases": [item.to_dict() for item in phases],
-                    "retained_audit_receipts": len(list_teardown_receipts()),
+                    "retained_audit_receipts": retained_receipts,
+                    "audit_receipts_retained": bool(retained_receipts),
                     "audit_receipts_are_operational_residue": False,
                 },
                 indent=2,

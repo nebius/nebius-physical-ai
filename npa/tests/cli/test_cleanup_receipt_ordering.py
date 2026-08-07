@@ -167,7 +167,12 @@ def test_final_audit_uses_receipts_after_config_and_resources_are_removed(
         assert phases[resource]["operator_action_required"] is False
         assert phases[resource]["operator_action_remains"] is False
     assert payload["retained_audit_receipts"] == 1
+    assert payload["audit_receipts_retained"] is True
     assert payload["audit_receipts_are_operational_residue"] is False
+    assert payload["operational_residue_present"] is False
+    assert payload["residue_present"] is False
+    assert payload["local_state"] == "fully_cleaned"
+    assert payload["verification_unresolved"] is False
 
 
 def test_uncertain_receipt_remains_visible_and_actionable(
@@ -186,6 +191,9 @@ def test_uncertain_receipt_remains_visible_and_actionable(
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
+    assert payload["operational_residue_present"] is False
+    assert payload["audit_receipts_retained"] is True
+    assert payload["verification_unresolved"] is True
     controller_phase = next(
         item for item in payload["phases"] if item["resource"] == "SkyPilot controller"
     )

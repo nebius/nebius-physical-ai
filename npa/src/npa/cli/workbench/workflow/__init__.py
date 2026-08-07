@@ -4076,6 +4076,9 @@ def cancel_cmd(
     project: str = typer.Option(
         "", "--project", "-p", help="Project alias for S3 credentials."
     ),
+    receipt: str = typer.Option("", "--receipt", help="Opaque teardown receipt ID."),
+    project_id: str = typer.Option("", "--project-id", help="Exact Nebius project ID."),
+    job_id: str = typer.Option("", "--job-id", help="Exact SkyPilot managed-job ID."),
     workflow_s3_uri: str = typer.Option(
         "",
         "--workflow-s3-uri",
@@ -4096,6 +4099,7 @@ def cancel_cmd(
 ) -> None:
     """Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops."""
     resolved_run_id = ""
+    identity = None
     try:
         from npa.orchestration.npa_workflow.cancellation import (
             assess_run_cancellation,
@@ -4103,18 +4107,75 @@ def cancel_cmd(
         )
         from npa.orchestration.npa_workflow.run_resolution import resolve_run
         from npa.orchestration.skypilot.workflow_state import WorkflowStateError
+        from npa.cleanup_identity import resolve_cleanup_identity
+        from npa.clients.config import resolve_environment
 
-        resolution = resolve_run(
-            run_id,
-            project=project,
-            workflow_s3_uri=workflow_s3_uri,
-            workflow_s3_prefix=workflow_s3_prefix,
-            s3_bucket=s3_bucket,
-            s3_endpoint=s3_endpoint,
-            sky_bin=sky_bin,
+        environment = resolve_environment(project) if project else None
+        identity = resolve_cleanup_identity(
+            explicit={
+                "project_alias": project,
+                "project_id": project_id,
+                "run_id": str(run_id) if not str(run_id).startswith("s3://") else "",
+                "workflow_s3_uri": workflow_s3_uri,
+                "sky_job_id": job_id,
+            },
+            receipt_id=receipt,
+            live={
+                "project_alias": project,
+                "project_id": str(getattr(environment, "project_id", "") or ""),
+            },
+            phase="workflow",
+            resource=str(run_id) if not str(run_id).startswith("s3://") else "",
         )
+        resolved_identity_run = str(identity.get("run_id") or run_id)
+        if identity.receipt_is_terminal:
+            from npa.orchestration.npa_workflow.run_resolution import RunResolution
+
+            resolution = RunResolution(
+                run_id=resolved_identity_run,
+                project=str(identity.get("project_alias") or project),
+                not_submitted=True,
+                source=f"receipt:{receipt}",
+            )
+        else:
+            resolution = resolve_run(
+                resolved_identity_run,
+                project=str(identity.get("project_alias") or project),
+                workflow_s3_uri=str(identity.get("workflow_s3_uri") or workflow_s3_uri),
+                workflow_s3_prefix=workflow_s3_prefix,
+                s3_bucket=s3_bucket,
+                s3_endpoint=s3_endpoint,
+                sky_bin=sky_bin,
+                exact_job_id=str(identity.get("sky_job_id") or job_id),
+                allow_local_not_submitted=True,
+            )
         resolved_run_id = resolution.run_id
-        if not resolution.found and resolution.conclusively_absent:
+        if resolution.not_submitted:
+            detected = (
+                "NOT_SUBMITTED"
+                if not identity.receipt_is_terminal
+                or identity.terminal_state == "not_submitted"
+                else "TERMINAL"
+            )
+            result = {
+                "run_id": resolved_run_id,
+                "outcome": "not_submitted"
+                if detected == "NOT_SUBMITTED"
+                else "already_absent",
+                "launch_state": "not_submitted"
+                if detected == "NOT_SUBMITTED"
+                else "terminal",
+                "detected_state": detected,
+                "sky_job_id": "",
+                "sky_job_ids": [],
+                "cloud_calls": False,
+                "verification": "terminal_receipt"
+                if identity.receipt_is_terminal
+                else "durable_planning_ledger",
+                "resolution_checks": resolution.checks_payload(),
+                "message": "No cancellation was needed; durable evidence proves the run never launched or is terminal.",
+            }
+        elif not resolution.found and resolution.conclusively_absent:
             result = {
                 "run_id": resolved_run_id,
                 "outcome": "already_absent",
@@ -4223,7 +4284,7 @@ def cancel_cmd(
                         "reported exact job/provider failures."
                     ),
                 }
-    except (WorkflowStateError, OSError, ValueError) as exc:
+    except (WorkflowStateError, OSError, RuntimeError, ValueError) as exc:
         result = {
             "run_id": resolved_run_id or str(run_id),
             "outcome": "verification_failed",
@@ -4234,19 +4295,27 @@ def cancel_cmd(
         from npa.clients.config import resolve_environment
         from npa.teardown_receipts import record_teardown_event
 
-        environment = resolve_environment(project or None)
+        environment = resolve_environment(project or None) if project else None
         receipt_state = {
             "already_absent": "verified_absent",
             "cancelled": "cancelled",
             "terminal": "terminal",
             "no_cancellation_needed": "terminal",
+            "not_submitted": "not_submitted",
         }.get(str(result.get("outcome") or ""), "verification_failed")
         record_teardown_event(
             phase="workflow",
             resource=resolved_run_id or str(run_id),
             terminal_state=receipt_state,
-            project_alias=project,
-            project_id=str(getattr(environment, "project_id", "") or ""),
+            project_alias=str(
+                identity.get("project_alias") if identity is not None else project
+            ),
+            project_id=str(
+                identity.get("project_id")
+                if identity is not None
+                else getattr(environment, "project_id", "") or ""
+            ),
+            identity=(identity.values if identity is not None else None),
             precheck={
                 "detected_state": result.get("detected_state", ""),
                 "resolution_checks": result.get("resolution_checks", []),
@@ -4269,10 +4338,15 @@ def cancel_cmd(
             result.setdefault("diagnostics", []).append(
                 f"teardown receipt unavailable: {exc}"
             )
+    result["identity_source"] = (
+        identity.source if identity is not None else "unavailable"
+    )
+    result["receipt_id"] = identity.receipt_id if identity is not None else ""
     if json_output:
         typer.echo(json.dumps(result, indent=2, sort_keys=True))
     else:
         typer.echo(f"run_id: {result['run_id']}")
+        typer.echo(f"identity_source: {result['identity_source']}")
         typer.echo(f"outcome: {result['outcome']}")
         if result.get("message"):
             typer.echo(str(result["message"]))

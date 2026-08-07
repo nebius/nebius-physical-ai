@@ -282,6 +282,10 @@ def cleanup_controller_cmd(
             "has exactly one NPA-owned cluster record."
         ),
     ),
+    receipt: str = typer.Option("", "--receipt", help="Opaque teardown receipt ID."),
+    project_id: str = typer.Option("", "--project-id", help="Exact Nebius project ID."),
+    cluster_id: str = typer.Option("", "--cluster-id", help="Exact immutable cluster ID."),
+    cluster_name: str = typer.Option("", "--cluster-name", help="Exact provider cluster name."),
     output_json: bool = typer.Option(
         False, "--json", help="Emit a machine-readable result."
     ),
@@ -311,11 +315,24 @@ def cleanup_controller_cmd(
     from npa.orchestration.skypilot.cleanup import cleanup_jobs_controller
 
     try:
-        result = cleanup_jobs_controller(
-            project=project,
-            context=context,
-            sky_bin=sky_bin or None,
+        cleanup_kwargs: dict[str, object] = {
+            "project": project,
+            "context": context,
+            "sky_bin": sky_bin or None,
+        }
+        cleanup_kwargs.update(
+            {
+                key: value
+                for key, value in {
+                    "receipt": receipt,
+                    "project_id": project_id,
+                    "cluster_id": cluster_id,
+                    "cluster_name": cluster_name,
+                }.items()
+                if value
+            }
         )
+        result = cleanup_jobs_controller(**cleanup_kwargs)
     except (OSError, RuntimeError, ValueError) as exc:
         payload = {
             "outcome": "verification_failed",
@@ -325,20 +342,25 @@ def cleanup_controller_cmd(
         }
     else:
         payload = {
-            "outcome": "cleaned" if result.ok else "verification_failed",
+            "outcome": getattr(result, "outcome", "cleaned") if result.ok else "verification_failed",
             "resources_removed": result.resources_removed,
             "errors": result.errors,
             "commands": result.commands,
+            "identity_source": getattr(result, "identity_source", "live_configuration"),
+            "receipt_id": getattr(result, "receipt_id", ""),
+            "verified": getattr(result, "verified", result.ok),
+            "no_op": getattr(result, "no_op", not result.resources_removed),
         }
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
+        typer.echo(f"identity_source: {payload.get('identity_source', 'unavailable')}")
         if payload["resources_removed"]:
             typer.echo(
                 "Removed SkyPilot controller state: "
                 + ", ".join(payload["resources_removed"])
             )
-        elif payload["outcome"] == "cleaned":
+        elif payload["outcome"] in {"cleaned", "already_absent"}:
             typer.echo("SkyPilot jobs controller is already absent; nothing to remove.")
         else:
             typer.echo("SkyPilot controller state could not be verified; nothing was removed.")

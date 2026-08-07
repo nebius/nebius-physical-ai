@@ -305,6 +305,12 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
 
 ## Key Operational Notes
 
+- **Cancellation distinguishes planning from launch.** A durable
+  planned/reserved/staged ledger with no workflow, stage, controller, or job ID
+  returns `NOT_SUBMITTED` without S3 or SkyPilot. Once any durable evidence says
+  submission began, missing S3/SkyPilot remains `VERIFICATION_UNAVAILABLE` until
+  exact provider or terminal receipt evidence resolves it. Receipt/exact flags
+  follow exact > receipt > live-config precedence and conflicts fail closed.
 - **Managed-job identity is per stage/wave attempt.** Runtime state records each
   wave key, encoded stage members, attempt number, job ID/name, timestamps, and
   outcome. Status and cancellation reconcile those records independently; they

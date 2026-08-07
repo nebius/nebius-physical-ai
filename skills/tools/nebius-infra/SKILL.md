@@ -141,6 +141,14 @@ or provider/auth verification failure is partial cleanup and exits 2.
   receipted before SkyPilot operational state is removed. List receipts with
   `npa cleanup --list-receipts`; prune only terminal aged receipts with the
   explicit `--prune-receipts --receipt-retention-days <days> --yes` path.
+- Receipt v2 is the durable recovery identity after a project stanza is removed.
+  Use the opaque ID printed before `configure --forget-project` with `--receipt`;
+  exact flags override receipt fields, receipts override live config, and every
+  overlap conflict fails closed before mutation. Never pass an arbitrary path.
+- Alias-free agent, cluster, storage-IAM, and controller reconciliation journals
+  into the existing project-ID-keyed receipt namespace; it never recreates an
+  alias. Exact NotFound is absence, while RBAC/auth/network/parse uncertainty is
+  unresolved and nonzero.
 - With no cluster state/inventory and no NPA kubeconfig, `npa cluster down` is a
   no-op before binary lookup, authentication, Terraform init/provider download,
   or Kubernetes/RBAC calls. Real apply/destroy uses marked ephemeral
@@ -148,6 +156,9 @@ or provider/auth verification failure is partial cleanup and exits 2.
   tracked lock read-only. Checksum mismatch is an actionable hard failure; verify
   the provider source and reconcile with reviewed `terraform providers lock`
   output rather than bypassing checksum verification.
+- Cleanup reports distinguish operational residue, retained audit receipts, and
+  unresolved verification. A receipt file alone never makes a fully cleaned
+  machine report operational residue.
 - On Nebius VMs with an attached service account, IAM token resolution can use
   service-account token sources (`/mnt/cloud-metadata/token` and IMDS) even
   when `~/.nebius/config.yaml` is absent. Keep this as fallback behavior, not a
