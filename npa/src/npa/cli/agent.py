@@ -3540,6 +3540,10 @@ def _apply_loaded_artifact(
         and not is_neural_reconstruction_recording(key)
     ):
         camera = _sim2real_pipeline_camera_label(camera)
+    elif render == "rerun" and is_groot_training_recording(key):
+        # A training-telemetry recording must not inherit a previous policy
+        # rollout's held-out camera label or preview entity.
+        camera = GROOT_TRAINING_CAMERA_LABEL
     elif render == "rerun" and is_neural_reconstruction_recording(key):
         # Do not inherit the previous run's label: the agent keeps sim_viz state
         # across loads, so a NuRec run following a Sim2Real one would report
@@ -3566,7 +3570,16 @@ def _apply_loaded_artifact(
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"))
         sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
-        if _is_data_factory_recording(key):
+        if is_groot_training_recording(key):
+            sim_viz["preview_entity"] = GROOT_TRAINING_CAMERA_LABEL
+            sim_viz["visualization_note"] = (
+                "GR00T training telemetry loaded. Entities contain representative "
+                "frames decoded from the run's real LeRobot dataset, validated "
+                "training metrics, safe logs, and provenance. Frame time is "
+                "dataset/synthetic-fps, not robot capture time; this is not a "
+                "policy rollout evaluation."
+            )
+        elif _is_data_factory_recording(key):
             sim_viz["preview_entity"] = "augmented"
             sim_viz["visualization_note"] = (
                 "Physical AI Data Factory recording loaded. Entities: input/<clip> "
@@ -3609,12 +3622,21 @@ def _apply_loaded_artifact(
             sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
             sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
             sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
-            sim_viz["visualization_note"] = (
-                "MCAP recording loaded: it plays in the embedded Lichtblick "
-                "(Foxglove-compatible, OSS) viewer — rollout camera, VLM critiques and "
-                "reward/advantage signals — and the same file is published on a CORS + "
-                "byte-range path for the official Foxglove app."
-            )
+            if is_groot_training_recording(key):
+                sim_viz["visualization_note"] = (
+                    "GR00T training telemetry MCAP loaded in the embedded Lichtblick "
+                    "viewer. It contains real dataset frames, safe training logs, and "
+                    "factual metrics on dataset/synthetic-fps time; it is not a policy "
+                    "rollout or robot-capture recording. The same file is also published "
+                    "on a CORS + byte-range path for Foxglove-compatible clients."
+                )
+            else:
+                sim_viz["visualization_note"] = (
+                    "MCAP recording loaded: it plays in the embedded Lichtblick "
+                    "(Foxglove-compatible, OSS) viewer — rollout camera, VLM critiques and "
+                    "reward/advantage signals — and the same file is published on a CORS + "
+                    "byte-range path for the official Foxglove app."
+                )
         else:
             sim_viz["lichtblick_ready"] = False
             sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(local_path, key)
