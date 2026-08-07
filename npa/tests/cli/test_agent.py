@@ -129,7 +129,7 @@ def _agent_source() -> str:
     from npa.cli import agent_site as agent_site_module
     from npa.cli import agent_viewer_runtime as agent_viewer_runtime_module
 
-    return "\n".join(
+    sources = [
         Path(module.__file__).read_text(encoding="utf-8")
         for module in (
             agent_module,
@@ -140,7 +140,13 @@ def _agent_source() -> str:
             agent_site_module,
             agent_viewer_runtime_module,
         )
+    ]
+    sources.append(
+        Path(agent_module.__file__)
+        .with_name("agent_artifact_content.py")
+        .read_text(encoding="utf-8")
     )
+    return "\n".join(sources)
 
 
 def _agent_ui_bundle() -> str:
@@ -1011,7 +1017,6 @@ def test_bootstrap_ui_lichtblick_autoloads_run_mcap() -> None:
 
 
 def test_bootstrap_artifact_file_transcodes_ppm_to_png() -> None:
-
     source = _agent_source()
     # .ppm/.bmp/.tiff are transcoded to PNG on serve so the browser can render them.
     assert "needs_image_transcode(safe_name)" in source
@@ -1413,7 +1418,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert '"/api/sim-viz/status?run_id="' in source
     # Media preview uses authenticated blob URLs; Rerun still avoids parent blob URLs for wasm.
     assert "does not reliably consume parent-created blob URLs" in source
-    assert "media_type=artifact_media_type(safe_name)" in source
+    assert "local_media_type = artifact_media_type(safe_name)" in source
     assert "apis_used" in source
     assert "format_live_context_block" in source
     assert "match_chat_intent" in source
@@ -1492,13 +1497,13 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '@app.post("/sim-viz/load-artifact")' in source
     # Every artifact must be directly downloadable: streaming download endpoint
     # + a per-artifact Download button wired to it.
-    assert '@app.get("/artifacts/download")' in source
+    assert '@app.api_route("/artifacts/download", methods=["GET", "HEAD"])' in source
     assert (
         'data-action="download-artifact"' in source
         or "data-action='download-artifact'" in source
     )
-    assert "async function downloadArtifact(" in source
-    assert "/api/artifacts/download?" in source
+    assert "function downloadArtifact(" in source
+    assert "/api/artifacts/content?" in source
     # Clicking a stage describes it and inlines its artifacts/info/configs.
     assert '@app.get("/artifacts/stage/{{run_id:path}}")' in source
     assert "async function showStageDetail(" in source
@@ -1599,7 +1604,7 @@ def test_artifact_backed_training_run_loads_without_rerun_recording() -> None:
     assert 'payload["rerun_ready"] = False' in status_body
     assert 'state: "no-preview-artifacts"' in source
     assert 'placeholder.setAttribute("data-state"' in source
-    assert "No previewable recording; artifacts available" in source
+    assert "No RRD/MCAP recording; use the artifacts below" in source
 
 
 def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
@@ -3405,7 +3410,6 @@ def test_run_details_surface_per_stage_workflow_logs() -> None:
 def test_artifact_file_transcodes_non_web_images_to_png() -> None:
     """Non-web images (.ppm sim camera frames, .bmp, .tiff) must be transcoded to
     PNG by the artifact file endpoint so they are viewable in the Rerun/Image panes."""
-
     source = _agent_source()
     assert "needs_image_transcode(safe_name)" in source
     assert 'format="PNG"' in source

@@ -94,7 +94,7 @@ def test_artifact_run_load_is_independent_from_rerun_preview() -> None:
 
     load_fn = ui.split("async function loadRunData")[1].split("async function selectCamera")[0]
     assert "await loadArtifactsForSelectedRun(runId)" in load_fn
-    assert "No previewable recording; artifacts available" in load_fn
+    assert "No RRD/MCAP recording; use the artifacts below" in load_fn
 
 
 def test_artifact_backed_stages_skip_unrelated_draft_overlay() -> None:

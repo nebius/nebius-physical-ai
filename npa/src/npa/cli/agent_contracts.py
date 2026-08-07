@@ -8,7 +8,11 @@ from pathlib import Path
 
 AGENT_MEDIA_PREVIEW_CONTRACT = (
     "authenticatedPreviewObjectUrl",
+    "artifactContentUrl",
+    "video.src = contentUrl",
     "Loading video preview…",
+    "No RRD/MCAP recording; use the artifacts below",
+    'pre.textContent = String(payload.text || "")',
     'data-preview-url="',
     "Keep the Rerun iframe mounted under the media pane",
     'id="renderModeVideo"',
@@ -16,6 +20,9 @@ AGENT_MEDIA_PREVIEW_CONTRACT = (
     'id="viewerPaneMedia"',
     "URL.createObjectURL(blob)",
     '@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])',
+    '@app.api_route("/artifacts/content", methods=["GET", "HEAD"])',
+    "parse_http_byte_range",
+    "X-Content-Type-Options",
     "artifact_media_type(",
 )
 
@@ -160,6 +167,10 @@ def _embedded_agent_artifacts_source() -> str:
     return _embedded_source(
         Path(__file__).resolve().parents[1] / "workflows" / "artifacts.py"
     )
+
+
+def _embedded_agent_artifact_content_source() -> str:
+    return _embedded_source(Path(__file__).with_name("agent_artifact_content.py"))
 
 
 def _embedded_agent_provenance_source() -> str:

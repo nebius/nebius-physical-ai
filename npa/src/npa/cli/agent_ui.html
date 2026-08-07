@@ -367,6 +367,37 @@
         background: #fff;
         padding: 8px 10px;
       }
+      .artifact-run-summary {
+        margin-top: 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-blue);
+        padding: 10px;
+      }
+      .artifact-run-summary:empty { display: none; }
+      .artifact-run-summary .summary-title { font-weight: 800; margin-bottom: 7px; }
+      .artifact-run-summary .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 6px;
+      }
+      .artifact-run-summary .summary-item {
+        border: 1px solid rgba(61, 86, 104, 0.22);
+        border-radius: 8px;
+        background: #fff;
+        padding: 6px 8px;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      .artifact-run-summary .no-recording {
+        margin-top: 8px;
+        border: 1px solid #f59e0b;
+        border-radius: 8px;
+        background: #fffbeb;
+        color: #78350f;
+        padding: 7px 9px;
+        font-weight: 700;
+      }
       .artifact-list:empty {
         display: flex;
         align-items: center;
@@ -745,6 +776,30 @@
       #artifactPreviewHost .preview-error {
         color: #fecaca;
         margin: 0 0 10px;
+      }
+      #artifactPreviewHost .preview-toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 0 0 8px;
+      }
+      #artifactPreviewHost .preview-toolbar input {
+        min-width: min(360px, 100%);
+        flex: 1 1 240px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 7px 9px;
+      }
+      #artifactPreviewHost pre.artifact-text-preview {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 10px;
+        border-radius: 8px;
+        max-height: min(70vh, 720px);
+        overflow: auto;
       }
       .chat-panel { margin-bottom: 12px; }
       .chat-panel-head {
@@ -2011,6 +2066,7 @@
                 <button id="workflowStatus" class="btn" type="button">Workflow status</button>
               </div>
               <div id="artifactDiscoverStatus" class="hint" style="margin-top:8px;">No runs discovered yet.</div>
+              <div id="artifactRunSummary" class="artifact-run-summary" aria-live="polite" data-testid="artifact-run-summary"></div>
               <div id="artifactProvenance" class="artifact-provenance" aria-live="polite"></div>
               <div id="artifactList" class="artifact-list" aria-live="polite"></div>
             </div>
@@ -5687,10 +5743,15 @@
           try {
             const resp = await fetchWithTimeout(previewUrl, { credentials: "include" }, 12000);
             if (!resp.ok) throw new Error("preview fetch failed");
-            const text = await resp.text();
+            const payload = await resp.json();
             if (!isCurrent()) return;
             host.hidden = false;
-            host.innerHTML = `<pre style="white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;max-height:min(70vh,720px);overflow:auto;">${escapeHtml(text.slice(0, 20000))}</pre>`;
+            host.replaceChildren();
+            const pre = document.createElement("pre");
+            pre.className = "artifact-text-preview";
+            pre.textContent = String(payload.text || "");
+            host.appendChild(pre);
+            appendArtifactDownloadLink(host, downloadUrl, "artifact");
             return;
           } catch (_err) {
             if (!isCurrent()) return;
@@ -6830,6 +6891,73 @@
         }
         return { data, runs, merged };
       }
+      function formatArtifactBytes(value) {
+        const bytes = Math.max(0, Number(value || 0));
+        if (bytes < 1024) return String(bytes) + " B";
+        const units = ["KiB", "MiB", "GiB", "TiB"];
+        let amount = bytes;
+        let idx = -1;
+        do { amount /= 1024; idx += 1; } while (amount >= 1024 && idx < units.length - 1);
+        return amount.toFixed(amount >= 10 ? 1 : 2) + " " + units[idx];
+      }
+      function artifactBucket(item) {
+        const explicit = String((item && item.bucket) || "").trim();
+        if (explicit) return explicit;
+        const uri = String((item && item.s3_uri) || "").trim();
+        const match = uri.match(/^s3:\/\/([^/]+)\//);
+        return match ? match[1] : "";
+      }
+      function artifactFromS3Uri(uri) {
+        const match = String(uri || "").trim().match(/^s3:\/\/([^/]+)\/(.+)$/);
+        return match ? { bucket: match[1], key: match[2] } : { bucket: "", key: "" };
+      }
+      function artifactContentUrl(runId, item, download) {
+        const params = new URLSearchParams();
+        params.set("run_id", String(runId || ""));
+        params.set("key", String((item && item.key) || ""));
+        const bucket = artifactBucket(item);
+        if (bucket) params.set("bucket", bucket);
+        if (download) params.set("download", "true");
+        return "/api/artifacts/content?" + params.toString();
+      }
+      function renderArtifactRunSummary(summary) {
+        const host = document.getElementById("artifactRunSummary");
+        if (!host) return;
+        host.replaceChildren();
+        if (!summary || typeof summary !== "object") return;
+        const title = document.createElement("div");
+        title.className = "summary-title";
+        title.textContent = "Run summary — " + String(summary.run_id || "unknown");
+        host.appendChild(title);
+        const grid = document.createElement("div");
+        grid.className = "summary-grid";
+        const fields = [
+          ["Completion", summary.completion_status || "unknown"],
+          ["Tool / workflow", summary.tool || summary.workflow || "unknown"],
+          ["Accelerators", String(summary.accelerator_count || 0) + (summary.accelerator_type ? " × " + String(summary.accelerator_type) : "")],
+          ["World size", summary.world_size || 0],
+          ["Training steps", summary.training_steps || 0],
+          ["Finite loss", summary.finite_loss ? String(summary.loss) : "not available"],
+          ["Artifacts", String(summary.artifact_count || 0) + " total · " + String(summary.output_artifact_count || 0) + " output · " + String(summary.input_artifact_count || 0) + " input/staged"],
+          ["Total bytes", formatArtifactBytes(summary.total_bytes || 0) + " (" + String(summary.total_bytes || 0) + ")"],
+        ];
+        for (const [label, value] of fields) {
+          const node = document.createElement("div");
+          node.className = "summary-item";
+          const strong = document.createElement("strong");
+          strong.textContent = label + ": ";
+          node.appendChild(strong);
+          node.appendChild(document.createTextNode(String(value)));
+          grid.appendChild(node);
+        }
+        host.appendChild(grid);
+        if (!summary.has_recording) {
+          const banner = document.createElement("div");
+          banner.className = "no-recording";
+          banner.textContent = "No RRD/MCAP recording; use the artifacts below";
+          host.appendChild(banner);
+        }
+      }
       async function loadArtifactsForSelectedRun(explicitRunId, priorPage, explicitEntry, requestContext) {
         // explicitRunId is optional; guard against event objects passed by
         // click handlers (bindClick calls fn(event)).
@@ -6898,6 +7026,19 @@
             merged.set(String((item && item.s3_uri) || (item && item.key) || ""), item);
           }
           data.artifacts = [...merged.values()];
+        }
+        renderArtifactRunSummary(data && data.summary);
+        if (data && data.no_recording) {
+          const noRecordingState = {
+            run_id: runId,
+            preview_status: "no_previewable_recording",
+            output_artifact_count: Number(data.output_artifact_count || 0),
+          };
+          updateRenderedDataSummary(noRecordingState);
+          showRerunPlaceholder(String(data.recording_state || "No RRD/MCAP recording; use the artifacts below."), {
+            force: true,
+            state: "no-preview-artifacts",
+          });
         }
         const list = document.getElementById("artifactList");
         if (!list) return false;
@@ -6969,39 +7110,51 @@
           displayArtifacts.map((item) => {
           const key = String(item.key || "");
           const render = String(item.render || "download");
-          const role = String(item.role || "output");
+          const artifactRole = String(item.role || "output");
+          const category = String(item.category || artifactRole);
+          const contentType = String(item.content_type || "application/octet-stream");
+          const bucket = artifactBucket(item);
           const s3uri = String(item.s3_uri || "");
           const basename = key.split("/").pop() || key;
           const isPreferred = preferredKey && preferredKey === key;
           const dataRole = String(item.data_role || "pipeline_metadata");
           const roleLabel = String(item.data_role_label || "Pipeline metadata / report");
-          const actionLabel = render === "rerun" ? "View in Rerun" : (render === "mcap" ? "View in Lichtblick" : (render === "video" ? "Play" : "Load"));
+          const previewable = ["rerun", "mcap", "video", "image", "json", "text"].includes(render);
+          const actionName = (render === "rerun" || render === "mcap") ? "load-artifact" : "preview-artifact";
+          const actionLabel = render === "rerun" ? "View in Rerun" : (render === "mcap" ? "View in Lichtblick" : "View");
           const primary = (render === "rerun" || render === "mcap" || render === "video") ? " btn-primary" : "";
+          const viewButton = previewable
+            ? '<button class="btn' + primary + '" type="button" data-action="' + actionName + '" data-run-id="' +
+              escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-bucket="' + escapeHtml(bucket) +
+              '" data-run-ref="' + escapeHtml(runRef) + '" data-s3-uri="' + escapeHtml(s3uri) +
+              '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button> '
+            : "";
           return (
             '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '" data-role="' + escapeHtml(artifactRole) + '">' +
             '<div class="artifact-card-head"><strong>' + escapeHtml(basename) + '</strong>' +
             (isPreferred ? '<span class="badge badge-ok">recommended</span>' : "") +
             '<span class="pill" data-role="' + escapeHtml(dataRole) + '"><strong>' + escapeHtml(roleLabel) + "</strong></span>" +
             '<span class="pill">' + escapeHtml(artifactRole) + '</span>' +
+            '<span class="pill">' + escapeHtml(category) + '</span>' +
             '<span class="pill">' + escapeHtml(render) + '</span></div>' +
-            '<div class="artifact-card-meta">size=' + escapeHtml(String(item.size || 0)) +
-            ' · updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
+            '<div class="artifact-card-meta">' + escapeHtml(formatArtifactBytes(item.size || 0)) + ' (' + escapeHtml(String(item.size || 0)) + ' bytes)' +
+            ' · ' + escapeHtml(contentType) + ' · updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
             '<div class="artifact-card-path"><code>' + escapeHtml(key) + '</code></div>' +
             // Inline image preview so browsing a stage (e.g. Source frames) shows
             // the actual data, not just filenames. Lazy-loaded via the auth proxy.
-            (render === "image" && s3uri
+            (render === "image"
               ? '<div class="artifact-thumb" role="button" tabindex="0" aria-label="Open artifact ' + escapeHtml(basename) +
-                '" data-thumb-uri="' + escapeHtml(s3uri) +
+                '" data-content-url="' + escapeHtml(artifactContentUrl(runRef || runId, item, false)) +
                 '" data-run-id="' + escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) +
                 '" data-key="' + escapeHtml(key) +
+                '" data-bucket="' + escapeHtml(bucket) +
                 '"><span class="hint">&hellip;</span></div>'
               : "") +
-            '<div style="margin-top:6px;"><button class="btn' + primary + '" type="button" data-action="load-artifact" data-run-id="' +
-            escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
-            '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button>' +
+            '<div style="margin-top:6px;">' + viewButton +
             ' <button class="btn" type="button" data-action="download-artifact" data-run-id="' +
             escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) +
-            '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+            '" data-key="' + escapeHtml(key) + '" data-bucket="' + escapeHtml(bucket) +
+            '" data-s3-uri="' + escapeHtml(s3uri) +
             '" data-name="' + escapeHtml(basename) + '">Download</button></div>' +
             '</div>'
           );
@@ -7027,9 +7180,24 @@
               run_id: String(btn.getAttribute("data-run-id") || "").trim(),
               run_ref: String(btn.getAttribute("data-run-ref") || "").trim(),
               key: String(btn.getAttribute("data-key") || "").trim(),
-              s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim(),
+              bucket: String(btn.getAttribute("data-bucket") || "").trim(),
             };
             await loadArtifact(payload);
+          });
+        });
+        list.querySelectorAll("button[data-action='preview-artifact']").forEach((btn) => {
+          btn.addEventListener("click", async (event) => {
+            event.preventDefault();
+            try {
+              await previewArtifact({
+                run_id: String(btn.getAttribute("data-run-id") || "").trim(),
+                key: String(btn.getAttribute("data-key") || "").trim(),
+                bucket: String(btn.getAttribute("data-bucket") || "").trim(),
+                render: String(btn.getAttribute("data-render") || "download").trim(),
+              });
+            } catch (err) {
+              showToast("Preview failed: " + String((err && err.message) || err), "error");
+            }
           });
         });
         list.querySelectorAll("button[data-action='download-artifact']").forEach((btn) => {
@@ -7039,31 +7207,28 @@
               String(btn.getAttribute("data-run-id") || "").trim(),
               String(btn.getAttribute("data-run-ref") || "").trim(),
               String(btn.getAttribute("data-key") || "").trim(),
-              String(btn.getAttribute("data-s3-uri") || "").trim(),
+              String(btn.getAttribute("data-bucket") || "").trim(),
               String(btn.getAttribute("data-name") || "").trim()
             );
           });
         });
         // Lazy-load inline image thumbnails via the authenticated download proxy so
         // browsing a stage shows the actual images; clicking one opens it full.
-        list.querySelectorAll(".artifact-thumb[data-thumb-uri]").forEach((node) => {
-          const uri = String(node.getAttribute("data-thumb-uri") || "").trim();
-          if (uri) {
-            const run = String(node.getAttribute("data-run-id") || "").trim();
-            const runRef = String(node.getAttribute("data-run-ref") || "").trim();
-            const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(uri) +
-              (runRef || run ? "&run_id=" + encodeURIComponent(runRef || run) : "");
+        list.querySelectorAll(".artifact-thumb[data-content-url]").forEach((node) => {
+          const url = String(node.getAttribute("data-content-url") || "").trim();
+          if (url) {
             authenticatedPreviewObjectUrl(url, null).then((src) => {
               node.innerHTML = '<img alt="artifact" src="' + src + '" />';
             }).catch(() => { node.innerHTML = '<span class="hint">no preview</span>'; });
           }
           const openArtifactThumbnail = (event) => {
             event.preventDefault();
-            loadArtifact({
+            previewArtifact({
               run_id: String(node.getAttribute("data-run-id") || "").trim(),
               run_ref: String(node.getAttribute("data-run-ref") || "").trim(),
               key: String(node.getAttribute("data-key") || "").trim(),
-              s3_uri: uri,
+              bucket: String(node.getAttribute("data-bucket") || "").trim(),
+              render: "image",
             }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
           };
           node.addEventListener("click", openArtifactThumbnail);
@@ -7300,42 +7465,158 @@
             " from run <code>" + escapeHtml(runId) + "</code><br>" +
             "<code>" + escapeHtml(key || uri) + "</code>" +
             (note ? "<br><span class='hint'>" + escapeHtml(note) + "</span>" : "");
+        } else if (String((simViz && simViz.preview_status) || "") === "no_previewable_recording") {
+          const outputCount = Number((simViz && simViz.output_artifact_count) || 0);
+          node.innerHTML =
+            "Run <code>" + escapeHtml(runId) + "</code> selected. " +
+            "<strong>No RRD/MCAP recording; use the artifacts below.</strong>" +
+            (outputCount ? " " + String(outputCount) + " output artifacts are listed for download or inline viewing." : "");
         } else {
           node.textContent = "Rendering: no run artifact loaded yet.";
         }
         applyLichtblickSimViz(simViz);
       }
-      async function downloadArtifact(runId, runRef, key, s3uri, name) {
-        // Every artifact is directly downloadable: stream it from S3 through the
-        // agent and save it under its real filename, independent of render type
-        // and without mutating the viewer state.
-        const params = new URLSearchParams();
-        if (s3uri) {
-          params.set("s3_uri", s3uri);
-          if (runRef || runId) params.set("run_id", runRef || runId);
-        } else {
-          if (runRef || runId) params.set("run_id", runRef || runId);
-          params.set("key", key);
+      function appendArtifactDownloadLink(host, url, name) {
+        const row = document.createElement("p");
+        const link = document.createElement("a");
+        link.className = "btn";
+        link.href = url;
+        link.download = String(name || "artifact.bin");
+        link.textContent = "Download";
+        row.appendChild(link);
+        host.appendChild(row);
+      }
+      async function previewArtifact(item) {
+        const runId = String((item && item.run_id) || "").trim();
+        const runRef = String((item && item.run_ref) || "").trim();
+        const key = String((item && item.key) || "").trim();
+        const bucket = String((item && item.bucket) || "").trim();
+        const render = String((item && item.render) || "download").trim();
+        if (!runId || !key) throw new Error("run_id and key are required for preview");
+        const contentUrl = artifactContentUrl(runRef || runId, { key, bucket }, false);
+        const downloadUrl = artifactContentUrl(runRef || runId, { key, bucket }, true);
+        const name = key.split("/").pop() || "artifact.bin";
+        const host = document.getElementById("artifactPreviewHost");
+        if (!host) return false;
+        activeRunId = runId;
+        activeArtifactRender = render;
+        await activateMainTab("rerun", { skipEnsure: true });
+        if (render === "video") setRenderMode("video");
+        else if (render === "image") setRenderMode("image");
+        else setRenderMode("data");
+        if (host._previewObjectUrl) {
+          try { URL.revokeObjectURL(host._previewObjectUrl); } catch (_err) { /* ignore */ }
+          host._previewObjectUrl = "";
         }
+        host.hidden = false;
+        host.replaceChildren();
+        const metadata = document.createElement("p");
+        metadata.className = "hint";
+        metadata.textContent = render + " · " + key;
+        host.appendChild(metadata);
+        updateRenderedDataSummary({
+          run_id: runId,
+          artifact_key: key,
+          artifact_render: render,
+          artifact_preview_url: contentUrl,
+          artifact_download_url: downloadUrl,
+          visualization_note: "Secure same-origin S3 artifact preview.",
+        });
+        try {
+          if (render === "image") {
+            const loading = document.createElement("p");
+            loading.className = "hint";
+            loading.textContent = "Loading image preview…";
+            host.appendChild(loading);
+            const src = await authenticatedPreviewObjectUrl(contentUrl, host);
+            loading.remove();
+            const img = document.createElement("img");
+            img.alt = name;
+            img.src = src;
+            img.setAttribute("data-preview-url", contentUrl);
+            host.appendChild(img);
+          } else if (render === "video") {
+            // Keep the authenticated same-origin URL as the native media source;
+            // browsers issue byte-range requests against it for metadata/seek.
+            const video = document.createElement("video");
+            video.controls = true;
+            video.playsInline = true;
+            video.preload = "metadata";
+            video.src = contentUrl;
+            video.setAttribute("data-preview-url", contentUrl);
+            host.appendChild(video);
+          } else if (render === "json" || render === "text") {
+            const response = await fetchWithTimeout(contentUrl, { credentials: "include" }, 30000);
+            if (!response.ok) throw new Error("preview fetch failed (" + String(response.status) + ")");
+            const payload = await response.json();
+            const toolbar = document.createElement("div");
+            toolbar.className = "preview-toolbar";
+            const search = document.createElement("input");
+            search.type = "search";
+            search.placeholder = "Search preview";
+            search.setAttribute("aria-label", "Search artifact preview");
+            const matchStatus = document.createElement("span");
+            matchStatus.className = "hint";
+            const copy = document.createElement("button");
+            copy.type = "button";
+            copy.className = "btn";
+            copy.textContent = "Copy";
+            toolbar.append(search, copy, matchStatus);
+            host.appendChild(toolbar);
+            const pre = document.createElement("pre");
+            pre.className = "artifact-text-preview";
+            pre.textContent = String(payload.text || "");
+            host.appendChild(pre);
+            search.addEventListener("input", () => {
+              const needle = String(search.value || "").toLowerCase();
+              if (!needle) { matchStatus.textContent = ""; return; }
+              const haystack = String(payload.text || "").toLowerCase();
+              let count = 0;
+              let index = 0;
+              while ((index = haystack.indexOf(needle, index)) >= 0) { count += 1; index += Math.max(1, needle.length); }
+              matchStatus.textContent = String(count) + " match" + (count === 1 ? "" : "es");
+            });
+            copy.addEventListener("click", async () => {
+              await navigator.clipboard.writeText(String(payload.text || ""));
+              showToast("Artifact preview copied", "success");
+            });
+            const previewMeta = document.createElement("p");
+            previewMeta.className = "hint";
+            previewMeta.textContent =
+              String(payload.bytes_read || 0) + " of " + String(payload.total_bytes || 0) + " bytes" +
+              (payload.truncated ? " · truncated; download for the complete file" : "") +
+              (payload.redacted ? " · secrets redacted" : "") +
+              (payload.invalid_utf8_replaced ? " · invalid UTF-8 replaced" : "");
+            host.appendChild(previewMeta);
+          } else {
+            const only = document.createElement("p");
+            only.textContent = "Download-only artifact. Binary content is not rendered inline.";
+            host.appendChild(only);
+          }
+          appendArtifactDownloadLink(host, downloadUrl, name);
+          return true;
+        } catch (err) {
+          const error = document.createElement("p");
+          error.className = "preview-error";
+          error.textContent = "Preview failed: " + String((err && err.message) || err);
+          host.appendChild(error);
+          appendArtifactDownloadLink(host, downloadUrl, name);
+          throw err;
+        }
+      }
+      function downloadArtifact(runId, runRef, key, bucket, name) {
+        // Let the browser stream the attachment directly. This avoids buffering
+        // multi-gigabyte checkpoints into a JavaScript Blob before download.
         const fallbackName = (String(key || "").split("/").pop()) || "artifact.bin";
         const saveName = String(name || fallbackName).trim() || fallbackName;
-        const url = "/api/artifacts/download?" + params.toString();
-        try {
-          showToast("Downloading " + saveName + "…", "info");
-          const resp = await fetchWithTimeout(url, { credentials: "include" }, 180000);
-          if (!resp.ok) throw new Error("download failed (" + String(resp.status) + ")");
-          const blob = await resp.blob();
-          const objUrl = URL.createObjectURL(blob);
-          const anchor = document.createElement("a");
-          anchor.href = objUrl;
-          anchor.download = saveName;
-          document.body.appendChild(anchor);
-          anchor.click();
-          anchor.remove();
-          setTimeout(() => { try { URL.revokeObjectURL(objUrl); } catch (_err) { /* ignore */ } }, 10000);
-        } catch (err) {
-          showToast("Download failed: " + String((err && err.message) || err), "error");
-        }
+        const url = artifactContentUrl(runRef || runId, { key, bucket }, true);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = saveName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        showToast("Downloading " + saveName + "…", "info");
       }
       let artifactLoadGeneration = 0;
       let refreshGeneration = 0;
@@ -7615,22 +7896,25 @@
         for (const node of grid.querySelectorAll(".voxel-thumb[data-thumb-uri]")) {
           const uri = String(node.getAttribute("data-thumb-uri") || "").trim();
           if (!uri) { node.innerHTML = '<span class="hint">no preview</span>'; continue; }
-          const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(uri) +
-            (voxelDatasetRun ? "&run_id=" + encodeURIComponent(voxelDatasetRun) : "");
+          const resolved = artifactFromS3Uri(uri);
+          const url = artifactContentUrl(voxelDatasetRun, resolved, false);
           authenticatedPreviewObjectUrl(url, null).then((src) => {
             node.innerHTML = '<img alt="sample" src="' + src + '" />';
           }).catch(() => { node.innerHTML = '<span class="hint">no preview</span>'; });
         }
         grid.querySelectorAll("button[data-vx-action='view']").forEach((btn) => {
-          btn.addEventListener("click", (e) => {
+          btn.addEventListener("click", async (e) => {
             e.preventDefault();
-            loadArtifact({ run_id: voxelDatasetRun, s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim() });
+            const resolved = artifactFromS3Uri(String(btn.getAttribute("data-s3-uri") || "").trim());
+            const render = resolved.key.match(/\.(mp4|webm|mov)$/i) ? "video" : "image";
+            await previewArtifact({ run_id: voxelDatasetRun, ...resolved, render });
           });
         });
         grid.querySelectorAll("button[data-vx-action='download']").forEach((btn) => {
           btn.addEventListener("click", (e) => {
             e.preventDefault();
-            downloadArtifact(voxelDatasetRun, "", String(btn.getAttribute("data-s3-uri") || "").trim(), String(btn.getAttribute("data-name") || "").trim());
+            const resolved = artifactFromS3Uri(String(btn.getAttribute("data-s3-uri") || "").trim());
+            downloadArtifact(voxelDatasetRun, "", resolved.key, resolved.bucket, String(btn.getAttribute("data-name") || "").trim());
           });
         });
       }
@@ -7698,7 +7982,7 @@
           }
           if (!ready && (!activeArtifactRender || activeArtifactRender === "rerun")) {
             if (String((simViz && simViz.preview_status) || "") === "no_previewable_recording") {
-              showRerunPlaceholder("No .rrd recording for this run yet. No previewable recording; artifacts available below.", {
+              showRerunPlaceholder("No RRD/MCAP recording; use the artifacts below.", {
                 force: true,
                 state: "no-preview-artifacts",
               });
@@ -8043,12 +8327,14 @@
           ? '<div class="stage-thumbs">' + mediaArts.map((a) => {
               const key = String(a.key || "");
               const s3uri = String(a.s3_uri || "");
+              const bucket = artifactBucket(a);
               const render = String(a.render || "");
               const base = key.split("/").pop() || key;
               const isVideo = render === "video";
               return '<div class="stage-thumb" role="button" tabindex="0" aria-label="Open artifact ' + escapeHtml(base) +
                 '" data-run-id="' + escapeHtml(rid) +
                 '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+                '" data-bucket="' + escapeHtml(bucket) + '" data-render="' + escapeHtml(render) +
                 '" data-thumb-uri="' + escapeHtml(isVideo ? "" : s3uri) +
                 '" title="' + escapeHtml(base) + '">' +
                 (isVideo ? '<span class="stage-thumb-badge">&#9654; video</span>' : '<span class="hint">&hellip;</span>') +
@@ -8062,14 +8348,20 @@
               const key = String(item.key || "");
               const render = String(item.render || "download");
               const s3uri = String(item.s3_uri || "");
+              const bucket = artifactBucket(item);
               const base = key.split("/").pop() || key;
-              const actionLabel = render === "rerun" ? "View in Rerun" : (render === "video" ? "Play" : "Load");
+              const previewable = ["rerun", "mcap", "video", "image", "json", "text"].includes(render);
+              const actionLabel = render === "rerun" ? "View in Rerun" : (render === "mcap" ? "View in Lichtblick" : "View");
+              const viewButton = previewable
+                ? ' <button class="btn" type="button" data-sd-action="load" data-run-id="' + escapeHtml(rid) +
+                  '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+                  '" data-bucket="' + escapeHtml(bucket) + '" data-render="' + escapeHtml(render) + '">' + actionLabel + "</button>"
+                : "";
               return '<div class="stage-detail-row"><code title="' + escapeHtml(key) + '">' +
                 escapeHtml(base) + '</code> <span class="pill">' + escapeHtml(render) + "</span>" +
-                ' <button class="btn" type="button" data-sd-action="load" data-run-id="' + escapeHtml(rid) +
-                '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) + '">' + actionLabel + "</button>" +
+                viewButton +
                 ' <button class="btn" type="button" data-sd-action="download" data-run-id="' + escapeHtml(rid) +
-                '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+                '" data-key="' + escapeHtml(key) + '" data-bucket="' + escapeHtml(bucket) +
                 '" data-name="' + escapeHtml(base) + '">Download</button></div>';
             }).join("") + "</div>"
           : '<p class="hint">No artifacts found for this stage.</p>';
@@ -8084,8 +8376,14 @@
           host.querySelectorAll(".stage-thumb").forEach((node) => {
             const thumbUri = String(node.getAttribute("data-thumb-uri") || "").trim();
             if (thumbUri) {
-              const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(thumbUri) +
-                (runId ? "&run_id=" + encodeURIComponent(runId) : "");
+              const url = artifactContentUrl(
+                String(node.getAttribute("data-run-id") || "").trim(),
+                {
+                  key: String(node.getAttribute("data-key") || "").trim(),
+                  bucket: String(node.getAttribute("data-bucket") || "").trim(),
+                },
+                false
+              );
               authenticatedPreviewObjectUrl(url, null).then((src) => {
                 const ph = node.querySelector(".hint");
                 if (ph) ph.remove();
@@ -8100,10 +8398,11 @@
             }
             const openStageThumbnail = (event) => {
               event.preventDefault();
-              loadArtifact({
+              previewArtifact({
                 run_id: String(node.getAttribute("data-run-id") || "").trim(),
                 key: String(node.getAttribute("data-key") || "").trim(),
-                s3_uri: String(node.getAttribute("data-s3-uri") || "").trim(),
+                bucket: String(node.getAttribute("data-bucket") || "").trim(),
+                render: String(node.getAttribute("data-render") || "image").trim(),
               }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
             };
             node.addEventListener("click", openStageThumbnail);
@@ -8114,11 +8413,17 @@
           host.querySelectorAll("button[data-sd-action='load']").forEach((btn) => {
             btn.addEventListener("click", (event) => {
               event.preventDefault();
-              loadArtifact({
+              const selected = {
                 run_id: String(btn.getAttribute("data-run-id") || "").trim(),
                 key: String(btn.getAttribute("data-key") || "").trim(),
-                s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim(),
-              });
+                bucket: String(btn.getAttribute("data-bucket") || "").trim(),
+                render: String(btn.getAttribute("data-render") || "download").trim(),
+              };
+              if (selected.render === "rerun" || selected.render === "mcap") {
+                loadArtifact(selected);
+              } else {
+                previewArtifact(selected);
+              }
             });
           });
           host.querySelectorAll("button[data-sd-action='download']").forEach((btn) => {
@@ -8126,8 +8431,9 @@
               event.preventDefault();
               downloadArtifact(
                 String(btn.getAttribute("data-run-id") || "").trim(),
+                "",
                 String(btn.getAttribute("data-key") || "").trim(),
-                String(btn.getAttribute("data-s3-uri") || "").trim(),
+                String(btn.getAttribute("data-bucket") || "").trim(),
                 String(btn.getAttribute("data-name") || "").trim()
               );
             });
@@ -8324,9 +8630,17 @@
         if (!runId) {
           throw new Error("Enter or select a run_id first");
         }
-        return loadSelectedRun(
+        const data = await loadSelectedRun(
           preferredRunEntry(runRef || runId) || { run_id: runId, run_ref: runRef }
         );
+        await loadArtifactsForSelectedRun(runId).catch(() => false);
+        if (!(data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready))) {
+          showRerunPlaceholder("No RRD/MCAP recording; use the artifacts below.", {
+            force: true,
+            state: "no-preview-artifacts",
+          });
+        }
+        return data;
       }
       async function selectCamera(camera) {
         const selected = String(camera || "");
@@ -8621,6 +8935,8 @@
           waitForQualityRerunFrame,
           probeRerunCanvasContent,
           captureMediaViewerFrame,
+          previewArtifact,
+          artifactContentUrl,
           captureDataPaneExcerpt,
           captureVisualContext,
           describeVisual,

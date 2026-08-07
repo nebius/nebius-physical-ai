@@ -55,9 +55,12 @@ def test_agent_bootstrap_source_smoke() -> None:
         + "\n"
         + AGENT_ASSETS_MODULE.read_text(encoding="utf-8")
     )
+    artifact_content_source = (
+        REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_artifact_content.py"
+    ).read_text(encoding="utf-8")
     ui_source = AGENT_UI_MODULE.read_text(encoding="utf-8")
     ui = rendered_agent_ui_html()
-    bundled = source + "\n" + ui_source + "\n" + ui
+    bundled = source + "\n" + artifact_content_source + "\n" + ui_source + "\n" + ui
     assert '@app.get("/sim-viz/rrd")' in source
     assert '@app.post("/sim-viz/load-franka-demo")' in source
     assert '@app.post("/sim-viz/camera-preview")' in source
@@ -93,7 +96,7 @@ def test_agent_bootstrap_source_smoke() -> None:
         encoding="utf-8"
     )
     assert 'add_header Cache-Control "no-store, no-cache, must-revalidate"' in site_source
-    assert "media_type=artifact_media_type(safe_name)" in source
+    assert "local_media_type = artifact_media_type(safe_name)" in artifact_content_source
 
 
 def test_agent_live_tmux_script_help() -> None:

@@ -110,6 +110,7 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
     AGENT_STAGES_RUN_PICKER_CONTRACT,
     AGENT_VIEWER_CHAT_DRAWER_CONTRACT,
     AGENT_VISUAL_FEEDBACK_CONTRACT,
+    _embedded_agent_artifact_content_source,
     _embedded_agent_artifacts_source,
     _embedded_agent_chat_source,
     _embedded_agent_provenance_source,
@@ -209,6 +210,7 @@ _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ACCESS_EMBED = "__NPA_AGENT_ACCESS_EMBED__"
 _AGENT_ACCESS_RUNTIME_EMBED = "__NPA_AGENT_ACCESS_RUNTIME_EMBED__"
+_AGENT_ARTIFACT_CONTENT_EMBED = "__NPA_AGENT_ARTIFACT_CONTENT_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
@@ -1136,6 +1138,7 @@ def _bootstrap_agent_stack(
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_access_source = _embedded_agent_access_source()
     agent_access_runtime_source = _embedded_agent_access_runtime_source()
+    agent_artifact_content_source = _embedded_agent_artifact_content_source()
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
@@ -1324,8 +1327,8 @@ from urllib.parse import quote
 
 import httpx
 import yaml
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 app = FastAPI(title="npa-agent")
 DEPLOYMENT = {deployment_json}
@@ -6542,6 +6545,44 @@ def artifacts_runs(
         raise
     except Exception as exc:
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+def _resolved_run_artifacts(s3, settings, run_ref_or_id: str, *, prefix: str = ""):
+    effective_prefix = _artifact_discovery_prefix(settings, prefix)
+    resolution = None
+    if prefix:
+        normalized_run = _validate_run_basename(run_ref_or_id)
+        artifacts = list_artifacts(
+            settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3
+        )
+        if artifacts:
+            resolution = RunResolution(
+                normalized_run, settings["bucket"], effective_prefix, artifacts
+            )
+    else:
+        allowed_buckets, _scope = _agent_artifact_list_scope(
+            _agent_access_report(), "", ""
+        )
+        resolution = resolve_run_artifacts(
+            allowed_buckets,
+            base_prefix=settings.get("prefix", ""),
+            run_ref_or_id=run_ref_or_id,
+            s3=s3,
+        )
+    if resolution is None:
+        raise HTTPException(
+            status_code=404,
+            detail="run artifacts not found in configured S3 storage",
+        )
+    return (
+        resolution.run_id,
+        resolution.bucket,
+        resolution.artifacts,
+        resolution.source_prefix,
+    )
+
+
+{_AGENT_ARTIFACT_CONTENT_EMBED}
+
+
 @app.get("/artifacts/run/{{run_id:path}}")
 def artifacts_for_run(
     run_id: str,
@@ -6658,6 +6699,12 @@ def artifacts_for_run(
             s3=s3,
         )
         preferred = select_preferred_artifact(page.artifacts)
+        role_counts = artifact_inventory_counts(page.artifacts)
+        summary = build_run_summary(
+            normalized_run,
+            page.artifacts,
+            _summary_documents_for_run(s3, run_bucket, page.artifacts),
+        )
         return {{
             "ok": True,
             "contract": ARTIFACT_DISCOVERY_CONTRACT,
@@ -6676,6 +6723,12 @@ def artifacts_for_run(
             "preferred": preferred.to_dict() if preferred else None,
             "access": _agent_access_diagnostics(access_report),
             **page.to_dict(),
+            "output_artifact_count": role_counts["output"],
+            "input_artifact_count": role_counts["input"],
+            "metadata_artifact_count": role_counts["metadata"],
+            "summary": summary,
+            "no_recording": not bool(summary.get("has_recording")),
+            "recording_state": str(summary.get("recording_state") or ""),
         }}
     except AmbiguousRunError as exc:
         raise HTTPException(
@@ -8223,6 +8276,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ACCESS_EMBED, agent_access_source)
         .replace(_AGENT_ACCESS_RUNTIME_EMBED, agent_access_runtime_source)
+        .replace(_AGENT_ARTIFACT_CONTENT_EMBED, agent_artifact_content_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)

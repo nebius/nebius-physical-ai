@@ -881,10 +881,10 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#simRunId").should("contain.text", runId);
     cy.get("#rerunPlaceholder", { timeout: 30000 })
       .should("have.attr", "data-state", "no-preview-artifacts")
-      .and("contain.text", "No previewable recording; artifacts available");
+      .and("contain.text", "No RRD/MCAP recording; use the artifacts below");
     cy.get("#renderedDataSummary").should(
       "contain.text",
-      "No previewable recording; artifacts available",
+      "No RRD/MCAP recording; use the artifacts below",
     );
   });
 

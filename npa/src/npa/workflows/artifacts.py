@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timezone
 import json
+import math
 import mimetypes
 from pathlib import Path
 import re
@@ -78,7 +79,8 @@ def is_model_artifact(name: str) -> bool:
 
 
 _JSON_EXTENSIONS = {".json"}
-_TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".yaml", ".yml", ".md"}
+_TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".jsonl", ".yaml", ".yml", ".md"}
+INLINE_TEXT_MAX_BYTES = 256 * 1024
 _INPUT_ARTIFACT_ROOTS = {
     "data",
     "dataset",
@@ -167,7 +169,8 @@ class Artifact:
     relative_key: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        role = artifact_data_role(self.key, self.run_id)
+        data_role = artifact_data_role(self.key, self.run_id)
+        category = artifact_category_for_relative_key(self.relative_key, role=self.role)
         return {
             "run_id": self.run_id,
             "key": self.key,
@@ -176,12 +179,16 @@ class Artifact:
             "last_modified": self.last_modified,
             "render": self.render,
             "inline": self.inline,
-            "data_role": role["role"],
-            "data_role_label": role["label"],
-            "data_role_detail": role["detail"],
+            "data_role": data_role["role"],
+            "data_role_label": data_role["label"],
+            "data_role_detail": data_role["detail"],
             "role": self.role,
             "namespace": self.namespace,
             "relative_key": self.relative_key,
+            "category": category,
+            "content_type": artifact_media_type(self.key),
+            "download_only": not self.inline,
+            "is_output": self.role == "output",
         }
 
 
@@ -220,6 +227,8 @@ class RunSummary:
     output_artifact_count: int = 0
     input_artifact_count: int = 0
     metadata_artifact_count: int = 0
+    namespaces: tuple[str, ...] = ()
+    canonical_score: int = 0
 
     @property
     def run_ref(self) -> str:
@@ -248,6 +257,7 @@ class RunSummary:
             "output_artifact_count": self.output_artifact_count,
             "input_artifact_count": self.input_artifact_count,
             "metadata_artifact_count": self.metadata_artifact_count,
+            "namespaces": list(self.namespaces),
             "source_type": "artifact_storage",
             "source_label": "S3 artifacts",
         }
@@ -411,6 +421,32 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     return parsed.netloc, key
 
 
+def authorize_artifact_inventory_key(
+    run_id: str,
+    key: str,
+    inventory_keys: "list[str] | tuple[str, ...] | set[str]",
+) -> str:
+    """Authorize one S3 key against the already-resolved inventory for a run.
+
+    The inventory must come from S3-first discovery for ``run_id``. Requiring an
+    exact match means S3 credentials can never turn this endpoint into an
+    arbitrary object reader, even when the credentials can access other runs.
+    """
+    normalized_run = validate_run_id(run_id)
+    normalized_key = str(key or "").strip().lstrip("/")
+    if not normalized_key:
+        raise ArtifactDiscoveryError("artifact key is required")
+    if "\\" in normalized_key or any(
+        segment in {"", ".", ".."} for segment in normalized_key.split("/")
+    ):
+        raise ArtifactDiscoveryError("artifact key traversal is not allowed")
+    if normalized_key not in {str(item) for item in inventory_keys}:
+        raise ArtifactDiscoveryError(
+            f"artifact key is not part of validated run {normalized_run!r}"
+        )
+    return normalized_key
+
+
 def build_s3_client(
     *,
     endpoint_url: str,
@@ -480,6 +516,35 @@ def artifact_role_for_relative_key(relative_key: str) -> str:
     return "input" if first in _INPUT_ARTIFACT_ROOTS else "output"
 
 
+def artifact_category_for_relative_key(relative_key: str, *, role: str = "output") -> str:
+    """Return a user-facing artifact category without inspecting object bytes."""
+    relative = str(relative_key or "").strip().lstrip("/")
+    lowered = relative.lower()
+    leaf = Path(lowered).name
+    first = lowered.split("/", 1)[0] if lowered else ""
+    suffix = Path(leaf).suffix
+    if leaf == "manifest.json" or leaf.endswith("_manifest.json"):
+        return "manifest"
+    if first in {"checkpoint", "checkpoints"} or suffix in {
+        ".bin",
+        ".ckpt",
+        ".pth",
+        ".pt",
+        ".safetensors",
+    }:
+        return "checkpoint"
+    if suffix == ".log" or first in {"log", "logs", "evidence"}:
+        return "log"
+    if suffix in {".yaml", ".yml"} or "config" in leaf or first in {"config", "configs"}:
+        return "config"
+    normalized_role = str(role or "output").lower()
+    if normalized_role == "input":
+        return "input"
+    if normalized_role == "metadata":
+        return "staged"
+    return "output"
+
+
 def artifact_inventory_counts(artifacts: "list[Artifact]") -> dict[str, int]:
     counts = {"output": 0, "input": 0, "metadata": 0}
     for item in artifacts:
@@ -488,6 +553,19 @@ def artifact_inventory_counts(artifacts: "list[Artifact]") -> dict[str, int]:
             role = "metadata"
         counts[role] += 1
     return counts
+
+
+def _artifact_output_signal_score(relative_key: str) -> int:
+    """Score evidence that a namespace is the authoritative output root."""
+    relative = str(relative_key or "").strip().lstrip("/").lower()
+    first = relative.split("/", 1)[0] if relative else ""
+    if relative == "manifest.json":
+        return 10_000
+    if first in {"checkpoint", "checkpoints"}:
+        return 1_000
+    if first in {"artifacts", "evidence", "output", "outputs", "reports", "results"}:
+        return 100
+    return 0
 
 
 def artifact_media_type(filename: str) -> str:
@@ -519,12 +597,18 @@ def artifact_media_type(filename: str) -> str:
         ".tif": "image/png",
         ".tiff": "image/png",
         ".json": "application/json",
+        ".jsonl": "application/x-ndjson; charset=utf-8",
         ".txt": "text/plain; charset=utf-8",
         ".log": "text/plain; charset=utf-8",
         ".md": "text/plain; charset=utf-8",
         ".csv": "text/plain; charset=utf-8",
         ".yaml": "text/plain; charset=utf-8",
         ".yml": "text/plain; charset=utf-8",
+        ".bin": "application/octet-stream",
+        ".ckpt": "application/octet-stream",
+        ".pt": "application/octet-stream",
+        ".pth": "application/octet-stream",
+        ".safetensors": "application/octet-stream",
     }
     if suffix in explicit:
         return explicit[suffix]
@@ -532,6 +616,236 @@ def artifact_media_type(filename: str) -> str:
     if guessed:
         return str(guessed)
     return "application/octet-stream"
+
+
+_SECRET_KEY_RE = re.compile(
+    r"(?i)(authorization|cookie|password|passwd|private[_-]?key|secret|token|"
+    r"access[_-]?key|api[_-]?key|client[_-]?secret)"
+)
+_SECRET_LINE_RE = re.compile(
+    r"(?im)^(?P<prefix>\s*[\"']?[A-Za-z0-9_.-]*"
+    r"(?:authorization|cookie|password|passwd|private[_-]?key|secret|token|"
+    r"access[_-]?key|api[_-]?key|client[_-]?secret)[\"']?\s*[:=]\s*)"
+    r"(?P<value>[^\r\n,}]+)"
+)
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*")
+_AWS_ACCESS_KEY_RE = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+_PEM_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----",
+    re.DOTALL,
+)
+
+
+def _redact_json_value(value: Any) -> tuple[Any, bool]:
+    redacted = False
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, child in value.items():
+            if _SECRET_KEY_RE.search(str(key)):
+                out[str(key)] = "[REDACTED]"
+                redacted = True
+            else:
+                clean, changed = _redact_json_value(child)
+                out[str(key)] = clean
+                redacted = redacted or changed
+        return out, redacted
+    if isinstance(value, list):
+        out_list = []
+        for child in value:
+            clean, changed = _redact_json_value(child)
+            out_list.append(clean)
+            redacted = redacted or changed
+        return out_list, redacted
+    if isinstance(value, str):
+        clean, changed = redact_artifact_text(value)
+        return clean, changed
+    return value, False
+
+
+def redact_artifact_text(text: str) -> tuple[str, bool]:
+    """Redact common credential forms from an inline text preview."""
+    value = str(text or "")
+    original = value
+    value = _PEM_PRIVATE_KEY_RE.sub("[REDACTED PRIVATE KEY]", value)
+    value = _BEARER_RE.sub("Bearer [REDACTED]", value)
+    value = _AWS_ACCESS_KEY_RE.sub("[REDACTED ACCESS KEY]", value)
+    value = _SECRET_LINE_RE.sub(lambda match: match.group("prefix") + "[REDACTED]", value)
+    return value, value != original
+
+
+def build_text_preview(
+    data: bytes,
+    *,
+    total_bytes: int,
+    render: str,
+    max_bytes: int = INLINE_TEXT_MAX_BYTES,
+) -> dict[str, Any]:
+    """Decode, redact, and format a bounded UTF-8 artifact preview."""
+    if max_bytes <= 0:
+        raise ArtifactDiscoveryError("text preview max_bytes must be > 0")
+    raw = bytes(data or b"")
+    bounded = raw[:max_bytes]
+    text = bounded.decode("utf-8", errors="replace")
+    redacted = False
+    normalized_render = str(render or "text").lower()
+    if normalized_render == "json":
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            text, redacted = redact_artifact_text(text)
+        else:
+            parsed, redacted = _redact_json_value(parsed)
+            text = json.dumps(parsed, indent=2, sort_keys=True, ensure_ascii=False)
+    else:
+        text, redacted = redact_artifact_text(text)
+    total = max(0, int(total_bytes or 0))
+    return {
+        "text": text,
+        "truncated": total > len(bounded) or len(raw) > len(bounded),
+        "bytes_read": len(bounded),
+        "total_bytes": total,
+        "max_bytes": int(max_bytes),
+        "encoding": "utf-8",
+        "invalid_utf8_replaced": "\ufffd" in text,
+        "redacted": redacted,
+        "render": normalized_render,
+    }
+
+
+def parse_http_byte_range(value: str, total_bytes: int) -> tuple[int, int] | None:
+    """Parse one RFC 7233 byte range; reject multiple or unsatisfiable ranges."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    total = int(total_bytes)
+    if total < 0 or not raw.lower().startswith("bytes=") or "," in raw:
+        raise ArtifactDiscoveryError("invalid byte range")
+    spec = raw.split("=", 1)[1].strip()
+    if "-" not in spec:
+        raise ArtifactDiscoveryError("invalid byte range")
+    start_raw, end_raw = (part.strip() for part in spec.split("-", 1))
+    if not start_raw:
+        if not end_raw.isdigit() or int(end_raw) <= 0 or total <= 0:
+            raise ArtifactDiscoveryError("unsatisfiable byte range")
+        length = min(int(end_raw), total)
+        return total - length, total - 1
+    if not start_raw.isdigit():
+        raise ArtifactDiscoveryError("invalid byte range")
+    start = int(start_raw)
+    if start >= total:
+        raise ArtifactDiscoveryError("unsatisfiable byte range")
+    if end_raw:
+        if not end_raw.isdigit():
+            raise ArtifactDiscoveryError("invalid byte range")
+        end = min(int(end_raw), total - 1)
+        if end < start:
+            raise ArtifactDiscoveryError("unsatisfiable byte range")
+    else:
+        end = total - 1
+    return start, end
+
+
+def safe_artifact_filename(key: str) -> str:
+    """Return a conservative ASCII download filename for Content-Disposition."""
+    leaf = Path(str(key or "").replace("\\", "/")).name or "artifact.bin"
+    clean = re.sub(r"[^A-Za-z0-9._-]+", "_", leaf).strip("._")
+    return (clean[:180] or "artifact.bin")
+
+
+def safe_content_disposition(key: str, *, attachment: bool) -> str:
+    disposition = "attachment" if attachment else "inline"
+    return f'{disposition}; filename="{safe_artifact_filename(key)}"'
+
+
+def build_run_summary(
+    run_id: str,
+    artifacts: list[Artifact],
+    documents: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a concise run summary from allowlisted manifest/evidence fields."""
+    docs = documents if isinstance(documents, dict) else {}
+
+    def _doc(suffix: str) -> dict[str, Any]:
+        normalized = suffix.lower().strip("/")
+        for key, value in docs.items():
+            if str(key).lower().strip("/") == normalized and isinstance(value, dict):
+                return value
+        for key, value in docs.items():
+            if str(key).lower().endswith(suffix.lower()) and isinstance(value, dict):
+                return value
+        return {}
+
+    root_manifest = _doc("manifest.json")
+    workflow_manifest = _doc("npa-workflow/manifest.json")
+    training = _doc("evidence/training.json")
+    capacity = _doc("evidence/capacity.json")
+    collective = _doc("evidence/collective.json")
+    checkpoint = _doc("checkpoints/npa_groot_finetune_manifest.json")
+    workflow = str(
+        root_manifest.get("workflow_name")
+        or workflow_manifest.get("workflow")
+        or workflow_manifest.get("name")
+        or ""
+    )
+    steps = workflow_manifest.get("steps") if isinstance(workflow_manifest.get("steps"), list) else []
+    tool_ref = ""
+    for step in steps:
+        if isinstance(step, dict) and step.get("tool_ref"):
+            tool_ref = str(step["tool_ref"])
+            break
+    status = str(
+        training.get("status")
+        or training.get("terminal_status")
+        or checkpoint.get("status")
+        or root_manifest.get("status")
+        or "unknown"
+    )
+    accelerator_count = int(
+        training.get("gpu_count")
+        or training.get("distinct_gpu_count")
+        or checkpoint.get("num_gpus")
+        or capacity.get("total_allocatable")
+        or 0
+    )
+    accelerator_type = str(
+        training.get("accelerator")
+        or collective.get("accelerator")
+        or capacity.get("accelerator")
+        or ""
+    )
+    world_size = int(training.get("world_size") or collective.get("world_size") or 0)
+    training_steps = int(training.get("optimizer_steps") or checkpoint.get("max_steps") or 0)
+    loss_value = training.get("train_loss")
+    try:
+        loss = float(loss_value) if loss_value is not None else None
+    except (TypeError, ValueError):
+        loss = None
+    finite_loss = bool(training.get("loss_finite")) and loss is not None and math.isfinite(loss)
+    counts = artifact_inventory_counts(artifacts)
+    has_recording = any(item.render in {"rerun", "mcap"} for item in artifacts)
+    return {
+        "run_id": str(run_id),
+        "completion_status": status,
+        "workflow": workflow,
+        "tool": tool_ref or workflow,
+        "accelerator_count": accelerator_count,
+        "accelerator_type": accelerator_type,
+        "world_size": world_size,
+        "training_steps": training_steps,
+        "loss": loss if finite_loss else None,
+        "finite_loss": finite_loss,
+        "artifact_count": len(artifacts),
+        "output_artifact_count": counts["output"],
+        "input_artifact_count": counts["input"],
+        "metadata_artifact_count": counts["metadata"],
+        "total_bytes": sum(max(0, int(item.size or 0)) for item in artifacts),
+        "has_recording": has_recording,
+        "recording_state": (
+            "Recording available"
+            if has_recording
+            else "No RRD/MCAP recording; use the artifacts below"
+        ),
+    }
 
 
 def list_runs(
@@ -827,9 +1141,18 @@ def _list_artifact_run_index(
                         "last_modified": "",
                         "earliest": "",
                         "has_viewable": False,
+                        "output_artifact_count": 0,
+                        "input_artifact_count": 0,
+                        "canonical_score": 0,
                     },
                 )
                 current["artifact_count"] = int(current["artifact_count"]) + 1
+                scope = "/".join(part for part in (parent, run_id) if part)
+                relative_key = key[len(scope) :].lstrip("/") if key.startswith(scope) else key
+                role = artifact_role_for_relative_key(relative_key)
+                count_key = "input_artifact_count" if role == "input" else "output_artifact_count"
+                current[count_key] = int(current[count_key]) + 1
+                current["canonical_score"] = int(current["canonical_score"]) + _artifact_output_signal_score(relative_key)
                 current["has_viewable"] = bool(
                     current["has_viewable"] or render_hint_for_object(key=key) != "download"
                 )
@@ -854,10 +1177,48 @@ def _list_artifact_run_index(
             bucket=bucket,
             summary_complete=discovery_complete,
             resolved_prefix=parent,
+            output_artifact_count=int(payload["output_artifact_count"]),
+            input_artifact_count=int(payload["input_artifact_count"]),
+            namespaces=(parent,),
+            canonical_score=int(payload["canonical_score"]),
         )
         for (parent, run_id), payload in summaries.items()
         if not needle or needle in run_id.lower()
     ]
+    # Some runners stage source/data beneath ``<workflow>/<run>/`` and publish
+    # checkpoints/manifests beneath ``<run>/``. Consolidate only that provable
+    # input-only + authoritative-output shape; unrelated duplicate run basenames
+    # remain source-qualified and ambiguous.
+    grouped: dict[str, list[RunSummary]] = {}
+    for run in runs:
+        grouped.setdefault(run.run_id, []).append(run)
+    consolidated: list[RunSummary] = []
+    for same_id in grouped.values():
+        canonical = [item for item in same_id if item.canonical_score >= 1_000]
+        noncanonical = [item for item in same_id if item not in canonical]
+        if (
+            len(same_id) > 1
+            and len(canonical) == 1
+            and all(item.output_artifact_count == 0 for item in noncanonical)
+        ):
+            owner = canonical[0]
+            consolidated.append(
+                dataclass_replace(
+                    owner,
+                    last_modified=max(item.last_modified for item in same_id),
+                    started_at=min(item.started_at for item in same_id),
+                    artifact_count=sum(item.artifact_count for item in same_id),
+                    has_viewable=any(item.has_viewable is True for item in same_id),
+                    output_artifact_count=sum(item.output_artifact_count for item in same_id),
+                    input_artifact_count=sum(item.input_artifact_count for item in same_id),
+                    metadata_artifact_count=sum(item.metadata_artifact_count for item in same_id),
+                    namespaces=tuple(sorted({item.resolved_prefix for item in same_id})),
+                    canonical_score=sum(item.canonical_score for item in same_id),
+                )
+            )
+        else:
+            consolidated.extend(same_id)
+    runs = consolidated
     runs.sort(
         key=lambda item: (
             item.last_modified,
@@ -1505,12 +1866,16 @@ def find_run_artifact_matches(
             run_id=normalized_run,
             bucket=bucket,
             source_prefix=item.resolved_prefix,
-            artifacts=list_artifacts(
-                bucket,
-                normalized_run,
-                prefix=item.resolved_prefix,
-                s3=s3,
-            ),
+            artifacts=[
+                artifact
+                for namespace in (item.namespaces or (item.resolved_prefix,))
+                for artifact in list_artifacts(
+                    bucket,
+                    normalized_run,
+                    prefix=namespace,
+                    s3=s3,
+                )
+            ],
         )
         for item in index.runs
         if item.run_id == normalized_run
@@ -1582,6 +1947,18 @@ def find_run_artifacts(bucket: str, *, base_prefix: str, run_id: str, s3=None) -
     if not matches:
         return []
     if len(matches) > 1:
+        canonical = [
+            item
+            for item in matches
+            if sum(_artifact_output_signal_score(artifact.relative_key) for artifact in item.artifacts)
+            >= 1_000
+        ]
+        noncanonical = [item for item in matches if item not in canonical]
+        if len(canonical) == 1 and all(
+            all(artifact.role == "input" for artifact in item.artifacts)
+            for item in noncanonical
+        ):
+            return [artifact for item in matches for artifact in item.artifacts]
         raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
     return matches[0].artifacts
 
