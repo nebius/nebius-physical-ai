@@ -380,12 +380,20 @@ def run_single_outer_iteration(
     ):
         heldout_report = dict(inner["selected_validation_report"])
     else:
+        selected_checkpoint_iteration = int(
+            (inner.get("checkpoint_selection") or {}).get("training_iteration")
+            or (inner.get("selected_validation_report") or {}).get(
+                "checkpoint_training_iteration"
+            )
+            or 0
+        )
         heldout_report = run_heldout_eval(
             config,
             local_dir=local_dir,
             inner_evidence=inner,
             outer_iteration=outer_iteration,
             evaluation_split="gold_heldout",
+            checkpoint_iteration=selected_checkpoint_iteration,
         )
     decision = threshold_decision(
         config,

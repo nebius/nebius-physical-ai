@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import npa.workflows.sim2real.engine as engine_module
 import npa.workflows.sim2real_loop as loop_module
 from npa.sdk.workbench import cosmos2, cosmos3, sim2real
 from npa.workbench.lerobot.policy_container import (
@@ -1457,6 +1458,54 @@ def test_staged_path_produces_same_decision_as_full_loop(tmp_path: Path) -> None
         == full_report["inner_loop"]["signal_converter_source"]
     )
     assert (staged_dir / "state" / "workflow_state.json").exists()
+
+
+def test_final_gold_eval_records_selected_checkpoint_training_iteration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = Sim2RealLoopConfig(
+        run_id="sim2real-final-lineage",
+        output_dir=tmp_path,
+        outer_iterations=1,
+        rerun_enabled=False,
+    )
+    selected_checkpoint = "s3://bucket/checkpoints/model_2200.pt"
+    inner = {
+        "final_quality": 0.0,
+        "final_checkpoint_uri": selected_checkpoint,
+        "evidence_uri": str(tmp_path / "inner-evidence.json"),
+        "checkpoint_selection": {
+            "checkpoint_uri": selected_checkpoint,
+            "training_iteration": 2200,
+        },
+        "selected_validation_report": {
+            "checkpoint_training_iteration": 2200,
+        },
+    }
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(engine_module, "run_inner_loop", lambda *args, **kwargs: inner)
+
+    def fake_eval(*args: object, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"success_rate": 0.0, "report_uri": str(tmp_path / "gold.json")}
+
+    monkeypatch.setattr(engine_module, "run_heldout_eval", fake_eval)
+    monkeypatch.setattr(
+        engine_module,
+        "threshold_decision",
+        lambda *args, **kwargs: {"decision": "loop_back_to_inner_loop"},
+    )
+
+    engine_module.run_single_outer_iteration(
+        config,
+        local_dir=tmp_path,
+        outer_iteration=1,
+        initial_quality=0.0,
+    )
+
+    assert captured["evaluation_split"] == "gold_heldout"
+    assert captured["checkpoint_iteration"] == 2200
 
 
 def test_workflow_runner_matches_full_loop(tmp_path: Path) -> None:
