@@ -60,10 +60,11 @@ separate license acceptances, and clearing one does not clear the other. The
 entrypoint refuses to start when guardrails are on and no token is present,
 because without that check the fetch goes out anonymous and dies with a `401`
 several minutes into startup, which reads like a bad token rather than a missing
-one. If a token **is** set and the download still fails, the status code
-separates the two causes: `401` from an anonymous request means no valid token
-reached Hugging Face, `403` from an authenticated one means the account has not
-accepted that repo's license.
+one. If a token **is** set and the download still fails, use an authenticated
+probe: authenticated `401` means the supplied token is missing, invalid, or
+revoked; authenticated `403` means the identity is valid but unauthorized
+because of repo approval/license, fine-grained scope, or organization policy.
+An anonymous `401` is not a token discriminator.
 
 **The base image's pinned Hugging Face client pair breaks the guardrail
 download.** `HF_HUB_DISABLE_XET=1` is set in the image, which is a departure
@@ -297,7 +298,7 @@ sha256 on the client side and upload them alongside the clip.
 | `the pinned parallel config needs 8 GPUs, found N` | The pinned strategy is an 8-GPU decomposition. Override it through `NPA_COSMOS3_SERVE_EXTRA_ARGS` and set `NPA_COSMOS3_SERVE_GPUS` to match. |
 | `Unable to parse string as hex hash value` | The xet defect the image already works around. Confirm `HF_HUB_DISABLE_XET=1` survived into the container environment. |
 | Health check fails during startup | The probe is tighter than the real readiness window. See the readiness section above. |
-| `403` on a guardrail download with a valid token | The token's account has not accepted `nvidia/Cosmos-1.0-Guardrail`. Accepting `nvidia/Cosmos-Guardrail1` does not clear it. |
+| Authenticated `403` on a guardrail download | The token identity lacks authorization. Check acceptance for `nvidia/Cosmos-1.0-Guardrail` (accepting `nvidia/Cosmos-Guardrail1` does not clear it), fine-grained repo scope, and organization policy. |
 
 ## Related
 

@@ -128,7 +128,7 @@ def test_require_model_access_demands_operator_hf_token() -> None:
 
 
 def test_require_model_access_missing_token_error_names_the_401_403_diagnostic() -> None:
-    """The 401 (bad token) vs 403 (unaccepted license) split, plus a doc pointer."""
+    """Authenticated 401 vs 403 guidance names every authorization cause."""
 
     with pytest.raises(Cosmos3GenerateError) as excinfo:
         require_model_access(checkpoint="Cosmos3-Nano", environ={})
@@ -137,6 +137,8 @@ def test_require_model_access_missing_token_error_names_the_401_403_diagnostic()
     assert "anonymous" in message
     assert "401" in message
     assert "403" in message
+    assert "with authentication" in message
+    assert "invalid, or revoked" in message
     assert "fine-grained token" in message
     assert "organization token policy" in message
     assert "docs/workbench/cosmos3-access-preflight.md" in message
@@ -347,6 +349,18 @@ def test_check_xet_pin_skips_probe_when_xet_is_already_disabled(
         )
         == ""
     )
+
+
+def test_check_xet_pin_false_value_still_warns_for_affected_pair(tmp_path: Path) -> None:
+    repo, _ = _fake_runtime(tmp_path)
+
+    warning = check_xet_pin(
+        repo,
+        environ={"HF_HUB_DISABLE_XET": "0"},
+        runner=_version_probe_runner(AFFECTED_PAIR),
+    )
+
+    assert "HF_HUB_DISABLE_XET=1" in warning
 
 
 def _generate_with_probe(

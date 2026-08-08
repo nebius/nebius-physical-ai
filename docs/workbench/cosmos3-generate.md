@@ -55,8 +55,20 @@ setup, the two-repo table, the 401-vs-403 diagnostic for a gated-download
 failure, and the Xet download workaround for a specific Hugging Face client
 pin.
 
+The r2 image keeps the faster Xet transfer path enabled with its measured,
+compatible baked versions (`huggingface_hub==0.36.2`, `hf-xet==1.3.2`). The
+image build records this pair and fails if the known-bad `1.23.0` / `1.5.1`
+combination is ever resolved; only non-image/custom environments need the
+runtime diagnostic and `HF_HUB_DISABLE_XET=1` fallback described there.
+
 Guardrails are **on** unless you pass `--no-guardrails`, and every result
 manifest records `guardrails` so a run's posture stays auditable.
+
+Known limitation: a prior live run requested guardrails but upstream reported
+`No safety models found, returning safe`. The manifest currently records the
+requested posture, not proof of effective safety-model execution. This is
+tracked separately in [issue #270](https://github.com/nebius/nebius-physical-ai/issues/270);
+this release does not redesign guardrail behavior.
 
 ## Build
 
