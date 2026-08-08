@@ -38,10 +38,55 @@ from npa.deploy.images import (
     public_container_registry,
     publicly_publishable_tools,
 )
-from npa.deploy.publish_public import build_publish_plan
+from npa.deploy.publish_public import (
+    PublishItem,
+    _pin_wan_publication_sources as REAL_WAN_SOURCE_PIN,
+    build_publish_plan,
+    verify_wan_publication_source as REAL_WAN_PUBLICATION_GATE,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
+
+
+@pytest.fixture(autouse=True)
+def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) -> None:
+    """Keep generic publish tests focused while the dedicated Wan tests exercise the gate."""
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(
+        publish_public,
+        "verify_wan_publication_source",
+        lambda item: (True, "test fixture: Wan gate verified"),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_pin_wan_publication_sources",
+        lambda plan: (list(plan), []),
+    )
+
+
+def test_wan_source_tag_is_frozen_before_preflight_and_copy(monkeypatch) -> None:
+    """A later tag retarget cannot change the bytes selected for publication."""
+
+    from npa.deploy import publish_public
+
+    digest = "sha256:" + "a" * 64
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, digest)
+    )
+    plan, failures = REAL_WAN_SOURCE_PIN(
+        [
+            PublishItem(
+                tool="wan2-2",
+                source_ref="source.example/npa-wan2-2:accepted",
+                target_ref="target.example/npa-wan2-2:accepted",
+            )
+        ]
+    )
+
+    assert failures == []
+    assert plan[0].source_ref == f"source.example/npa-wan2-2@{digest}"
 
 
 def test_isaac_images_are_no_longer_restricted() -> None:
@@ -560,6 +605,112 @@ def test_the_preflight_flag_never_copies(monkeypatch) -> None:
     )
 
 
+def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    platform_digest = "sha256:" + "1" * 64
+    index_digest = "sha256:" + "2" * 64
+    attestation_digest = "sha256:" + "3" * 64
+    subject = [{"name": "pkg", "digest": {"sha256": "1" * 64}}]
+    index = {
+        "manifests": [
+            {
+                "digest": platform_digest,
+                "platform": {"architecture": "amd64", "os": "linux"},
+            },
+            {
+                "digest": attestation_digest,
+                "annotations": {
+                    "vnd.docker.reference.type": "attestation-manifest",
+                    "vnd.docker.reference.digest": platform_digest,
+                },
+            },
+        ]
+    }
+    attestation = {
+        "layers": [
+            {
+                "digest": "sha256:spdx",
+                "annotations": {
+                    "in-toto.io/predicate-type": "https://spdx.dev/Document"
+                },
+            },
+            {
+                "digest": "sha256:slsa",
+                "annotations": {
+                    "in-toto.io/predicate-type": "https://slsa.dev/provenance/v1"
+                },
+            },
+        ]
+    }
+
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, index_digest)
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: (
+            index if args[0:1] == ["manifest"] and "@" not in args[1] else attestation
+        ),
+    )
+
+    def fake_blob(repository: str, digest: str) -> dict:
+        if digest == "sha256:spdx":
+            return {
+                "subject": subject,
+                "predicateType": "https://spdx.dev/Document",
+                "predicate": {"packages": [{"name": "npa-wan2-2"}]},
+            }
+        return {
+            "subject": subject,
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "predicate": {"buildDefinition": {"buildType": "docker"}},
+        }
+
+    monkeypatch.setattr(publish_public, "_crane_blob_json", fake_blob)
+
+    class CleanScan:
+        returncode = 0
+        stdout = json.dumps({"status": "pass", "findings": []})
+        stderr = ""
+
+    monkeypatch.setattr(publish_public.subprocess, "run", lambda *a, **k: CleanScan())
+    ok, detail = REAL_WAN_PUBLICATION_GATE(
+        PublishItem(
+            tool="wan2-2",
+            source_ref="source.example/npa-wan2-2:accepted",
+            target_ref="ghcr.io/example/npa-wan2-2:accepted",
+        )
+    )
+
+    assert ok, detail
+    assert index_digest in detail
+    assert platform_digest in detail
+
+
+def test_wan_publication_gate_blocks_copy_before_any_write(monkeypatch, capsys) -> None:
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_wan_publication_source",
+        lambda item: (False, "SLSA provenance is absent"),
+    )
+
+    def explode(item) -> None:  # pragma: no cover - must not run
+        raise AssertionError(f"publication gate must prevent copying {item.target_ref}")
+
+    monkeypatch.setattr(publish_public, "_crane_copy", explode)
+    rc = publish_public.main(["--target", "ghcr.io/example/workbench"])
+
+    assert rc == 1
+    assert "SLSA provenance is absent" in capsys.readouterr().err
+
+
 def test_a_successful_copy_still_fails_while_the_packages_are_private(
     monkeypatch, capsys
 ) -> None:
@@ -684,16 +835,15 @@ def test_crane_copy_updates_a_target_with_a_different_digest(
         source_ref="source.example/npa-lerobot:1.0",
         target_ref="target.example/npa-lerobot:1.0",
     )
-    digests = {
-        item.source_ref: (True, "sha256:new"),
-        item.target_ref: (True, "sha256:old"),
-    }
+    target_reads = iter([(True, "sha256:old"), (True, "sha256:new")])
     calls: list[list[str]] = []
     monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
     monkeypatch.setattr(
         publish_public,
         "_crane_digest",
-        lambda ref, **_: digests[ref],
+        lambda ref, **_: (
+            (True, "sha256:new") if ref == item.source_ref else next(target_reads)
+        ),
     )
     monkeypatch.setattr(
         publish_public.subprocess,
@@ -726,16 +876,15 @@ def test_crane_copy_creates_a_missing_or_pull_denied_target(
         source_ref="source.example/npa-lerobot:1.0",
         target_ref="target.example/npa-lerobot:1.0",
     )
-    digests = {
-        item.source_ref: (True, "sha256:new"),
-        item.target_ref: (False, target_error),
-    }
+    target_reads = iter([(False, target_error), (True, "sha256:new")])
     calls: list[list[str]] = []
     monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
     monkeypatch.setattr(
         publish_public,
         "_crane_digest",
-        lambda ref, **_: digests[ref],
+        lambda ref, **_: (
+            (True, "sha256:new") if ref == item.source_ref else next(target_reads)
+        ),
     )
     monkeypatch.setattr(
         publish_public.subprocess,
@@ -745,6 +894,20 @@ def test_crane_copy_creates_a_missing_or_pull_denied_target(
 
     assert publish_public._crane_copy(item) is True
     assert calls == [["/usr/bin/crane", "copy", item.source_ref, item.target_ref]]
+
+
+def test_wan_copy_refuses_a_mutable_source_tag(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
+    with pytest.raises(RuntimeError, match="pinned by exact OCI digest"):
+        publish_public._crane_copy(
+            PublishItem(
+                tool="wan2-2",
+                source_ref="source.example/npa-wan2-2:mutable",
+                target_ref="target.example/npa-wan2-2:mutable",
+            )
+        )
 
 
 def test_crane_copy_refuses_an_unknown_target_digest_failure(monkeypatch) -> None:

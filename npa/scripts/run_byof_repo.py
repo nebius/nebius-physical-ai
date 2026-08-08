@@ -20,6 +20,7 @@ from npa.deploy.images import container_image_for_tool
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
 from npa.workflows.byof.postprocess import (
     PostprocessContext,
+    has_registered_postprocess,
     run_registered_postprocess,
 )
 
@@ -441,6 +442,15 @@ def main(argv: list[str] | None = None) -> int:
     docker_config_dir: str | None = None
     docker_env: dict[str, str] = {}
     try:
+        requires_postprocess = (
+            args.workload == "solution-smoke"
+            and has_registered_postprocess(args.solution_name)
+        )
+        if requires_postprocess and not args.output_root.strip():
+            raise ValueError(
+                f"registered solution {args.solution_name!r} requires --output-root "
+                "so its verified postprocess cannot be skipped"
+            )
         if not skip_build:
             if not skip_push:
                 docker_config_dir = tempfile.mkdtemp(prefix="npa-docker-auth-")
@@ -596,7 +606,7 @@ def main(argv: list[str] | None = None) -> int:
             summary["run"] = _parse_last_json(run_proc.stdout) or {
                 "status": "submitted"
             }
-            if args.workload == "solution-smoke" and args.output_root.strip():
+            if requires_postprocess:
                 postprocess = run_registered_postprocess(
                     args.solution_name,
                     PostprocessContext(

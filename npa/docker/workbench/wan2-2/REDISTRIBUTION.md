@@ -27,7 +27,18 @@ opinion or substitute for counsel.
    User inputs and generated artifacts are never image inputs.
 
 Release qualification requires scanning the pushed digest with
-`npa/scripts/scan_image_wan_payload.py`, reviewing its SBOM/license inventory,
-and independently confirming the precise source/model/vendor terms remain
-current. Passing automation proves byte absence and contract consistency; it
-does not constitute human legal approval.
+`npa/scripts/scan_image_wan_payload.py`, separately inspecting the BuildKit SPDX
+attestation and SLSA provenance bound to the exact platform manifest, reviewing
+the dependency license inventory, and independently confirming the precise
+source/model/vendor terms remain current. The scanner proves prohibited-byte
+absence; it does not generate or review an SBOM or make a legal determination.
+Passing automation proves byte absence and contract consistency, not human legal
+approval.
+
+The container starts as UID 1000 and the runtime/model caches are owned by that
+user. This is an ownership and accidental-write boundary, not a security
+sandbox: the image retains passwordless sudo because the shared SkyPilot image
+bootstrap contract may need to create SSH host keys and perform runtime setup.
+Operators requiring a privilege boundary must enforce an admission-approved pod
+security context outside the image and validate it against SkyPilot bootstrap;
+the default image alone does not provide that isolation.

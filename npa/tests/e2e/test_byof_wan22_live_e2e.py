@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,7 +32,6 @@ import pytest
 import yaml
 
 from npa.clients.config import resolve_container_registry
-from npa.deploy.images import container_image_for_tool
 from npa.clients.project_credentials import storage_env_for_project
 from npa.workflows.byof.live import (
     resolve_byof_kubernetes_target,
@@ -277,11 +277,14 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
     registry = resolve_container_registry(e2e_project)
     assert registry, "NPA container registry could not be resolved"
     reuse_image = os.environ.get("NPA_BYOF_WAN22_REUSE_IMAGE", "").strip()
-    if reuse_image:
-        assert reuse_image.startswith(registry.rstrip("/") + "/"), reuse_image
+    assert reuse_image, (
+        "the live acceptance run requires an explicitly digest-pinned image"
+    )
+    assert reuse_image.startswith(registry.rstrip("/") + "/"), reuse_image
+    assert re.search(r"@sha256:[0-9a-f]{64}$", reuse_image), reuse_image
     run_id = "byof-wan22-e2e-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     planned = _planned_byof_args(run_id)
-    image = reuse_image or container_image_for_tool("wan2-2", registry=registry)
+    image = reuse_image
     profile = PROFILE_DIR / f"{planned['--yaml']}.yaml"
     out_bucket = live_bucket(e2e_project)
     output_root = f"s3://{out_bucket}/oss-solutions/wan2.2"
@@ -444,6 +447,9 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
     assert video_head["ContentLength"] > 4096
     video_path = tmp_path / "wan2_2_ti2v_5b.mp4"
     s3.download_file(out_bucket, video_key, str(video_path))
+    assert (
+        artifact["output_sha256"] == hashlib.sha256(video_path.read_bytes()).hexdigest()
+    )
     stream = _decode_mp4(video_path)
     assert int(stream["width"]) == 1280
     assert int(stream["height"]) == 704

@@ -64,6 +64,7 @@ config:
     from __future__ import annotations
 
     import copy
+    import hashlib
     import importlib.metadata
     import json
     import os
@@ -449,6 +450,7 @@ config:
         "runtime_inventory_filename": INVENTORY_NAME,
         "output_filename": OUTPUT_NAME,
         "output_size_bytes": output_size,
+        "output_sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(),
         "capabilities_exercised": capabilities_exercised,
         "deferred": [],
         "not_claimed": [

@@ -5,7 +5,9 @@ metadata:
   name: byof-wan2-2-multigpu
   description: >
     Honest four-GPU Wan 2.2 TI2V-5B generation through the pinned upstream
-    torchrun entrypoint. Every rank participates in one generation using
+    code path: torch.distributed.run launches an instrumentation wrapper on
+    four ranks, and that wrapper executes official generate.py as __main__.
+    Every rank participates in one generation using
     NCCL, FULL_SHARD FSDP for T5 and DiT, and DeepSpeed Ulysses sequence
     parallelism. Rank zero writes the MP4 only after the shared generation;
     all ranks then cross the upstream final barrier and emit sanitized
@@ -54,7 +56,9 @@ config:
     export TORCH_NCCL_USE_COMM_NONBLOCKING="1"
     export NCCL_DEBUG="INFO"
     export NCCL_DEBUG_SUBSYS="INIT,COLL,ENV"
-    export NCCL_DEBUG_FILE="${NPA_SMOKE_OUTPUT_DIR}/wan2_2_nccl.%h.%p.log"
+    # The wrapper replaces this with one deterministic filename per rank before
+    # process-group initialization so the logs can enter verified RRD lineage.
+    export NCCL_DEBUG_FILE="${NPA_SMOKE_OUTPUT_DIR}/wan2_2_multigpu_nccl_unbound.%p.log"
     wan-runtime ensure
     OUT_DIR="${NPA_SMOKE_OUTPUT_DIR}"
     CHECKPOINT_FILE="${OUT_DIR}/checkpoint_dir.txt"
@@ -100,6 +104,8 @@ config:
     cat > "${WRAPPER}" <<'PY'
     from __future__ import annotations
 
+    import ctypes
+    import ctypes.util
     import hashlib
     import json
     import os
@@ -127,6 +133,8 @@ config:
         raise SystemExit(f"required WORLD_SIZE=4, observed {world_size}")
 
     progress_path = out_dir / f"wan2_2_multigpu_progress_rank_{rank}.json"
+    nccl_log_path = out_dir / f"wan2_2_multigpu_nccl_rank_{rank}.log"
+    os.environ["NCCL_DEBUG_FILE"] = str(nccl_log_path)
 
     def record_progress(stage: str) -> None:
         progress_path.write_text(
@@ -173,6 +181,31 @@ config:
     original_barrier = dist.barrier
     original_destroy = dist.destroy_process_group
 
+    def loaded_nccl_evidence() -> dict:
+        library_name = ctypes.util.find_library("nccl") or "libnccl.so.2"
+        library = ctypes.CDLL(library_name)
+        version_code = ctypes.c_int()
+        result = int(library.ncclGetVersion(ctypes.byref(version_code)))
+        if result != 0:
+            raise RuntimeError(f"ncclGetVersion failed with code {result}")
+        value = int(version_code.value)
+        version = f"{value // 10000}.{(value // 100) % 100}.{value % 100}"
+        if version != "2.27.7":
+            raise RuntimeError(f"loaded NCCL version is {version}, not 2.27.7")
+        mapped = sorted({
+            line.rsplit(None, 1)[-1]
+            for line in Path("/proc/self/maps").read_text(encoding="utf-8").splitlines()
+            if "libnccl.so" in line and "/" in line
+        })
+        if not mapped or not Path(mapped[0]).name.startswith("libnccl.so.2"):
+            raise RuntimeError(f"cannot identify loaded NCCL library: {mapped}")
+        return {
+            "version": version,
+            "version_code": value,
+            "library_basename": Path(mapped[0]).name,
+            "mapped_path_sha256": hashlib.sha256(mapped[0].encode()).hexdigest(),
+        }
+
     def instrumented_init(*args, **kwargs):
         record_progress("process_group_init_started")
         result = original_init(*args, **kwargs)
@@ -190,6 +223,7 @@ config:
         evidence["process_group_initialized"] = True
         evidence["backend"] = str(dist.get_backend())
         evidence["nccl_all_reduce"] = {"finite": finite, "observed_sum": observed, "expected_sum": wanted}
+        evidence["loaded_nccl"] = loaded_nccl_evidence()
         record_progress("nccl_probe_completed")
         return result
 
@@ -287,7 +321,7 @@ config:
         evidence["torch"] = torch.__version__
         evidence["torch_cuda"] = torch.version.cuda
         evidence["torch_cuda_arch_list"] = torch.cuda.get_arch_list()
-        evidence["nccl_version"] = list(torch.cuda.nccl.version())
+        evidence["nccl_build_api_version"] = list(torch.cuda.nccl.version())
         (out_dir / f"wan2_2_multigpu_rank_{rank}.json").write_text(
             json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
@@ -318,6 +352,8 @@ config:
                         or item["nccl_socket_family"] != "AF_INET"
                         or item["nccl_ib_disable"] != "1"
                         or item["torch_nccl_use_comm_nonblocking"] != "1"
+                        or item["loaded_nccl"]["version"] != "2.27.7"
+                        or item["loaded_nccl"]["version_code"] != 22707
                         or len(wrappers) != 2
                         or "WanModel" not in wrapper_sources
                         or not any(wrapper["sequence_parallel_active_before_wrap"] for wrapper in wrappers)
@@ -392,6 +428,47 @@ config:
     expected = int(os.environ["WAN22_EXPECTED_WORLD_SIZE"])
     if topology["world_size"] != expected or len(topology["rank_evidence"]) != expected:
         raise SystemExit("topology artifact does not contain every expected rank")
+    progress = []
+    rank_logs = []
+    for rank in range(expected):
+        progress_path = out / f"wan2_2_multigpu_progress_rank_{rank}.json"
+        marker = json.loads(progress_path.read_text(encoding="utf-8"))
+        if (
+            marker.get("rank") != rank
+            or marker.get("local_rank") != rank
+            or marker.get("world_size") != expected
+            or marker.get("stage") != "process_group_destroyed"
+        ):
+            raise SystemExit(f"rank {rank} lacks a valid process-group teardown marker")
+        progress.append(marker)
+        log_path = out / f"wan2_2_multigpu_nccl_rank_{rank}.log"
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        version_observed = "NCCL version 2.27.7" in log_text
+        init_observed = "Init COMPLETE" in log_text
+        if not version_observed or not init_observed:
+            raise SystemExit(f"rank {rank} NCCL log lacks version/init evidence")
+        rank_logs.append({
+            "rank": rank,
+            "filename": log_path.name,
+            "size_bytes": log_path.stat().st_size,
+            "sha256": hashlib.sha256(log_path.read_bytes()).hexdigest(),
+            "version_line_observed": version_observed,
+            "init_complete_observed": init_observed,
+        })
+    loaded_versions = {
+        item["loaded_nccl"]["version"] for item in topology["rank_evidence"]
+    }
+    if loaded_versions != {"2.27.7"}:
+        raise SystemExit(f"rank loaded NCCL versions disagree: {loaded_versions}")
+    nccl_summary = {
+        "schema": "npa.workbench.byof.wan2_2_multigpu_nccl_summary.v1",
+        "loaded_version": "2.27.7",
+        "process_group_destroyed_on_all_ranks": True,
+        "rank_logs": rank_logs,
+    }
+    (out / "wan2_2_multigpu_nccl_summary.json").write_text(
+        json.dumps(nccl_summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     capture = cv2.VideoCapture(str(video))
     if not capture.isOpened():
@@ -445,7 +522,8 @@ config:
         "upstream": {
             "repo": "https://github.com/Wan-Video/Wan2.2.git",
             "ref": "42bf4cfaa384bc21833865abc2f9e6c0e67233dc",
-            "entrypoint": "python -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node=4 generate.py",
+            "entrypoint": "python -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node=4 wan22_distributed_wrapper.py",
+            "wrapper_execution": "runpy.run_path('/opt/byof/generate.py', run_name='__main__')",
         },
         "model": {"id": "Wan-AI/Wan2.2-TI2V-5B", "ref": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e", "weights_baked": False},
         "tokenizer": {"id": "google/umt5-xxl", "ref": "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"},
@@ -457,7 +535,7 @@ config:
         "generation": {"prompt": os.environ["WAN22_PROMPT"], "seed": 42, "width": 1280, "height": 704, "frames": 17, "fps": 24.0, "steps": 8},
         "observed": {"width": 1280, "height": 704, "channels": 3, "frame_count": len(frames), "fps": fps, "codec": ffprobe, "max_spatial_std": spatial_std, "pixel_range": pixel_range, "mean_temporal_abs_delta": temporal_delta},
         "output": {"filename": video.name, "size_bytes": size, "sha256": digest},
-        "runtime": {"torch": torch.__version__, "torch_cuda": torch.version.cuda, "torch_cuda_arch_list": torch.cuda.get_arch_list(), "driver_versions": sorted(set(value.strip() for value in driver if value.strip())), "nccl_version": topology["rank_evidence"][0]["nccl_version"]},
+        "runtime": {"torch": torch.__version__, "torch_cuda": torch.version.cuda, "torch_cuda_arch_list": torch.cuda.get_arch_list(), "driver_versions": sorted(set(value.strip() for value in driver if value.strip())), "nccl_build_api_version": topology["rank_evidence"][0]["nccl_build_api_version"], "nccl_loaded_version": "2.27.7"},
         "capabilities_exercised": capabilities,
         "deferred": [],
         "not_claimed": ["wan2.2_ti2v_5b_image_to_video", "wan2.2_action_prediction", "wan2.2_training"],
@@ -518,9 +596,11 @@ initial: generate
 states:
   generate:
     description: >
-      Run the pinned official Wan torchrun entrypoint on four B200 GPUs in one
-      pod, with NCCL, FULL_SHARD FSDP for T5 and DiT, and Ulysses size four;
-      validate all rank, topology, barrier, MP4, and content hard gates.
+      Launch an instrumentation wrapper on four B200 ranks with
+      torch.distributed.run; have that wrapper execute pinned official
+      generate.py as __main__ with NCCL, FULL_SHARD FSDP for T5 and DiT, and
+      Ulysses size four; validate all rank, topology, barrier, MP4, and content
+      hard gates.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:

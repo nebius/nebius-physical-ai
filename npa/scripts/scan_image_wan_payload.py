@@ -13,7 +13,7 @@ import tarfile
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 
 @dataclass(frozen=True)
@@ -44,7 +44,22 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "cuda_library",
         re.compile(
-            r"(?:^|/)(?:lib)?(?:cuda|cudart|cublas|cudnn|nccl|nvrtc|nvjitlink|cusparse|cusolver|curand|cufft)(?:[^/]*)\.(?:so(?:\.|$)|a$)",
+            r"(?:^|/)(?:lib)?(?:(?:[a-z0-9]+_)*(?:cuda|cudart|cublas|cudnn|"
+            r"nccl|nvrtc|nvjitlink|nvtx|nvtoolsext|nvfatbin|nvptxcompiler|cupti|"
+            r"cufile|cusparse|cusolver|curand|cufft|npp[a-z]*)"
+            r"(?:[a-z0-9_-]*)|nvidia(?:-[a-z0-9_-]+)?|(?:glx|egl)_nvidia|"
+            r"nv(?:cuvid|optix|encode|decode))(?:[^/]*)"
+            r"\.(?:so(?:\.|$)|a$)",
+            re.I,
+        ),
+    ),
+    (
+        "cuda_tool",
+        re.compile(
+            r"(?:^|/)(?:(?:usr/local|opt)/cuda(?:-[0-9.]+)?(?:/|$)|"
+            r"usr/include/(?:cuda|cublas|cudnn|nccl|nvrtc|nvToolsExt|npp|cupti|"
+            r"cufft|cusparse|cusolver|curand)[^/]*\.h$|(?:nvcc|ptxas|cuobjdump|"
+            r"compute-sanitizer|nvidia-smi)(?:$|\.))",
             re.I,
         ),
     ),
@@ -52,7 +67,9 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "checkpoint_or_weight",
         re.compile(
             r"(?:\.(?:safetensors|ckpt|bin\.index\.json)$|"
-            r"(?:^|/)(?:models?|weights?|checkpoints?)(?:/|[^/]*)[^/]*\.(?:bin|pt|pth)$)",
+            r"(?:^|/)(?:models?|weights?|checkpoints?)(?:/|[^/]*)[^/]*\.(?:bin|pt|pth)$|"
+            r"(?:^|/)(?:pytorch_model|diffusion_pytorch_model|model|weights?|checkpoint)"
+            r"[^/]*\.(?:bin|pt|pth)$)",
             re.I,
         ),
     ),
@@ -98,6 +115,13 @@ SECRET_CONTENT = (
     re.compile(rb"(?i)(?:aws_secret_access_key|hf_token)\s*[=:]\s*[^$<\s][^\s]{7,}"),
 )
 
+FORBIDDEN_ELF_DEPENDENCY = re.compile(
+    rb"lib(?:[A-Za-z0-9]+_)*(?:cuda|cudart|cublas|cudnn|nccl|nvrtc|nvjitlink|"
+    rb"nvtx|nvtoolsext|nvfatbin|nvptxcompiler|cupti|cufile|cusparse|cusolver|"
+    rb"curand|cufft|npp[a-z]*|nvidia)[A-Za-z0-9_.-]*\.so",
+    re.I,
+)
+
 SECRET_CONTENT_EXCLUSIONS = (
     re.compile(
         r"^opt/wan-base/lib/python3\.10/site-packages/PIL/(?:ImageFont\.py|__pycache__/ImageFont\.)"
@@ -138,6 +162,33 @@ def _scan_secret_content(path: str) -> bool:
     return not any(pattern.search(path) for pattern in SECRET_CONTENT_EXCLUSIONS)
 
 
+def _contains_secret(stream: IO[bytes]) -> bool:
+    """Stream arbitrary-size files while retaining boundary-spanning matches."""
+
+    overlap = b""
+    while chunk := stream.read(1024 * 1024):
+        payload = overlap + chunk
+        if any(pattern.search(payload) for pattern in SECRET_CONTENT):
+            return True
+        overlap = payload[-1024:]
+    return False
+
+
+def _contains_forbidden_elf_dependency(stream: IO[bytes]) -> bool:
+    """Detect a renamed ELF that still dynamically depends on NVIDIA/CUDA."""
+
+    head = stream.read(4)
+    if head != b"\x7fELF":
+        return False
+    overlap = head
+    while chunk := stream.read(1024 * 1024):
+        payload = overlap + chunk
+        if FORBIDDEN_ELF_DEPENDENCY.search(payload):
+            return True
+        overlap = payload[-256:]
+    return False
+
+
 def _history_text(config: dict[str, Any]) -> str:
     return (
         "\n".join(
@@ -171,26 +222,29 @@ def _scan_tars(tars: list[Path], config: dict[str, Any]) -> list[Finding]:
                         findings.append(
                             Finding(kind, path, f"forbidden bytes in {tar_path.name}")
                         )
-                if (
-                    not member.isfile()
-                    or member.size > 2_000_000
-                    or not _scan_secret_content(path)
-                ):
+                if member.isfile():
+                    elf = archive.extractfile(member)
+                    if elf is not None and _contains_forbidden_elf_dependency(elf):
+                        findings.append(
+                            Finding(
+                                "cuda_elf_dependency",
+                                path,
+                                f"ELF links to forbidden runtime in {tar_path.name}",
+                            )
+                        )
+                if not member.isfile() or not _scan_secret_content(path):
                     continue
                 fileobj = archive.extractfile(member)
                 if fileobj is None:
                     continue
-                payload = fileobj.read()
-                for secret_pattern in SECRET_CONTENT:
-                    if secret_pattern.search(payload):
-                        findings.append(
-                            Finding(
-                                "credential_content",
-                                path,
-                                f"secret-like bytes in {tar_path.name}",
-                            )
+                if _contains_secret(fileobj):
+                    findings.append(
+                        Finding(
+                            "credential_content",
+                            path,
+                            f"secret-like bytes in {tar_path.name}",
                         )
-                        break
+                    )
 
     history = _history_text(config)
     for kind, pattern in FORBIDDEN_HISTORY:

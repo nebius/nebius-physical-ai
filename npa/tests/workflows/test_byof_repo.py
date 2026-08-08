@@ -512,6 +512,43 @@ def test_main_publishes_verified_wan_rrd_after_success(monkeypatch, capsys) -> N
     assert '"capability": "wan2.2_verified_rerun_recording"' in output
 
 
+def test_main_fails_before_launch_when_registered_wan_has_no_output_root(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    launched = False
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+
+    def unexpected_run(*_args, **_kwargs):
+        nonlocal launched
+        launched = True
+        raise AssertionError("registered Wan smoke must fail before launch")
+
+    monkeypatch.setattr(module, "_run", unexpected_run)
+    rc = module.main(
+        [
+            "--run-id",
+            "wan-no-output-root",
+            "--skip-build",
+            "--workload",
+            "solution-smoke",
+            "--solution-name",
+            "wan2.2",
+        ]
+    )
+
+    assert rc == 1
+    assert launched is False
+    output = capsys.readouterr().out
+    assert "requires --output-root" in output
+    assert '"status": "failed"' in output
+
+
 def test_main_fails_closed_when_wan_rrd_publication_fails(monkeypatch, capsys) -> None:
     module = _load_module()
     monkeypatch.setattr(
@@ -612,6 +649,30 @@ def test_closed_postprocess_registry_ignores_unregistered_solution() -> None:
         PostprocessContext("s3://bucket/prefix/", None),
     )
     assert result is None
+
+
+def test_closed_postprocess_registry_normalizes_solution_casing(monkeypatch) -> None:
+    from npa.workflows.byof import postprocess
+    from npa.workflows.byof.postprocess import (
+        PostprocessContext,
+        has_registered_postprocess,
+        run_registered_postprocess,
+    )
+
+    seen: list[str] = []
+    monkeypatch.setitem(
+        postprocess.POSTPROCESSORS,
+        "wan2.2",
+        lambda context: {"run_prefix_uri": seen.append(context.run_prefix_uri)},
+    )
+    assert has_registered_postprocess("  WAN2.2  ")
+    assert (
+        run_registered_postprocess(
+            "Wan2.2", PostprocessContext("s3://bucket/prefix/", None)
+        )
+        is not None
+    )
+    assert seen == ["s3://bucket/prefix/"]
 
 
 def test_base_image_candidates_isaac_lab_profile(monkeypatch) -> None:

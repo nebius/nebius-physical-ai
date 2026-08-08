@@ -312,17 +312,19 @@ Accepted live hard-gate capabilities, validated by
   conservative non-uniform-content checks)
 
 Accepted distributed hard-gate capabilities, validated by
-`byof-wan22-multigpu-e2e-20260806T024353Z` on one node with four B200s
+`byof-wan22-multigpu-e2e-20260808T202308Z` on one node with four B200s
 (`sm_100`, world/local world size 4):
 
-- `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` (pinned official
-  `torchrun generate.py` path, NCCL, T5 and DiT FULL_SHARD FSDP, Ulysses size 4)
+- `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses`
+  (`torch.distributed.run` launches an instrumentation wrapper on four ranks;
+  the wrapper executes pinned official `generate.py` as `__main__` with NCCL,
+  T5 and DiT FULL_SHARD FSDP, and Ulysses size 4)
 - `wan2.2_distributed_rank_topology_validation` (four unique GPU hashes;
   ranks/local ranks 0–3; NCCL sum 10/10; 480 distributed-attention and 1,920
   all-to-all calls per rank; upstream and observer final barriers)
-- `wan2.2_decoded_mp4_validation` (634,523-byte H.264 MP4; 1280x704, 17 frames,
-  24 fps; spatial stddev 46.9864, pixel range 255, temporal delta 0.731357,
-  SHA-256 `ae77b119…09389`)
+- `wan2.2_decoded_mp4_validation` (2,809,770-byte H.264 MP4; 1280x704,
+  17 frames, 24 fps; spatial stddev 71.9485, pixel range 255, temporal delta
+  9.714725, SHA-256 `9574f79c…94865`)
 
 The primary artifact is `wan2_2_ti2v_5b_text_to_video.json`; the MP4 is
 `wan2_2_ti2v_5b.mp4`, and the actual pulled image emits

@@ -44,6 +44,7 @@ import argparse
 import base64
 import binascii
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -51,7 +52,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any
 
 from npa.deploy import images
 from npa.deploy.images import (
@@ -93,13 +96,20 @@ def build_publish_plan(
         # worse than no check at all. (`from ... import OMNIVERSE_RESTRICTED_TOOLS` binds
         # the value at import time, so this guard and publicly_publishable_tools() could
         # disagree - which is exactly what a test caught once the set stopped being empty.)
-        if not is_publicly_redistributable(tool) or tool in images.OMNIVERSE_RESTRICTED_TOOLS:
+        if (
+            not is_publicly_redistributable(tool)
+            or tool in images.OMNIVERSE_RESTRICTED_TOOLS
+        ):
             raise ValueError(
                 f"refusing to publish restricted (Omniverse Kit) tool {tool!r} to a public registry"
             )
         source_ref = container_image_for_tool(tool, registry=source_registry)
         image = source_ref.rsplit("/", 1)[-1]  # npa-<tool>:<tag>
-        plan.append(PublishItem(tool=tool, source_ref=source_ref, target_ref=f"{target}/{image}"))
+        plan.append(
+            PublishItem(
+                tool=tool, source_ref=source_ref, target_ref=f"{target}/{image}"
+            )
+        )
     return plan
 
 
@@ -117,11 +127,169 @@ def build_publish_plan(
 _PREFLIGHT_TIMEOUT_SECONDS = 60
 
 
-def _crane_manifest_readable(ref: str, *, timeout: float = _PREFLIGHT_TIMEOUT_SECONDS) -> tuple[bool, str]:
+def _repository(ref: str) -> str:
+    without_digest = ref.split("@", 1)[0]
+    slash = without_digest.rfind("/")
+    colon = without_digest.rfind(":")
+    return without_digest[:colon] if colon > slash else without_digest
+
+
+def _crane_json(args: list[str]) -> dict[str, Any]:
+    crane = shutil.which("crane")
+    if not crane:
+        raise RuntimeError(
+            "crane not found on PATH; install go-containerregistry crane"
+        )
+    completed = subprocess.run(
+        [crane, *args], capture_output=True, text=True, check=False
+    )
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(detail or f"crane {' '.join(args)} failed")
+    payload = json.loads(completed.stdout)
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"crane {' '.join(args)} did not return a JSON object")
+    return payload
+
+
+def _crane_blob_json(repository: str, digest: str) -> dict[str, Any]:
+    crane = shutil.which("crane")
+    if not crane:
+        raise RuntimeError(
+            "crane not found on PATH; install go-containerregistry crane"
+        )
+    completed = subprocess.run(
+        [crane, "blob", f"{repository}@{digest}"],
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout or b"").decode(errors="replace")
+        raise RuntimeError(detail.strip() or f"cannot read attestation blob {digest}")
+    payload = json.loads(completed.stdout)
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"attestation blob {digest} is not a JSON object")
+    return payload
+
+
+def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
+    """Bind Wan publication to exact clean bytes plus SPDX/SLSA attestations."""
+
+    if item.tool != "wan2-2":
+        return True, "not applicable"
+    try:
+        digest_ok, index_digest = _crane_digest(item.source_ref)
+        if not digest_ok:
+            raise RuntimeError(index_digest)
+        index = _crane_json(["manifest", item.source_ref])
+        manifests = index.get("manifests")
+        if not isinstance(manifests, list):
+            raise RuntimeError("Wan source tag is not an attested OCI index")
+        platform = next(
+            (
+                entry
+                for entry in manifests
+                if isinstance(entry, dict)
+                and entry.get("platform") == {"architecture": "amd64", "os": "linux"}
+            ),
+            None,
+        )
+        if platform is None:
+            raise RuntimeError("Wan OCI index has no linux/amd64 platform manifest")
+        platform_digest = str(platform.get("digest") or "")
+        attestation = next(
+            (
+                entry
+                for entry in manifests
+                if isinstance(entry, dict)
+                and (entry.get("annotations") or {}).get("vnd.docker.reference.type")
+                == "attestation-manifest"
+                and (entry.get("annotations") or {}).get("vnd.docker.reference.digest")
+                == platform_digest
+            ),
+            None,
+        )
+        if attestation is None:
+            raise RuntimeError(
+                "Wan linux/amd64 manifest has no bound attestation manifest"
+            )
+        repository = _repository(item.source_ref)
+        attestation_manifest = _crane_json(
+            ["manifest", f"{repository}@{attestation['digest']}"]
+        )
+        layers = attestation_manifest.get("layers")
+        if not isinstance(layers, list):
+            raise RuntimeError("Wan attestation manifest has no layers")
+        statements: dict[str, dict[str, Any]] = {}
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            predicate_type = str(
+                (layer.get("annotations") or {}).get("in-toto.io/predicate-type") or ""
+            )
+            if predicate_type:
+                statement = _crane_blob_json(repository, str(layer.get("digest") or ""))
+                subjects = statement.get("subject") or []
+                if not any(
+                    isinstance(subject, dict)
+                    and (subject.get("digest") or {}).get("sha256")
+                    == platform_digest.removeprefix("sha256:")
+                    for subject in subjects
+                ):
+                    raise RuntimeError(
+                        f"Wan {predicate_type} attestation is not bound to {platform_digest}"
+                    )
+                if statement.get("predicateType") != predicate_type:
+                    raise RuntimeError(
+                        f"Wan {predicate_type} attestation type disagrees"
+                    )
+                statements[predicate_type] = statement
+        spdx = statements.get("https://spdx.dev/Document")
+        provenance = statements.get("https://slsa.dev/provenance/v1")
+        if not spdx or not provenance:
+            raise RuntimeError(
+                "Wan source requires bound SPDX and SLSA v1 attestations"
+            )
+        if not (spdx.get("predicate") or {}).get("packages"):
+            raise RuntimeError("Wan SPDX attestation contains no package inventory")
+        if not (provenance.get("predicate") or {}).get("buildDefinition"):
+            raise RuntimeError("Wan SLSA provenance contains no build definition")
+
+        scan_script = (
+            Path(__file__).resolve().parents[3]
+            / "scripts"
+            / "scan_image_wan_payload.py"
+        )
+        digest_ref = f"{repository}@{index_digest}"
+        scan = subprocess.run(
+            [sys.executable, str(scan_script), digest_ref],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if scan.returncode:
+            detail = (scan.stderr or scan.stdout or "").strip()
+            raise RuntimeError(detail or "Wan exact-digest payload scan failed")
+        scan_result = json.loads(scan.stdout)
+        if scan_result.get("status") != "pass" or scan_result.get("findings"):
+            raise RuntimeError("Wan exact-digest payload scan did not pass cleanly")
+        return (
+            True,
+            f"exact digest {index_digest}; payload clean; SPDX+SLSA bound to {platform_digest}",
+        )
+    except (KeyError, StopIteration, TypeError, ValueError, RuntimeError) as exc:
+        return False, str(exc)
+
+
+def _crane_manifest_readable(
+    ref: str, *, timeout: float = _PREFLIGHT_TIMEOUT_SECONDS
+) -> tuple[bool, str]:
     """Whether ``ref`` can be read with the ambient registry credentials."""
     crane = shutil.which("crane")
     if not crane:
-        raise RuntimeError("crane not found on PATH; install go-containerregistry crane")
+        raise RuntimeError(
+            "crane not found on PATH; install go-containerregistry crane"
+        )
     try:
         completed = subprocess.run(
             [crane, "manifest", ref],
@@ -146,6 +314,9 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
     failures: list[tuple[PublishItem, str]] = []
     for item in plan:
         ok, detail = _crane_manifest_readable(item.source_ref)
+        if ok and item.tool == "wan2-2":
+            ok, detail = verify_wan_publication_source(item)
+            detail = f"WAN GATE — {detail}"
         print(f"  {item.source_ref}  {'ok' if ok else f'UNREADABLE — {detail}'}")
         if not ok:
             failures.append((item, detail))
@@ -287,7 +458,9 @@ def _registry_host(ref: str) -> str:
     return ref.split("/", 1)[0]
 
 
-def anonymous_pull_ok(ref: str, *, timeout: float = _ANON_TIMEOUT_SECONDS) -> tuple[bool, str]:
+def anonymous_pull_ok(
+    ref: str, *, timeout: float = _ANON_TIMEOUT_SECONDS
+) -> tuple[bool, str]:
     """Whether ``ref`` can be pulled with NO credentials at all.
 
     This is the property that actually matters to an external consumer, and the only one
@@ -402,11 +575,17 @@ def visibility_checklist(failures: list[tuple[PublishItem, str]]) -> str:
         url = package_settings_url(item.target_ref)
         # Label with the package name as the settings page shows it, so the list reads
         # the same as the page it links to.
-        lines.append(f"- [ ] [{parsed[1]}]({url})" if parsed and url else f"- [ ] {item.target_ref}")
+        lines.append(
+            f"- [ ] [{parsed[1]}]({url})"
+            if parsed and url
+            else f"- [ ] {item.target_ref}"
+        )
     return "\n".join(lines)
 
 
-def _crane_digest(ref: str, *, timeout: float = _PREFLIGHT_TIMEOUT_SECONDS) -> tuple[bool, str]:
+def _crane_digest(
+    ref: str, *, timeout: float = _PREFLIGHT_TIMEOUT_SECONDS
+) -> tuple[bool, str]:
     """Return ``(True, digest)`` or ``(False, registry error)`` for ``ref``.
 
     ``crane copy`` is content-addressed, but invoking it for every image still walks and
@@ -417,7 +596,9 @@ def _crane_digest(ref: str, *, timeout: float = _PREFLIGHT_TIMEOUT_SECONDS) -> t
     """
     crane = shutil.which("crane")
     if not crane:
-        raise RuntimeError("crane not found on PATH; install go-containerregistry crane")
+        raise RuntimeError(
+            "crane not found on PATH; install go-containerregistry crane"
+        )
     try:
         completed = subprocess.run(
             [crane, "digest", ref],
@@ -437,6 +618,30 @@ def _crane_digest(ref: str, *, timeout: float = _PREFLIGHT_TIMEOUT_SECONDS) -> t
     return False, detail[-1] if detail else f"crane exited {completed.returncode}"
 
 
+def _pin_wan_publication_sources(
+    plan: list[PublishItem],
+) -> tuple[list[PublishItem], list[tuple[PublishItem, str]]]:
+    """Resolve Wan tags once and return a plan that can only copy those bytes."""
+
+    pinned: list[PublishItem] = []
+    failures: list[tuple[PublishItem, str]] = []
+    for item in plan:
+        if item.tool != "wan2-2":
+            pinned.append(item)
+            continue
+        ok, detail = _crane_digest(item.source_ref)
+        if not ok:
+            failures.append((item, detail))
+            continue
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", detail) is None:
+            failures.append((item, f"registry returned invalid digest {detail!r}"))
+            continue
+        pinned.append(
+            replace(item, source_ref=f"{_repository(item.source_ref)}@{detail}")
+        )
+    return pinned, failures
+
+
 def _crane_copy(item: PublishItem) -> bool:
     """Copy ``item`` only when the target is absent or has a different digest.
 
@@ -449,7 +654,15 @@ def _crane_copy(item: PublishItem) -> bool:
     """
     crane = shutil.which("crane")
     if not crane:
-        raise RuntimeError("crane not found on PATH; install go-containerregistry crane")
+        raise RuntimeError(
+            "crane not found on PATH; install go-containerregistry crane"
+        )
+
+    if (
+        item.tool == "wan2-2"
+        and re.search(r"@sha256:[0-9a-f]{64}$", item.source_ref) is None
+    ):
+        raise RuntimeError("Wan publication source must be pinned by exact OCI digest")
 
     source_ok, source_detail = _crane_digest(item.source_ref)
     if not source_ok:
@@ -473,9 +686,17 @@ def _crane_copy(item: PublishItem) -> bool:
                 f"could not determine target digest for {item.target_ref}: {target_detail}; "
                 "refusing to copy because the target may already be current"
             )
-        print(f"Target absent or unreadable ({target_detail}); copying {item.target_ref}")
+        print(
+            f"Target absent or unreadable ({target_detail}); copying {item.target_ref}"
+        )
 
     subprocess.run([crane, "copy", item.source_ref, item.target_ref], check=True)
+    copied_ok, copied_detail = _crane_digest(item.target_ref)
+    if not copied_ok or copied_detail != source_detail:
+        raise RuntimeError(
+            f"copied target digest does not match source {source_detail}: "
+            f"{copied_detail}"
+        )
     return True
 
 
@@ -492,7 +713,9 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Source registry to copy from (defaults to the primary Nebius registry).",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Print the plan without copying.")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print the plan without copying."
+    )
     parser.add_argument(
         "--verify-public",
         action="store_true",
@@ -549,13 +772,18 @@ def main(argv: list[str] | None = None) -> int:
     # must not require a target registry it has no use for.
     if args.describe_credential:
         usable, verdict = describe_credential(sys.stdin.read())
-        print(f"Source registry credential: {verdict}", file=sys.stdout if usable else sys.stderr)
+        print(
+            f"Source registry credential: {verdict}",
+            file=sys.stdout if usable else sys.stderr,
+        )
         return 0 if usable else 1
 
     if not (args.target or "").strip():
         parser.error("no target registry; pass --target or set NPA_PUBLIC_REGISTRY")
 
-    plan = build_publish_plan(target_registry=args.target, source_registry=args.source_registry)
+    plan = build_publish_plan(
+        target_registry=args.target, source_registry=args.source_registry
+    )
     restricted = omniverse_restricted_image_names()
     print(f"Publishing {len(plan)} OSS image(s) to {args.target.rstrip('/')}")
     if restricted:
@@ -633,20 +861,25 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _preflight_or_explain(plan: list[PublishItem], *, skip_missing: bool = False) -> list[PublishItem]:
+def _preflight_or_explain(
+    plan: list[PublishItem], *, skip_missing: bool = False
+) -> list[PublishItem]:
     """Run the source preflight and return the items that are safe to copy.
 
     Returns an empty list when the run must stop. With ``skip_missing`` the never-pushed
     images are dropped from the returned set instead of failing the run, so a young tool
     whose image has not been built yet cannot block the images that are ready.
     """
-    failures = preflight_sources(plan)
+    pinned_plan, resolution_failures = _pin_wan_publication_sources(plan)
+    failures = resolution_failures + preflight_sources(pinned_plan)
     if not failures:
-        return list(plan)
+        return pinned_plan
 
     by_kind: dict[str, list[tuple[PublishItem, str]]] = {}
     for item, detail in failures:
-        by_kind.setdefault(classify_preflight_failure(detail), []).append((item, detail))
+        by_kind.setdefault(classify_preflight_failure(detail), []).append(
+            (item, detail)
+        )
     missing = by_kind.get("missing", [])
     blocking = by_kind.get("denied", []) + by_kind.get("other", [])
 
@@ -664,8 +897,8 @@ def _preflight_or_explain(plan: list[PublishItem], *, skip_missing: bool = False
             "absent from the public registry and will fail at pull time for consumers.",
             file=sys.stderr,
         )
-        skipped = {item.source_ref for item, _ in missing}
-        return [item for item in plan if item.source_ref not in skipped]
+        skipped_tools = {item.tool for item, _ in missing}
+        return [item for item in pinned_plan if item.tool not in skipped_tools]
 
     lines = [
         f"\n{len(failures)} of {len(plan)} source image(s) could not be read; nothing was "
@@ -706,7 +939,8 @@ def _preflight_or_explain(plan: list[PublishItem], *, skip_missing: bool = False
                 f"{len(missing)} image(s) are simply not in the source registry:"
             )
             lines.extend(
-                f"  {item.source_ref}  ({_missing_reason(detail)})" for item, detail in missing
+                f"  {item.source_ref}  ({_missing_reason(detail)})"
+                for item, detail in missing
             )
             lines.append(
                 "Build and push those images, or correct their pins. To publish the rest now\n"

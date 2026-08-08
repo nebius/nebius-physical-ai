@@ -37,12 +37,22 @@ POSTPROCESSORS: dict[str, Postprocessor] = {
 }
 
 
+def _normalize_key(key: str) -> str:
+    return str(key or "").strip().lower()
+
+
+def has_registered_postprocess(key: str) -> bool:
+    """Return whether a solution must complete a trusted host postprocess."""
+
+    return _normalize_key(key) in POSTPROCESSORS
+
+
 def run_registered_postprocess(
     key: str, context: PostprocessContext
 ) -> dict[str, Any] | None:
     """Run a registered solution hook, if one exists; never import from config."""
 
-    normalized = str(key or "").strip()
+    normalized = _normalize_key(key)
     if not normalized:
         return None
     processor = POSTPROCESSORS.get(normalized)

@@ -16,9 +16,12 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+import numpy as np
 
 from npa.clients.project_credentials import s3_client_for_project
 
@@ -53,6 +56,7 @@ class WanRunLayout:
     inventory_filename: str
     topology_filename: str | None
     rank_filenames: tuple[str, ...]
+    additional_evidence_filenames: tuple[str, ...]
     rrd_filename: str
     manifest_filename: str
 
@@ -68,6 +72,7 @@ SINGLE_GPU_LAYOUT = WanRunLayout(
     inventory_filename="wan2_2_runtime_inventory.json",
     topology_filename=None,
     rank_filenames=(),
+    additional_evidence_filenames=(),
     rrd_filename="wan2_2_ti2v_5b.rrd",
     manifest_filename="wan2_2_ti2v_5b_rrd_manifest.json",
 )
@@ -79,6 +84,11 @@ MULTI_GPU_LAYOUT = WanRunLayout(
     inventory_filename="wan2_2_multigpu_runtime_inventory.json",
     topology_filename="wan2_2_multigpu_topology.json",
     rank_filenames=tuple(f"wan2_2_multigpu_rank_{rank}.json" for rank in range(4)),
+    additional_evidence_filenames=(
+        *(f"wan2_2_multigpu_progress_rank_{rank}.json" for rank in range(4)),
+        "wan2_2_multigpu_nccl_summary.json",
+        *(f"wan2_2_multigpu_nccl_rank_{rank}.log" for rank in range(4)),
+    ),
     rrd_filename="wan2_2_ti2v_5b_multigpu.rrd",
     manifest_filename="wan2_2_ti2v_5b_multigpu_rrd_manifest.json",
 )
@@ -165,6 +175,109 @@ def _primary_path(run_dir: Path, layout: WanRunLayout, summary: dict[str, Any]) 
     return matches[0]
 
 
+def _decode_video_metrics(video_path: Path) -> dict[str, Any]:
+    """Independently decode the downloaded MP4 rather than trusting run JSON."""
+
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,width,height,avg_frame_rate",
+                "-of",
+                "json",
+                str(video_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise WanRrdError(
+            f"ffprobe is required for Wan MP4 verification: {exc}"
+        ) from exc
+    if probe.returncode:
+        raise WanRrdError(
+            f"downloaded MP4 probe failed ({probe.returncode}): {probe.stderr.strip()}"
+        )
+    try:
+        streams = json.loads(probe.stdout).get("streams") or []
+        stream = streams[0]
+        codec = str(stream["codec_name"]).lower()
+        width = int(stream["width"])
+        height = int(stream["height"])
+        fps = float(Fraction(str(stream["avg_frame_rate"])))
+    except (IndexError, KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
+        raise WanRrdError("downloaded MP4 has invalid video stream metadata") from exc
+    _require(codec == "h264", "downloaded source video is not H.264")
+    _require(width > 0 and height > 0 and fps > 0, "downloaded MP4 metadata is invalid")
+
+    try:
+        decode = subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-i",
+                str(video_path),
+                "-map",
+                "0:v:0",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ],
+            check=False,
+            capture_output=True,
+        )
+    except OSError as exc:
+        raise WanRrdError(
+            f"ffmpeg is required for Wan MP4 verification: {exc}"
+        ) from exc
+    if decode.returncode:
+        detail = decode.stderr.decode(errors="replace").strip()
+        raise WanRrdError(
+            f"downloaded MP4 decode failed ({decode.returncode}): {detail}"
+        )
+    frame_bytes = width * height * 3
+    _require(
+        frame_bytes > 0 and len(decode.stdout) % frame_bytes == 0,
+        "downloaded MP4 decoded byte count is invalid",
+    )
+    frame_count = len(decode.stdout) // frame_bytes
+    _require(frame_count > 0, "downloaded MP4 has no decodable frames")
+    frames = np.frombuffer(decode.stdout, dtype=np.uint8).reshape(
+        frame_count, height, width, 3
+    )
+    max_spatial_std = max(float(np.std(frame)) for frame in frames)
+    pixel_range = int(frames.max()) - int(frames.min())
+    mean_temporal_abs_delta = (
+        float(
+            np.mean(
+                np.abs(frames[1:].astype(np.float32) - frames[:-1].astype(np.float32))
+            )
+        )
+        if frame_count > 1
+        else 0.0
+    )
+    return {
+        "codec": codec,
+        "width": width,
+        "height": height,
+        "frame_count": frame_count,
+        "fps": fps,
+        "max_spatial_std": max_spatial_std,
+        "pixel_range": pixel_range,
+        "mean_temporal_abs_delta": mean_temporal_abs_delta,
+    }
+
+
 def _validate_output(
     primary: dict[str, Any], video_path: Path, layout: WanRunLayout
 ) -> dict[str, Any]:
@@ -201,6 +314,37 @@ def _validate_output(
         not primary.get("deferred"),
         "source capability artifact has hard-gate deferrals",
     )
+    decoded = _decode_video_metrics(video_path)
+    _require(video_size >= 4096, "downloaded MP4 is implausibly small")
+    _require(
+        decoded["width"] == 1280
+        and decoded["height"] == 704
+        and decoded["frame_count"] == 17
+        and abs(float(decoded["fps"]) - 24.0) <= 0.01,
+        "downloaded MP4 violates the accepted 1280x704/17-frame/24-fps contract",
+    )
+    for key in ("width", "height", "frame_count", "pixel_range"):
+        _require(
+            int(observed.get(key) or -1) == int(decoded[key]),
+            f"downloaded MP4 disagrees with reported {key}",
+        )
+    _require(
+        abs(float(observed.get("fps") or 0.0) - float(decoded["fps"])) <= 0.01,
+        "downloaded MP4 disagrees with reported FPS",
+    )
+    for key in ("max_spatial_std", "mean_temporal_abs_delta"):
+        reported = float(observed.get(key) or 0.0)
+        actual = float(decoded[key])
+        _require(
+            abs(reported - actual) <= max(0.1, actual * 0.02),
+            f"downloaded MP4 disagrees with reported {key}",
+        )
+    _require(
+        decoded["max_spatial_std"] >= 1.0
+        and decoded["pixel_range"] >= 4
+        and decoded["mean_temporal_abs_delta"] > 0.001,
+        "downloaded MP4 fails independent spatial/temporal variation checks",
+    )
 
     if layout is MULTI_GPU_LAYOUT:
         output = _require_mapping(
@@ -230,12 +374,16 @@ def _validate_output(
             int(primary.get("output_size_bytes") or 0) == video_size,
             "single-GPU output size mismatch",
         )
+        _require(
+            primary.get("output_sha256") == video_sha256,
+            "single-GPU output SHA-256 mismatch",
+        )
 
     return {
         "path": video_path,
         "size_bytes": video_size,
         "sha256": video_sha256,
-        "observed": observed,
+        "observed": {**observed, **decoded},
         "capabilities": sorted(capabilities),
     }
 
@@ -244,6 +392,9 @@ def _validate_multigpu(
     primary: dict[str, Any],
     topology: dict[str, Any],
     rank_documents: list[dict[str, Any]],
+    progress_documents: list[dict[str, Any]],
+    nccl_summary: dict[str, Any],
+    nccl_log_paths: list[Path],
 ) -> dict[str, Any]:
     distributed = _require_mapping(
         primary.get("distributed"),
@@ -390,6 +541,17 @@ def _validate_multigpu(
             item.get("observer_final_barrier") is True,
             f"rank {rank} lacks terminal synchronization",
         )
+        loaded_nccl = _require_mapping(
+            item.get("loaded_nccl"), f"rank {rank} lacks loaded NCCL evidence"
+        )
+        _require(
+            loaded_nccl.get("version") == "2.27.7"
+            and loaded_nccl.get("version_code") == 22707
+            and str(loaded_nccl.get("library_basename") or "").startswith(
+                "libnccl.so.2"
+            ),
+            f"rank {rank} did not load the accepted NCCL 2.27.7 runtime",
+        )
 
     _require(
         len(gpu_hashes) == 4 and "" not in gpu_hashes,
@@ -399,7 +561,142 @@ def _validate_multigpu(
         len(host_hashes) == 1 and "" not in host_hashes,
         "all ranks must share one hashed hostname",
     )
-    return {"distributed": distributed, "topology": topology, "ranks": rank_documents}
+    _require(len(progress_documents) == 4, "four post-destroy markers are required")
+    progress_by_rank = {int(item.get("rank", -1)): item for item in progress_documents}
+    _require(
+        set(progress_by_rank) == {0, 1, 2, 3}, "post-destroy ranks must be 0 through 3"
+    )
+    for rank, item in progress_by_rank.items():
+        _require(
+            item.get("local_rank") == rank
+            and item.get("world_size") == 4
+            and item.get("stage") == "process_group_destroyed"
+            and int(item.get("time_ns") or 0) > 0,
+            f"rank {rank} lacks a valid post-destroy marker",
+        )
+
+    _require(
+        nccl_summary.get("schema")
+        == "npa.workbench.byof.wan2_2_multigpu_nccl_summary.v1",
+        "NCCL summary schema is invalid",
+    )
+    _require(
+        nccl_summary.get("loaded_version") == "2.27.7",
+        "NCCL summary does not prove loaded version 2.27.7",
+    )
+    log_entries = _require_list(
+        nccl_summary.get("rank_logs"), "NCCL summary must contain four rank logs"
+    )
+    _require(len(log_entries) == 4, "NCCL summary must contain four rank logs")
+    logs_by_name = {path.name: path for path in nccl_log_paths}
+    _require(len(logs_by_name) == 4, "four deterministic NCCL logs are required")
+    seen_log_ranks: set[int] = set()
+    for entry in log_entries:
+        _require(isinstance(entry, dict), "NCCL log summary entry is invalid")
+        rank = int(entry.get("rank", -1))
+        filename = str(entry.get("filename") or "")
+        _require(rank in {0, 1, 2, 3}, "NCCL log rank is invalid")
+        _require(rank not in seen_log_ranks, "NCCL log ranks are duplicated")
+        seen_log_ranks.add(rank)
+        expected_name = f"wan2_2_multigpu_nccl_rank_{rank}.log"
+        _require(filename == expected_name, f"rank {rank} NCCL log filename is invalid")
+        log_path = logs_by_name.get(filename)
+        if log_path is None or not log_path.is_file():
+            raise WanRrdError(f"missing rank {rank} NCCL log")
+        try:
+            log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise WanRrdError(f"cannot read rank {rank} NCCL log: {exc}") from exc
+        _require(
+            int(entry.get("size_bytes") or 0) == log_path.stat().st_size
+            and entry.get("sha256") == _sha256_file(log_path),
+            f"rank {rank} NCCL log hash/size is invalid",
+        )
+        _require(
+            re.search(r"\bNCCL version 2\.27\.7(?:\+cuda[0-9.]+)?\b", log_text)
+            is not None
+            and re.search(r"\bInit COMPLETE\b", log_text) is not None
+            and entry.get("version_line_observed") is True
+            and entry.get("init_complete_observed") is True,
+            f"rank {rank} NCCL log lacks initialization/version evidence",
+        )
+    _require(seen_log_ranks == {0, 1, 2, 3}, "NCCL log ranks must be 0 through 3")
+    return {
+        "distributed": distributed,
+        "topology": topology,
+        "ranks": rank_documents,
+        "post_destroy": progress_documents,
+        "nccl_summary": nccl_summary,
+    }
+
+
+def _validate_single_gpu(
+    primary: dict[str, Any], inventory: dict[str, Any]
+) -> dict[str, Any]:
+    topology = _require_mapping(
+        primary.get("device_topology"), "single-GPU device topology is absent"
+    )
+    devices = _require_list(topology.get("devices"), "single-GPU devices are absent")
+    _require(
+        topology.get("cuda_device_count") == 1 and len(devices) == 1,
+        "single-GPU evidence must contain exactly one CUDA device",
+    )
+    device = _require_mapping(devices[0], "single-GPU device evidence is invalid")
+    _require(
+        device.get("name") == "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+        and device.get("compute_capability") == [12, 0],
+        "single-GPU evidence is not the accepted RTX PRO 6000 sm_120 device",
+    )
+    _require(
+        str(topology.get("torch") or "").startswith("2.7.1+cu128")
+        and topology.get("torch_cuda") == "12.8"
+        and "sm_120" in (topology.get("torch_cuda_arch_list") or []),
+        "single-GPU CUDA runtime is not the accepted sm_120 closure",
+    )
+    driver_versions = _require_list(
+        topology.get("driver_versions"),
+        "single-GPU driver version evidence is absent",
+    )
+    _require(
+        bool(driver_versions)
+        and all(
+            isinstance(version, str) and version.strip() for version in driver_versions
+        ),
+        "single-GPU driver version evidence is invalid",
+    )
+    probe = _require_mapping(
+        topology.get("sdpa_probe"), "single-GPU SDPA probe evidence is absent"
+    )
+    _require(
+        topology.get("attention_backend")
+        == "torch.nn.functional.scaled_dot_product_attention"
+        and topology.get("flash_attention_installed") is False
+        and topology.get("sdpa_source_binding") is True
+        and probe.get("dtype") == "torch.bfloat16"
+        and probe.get("shape") == [1, 4, 32, 64]
+        and probe.get("finite") is True,
+        "single-GPU native BF16 SDPA gate is invalid",
+    )
+    runtime_stack = _require_mapping(
+        inventory.get("runtime_stack"),
+        "single-GPU runtime stack inventory is absent",
+    )
+    for key in (
+        "devices",
+        "torch",
+        "torch_cuda",
+        "torch_cuda_arch_list",
+        "driver_versions",
+        "attention_backend",
+        "flash_attention_installed",
+        "sdpa_source_binding",
+        "sdpa_probe",
+    ):
+        _require(
+            runtime_stack.get(key) == topology.get(key),
+            f"single-GPU runtime inventory disagrees on {key}",
+        )
+    return {"distributed": None, "topology": topology, "ranks": []}
 
 
 def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
@@ -444,6 +741,14 @@ def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
         _require(
             upstream.get("ref") == SOURCE_REF, "official source revision is invalid"
         )
+        _require(
+            upstream.get("entrypoint")
+            == "python -m torch.distributed.run --standalone --nnodes=1 "
+            "--nproc_per_node=4 wan22_distributed_wrapper.py"
+            and upstream.get("wrapper_execution")
+            == "runpy.run_path('/opt/byof/generate.py', run_name='__main__')",
+            "official distributed wrapper execution identity is invalid",
+        )
         model = _require_mapping(primary.get("model"), "official model id is invalid")
         _require(model.get("id") == MODEL_ID, "official model id is invalid")
         _require(model.get("ref") == MODEL_REF, "official model revision is invalid")
@@ -468,7 +773,17 @@ def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
             raise WanRrdError("multi-GPU layout has no topology filename")
         topology = _load_json(run_dir / topology_filename)
         ranks = [_load_json(run_dir / name) for name in layout.rank_filenames]
-        execution = _validate_multigpu(primary, topology, ranks)
+        progress = [
+            _load_json(run_dir / f"wan2_2_multigpu_progress_rank_{rank}.json")
+            for rank in range(4)
+        ]
+        nccl_summary = _load_json(run_dir / "wan2_2_multigpu_nccl_summary.json")
+        nccl_logs = [
+            run_dir / f"wan2_2_multigpu_nccl_rank_{rank}.log" for rank in range(4)
+        ]
+        execution = _validate_multigpu(
+            primary, topology, ranks, progress, nccl_summary, nccl_logs
+        )
         _require(
             inventory.get("source_ref") == SOURCE_REF,
             "runtime inventory source revision is invalid",
@@ -502,13 +817,6 @@ def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
             isinstance(primary.get("requested"), dict),
             "single-GPU requested generation object is absent",
         )
-        device_topology = primary.get("device_topology")
-        _require(
-            isinstance(device_topology, dict)
-            and isinstance(device_topology.get("devices"), list)
-            and bool(device_topology.get("devices")),
-            "single-GPU device topology is absent",
-        )
         _require(
             primary.get("weights_baked") is False,
             "model weights must remain runtime-only",
@@ -521,14 +829,14 @@ def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
             "single-GPU runtime was not non-root",
         )
         _require(
+            baked_runtime.get("venv_readable") is True,
+            "single-GPU accepted runtime venv was not readable",
+        )
+        _require(
             not baked_runtime.get("large_checkpoint_shaped_files"),
             "runtime inventory found baked weights",
         )
-        _require_mapping(
-            inventory.get("runtime_stack"),
-            "single-GPU runtime stack inventory is absent",
-        )
-        execution = {"distributed": None, "topology": None, "ranks": []}
+        execution = _validate_single_gpu(primary, inventory)
 
     return {
         "run_id": run_id,
@@ -591,7 +899,15 @@ def _machine_summary(evidence: dict[str, Any]) -> dict[str, Any]:
             "sha256": evidence["video"]["sha256"],
             "decode_status": "passed",
         },
-        "execution": evidence.get("distributed") or runtime,
+        "execution": (
+            {
+                **evidence["distributed"],
+                "loaded_nccl": evidence["nccl_summary"],
+                "process_group_destroyed_on_all_ranks": True,
+            }
+            if layout is MULTI_GPU_LAYOUT
+            else runtime
+        ),
         "capabilities_exercised": evidence["video"]["capabilities"],
         "weights_baked": False,
     }
@@ -670,7 +986,9 @@ def _execution_markdown(evidence: dict[str, Any]) -> str:
         "- FSDP: `T5Encoder` and `WanModel`, `FULL_SHARD`, on every rank\n"
         f"- Ulysses: size `{distributed['ulysses']['size']}`, distributed-attention calls "
         f"`{attention_calls}`, all-to-all calls `{all_to_all_calls}` per rank\n"
-        f"- Upstream barriers: `{barrier_calls}` per rank; observer terminal barrier: `true` on every rank"
+        f"- Upstream barriers: `{barrier_calls}` per rank; observer terminal barrier: `true` on every rank\n"
+        "- Loaded NCCL: `2.27.7`, independently confirmed in every rank log\n"
+        "- Process-group teardown: `process_group_destroyed` on every rank"
     )
 
 
@@ -684,7 +1002,7 @@ def _runtime_markdown(evidence: dict[str, Any]) -> str:
             f"- Non-root: `{inventory.get('non_root')}`\n"
             f"- Weights baked: `{inventory.get('weights_baked')}`\n"
             f"- PyTorch / CUDA / NCCL: `{runtime.get('torch')}` / "
-            f"`{runtime.get('torch_cuda')}` / `{runtime.get('nccl_version')}`\n"
+            f"`{runtime.get('torch_cuda')}` / `{runtime.get('nccl_loaded_version')}`\n"
             f"- Driver: `{', '.join(runtime.get('driver_versions') or [])}`\n"
             f"- Package versions: `{json.dumps(packages, sort_keys=True)}`"
         )
@@ -795,6 +1113,22 @@ def _log_recording(output_path: Path, evidence: dict[str, Any]) -> None:
                 ),
                 static=True,
             )
+        if evidence["layout"] is MULTI_GPU_LAYOUT:
+            recording.log(
+                f"{ENTITY_ROOT}/evidence/teardown",
+                rr.TextDocument(
+                    json.dumps(
+                        {
+                            "post_destroy": evidence["post_destroy"],
+                            "nccl_summary": evidence["nccl_summary"],
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                    media_type="text/plain",
+                ),
+                static=True,
+            )
 
         scalar_values = {
             "frame_count": frame_count,
@@ -892,6 +1226,8 @@ def verify_wan_rrd(
     }
     for rank in range(expected_rank_count):
         required[f"/{ENTITY_ROOT}/evidence/ranks/rank_{rank}"] = 1
+    if expected_rank_count:
+        required[f"/{ENTITY_ROOT}/evidence/teardown"] = 1
     for entity, minimum in required.items():
         _require(
             counts.get(entity, 0) >= minimum, f"RRD entity {entity} has too few rows"
@@ -1012,6 +1348,12 @@ def _source_role(name: str, layout: WanRunLayout) -> str:
         return "distributed_topology"
     if name in layout.rank_filenames:
         return "distributed_rank_evidence"
+    if name.startswith("wan2_2_multigpu_progress_rank_"):
+        return "distributed_post_destroy_evidence"
+    if name == "wan2_2_multigpu_nccl_summary.json":
+        return "distributed_loaded_nccl_summary"
+    if name.startswith("wan2_2_multigpu_nccl_rank_"):
+        return "distributed_nccl_log"
     return "source_evidence"
 
 
@@ -1025,6 +1367,7 @@ def _source_filenames(layout: WanRunLayout, primary_filename: str) -> list[str]:
     if layout.topology_filename:
         names.append(layout.topology_filename)
     names.extend(layout.rank_filenames)
+    names.extend(layout.additional_evidence_filenames)
     names.append(layout.video_filename)
     return names
 
@@ -1125,23 +1468,27 @@ def publish_wan_rrd_from_s3(
             key = prefix + name
             if name == summary_name:
                 payload = summary_bytes
+                response = summary_response
             else:
-                payload = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+                response = s3.get_object(Bucket=bucket, Key=key)
+                payload = response["Body"].read()
                 (run_dir / name).write_bytes(payload)
-            head = s3.head_object(Bucket=bucket, Key=key)
             _require(
-                int(head.get("ContentLength") or -1) == len(payload),
+                int(response.get("ContentLength") or -1) == len(payload),
                 f"S3 size mismatch for {name}",
             )
-            source_objects.append(
-                {
-                    "role": _source_role(name, layout),
-                    "uri": normalized_prefix + name,
-                    "etag": str(head.get("ETag") or "").strip('"'),
-                    "size_bytes": len(payload),
-                    "sha256": _sha256_bytes(payload),
-                }
-            )
+            etag = str(response.get("ETag") or "").strip('"')
+            _require(bool(etag), f"S3 ETag is absent for {name}")
+            source_object = {
+                "role": _source_role(name, layout),
+                "uri": normalized_prefix + name,
+                "etag": etag,
+                "size_bytes": len(payload),
+                "sha256": _sha256_bytes(payload),
+            }
+            if response.get("VersionId"):
+                source_object["version_id"] = str(response["VersionId"])
+            source_objects.append(source_object)
 
         local_rrd = Path(tmp) / layout.rrd_filename
         build = build_wan_rrd(run_dir, local_rrd, layout=layout)

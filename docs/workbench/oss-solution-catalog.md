@@ -51,11 +51,11 @@ unique and must be tested with its own upstream-named capabilities.
 | Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 15000 steps on the Minecraft latents) |
 | Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; dream maintains coherent Minecraft scenery across the 32-frame horizon; dream PSNR 17.3 dB) |
 | Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (21 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 10 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
-| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **accepted** | `byof-wan22-e2e-20260808T172003Z`: pulled the accepted runtime-fetch candidate; native TI2V-5B generation on RTX PRO 6000 Blackwell (`sm_120`) |
+| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **accepted** | `byof-wan22-e2e-20260808T195949Z`: pulled the accepted runtime-fetch candidate; native TI2V-5B generation on RTX PRO 6000 Blackwell (`sm_120`) |
 | Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` | **accepted** | Same run: 2,923,858-byte H.264 MP4, 1280x704, 17 frames at 24 fps; full decode and non-uniform-content gates passed |
-| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | **accepted** | `byof-wan22-multigpu-e2e-20260806T024353Z`: one node, 4×B200 (`sm_100`), world size 4, NCCL + T5/DiT FULL_SHARD FSDP + Ulysses size 4 through the official `torchrun generate.py` path |
-| Wan 2.2 TI2V-5B | `wan2.2_distributed_rank_topology_validation` | **accepted** | Same run: four unique GPU hashes/ranks 0–3, NCCL sum 10/10 per rank, 480 distributed-attention and 1,920 all-to-all calls per rank, three upstream barriers plus the observed final barrier |
-| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` (distributed run) | **accepted** | Same run: 634,523-byte H.264 MP4, 1280x704, 17 frames at 24 fps; spatial stddev 46.9864, pixel range 255, temporal delta 0.731357, SHA-256 `ae77b119…09389` |
+| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | **accepted** | `byof-wan22-multigpu-e2e-20260808T202308Z`: one node, 4×B200 (`sm_100`), world size 4, loaded NCCL 2.27.7 + T5/DiT FULL_SHARD FSDP + Ulysses size 4; `torch.distributed.run` launches the instrumentation wrapper, which executes pinned official `generate.py` as `__main__` |
+| Wan 2.2 TI2V-5B | `wan2.2_distributed_rank_topology_validation` | **accepted** | Same run: four unique GPU hashes/ranks 0–3, NCCL sum 10/10 per rank, 480 distributed-attention and 1,920 all-to-all calls per rank, three barriers, final barrier, and process-group teardown |
+| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` (distributed run) | **accepted** | Same run: 2,809,770-byte H.264 MP4, 1280x704, 17 frames at 24 fps; spatial stddev 71.9485, pixel range 255, temporal delta 9.714725, SHA-256 `9574f79c…94865` |
 
 ## Native Capabilities Per Container
 
@@ -143,8 +143,9 @@ an operator-owned volume after explicit terms acceptance; the image contains
 the pinned source and OSS CPU dependency base. The checked-in
 single-GPU profile targets one RTX PRO 6000 Blackwell (`sm_120`) and the
 upstream PyTorch SDPA fallback. The separate distributed profile requests four
-B200s in one pod. It invokes the pinned official `torchrun` entrypoint with
-`--dit_fsdp --t5_fsdp --ulysses_size 4`; the 24 attention heads divide evenly
+B200s in one pod. `torch.distributed.run` launches an instrumentation wrapper
+on the four ranks, and the wrapper executes pinned official `generate.py` as
+`__main__` with `--dit_fsdp --t5_fsdp --ulysses_size 4`; the 24 attention heads divide evenly
 across the four Ulysses ranks. The distributed smoke fails unless the CUDA 12.8
 PyTorch wheel contains `sm_100`, every observed device is compute capability
 10.0, NCCL connects all four unique devices, both T5 and WanModel use
@@ -153,12 +154,12 @@ collectives during the shared generation.
 
 | Capability | Status | Upstream basis / NPA evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted (live validated) | `byof-wan22-e2e-20260808T172003Z`: native `wan.WanTI2V.generate` at 1280x704 on RTX PRO 6000 Blackwell (`sm_120`) |
+| `wan2.2_ti2v_5b_text_to_video` | accepted (live validated) | `byof-wan22-e2e-20260808T195949Z`: native `wan.WanTI2V.generate` at 1280x704 on RTX PRO 6000 Blackwell (`sm_120`) |
 | `wan2.2_decoded_mp4_validation` | accepted (live validated) | same run: all 17 frames decoded at 24 fps; 2,923,858 bytes, spatial stddev 78.0124, pixel range 255, mean temporal delta 11.7294 |
-| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted (live validated) | `byof-wan22-multigpu-e2e-20260806T024353Z`: official four-rank `torchrun generate.py` path on one 4×B200 node; NCCL, T5/DiT FULL_SHARD FSDP, Ulysses size 4 |
-| `wan2.2_distributed_rank_topology_validation` | accepted (live validated) | same run: ranks/local ranks 0–3 mapped to four unique GPU hashes; each rank recorded NCCL sum 10/10, 480 Ulysses attention calls, 1,920 all-to-all calls, three upstream barriers, and the observed final barrier |
-| `wan2.2_decoded_mp4_validation` (distributed run) | accepted (live validated) | same run: all 17 H.264 frames decoded at 24 fps; 634,523 bytes, spatial stddev 46.9864, pixel range 255, mean temporal delta 0.731357, SHA-256 `ae77b119…09389` |
-| `wan2.2_verified_rerun_recording` | accepted (live artifact verified) | accepted distributed MP4 plus summary/topology/runtime/rank JSONs embedded as video + static evidence; uploaded RRD is 825,197 bytes, SHA-256 `b6e0065b…4092`; local, remote, and live-agent parse/hash/entity checks passed |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted (live validated) | `byof-wan22-multigpu-e2e-20260808T202308Z`: `torch.distributed.run` launches four wrapper ranks on one 4×B200 node; each wrapper executes pinned official `generate.py` as `__main__`; loaded NCCL 2.27.7, T5/DiT FULL_SHARD FSDP, Ulysses size 4 |
+| `wan2.2_distributed_rank_topology_validation` | accepted (live validated) | same run: ranks/local ranks 0–3 mapped to four unique GPU hashes; each rank recorded NCCL sum 10/10, 480 Ulysses attention calls, 1,920 all-to-all calls, three barriers, the observed final barrier, and teardown |
+| `wan2.2_decoded_mp4_validation` (distributed run) | accepted (live validated) | same run: all 17 H.264 frames decoded at 24 fps; 2,809,770 bytes, spatial stddev 71.9485, pixel range 255, mean temporal delta 9.714725, SHA-256 `9574f79c…94865` |
+| `wan2.2_verified_rerun_recording` | accepted (live artifact verified) | fresh distributed MP4 plus summary/topology/runtime/rank JSONs embedded as video + static evidence; uploaded RRD is 2,943,670 bytes, SHA-256 `ab9ea016…29c2`; local, remote, and live-agent byte/parse/hash/entity checks passed |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | official unified-model capability and a real optional S3-image code path exist, but no separate live input/output evidence |
 | `wan2.2_t2v_a14b` / `wan2.2_i2v_a14b` | deferred | separate MoE checkpoints and materially different GPU contract; not in this image gate |
 | `wan2.2_s2v_14b` | deferred | separate speech/audio inputs and checkpoint |
@@ -173,11 +174,11 @@ distributed workflow emits `wan2_2_ti2v_5b_multigpu.json`,
 `wan2_2_ti2v_5b_multigpu.mp4`. The successful BYOF path then publishes
 `wan2_2_ti2v_5b_multigpu.rrd` and its verified manifest. The recording embeds
 the exact MP4 and exposes the real run evidence in the NPA agent's Rerun viewer.
-The historical distributed run used the same prior private image bytes as the
-historical single-GPU run (digest `sha256:2baaa063…cbb3`). That old image is not
-a publication candidate because it baked CUDA Python distributions; the
-runtime-fetch candidate requires fresh GPU evidence. Live capability results do
-not by themselves authorize public image publication. See
+The accepted single- and distributed runs use the same immutable runtime-fetch
+candidate; CUDA Python distributions and model/tokenizer bytes remain in
+operator-owned runtime volumes. A historical private image that baked CUDA
+Python distributions remains excluded from publication. Live capability results
+do not by themselves authorize public image publication. See
 [`wan2.2.md`](wan2.2.md) for the workflow, RRD, licensing, and validation
 contracts.
 

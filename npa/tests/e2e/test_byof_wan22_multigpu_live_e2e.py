@@ -4,13 +4,15 @@ The always-on test plans the dedicated checked-in spec. The live gate may reuse
 the exact immutable image already accepted by the single-GPU Wan run because the
 distributed behavior is an upstream/runtime contract; it still pulls that image
 onto a B200 node and fails closed unless all four physical devices participate in
-one official torchrun generation with NCCL, FULL_SHARD FSDP, and Ulysses.
+one `torch.distributed.run → instrumentation wrapper → runpy(generate.py)`
+generation with NCCL, FULL_SHARD FSDP, and Ulysses.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -20,7 +22,6 @@ import pytest
 import yaml
 
 from npa.clients.config import resolve_container_registry
-from npa.deploy.images import container_image_for_tool
 from npa.workflows.byof.live import (
     resolve_byof_kubernetes_target,
     resolve_skypilot_bin,
@@ -111,8 +112,11 @@ def test_wan22_multigpu_spec_plans_the_real_official_path() -> None:
     assert 'export NCCL_SOCKET_FAMILY="AF_INET"' in smoke
     assert 'export NCCL_IB_DISABLE="1"' in smoke
     assert 'export TORCH_NCCL_USE_COMM_NONBLOCKING="1"' in smoke
-    assert "wan2_2_nccl.%h.%p.log" in smoke
+    assert "wan2_2_multigpu_nccl_rank_{rank}.log" in smoke
     assert "wan2_2_multigpu_progress_rank_" in smoke
+    assert "wan2_2_multigpu_nccl_summary.json" in smoke
+    assert "process_group_destroyed" in smoke
+    assert "ncclGetVersion" in smoke
     assert "wan2_2_multigpu_topology.json" in smoke
     assert str(config["prompt"]) in smoke
     assert "{{config." not in smoke
@@ -153,12 +157,15 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
     registry = resolve_container_registry(e2e_project)
     assert registry, "NPA container registry could not be resolved"
     reuse_image = os.environ.get("NPA_BYOF_WAN22_MULTIGPU_REUSE_IMAGE", "").strip()
-    if reuse_image:
-        assert reuse_image.startswith(registry.rstrip("/") + "/"), reuse_image
+    assert reuse_image, (
+        "the live acceptance run requires an explicitly digest-pinned image"
+    )
+    assert reuse_image.startswith(registry.rstrip("/") + "/"), reuse_image
+    assert re.search(r"@sha256:[0-9a-f]{64}$", reuse_image), reuse_image
     run_id = "byof-wan22-multigpu-e2e-" + datetime.now(timezone.utc).strftime(
         "%Y%m%dT%H%M%SZ"
     )
-    image = reuse_image or container_image_for_tool("wan2-2", registry=registry)
+    image = reuse_image
     profile = PROFILE_DIR / f"{planned['--yaml']}.yaml"
     out_bucket = live_bucket(e2e_project)
     output_root = f"s3://{out_bucket}/oss-solutions/wan2.2-multigpu"
@@ -259,7 +266,12 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
     assert artifact["schema"] == "npa.workbench.byof.wan2_2_ti2v_5b_multigpu.v1"
     assert artifact["solution"] == "wan2.2"
     assert artifact["upstream"]["ref"] == planned["--repo-ref"]
-    assert artifact["upstream"]["entrypoint"].endswith("--nproc_per_node=4 generate.py")
+    assert artifact["upstream"]["entrypoint"].endswith(
+        "--nproc_per_node=4 wan22_distributed_wrapper.py"
+    )
+    assert artifact["upstream"]["wrapper_execution"] == (
+        "runpy.run_path('/opt/byof/generate.py', run_name='__main__')"
+    )
     assert artifact["model"]["weights_baked"] is False
     assert artifact["generation"]["prompt"] == config["prompt"]
     assert set(artifact["capabilities_exercised"]) == EXPECTED_CAPABILITIES

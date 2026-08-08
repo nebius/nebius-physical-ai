@@ -64,7 +64,34 @@ def test_clean_oss_rootfs_and_runtime_fetch_plumbing_pass(tmp_path: Path) -> Non
             "bundled_ffmpeg_executable",
         ),
         ("usr/local/lib/libcudnn.so.9", "cuda_library"),
+        ("usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1", "cuda_library"),
+        ("usr/lib/x86_64-linux-gnu/libGLX_nvidia.so.0", "cuda_library"),
+        ("usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0", "cuda_library"),
+        ("usr/lib/x86_64-linux-gnu/libnvcuvid.so.1", "cuda_library"),
+        ("usr/lib/x86_64-linux-gnu/libnvoptix.so.1", "cuda_library"),
+        (
+            "opt/venv/lib/python3.10/site-packages/torch/lib/libtorch_cuda.so",
+            "cuda_library",
+        ),
+        (
+            "opt/venv/lib/python3.10/site-packages/torch/lib/libc10_cuda.so",
+            "cuda_library",
+        ),
+        ("usr/lib/x86_64-linux-gnu/libcufile.so.0", "cuda_library"),
+        ("usr/local/cuda/bin/ptxas", "cuda_tool"),
+        ("usr/local/cuda/include/cuda.h", "cuda_tool"),
+        ("usr/local/cuda-12.8/include/cuda.h", "cuda_tool"),
+        ("opt/cuda/include/nccl.h", "cuda_tool"),
+        ("usr/include/cuda_runtime_api.h", "cuda_tool"),
+        ("usr/bin/nvidia-smi", "cuda_tool"),
+        ("usr/lib/x86_64-linux-gnu/libnvToolsExt.so.1", "cuda_library"),
+        ("usr/lib/x86_64-linux-gnu/libnppc.so.12", "cuda_library"),
+        (
+            "opt/venv/lib/python3.10/site-packages/nvidia_cuda_runtime_cu12-12.8.dist-info/METADATA",
+            "nvidia_python_distribution",
+        ),
         ("opt/byof/model.safetensors", "checkpoint_or_weight"),
+        ("opt/byof/pytorch_model-00001-of-00002.bin", "checkpoint_or_weight"),
         ("root/.cache/huggingface/hub/model.bin", "checkpoint_or_weight"),
         ("root/.aws/credentials", "credential_file"),
         ("tmp/wheelhouse/download.whl", "package_cache"),
@@ -107,6 +134,16 @@ def test_secret_content_mutation_fails(tmp_path: Path) -> None:
     assert {item.kind for item in findings} == {"credential_content"}
 
 
+def test_large_secret_content_and_chunk_boundary_mutations_fail(tmp_path: Path) -> None:
+    prefix = b"x" * (2 * 1024 * 1024 - 8)
+    rootfs = _tar(
+        tmp_path / "large-secret.tar",
+        {"opt/application/large.dat": prefix + b"AKIAABCDEFGHIJKLMNOP"},
+    )
+    findings = scanner.scan(rootfs, {})
+    assert {item.kind for item in findings} == {"credential_content"}
+
+
 def test_deleted_forbidden_bytes_in_a_lower_layer_still_fail(tmp_path: Path) -> None:
     lower = _tar(
         tmp_path / "lower.tar",
@@ -122,6 +159,30 @@ def test_deleted_forbidden_bytes_in_a_lower_layer_still_fail(tmp_path: Path) -> 
     )
     findings = scanner._scan_tars([lower, upper], {})
     assert "cuda_library" in {item.kind for item in findings}
+
+
+def test_renamed_elf_with_cuda_dependency_fails(tmp_path: Path) -> None:
+    rootfs = _tar(
+        tmp_path / "elf.tar",
+        {"opt/application/libinnocent.so": b"\x7fELF\x00libcuda.so.1\x00"},
+    )
+    findings = scanner.scan(rootfs, {})
+    assert "cuda_elf_dependency" in {item.kind for item in findings}
+
+
+@pytest.mark.parametrize(
+    "dependency",
+    [b"libtorch_cuda.so", b"libc10_cuda.so", b"libnvToolsExt.so.1"],
+)
+def test_renamed_elf_with_embedded_cuda_dependency_fails(
+    tmp_path: Path, dependency: bytes
+) -> None:
+    rootfs = _tar(
+        tmp_path / "elf-dependency.tar",
+        {"opt/application/librenamed.so": b"\x7fELF\x00" + dependency + b"\x00"},
+    )
+    findings = scanner.scan(rootfs, {})
+    assert "cuda_elf_dependency" in {item.kind for item in findings}
 
 
 def test_cli_emits_machine_readable_failure(tmp_path: Path, capsys) -> None:

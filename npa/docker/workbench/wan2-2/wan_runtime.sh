@@ -16,6 +16,16 @@ OFFLINE="${NPA_WAN_RUNTIME_OFFLINE:-0}"
 log() { printf 'wan-runtime: %s\n' "$*" >&2; }
 die() { local code="$1"; shift; log "$*"; exit "$code"; }
 
+tmp=""
+cleanup_tmp() {
+  if [[ -n "$tmp" && -d "$tmp" ]]; then
+    rm -rf -- "$tmp"
+  fi
+}
+trap cleanup_tmp EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 accepted() {
   case "$(printf '%s' "${!ACCEPT_ENV:-}" | tr '[:lower:]' '[:upper:]')" in
     YES) return 0 ;;
@@ -96,22 +106,30 @@ ensure_runtime() {
     return
   }
 
-  local stamp target tmp lock
+  local stamp target lock base_site cache_site
   stamp="$(cache_stamp)"
   target="$CACHE_ROOT/$stamp"
   lock="$CACHE_ROOT/.install.lock"
   mkdir -p "$CACHE_ROOT"
   exec 9>"$lock"
   flock 9
+  # The lock covers the whole Wan runtime root, so no live installer can own
+  # these partial trees/symlinks. Clean every stale stamp, including remnants
+  # from a SIGKILL before a requirements/ABI change.
+  find "$CACHE_ROOT" -maxdepth 1 -type d -name ".*.tmp.*" \
+    -exec rm -rf -- {} +
+  find "$CACHE_ROOT" -maxdepth 1 -type l -name ".current.*" -delete
   if ! ready_tree "$target"; then
+    # A killed or failed installer must not consume another multi-gigabyte tree
+    # on every retry. The lock makes this exact-stamp cleanup race-free.
     tmp="$CACHE_ROOT/.${stamp}.tmp.$$"
-    rm -rf "$tmp"
     "$BASE_PYTHON" -m venv --copies "$tmp/venv"
     base_site="$("$BASE_PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
     cache_site="$("$tmp/venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
     printf '%s\n' "$base_site" > "$cache_site/_npa_wan_image_site.pth"
     "$tmp/venv/bin/python" -m pip install \
       --disable-pip-version-check --no-cache-dir --ignore-installed --no-deps \
+      --require-hashes \
       -r "$REQUIREMENTS"
     verify_tree "$tmp"
     cp "$REQUIREMENTS" "$tmp/runtime-requirements.txt"
@@ -119,6 +137,7 @@ ensure_runtime() {
     : > "$tmp/.complete"
     rm -rf "$target"
     mv "$tmp" "$target"
+    tmp=""
   fi
   ln -sfn "$target" "$CACHE_ROOT/.current.$$"
   mv -Tf "$CACHE_ROOT/.current.$$" "$CACHE_ROOT/current"

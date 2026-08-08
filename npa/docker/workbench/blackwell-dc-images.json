@@ -195,12 +195,23 @@
       "dockerfile": "wan2-2/Dockerfile",
       "build_script": "wan2-2/build.sh",
       "verdict": "ready",
-      "validation": "pending-hardware",
+      "validation": "validated",
       "redistribution": "public",
       "torch": "2.7.1+cu128, fetched into the operator-owned runtime volume after explicit terms acceptance",
       "source_compiled_extensions": [],
-      "smoke": "official Wan TI2V-5B generation through torchrun on four B200s with NCCL, FULL_SHARD T5/DiT, Ulysses collectives, decoded H.264 MP4 validation, and verified Rerun evidence",
-      "notes": "The public-eligible image itself is CPU-only. Its pinned cu128 runtime closure reports sm_100 for the B200 path; the dedicated live E2E must pass before validation can become validated. The separate RTX PRO 6000 path requires sm_120 and native PyTorch SDPA. No GPU result is inferred from either architecture for the other."
+      "smoke": "torch.distributed.run launches an instrumentation wrapper on four B200 ranks; the wrapper executes pinned official Wan TI2V-5B generate.py as __main__ with NCCL, FULL_SHARD T5/DiT, Ulysses collectives, decoded H.264 MP4 validation, and verified Rerun evidence",
+      "notes": "The public-eligible image itself is CPU-only. The accepted runtime closure was installed only in a writable volume and passed the dedicated official four-rank TI2V-5B smoke on four physical B200s, including NCCL 2.27.7 transport, T5/DiT FULL_SHARD, Ulysses collectives, MP4 validation, and RRD verification. The separate RTX PRO 6000 path independently passed with sm_120 and native PyTorch SDPA. No GPU result is inferred from either architecture for the other.",
+      "validation_run": "byof-wan22-multigpu-e2e-20260808T202308Z",
+      "measured_torch": "2.7.1+cu128",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
+      ]
     },
     {
       "name": "npa-cosmos3-reason",

@@ -54,8 +54,10 @@ The distributed spec uses `byof-solution-smoke-wan22-b200-4gpu.yaml` and exactly
 four ranks. Invoke the official path with:
 
 ```text
-/opt/byof/.venv/bin/torchrun --standalone --nnodes=1 --nproc_per_node=4 \
-  generate.py --dit_fsdp --t5_fsdp --ulysses_size 4
+/opt/byof/.venv/bin/python -m torch.distributed.run --standalone \
+  --nnodes=1 --nproc_per_node=4 wan22_distributed_wrapper.py
+# The generated wrapper instruments all ranks, then executes pinned official
+# /opt/byof/generate.py as __main__ with --dit_fsdp --t5_fsdp --ulysses_size 4.
 ```
 
 Fail closed unless every rank proves NCCL initialization/all-reduce, a unique

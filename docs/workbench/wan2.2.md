@@ -31,9 +31,10 @@ count make this a capability smoke; they are not a production-quality claim.
 
 - `byof-wan2.2.yaml` calls native `wan.WanTI2V.generate` on one RTX PRO 6000
   Blackwell (`sm_120`) using the upstream PyTorch SDPA fallback.
-- `byof-wan2.2-multigpu.yaml` calls the pinned official `torchrun generate.py`
-  path on one pod with `B200:4`, `--dit_fsdp`, `--t5_fsdp`, and
-  `--ulysses_size 4`.
+- `byof-wan2.2-multigpu.yaml` uses `python -m torch.distributed.run` to launch
+  an instrumentation wrapper on exactly four B200 ranks; the wrapper executes
+  pinned official `/opt/byof/generate.py` as `__main__` with `--dit_fsdp`,
+  `--t5_fsdp`, and `--ulysses_size 4`.
 - Both use the real `workbench.byof.repo` toolRef and the existing BYOF upload
   path. There is no synthetic or import-only Wan toolRef.
 
@@ -74,9 +75,13 @@ The distributed path requires exactly four ranks in one pod and fails unless:
 - every rank crosses the upstream barrier and the observer terminal barrier;
 - every selected device is compute capability 10.0 and the wheel has `sm_100`.
 
-Both routes execute non-root, fetch CUDA Python/model/tokenizer bytes into
-writable volumes at run time, and use the explicit `-1` terminal-wait sentinel
-without imposing an artificial deadline. Generic timeout zero still checks once.
+Both routes start as UID 1000 and fetch CUDA Python/model/tokenizer bytes into
+writable volumes at run time. That UID and cache ownership prevent accidental
+image-layer writes; they are not an isolation claim because the common SkyPilot
+bootstrap image contract retains passwordless sudo. A hardened deployment must
+apply and validate its own pod security policy. Both routes use the explicit
+`-1` terminal-wait sentinel without imposing an artificial deadline. Generic
+timeout zero still checks once.
 
 ## Output and Rerun contract
 
@@ -131,6 +136,7 @@ The recording uses these stable entities:
 | `/wan2_2/evidence/execution` | accurate execution evidence for either single-GPU runtime or distributed topology |
 | `/wan2_2/evidence/runtime` | runtime inventory |
 | `/wan2_2/evidence/ranks/rank_0` … `rank_3` | exact sanitized rank evidence for distributed runs |
+| `/wan2_2/evidence/teardown` | per-rank post-`destroy_process_group` markers and loaded-NCCL summary |
 | `/wan2_2/metrics/*` | static scalar facts, never invented time series |
 
 The default blueprint opens the video beside tabs for overview, validation,
@@ -148,11 +154,11 @@ local plus remote verification results. Only a verified manifest names the
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260808T172003Z`, fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
+| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260808T195949Z`, fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
 | `wan2.2_decoded_mp4_validation` | accepted | same run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
-| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | `byof-wan22-multigpu-e2e-20260806T024353Z`, official four-rank path on 4×B200 |
-| `wan2.2_distributed_rank_topology_validation` | accepted | same run proved unique ranks/devices, NCCL, T5/DiT FULL_SHARD, Ulysses calls, and terminal barriers |
-| `wan2.2_verified_rerun_recording` | accepted | RRD built from the accepted distributed MP4 and JSON evidence, then uploaded and remotely re-verified |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | `byof-wan22-multigpu-e2e-20260808T202308Z`, official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
+| `wan2.2_distributed_rank_topology_validation` | accepted | same run proved unique ranks/devices, NCCL 2.27.7 runtime transport and sum 10/10, T5/DiT FULL_SHARD, Ulysses calls, and process-group teardown |
+| `wan2.2_verified_rerun_recording` | accepted | RRD built from that fresh distributed MP4 and JSON evidence, then uploaded, remotely re-verified, and loaded byte-identically into the live agent |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | optional real input path exists but lacks separately accepted live evidence |
 | A14B, S2V-14B, Animate-14B | deferred | separate models and input/GPU contracts |
 | official TI2V fine-tuning | deferred | pinned official source has no TI2V training entrypoint |
@@ -163,12 +169,12 @@ not turn Wan into a world model or add action conditioning.
 
 The materialized accepted distributed recording is:
 
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260806T024353Z/wan2_2_ti2v_5b_multigpu.rrd`
-  (825,197 bytes; SHA-256
-  `b6e0065bcc9530e07e8b5834299808c8a28826987735af56bc7bbdd035064092`).
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260806T024353Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
-  (6,637 bytes; SHA-256
-  `311df1d2f982300173df593e78ea127837744a74195a39b7c52cc8815f71721f`).
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260808T202308Z/wan2_2_ti2v_5b_multigpu.rrd`
+  (2,943,670 bytes; SHA-256
+  `ab9ea016a3ff25e01ce595523a924e7beb76c0f444c417426efccba9a31929c2`).
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260808T202308Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
+  (6,636 bytes; SHA-256
+  `088a4b7d017fa7f918408dd5e083a4febf8895898c4d458c83ecf2d2b6a44dcc`).
 
 S3 HEAD/GET, local and downloaded `rerun rrd verify`, `rerun rrd stats`, entity
 inspection, embedded-video identity, and the live agent Rerun blob all agreed
@@ -180,11 +186,15 @@ The pinned source, model, and tokenizer declare Apache-2.0. The shipped runtime
 contains only the digest-pinned official Python/Debian base, CPU-only PyTorch,
 and audited OSS dependencies; Debian copyright records and wheel metadata carry
 their GPL/LGPL/BSD/MIT/Apache notices. CUDA Python distributions, model/tokenizer,
-credentials, data, and caches are runtime-only. Public eligibility is earned by
-scanning the pushed digest, every individual layer, history, SBOM, and license
-inventory with `npa/scripts/scan_image_wan_payload.py`; it is not inferred from
-this Dockerfile. Passing those gates is an engineering classification and still
-requires the organization's human publication/legal approval.
+credentials, data, and caches are runtime-only. Public eligibility requires four
+separate checks: scan the pushed digest and every individual layer/history entry
+with `npa/scripts/scan_image_wan_payload.py`; inspect the BuildKit SPDX
+attestation; bind the SLSA provenance to the exact platform manifest; and review
+the license inventory. The scanner proves prohibited-byte absence only—it does
+not generate or review the SBOM or make a legal determination. The publication
+preflight repeats the exact-digest scan and attestation binding before any copy.
+Passing these gates remains an engineering classification and still requires the
+organization's human publication/legal approval.
 
 ## Validation
 

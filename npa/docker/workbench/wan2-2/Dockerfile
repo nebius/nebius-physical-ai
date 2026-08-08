@@ -14,6 +14,7 @@ LABEL npa.tool="wan2-2" \
       npa.source.ref="${WAN_SOURCE_REF}" \
       npa.cuda.provisioning="operator-accepted-runtime-fetch" \
       npa.weights="runtime-only" \
+      npa.security.runtime-user="uid-1000-with-skypilot-bootstrap-sudo" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.revision="${NPA_SOURCE_COMMIT}"
 

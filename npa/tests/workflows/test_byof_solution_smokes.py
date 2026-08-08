@@ -311,7 +311,9 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
     assert 'export TORCH_NCCL_USE_COMM_NONBLOCKING="1"' in smoke
     assert 'export NCCL_DEBUG="INFO"' in smoke
     assert 'export NCCL_DEBUG_SUBSYS="INIT,COLL,ENV"' in smoke
-    assert "wan2_2_nccl.%h.%p.log" in smoke
+    assert "wan2_2_multigpu_nccl_rank_{rank}.log" in smoke
+    assert "wan2_2_multigpu_nccl_summary.json" in smoke
+    assert "process_group_destroyed" in smoke
     assert 'item["nccl_cumem_enable"] != "0"' in smoke
     assert 'item["nccl_cumem_host_enable"] != "0"' in smoke
     assert 'item["nccl_nvls_enable"] != "0"' in smoke

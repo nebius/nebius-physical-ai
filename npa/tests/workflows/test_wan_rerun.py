@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,38 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+
+
+@lru_cache(maxsize=1)
+def _valid_video_bytes() -> bytes:
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=1280x704:rate=24",
+            "-frames:v",
+            "17",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "frag_keyframe+empty_moov",
+            "-f",
+            "mp4",
+            "pipe:1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return result.stdout
 
 
 def _rank(rank: int) -> dict[str, Any]:
@@ -68,15 +102,24 @@ def _rank(rank: int) -> dict[str, Any]:
         "torch": "2.7.1+cu128",
         "torch_cuda": "12.8",
         "torch_cuda_arch_list": ["sm_100", "sm_120", "compute_120"],
-        "nccl_version": [2, 26, 2],
+        "nccl_build_api_version": [2, 26, 2],
+        "loaded_nccl": {
+            "version": "2.27.7",
+            "version_code": 22707,
+            "library_basename": "libnccl.so.2",
+            "mapped_path_sha256": hashlib.sha256(
+                f"/runtime/rank-{rank}/libnccl.so.2".encode()
+            ).hexdigest(),
+        },
     }
 
 
 def _materialize_multigpu_run(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    video = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 64
+    video = _valid_video_bytes()
     video_path = root / MULTI_GPU_LAYOUT.video_filename
     video_path.write_bytes(video)
+    decoded = wan_rerun._decode_video_metrics(video_path)
     video_sha256 = hashlib.sha256(video).hexdigest()
     ranks = [_rank(rank) for rank in range(4)]
 
@@ -112,7 +155,8 @@ def _materialize_multigpu_run(root: Path) -> None:
             "upstream": {
                 "repo": "https://github.com/Wan-Video/Wan2.2.git",
                 "ref": "42bf4cfaa384bc21833865abc2f9e6c0e67233dc",
-                "entrypoint": "torchrun --standalone --nnodes=1 --nproc_per_node=4 generate.py",
+                "entrypoint": "python -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node=4 wan22_distributed_wrapper.py",
+                "wrapper_execution": "runpy.run_path('/opt/byof/generate.py', run_name='__main__')",
             },
             "model": {
                 "id": "Wan-AI/Wan2.2-TI2V-5B",
@@ -147,15 +191,15 @@ def _materialize_multigpu_run(root: Path) -> None:
                 "steps": 8,
             },
             "observed": {
-                "width": 1280,
-                "height": 704,
+                "width": decoded["width"],
+                "height": decoded["height"],
                 "channels": 3,
-                "frame_count": 17,
-                "fps": 24.0,
-                "codec": "h264",
-                "max_spatial_std": 46.9,
-                "pixel_range": 255,
-                "mean_temporal_abs_delta": 0.73,
+                "frame_count": decoded["frame_count"],
+                "fps": decoded["fps"],
+                "codec": decoded["codec"],
+                "max_spatial_std": decoded["max_spatial_std"],
+                "pixel_range": decoded["pixel_range"],
+                "mean_temporal_abs_delta": decoded["mean_temporal_abs_delta"],
             },
             "output": {
                 "filename": MULTI_GPU_LAYOUT.video_filename,
@@ -167,7 +211,8 @@ def _materialize_multigpu_run(root: Path) -> None:
                 "torch_cuda": "12.8",
                 "torch_cuda_arch_list": ["sm_100", "sm_120"],
                 "driver_versions": ["580.159.04"],
-                "nccl_version": [2, 26, 2],
+                "nccl_build_api_version": [2, 26, 2],
+                "nccl_loaded_version": "2.27.7",
             },
             "capabilities_exercised": [
                 "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
@@ -197,6 +242,42 @@ def _materialize_multigpu_run(root: Path) -> None:
     )
     for rank, payload in enumerate(ranks):
         _write_json(root / f"wan2_2_multigpu_rank_{rank}.json", payload)
+        _write_json(
+            root / f"wan2_2_multigpu_progress_rank_{rank}.json",
+            {
+                "rank": rank,
+                "local_rank": rank,
+                "world_size": 4,
+                "stage": "process_group_destroyed",
+                "time_ns": rank + 1,
+            },
+        )
+    rank_logs = []
+    for rank in range(4):
+        log_path = root / f"wan2_2_multigpu_nccl_rank_{rank}.log"
+        log_path.write_text(
+            f"rank {rank}: NCCL version 2.27.7+cuda12.9\nrank {rank}: Init COMPLETE\n",
+            encoding="utf-8",
+        )
+        rank_logs.append(
+            {
+                "rank": rank,
+                "filename": log_path.name,
+                "size_bytes": log_path.stat().st_size,
+                "sha256": hashlib.sha256(log_path.read_bytes()).hexdigest(),
+                "version_line_observed": True,
+                "init_complete_observed": True,
+            }
+        )
+    _write_json(
+        root / "wan2_2_multigpu_nccl_summary.json",
+        {
+            "schema": "npa.workbench.byof.wan2_2_multigpu_nccl_summary.v1",
+            "loaded_version": "2.27.7",
+            "process_group_destroyed_on_all_ranks": True,
+            "rank_logs": rank_logs,
+        },
+    )
     _write_json(
         root / "wan2_2_multigpu_runtime_inventory.json",
         {
@@ -208,7 +289,8 @@ def _materialize_multigpu_run(root: Path) -> None:
                 "torch": "2.7.1+cu128",
                 "torch_cuda": "12.8",
                 "driver_versions": ["580.159.04"],
-                "nccl_version": [2, 26, 2],
+                "nccl_build_api_version": [2, 26, 2],
+                "nccl_loaded_version": "2.27.7",
             },
             "package_versions": {"torch": "2.7.1+cu128"},
             "devices": [rank["device"] for rank in ranks],
@@ -218,8 +300,10 @@ def _materialize_multigpu_run(root: Path) -> None:
 
 def _materialize_single_gpu_run(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    video = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 64
-    (root / SINGLE_GPU_LAYOUT.video_filename).write_bytes(video)
+    video = _valid_video_bytes()
+    video_path = root / SINGLE_GPU_LAYOUT.video_filename
+    video_path.write_bytes(video)
+    decoded = wan_rerun._decode_video_metrics(video_path)
     _write_json(
         root / "npa_byof_summary.json",
         {
@@ -259,25 +343,40 @@ def _materialize_single_gpu_run(root: Path) -> None:
             "seed": 42,
             "requested": {"width": 1280, "height": 704, "frames": 17, "fps": 24.0},
             "observed": {
-                "width": 1280,
-                "height": 704,
-                "frame_count": 17,
-                "fps": 24.0,
-                "codec": "h264",
-                "max_spatial_std": 46.9,
-                "pixel_range": 255,
-                "mean_temporal_abs_delta": 0.73,
+                "width": decoded["width"],
+                "height": decoded["height"],
+                "frame_count": decoded["frame_count"],
+                "fps": decoded["fps"],
+                "codec": decoded["codec"],
+                "max_spatial_std": decoded["max_spatial_std"],
+                "pixel_range": decoded["pixel_range"],
+                "mean_temporal_abs_delta": decoded["mean_temporal_abs_delta"],
             },
             "output_filename": SINGLE_GPU_LAYOUT.video_filename,
             "output_size_bytes": len(video),
+            "output_sha256": hashlib.sha256(video).hexdigest(),
             "device_topology": {
                 "cuda_device_count": 1,
-                "devices": [{"name": "NVIDIA RTX PRO 6000 Blackwell Server Edition"}],
+                "devices": [
+                    {
+                        "index": 0,
+                        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+                        "compute_capability": [12, 0],
+                        "total_memory_bytes": 1024,
+                    }
+                ],
                 "torch": "2.7.1+cu128",
                 "torch_cuda": "12.8",
+                "torch_cuda_arch_list": ["sm_100", "sm_120", "compute_120"],
                 "driver_versions": ["580.159.04"],
-                "attention_backend": "pytorch_sdpa",
+                "attention_backend": "torch.nn.functional.scaled_dot_product_attention",
+                "flash_attention_installed": False,
                 "sdpa_source_binding": True,
+                "sdpa_probe": {
+                    "dtype": "torch.bfloat16",
+                    "shape": [1, 4, 32, 64],
+                    "finite": True,
+                },
             },
             "capabilities_exercised": [
                 "wan2.2_ti2v_5b_text_to_video",
@@ -296,9 +395,26 @@ def _materialize_single_gpu_run(root: Path) -> None:
                 "large_checkpoint_shaped_files": [],
             },
             "runtime_stack": {
+                "devices": [
+                    {
+                        "index": 0,
+                        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+                        "compute_capability": [12, 0],
+                        "total_memory_bytes": 1024,
+                    }
+                ],
                 "torch": "2.7.1+cu128",
                 "torch_cuda": "12.8",
+                "torch_cuda_arch_list": ["sm_100", "sm_120", "compute_120"],
                 "driver_versions": ["580.159.04"],
+                "attention_backend": "torch.nn.functional.scaled_dot_product_attention",
+                "flash_attention_installed": False,
+                "sdpa_source_binding": True,
+                "sdpa_probe": {
+                    "dtype": "torch.bfloat16",
+                    "shape": [1, 4, 32, 64],
+                    "finite": True,
+                },
             },
         },
     )
@@ -311,11 +427,19 @@ class _MemoryS3:
             if path.is_file():
                 self.objects[(bucket, prefix + path.name)] = path.read_bytes()
         self.content_types: dict[tuple[str, str], str] = {}
+        self.head_calls: list[tuple[str, str]] = []
 
     def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
-        return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
+        payload = self.objects[(Bucket, Key)]
+        return {
+            "Body": io.BytesIO(payload),
+            "ContentLength": len(payload),
+            "ETag": f'"{hashlib.md5(payload, usedforsecurity=False).hexdigest()}"',
+            "VersionId": "version-1",
+        }
 
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        self.head_calls.append((Bucket, Key))
         payload = self.objects[(Bucket, Key)]
         return {
             "ContentLength": len(payload),
@@ -386,6 +510,58 @@ def test_single_gpu_schema_drift_fails_with_structured_error(tmp_path: Path) -> 
     _write_json(artifact, payload)
 
     with pytest.raises(WanRrdError, match="tokenizer identity"):
+        build_wan_rrd(run_dir, tmp_path / "broken.rrd", layout=SINGLE_GPU_LAYOUT)
+
+
+def test_host_postprocess_rejects_a_forged_nondecodable_mp4(tmp_path: Path) -> None:
+    run_dir = tmp_path / "single"
+    _materialize_single_gpu_run(run_dir)
+    video_path = run_dir / SINGLE_GPU_LAYOUT.video_filename
+    forged = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 64
+    video_path.write_bytes(forged)
+    artifact = run_dir / "wan2_2_ti2v_5b_text_to_video.json"
+    payload = json.loads(artifact.read_text())
+    payload["output_size_bytes"] = len(forged)
+    payload["output_sha256"] = hashlib.sha256(forged).hexdigest()
+    _write_json(artifact, payload)
+
+    with pytest.raises(WanRrdError, match="MP4 probe failed"):
+        build_wan_rrd(run_dir, tmp_path / "broken.rrd", layout=SINGLE_GPU_LAYOUT)
+
+
+def test_single_gpu_runtime_gate_drift_fails_closed(tmp_path: Path) -> None:
+    run_dir = tmp_path / "single"
+    _materialize_single_gpu_run(run_dir)
+    artifact = run_dir / "wan2_2_ti2v_5b_text_to_video.json"
+    payload = json.loads(artifact.read_text())
+    payload["device_topology"]["sdpa_probe"]["finite"] = False
+    _write_json(artifact, payload)
+
+    with pytest.raises(WanRrdError, match="BF16 SDPA gate"):
+        build_wan_rrd(run_dir, tmp_path / "broken.rrd", layout=SINGLE_GPU_LAYOUT)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("driver_mismatch", "disagrees on driver_versions"),
+        ("venv_unreadable", "runtime venv was not readable"),
+    ],
+)
+def test_single_gpu_runtime_identity_drift_fails_closed(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    run_dir = tmp_path / "single"
+    _materialize_single_gpu_run(run_dir)
+    inventory_path = run_dir / SINGLE_GPU_LAYOUT.inventory_filename
+    inventory = json.loads(inventory_path.read_text())
+    if mutation == "driver_mismatch":
+        inventory["runtime_stack"]["driver_versions"] = ["different"]
+    else:
+        inventory["baked_runtime"]["venv_readable"] = False
+    _write_json(inventory_path, inventory)
+
+    with pytest.raises(WanRrdError, match=message):
         build_wan_rrd(run_dir, tmp_path / "broken.rrd", layout=SINGLE_GPU_LAYOUT)
 
 
@@ -469,6 +645,80 @@ def test_build_wan_rrd_rejects_rank_evidence_disagreement(tmp_path: Path) -> Non
         )
 
 
+def test_build_wan_rrd_rejects_distributed_wrapper_identity_drift(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    _materialize_multigpu_run(run_dir)
+    artifact_path = run_dir / "wan2_2_ti2v_5b_multigpu.json"
+    artifact = json.loads(artifact_path.read_text())
+    artifact["upstream"]["wrapper_execution"] = "untrusted.py"
+    _write_json(artifact_path, artifact)
+
+    with pytest.raises(WanRrdError, match="wrapper execution identity"):
+        build_wan_rrd(
+            run_dir,
+            tmp_path / MULTI_GPU_LAYOUT.rrd_filename,
+            layout=MULTI_GPU_LAYOUT,
+        )
+
+
+def test_build_wan_rrd_requires_post_destroy_and_loaded_nccl_evidence(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    _materialize_multigpu_run(run_dir)
+    progress = run_dir / "wan2_2_multigpu_progress_rank_2.json"
+    payload = json.loads(progress.read_text())
+    payload["stage"] = "process_group_initialized"
+    _write_json(progress, payload)
+
+    with pytest.raises(WanRrdError, match="post-destroy marker"):
+        build_wan_rrd(
+            run_dir,
+            tmp_path / MULTI_GPU_LAYOUT.rrd_filename,
+            layout=MULTI_GPU_LAYOUT,
+        )
+
+
+def test_build_wan_rrd_rejects_loaded_nccl_summary_corruption(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _materialize_multigpu_run(run_dir)
+    summary_path = run_dir / "wan2_2_multigpu_nccl_summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["loaded_version"] = "0.0.0"
+    _write_json(summary_path, summary)
+
+    with pytest.raises(WanRrdError, match="loaded version"):
+        build_wan_rrd(
+            run_dir,
+            tmp_path / MULTI_GPU_LAYOUT.rrd_filename,
+            layout=MULTI_GPU_LAYOUT,
+        )
+
+
+def test_build_wan_rrd_reparses_nccl_log_content(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _materialize_multigpu_run(run_dir)
+    log_path = run_dir / "wan2_2_multigpu_nccl_rank_1.log"
+    log_path.write_text("rank 1: forged log\n", encoding="utf-8")
+    summary_path = run_dir / "wan2_2_multigpu_nccl_summary.json"
+    summary = json.loads(summary_path.read_text())
+    entry = summary["rank_logs"][1]
+    entry["size_bytes"] = log_path.stat().st_size
+    entry["sha256"] = hashlib.sha256(log_path.read_bytes()).hexdigest()
+    entry["version_line_observed"] = True
+    entry["init_complete_observed"] = True
+    _write_json(summary_path, summary)
+
+    with pytest.raises(WanRrdError, match="initialization/version evidence"):
+        build_wan_rrd(
+            run_dir,
+            tmp_path / MULTI_GPU_LAYOUT.rrd_filename,
+            layout=MULTI_GPU_LAYOUT,
+        )
+
+
 def test_publish_wan_rrd_rechecks_remote_bytes_and_writes_manifest(
     tmp_path: Path,
 ) -> None:
@@ -503,7 +753,15 @@ def test_publish_wan_rrd_rechecks_remote_bytes_and_writes_manifest(
     assert manifest["rrd"]["sha256"] == result["rrd_sha256"]
     assert manifest["video"]["embedded_sha256"] == result["video_sha256"]
     assert manifest["verification"]["remote_rerun_cli_verify"] == "passed"
-    assert len(manifest["source_objects"]) == 10
+    assert len(manifest["source_objects"]) == 19
+    roles = {item["role"] for item in manifest["source_objects"]}
+    assert "distributed_post_destroy_evidence" in roles
+    assert "distributed_loaded_nccl_summary" in roles
+    assert "distributed_nccl_log" in roles
+    source_keys = {
+        (bucket, prefix + Path(item["uri"]).name) for item in manifest["source_objects"]
+    }
+    assert source_keys.isdisjoint(s3.head_calls)
     assert s3.content_types[(bucket, prefix + MULTI_GPU_LAYOUT.manifest_filename)] == (
         "application/json"
     )
