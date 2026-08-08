@@ -19,6 +19,23 @@ class ClusterOwnerIdentityMismatchError(RuntimeError):
     """A controller operation targets a different immutable cluster owner."""
 
 
+class ControllerIdentityUnavailableError(ClusterOwnerIdentityMismatchError):
+    """Exact local/provider evidence was unavailable, so ownership is unchanged."""
+
+
+_TERMINAL_CLUSTER_STATES = frozenset(
+    {
+        "ABSENT",
+        "DELETED",
+        "DELETING",
+        "DESTROYED",
+        "NOT_FOUND",
+        "ROLLED_BACK",
+        "ROLLED-BACK",
+    }
+)
+
+
 @dataclass(frozen=True)
 class ControllerOwner:
     project_alias: str
@@ -89,6 +106,39 @@ def resolve_controller_candidate(project: str, context: str) -> ControllerOwner:
             f"Context {context!r} belongs to project {cluster.project_id!r}, not "
             f"selected project {environment.project_id!r}."
         )
+    cluster_state = str(cluster.last_seen_state or "").strip().upper()
+    if cluster_state in _TERMINAL_CLUSTER_STATES:
+        raise ClusterOwnerIdentityMismatchError(
+            f"Context {context!r} is recorded as {cluster_state}; refusing controller adoption. "
+            "Provision or adopt a live exact cluster before binding."
+        )
+    operation_id = ""
+    try:
+        from npa.provisioning_journal import current_operation, list_operations
+
+        operation = current_operation()
+        candidates = (
+            [operation]
+            if operation is not None
+            else list_operations(
+                project_alias=alias,
+                project_id=environment.project_id,
+                resource_type="cluster",
+                requested_name=context,
+            )
+        )
+        for operation in candidates:
+            payload = operation.read()
+            if any(
+                isinstance(item, dict)
+                and item.get("resource_type") == "managed_kubernetes_cluster"
+                and str(item.get("provider_id") or "") == cluster.cluster_id
+                for item in payload.get("resources", [])
+            ):
+                operation_id = operation.operation_id
+                break
+    except (OSError, RuntimeError, ValueError):
+        operation_id = ""
     digest = hashlib.sha256()
     for value in (environment.project_id, cluster.cluster_id, context):
         digest.update(value.encode("utf-8"))
@@ -100,7 +150,139 @@ def resolve_controller_candidate(project: str, context: str) -> ControllerOwner:
         cluster_name=cluster.name,
         context=context,
         context_fingerprint=digest.hexdigest(),
+        operation_id=operation_id,
     )
+
+
+def _assert_owner_operation_is_live(candidate: ControllerOwner) -> None:
+    if not candidate.operation_id:
+        return
+    try:
+        from npa.provisioning_journal import load_operation
+
+        payload = load_operation(candidate.operation_id).read()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ControllerIdentityUnavailableError(
+            "The controller owner operation journal cannot be verified; ownership "
+            f"was not changed: {type(exc).__name__}: {exc}"
+        ) from exc
+    phase = str(payload.get("phase") or "").strip().lower()
+    if phase in {"destroyed", "rolled-back"}:
+        raise ClusterOwnerIdentityMismatchError(
+            f"Controller owner operation {candidate.operation_id} is {phase}; "
+            "refusing to bind a cluster destroyed by that attempt."
+        )
+    matches = [
+        item
+        for item in payload.get("resources", [])
+        if isinstance(item, dict)
+        and item.get("resource_type") == "managed_kubernetes_cluster"
+        and str(item.get("provider_id") or "") == candidate.cluster_id
+        and str(item.get("project_id") or candidate.project_id) == candidate.project_id
+    ]
+    if not matches:
+        raise ClusterOwnerIdentityMismatchError(
+            "Controller owner operation does not prove the exact recorded cluster/project identity."
+        )
+
+
+def verify_live_controller_candidate(candidate: ControllerOwner) -> ControllerOwner:
+    """Require exact local and provider evidence for one live controller owner."""
+
+    local = resolve_controller_candidate(candidate.project_alias, candidate.context)
+    if not _same_immutable_owner(local, candidate):
+        raise ClusterOwnerIdentityMismatchError(
+            "The proposed controller owner no longer matches exact local cluster state."
+        )
+    _assert_owner_operation_is_live(candidate)
+    try:
+        from npa.cluster.identity import (
+            ClusterIdentityError,
+            resolve_verified_cluster_identity,
+        )
+
+        verified = resolve_verified_cluster_identity(
+            project=candidate.project_alias,
+            context=candidate.context,
+        )
+    except ClusterIdentityError as exc:
+        raise ControllerIdentityUnavailableError(str(exc)) from exc
+    if verified.cluster_absent:
+        raise ClusterOwnerIdentityMismatchError(
+            f"Provider reports cluster {candidate.cluster_id} absent; refusing controller binding."
+        )
+    if (
+        verified.project_id != candidate.project_id
+        or verified.cluster_id != candidate.cluster_id
+        or verified.context != candidate.context
+    ):
+        raise ClusterOwnerIdentityMismatchError(
+            "Provider identity does not match the exact proposed controller owner; "
+            "ownership was not changed."
+        )
+    return candidate
+
+
+def ensure_controller_owner(project: str, context: str) -> ControllerOwner:
+    """Verify and atomically bind an unowned exact cluster, or compare an owner."""
+
+    candidate = verify_live_controller_candidate(
+        resolve_controller_candidate(project, context)
+    )
+    existing = controller_owner()
+    if existing is not None and not _same_immutable_owner(existing, candidate):
+        raise ClusterOwnerIdentityMismatchError(
+            "Shared controller owner mismatch: recorded "
+            f"{existing.project_alias}/{existing.context}/{existing.cluster_id}, requested "
+            f"{candidate.project_alias}/{candidate.context}/{candidate.cluster_id}. "
+            "Finish or cancel the recorded owner's jobs, clean up its controller, then "
+            "run provisioning again; Terraform was not changed."
+        )
+    return bind_controller_owner(candidate)
+
+
+def controller_preflight(project: str, context: str) -> tuple[str, str]:
+    """Classify ownership before paid mutation.
+
+    Returns ``(ready|blocked|unknown, reason)``. A missing cluster with no saved
+    owner is the only safely bindable-after-create case.
+    """
+
+    existing = controller_owner()
+    cluster = load_cluster_state(context)
+    if cluster is None:
+        if existing is None:
+            return "ready", "unowned new cluster will be bound after exact provider identity is durable"
+        return (
+            "blocked",
+            "recorded controller owner references missing/stale cluster state; clean up "
+            "that exact controller owner before provisioning a replacement",
+        )
+    try:
+        candidate = verify_live_controller_candidate(
+            resolve_controller_candidate(project, context)
+        )
+    except ControllerIdentityUnavailableError as exc:
+        return "unknown", str(exc)
+    except ClusterOwnerIdentityMismatchError as exc:
+        return "blocked", str(exc)
+    if existing is None:
+        return "ready", f"exact live cluster {candidate.cluster_id} is safely bindable"
+    try:
+        verify_live_controller_candidate(existing)
+    except ControllerIdentityUnavailableError as exc:
+        return "unknown", str(exc)
+    except ClusterOwnerIdentityMismatchError as exc:
+        return "blocked", str(exc)
+    if not _same_immutable_owner(existing, candidate):
+        return (
+            "blocked",
+            "shared controller belongs to "
+            f"{existing.project_alias}/{existing.context}/{existing.cluster_id}; "
+            "cancel/finish its jobs and run `npa skypilot cleanup-controller --project "
+            f"{existing.project_alias} --context {existing.context} --yes` before provisioning",
+        )
+    return "ready", f"compatible owner verified for exact cluster {candidate.cluster_id}"
 
 
 def _same_immutable_owner(left: ControllerOwner, right: ControllerOwner) -> bool:

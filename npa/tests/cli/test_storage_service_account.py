@@ -1428,3 +1428,86 @@ def test_receipt_context_carries_exact_account_without_configured_alias(
     assert context.tenant_id == "tenant-1"
     assert context.account_id == "service-account-1"
     assert context.receipt_id == path.stem
+
+
+def test_receipt_only_storage_iam_verifies_parent_and_access_key_after_forget(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.clients import nebius as nebius_module
+    from npa.teardown_receipts import record_teardown_event
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("projects: {}\n", encoding="utf-8")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "missing-credentials.yaml"
+    )
+    path = record_teardown_event(
+        phase="bucket",
+        resource="bucket-a",
+        terminal_state="verified_deleted",
+        project_alias="forgotten",
+        project_id="project-a",
+        identity={"project_id": "project-a"},
+    )
+    record_teardown_event(
+        phase="storage_iam",
+        resource="serviceaccount-storage",
+        terminal_state="operator_action_remains",
+        project_alias="forgotten",
+        project_id="project-a",
+        identity={
+            "project_id": "project-a",
+            "tenant_id": "tenant-a",
+            "service_account_id": "serviceaccount-storage",
+            "service_account_name": "lerobot-training",
+            "ownership": "npa",
+            "iam_key_ids": ["accesskey-storage"],
+        },
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "get_service_account_identity",
+        lambda account_id, **_kwargs: nebius_module.ServiceAccountIdentity(
+            account_id=account_id,
+            name="lerobot-training",
+            project_id="project-a",
+            tenant_id="tenant-a",
+            profile="",
+        ),
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "list_access_keys_for_service_account",
+        lambda _project, account_id, **_kwargs: [
+            {
+                "id": "accesskey-storage",
+                "name": "lerobot-access-key",
+                "state": "ACTIVE",
+                "service_account_id": account_id,
+            }
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "storage",
+            "service-account",
+            "delete",
+            "--receipt",
+            path.stem,
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["result"] == "delete_planned"
+    assert payload["service_account_id"] == "serviceaccount-storage"
+    assert payload["access_key_ids"] == ["accesskey-storage"]

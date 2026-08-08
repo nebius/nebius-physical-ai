@@ -45,6 +45,7 @@ class CleanupResult:
     project_id: str = ""
     cluster_id: str = ""
     context: str = ""
+    remote_absence_verified: bool = False
 
     @property
     def ok(self) -> bool:
@@ -75,6 +76,14 @@ _RUN_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9-]+$")
 DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS = 300
 DEFAULT_JOB_DRAIN_INTERVAL_SECONDS = 5.0
 _IN_PROGRESS_JOBS_MARKERS = ("in-progress managed jobs", "in progress managed jobs")
+_EMPTY_QUEUE_MESSAGES = frozenset(
+    {
+        "no in-progress managed jobs",
+        "no in-progress managed jobs.",
+        "no in-progress managed jobs found",
+        "no in-progress managed jobs found.",
+    }
+)
 
 
 class InvalidRunIdError(ValueError):
@@ -490,6 +499,7 @@ def _record_remote_controller_absence(identity: Any, cleanup: CleanupResult) -> 
             f"failed; real local SkyPilot state was preserved: {exc}"
         )
         return False
+    cleanup.remote_absence_verified = True
     return True
 
 
@@ -1060,6 +1070,15 @@ def _all_jobs(
         raise JobQueueUnreadableError(
             "managed-job queue command failed: " + redact_text(str(exc))
         ) from exc
+    if _is_verified_empty_queue_message(result):
+        return JobQueueSnapshot(state="verified_empty")
+    combined = " ".join(
+        str(value or "").lower() for value in (result.stdout, result.stderr)
+    )
+    if "no in-progress managed jobs" in combined:
+        raise JobQueueUnreadableError(
+            "managed-job queue mixed a benign-empty marker with unexpected output"
+        )
     if result.returncode != 0:
         detail = _command_detail(result)
         raise JobQueueUnreadableError(
@@ -1076,6 +1095,27 @@ def _all_jobs(
         state="verified_jobs" if jobs else "verified_empty",
         jobs=tuple(jobs),
     )
+
+
+def _is_verified_empty_queue_message(
+    result: subprocess.CompletedProcess[str],
+) -> bool:
+    """Recognize only pinned SkyPilot's complete benign empty-queue response.
+
+    SkyPilot 0.12.2 has emitted this diagnostic on either stream and with both
+    zero and one return codes.  Requiring the entire non-empty output to equal a
+    known sentence prevents an auth/transport failure that merely mentions the
+    sentence from becoming false absence proof.
+    """
+
+    if result.returncode not in {0, 1}:
+        return False
+    parts = [
+        " ".join(str(value or "").strip().lower().split())
+        for value in (result.stdout, result.stderr)
+        if str(value or "").strip()
+    ]
+    return len(parts) == 1 and parts[0] in _EMPTY_QUEUE_MESSAGES
 
 
 def _matching_jobs(

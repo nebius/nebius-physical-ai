@@ -198,31 +198,36 @@ def _transactional_provision(function):
         )
         operation.record_preflight_plan(plan.to_dict())
         with operation_context(operation):
+            sys.stderr.write(
+                f"Provisioning operation {operation.operation_id}: preflight complete; beginning mutation\n"
+            )
+            sys.stderr.flush()
             operation.transition("mutating")
             try:
                 result = function(*args, **kwargs)
             except BaseException as exc:
-                _rollback_owned_cluster(
-                    operation,
-                    project_alias=alias,
-                    context=context,
-                    terraform_dir=bound.arguments.get("terraform_dir"),
-                    kubeconfig=bound.arguments.get("kubeconfig"),
-                    timeout=int(bound.arguments.get("timeout") or 120),
-                )
-                if operation.read().get("phase") != "recovery-required":
-                    if operation.read().get("phase") not in {
-                        "rolled-back",
-                        "rollback-incomplete",
-                    }:
-                        operation.transition(
-                            "recovery-required",
-                            error=str(exc),
-                            details={"error_type": type(exc).__name__},
-                        )
+                operation.record_failure(exc)
+                if str(operation.read().get("phase") or "") not in {
+                    "rolled-back",
+                    "destroyed",
+                }:
+                    operation.transition("recovery-required")
+                    _rollback_owned_cluster(
+                        operation,
+                        project_alias=alias,
+                        context=context,
+                        terraform_dir=bound.arguments.get("terraform_dir"),
+                        kubeconfig=bound.arguments.get("kubeconfig"),
+                        timeout=int(bound.arguments.get("timeout") or 120),
+                    )
                 sys.stderr.write(emit_recovery_summary(operation) + "\n")
                 raise
             if result.status == "partial":
+                operation.transition(
+                    "recovery-required",
+                    error="; ".join(result.warnings) or "provisioning returned partial",
+                    details={"error_type": "PartialProvisioningError"},
+                )
                 rolled_back = _rollback_owned_cluster(
                     operation,
                     project_alias=alias,
@@ -234,14 +239,6 @@ def _transactional_provision(function):
                 if rolled_back:
                     result.actions.append(
                         "rollback:removed only cluster resources created by this operation"
-                    )
-                elif operation.read().get("phase") not in {
-                    "rolled-back",
-                    "rollback-incomplete",
-                }:
-                    operation.transition(
-                        "recovery-required",
-                        error="; ".join(result.warnings),
                     )
             else:
                 phase = str(operation.read().get("phase") or "")
@@ -283,6 +280,7 @@ def provision_if_absent(
     gpu_readiness_timeout: float = 600.0,
     gpu_readiness_poll_interval: float = 10.0,
     sky_bin: str = "",
+    agent_exists: bool = False,
     output_format: str = "text",
     _resolved_plan=None,
 ) -> ProvisionIfAbsentResult:
@@ -310,6 +308,7 @@ def provision_if_absent(
         gpu_platform=gpu_platform,
         gpu_preset=gpu_preset,
         preemptible=preemptible,
+        agent_exists=agent_exists,
     )
     topology = plan.topology
     gpu_nodes = topology.gpu_nodes
@@ -463,7 +462,7 @@ def provision_if_absent(
 
     requested_accelerator = str(accelerator or "").strip()
     if requested_accelerator and k8s_ready and not skip_k8s and not dry_run:
-        from npa.controller_ownership import verify_controller_owner
+        from npa.controller_ownership import ensure_controller_owner
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
             KubernetesGpuCatalogError,
             wait_for_kubernetes_accelerators,
@@ -472,7 +471,10 @@ def provision_if_absent(
         previous_kubeconfig = os.environ.get("KUBECONFIG")
         os.environ["KUBECONFIG"] = str(kubeconfig_path)
         try:
-            verify_controller_owner(alias, context)
+            owner = ensure_controller_owner(alias, context)
+            actions.append(
+                f"controller:bound {owner.project_alias}/{owner.context}/{owner.cluster_id}"
+            )
 
             def report_gpu_status(message: str) -> None:
                 actions.append(f"gpu:{message}")
@@ -490,7 +492,7 @@ def provision_if_absent(
                 poll_interval=gpu_readiness_poll_interval,
                 on_status=report_gpu_status,
             )
-        except (KubernetesGpuCatalogError, ValueError) as exc:
+        except (KubernetesGpuCatalogError, RuntimeError, ValueError) as exc:
             gpu_readiness = "timeout"
             warnings.append(str(exc))
             operation = current_operation()
@@ -556,6 +558,7 @@ def _build_provision_plan(
     gpu_platform: str,
     gpu_preset: str,
     preemptible: bool | None,
+    agent_exists: bool = False,
 ):
     from npa.provisioning_preflight import (
         build_whole_path_plan,
@@ -567,6 +570,7 @@ def _build_provision_plan(
     requested = resolve_topology(
         cluster_name=cluster_name,
         accelerator=accelerator,
+        agent_exists=agent_exists,
         cpu_nodes=0 if skip_k8s else cpu_nodes,
         gpu_nodes=0 if skip_k8s else gpu_nodes,
         cpu_platform=cpu_platform,
@@ -593,9 +597,23 @@ def _build_provision_plan(
         existing_cpu_nodes = min(requested.cpu_nodes, existing.cpu_nodes)
         existing_gpu_nodes = min(requested.gpu_nodes, existing.gpu_nodes)
         checks.append(existing.check)
+    if accelerator and not skip_k8s:
+        from npa.controller_ownership import controller_preflight
+
+        owner_status, owner_reason = controller_preflight(alias, context)
+        from npa.provisioning_preflight import PreflightCheck
+
+        checks.append(
+            PreflightCheck(
+                name="controller_ownership",
+                status=owner_status,
+                reason=owner_reason,
+            )
+        )
     topology = resolve_topology(
         cluster_name=cluster_name,
         accelerator=accelerator,
+        agent_exists=agent_exists,
         cpu_nodes=requested.cpu_nodes,
         gpu_nodes=requested.gpu_nodes,
         existing_cpu_nodes=existing_cpu_nodes,
@@ -687,6 +705,8 @@ def _rollback_owned_cluster(
     """Roll back only a cluster explicitly receipted as created by this operation."""
 
     payload = operation.read()
+    if str(payload.get("phase") or "") == "rolled-back":
+        return True
     owned = [
         item
         for item in payload.get("resources", [])
@@ -695,7 +715,29 @@ def _rollback_owned_cluster(
         and item.get("resource_type") == "managed_kubernetes_cluster"
     ]
     if not owned:
+        operation.record_rollback(
+            attempted=False,
+            completed=False,
+            removed=[],
+            preserved=list(payload.get("resources") or []),
+        )
         return False
+    terraform_owned = [
+        item
+        for item in payload.get("resources", [])
+        if isinstance(item, dict)
+        and item.get("ownership") == "created_by_this_operation"
+        and str(item.get("ownership_source") or "").startswith("terraform")
+    ]
+    preserved = [
+        item for item in payload.get("resources", []) if item not in terraform_owned
+    ]
+    operation.record_rollback(
+        attempted=True,
+        completed=False,
+        removed=[],
+        preserved=list(payload.get("resources") or []),
+    )
     operation.transition("rolling-back")
     try:
         from npa.cli.cluster.terraform_lifecycle import down_cmd
@@ -716,8 +758,33 @@ def _rollback_owned_cluster(
             output_json=False,
         )
     except BaseException as exc:
+        operation.record_rollback(
+            attempted=True,
+            completed=False,
+            removed=[],
+            preserved=list(payload.get("resources") or []),
+            error=str(exc),
+        )
         operation.transition("rollback-incomplete", error=str(exc))
         return False
+    try:
+        from npa.controller_ownership import clear_controller_owner
+
+        clear_controller_owner(
+            project_id=str(payload.get("project_id") or ""),
+            cluster_id=str(owned[0].get("provider_id") or ""),
+            context=context,
+        )
+    except (OSError, RuntimeError, ValueError):
+        # cluster down succeeded; a non-matching/unavailable owner is preserved
+        # for explicit reconciliation and is never cleared by alias alone.
+        pass
+    operation.record_rollback(
+        attempted=True,
+        completed=True,
+        removed=terraform_owned,
+        preserved=preserved,
+    )
     operation.transition("rolled-back")
     return True
 

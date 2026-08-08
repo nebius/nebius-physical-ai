@@ -232,6 +232,74 @@ def test_controller_owner_is_global_and_alias_rename_keeps_immutable_identity(
     assert controller_owner() is None
 
 
+def test_controller_binding_rejects_cluster_from_rolled_back_attempt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa import controller_ownership as ownership
+    from npa.clients import config
+    from npa.cluster import state as cluster_state
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "prod",
+                "projects": {
+                    "prod": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "region-a",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(ownership, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cluster_state, "CLUSTERS_DIR", tmp_path / "clusters")
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    cluster_state.save_cluster_state(
+        cluster_state.ClusterState(
+            name="gpu",
+            cluster_id="cluster-dead",
+            project_id="project-a",
+            region="region-a",
+            node_count=1,
+            node_platform="gpu-rtx6000",
+            node_preset="1gpu-24vcpu-218gb",
+            k8s_version="1.31",
+            subnet_id="subnet-a",
+            created_at="2026-08-08T00:00:00Z",
+        )
+    )
+    operation = ProvisioningOperation.prepare(
+        command="npa provision-if-absent",
+        project_alias="prod",
+        project_id="project-a",
+        resource_type="cluster",
+        requested_name="gpu",
+        resume_command="npa provision-if-absent --project prod",
+    )
+    operation.transition("mutating")
+    operation.record_resource(
+        resource_type="managed_kubernetes_cluster",
+        requested_name="gpu",
+        provider_id="cluster-dead",
+        project_id="project-a",
+        ownership="created_by_this_operation",
+        ownership_source="terraform-output",
+    )
+    operation.record_failure("apply failed")
+    operation.transition("rolled-back")
+
+    candidate = ownership.resolve_controller_candidate("prod", "gpu")
+    assert candidate.operation_id == operation.operation_id
+    with pytest.raises(ClusterOwnerIdentityMismatchError, match="rolled-back"):
+        ownership.verify_live_controller_candidate(candidate)
+    assert ownership.controller_owner() is None
+
+
 def test_pdb_conflicts_refetch_and_stop_without_deleting_replacement() -> None:
     blocker = DisruptionBlocker(
         namespace="kube-system",
@@ -479,6 +547,35 @@ def test_project_destroy_continues_independent_work_but_preserves_dependencies(
     assert statuses["forget_alias"] == "skipped_dependency"
 
 
+def test_internal_project_destroy_uses_active_interpreter_without_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from npa import project_destroy
+
+    seen: list[list[str]] = []
+
+    def run(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        seen.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(project_destroy.subprocess, "run", run)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    completed = project_destroy._run(("npa", "--version"), run)
+
+    assert completed.returncode == 0
+    expected = [
+        sys.executable,
+        "-m",
+        "npa",
+        "--version",
+    ]
+    assert seen == [expected]
+    assert project_destroy._internal_command_argv(("npa", "--version")) == expected
+
+
 def test_project_destroy_skips_not_submitted_workflow_cancellation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -525,6 +622,64 @@ def test_project_destroy_skips_not_submitted_workflow_cancellation(
 
     assert result["status"] == "success"
     assert commands == [["npa", "workflow-list"]]
+
+
+def test_remote_controller_absence_allows_safe_downstream_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.clients import config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "demo",
+                "projects": {"demo": {"project_id": "project-a"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    phases = [
+        DestroyPhase("workflows", (), "none"),
+        DestroyPhase(
+            "controller", (("npa", "controller"),), "controller", ("workflows",)
+        ),
+        DestroyPhase(
+            "clusters", (("npa", "cluster"),), "cluster", ("controller",)
+        ),
+        DestroyPhase("bucket", (("npa", "bucket"),), "bucket", ("clusters",)),
+    ]
+    commands: list[str] = []
+
+    def runner(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        commands.append(cmd[1])
+        if cmd[1] == "controller":
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps(
+                    {
+                        "outcome": "degraded_local_metadata",
+                        "remote_absence_verified": True,
+                    }
+                ),
+                stderr="stale local row",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    result = execute_project_destroy("demo", phases, runner=runner)
+
+    assert commands == ["controller", "cluster", "bucket"]
+    statuses = {item["phase"]: item["status"] for item in result["phases"]}
+    assert statuses == {
+        "workflows": "completed",
+        "controller": "degraded",
+        "clusters": "completed",
+        "bucket": "completed",
+    }
+    assert result["status"] == "partial"
 
 
 def test_full_mocked_project_lifecycle_is_exact_isolated_and_idempotent(
@@ -641,6 +796,55 @@ def test_full_mocked_project_lifecycle_is_exact_isolated_and_idempotent(
     )
     cluster_state.save_cluster_state(target_cluster)
     cluster_state.save_cluster_state(unrelated_cluster)
+    failed_cluster = ProvisioningOperation.prepare(
+        command="npa provision-if-absent",
+        project_alias="target",
+        project_id="project-target",
+        tenant_id="tenant-target",
+        region="eu-test1",
+        resource_type="cluster",
+        requested_name="cluster-target",
+        resume_command="npa provision-if-absent --project target",
+    )
+    failed_cluster.transition("mutating")
+    failed_cluster.record_resource(
+        resource_type="managed_kubernetes_cluster",
+        requested_name="cluster-target",
+        provider_id="cluster-first-failed-id",
+        project_id="project-target",
+        ownership="created_by_this_operation",
+        ownership_source="terraform-output",
+    )
+    failed_cluster.record_failure("simulated first apply failure")
+    failed_cluster.record_rollback(
+        attempted=True,
+        completed=True,
+        removed=failed_cluster.read()["resources"],
+        preserved=[],
+    )
+    failed_cluster.transition("rolled-back")
+    retry_cluster = ProvisioningOperation.prepare(
+        command="npa provision-if-absent",
+        project_alias="target",
+        project_id="project-target",
+        tenant_id="tenant-target",
+        region="eu-test1",
+        resource_type="cluster",
+        requested_name="cluster-target",
+        resume_command="npa provision-if-absent --project target",
+    )
+    retry_cluster.transition("mutating")
+    retry_cluster.record_resource(
+        resource_type="managed_kubernetes_cluster",
+        requested_name="cluster-target",
+        provider_id="cluster-target-id",
+        project_id="project-target",
+        ownership="created_by_this_operation",
+        ownership_source="terraform-output",
+    )
+    retry_cluster.transition("state-durable")
+    retry_cluster.commit()
+    assert retry_cluster.operation_id.endswith("-r1")
     bind_controller_owner(
         ControllerOwner(
             project_alias="target",
@@ -721,8 +925,9 @@ def test_full_mocked_project_lifecycle_is_exact_isolated_and_idempotent(
             assert command[command.index("--cluster-id") + 1] == "cluster-target-id"
             provider["controllers"].discard("cluster-target-id")
         elif command[1:3] == ["cluster", "down"]:
-            assert command[command.index("--cluster-id") + 1] == "cluster-target-id"
-            provider["clusters"].discard("cluster-target-id")
+            target_id = command[command.index("--cluster-id") + 1]
+            assert target_id in {"cluster-first-failed-id", "cluster-target-id"}
+            provider["clusters"].discard(target_id)
             cluster_state.state_file("cluster-target").unlink(missing_ok=True)
         elif command[1:4] == ["storage", "bucket", "delete"]:
             assert command[command.index("--name") + 1] == "bucket-target"

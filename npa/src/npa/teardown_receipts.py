@@ -298,6 +298,7 @@ def _merge_identity(
                             key
                             for key in (
                                 "agent_name",
+                                "cluster_id",
                                 "context",
                                 "run_id",
                                 "operation_id",
@@ -376,7 +377,12 @@ def _root_identity(
         )
     elif phase == "storage_iam":
         collection = "storage_iam"
-        resource_fields = ("service_account_id", "ownership")
+        resource_fields = (
+            "service_account_id",
+            "service_account_name",
+            "ownership",
+            "iam_key_ids",
+        )
     scoped = {
         key: root.pop(key)
         for key in resource_fields
@@ -385,7 +391,10 @@ def _root_identity(
     if collection in {"agents", "clusters", "workflows"} and scoped:
         identity_key = {
             "agents": "agent_name",
-            "clusters": "context",
+            # One context may have several immutable IDs across failed/retried
+            # attempts.  Preserve each ID independently instead of treating
+            # audit history as an immutable-context conflict.
+            "clusters": "cluster_id",
             "workflows": "run_id",
         }[collection]
         scoped.setdefault(identity_key, resource)

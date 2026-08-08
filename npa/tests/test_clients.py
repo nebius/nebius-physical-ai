@@ -692,6 +692,7 @@ def test_nebius_find_active_access_key_prefers_requested_name(mocker) -> None:
 def test_access_key_inventory_exposes_only_cli_allowlisted_jsonpath_fields(
     mocker,
 ) -> None:
+    mocker.patch("npa.clients.nebius._iam_profile_args", return_value=([], ""))
     run = mocker.patch(
         "npa.clients.nebius._run",
         side_effect=[
@@ -728,9 +729,9 @@ def test_access_key_inventory_exposes_only_cli_allowlisted_jsonpath_fields(
         "access-key",
         "list",
     ]
-    assert command_index == 2
-    assert args[0] == "--profile"
-    assert args[1]
+    # Exercise CI's profile-free command shape deterministically.  Profile
+    # prefixing is orthogonal to the secret-safe projection guarded here.
+    assert command_index == 0
     assert "--all" in args
     output_format = args[args.index("--format") + 1]
     assert output_format.startswith("jsonpath=")

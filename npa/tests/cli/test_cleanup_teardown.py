@@ -779,6 +779,96 @@ def test_agent_iam_purge_fails_closed_when_provider_inventory_is_forbidden(
     )
 
 
+def test_agent_iam_schema_invalid_inventory_uses_exact_terminal_graph_receipt(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli.agent_iam import report_agent_iam
+    from npa.clients import nebius as nebius_module
+    from npa.teardown_receipts import record_teardown_event
+
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    deleted = _iam_stubs(monkeypatch)
+    monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
+    monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_args: True)
+    monkeypatch.setattr(nebius_module, "_run_json", lambda *_a, **_k: {"items": {}})
+    record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_deleted",
+        project_alias="prod",
+        project_id="project-a",
+        identity={
+            "project_alias": "prod",
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-agent",
+            "service_account_id": "serviceaccount-agent",
+        },
+        verification={
+            "terraform_destroy_completed": True,
+            "terraform_dependency_graph": [
+                "compute_instance",
+                "boot_disk",
+                "network",
+                "subnet",
+                "security_group",
+                "public_ip",
+            ],
+            "exact_instance_absent": True,
+        },
+    )
+    lines: list[str] = []
+
+    reported = report_agent_iam(
+        project_id="project-a",
+        remaining_agents=0,
+        purge=True,
+        on_status=lines.append,
+    )
+
+    assert deleted == ["accesskey-1", "serviceaccount-agent"]
+    assert len(reported) == 2
+
+
+def test_agent_iam_vm_not_found_receipt_does_not_prove_dependency_graph(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli.agent_iam import report_agent_iam
+    from npa.clients import nebius as nebius_module
+    from npa.teardown_receipts import record_teardown_event
+
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    deleted = _iam_stubs(monkeypatch)
+    monkeypatch.setattr("npa.cli.agent_iam.agent_iam_owned", lambda *_args: True)
+    monkeypatch.setattr(nebius_module, "_run_json", lambda *_a, **_k: {"items": {}})
+    record_teardown_event(
+        phase="agent",
+        resource="agent",
+        terminal_state="verified_absent",
+        project_alias="prod",
+        project_id="project-a",
+        identity={
+            "project_alias": "prod",
+            "project_id": "project-a",
+            "agent_name": "agent",
+            "instance_id": "instance-agent",
+            "service_account_id": "serviceaccount-agent",
+        },
+        verification={"exact_instance_absent": True},
+    )
+    lines: list[str] = []
+
+    report_agent_iam(
+        project_id="project-a",
+        remaining_agents=0,
+        purge=True,
+        on_status=lines.append,
+    )
+
+    assert deleted == []
+    assert any("exact receipt fallback" in line for line in lines)
+
+
 def test_agent_destroy_keep_iam_names_the_delete_commands(
     monkeypatch, tmp_path: Path
 ) -> None:

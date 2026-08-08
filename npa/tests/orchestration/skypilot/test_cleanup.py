@@ -860,6 +860,70 @@ def test_every_unreadable_queue_shape_is_explicit(
         )
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr"),
+    [
+        (0, "No in-progress managed jobs.\n", ""),
+        (1, "", "No in-progress managed jobs.\n"),
+        (0, "No in-progress managed jobs found.\n", ""),
+        (1, "", "No in-progress managed jobs found\n"),
+    ],
+)
+def test_pinned_sky_empty_queue_diagnostic_is_verified_absence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, returncode, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    snapshot = cleanup_module._all_jobs(
+        isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
+    )
+
+    assert snapshot.state == "verified_empty"
+    assert snapshot.jobs == ()
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr"),
+    [
+        (1, "No in-progress managed jobs.\n", "permission denied"),
+        (2, "No in-progress managed jobs.\n", ""),
+        (1, "warning: No in-progress managed jobs. retry failed", ""),
+        (0, "No in-progress managed jobs.\n[]", ""),
+    ],
+)
+def test_empty_queue_words_do_not_mask_adversarial_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, returncode, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    with pytest.raises(cleanup_module.JobQueueUnreadableError):
+        cleanup_module._all_jobs(
+            isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
+        )
+
+
 def test_queue_timeout_is_unreadable_not_empty(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

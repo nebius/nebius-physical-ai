@@ -220,6 +220,11 @@ npa provision-if-absent --project "$PROJECT" --cluster-name "$CONTEXT" \
   --gpu-nodes 1 --gpu-platform gpu-rtx6000 \
   --gpu-preset 1gpu-24vcpu-218gb --on-demand \
   --accelerator RTXPRO6000:1 --gpu-readiness-timeout 900
+# The accelerator-gated provisioning transaction verifies the exact
+# project/context/provider cluster identity and atomically binds the shared
+# jobs-controller owner before waiting for GPU readiness. No separate bind is
+# needed, and an incompatible/stale owner fails the earlier dry-run/preflight
+# before Terraform or source staging.
 
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --registry "$REGISTRY" \
@@ -637,10 +642,14 @@ Authentication, RBAC, connectivity, stale, mismatched, or ambiguous identity
 preserves local state for an exact retry; an unrelated current context or stale
 SkyPilot profile is never a fallback.
 
-The shared controller also has one global immutable owner. Bind it explicitly
-with `npa skypilot bind-controller --project <alias> --context <context>` (or
-pass `--bind-controller` on the first workflow submission). Cross-project use is
-refused. `--rebind` is allowed only after the managed-job queue is proven
+The shared controller also has one global immutable owner. The core
+accelerator-gated `provision-if-absent` transaction binds it automatically,
+after the exact project/context/provider cluster identity is durable and before
+GPU readiness or submission. `npa skypilot bind-controller --project <alias>
+--context <context>` is therefore only for adopting an already-live cluster
+outside that core flow. It performs the same provider identity checks and
+rejects missing, destroyed, rolled-back, or replaced clusters. Cross-project
+use is refused. `--rebind` is allowed only after the managed-job queue is proven
 terminal; changing an alias for the same project/cluster IDs is not a rebind.
 When an agent fails before its final config record is written, `npa agent status
 --project <alias> --name <name> --json` reads the operation journal instead. It

@@ -865,6 +865,49 @@ def submit_cmd(
             enabled=preflight_images and not plan_only,
             infra=infra,
         )
+        if not plan_only:
+            # Establish the exact run and current-schema no-launch evidence
+            # before PAIDF input/source staging or deployIfAbsent can mutate
+            # storage/paid infrastructure. Status can therefore prove
+            # NOT_SUBMITTED locally if any later prerequisite fails.
+            try:
+                persisted_identity = prepare_run(
+                    project=project,
+                    workflow_identity=workflow_identity,
+                    resume_run=resolved_run_id if resume else "",
+                    new_run_id="" if resume else resolved_run_id,
+                    persist=True,
+                )
+                from npa.orchestration.npa_workflow.submission_state import (
+                    update_submission_state,
+                )
+
+                update_submission_state(
+                    project or "default",
+                    resolved_run_id,
+                    {
+                        "launch_state": "planned",
+                        "workflow": {
+                            "name": workflow_identity,
+                            "kind": "npa.workflow/v0.0.1",
+                        },
+                        "planning": {
+                            "state": "durable",
+                            "source_action": source_action,
+                            "input_action": "planned" if is_paidf_spec else "not-required",
+                            "infra_context": infra_context,
+                        },
+                    },
+                )
+            except Exception as exc:
+                _fail(f"could not persist pre-mutation submission ledger: {exc}")
+                return
+            if output_format != OutputFormat.json:
+                typer.echo(
+                    f"Run planning ledger persisted before mutation: "
+                    f"{persisted_identity.state_path}",
+                    err=True,
+                )
         # Validate and stage the selected PAIDF input before staging the NPA
         # source. Invalid media, inaccessible input, and provenance conflicts
         # therefore leave no source upload or run/controller state. The PAIDF
@@ -948,26 +991,6 @@ def submit_cmd(
                 return
             os.environ["NPA_SRC_S3_URI"] = staged_uri
             source_action = "reused" if staged_uri == existing_source_uri else "staged"
-        if not plan_only:
-            # This is the first durable run-specific write.  Source/input upload
-            # failures and every whole-path preflight blocker return above it.
-            try:
-                persisted_identity = prepare_run(
-                    project=project,
-                    workflow_identity=workflow_identity,
-                    resume_run=resolved_run_id if resume else "",
-                    new_run_id="" if resume else resolved_run_id,
-                    persist=True,
-                )
-            except Exception as exc:
-                _fail(str(exc))
-                return
-            if output_format != OutputFormat.json:
-                typer.echo(
-                    f"Run identity persisted after green preflight: "
-                    f"{persisted_identity.state_path}",
-                    err=True,
-                )
         _warn_placeholder_bucket(spec_config, quiet=output_format == OutputFormat.json)
         image_overrides: dict[str, str] = {}
         # ``none`` / ``default`` clears workbench image pins so tasks use the

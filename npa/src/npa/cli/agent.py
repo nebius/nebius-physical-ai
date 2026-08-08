@@ -3788,6 +3788,7 @@ def _agent_k8s_backends(project: str = "") -> dict:
         ),
         "agent_npa_ready": ready,
         "agent_npa_error": reason,
+        "agent_exists": _configured_healthy_agent_exists(alias, config),
         "terraform_dir": str(NPA_CLUSTER_TERRAFORM_DIR),
         "options": [
             "POST /api/infra/provision to let the agent create the minimal Kubernetes backend.",
@@ -3795,6 +3796,32 @@ def _agent_k8s_backends(project: str = "") -> dict:
             "Pass project/cluster_name in the workflow submit payload to target a known backend.",
         ],
     }}
+
+
+def _configured_healthy_agent_exists(alias: str, config: dict | None = None) -> bool:
+    # True only for this running agent's exact configured project record.
+    payload = config if isinstance(config, dict) else _load_agent_config_yaml()
+    projects = payload.get("projects") if isinstance(payload, dict) else {{}}
+    project = projects.get(alias) if isinstance(projects, dict) else {{}}
+    if not isinstance(project, dict):
+        return False
+    project_id = str(project.get("project_id") or "").strip()
+    runtime_project_id = str(os.environ.get("NPA_PROJECT_ID") or "").strip()
+    if not project_id or project_id != runtime_project_id:
+        return False
+    agents = project.get("agents")
+    if not isinstance(agents, dict):
+        return False
+    runtime_agent_name = str(os.environ.get("NPA_AGENT_NAME") or "agent").strip()
+    record = agents.get(runtime_agent_name)
+    if not isinstance(record, dict):
+        return False
+    ready, _reason = _agent_npa_ready()
+    return bool(
+        ready
+        and str(record.get("project_id") or project_id).strip() == project_id
+        and str(record.get("public_ip") or "").strip()
+    )
 
 
 def _agent_command_env() -> dict:
@@ -4277,6 +4304,7 @@ def _provision_agent_infra(
             validate=validate,
             sky_smoke=False,
             dry_run=dry_run,
+            agent_exists=_configured_healthy_agent_exists(project),
         )
         payload = result.to_dict()
         payload["ok"] = True

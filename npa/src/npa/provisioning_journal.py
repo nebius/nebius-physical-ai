@@ -22,7 +22,9 @@ import os
 from pathlib import Path
 import re
 import shlex
+import sys
 import tempfile
+import time
 from typing import Any
 
 
@@ -296,7 +298,28 @@ def _locked_execution(operation_id: str) -> Iterator[None]:
             raise OperationJournalError(f"operation lock {lock_path} is a symlink")
         with lock_path.open("a+", encoding="utf-8") as lock:
             os.fchmod(lock.fileno(), 0o600)
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            announced_at = 0.0
+            while True:
+                try:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    now = time.monotonic()
+                    if not announced_at or now - announced_at >= 10.0:
+                        message = (
+                            f"Provisioning operation {operation_id}: waiting for the "
+                            "same operation's execution lock; no mutation is running in "
+                            "this process yet"
+                        )
+                        print(message, file=sys.stderr, flush=True)
+                        try:
+                            ProvisioningOperation(operation_id).heartbeat(
+                                details={"wait_reason": "execution_lock"}
+                            )
+                        except OperationJournalError:
+                            pass
+                        announced_at = now
+                    time.sleep(0.25)
             yield
     except OSError as exc:
         raise OperationJournalError(
@@ -607,13 +630,93 @@ class ProvisioningOperation:
             payload["updated_at"] = now
             payload["heartbeat_at"] = now
             payload["owner_pid"] = os.getpid()
-            if cleaned in TERMINAL_PHASES:
+            if cleaned == "committed":
                 payload["lifecycle"] = "succeeded"
+                payload["result"] = "succeeded"
+            elif cleaned == "destroyed":
+                payload["lifecycle"] = "succeeded"
+                payload["result"] = "destroyed"
+            elif cleaned == "rolled-back":
+                payload["lifecycle"] = "failed"
+                payload["result"] = "rolled_back"
             elif cleaned in {"recovery-required", "rollback-incomplete"}:
                 payload["lifecycle"] = "failed"
+                payload["result"] = "failed"
             else:
-                payload["lifecycle"] = "running"
+                payload["lifecycle"] = (
+                    "failed" if payload.get("last_error") else "running"
+                )
             payload.setdefault("events", []).append(event)
+            _write_atomic(self.path, payload)
+
+    def record_rollback(
+        self,
+        *,
+        attempted: bool,
+        completed: bool,
+        removed: Sequence[Mapping[str, Any]],
+        preserved: Sequence[Mapping[str, Any]],
+        error: str = "",
+    ) -> None:
+        """Persist rollback outcome separately from command success/failure."""
+
+        def resource_identity(item: Mapping[str, Any]) -> dict[str, str]:
+            return {
+                key: str(item.get(key) or "")
+                for key in (
+                    "resource_type",
+                    "provider_id",
+                    "requested_name",
+                    "project_id",
+                    "ownership",
+                    "ownership_source",
+                )
+                if str(item.get(key) or "")
+            }
+
+        with _locked_operation(self.operation_id):
+            payload = _read_unlocked(self.path)
+            payload["rollback"] = {
+                "attempted": bool(attempted),
+                "completed": bool(completed),
+                "resources_removed": [resource_identity(item) for item in removed],
+                "resources_preserved": [
+                    resource_identity(item) for item in preserved
+                ],
+                "error": str(_sanitize(error)) if error else "",
+                "updated_at": utc_now(),
+            }
+            payload["updated_at"] = utc_now()
+            _write_atomic(self.path, payload)
+
+    def record_failure(self, error: BaseException | str, *, error_type: str = "") -> None:
+        """Persist the primary failure without changing or reopening its phase."""
+
+        message = str(error or "provisioning failed")
+        kind = error_type or (
+            type(error).__name__ if isinstance(error, BaseException) else "ProvisioningError"
+        )
+        now = utc_now()
+        with _locked_operation(self.operation_id):
+            payload = _read_unlocked(self.path)
+            payload["last_error"] = str(_sanitize(message))
+            payload["last_error_type"] = str(_sanitize(kind))
+            payload["lifecycle"] = "failed"
+            payload["result"] = (
+                "rolled_back"
+                if str(payload.get("phase") or "") == "rolled-back"
+                else "failed"
+            )
+            payload["updated_at"] = now
+            payload.setdefault("events", []).append(
+                {
+                    "phase": str(payload.get("phase") or "prepared"),
+                    "lifecycle": "failed",
+                    "error_type": str(_sanitize(kind)),
+                    "error": str(_sanitize(message)),
+                    "recorded_at": now,
+                }
+            )
             _write_atomic(self.path, payload)
 
     def heartbeat(self, *, details: Mapping[str, Any] | None = None) -> None:
@@ -973,6 +1076,8 @@ class ProvisioningOperation:
             "destroy_argv": list(commands.get("destroy_argv") or []),
             "last_error_type": payload.get("last_error_type", ""),
             "last_error": payload.get("last_error", ""),
+            "result": payload.get("result", ""),
+            "rollback": dict(payload.get("rollback") or {}),
             "resources": list(payload.get("resources") or []),
         }
 
@@ -1122,6 +1227,20 @@ def emit_recovery_summary(
             f"Preserved local Terraform state: {states}\n"
             f"Resume: {summary['resume_command']}"
         )
+        if summary.get("last_error"):
+            rendered += (
+                "\nPrimary failure: "
+                f"{summary.get('last_error_type') or 'ProvisioningError'}: "
+                f"{summary['last_error']}"
+            )
+        rollback = summary.get("rollback") or {}
+        if rollback:
+            rendered += (
+                "\nRollback: attempted="
+                f"{bool(rollback.get('attempted'))}, completed="
+                f"{bool(rollback.get('completed'))}, resources_removed="
+                f"{len(rollback.get('resources_removed') or [])}"
+            )
         if summary.get("destroy_command"):
             rendered += f"\nDestroy: {summary['destroy_command']}"
     return rendered

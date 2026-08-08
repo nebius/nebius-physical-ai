@@ -2315,6 +2315,17 @@ def test_bootstrap_recordings_api_in_system_prompt() -> None:
     assert "available .rrd recording" in source
 
 
+def test_agent_dry_run_counts_only_its_exact_healthy_project_record() -> None:
+    source = _agent_source()
+
+    assert 'runtime_agent_name = str(os.environ.get("NPA_AGENT_NAME") or "agent")' in source
+    assert "record = agents.get(runtime_agent_name)" in source
+    assert "project_id != runtime_project_id" in source
+    assert "any(" not in source.split(
+        "def _configured_healthy_agent_exists", 1
+    )[1].split("def _agent_command_env", 1)[0]
+
+
 def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
 
     source = _agent_source()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import subprocess
+import sys
 from typing import Any, Callable
 
 from npa.clients.json_output import parse_single_json_document
@@ -89,6 +90,34 @@ def build_project_destroy_plan(
                 "--json",
             ),
         )
+    cluster_targets: dict[tuple[str, str], str] = {
+        (cluster.name, cluster.cluster_id): ""
+        for cluster in list_local_clusters()
+        if cluster.project_id == project_id and cluster.cluster_id
+    }
+    # Retries intentionally produce a new operation and may receive a different
+    # immutable cluster ID for the same context.  Inventory every attempt; a
+    # destroyed historical ID is harmless audit evidence, while collapsing by
+    # context would either forget it or deadlock it against the newer ID.
+    for operation in list_operations(
+        project_alias=project, project_id=project_id, resource_type="cluster"
+    ):
+        payload = operation.read()
+        context = str(payload.get("requested_name") or "").strip()
+        for resource in payload.get("resources") or []:
+            if not isinstance(resource, dict):
+                continue
+            cluster_id = str(resource.get("provider_id") or "").strip()
+            resource_project = str(resource.get("project_id") or project_id).strip()
+            if (
+                resource.get("resource_type") == "managed_kubernetes_cluster"
+                and context
+                and cluster_id
+                and resource_project == project_id
+            ):
+                cluster_targets.setdefault(
+                    (context, cluster_id), operation.operation_id
+                )
     cluster_commands = tuple(
         (
             "npa",
@@ -97,16 +126,20 @@ def build_project_destroy_plan(
             "--project",
             project,
             "--project-id",
-            cluster.project_id,
+            project_id,
             "--cluster-id",
-            cluster.cluster_id,
+            cluster_id,
             "--context",
-            cluster.name,
+            context,
+            *(
+                ("--operation-id", operation_id)
+                if operation_id
+                else ()
+            ),
             "--force",
             "--json",
         )
-        for cluster in list_local_clusters()
-        if cluster.project_id == project_id
+        for (context, cluster_id), operation_id in sorted(cluster_targets.items())
     )
     state = resolve_terraform_state(project)
     bucket_commands: tuple[tuple[str, ...], ...] = ()
@@ -224,9 +257,10 @@ def build_project_destroy_plan(
 
 
 def _run(command: tuple[str, ...], runner: Runner) -> subprocess.CompletedProcess[str]:
+    argv = _internal_command_argv(command) if runner is subprocess.run else list(command)
     try:
         return runner(
-            list(command),
+            argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -234,11 +268,25 @@ def _run(command: tuple[str, ...], runner: Runner) -> subprocess.CompletedProces
         )
     except OSError as exc:
         return subprocess.CompletedProcess(
-            list(command),
+            argv,
             127,
             stdout="",
             stderr=f"{type(exc).__name__}: NPA command could not be started",
         )
+
+
+def _internal_command_argv(command: tuple[str, ...]) -> list[str]:
+    """Invoke NPA with this process's interpreter, independent of ``PATH``.
+
+    Plans and recovery receipts intentionally retain the operator-facing
+    ``npa ...`` spelling.  Only in-process orchestration replaces that first
+    token, without a shell, so editable installs and console-entrypoint installs
+    execute the same imported package under the active environment.
+    """
+
+    if not command or command[0] != "npa":
+        return list(command)
+    return [sys.executable, "-m", "npa", *command[1:]]
 
 
 def execute_project_destroy(
@@ -265,12 +313,13 @@ def execute_project_destroy(
             on_phase(phase.name)
         commands = list(phase.commands)
         phase_errors: list[str] = []
+        phase_warnings: list[str] = []
         executed: list[list[str]] = []
         recovery_commands: list[list[str]] = []
         blocked_by = [
             dependency
             for dependency in phase.requires
-            if statuses.get(dependency) != "completed"
+            if statuses.get(dependency) not in {"completed", "degraded"}
         ]
         if blocked_by:
             phase_errors.append("dependency not converged: " + ", ".join(blocked_by))
@@ -327,12 +376,26 @@ def execute_project_destroy(
             for command in commands:
                 completed = _run(command, runner)
                 executed.append(list(command))
-                if completed.returncode != 0:
+                parsed = parse_single_json_document(completed.stdout or "")
+                remote_only_converged = bool(
+                    phase.name == "controller"
+                    and isinstance(parsed, dict)
+                    and parsed.get("outcome") == "degraded_local_metadata"
+                    and parsed.get("remote_absence_verified") is True
+                )
+                if remote_only_converged:
+                    phase_warnings.append(
+                        "exact remote controller absence verified; stale local "
+                        "metadata remains for idempotent reconciliation"
+                    )
+                elif completed.returncode != 0:
                     phase_errors.append(f"command failed (exit {completed.returncode})")
                     recovery_commands.append(list(command))
         phase_status = (
             "skipped_dependency"
             if blocked_by
+            else "degraded"
+            if phase_warnings and not phase_errors
             else "completed"
             if not phase_errors
             else "partial"
@@ -344,6 +407,7 @@ def execute_project_destroy(
                 "status": phase_status,
                 "commands": executed,
                 "errors": phase_errors,
+                "warnings": phase_warnings,
                 "recovery_commands": recovery_commands,
                 "blocked_by": blocked_by,
             }
@@ -354,12 +418,21 @@ def execute_project_destroy(
             record_teardown_event(
                 phase=f"project_destroy_{phase.name}",
                 resource=project,
-                terminal_state="completed" if not phase_errors else "partial",
+                terminal_state=(
+                    "degraded_local_metadata"
+                    if phase_warnings and not phase_errors
+                    else "completed"
+                    if not phase_errors
+                    else "partial"
+                ),
                 project_alias=project,
                 project_id=project_id,
                 precheck={"planned_command_count": len(commands)},
                 action={"kind": "npa_guarded_phase", "executed_count": len(executed)},
-                verification={"converged": not phase_errors},
+                verification={
+                    "converged": not phase_errors,
+                    "remote_absence_only": bool(phase_warnings),
+                },
                 errors=phase_errors,
             )
         except (OSError, RuntimeError, ValueError) as exc:

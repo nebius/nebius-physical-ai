@@ -47,8 +47,16 @@ def _successful_storage_probe(monkeypatch):
         lambda **_kwargs: ExistingCapacity(),
     )
     monkeypatch.setattr(
-        "npa.controller_ownership.verify_controller_owner",
-        lambda *_args, **_kwargs: None,
+        "npa.controller_ownership.ensure_controller_owner",
+        lambda *_args, **_kwargs: type(
+            "Owner",
+            (),
+            {
+                "project_alias": "proj",
+                "context": "npa-cluster",
+                "cluster_id": "cluster-1",
+            },
+        )(),
     )
 
 

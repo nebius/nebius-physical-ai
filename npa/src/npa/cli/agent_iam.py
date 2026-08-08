@@ -234,7 +234,6 @@ def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
     if sa_id:
         try:
             keys = list_access_keys_for_service_account(project_id, sa_id, strict=True)
-            dependents = _provider_agent_dependents(project_id, sa_id)
         except Exception as exc:  # noqa: BLE001 - fail closed and report exact blocker
             return {
                 "project_id": project_id,
@@ -246,6 +245,22 @@ def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
                 "inventory_error": str(exc),
                 "dependents": [],
             }
+        try:
+            dependents = _provider_agent_dependents(project_id, sa_id)
+        except Exception as exc:  # noqa: BLE001 - exact receipt fallback below
+            proof, proof_error = _receipt_proves_agent_graphs_absent(project_id, sa_id)
+            if not proof:
+                return {
+                    "project_id": project_id,
+                    "service_account_id": sa_id,
+                    "service_account_name": AGENT_SERVICE_ACCOUNT_NAME,
+                    "access_keys": keys,
+                    "owned_by_npa": agent_iam_owned(project_id, sa_id),
+                    "inventory_verified": False,
+                    "inventory_error": f"{exc}; exact receipt fallback: {proof_error}",
+                    "dependents": [],
+                }
+            dependents = []
     else:
         dependents = []
     return {
@@ -258,6 +273,76 @@ def agent_iam_leftovers(project_id: str) -> dict[str, Any]:
         "inventory_error": "",
         "dependents": dependents,
     }
+
+
+def _receipt_proves_agent_graphs_absent(
+    project_id: str, account_id: str
+) -> tuple[bool, str]:
+    """Use exact terminal Terraform-graph receipts when broad inventory is invalid.
+
+    This fallback never treats an empty/missing receipt set as absence.  Every
+    receipt agent tied to the selected NPA-created service account must have an
+    immutable instance ID and a terminal verified delete/absence event.  Those
+    events are written only after Terraform destroys the VM, disk, network,
+    subnet, security group and public-IP graph and an exact VM get returns
+    NotFound.
+    """
+
+    from npa.teardown_receipts import list_teardown_receipts
+
+    terminal = {"verified_absent", "verified_deleted", "deleted"}
+    candidates: set[tuple[str, str]] = set()
+    verified: set[tuple[str, str]] = set()
+    for receipt in list_teardown_receipts(project_id=project_id, legacy="exclude"):
+        identity = receipt.get("identity")
+        identity = identity if isinstance(identity, dict) else {}
+        for item in identity.get("agents") or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("service_account_id") or "") != account_id:
+                continue
+            name = str(item.get("agent_name") or "").strip()
+            instance_id = str(item.get("instance_id") or "").strip()
+            if name and instance_id:
+                candidates.add((name, instance_id))
+        for event in receipt.get("events") or []:
+            if not isinstance(event, dict) or event.get("phase") != "agent":
+                continue
+            event_identity = event.get("identity")
+            event_identity = event_identity if isinstance(event_identity, dict) else {}
+            if str(event_identity.get("service_account_id") or "") != account_id:
+                continue
+            name = str(
+                event_identity.get("agent_name") or event.get("resource") or ""
+            ).strip()
+            instance_id = str(event_identity.get("instance_id") or "").strip()
+            if (
+                name
+                and instance_id
+                and str(event.get("terminal_state") or "").lower() in terminal
+                and isinstance(event.get("verification"), dict)
+                and event["verification"].get("exact_instance_absent") is True
+                and event["verification"].get("terraform_destroy_completed") is True
+                and {
+                    "compute_instance",
+                    "boot_disk",
+                    "network",
+                    "subnet",
+                    "security_group",
+                    "public_ip",
+                }.issubset(
+                    set(event["verification"].get("terraform_dependency_graph") or [])
+                )
+            ):
+                verified.add((name, instance_id))
+    if not candidates:
+        return False, "no exact agent dependency graph is recorded"
+    missing = sorted(candidates - verified)
+    if missing:
+        return False, "non-terminal exact agent graph(s): " + ", ".join(
+            f"{name}/{instance_id}" for name, instance_id in missing
+        )
+    return True, "all exact receipt-recorded agent dependency graphs are absent"
 
 
 def _provider_agent_dependents(project_id: str, account_id: str) -> list[str]:

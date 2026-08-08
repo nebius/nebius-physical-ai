@@ -380,8 +380,17 @@ def cleanup_controller_cmd(
             "commands": [],
         }
     else:
+        remote_absence_verified = bool(
+            getattr(result, "remote_absence_verified", False)
+        )
         payload = {
-            "outcome": getattr(result, "outcome", "cleaned") if result.ok else "verification_failed",
+            "outcome": (
+                getattr(result, "outcome", "cleaned")
+                if result.ok
+                else "degraded_local_metadata"
+                if remote_absence_verified
+                else "verification_failed"
+            ),
             "resources_removed": result.resources_removed,
             "errors": result.errors,
             "commands": result.commands,
@@ -393,6 +402,7 @@ def cleanup_controller_cmd(
             "project_id": getattr(result, "project_id", project_id),
             "cluster_id": getattr(result, "cluster_id", cluster_id),
             "context": getattr(result, "context", context),
+            "remote_absence_verified": remote_absence_verified,
         }
     if payload["outcome"] in {"cleaned", "already_absent"} and (
         payload.get("project_alias") or payload.get("project_id")
@@ -407,7 +417,11 @@ def cleanup_controller_cmd(
                 context=str(payload.get("context") or ""),
             )
         except (OSError, RuntimeError, ValueError) as exc:
-            payload["outcome"] = "verification_failed"
+            payload["outcome"] = (
+                "degraded_local_metadata"
+                if payload.get("remote_absence_verified")
+                else "verification_failed"
+            )
             payload["errors"].append(
                 "controller cleanup succeeded but the exact local ownership record "
                 f"could not be cleared: {exc}"
@@ -421,7 +435,11 @@ def cleanup_controller_cmd(
                 "Removed SkyPilot controller state: "
                 + ", ".join(payload["resources_removed"])
             )
-        elif payload["outcome"] in {"cleaned", "already_absent"}:
+        elif payload["outcome"] in {
+            "cleaned",
+            "already_absent",
+            "degraded_local_metadata",
+        }:
             typer.echo("SkyPilot jobs controller is already absent; nothing to remove.")
         else:
             typer.echo("SkyPilot controller state could not be verified; nothing was removed.")
@@ -449,10 +467,13 @@ def bind_controller_cmd(
         ClusterOwnerIdentityMismatchError,
         bind_controller_owner,
         resolve_controller_candidate,
+        verify_live_controller_candidate,
     )
 
     try:
-        candidate = resolve_controller_candidate(project, context)
+        candidate = verify_live_controller_candidate(
+            resolve_controller_candidate(project, context)
+        )
         if rebind:
             from npa.orchestration.skypilot.cleanup import (
                 NONTERMINAL_JOB_STATUSES,

@@ -42,6 +42,7 @@ class _OwnedStorageServiceAccount:
     name: str
     project_id: str
     source: str
+    access_key_ids: tuple[str, ...] = ()
 
 
 class _BucketRow(TypedDict):
@@ -149,7 +150,7 @@ def list_buckets_cmd(
 
 
 def _storage_service_account_record(
-    *, account_id: str = "", project_id: str = ""
+    *, account_id: str = "", project_id: str = "", receipt_id: str = ""
 ) -> tuple[_OwnedStorageServiceAccount | None, str]:
     """Read the persisted ownership proof for NPA-created storage IAM.
 
@@ -164,17 +165,16 @@ def _storage_service_account_record(
     from npa.clients.credentials import CREDENTIALS_PATH
     from npa.clients.nebius import DEFAULT_SERVICE_ACCOUNT_NAME
 
-    if not CREDENTIALS_PATH.exists():
-        return None, "No trustworthy NPA storage IAM ownership record is present."
     try:
-        data = yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return None, (
-            "No trustworthy ownership decision can be made because the NPA "
-            "storage IAM record is unreadable."
+        data = (
+            yaml.safe_load(CREDENTIALS_PATH.read_text(encoding="utf-8")) or {}
+            if CREDENTIALS_PATH.exists()
+            else {}
         )
+    except (OSError, yaml.YAMLError):
+        data = {}
     if not isinstance(data, dict):
-        return None, "No trustworthy NPA storage IAM ownership record is present."
+        data = {}
 
     candidates: list[_OwnedStorageServiceAccount] = []
 
@@ -209,7 +209,21 @@ def _storage_service_account_record(
             and project_id
         ):
             candidates.append(
-                _OwnedStorageServiceAccount(account_id, name, project_id, source)
+                _OwnedStorageServiceAccount(
+                    account_id,
+                    name,
+                    project_id,
+                    source,
+                    tuple(
+                        sorted(
+                            str(item).strip()
+                            for item in record_data.get("iam_key_ids", [])
+                            if str(item).strip()
+                        )
+                    )
+                    if isinstance(record_data.get("iam_key_ids"), list)
+                    else (),
+                )
             )
 
     # A complete dedicated or legacy proof remains readable across upgrades.
@@ -251,6 +265,44 @@ def _storage_service_account_record(
                 },
                 f"storage setup journal for {journal_project}",
             )
+
+    if receipt_id:
+        try:
+            from npa.teardown_receipts import load_teardown_receipt
+
+            receipt_payload = load_teardown_receipt(receipt_id)
+            receipt_identity = receipt_payload.get("identity")
+            receipt_identity = (
+                receipt_identity if isinstance(receipt_identity, dict) else {}
+            )
+            receipt_storage = receipt_identity.get("storage_iam")
+            if isinstance(receipt_storage, dict):
+                _candidate(
+                    {
+                        "service_account_id": receipt_storage.get(
+                            "service_account_id"
+                        ),
+                        "service_account_name": receipt_storage.get(
+                            "service_account_name"
+                        )
+                        or DEFAULT_SERVICE_ACCOUNT_NAME,
+                        "service_account_project_id": receipt_storage.get(
+                            "project_id"
+                        )
+                        or receipt_payload.get("project_id"),
+                        "service_account_managed_by": (
+                            "npa"
+                            if receipt_storage.get("ownership") == "npa"
+                            else ""
+                        ),
+                        "iam_key_ids": receipt_storage.get("iam_key_ids") or [],
+                    },
+                    f"teardown receipt {receipt_id}",
+                )
+        except (OSError, RuntimeError, ValueError):
+            # The identity resolver reports malformed/missing selected receipts.
+            # A secondary ownership source must never turn that into permission.
+            pass
 
     selected_id = str(account_id or "").strip()
     selected_project = str(project_id or "").strip()
@@ -467,7 +519,10 @@ def _resolve_storage_iam_context(
             "project_alias": alias,
             "project_id": str(getattr(environment, "project_id", "") or ""),
             "tenant_id": str(getattr(environment, "tenant_id", "") or ""),
-            "profile": nebius_profile(),
+            # An ambient active profile is not project configuration and must
+            # not contradict a durable receipt after the alias was removed.
+            # It remains a fallback only when no receipt selects the identity.
+            "profile": "" if receipt else nebius_profile(),
         },
         phase="storage_iam",
     )
@@ -504,6 +559,7 @@ def _observe_storage_iam(
     record, ownership_note = _storage_service_account_record(
         account_id=context.account_id,
         project_id=context.project_id,
+        receipt_id=context.receipt_id,
     )
     if context.account_id and record is None:
         return _StorageIamObservation(
@@ -658,7 +714,10 @@ def _persist_storage_iam_observation(observation: _StorageIamObservation) -> Non
     )
 
     alias = observation.context.alias
-    if not alias:
+    from npa.clients.config import resolve_environment
+
+    alias_is_configured = bool(alias and resolve_environment(alias) is not None)
+    if not alias_is_configured:
         from npa.teardown_receipts import record_teardown_event
 
         record_teardown_event(
@@ -667,14 +726,19 @@ def _persist_storage_iam_observation(observation: _StorageIamObservation) -> Non
             terminal_state=(
                 "verified_absent"
                 if observation.verified_absent
+                else "verified_present"
+                if observation.present
                 else "verification_failed"
             ),
+            project_alias=alias,
             project_id=observation.context.project_id,
             identity={
                 "project_id": observation.context.project_id,
                 "tenant_id": observation.context.tenant_id,
                 "profile": observation.context.profile,
                 "service_account_id": observation.account_id,
+                "service_account_name": observation.account_name,
+                "ownership": observation.ownership,
             },
             precheck={"identity_source": observation.context.identity_source},
             action={"kind": "exact_provider_check", "mutation": False},
@@ -741,6 +805,7 @@ def _record_storage_iam_teardown(
     terminal_state: str,
     action: str,
     errors: tuple[str, ...] = (),
+    access_key_ids: tuple[str, ...] = (),
 ) -> None:
     from npa.teardown_receipts import record_teardown_event
 
@@ -755,6 +820,9 @@ def _record_storage_iam_teardown(
             "tenant_id": observation.context.tenant_id,
             "profile": observation.context.profile,
             "service_account_id": observation.account_id,
+            "service_account_name": observation.account_name,
+            "ownership": observation.ownership,
+            "iam_key_ids": list(access_key_ids),
         },
         precheck={
             "provider_outcome": observation.outcome,
@@ -764,6 +832,31 @@ def _record_storage_iam_teardown(
         action={"kind": action},
         verification={"provider_outcome": observation.outcome},
         errors=errors,
+    )
+
+
+def _receipt_proves_bucket_cleanup(receipt_id: str, project_id: str) -> bool:
+    """Require exact durable bucket completion before alias-free IAM deletion."""
+
+    if not receipt_id:
+        return False
+    from npa.teardown_receipts import load_teardown_receipt
+
+    receipt = load_teardown_receipt(receipt_id)
+    if str(receipt.get("project_id") or "") != project_id:
+        return False
+    terminal = {
+        "completed",
+        "verified_absent",
+        "verified_deleted",
+        "deleted",
+    }
+    return any(
+        isinstance(event, dict)
+        and str(event.get("phase") or "")
+        in {"bucket", "project_destroy_bucket"}
+        and str(event.get("terminal_state") or "").lower() in terminal
+        for event in receipt.get("events") or []
     )
 
 
@@ -1109,6 +1202,7 @@ def delete_service_account_cmd(
         record, _note = _storage_service_account_record(
             account_id=context.account_id,
             project_id=context.project_id,
+            receipt_id=context.receipt_id,
         )
         from npa.clients.config import storage_iam_residue
 
@@ -1166,6 +1260,7 @@ def delete_service_account_cmd(
     record, note = _storage_service_account_record(
         account_id=context.account_id,
         project_id=context.project_id,
+        receipt_id=context.receipt_id,
     )
     if (
         observation.ownership != "npa"
@@ -1184,29 +1279,49 @@ def delete_service_account_cmd(
             f"{context.alias or '<alias>'} --id {observation.account_id} --dry-run`."
         )
 
-    try:
-        credentials = load_credentials(environ={})
-    except Exception as exc:  # noqa: BLE001 - fail closed on credential uncertainty
-        message = (
-            "could not verify the delete-bucket-first interlock because the saved "
-            f"credential/config store is unreadable or invalid: {exc}. Nothing was deleted."
-        )
-        _partial_cleanup(
-            message,
-            output_json=output_json,
-            payload={
-                **payload,
-                "result": "bucket_interlock_unresolved",
-                "interlock": "delete_bucket_first",
-            },
-        )
-    configured_bucket = str(getattr(credentials, "s3_bucket", "") or "").strip()
-    if configured_bucket:
-        raise typer.BadParameter(
-            f"Object storage {configured_bucket} is still configured. Run `npa storage "
-            "bucket delete --project <alias> --yes --wait` first so this account is "
-            "not deleted while its bucket may still need it."
-        )
+    from npa.clients.config import resolve_environment
+
+    alias_is_configured = bool(
+        context.alias and resolve_environment(context.alias) is not None
+    )
+    if context.receipt_id and not alias_is_configured:
+        if not _receipt_proves_bucket_cleanup(context.receipt_id, context.project_id):
+            _partial_cleanup(
+                "the alias is absent and the selected receipt does not prove exact "
+                "bucket cleanup completed; storage IAM was preserved.",
+                output_json=output_json,
+                payload={
+                    **payload,
+                    "result": "bucket_interlock_unresolved",
+                    "interlock": "delete_bucket_first",
+                },
+            )
+    else:
+        try:
+            credentials = load_credentials(environ={})
+        except Exception as exc:  # noqa: BLE001 - fail closed on credential uncertainty
+            message = (
+                "could not verify the delete-bucket-first interlock because the saved "
+                f"credential/config store is unreadable or invalid: {exc}. Nothing was deleted."
+            )
+            _partial_cleanup(
+                message,
+                output_json=output_json,
+                payload={
+                    **payload,
+                    "result": "bucket_interlock_unresolved",
+                    "interlock": "delete_bucket_first",
+                },
+            )
+        configured_bucket = str(
+            getattr(credentials, "s3_bucket", "") or ""
+        ).strip()
+        if configured_bucket:
+            raise typer.BadParameter(
+                f"Object storage {configured_bucket} is still configured. Run `npa storage "
+                "bucket delete --project <alias> --yes --wait` first so this account is "
+                "not deleted while its bucket may still need it."
+            )
 
     try:
         keys = list_access_keys_for_service_account(
@@ -1399,6 +1514,7 @@ def delete_service_account_cmd(
             deleted_observation,
             terminal_state="verified_deleted",
             action="delete_npa_owned_service_account",
+            access_key_ids=tuple(key_ids),
         )
         if not _remove_storage_service_account_record(record.account_id):
             failed = True

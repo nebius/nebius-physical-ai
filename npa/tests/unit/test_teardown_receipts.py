@@ -249,3 +249,39 @@ def test_one_project_receipt_keeps_multiple_resource_identities(
         (item["agent_name"], item["instance_id"])
         for item in payload["identity"]["agents"]
     } == {("agent-a", "instance-a"), ("agent-b", "instance-b")}
+
+
+def test_retry_cluster_ids_coexist_for_one_context_and_resolve_exactly(
+    monkeypatch, tmp_path: Path
+) -> None:  # noqa: ANN001
+    from npa.cleanup_identity import resolve_cleanup_identity
+
+    _root(monkeypatch, tmp_path)
+    path = None
+    for cluster_id in ("cluster-first", "cluster-retry"):
+        path = receipts.record_teardown_event(
+            phase="cluster",
+            resource="gpu-context",
+            terminal_state="verified_absent",
+            project_id="project-1",
+            context="gpu-context",
+            identity={
+                "project_id": "project-1",
+                "context": "gpu-context",
+                "cluster_id": cluster_id,
+            },
+        )
+    assert path is not None
+    payload = receipts.load_teardown_receipt(path.stem)
+    assert {item["cluster_id"] for item in payload["identity"]["clusters"]} == {
+        "cluster-first",
+        "cluster-retry",
+    }
+
+    selected = resolve_cleanup_identity(
+        explicit={"project_id": "project-1", "cluster_id": "cluster-retry"},
+        receipt_id=path.stem,
+        phase="cluster",
+        resource="gpu-context",
+    )
+    assert selected.get("cluster_id") == "cluster-retry"

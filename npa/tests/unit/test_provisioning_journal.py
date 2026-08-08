@@ -14,6 +14,7 @@ from npa.provisioning_journal import (
     OperationJournalError,
     ProvisioningOperation,
     current_operation,
+    emit_recovery_summary,
     list_operations,
     operation_context,
 )
@@ -61,6 +62,42 @@ def test_retry_reuses_nonterminal_operation_and_terminal_run_gets_new_receipt(
 
     assert later.operation_id == f"{first.operation_id}-r1"
     assert later.read()["phase"] == "prepared"
+
+
+def test_rolled_back_failure_is_terminal_but_never_success(
+    journal_root: Path,
+) -> None:
+    operation = _prepare(resource_type="cluster", requested_name="gpu")
+    operation.transition("mutating")
+    operation.record_resource(
+        resource_type="managed_kubernetes_cluster",
+        requested_name="gpu",
+        provider_id="cluster-first",
+        ownership="created_by_this_operation",
+        ownership_source="terraform-output",
+        project_id="project-a",
+    )
+    operation.record_failure(RuntimeError("primary sanitized failure"))
+    operation.record_rollback(
+        attempted=True,
+        completed=True,
+        removed=operation.read()["resources"],
+        preserved=[],
+    )
+    operation.transition("rolled-back")
+
+    payload = operation.read()
+    assert payload["phase"] == "rolled-back"
+    assert payload["lifecycle"] == "failed"
+    assert payload["result"] == "rolled_back"
+    assert payload["last_error"] == "primary sanitized failure"
+    rendered = emit_recovery_summary(operation)
+    assert "Primary failure: RuntimeError: primary sanitized failure" in rendered
+    assert "Rollback: attempted=True, completed=True, resources_removed=1" in rendered
+
+    retry = _prepare(resource_type="cluster", requested_name="gpu")
+    assert retry.operation_id == f"{operation.operation_id}-r1"
+    assert retry.read()["resources"] == []
 
 
 def test_long_requested_name_produces_a_valid_retry_path(journal_root: Path) -> None:

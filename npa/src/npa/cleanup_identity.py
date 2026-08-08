@@ -157,7 +157,11 @@ def _matching_item(items: object, *, key: str, value: str) -> dict[str, Any]:
 
 
 def _flatten_receipt_identity(
-    receipt: Mapping[str, Any], *, phase: str = "", resource: str = ""
+    receipt: Mapping[str, Any],
+    *,
+    phase: str = "",
+    resource: str = "",
+    selectors: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     values = _clean(
         receipt.get("identity") if isinstance(receipt.get("identity"), Mapping) else {}
@@ -165,12 +169,25 @@ def _flatten_receipt_identity(
     values.setdefault("project_alias", str(receipt.get("project_alias") or ""))
     values.setdefault("project_id", str(receipt.get("project_id") or ""))
     events = [item for item in receipt.get("events") or [] if isinstance(item, Mapping)]
-    matching = [
-        item
-        for item in events
-        if (not phase or str(item.get("phase") or "") == phase)
-        and (not resource or str(item.get("resource") or "") == resource)
-    ]
+    selected_cluster_id = str((selectors or {}).get("cluster_id") or "").strip()
+
+    def event_matches(item: Mapping[str, Any]) -> bool:
+        if phase and str(item.get("phase") or "") != phase:
+            return False
+        if resource and str(item.get("resource") or "") != resource:
+            return False
+        if selected_cluster_id:
+            event_identity = item.get("identity")
+            event_cluster_id = str(
+                event_identity.get("cluster_id")
+                if isinstance(event_identity, Mapping)
+                else ""
+            ).strip()
+            if event_cluster_id and event_cluster_id != selected_cluster_id:
+                return False
+        return True
+
+    matching = [item for item in events if event_matches(item)]
     latest = max(
         matching, key=lambda item: str(item.get("recorded_at") or ""), default={}
     )
@@ -195,7 +212,12 @@ def _flatten_receipt_identity(
         )
         values.update(_clean(operation))
     elif phase in {"cluster", "controller"} and resource:
-        item = _matching_item(values.get("clusters"), key="context", value=resource)
+        exact_cluster_id = str((selectors or {}).get("cluster_id") or "").strip()
+        item = _matching_item(
+            values.get("clusters"),
+            key="cluster_id" if exact_cluster_id else "context",
+            value=exact_cluster_id or resource,
+        )
         values.update(_clean(item))
         values.setdefault("controller_context", values.get("context", ""))
     elif phase == "workflow" and resource:
@@ -253,7 +275,7 @@ def resolve_cleanup_identity(
     if receipt_id:
         receipt = load_teardown_receipt(receipt_id)
         receipt_values, event = _flatten_receipt_identity(
-            receipt, phase=phase, resource=resource
+            receipt, phase=phase, resource=resource, selectors=exact
         )
 
     values: dict[str, Any] = {}
@@ -387,10 +409,18 @@ def project_cleanup_identity_snapshot(alias: str) -> dict[str, Any]:
     if isinstance(marker, Mapping):
         identity["storage_iam"] = {
             "service_account_id": str(marker.get("service_account_id") or ""),
+            "service_account_name": str(marker.get("service_account_name") or ""),
             "project_id": str(marker.get("project_id") or project_id),
             "tenant_id": str(marker.get("tenant_id") or identity["tenant_id"]),
             "profile": str(marker.get("profile") or ""),
             "ownership": str(marker.get("ownership") or ""),
+            "iam_key_ids": [
+                str(item)
+                for item in marker.get("access_key_ids", marker.get("iam_key_ids", []))
+                if str(item).strip()
+            ]
+            if isinstance(marker.get("access_key_ids", marker.get("iam_key_ids")), list)
+            else [],
         }
 
     workflows: list[dict[str, Any]] = []

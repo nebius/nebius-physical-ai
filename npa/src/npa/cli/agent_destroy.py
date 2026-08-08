@@ -73,6 +73,7 @@ def destroy_cmd(
                 "instance_id": str(record.get("instance_id") or ""),
                 "project_id": str(record.get("project_id") or live["project_id"]),
                 "region": str(record.get("region") or live["region"]),
+                "service_account_id": str(record.get("service_account_id") or ""),
             }
         )
     try:
@@ -284,6 +285,7 @@ def destroy_cmd(
         identity=identity.values,
         project_id=exact_project,
         identity_source=identity.source,
+        terraform_graph_absent=True,
     )
     if record:
         agent_module._remove_agent_record(alias, name)

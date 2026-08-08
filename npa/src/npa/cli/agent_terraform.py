@@ -297,6 +297,7 @@ def _record_agent_destroy_event(
     identity: dict[str, Any] | None = None,
     project_id: str = "",
     identity_source: str = "live_configuration",
+    terraform_graph_absent: bool = False,
 ) -> None:
     """Persist agent destroy evidence outside the removable project record."""
 
@@ -315,6 +316,30 @@ def _record_agent_destroy_event(
     action: dict[str, object] = {"kind": "terraform_agent_destroy"}
     if purge_iam is not None:
         action["purge_iam"] = purge_iam
+    verification: dict[str, object] = {
+        "remote_destroy": {
+            "in_progress": "pending",
+            "failed": "failed",
+            "verified_deleted": "completed",
+            "verified_absent": "already_absent",
+        }.get(terminal_state, terminal_state)
+    }
+    if terminal_state in {"verified_deleted", "verified_absent"}:
+        verification["exact_instance_absent"] = True
+        if terraform_graph_absent:
+            verification.update(
+                {
+                    "terraform_destroy_completed": True,
+                    "terraform_dependency_graph": [
+                        "compute_instance",
+                        "boot_disk",
+                        "network",
+                        "subnet",
+                        "security_group",
+                        "public_ip",
+                    ],
+                }
+            )
     record_teardown_event(
         phase="agent",
         resource=name,
@@ -324,13 +349,7 @@ def _record_agent_destroy_event(
         identity=identity,
         precheck=precheck,
         action=action,
-        verification={
-            "remote_destroy": {
-                "in_progress": "pending",
-                "failed": "failed",
-                "verified_deleted": "completed",
-            }.get(terminal_state, terminal_state)
-        },
+        verification=verification,
         errors=[error] if error else [],
     )
 

@@ -511,7 +511,7 @@ def test_plan_only_stage_src_can_describe_a_placeholder_bucket(
     [((), False), (("--stage-src",), True)],
     ids=["automatic", "force-restage"],
 )
-def test_real_submit_stages_source_before_first_durable_run_state(
+def test_real_submit_persists_no_submit_ledger_before_source_staging(
     extra: tuple[str, ...],
     expected_force: bool,
     monkeypatch: pytest.MonkeyPatch,
@@ -529,7 +529,7 @@ def test_real_submit_stages_source_before_first_durable_run_state(
     monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
     stage = mocker.patch(
         "npa.cli.workbench.workflow._stage_npa_src_for_submit",
-        return_value="s3://real-bucket/npa-src/npa/" + "a" * 64 + "/",
+        side_effect=RuntimeError("stop during staging"),
     )
     mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
@@ -543,8 +543,6 @@ def test_real_submit_stages_source_before_first_durable_run_state(
 
     def prepare(**kwargs):
         persist_calls.append(bool(kwargs.get("persist")))
-        if kwargs.get("persist"):
-            raise RuntimeError("stop after staging")
         return RunPreparation(
             run_id="stage-demo", generated_new=False, state_path="unused"
         )
@@ -552,6 +550,9 @@ def test_real_submit_stages_source_before_first_durable_run_state(
     mocker.patch(
         "npa.orchestration.npa_workflow.first_run_state.prepare_run",
         side_effect=prepare,
+    )
+    update_state = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
     )
 
     result = runner.invoke(
@@ -573,13 +574,15 @@ def test_real_submit_stages_source_before_first_durable_run_state(
     )
 
     assert result.exit_code == 1
-    assert "stop after staging" in result.output
+    assert str(result.exception) == "stop during staging"
     stage.assert_called_once()
     assert stage.call_args.kwargs["force"] is expected_force
     assert persist_calls == [False, True]
+    update_state.assert_called_once()
+    assert update_state.call_args.args[2]["launch_state"] == "planned"
 
 
-def test_source_upload_failure_precedes_durable_run_state(
+def test_source_upload_failure_preserves_durable_no_submit_ledger(
     monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:
     from npa.orchestration.npa_workflow.first_run_state import RunPreparation
@@ -609,6 +612,9 @@ def test_source_upload_failure_precedes_durable_run_state(
         "npa.orchestration.npa_workflow.first_run_state.prepare_run",
         side_effect=prepare,
     )
+    update_state = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
     input_upload = mocker.patch("npa.workflows.data_factory_input.prepare_paidf_input")
 
     result = runner.invoke(
@@ -630,12 +636,13 @@ def test_source_upload_failure_precedes_durable_run_state(
 
     assert result.exit_code == 1
     assert "synthetic upload failed" in result.output
-    assert persist_calls == [False]
+    assert persist_calls == [False, True]
+    assert update_state.call_args.args[2]["launch_state"] == "planned"
     input_upload.assert_called_once()
     persist_source.assert_not_called()
 
 
-def test_input_preflight_failure_prevents_source_upload_and_run_state(
+def test_input_preflight_failure_prevents_source_upload_after_durable_ledger(
     monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:
     from npa.orchestration.npa_workflow.first_run_state import RunPreparation
@@ -666,6 +673,9 @@ def test_input_preflight_failure_prevents_source_upload_and_run_state(
         "npa.orchestration.npa_workflow.first_run_state.prepare_run",
         side_effect=prepare,
     )
+    update_state = mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state"
+    )
 
     result = runner.invoke(
         app,
@@ -686,7 +696,8 @@ def test_input_preflight_failure_prevents_source_upload_and_run_state(
 
     assert result.exit_code == 1
     assert "invalid H.264 input" in result.output
-    assert persist_calls == [False]
+    assert persist_calls == [False, True]
+    assert update_state.call_args.args[2]["launch_state"] == "planned"
     stage.assert_not_called()
 
 

@@ -122,6 +122,7 @@ def _transactional_cluster_up(function):
             try:
                 result = function(*args, **kwargs)
             except BaseException as exc:
+                operation.record_failure(exc)
                 for candidate in (
                     tf_dir / "errored.tfstate",
                     tf_dir / "terraform.tfstate",
@@ -140,7 +141,7 @@ def _transactional_cluster_up(function):
                     "rollback-incomplete",
                     "rolled-back",
                 }:
-                    operation.transition("recovery-required", error=str(exc))
+                    operation.transition("recovery-required")
                 typer.echo(emit_recovery_summary(operation), err=True)
                 raise
             state_path = tf_dir / "terraform.tfstate"
@@ -543,6 +544,9 @@ def down_cmd(
     cluster_id: str = typer.Option(
         "", "--cluster-id", help="Exact immutable cluster ID."
     ),
+    operation_id: str = typer.Option(
+        "", "--operation-id", help="Exact provisioning attempt journal ID."
+    ),
     context_name: str = typer.Option(
         "",
         "--context",
@@ -615,12 +619,14 @@ def down_cmd(
                 "tenant_id": tenant_id,
                 "region": region,
                 "cluster_id": cluster_id,
+                "operation_id": operation_id,
                 "context": context_name.strip(),
                 "kubeconfig_path": str(kubeconfig) if kubeconfig else "",
             },
             receipt_id=receipt,
             live=live,
             phase="cluster",
+            resource=context_name.strip() or str(live.get("context") or ""),
         )
     except (CleanupIdentityError, RuntimeError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -632,12 +638,30 @@ def down_cmd(
     )
     exact_project_id = str(cleanup_identity.get("project_id") or "")
     exact_cluster_id = str(cleanup_identity.get("cluster_id") or "")
-    recovery_operations = list_operations(
-        project_alias=alias,
-        project_id=exact_project_id,
-        resource_type="cluster",
-        requested_name=preview_context,
-    )
+    if operation_id:
+        from npa.provisioning_journal import load_operation
+
+        recovery_operations = [load_operation(operation_id)]
+    else:
+        recovery_operations = list_operations(
+            project_alias=alias,
+            project_id=exact_project_id,
+            resource_type="cluster",
+            requested_name=preview_context,
+        )
+    if exact_cluster_id:
+        recovery_operations = [
+            candidate
+            for candidate in recovery_operations
+            if any(
+                isinstance(item, dict)
+                and item.get("resource_type") == "managed_kubernetes_cluster"
+                and str(item.get("provider_id") or "") == exact_cluster_id
+                and str(item.get("project_id") or exact_project_id)
+                == exact_project_id
+                for item in candidate.read().get("resources") or []
+            )
+        ]
     recovery_operation = (
         recovery_operations[0] if len(recovery_operations) == 1 else None
     )

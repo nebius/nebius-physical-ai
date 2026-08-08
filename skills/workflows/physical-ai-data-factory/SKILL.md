@@ -234,8 +234,9 @@ npa workbench workflow plan-spec "$SPEC" --run-id demo \
   --assume-decision promote_checkpoint --var bucket=<bucket> --json
 
 # Prerequisites, in order, on a fresh machine/account:
-npa provision-if-absent --project <alias>       # bucket + GPU cluster if missing
 npa skypilot bootstrap                          # persists skypilot.sky_bin
+npa provision-if-absent --project <alias> --cluster-name <context> \
+  --accelerator RTXPRO6000:1                    # creates + atomically binds exact owner
 # Submit stages missing/outdated content-addressed NPA source automatically.
 # `stage-src` or submit `--stage-src` remains the explicit force/restage path.
 
