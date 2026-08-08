@@ -1,6 +1,8 @@
 # Installed only into the operator-owned writable runtime cache after explicit
 # acceptance of NVIDIA's current package terms. These packages and their
 # proprietary nvidia-* dependencies are never installed in an image layer.
+# This is the complete runtime closure. It is installed with --no-deps so the
+# tested NCCL 2.27.7 override is not replaced by torch 2.7.1's older metadata pin.
 --index-url https://download.pytorch.org/whl/cu128
 torch==2.7.1
 torchvision==0.22.1

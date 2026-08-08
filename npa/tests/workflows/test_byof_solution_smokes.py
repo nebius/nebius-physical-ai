@@ -294,6 +294,7 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
     assert "wan-runtime ensure" in smoke
     assert "nvidia-nccl-cu12==2.27.7" in runtime_requirements
     assert '"nvidia-nccl-cu12": "2.27.7"' in runtime_script
+    assert "--ignore-installed --no-deps" in runtime_script
     assert "nvidia-nccl-cu12==2.26.2" not in runtime_requirements
     assert "--nproc_per_node=4" in smoke
     assert "--dit_fsdp --t5_fsdp --ulysses_size 4" in smoke
@@ -340,6 +341,7 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
     assert '"sm_100"' in smoke and "[10, 0]" in smoke
     assert "ffprobe" in smoke and 'ffprobe != "h264"' in smoke
     assert "wan2_2_multigpu_topology.json" in smoke
+    assert '"nvidia-nccl-cu12"' in smoke
     assert "snapshot_download" not in str(config["build_command"])
     assert config["build_command"] == ""
     assert '"weights_baked": False' in smoke

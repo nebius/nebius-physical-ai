@@ -111,7 +111,8 @@ ensure_runtime() {
     cache_site="$("$tmp/venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
     printf '%s\n' "$base_site" > "$cache_site/_npa_wan_image_site.pth"
     "$tmp/venv/bin/python" -m pip install \
-      --disable-pip-version-check --no-cache-dir --ignore-installed -r "$REQUIREMENTS"
+      --disable-pip-version-check --no-cache-dir --ignore-installed --no-deps \
+      -r "$REQUIREMENTS"
     verify_tree "$tmp"
     cp "$REQUIREMENTS" "$tmp/runtime-requirements.txt"
     "$tmp/venv/bin/python" -m pip freeze --all > "$tmp/pip-freeze.txt"

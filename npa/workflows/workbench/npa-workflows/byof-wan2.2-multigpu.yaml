@@ -476,7 +476,7 @@ config:
         "customer_data_in_image": False,
         "runtime": result["runtime"],
         "devices": [item["device"] for item in topology["rank_evidence"]],
-        "package_versions": {name: importlib.metadata.version(name) for name in ("torch", "torchvision", "transformers", "diffusers", "opencv-python-headless")},
+        "package_versions": {name: importlib.metadata.version(name) for name in ("torch", "torchvision", "transformers", "diffusers", "opencv-python-headless", "nvidia-nccl-cu12")},
     }
     if not inventory["non_root"]:
         raise SystemExit("Wan multi-GPU image must execute as non-root")

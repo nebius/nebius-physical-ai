@@ -435,6 +435,7 @@ def test_wan22_live_rtxpro_candidate_generate_and_decode(
     }
     assert installed["wan"] == "2.2.0"
     assert installed["torch"] == "2.7.1+cu128"
+    assert installed["nvidia-nccl-cu12"] == "2.27.7"
     assert inventory["baked_runtime"]["os_packages"]
 
     video_key = key_prefix + str(artifact["output_filename"])
