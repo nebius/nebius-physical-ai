@@ -520,6 +520,27 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    "workbench.fiftyone.curate_augmented": ToolEntry(
+        name="workbench.fiftyone.curate_augmented",
+        description=(
+            "Run real FiftyOne Brain uniqueness, similarity, duplicate detection, "
+            "and PCA review over PAIDF variants, merging the Cosmos Curator report."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "fiftyone",
+            "curate-augmented",
+            "--augment-uri",
+            "{{config.augment_uri}}",
+            "--report-uri",
+            "{{config.curation_report_uri}}",
+            "--curator-report-uri",
+            "{{config.curator_report_uri}}",
+            "--output",
+            "json",
+        ],
+    ),
     "workbench.sim2real_envgen.raw_shard": ToolEntry(
         name="workbench.sim2real_envgen.raw_shard",
         description="Generate raw simulation env shard.",

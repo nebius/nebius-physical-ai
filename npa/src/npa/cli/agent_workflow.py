@@ -1361,7 +1361,7 @@ def _data_factory_spec() -> dict[str, Any]:
                         "cloud": "kubernetes",
                         "accelerators": "RTXPRO6000:4",
                         "cpus": 16,
-                        "memory": "80Gi",
+                        "memory": "128Gi",
                     }
                 ),
                 "cpu": OrderedDict({"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"}),
@@ -1468,7 +1468,7 @@ def _data_factory_spec() -> dict[str, Any]:
                     {
                         "description": (
                             "Augment & Evaluate refinement loop: augment (GPU multiply) -> "
-                            "attribute-verify (VLM) -> quality-gate. Loops back to RE-AUGMENT on "
+                            "Cosmos Evaluator -> quality-gate. Loops back to RE-AUGMENT on "
                             "failure, up to refinement_iterations, and breaks on promote."
                         ),
                         "needs": ["annotate-original"],
@@ -1478,17 +1478,18 @@ def _data_factory_spec() -> dict[str, Any]:
                                 "until": "promote_checkpoint",
                             }
                         ),
-                        "sequence": ["augment", "attribute-verify", "quality-gate"],
+                        "sequence": ["augment", "evaluate", "quality-gate"],
                         "next": "annotate-augmented",
                     }
                 ),
-                "attribute-verify": OrderedDict(
+                "evaluate": OrderedDict(
                     {
                         "description": (
-                            "VLM-based attribute verification of the augmented clips "
-                            "(Token Factory, --backend api)."
+                            "Evaluate with the real NVIDIA Cosmos Evaluator: Token Factory "
+                            "attribute verification plus hallucinated-motion comparison against "
+                            "the input-conditioned source clip."
                         ),
-                        "toolRef": "workbench.vlm_eval.run",
+                        "toolRef": "workbench.cosmos_evaluator.evaluate",
                         "resources": "cpu",
                         "inputs": [
                             OrderedDict(
@@ -1501,8 +1502,8 @@ def _data_factory_spec() -> dict[str, Any]:
                         "outputs": [
                             OrderedDict(
                                 {
-                                    "uri": "{{config.scores_uri}}vlm_eval_stub.json",
-                                    "schema": "npa.workbench.vlm_eval.report.v1",
+                                    "uri": "{{config.scores_uri}}cosmos_evaluator.json",
+                                    "schema": "npa.cosmos_evaluator.report.v1",
                                 }
                             )
                         ],
@@ -1515,7 +1516,7 @@ def _data_factory_spec() -> dict[str, Any]:
                             "loop_back decision that drives the grade loop."
                         ),
                         "writesDecision": True,
-                        "needs": ["attribute-verify"],
+                        "needs": ["evaluate"],
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
@@ -1588,7 +1589,7 @@ def _data_factory_spec() -> dict[str, Any]:
                             OrderedDict(
                                 {
                                     "uri": "{{config.curator_report_uri}}",
-                                    "schema": "npa.cosmos_curator.report.v1",
+                                    "schema": "npa.cosmos_curate.curation.v1",
                                 }
                             )
                         ],
@@ -1604,6 +1605,7 @@ def _data_factory_spec() -> dict[str, Any]:
                             "image, else degrade to the report-only counts path."
                         ),
                         "needs": ["cosmos-curate"],
+                        "toolRef": "workbench.fiftyone.curate_augmented",
                         "resources": "cpu",
                         "inputs": [
                             OrderedDict(
@@ -1613,15 +1615,6 @@ def _data_factory_spec() -> dict[str, Any]:
                                 }
                             )
                         ],
-                        "run": OrderedDict(
-                            {
-                                "shell": (
-                                    "python3 -c \"from npa.workflows.data_factory_stages import "
-                                    "curate; curate('{{config.augment_uri}}', "
-                                    "'{{config.curation_report_uri}}')\""
-                                )
-                            }
-                        ),
                         "outputs": [
                             OrderedDict(
                                 {
@@ -1644,6 +1637,8 @@ def _data_factory_spec() -> dict[str, Any]:
                         "run": OrderedDict(
                             {
                                 "shell": (
+                                    "python3 -c \"import rerun\" 2>/dev/null || "
+                                    "python3 -m pip install --quiet \"rerun-sdk==0.31.4\"; "
                                     "python3 -c \"from npa.workflows.data_factory_viz import "
                                     "build_run_rrd; print(build_run_rrd('{{config.run_root_uri}}', "
                                     "'{{config.rrd_uri}}'))\""
@@ -1890,6 +1885,10 @@ def extract_data_factory_params(user_text: str) -> dict[str, Any]:
     min_clip_len = _named_number(text, r"minimum\s+clip(?:\s+length|\s+len)?")
     max_images = _named_number(text, r"max(?:imum)?\s+images?", integer=True)
     max_tokens = _named_number(text, r"max(?:imum)?\s+tokens?", integer=True)
+    if max_images is None:
+        max_images = _first_int(re.search(r"\bmax(?:imum)?\s+(\d+)\s+images?\b", text, re.I))
+    if max_tokens is None:
+        max_tokens = _first_int(re.search(r"\bmax(?:imum)?\s+(\d+)\s+tokens?\b", text, re.I))
     if isinstance(refinement, int) and refinement > 0:
         params["refinement_iterations"] = refinement
     if isinstance(threshold, float) and 0 <= threshold <= 1:
@@ -1942,7 +1941,7 @@ def extract_sim2real_params(user_text: str) -> dict[str, Any]:
         "outer_iterations": r"outer(?:\s+loop)?\s+iterations?",
         "loop_of_loops_iterations": r"loop[-\s]+of[-\s]+loops?\s+iterations?",
         "rollout_count": r"(?:train\s+)?rollouts?",
-        "steps_per_rollout": r"steps?\s+per\s+rollout",
+        "steps_per_rollout": r"(?:steps?\s+per\s+rollout|(?:train(?:ing)?)\s+steps?)",
         "heldout_env_count": r"held[-\s]?out\s+env(?:ironment)?s?",
         "env_count": r"(?:generated\s+)?env(?:ironment)?s?",
         "envgen_shard_count": r"env(?:ironment)?(?:gen)?\s+shards?",
@@ -1954,7 +1953,7 @@ def extract_sim2real_params(user_text: str) -> dict[str, Any]:
         if isinstance(value, int) and (value > 0 or field == "seed"):
             params[field] = value
     threshold = _named_number(
-        text, r"(?:success|held[-\s]?out)\s+threshold", fraction=True
+        text, r"(?:success|held[-\s]?out|evaluation)\s+threshold", fraction=True
     )
     train_fraction = _named_number(text, r"train(?:ing)?\s+fraction", fraction=True)
     if isinstance(threshold, float) and 0 <= threshold <= 1:

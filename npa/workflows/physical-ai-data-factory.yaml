@@ -313,15 +313,11 @@ states:
       the report's curation_engine is "fiftyone-brain"; otherwise it degrades to
       the report-only counts path so the pipeline never regresses.
     needs: [cosmos-curate]
+    toolRef: workbench.fiftyone.curate_augmented
     resources: cpu
     inputs:
       - uri: "{{config.lance_uri}}"
         schema: npa.cosmos2.transfer.v1
-    run:
-      shell: >
-        python3 -c "from npa.workflows.data_factory_stages import curate;
-        curate('{{config.augment_uri}}', '{{config.curation_report_uri}}',
-        curator_report_uri='{{config.curator_report_uri}}')"
     outputs:
       - uri: "{{config.curation_report_uri}}"
         schema: npa.fiftyone.curation.v1

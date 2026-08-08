@@ -3650,6 +3650,11 @@ def curate_augmented_cmd(
         "--report-uri",
         help="S3 URI where the FiftyOne curation report JSON is written.",
     ),
+    curator_report_uri: str = typer.Option(
+        "",
+        "--curator-report-uri",
+        help="Optional Cosmos Curator summary URI to merge into the FiftyOne report.",
+    ),
     dedup_threshold: float = typer.Option(
         0.10,
         "--dedup-threshold",
@@ -3676,7 +3681,12 @@ def curate_augmented_cmd(
     from npa.workflows.data_factory_stages import curate as _curate
 
     try:
-        report = _curate(aug, rpt, dedup_threshold=dedup_threshold)
+        report = _curate(
+            aug,
+            rpt,
+            dedup_threshold=dedup_threshold,
+            curator_report_uri=curator_report_uri.strip(),
+        )
     except Exception as exc:  # noqa: BLE001 - surface a clean CLI error
         _fail(f"curation failed: {exc}")
         return

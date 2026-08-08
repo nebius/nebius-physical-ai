@@ -43,7 +43,7 @@ is pure composition of existing toolRefs; only add real tools with tests.
 | Evaluate & Validate | `grade` loop (`evaluate` + `quality-gate`) | `workbench.cosmos_evaluator.evaluate` (real Cosmos Evaluator: hallucination + attribute verification) + `data_factory_stages.grade_gate` | Token Factory + CPU |
 | Pseudo-Label Augmented | `annotate-augmented` | `npa workbench token-factory caption` (run.shell) | Token Factory |
 | Curation | `cosmos-curate` | `workbench.cosmos_curate.curate` (real Cosmos Curator stages → `clips/` + `metas/v0/`) | CPU |
-| Curation review | `curate` | `data_factory_stages.curate` (real FiftyOne Brain, merges the curator report) | CPU |
+| Curation review | `curate` | `workbench.fiftyone.curate_augmented` → `npa workbench fiftyone curate-augmented` (real FiftyOne Brain, merges the curator report) | CPU |
 | Visualize | `visualize` | `data_factory_viz.build_run_rrd` → `reports/sim2real.rrd` | CPU |
 | Finalize | `finalize` | `data_factory_stages.finalize` (real aggregate report) | CPU |
 
@@ -312,7 +312,7 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   are additive). Outside the image (unit tests, dev-VM worktree python) it
   degrades to the report-only counts path (`curation_engine: report-only`). Run it
   standalone with `npa workbench fiftyone curate-augmented --augment-uri ...
-  --report-uri ...`. The agent's Voxel51 tab surfaces uniqueness + kept/dropped
+  --report-uri ... --curator-report-uri ...`. The agent's Voxel51 tab surfaces uniqueness + kept/dropped
   per card and curation stats in the summary (`build_fiftyone_dataset`).
   `test_publish_transfer_layout_interoperates_with_curate_and_viz` guards it. The
   augment stage "multiplies": it runs one inference per sampled combo and emits

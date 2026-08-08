@@ -85,6 +85,19 @@ def test_agent_generated_blueprints_use_only_real_toolrefs(yaml_text: str) -> No
         assert TOOL_CATALOG[tool_ref].stub is False, (name, tool_ref)
 
 
+def test_agent_generated_paidf_runs_named_real_components() -> None:
+    spec = yaml.safe_load(generate_data_factory_yaml(user_text="fan out 2 variants on 2 GPUs"))
+    states = spec["states"]
+    assert states["grade"]["sequence"] == ["augment", "evaluate", "quality-gate"]
+    assert states["evaluate"]["toolRef"] == "workbench.cosmos_evaluator.evaluate"
+    assert states["cosmos-curate"]["toolRef"] == "workbench.cosmos_curate.curate"
+    assert states["curate"]["toolRef"] == "workbench.fiftyone.curate_augmented"
+    assert "--curator-report-uri" in TOOL_CATALOG[
+        "workbench.fiftyone.curate_augmented"
+    ].argv_template
+    assert "rerun-sdk==0.31.4" in states["visualize"]["run"]["shell"]
+
+
 def test_blueprint_run_shell_stages_are_real() -> None:
     for name, state in _states().items():
         run = state.get("run")
@@ -154,8 +167,9 @@ def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
 
     assert states["cosmos-curate"]["next"] == "curate"
     assert states["curate"]["needs"] == ["cosmos-curate"]
-    # The review stage must actually read the curator's summary, not ignore it.
-    assert "curator_report_uri" in str(states["curate"]["run"]["shell"])
+    assert states["curate"]["toolRef"] == "workbench.fiftyone.curate_augmented"
+    fiftyone_argv = TOOL_CATALOG["workbench.fiftyone.curate_augmented"].argv_template
+    assert "--curator-report-uri" in fiftyone_argv
 
 
 def test_quality_gate_reads_the_evaluator_report() -> None:

@@ -153,8 +153,11 @@ def test_generated_input_cosmos_stages_fail_closed_without_their_clip(
 def test_generated_data_factory_consumer_uses_canonical_manifest_schema() -> None:
     spec = yaml.safe_load(generate_data_factory_yaml())
 
-    assert spec["states"]["attribute-verify"]["inputs"][0]["schema"] == (
+    assert spec["states"]["evaluate"]["inputs"][0]["schema"] == (
         "npa.cosmos2.transfer.v1"
+    )
+    assert spec["states"]["evaluate"]["toolRef"] == (
+        "workbench.cosmos_evaluator.evaluate"
     )
 
 
@@ -211,7 +214,7 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
         "annotate-original",
         "augment",
         "grade",
-        "attribute-verify",
+        "evaluate",
         "quality-gate",
         "annotate-augmented",
         "cosmos-curate",
@@ -225,7 +228,9 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
     tool_refs = [step.get("tool_ref") for step in plan["steps"]]
     assert "workbench.cosmos2.transfer_execute" in tool_refs
     assert "workbench.token_factory.caption" in tool_refs
+    assert "workbench.cosmos_evaluator.evaluate" in tool_refs
     assert "workbench.cosmos_curate.curate" in tool_refs
+    assert "workbench.fiftyone.curate_augmented" in tool_refs
     assert generated["config"]["trigger_uri"] == generated["config"]["input_uri"]
     assert "supported video" in generated["states"]["augment"]["description"].lower()
 
@@ -279,21 +284,24 @@ def test_data_factory_subject_is_an_argv_value_not_shell_source() -> None:
 def test_data_factory_chat_propagates_quality_and_curator_knobs() -> None:
     params = extract_data_factory_params(
         "create PAIDF with 3 refinement iterations, grade threshold 80%, "
-        "clip length 5 and minimum clip length 2, max images 12"
+        "clip length 5 and minimum clip length 2, maximum 12 images and maximum 384 tokens"
     )
     assert params["refinement_iterations"] == 3
     assert params["grade_threshold"] == 0.8
     assert params["curator_clip_len_s"] == 5
     assert params["curator_min_clip_len_s"] == 2
+    assert params["max_images"] == 12
+    assert params["max_tokens"] == 384
     data = yaml.safe_load(generate_data_factory_yaml(user_text=(
         "create PAIDF with 3 refinement iterations, grade threshold 80%, "
-        "clip length 5 and minimum clip length 2, max images 12"
+        "clip length 5 and minimum clip length 2, maximum 12 images and maximum 384 tokens"
     )))
     assert data["config"]["refinement_iterations"] == "3"
     assert data["config"]["grade_threshold"] == "0.8"
     assert data["config"]["curator_clip_len_s"] == "5"
     assert data["config"]["curator_min_clip_len_s"] == "2"
     assert data["config"]["max_images"] == "12"
+    assert data["config"]["max_tokens"] == "384"
 
 
 def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
@@ -330,6 +338,24 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
     argv = plan["steps"][0]["argv"]
     assert argv[argv.index("--env-count") + 1] == "12000"
     assert argv[argv.index("--threshold") + 1] == "0.82"
+
+
+def test_sim2real_chat_accepts_training_steps_and_evaluation_threshold() -> None:
+    params = extract_sim2real_params(
+        "write sim-to-real YAML with 8 training steps and an 80% evaluation threshold"
+    )
+    assert params["steps_per_rollout"] == 8
+    assert params["success_threshold"] == 0.8
+
+    spec = yaml.safe_load(
+        generate_sim2real_staged_yaml(
+            user_text=(
+                "write sim-to-real YAML with 8 training steps and an 80% evaluation threshold"
+            )
+        )
+    )
+    assert spec["config"]["steps_per_rollout"] == "8"
+    assert spec["config"]["success_threshold"] == "0.8"
 
 
 def test_workflow_draft_uses_configured_infrastructure_without_inventing() -> None:
