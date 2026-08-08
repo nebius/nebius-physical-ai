@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,15 @@ HF_TOKEN_ENV_OVERRIDE = "NPA_COSMOS3_HF_TOKEN_ENV"
 NGC_API_KEY_ENV_OVERRIDE = "NPA_COSMOS3_NGC_API_KEY_ENV"
 DEFAULT_NGC_API_KEY_ENV = "NGC_API_KEY"
 REQUIRE_NGC_ENV = "NPA_COSMOS3_REQUIRE_NGC"
+
+ACCESS_PREFLIGHT_DOC = "docs/workbench/cosmos3-access-preflight.md"
+
+# huggingface/xet-core#895: a gated-repo download fails with "Unable to parse
+# string as hex hash value" on exactly this pin pair. Fixed in later releases
+# of both packages, so this is a warning naming the known-bad pair, not an
+# unconditional env default. See ACCESS_PREFLIGHT_DOC.
+XET_AFFECTED_HUGGINGFACE_HUB_VERSION = "1.23.0"
+XET_AFFECTED_HF_XET_VERSION = "1.5.1"
 
 _IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 _VIDEO_SUFFIXES = (".mp4", ".webm", ".mkv", ".mov")
@@ -159,7 +169,11 @@ def require_model_access(
                 f"download {' and '.join(needs)} from Hugging Face. Set HF_TOKEN "
                 f"(or {HF_TOKEN_ENV_OVERRIDE}) to a token that has accepted those "
                 "licenses. A staged local/s3 --checkpoint only removes this "
-                "requirement when --no-guardrails is also passed."
+                "requirement when --no-guardrails is also passed. With no token "
+                "set, a fetch of a gated repo is anonymous and fails with 401; "
+                "if you set a token and then see 403 instead, the token itself "
+                "is reaching Hugging Face and the account behind it still has to "
+                f"accept the repo's license. See {ACCESS_PREFLIGHT_DOC}."
             )
         hf_auth = "configured"
 
@@ -173,6 +187,79 @@ def require_model_access(
         ngc_auth = "configured"
 
     return {"hf_auth": hf_auth, "ngc_auth": ngc_auth}
+
+
+def _installed_package_versions(
+    python: Path, packages: tuple[str, ...], *, runner: Any = None
+) -> dict[str, str]:
+    """Best-effort read of ``packages`` versions inside ``python``'s environment.
+
+    Returns an empty dict on any failure (missing interpreter, package not
+    installed, non-zero exit): this backs a warning, not a preflight gate, so
+    it must never block or fail a run on its own.
+    """
+
+    probe = (
+        "import importlib.metadata as m, json, sys\n"
+        "out = {}\n"
+        "for name in sys.argv[1:]:\n"
+        "    try:\n"
+        "        out[name] = m.version(name)\n"
+        "    except m.PackageNotFoundError:\n"
+        "        pass\n"
+        "print(json.dumps(out))\n"
+    )
+    run = runner or subprocess.run
+    try:
+        completed = run(
+            [str(python), "-c", probe, *packages],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if getattr(completed, "returncode", 1) != 0:
+        return {}
+    try:
+        versions = json.loads(getattr(completed, "stdout", "") or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(versions, dict):
+        return {}
+    return {k: str(v) for k, v in versions.items() if isinstance(k, str)}
+
+
+def check_xet_pin(repo: Path, *, runner: Any = None) -> str:
+    """Warn when the runtime venv has the known-bad Xet-download pin pair.
+
+    huggingface/xet-core#895 makes a gated-repo download fail with
+    "Unable to parse string as hex hash value" on exactly
+    ``huggingface_hub==1.23.0`` plus ``hf-xet==1.5.1``. Returns a warning
+    string naming the ``HF_HUB_DISABLE_XET=1`` workaround when that exact
+    pair is installed, or "" when the pair cannot be confirmed (package
+    missing, versions differ, or the check itself failed). This never sets
+    the environment variable itself: newer releases fix the issue, so
+    disabling Xet unconditionally would cost every unaffected environment a
+    faster download path for no reason.
+    """
+
+    versions = _installed_package_versions(
+        _venv_python(repo), ("huggingface_hub", "hf-xet"), runner=runner
+    )
+    if (
+        versions.get("huggingface_hub") == XET_AFFECTED_HUGGINGFACE_HUB_VERSION
+        and versions.get("hf-xet") == XET_AFFECTED_HF_XET_VERSION
+    ):
+        return (
+            "huggingface_hub "
+            f"{XET_AFFECTED_HUGGINGFACE_HUB_VERSION} + hf-xet "
+            f"{XET_AFFECTED_HF_XET_VERSION} is affected by "
+            "huggingface/xet-core#895 (gated-repo download fails with "
+            "'Unable to parse string as hex hash value'). Set "
+            f"HF_HUB_DISABLE_XET=1 and retry; see {ACCESS_PREFLIGHT_DOC}."
+        )
+    return ""
 
 
 def build_generate_spec(
@@ -367,13 +454,16 @@ def run_cosmos3_generate(
     parallelism_preset: str = DEFAULT_PARALLELISM_PRESET,
     environ: Mapping[str, str] | None = None,
     runner: Any = None,
+    version_probe_runner: Any = None,
 ) -> dict[str, Any]:
     """Run a real Cosmos 3 generation; return the artifact plus its metadata.
 
     Guardrails stay on unless ``no_guardrails`` is explicitly requested. Raises
     :class:`Cosmos3GenerateError` when the runtime is absent, the operator's
     Hugging Face credentials are missing, inference fails, or no media artifact
-    was produced.
+    was produced. ``version_probe_runner`` overrides only the xet pin check's
+    subprocess seam, so a test can drive that check without also mocking the
+    inference call or the check itself; production leaves it ``None``.
     """
 
     env = dict(environ if environ is not None else os.environ)
@@ -403,6 +493,13 @@ def run_cosmos3_generate(
         guardrails=bool(plan["guardrails"]),
         environ=env,
     )
+    if access["hf_auth"] == "configured":
+        # Scoped to "this run downloads from Hugging Face", not to guardrails:
+        # xet-core#895 is a transfer bug, so a guardrails-off run that still
+        # pulls its checkpoint from HF hits it too.
+        xet_warning = check_xet_pin(Path(plan["repo"]), runner=version_probe_runner)
+        if xet_warning:
+            print(f"WARNING: {xet_warning}", file=sys.stderr)
 
     output_root = Path(plan["output_dir"])
     output_root.mkdir(parents=True, exist_ok=True)
@@ -659,6 +756,7 @@ __all__ = [
     "VIDEO_MODES",
     "VISION_REQUIRED_MODES",
     "build_generate_spec",
+    "check_xet_pin",
     "cosmos3_generate_available",
     "cosmos3_repo",
     "generate_and_publish",
