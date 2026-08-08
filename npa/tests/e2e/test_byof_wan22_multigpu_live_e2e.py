@@ -20,6 +20,7 @@ import pytest
 import yaml
 
 from npa.clients.config import resolve_container_registry
+from npa.deploy.images import container_image_for_tool
 from npa.workflows.byof.live import (
     resolve_byof_kubernetes_target,
     resolve_skypilot_bin,
@@ -94,7 +95,9 @@ def test_wan22_multigpu_spec_plans_the_real_official_path() -> None:
 
     assert planned["--repo-ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert planned["--yaml"] == "byof-solution-smoke-wan22-b200-4gpu"
-    assert planned["--wait-timeout"] == "0"
+    assert planned["--base-profile"] == "prebuilt"
+    assert planned["--base-image"] == "tool://wan2-2"
+    assert planned["--wait-timeout"] == "-1"
     assert planned["--capability-name"] in EXPECTED_CAPABILITIES
     assert "--nproc_per_node=4" in smoke
     assert "--dit_fsdp --t5_fsdp --ulysses_size 4" in smoke
@@ -146,7 +149,7 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
     run_id = "byof-wan22-multigpu-e2e-" + datetime.now(timezone.utc).strftime(
         "%Y%m%dT%H%M%SZ"
     )
-    image = reuse_image or f"{registry.rstrip('/')}/npa-byof:{run_id}"
+    image = reuse_image or container_image_for_tool("wan2-2", registry=registry)
     profile = PROFILE_DIR / f"{planned['--yaml']}.yaml"
     out_bucket = live_bucket(e2e_project)
     output_root = f"s3://{out_bucket}/oss-solutions/wan2.2-multigpu"
@@ -162,7 +165,7 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
         "--base-profile",
         str(planned["--base-profile"]),
         "--base-image",
-        str(planned["--base-image"]),
+        image,
         "--build-command",
         str(planned["--build-command"]),
         "--project",
@@ -194,8 +197,6 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
     config_path = skypilot_config_for_project(e2e_project)
     if config_path:
         cmd.extend(["--config-path", config_path])
-    if reuse_image:
-        cmd.extend(["--skip-build", "--skip-push"])
 
     env = dict(os.environ)
     env["NPA_E2E_PROJECT"] = e2e_project or env.get("NPA_E2E_PROJECT", "")
@@ -225,10 +226,7 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
     assert runner["status"] == "ok"
     assert runner["image"] == image
     assert runner["repo_ref"] == planned["--repo-ref"]
-    if reuse_image:
-        assert runner["build"] == {"ok": True, "skipped": True}
-    else:
-        assert runner["build"] == {"ok": True, "pushed": True}
+    assert runner["build"] == {"ok": True, "skipped": True}
 
     s3 = _s3_client(e2e_project)
     summary = _read_s3_json(s3, out_bucket, key_prefix + "npa_byof_summary.json")

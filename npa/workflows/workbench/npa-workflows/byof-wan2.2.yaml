@@ -5,8 +5,9 @@ metadata:
   name: byof-wan2-2
   description: >
     BYOF registry-candidate workflow for Alibaba Wan 2.2 TI2V-5B. The image
-    contains the pinned official source and a pinned CUDA/PyTorch runtime, but
-    no model weights. At run time it fetches immutable official Wan-AI model and
+    contains pinned official source and OSS CPU dependencies, but no NVIDIA
+    CUDA Python packages or model weights. After explicit operator acceptance,
+    it fetches the pinned CUDA/PyTorch runtime into a writable volume, then the immutable Wan-AI model and
     tokenizer revisions, calls the real upstream WanTI2V generator on one RTX
     PRO 6000 Blackwell,
     writes an MP4, decodes every frame, rejects corrupt or uniform output, and
@@ -19,50 +20,46 @@ metadata:
 config:
   bucket: example-bucket
   prompt: "A red sailboat crosses a sunlit ocean while seabirds circle above, cinematic wide shot."
+  # Non-empty input selects image-to-video and therefore MUST be paired with
+  # capability_name=wan2.2_ti2v_5b_image_to_video and
+  # smoke_artifact_name=wan2_2_ti2v_5b_image_to_video.json. The smoke fails
+  # closed when those configuration surfaces disagree.
   context_image_uri: ""
 
   repo_url: "https://github.com/Wan-Video/Wan2.2.git"
   # Reviewed official upstream commit from 2026-03-17 (immutable, not main).
   repo_ref: "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
-  base_profile: ubuntu
-  base_image: "ubuntu:22.04"
-  build_command: >
-    export DEBIAN_FRONTEND=noninteractive &&
-    apt-get update &&
-    apt-get install -y --no-install-recommends
-    python3 python3-dev python3-pip python3-venv git git-lfs
-    build-essential ca-certificates ffmpeg libgl1 libglib2.0-0 &&
-    rm -rf /var/lib/apt/lists/* &&
-    python3 -m venv /opt/byof/.venv &&
-    /opt/byof/.venv/bin/python -m pip install --no-cache-dir --upgrade
-    "pip==25.1.1" "setuptools==80.9.0" "wheel==0.45.1" &&
-    /opt/byof/.venv/bin/python -m pip install --no-cache-dir
-    --index-url https://download.pytorch.org/whl/cu128
-    "torch==2.7.1" "torchvision==0.22.1" "torchaudio==2.7.1" &&
-    /opt/byof/.venv/bin/python -m pip install --no-cache-dir
-    "numpy==1.26.4" "opencv-python-headless==4.11.0.86"
-    "diffusers==0.35.1" "transformers==4.51.3" "tokenizers==0.21.4"
-    "accelerate==1.9.0" "huggingface-hub==0.34.4"
-    "imageio[ffmpeg]==2.37.0" "imageio-ffmpeg==0.6.0"
-    "safetensors==0.5.3" "sentencepiece==0.2.0" "einops==0.8.1"
-    "easydict==1.13" "ftfy==6.3.1" "tqdm==4.67.1"
-    "decord==0.6.0" "peft==0.17.0" "librosa==0.11.0"
-    "dashscope==1.26.5" "boto3==1.39.11" &&
-    /opt/byof/.venv/bin/python -m pip install --no-cache-dir --no-deps -e /opt/byof &&
-    sed -i
-    's/^from \.attention import flash_attention$/from .attention import attention as flash_attention/'
-    /opt/byof/wan/modules/model.py &&
-    grep -Fxq 'from .attention import attention as flash_attention'
-    /opt/byof/wan/modules/model.py &&
-    chmod -R a+rX /opt/byof/.venv /opt/byof &&
-    /opt/byof/.venv/bin/python -c
-    "import py_compile, torch; py_compile.compile('/opt/byof/wan/textimage2video.py', doraise=True); print(torch.__version__, torch.version.cuda)"
+  base_profile: prebuilt
+  base_image: "tool://wan2-2"
+  build_command: ""
+  pip_extra: viz
   workload: solution-smoke
   smoke_command: |
     set -euo pipefail
+    # Default audited contract: wan2.2_ti2v_5b_text_to_video emits
+    # wan2_2_ti2v_5b_text_to_video.json. The solution-scoped resolver below
+    # switches both fields together for the optional I2V configuration:
+    # wan2.2_ti2v_5b_image_to_video emits wan2_2_ti2v_5b_image_to_video.json.
     export WAN22_PROMPT="{{config.prompt}}"
     export WAN22_CONTEXT_IMAGE_URI="{{config.context_image_uri}}"
     export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
+    # Validate the config-facing input/capability/artifact contract before the
+    # accepted CUDA runtime fetch can create a cache or contact a package index.
+    /opt/wan-base/bin/python - <<'PY'
+    import os
+
+    from npa_wan_input_contract import WanInputContractError, resolve_wan_input_contract
+
+    try:
+        resolve_wan_input_contract(
+            context_image_uri=os.environ.get("WAN22_CONTEXT_IMAGE_URI", ""),
+            declared_capability=os.environ.get("BYOF_CAPABILITY_NAME", ""),
+            declared_artifact=os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
+        )
+    except WanInputContractError as exc:
+        raise SystemExit(str(exc)) from exc
+    PY
+    wan-runtime ensure
     /opt/byof/.venv/bin/python - <<'PY'
     from __future__ import annotations
 
@@ -83,6 +80,7 @@ config:
     from PIL import Image
 
     import wan
+    from npa_wan_input_contract import resolve_wan_input_contract
     from wan.configs import WAN_CONFIGS
     from wan.utils.utils import save_video
 
@@ -94,10 +92,6 @@ config:
     UMT5_REVISION = "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"
     OUTPUT_NAME = "wan2_2_ti2v_5b.mp4"
     INVENTORY_NAME = "wan2_2_runtime_inventory.json"
-    T2V_ARTIFACT_NAME = "wan2_2_ti2v_5b_text_to_video.json"
-    I2V_ARTIFACT_NAME = "wan2_2_ti2v_5b_image_to_video.json"
-    T2V_CAPABILITY = "wan2.2_ti2v_5b_text_to_video"
-    I2V_CAPABILITY = "wan2.2_ti2v_5b_image_to_video"
     VALIDATION_CAPABILITY = "wan2.2_decoded_mp4_validation"
 
     out_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
@@ -287,19 +281,17 @@ config:
         s3_client().download_file(parsed.netloc, parsed.path.lstrip("/"), str(target))
         return target
 
-    context_path = materialize_context(os.environ.get("WAN22_CONTEXT_IMAGE_URI", ""))
+    context_uri = os.environ.get("WAN22_CONTEXT_IMAGE_URI", "")
+    selected_contract = resolve_wan_input_contract(
+        context_image_uri=context_uri,
+        declared_capability=os.environ.get("BYOF_CAPABILITY_NAME", ""),
+        declared_artifact=os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
+    )
+    context_path = materialize_context(context_uri)
     context_image = Image.open(context_path).convert("RGB") if context_path else None
-    task = "image-to-video" if context_image is not None else "text-to-video"
-    capability = I2V_CAPABILITY if context_image is not None else T2V_CAPABILITY
-    artifact_name = I2V_ARTIFACT_NAME if context_image is not None else T2V_ARTIFACT_NAME
-    declared_capability = os.environ.get("BYOF_CAPABILITY_NAME", "").strip()
-    declared_artifact = os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", "").strip()
-    if declared_capability != capability or declared_artifact != artifact_name:
-        raise SystemExit(
-            "Wan input mode and declared BYOF contract disagree: "
-            f"actual=({capability}, {artifact_name}), "
-            f"declared=({declared_capability}, {declared_artifact})"
-        )
+    task = selected_contract.task
+    capability = selected_contract.capability_name
+    artifact_name = selected_contract.artifact_name
     # 1280x704 is the official TI2V-5B 720P CLI size. Frame count and sampling
     # steps are intentionally reduced for a capability smoke, but the spatial
     # claim is not weakened to an undocumented resolution.
@@ -476,9 +468,9 @@ config:
   iterations: 1
   num_envs: 1
   num_demos: 1
-  # Zero means wait until terminal. Wan checkpoint acquisition and generation
-  # are not forced under an artificial job deadline.
-  wait_timeout: "0"
+  # Explicit negative sentinel means wait until terminal. Zero retains the
+  # generic immediate-status behavior; Wan has no artificial job deadline.
+  wait_timeout: "-1"
   poll_interval: "60"
   output_root: "s3://{{config.bucket}}/oss-solutions/wan2.2"
   summary_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/npa_byof_summary.json"

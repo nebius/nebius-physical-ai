@@ -18,7 +18,10 @@ from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import container_image_for_tool
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
-from npa.workflows.wan_rerun import layout_for_solution, publish_wan_rrd_from_s3
+from npa.workflows.byof.postprocess import (
+    PostprocessContext,
+    run_registered_postprocess,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
@@ -29,7 +32,7 @@ BYOF_REPO_MOUNT = "/opt/byof"
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_REPO_REF = "main"
 DEFAULT_UBUNTU_BASE_IMAGE = "ubuntu:22.04"
-BASE_PROFILES = frozenset({"ubuntu", "isaac-lab"})
+BASE_PROFILES = frozenset({"ubuntu", "isaac-lab", "prebuilt"})
 PLACEHOLDER_VALUES = frozenset(
     {
         "",
@@ -131,7 +134,8 @@ def _live_runner_env(project: str) -> dict[str, str]:
             section = _resolve_project_section(yml, project or None) if project else {}
             storage = section.get("storage") if isinstance(section, dict) else {}
             if not isinstance(storage, dict):
-                storage = yml.get("storage") if isinstance(yml.get("storage"), dict) else {}
+                root_storage = yml.get("storage") if isinstance(yml, dict) else None
+                storage = root_storage if isinstance(root_storage, dict) else {}
             bare = _bare_s3_bucket(
                 str(
                     storage.get("checkpoint_bucket")
@@ -154,7 +158,9 @@ def _refresh_registry_pull_secrets(image: str, project: str) -> None:
     if "nebius.cloud" not in registry_server:
         return
     try:
-        from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
+        from npa.workflows.sim2real.registry_auth import (
+            ensure_nebius_registry_pull_secret,
+        )
 
         target = resolve_byof_kubernetes_target(project or None)
         namespaces = {target.namespace or "default", "default"}
@@ -195,7 +201,11 @@ def _docker_login_nebius(server: str, *, env: dict[str, str] | None = None) -> N
     token = token_proc.stdout.strip()
     if not token:
         raise RuntimeError("nebius iam get-access-token returned empty token")
-    _run(["docker", "login", "-u", "iam", "--password-stdin", server], stdin=token, env=env)
+    _run(
+        ["docker", "login", "-u", "iam", "--password-stdin", server],
+        stdin=token,
+        env=env,
+    )
 
 
 def _dockerfile_text() -> str:
@@ -213,19 +223,19 @@ def _dockerfile_text() -> str:
         "RUN echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
         "  && chmod 440 /etc/sudoers.d/ubuntu\n"
         "RUN mkdir -p /workspace && chown ubuntu:ubuntu /workspace\n"
-        f"RUN git clone --depth 1 --branch \"${{OSS_REPO_REF}}\" \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT} \\\n"
+        f'RUN git clone --depth 1 --branch "${{OSS_REPO_REF}}" "${{OSS_REPO_URL}}" {BYOF_REPO_MOUNT} \\\n'
         f"  || (rm -rf {BYOF_REPO_MOUNT} \\\n"
-        f"    && git clone \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT} \\\n"
+        f'    && git clone "${{OSS_REPO_URL}}" {BYOF_REPO_MOUNT} \\\n'
         f"    && cd {BYOF_REPO_MOUNT} \\\n"
-        "    && git checkout \"${OSS_REPO_REF}\") \\\n"
+        '    && git checkout "${OSS_REPO_REF}") \\\n'
         f"  && chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
-        "RUN if [ -n \"${BYOF_BUILD_COMMAND}\" ]; then /bin/sh -lc \"${BYOF_BUILD_COMMAND}\"; fi\n"
-        f"RUN printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \\\n"
-        f"  \"${{OSS_REPO_URL}}\" \"${{OSS_REPO_REF}}\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json \\\n"
+        'RUN if [ -n "${BYOF_BUILD_COMMAND}" ]; then /bin/sh -lc "${BYOF_BUILD_COMMAND}"; fi\n'
+        f'RUN printf \'{{\\n  "source": "oss-byof",\\n  "repo": "%s",\\n  "ref": "%s"\\n}}\\n\' \\\n'
+        f'  "${{OSS_REPO_URL}}" "${{OSS_REPO_REF}}" > {BYOF_REPO_MOUNT}/npa_source_metadata.json \\\n'
         f"  && chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json\n"
-        "LABEL npa.byof.repo=\"${OSS_REPO_URL}\" npa.byof.ref=\"${OSS_REPO_REF}\" "
-        "npa.packaging.tier=\"interactive\"\n"
+        'LABEL npa.byof.repo="${OSS_REPO_URL}" npa.byof.ref="${OSS_REPO_REF}" '
+        'npa.packaging.tier="interactive"\n'
         "USER ubuntu\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
     )
@@ -244,7 +254,9 @@ def _parse_last_json(text: str) -> dict[str, Any] | None:
 
 
 def _ubuntu_base_image_candidates() -> list[str]:
-    configured = os.environ.get("NPA_BYOF_UBUNTU_BASE_IMAGE", DEFAULT_UBUNTU_BASE_IMAGE).strip()
+    configured = os.environ.get(
+        "NPA_BYOF_UBUNTU_BASE_IMAGE", DEFAULT_UBUNTU_BASE_IMAGE
+    ).strip()
     return [configured or DEFAULT_UBUNTU_BASE_IMAGE]
 
 
@@ -258,10 +270,15 @@ def _isaac_lab_base_image_candidates(*, image: str, registry: str) -> list[str]:
     except TypeError:
         pass
     for candidate_registry in (registry, derived_registry):
-        candidate = str(container_image_for_tool("isaac-lab", registry=candidate_registry)).strip()
+        candidate = str(
+            container_image_for_tool("isaac-lab", registry=candidate_registry)
+        ).strip()
         if candidate and candidate not in candidates:
             candidates.append(candidate)
-    for public_candidate in ("nvcr.io/nvidia/isaac-lab:2.3.2", "nvcr.io/nvidia/isaac-sim:4.5.0"):
+    for public_candidate in (
+        "nvcr.io/nvidia/isaac-lab:2.3.2",
+        "nvcr.io/nvidia/isaac-sim:4.5.0",
+    ):
         if public_candidate not in candidates:
             candidates.append(public_candidate)
     return candidates
@@ -274,11 +291,20 @@ def _base_image_candidates(
     registry: str,
     explicit_base: str,
 ) -> list[str]:
+    if explicit_base.startswith("tool://"):
+        tool = explicit_base.removeprefix("tool://").strip()
+        if not tool:
+            raise ValueError("tool:// base image must name a registered image tool")
+        return [container_image_for_tool(tool, registry=registry)]
     if explicit_base:
         return [explicit_base]
     normalized_profile = profile if profile in BASE_PROFILES else "ubuntu"
     if normalized_profile == "isaac-lab":
         return _isaac_lab_base_image_candidates(image=image, registry=registry)
+    if normalized_profile == "prebuilt":
+        raise ValueError(
+            "prebuilt profile requires --base-image tool://<registered-tool>"
+        )
     return _ubuntu_base_image_candidates()
 
 
@@ -286,14 +312,20 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-url", default=DEFAULT_REPO_URL)
     parser.add_argument("--repo-ref", default=DEFAULT_REPO_REF)
-    parser.add_argument("--project", default="", help="Project alias used for container-registry resolution.")
+    parser.add_argument(
+        "--project",
+        default="",
+        help="Project alias used for container-registry resolution.",
+    )
     parser.add_argument("--registry", default="", help="Override registry host/path.")
-    parser.add_argument("--image", default="", help="Fully-qualified image ref to build/push and run.")
+    parser.add_argument(
+        "--image", default="", help="Fully-qualified image ref to build/push and run."
+    )
     parser.add_argument(
         "--base-profile",
         choices=sorted(BASE_PROFILES),
         default=os.environ.get("NPA_BYOF_BASE_PROFILE", "ubuntu"),
-        help="Base image family: ubuntu (generic) or isaac-lab (sim workloads).",
+        help="Base family: ubuntu, isaac-lab, or prebuilt with tool://<registered-tool>.",
     )
     parser.add_argument(
         "--base-image",
@@ -317,20 +349,46 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=os.environ.get("NPA_BYOF_SMOKE_COMMAND", ""),
         help="Optional documented shell command run during solution-smoke from /opt/byof.",
     )
-    parser.add_argument("--solution-name", default=os.environ.get("NPA_BYOF_SOLUTION_NAME", ""))
-    parser.add_argument("--capability-name", default=os.environ.get("NPA_BYOF_CAPABILITY_NAME", ""))
-    parser.add_argument("--smoke-artifact-name", default=os.environ.get("NPA_BYOF_SMOKE_ARTIFACT_NAME", ""))
-    parser.add_argument("--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload).")
-    parser.add_argument("--num-demos", type=int, default=4, help="Demonstrations to record (datagen workload).")
+    parser.add_argument(
+        "--solution-name", default=os.environ.get("NPA_BYOF_SOLUTION_NAME", "")
+    )
+    parser.add_argument(
+        "--capability-name", default=os.environ.get("NPA_BYOF_CAPABILITY_NAME", "")
+    )
+    parser.add_argument(
+        "--smoke-artifact-name",
+        default=os.environ.get("NPA_BYOF_SMOKE_ARTIFACT_NAME", ""),
+    )
+    parser.add_argument(
+        "--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload)."
+    )
+    parser.add_argument(
+        "--num-demos",
+        type=int,
+        default=4,
+        help="Demonstrations to record (datagen workload).",
+    )
     parser.add_argument("--task", default="Isaac-Cartpole-v0")
     parser.add_argument("--iterations", type=int, default=1)
-    parser.add_argument("--yaml", default="", help="Optional SkyPilot YAML override for the selected workload.")
-    parser.add_argument("--output-root", default="", help="Override workload output root.")
+    parser.add_argument(
+        "--yaml",
+        default="",
+        help="Optional SkyPilot YAML override for the selected workload.",
+    )
+    parser.add_argument(
+        "--output-root", default="", help="Override workload output root."
+    )
     parser.add_argument("--wait-timeout", type=int, default=21600)
     parser.add_argument("--poll-interval", type=int, default=60)
     parser.add_argument("--sky-bin", default="")
-    parser.add_argument("--config-path", default="", help="SkyPilot global config YAML for kubernetes pod_config.")
-    parser.add_argument("--cleanup", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--config-path",
+        default="",
+        help="SkyPilot global config YAML for kubernetes pod_config.",
+    )
+    parser.add_argument(
+        "--cleanup", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--skip-push", action="store_true")
     parser.add_argument("--skip-run", action="store_true")
@@ -352,6 +410,14 @@ def main(argv: list[str] | None = None) -> int:
     if not base_candidates:
         raise RuntimeError("unable to resolve a BYOF base image candidate")
     base_image = base_candidates[0]
+    if base_profile == "prebuilt":
+        if args.build_command.strip():
+            raise ValueError(
+                "prebuilt profile forbids --build-command; image bytes are immutable"
+            )
+        image = base_image
+    skip_build = args.skip_build or base_profile == "prebuilt"
+    skip_push = args.skip_push or base_profile == "prebuilt"
     base_registry = _registry_path(base_image) or (_registry_path(image) or registry)
 
     summary: dict[str, Any] = {
@@ -375,19 +441,23 @@ def main(argv: list[str] | None = None) -> int:
     docker_config_dir: str | None = None
     docker_env: dict[str, str] = {}
     try:
-        if not args.skip_build:
-            if not args.skip_push:
+        if not skip_build:
+            if not skip_push:
                 docker_config_dir = tempfile.mkdtemp(prefix="npa-docker-auth-")
                 docker_env = {"DOCKER_CONFIG": docker_config_dir}
                 _docker_login_nebius(_registry_server(image), env=docker_env)
             with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
                 context = Path(tmp)
-                (context / "Dockerfile").write_text(_dockerfile_text(), encoding="utf-8")
+                (context / "Dockerfile").write_text(
+                    _dockerfile_text(), encoding="utf-8"
+                )
                 last_build_error: Exception | None = None
                 for idx, candidate_base in enumerate(base_candidates):
                     base_image = candidate_base
                     summary["base_image"] = base_image
-                    summary["base_registry"] = _registry_path(base_image) or (_registry_path(image) or registry)
+                    summary["base_registry"] = _registry_path(base_image) or (
+                        _registry_path(image) or registry
+                    )
                     try:
                         _run(
                             [
@@ -426,17 +496,22 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     assert last_build_error is not None
                     raise last_build_error
-            if not args.skip_push:
-                push_proc = _run(["docker", "push", image], env=docker_env or None, capture=True)
+            if not skip_push:
+                push_proc = _run(
+                    ["docker", "push", image], env=docker_env or None, capture=True
+                )
                 if push_proc.stdout:
                     sys.stdout.write(push_proc.stdout)
                 if push_proc.stderr:
                     sys.stderr.write(push_proc.stderr)
                 try:
-                    _run(["docker", "buildx", "imagetools", "inspect", image], env=docker_env or None)
+                    _run(
+                        ["docker", "buildx", "imagetools", "inspect", image],
+                        env=docker_env or None,
+                    )
                 except Exception:
                     pass
-            summary["build"] = {"ok": True, "pushed": not args.skip_push}
+            summary["build"] = {"ok": True, "pushed": not skip_push}
         else:
             summary["build"] = {"ok": True, "skipped": True}
 
@@ -518,23 +593,19 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(run_proc.stdout)
             if run_proc.stderr:
                 sys.stderr.write(run_proc.stderr)
-            summary["run"] = _parse_last_json(run_proc.stdout) or {"status": "submitted"}
-            wan_rrd_layout = layout_for_solution(args.solution_name)
-            if wan_rrd_layout is not None:
-                if args.workload != "solution-smoke":
-                    raise RuntimeError(
-                        "Wan RRD postprocessing requires the solution-smoke workload"
-                    )
-                if not args.output_root.strip():
-                    raise RuntimeError(
-                        "Wan RRD postprocessing requires an explicit S3 output root"
-                    )
-                run_prefix_uri = f"{args.output_root.rstrip('/')}/{args.run_id}/"
-                summary["wan_rrd"] = publish_wan_rrd_from_s3(
-                    run_prefix_uri,
-                    variant=wan_rrd_layout.variant,
-                    project=args.project or None,
+            summary["run"] = _parse_last_json(run_proc.stdout) or {
+                "status": "submitted"
+            }
+            if args.workload == "solution-smoke" and args.output_root.strip():
+                postprocess = run_registered_postprocess(
+                    args.solution_name,
+                    PostprocessContext(
+                        run_prefix_uri=f"{args.output_root.rstrip('/')}/{args.run_id}/",
+                        project=args.project or None,
+                    ),
                 )
+                if postprocess is not None:
+                    summary["postprocess"] = postprocess
         else:
             summary["run"] = {"skipped": True}
         summary["status"] = "ok"
@@ -544,7 +615,9 @@ def main(argv: list[str] | None = None) -> int:
         message = str(exc)
         summary["status"] = "failed"
         summary["error"] = message
-        if "403 Forbidden" in message and ("BYOF_BASE_IMAGE" in message or "ISAAC_BASE_IMAGE" in message):
+        if "403 Forbidden" in message and (
+            "BYOF_BASE_IMAGE" in message or "ISAAC_BASE_IMAGE" in message
+        ):
             summary["hint"] = (
                 "Registry pull for the base image was denied. "
                 "Pass --base-image from an accessible registry (e.g. ubuntu:22.04), "

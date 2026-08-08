@@ -42,6 +42,7 @@ def _script_path() -> Path:
 class BaseProfile(str, Enum):
     ubuntu = "ubuntu"
     isaac_lab = "isaac-lab"
+    prebuilt = "prebuilt"
 
 
 class Workload(str, Enum):
@@ -162,14 +163,20 @@ def build_byof_argv(
 
 @app.command("run")
 def run_cmd(
-    repo_url: str = typer.Option(..., "--repo-url", help="Public GitHub/GitLab repo URL."),
-    repo_ref: str = typer.Option("main", "--repo-ref", help="Git ref to clone into the image."),
+    repo_url: str = typer.Option(
+        ..., "--repo-url", help="Public GitHub/GitLab repo URL."
+    ),
+    repo_ref: str = typer.Option(
+        "main", "--repo-ref", help="Git ref to clone into the image."
+    ),
     base_profile: BaseProfile = typer.Option(
         BaseProfile.ubuntu,
         "--base-profile",
-        help="ubuntu (generic OSS) or isaac-lab (sim workloads).",
+        help="ubuntu, isaac-lab, or prebuilt with --base-image tool://<registered-tool>.",
     ),
-    base_image: str = typer.Option("", "--base-image", help="Explicit base image override."),
+    base_image: str = typer.Option(
+        "", "--base-image", help="Explicit base image override."
+    ),
     workload: Workload = typer.Option(
         Workload.container_verify,
         "--workload",
@@ -185,33 +192,65 @@ def run_cmd(
         "--smoke-command",
         help="Optional documented shell command for solution-smoke from /opt/byof.",
     ),
-    solution_name: str = typer.Option("", "--solution-name", help="Registry solution name."),
-    capability_name: str = typer.Option("", "--capability-name", help="Registry capability name."),
+    solution_name: str = typer.Option(
+        "", "--solution-name", help="Registry solution name."
+    ),
+    capability_name: str = typer.Option(
+        "", "--capability-name", help="Registry capability name."
+    ),
     smoke_artifact_name: str = typer.Option(
         "",
         "--smoke-artifact-name",
         help="Expected JSON artifact filename for solution-smoke.",
     ),
-    project: str = typer.Option("", "--project", help="Project alias for registry resolution."),
+    project: str = typer.Option(
+        "", "--project", help="Project alias for registry resolution."
+    ),
     registry: str = typer.Option("", "--registry", help="Override registry host/path."),
-    image: str = typer.Option("", "--image", help="Fully-qualified image ref to build/push."),
-    run_id: str = typer.Option("", "--run-id", help="Run identifier (default byof-<stamp>)."),
-    task: str = typer.Option("Isaac-Cartpole-v0", "--task", help="Isaac task for RL/datagen."),
+    image: str = typer.Option(
+        "", "--image", help="Fully-qualified image ref to build/push."
+    ),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Run identifier (default byof-<stamp>)."
+    ),
+    task: str = typer.Option(
+        "Isaac-Cartpole-v0", "--task", help="Isaac task for RL/datagen."
+    ),
     iterations: int = typer.Option(1, "--iterations", help="RL training iterations."),
     num_envs: int = typer.Option(4, "--num-envs", help="Parallel sim envs (datagen)."),
-    num_demos: int = typer.Option(4, "--num-demos", help="Demonstrations to record (datagen)."),
-    yaml_path: str = typer.Option("", "--yaml", help="Optional SkyPilot YAML override."),
-    output_root: str = typer.Option("", "--output-root", help="Override workload output root."),
-    wait_timeout: int = typer.Option(21600, "--wait-timeout", help="Workload wait timeout seconds."),
-    poll_interval: int = typer.Option(60, "--poll-interval", help="Poll interval seconds."),
+    num_demos: int = typer.Option(
+        4, "--num-demos", help="Demonstrations to record (datagen)."
+    ),
+    yaml_path: str = typer.Option(
+        "", "--yaml", help="Optional SkyPilot YAML override."
+    ),
+    output_root: str = typer.Option(
+        "", "--output-root", help="Override workload output root."
+    ),
+    wait_timeout: int = typer.Option(
+        21600, "--wait-timeout", help="Workload wait timeout seconds."
+    ),
+    poll_interval: int = typer.Option(
+        60, "--poll-interval", help="Poll interval seconds."
+    ),
     sky_bin: str = typer.Option("", "--sky-bin", help="SkyPilot binary override."),
-    config_path: str = typer.Option("", "--config-path", help="SkyPilot global config YAML."),
-    cleanup: bool = typer.Option(True, "--cleanup/--no-cleanup", help="Cleanup SkyPilot resources."),
+    config_path: str = typer.Option(
+        "", "--config-path", help="SkyPilot global config YAML."
+    ),
+    cleanup: bool = typer.Option(
+        True, "--cleanup/--no-cleanup", help="Cleanup SkyPilot resources."
+    ),
     skip_build: bool = typer.Option(False, "--skip-build", help="Skip docker build."),
     skip_push: bool = typer.Option(False, "--skip-push", help="Skip docker push."),
-    skip_run: bool = typer.Option(False, "--skip-run", help="Build/push only; skip live workload."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print argv JSON and exit without running."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format for dry-run."),
+    skip_run: bool = typer.Option(
+        False, "--skip-run", help="Build/push only; skip live workload."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print argv JSON and exit without running."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format for dry-run."
+    ),
 ) -> None:
     """Build/push a BYOF image and optionally run a live workload."""
 
@@ -265,16 +304,22 @@ def run_cmd(
 
 @app.command("ladder")
 def ladder_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show the OSS onboarding ladder (Tier 0 → Tier 2)."""
 
-    payload = {
+    payload: dict[str, Any] = {
         "doc": _LADDER_DOC,
         "skill": _SKILL_PATH,
         "tiers": [
             {"tier": 0, "name": "BYOF container", "cli": "npa workbench byof run"},
-            {"tier": 1, "name": "Solution workflow", "cli": "npa workbench workflow validate-spec"},
+            {
+                "tier": 1,
+                "name": "Solution workflow",
+                "cli": "npa workbench workflow validate-spec",
+            },
             {"tier": 2, "name": "First-class tool", "cli": "npa workbench <tool>"},
         ],
     }
@@ -289,7 +334,9 @@ def ladder_cmd(
 
 @app.command("status")
 def status_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Report BYOF packaging surfaces (CLI / SDK / YAML)."""
 

@@ -16,6 +16,13 @@ Wan as an action-conditioned robotics simulator or an action-prediction model.
 | Official TI2V-5B model | [`Wan-AI/Wan2.2-TI2V-5B` `921dbaf…`](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B/tree/921dbaf3f1674a56f47e83fb80a34bac8a8f203e) | fetched at run time; never baked |
 | UMT5 tokenizer | [`google/umt5-xxl` `66cb9e7…`](https://huggingface.co/google/umt5-xxl/tree/66cb9e7e85526fe440a945569e42c72fb6cbc0ad) | fetched at run time |
 
+The canonical `npa-wan2-2` image ships the pinned source, its Apache license,
+and an OSS CPU dependency base. CUDA-enabled PyTorch and every `nvidia-*`
+distribution are deliberately absent from all image layers. `wan-runtime`
+refuses before download unless the operator sets
+`NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS=YES`; accepted installation is atomic and
+lands only in `/workspace/.cache/npa/wan2-2/runtime`.
+
 The hard gate generates 17 frames at the official TI2V-5B 1280×704 spatial
 size and 24 fps with eight sampling steps. The shorter duration and sampling
 count make this a capability smoke; they are not a production-quality claim.
@@ -67,8 +74,9 @@ The distributed path requires exactly four ranks in one pod and fails unless:
 - every rank crosses the upstream barrier and the observer terminal barrier;
 - every selected device is compute capability 10.0 and the wheel has `sm_100`.
 
-Both routes execute non-root, fetch model/tokenizer bytes at run time, and have
-no artificial terminal wait deadline.
+Both routes execute non-root, fetch CUDA Python/model/tokenizer bytes into
+writable volumes at run time, and use the explicit `-1` terminal-wait sentinel
+without imposing an artificial deadline. Generic timeout zero still checks once.
 
 ## Output and Rerun contract
 
@@ -104,7 +112,8 @@ wan2_2_ti2v_5b_multigpu_rrd_manifest.json
 ```
 
 After the GPU job and initial BYOF upload succeed,
-`npa.workflows.wan_rerun` downloads the immutable evidence, validates the
+the closed BYOF postprocess registry calls
+`npa.solutions.wan2_2.rerun`, which downloads the immutable evidence, validates the
 source contract, builds the recording with Rerun SDK 0.31.4, parses it, runs
 `rerun rrd verify` and `rerun rrd stats`, uploads it, downloads it again, and
 repeats the structural and embedded-video checks. Any failure makes the BYOF
@@ -119,7 +128,7 @@ The recording uses these stable entities:
 | `/wan2_2/summary/overview` | human-readable official source/model/run/output summary |
 | `/wan2_2/summary/machine_readable` | sanitized JSON summary |
 | `/wan2_2/evidence/validation` | decode, dimensions, variation, size, and SHA facts |
-| `/wan2_2/evidence/distributed` | real execution topology; single-GPU runtime on that route |
+| `/wan2_2/evidence/execution` | accurate execution evidence for either single-GPU runtime or distributed topology |
 | `/wan2_2/evidence/runtime` | runtime inventory |
 | `/wan2_2/evidence/ranks/rank_0` … `rank_3` | exact sanitized rank evidence for distributed runs |
 | `/wan2_2/metrics/*` | static scalar facts, never invented time series |
@@ -154,10 +163,10 @@ not turn Wan into a world model or add action conditioning.
 
 The materialized accepted distributed recording is:
 
-- `s3://npa-bucket-8a0bcf2c/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260806T024353Z/wan2_2_ti2v_5b_multigpu.rrd`
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260806T024353Z/wan2_2_ti2v_5b_multigpu.rrd`
   (825,197 bytes; SHA-256
   `b6e0065bcc9530e07e8b5834299808c8a28826987735af56bc7bbdd035064092`).
-- `s3://npa-bucket-8a0bcf2c/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260806T024353Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260806T024353Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
   (6,637 bytes; SHA-256
   `311df1d2f982300173df593e78ea127837744a74195a39b7c52cc8815f71721f`).
 
@@ -167,11 +176,15 @@ on those exact bytes.
 
 ## Licensing and publication
 
-The pinned source and model declare Apache-2.0. Model and tokenizer files are
-fetched at run time and never baked. The emitted runtime inventory records the
-actual Python/OS packages and checks for large checkpoint-shaped files under
-`/opt/byof`. Capability acceptance alone does not authorize public image
-publication; the built-image redistribution review remains a separate gate.
+The pinned source, model, and tokenizer declare Apache-2.0. The shipped runtime
+contains only the digest-pinned official Python/Debian base, CPU-only PyTorch,
+and audited OSS dependencies; Debian copyright records and wheel metadata carry
+their GPL/LGPL/BSD/MIT/Apache notices. CUDA Python distributions, model/tokenizer,
+credentials, data, and caches are runtime-only. Public eligibility is earned by
+scanning the pushed digest, every individual layer, history, SBOM, and license
+inventory with `npa/scripts/scan_image_wan_payload.py`; it is not inferred from
+this Dockerfile. Passing those gates is an engineering classification and still
+requires the organization's human publication/legal approval.
 
 ## Validation
 

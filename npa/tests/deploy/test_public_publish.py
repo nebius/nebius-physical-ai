@@ -74,7 +74,9 @@ def test_no_tool_is_currently_restricted() -> None:
 def test_public_set_excludes_every_restricted_tool(monkeypatch) -> None:
     """The exclusion still works. Monkeypatched, because the real set is empty and an
     all-inclusive selector would satisfy an assertion over an empty set trivially."""
-    monkeypatch.setattr(images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis", "cosmos"}))
+    monkeypatch.setattr(
+        images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis", "cosmos"})
+    )
     public = set(publicly_publishable_tools())
     assert public.isdisjoint({"genesis", "cosmos"})
     for tool in ("genesis", "cosmos"):
@@ -197,7 +199,9 @@ def test_restricted_image_names_cover_every_contract_restricted_image() -> None:
     assert names == sorted(names), "names must be stable/sorted for operator output"
     assert contract_restricted <= set(names), sorted(contract_restricted - set(names))
     assert set(OMNIVERSE_RESTRICTED_DERIVED_IMAGES).isdisjoint(CONTAINER_IMAGE_NAMES)
-    assert set(OMNIVERSE_RESTRICTED_DERIVED_IMAGES).isdisjoint(publicly_publishable_tools())
+    assert set(OMNIVERSE_RESTRICTED_DERIVED_IMAGES).isdisjoint(
+        publicly_publishable_tools()
+    )
 
 
 def test_contract_marks_the_isaac_images_public_and_runtime_fetch() -> None:
@@ -230,9 +234,12 @@ def test_the_restriction_mechanism_still_exists() -> None:
         "is_public_registry",
     ):
         assert callable(getattr(images, symbol)), symbol
-    assert "restricted" in yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))[
-        "redistribution"
-    ]["classes"], "the restricted class must survive having no members"
+    assert (
+        "restricted"
+        in yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))["redistribution"][
+            "classes"
+        ]
+    ), "the restricted class must survive having no members"
 
 
 def test_selector_matches_packaging_contract_classification() -> None:
@@ -282,10 +289,14 @@ def test_restricted_tools_refuse_to_resolve_from_a_public_registry(
         container_image_for_tool("genesis", registry=registry)
 
 
-def test_restricted_tools_still_resolve_from_an_operators_own_registry(monkeypatch) -> None:
+def test_restricted_tools_still_resolve_from_an_operators_own_registry(
+    monkeypatch,
+) -> None:
     """Build-your-own into a private registry is the licensed path; do not block it."""
     monkeypatch.setattr(images, "OMNIVERSE_RESTRICTED_TOOLS", frozenset({"genesis"}))
-    ref = container_image_for_tool("genesis", registry="cr.eu-north1.nebius.cloud/example")
+    ref = container_image_for_tool(
+        "genesis", registry="cr.eu-north1.nebius.cloud/example"
+    )
     assert ref.startswith("cr.eu-north1.nebius.cloud/example/npa-genesis:")
 
 
@@ -304,7 +315,9 @@ def test_public_mirror_override_is_treated_as_public(monkeypatch) -> None:
 
 def test_oss_tools_resolve_from_the_public_mirror_normally() -> None:
     """The guard must not get in the way of the images that ARE publishable."""
-    ref = container_image_for_tool("lerobot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
+    ref = container_image_for_tool(
+        "lerobot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
+    )
     assert ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-lerobot:")
 
 
@@ -324,7 +337,10 @@ def test_oss_tools_resolve_from_the_public_mirror_normally() -> None:
 def test_registry_host_is_split_off_correctly() -> None:
     from npa.deploy.publish_public import _registry_host
 
-    assert _registry_host("ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1") == "ghcr.io"
+    assert (
+        _registry_host("ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.5.1")
+        == "ghcr.io"
+    )
     assert _registry_host("cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1") == (
         "cr.eu-north1.nebius.cloud"
     )
@@ -337,7 +353,11 @@ def test_verify_public_reports_every_private_image(monkeypatch) -> None:
     private = {plan[0].target_ref, plan[1].target_ref}
 
     def fake_check(ref: str, **_: object) -> tuple[bool, str]:
-        return (False, "HTTP 403 (package is private)") if ref in private else (True, "HTTP 200")
+        return (
+            (False, "HTTP 403 (package is private)")
+            if ref in private
+            else (True, "HTTP 200")
+        )
 
     monkeypatch.setattr(publish_public, "anonymous_pull_ok", fake_check)
     failures = publish_public.verify_public(plan)
@@ -346,7 +366,9 @@ def test_verify_public_reports_every_private_image(monkeypatch) -> None:
     assert all("403" in detail for _, detail in failures)
 
 
-def test_verify_public_exits_non_zero_when_anything_is_private(monkeypatch, capsys) -> None:
+def test_verify_public_exits_non_zero_when_anything_is_private(
+    monkeypatch, capsys
+) -> None:
     """The whole point: a publish that produced private packages must FAIL the run."""
     from npa.deploy import publish_public
 
@@ -366,8 +388,15 @@ def test_verify_public_exits_non_zero_when_anything_is_private(monkeypatch, caps
 def test_verify_public_exits_zero_when_everything_is_public(monkeypatch) -> None:
     from npa.deploy import publish_public
 
-    monkeypatch.setattr(publish_public, "anonymous_pull_ok", lambda ref, **_: (True, "HTTP 200"))
-    assert publish_public.main(["--target", "ghcr.io/example/workbench", "--verify-public"]) == 0
+    monkeypatch.setattr(
+        publish_public, "anonymous_pull_ok", lambda ref, **_: (True, "HTTP 200")
+    )
+    assert (
+        publish_public.main(
+            ["--target", "ghcr.io/example/workbench", "--verify-public"]
+        )
+        == 0
+    )
 
 
 def test_verify_public_does_not_copy_anything(monkeypatch) -> None:
@@ -378,11 +407,20 @@ def test_verify_public_does_not_copy_anything(monkeypatch) -> None:
         raise AssertionError(f"--verify-public must not copy {item.target_ref}")
 
     monkeypatch.setattr(publish_public, "_crane_copy", explode)
-    monkeypatch.setattr(publish_public, "anonymous_pull_ok", lambda ref, **_: (True, "ok"))
-    assert publish_public.main(["--target", "ghcr.io/example/workbench", "--verify-public"]) == 0
+    monkeypatch.setattr(
+        publish_public, "anonymous_pull_ok", lambda ref, **_: (True, "ok")
+    )
+    assert (
+        publish_public.main(
+            ["--target", "ghcr.io/example/workbench", "--verify-public"]
+        )
+        == 0
+    )
 
 
-def test_anonymous_check_sends_no_credentials_for_a_private_registry(monkeypatch) -> None:
+def test_anonymous_check_sends_no_credentials_for_a_private_registry(
+    monkeypatch,
+) -> None:
     """It must test the UNAUTHENTICATED path, or a private package reads as public.
 
     Using plain HTTP rather than a crane/docker call is deliberate: those would happily
@@ -417,11 +455,17 @@ def test_anonymous_check_sends_no_credentials_for_a_private_registry(monkeypatch
     )
 
     assert ok, detail
-    assert seen["url"].startswith("https://cr.eu-north1.nebius.cloud/v2/abc/npa-lerobot/manifests/")
-    assert seen.get("auth") is None, "no Authorization header may be sent for a non-GHCR host"
+    assert seen["url"].startswith(
+        "https://cr.eu-north1.nebius.cloud/v2/abc/npa-lerobot/manifests/"
+    )
+    assert seen.get("auth") is None, (
+        "no Authorization header may be sent for a non-GHCR host"
+    )
 
 
-def test_a_token_endpoint_refusal_is_reported_as_a_verdict_not_a_glitch(monkeypatch) -> None:
+def test_a_token_endpoint_refusal_is_reported_as_a_verdict_not_a_glitch(
+    monkeypatch,
+) -> None:
     """GHCR can refuse at the token endpoint when a package is private or absent.
 
     Reporting that as "could not obtain an anonymous token" reads like a network problem and
@@ -435,7 +479,9 @@ def test_a_token_endpoint_refusal_is_reported_as_a_verdict_not_a_glitch(monkeypa
         )
 
     monkeypatch.setattr(publish_public.urllib.request, "urlopen", fake_urlopen)
-    ok, detail = publish_public.anonymous_pull_ok("ghcr.io/example/workbench/npa-lerobot:1.0")
+    ok, detail = publish_public.anonymous_pull_ok(
+        "ghcr.io/example/workbench/npa-lerobot:1.0"
+    )
 
     assert not ok
     assert "private or does not exist yet" in detail
@@ -452,11 +498,15 @@ def test_a_token_endpoint_refusal_is_reported_as_a_verdict_not_a_glitch(monkeypa
 # --------------------------------------------------------------------------------------
 
 
-def test_the_copy_path_writes_nothing_when_a_source_is_unreadable(monkeypatch, capsys) -> None:
+def test_the_copy_path_writes_nothing_when_a_source_is_unreadable(
+    monkeypatch, capsys
+) -> None:
     from npa.deploy import publish_public
 
     def explode(item) -> None:  # pragma: no cover - must not run
-        raise AssertionError(f"nothing may be copied after a failed preflight: {item.target_ref}")
+        raise AssertionError(
+            f"nothing may be copied after a failed preflight: {item.target_ref}"
+        )
 
     monkeypatch.setattr(publish_public, "_crane_copy", explode)
     monkeypatch.setattr(
@@ -481,9 +531,13 @@ def test_preflight_reports_the_registrys_own_reason(monkeypatch) -> None:
         stderr = "Error: fetching manifest\nMANIFEST_UNKNOWN: manifest unknown"
 
     monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
-    monkeypatch.setattr(publish_public.subprocess, "run", lambda *a, **k: FakeCompleted())
+    monkeypatch.setattr(
+        publish_public.subprocess, "run", lambda *a, **k: FakeCompleted()
+    )
 
-    ok, detail = publish_public._crane_manifest_readable("cr.example/abc/npa-lerobot:1.0")
+    ok, detail = publish_public._crane_manifest_readable(
+        "cr.example/abc/npa-lerobot:1.0"
+    )
 
     assert not ok
     assert detail == "MANIFEST_UNKNOWN: manifest unknown"
@@ -496,19 +550,32 @@ def test_the_preflight_flag_never_copies(monkeypatch) -> None:
         raise AssertionError(f"--preflight must not copy {item.target_ref}")
 
     monkeypatch.setattr(publish_public, "_crane_copy", explode)
-    monkeypatch.setattr(publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok"))
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
+    )
 
-    assert publish_public.main(["--target", "ghcr.io/example/workbench", "--preflight"]) == 0
+    assert (
+        publish_public.main(["--target", "ghcr.io/example/workbench", "--preflight"])
+        == 0
+    )
 
 
-def test_a_successful_copy_still_fails_while_the_packages_are_private(monkeypatch, capsys) -> None:
+def test_a_successful_copy_still_fails_while_the_packages_are_private(
+    monkeypatch, capsys
+) -> None:
     """Copying every image and exiting 0 would be the silent false success we guard against."""
     from npa.deploy import publish_public
 
     copied: list[str] = []
-    monkeypatch.setattr(publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok"))
-    monkeypatch.setattr(publish_public, "_crane_copy", lambda item: copied.append(item.target_ref))
-    monkeypatch.setattr(publish_public, "anonymous_pull_ok", lambda ref, **_: (False, "HTTP 403"))
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_copy", lambda item: copied.append(item.target_ref)
+    )
+    monkeypatch.setattr(
+        publish_public, "anonymous_pull_ok", lambda ref, **_: (False, "HTTP 403")
+    )
 
     rc = publish_public.main(["--target", "ghcr.io/example/workbench"])
     captured = capsys.readouterr()
@@ -523,14 +590,20 @@ def test_a_successful_copy_still_fails_while_the_packages_are_private(monkeypatc
 def test_a_copy_exits_zero_only_once_the_packages_are_public(monkeypatch) -> None:
     from npa.deploy import publish_public
 
-    monkeypatch.setattr(publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok"))
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
+    )
     monkeypatch.setattr(publish_public, "_crane_copy", lambda item: None)
-    monkeypatch.setattr(publish_public, "anonymous_pull_ok", lambda ref, **_: (True, "HTTP 200"))
+    monkeypatch.setattr(
+        publish_public, "anonymous_pull_ok", lambda ref, **_: (True, "HTTP 200")
+    )
 
     assert publish_public.main(["--target", "ghcr.io/example/workbench"]) == 0
 
 
-def test_crane_copy_skips_a_target_with_the_exact_source_digest(monkeypatch, capsys) -> None:
+def test_crane_copy_skips_a_target_with_the_exact_source_digest(
+    monkeypatch, capsys
+) -> None:
     """Repeat publishes must prove equality without invoking the registry write path."""
     from npa.deploy import publish_public
     from npa.deploy.publish_public import PublishItem
@@ -590,7 +663,9 @@ def test_crane_digest_preserves_the_registry_error(monkeypatch) -> None:
         stderr = "Error: fetching digest\nMANIFEST_UNKNOWN: manifest unknown\n"
 
     monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
-    monkeypatch.setattr(publish_public.subprocess, "run", lambda *args, **kwargs: Result())
+    monkeypatch.setattr(
+        publish_public.subprocess, "run", lambda *args, **kwargs: Result()
+    )
 
     assert publish_public._crane_digest("registry.example/image:missing") == (
         False,
@@ -598,7 +673,9 @@ def test_crane_digest_preserves_the_registry_error(monkeypatch) -> None:
     )
 
 
-def test_crane_copy_updates_a_target_with_a_different_digest(monkeypatch, capsys) -> None:
+def test_crane_copy_updates_a_target_with_a_different_digest(
+    monkeypatch, capsys
+) -> None:
     from npa.deploy import publish_public
     from npa.deploy.publish_public import PublishItem
 
@@ -701,7 +778,9 @@ def test_repeat_publish_skips_all_matching_copies_but_still_verifies(
     """Incrementality removes writes, not the final anonymous-public assertion."""
     from npa.deploy import publish_public
 
-    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    plan = publish_public.build_publish_plan(
+        target_registry="ghcr.io/example/workbench"
+    )
     verified: list[str] = []
     monkeypatch.setattr(
         publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
@@ -734,10 +813,14 @@ def test_settings_url_encodes_the_repository_nested_package_name() -> None:
     )
 
 
-def test_settings_url_is_none_for_a_registry_with_a_different_visibility_model() -> None:
+def test_settings_url_is_none_for_a_registry_with_a_different_visibility_model() -> (
+    None
+):
     from npa.deploy.publish_public import package_settings_url
 
-    assert package_settings_url("cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1") is None
+    assert (
+        package_settings_url("cr.eu-north1.nebius.cloud/abc/npa-lerobot:0.5.1") is None
+    )
 
 
 def test_the_checklist_covers_exactly_the_packages_still_private() -> None:
@@ -796,7 +879,9 @@ def _jwt(exp: int | None) -> str:
     return f"{segment({'alg': 'RS256'})}.{segment(claims)}.c2lnbmF0dXJl"
 
 
-def test_an_expired_access_token_is_reported_as_expired_not_as_a_registry_problem() -> None:
+def test_an_expired_access_token_is_reported_as_expired_not_as_a_registry_problem() -> (
+    None
+):
     from npa.deploy.publish_public import describe_credential
 
     now = 1_800_000_000.0
@@ -868,7 +953,9 @@ def test_describe_credential_never_echoes_the_secret() -> None:
             assert len(part) < 8 or part not in verdict
 
 
-def test_the_credential_check_exits_non_zero_on_an_expired_token(monkeypatch, capsys) -> None:
+def test_the_credential_check_exits_non_zero_on_an_expired_token(
+    monkeypatch, capsys
+) -> None:
     """The workflow relies on the exit code to stop before the manifest sweep."""
     import io
 
@@ -908,7 +995,9 @@ def test_the_credential_check_copies_nothing(monkeypatch) -> None:
     assert publish_public.main(["--describe-credential"]) == 0
 
 
-def test_a_wholesale_unauthorized_preflight_blames_the_credential(monkeypatch, capsys) -> None:
+def test_a_wholesale_unauthorized_preflight_blames_the_credential(
+    monkeypatch, capsys
+) -> None:
     """All reads failing is a different diagnosis from some failing, and the old message
     conflated them — it recommended re-minting a 12-hour token, which is what caused it."""
     from npa.deploy import publish_public
@@ -916,7 +1005,10 @@ def test_a_wholesale_unauthorized_preflight_blames_the_credential(monkeypatch, c
     monkeypatch.setattr(
         publish_public,
         "_crane_manifest_readable",
-        lambda ref, **_: (False, "UNAUTHORIZED: authentication required: failed to get profile"),
+        lambda ref, **_: (
+            False,
+            "UNAUTHORIZED: authentication required: failed to get profile",
+        ),
     )
 
     rc = publish_public.main(["--target", "ghcr.io/example/workbench", "--preflight"])
@@ -928,16 +1020,24 @@ def test_a_wholesale_unauthorized_preflight_blames_the_credential(monkeypatch, c
     assert "lacks\nviewer" not in err, "a per-repository role hint would misdirect here"
 
 
-def test_a_partial_preflight_failure_blames_the_role_or_the_tag(monkeypatch, capsys) -> None:
+def test_a_partial_preflight_failure_blames_the_role_or_the_tag(
+    monkeypatch, capsys
+) -> None:
     from npa.deploy import publish_public
 
-    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    plan = publish_public.build_publish_plan(
+        target_registry="ghcr.io/example/workbench"
+    )
     broken = plan[0].source_ref
 
     monkeypatch.setattr(
         publish_public,
         "_crane_manifest_readable",
-        lambda ref, **_: (False, "MANIFEST_UNKNOWN: manifest unknown") if ref == broken else (True, "ok"),
+        lambda ref, **_: (
+            (False, "MANIFEST_UNKNOWN: manifest unknown")
+            if ref == broken
+            else (True, "ok")
+        ),
     )
 
     rc = publish_public.main(["--target", "ghcr.io/example/workbench", "--preflight"])
@@ -967,7 +1067,9 @@ _NAME_UNKNOWN = (
     "NAME_UNKNOWN: repository name not known to registry: Entity Folder not found for "
     "registry e00example"
 )
-_MANIFEST_UNKNOWN = "MANIFEST_UNKNOWN: manifest unknown: Tag not found for manifest npa-x:null"
+_MANIFEST_UNKNOWN = (
+    "MANIFEST_UNKNOWN: manifest unknown: Tag not found for manifest npa-x:null"
+)
 _FAILED_TO_GET_PROFILE = "UNAUTHORIZED: authentication required: failed to get profile"
 
 
@@ -996,12 +1098,20 @@ def test_a_denial_that_also_says_name_unknown_is_never_treated_as_absence() -> N
     """
     from npa.deploy.publish_public import classify_preflight_failure
 
-    assert classify_preflight_failure("UNAUTHORIZED: NAME_UNKNOWN: not visible") == "denied"
+    assert (
+        classify_preflight_failure("UNAUTHORIZED: NAME_UNKNOWN: not visible")
+        == "denied"
+    )
 
 
 def _run2_readability(plan):
     """The exact pass/fail split run #2 saw: 18 readable, 4 absent repos, 1 absent tag."""
-    never_built = {"npa-cosmos-curate", "npa-cosmos-evaluator", "npa-cosmos3", "npa-foxglove-embed"}
+    never_built = {
+        "npa-cosmos-curate",
+        "npa-cosmos-evaluator",
+        "npa-cosmos3",
+        "npa-foxglove-embed",
+    }
     unpushed_tag = {"npa-cosmos2-transfer"}
 
     def readable(ref: str, **_: object) -> tuple[bool, str]:
@@ -1020,8 +1130,12 @@ def test_unbuilt_images_block_the_publish_by_default(monkeypatch, capsys) -> Non
     dropped an image would look exactly like success."""
     from npa.deploy import publish_public
 
-    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
-    monkeypatch.setattr(publish_public, "_crane_manifest_readable", _run2_readability(plan))
+    plan = publish_public.build_publish_plan(
+        target_registry="ghcr.io/example/workbench"
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", _run2_readability(plan)
+    )
 
     def explode(item) -> None:  # pragma: no cover - must not run
         raise AssertionError("nothing may be copied without --skip-missing")
@@ -1032,24 +1146,38 @@ def test_unbuilt_images_block_the_publish_by_default(monkeypatch, capsys) -> Non
     err = capsys.readouterr().err
 
     assert rc == 1
-    assert "5 of 23" in err
+    assert "5 of 24" in err
     # Both codes must survive into the explanation: they need different fixes, and an
     # operator greps for the registry's own wording.
     assert "NAME_UNKNOWN" in err and "never been pushed" in err
     assert "MANIFEST_UNKNOWN" in err and "unpushed build" in err
-    assert "--skip-missing" in err, "the way forward has to be named where it is discovered"
+    assert "--skip-missing" in err, (
+        "the way forward has to be named where it is discovered"
+    )
 
 
-def test_skip_missing_publishes_the_ready_images_and_names_the_skipped(monkeypatch, capsys) -> None:
+def test_skip_missing_publishes_the_ready_images_and_names_the_skipped(
+    monkeypatch, capsys
+) -> None:
     from npa.deploy import publish_public
 
-    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
-    monkeypatch.setattr(publish_public, "_crane_manifest_readable", _run2_readability(plan))
+    plan = publish_public.build_publish_plan(
+        target_registry="ghcr.io/example/workbench"
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", _run2_readability(plan)
+    )
     copied: list[str] = []
-    monkeypatch.setattr(publish_public, "_crane_copy", lambda item: copied.append(item.target_ref))
-    monkeypatch.setattr(publish_public, "anonymous_pull_ok", lambda ref, **_: (True, "HTTP 200"))
+    monkeypatch.setattr(
+        publish_public, "_crane_copy", lambda item: copied.append(item.target_ref)
+    )
+    monkeypatch.setattr(
+        publish_public, "anonymous_pull_ok", lambda ref, **_: (True, "HTTP 200")
+    )
 
-    rc = publish_public.main(["--target", "ghcr.io/example/workbench", "--skip-missing"])
+    rc = publish_public.main(
+        ["--target", "ghcr.io/example/workbench", "--skip-missing"]
+    )
     captured = capsys.readouterr()
 
     assert rc == 0
@@ -1058,8 +1186,10 @@ def test_skip_missing_publishes_the_ready_images_and_names_the_skipped(monkeypat
         assert not any(f"/{image}:" in ref for ref in copied), image
         # Skipping quietly would leave a hole in the mirror nobody knew about.
         assert image in captured.err, image
-    assert any("/npa-lerobot:" in ref for ref in copied), "ready images must still publish"
-    assert "Copied 18 image(s)." in captured.out
+    assert any("/npa-lerobot:" in ref for ref in copied), (
+        "ready images must still publish"
+    )
+    assert "Copied 19 image(s)." in captured.out
 
 
 def test_skip_missing_never_skips_past_a_denial(monkeypatch, capsys) -> None:
@@ -1070,7 +1200,9 @@ def test_skip_missing_never_skips_past_a_denial(monkeypatch, capsys) -> None:
     """
     from npa.deploy import publish_public
 
-    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
+    plan = publish_public.build_publish_plan(
+        target_registry="ghcr.io/example/workbench"
+    )
     denied = plan[3].source_ref
 
     def readable(ref: str, **_: object) -> tuple[bool, str]:
@@ -1085,7 +1217,9 @@ def test_skip_missing_never_skips_past_a_denial(monkeypatch, capsys) -> None:
 
     monkeypatch.setattr(publish_public, "_crane_copy", explode)
 
-    rc = publish_public.main(["--target", "ghcr.io/example/workbench", "--skip-missing"])
+    rc = publish_public.main(
+        ["--target", "ghcr.io/example/workbench", "--skip-missing"]
+    )
     err = capsys.readouterr().err
 
     assert rc == 1
@@ -1098,8 +1232,12 @@ def test_skip_missing_preflight_alone_reports_success(monkeypatch) -> None:
     """So a dry run can confirm the publish would proceed before anything is written."""
     from npa.deploy import publish_public
 
-    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
-    monkeypatch.setattr(publish_public, "_crane_manifest_readable", _run2_readability(plan))
+    plan = publish_public.build_publish_plan(
+        target_registry="ghcr.io/example/workbench"
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", _run2_readability(plan)
+    )
 
     assert (
         publish_public.main(
@@ -1109,16 +1247,30 @@ def test_skip_missing_preflight_alone_reports_success(monkeypatch) -> None:
     )
 
 
-def test_verify_public_with_skip_missing_ignores_the_unpublished(monkeypatch, capsys) -> None:
+def test_verify_public_with_skip_missing_ignores_the_unpublished(
+    monkeypatch, capsys
+) -> None:
     """The checklist must not list packages nobody tried to publish — those links 404."""
     from npa.deploy import publish_public
 
-    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
-    monkeypatch.setattr(publish_public, "_crane_manifest_readable", _run2_readability(plan))
-    monkeypatch.setattr(publish_public, "anonymous_pull_ok", lambda ref, **_: (False, "HTTP 403"))
+    plan = publish_public.build_publish_plan(
+        target_registry="ghcr.io/example/workbench"
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", _run2_readability(plan)
+    )
+    monkeypatch.setattr(
+        publish_public, "anonymous_pull_ok", lambda ref, **_: (False, "HTTP 403")
+    )
 
     rc = publish_public.main(
-        ["--target", "ghcr.io/example/workbench", "--skip-missing", "--verify-public", "--checklist"]
+        [
+            "--target",
+            "ghcr.io/example/workbench",
+            "--skip-missing",
+            "--verify-public",
+            "--checklist",
+        ]
     )
     captured = capsys.readouterr()
 
@@ -1128,19 +1280,32 @@ def test_verify_public_with_skip_missing_ignores_the_unpublished(monkeypatch, ca
     # and IS readable, so a substring check would fail for the wrong reason.
     listed = set(re.findall(r"- \[ \] \[workbench/([^\]]+)\]", captured.out))
     assert "npa-cosmos3" not in listed
-    assert "npa-cosmos3-reason" in listed, "a readable image whose name shares a prefix stays"
+    assert "npa-cosmos3-reason" in listed, (
+        "a readable image whose name shares a prefix stays"
+    )
     assert listed.isdisjoint(
-        {"npa-cosmos3", "npa-cosmos-curate", "npa-cosmos-evaluator", "npa-foxglove-embed",
-         "npa-cosmos2-transfer"}
+        {
+            "npa-cosmos3",
+            "npa-cosmos-curate",
+            "npa-cosmos-evaluator",
+            "npa-foxglove-embed",
+            "npa-cosmos2-transfer",
+        }
     )
 
 
-def test_the_post_copy_verification_only_covers_what_was_copied(monkeypatch, capsys) -> None:
+def test_the_post_copy_verification_only_covers_what_was_copied(
+    monkeypatch, capsys
+) -> None:
     """Verifying the skipped ones too would fail a publish that did everything asked of it."""
     from npa.deploy import publish_public
 
-    plan = publish_public.build_publish_plan(target_registry="ghcr.io/example/workbench")
-    monkeypatch.setattr(publish_public, "_crane_manifest_readable", _run2_readability(plan))
+    plan = publish_public.build_publish_plan(
+        target_registry="ghcr.io/example/workbench"
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", _run2_readability(plan)
+    )
     monkeypatch.setattr(publish_public, "_crane_copy", lambda item: None)
 
     verified: list[str] = []
@@ -1151,7 +1316,9 @@ def test_the_post_copy_verification_only_covers_what_was_copied(monkeypatch, cap
 
     monkeypatch.setattr(publish_public, "anonymous_pull_ok", anon)
 
-    rc = publish_public.main(["--target", "ghcr.io/example/workbench", "--skip-missing"])
+    rc = publish_public.main(
+        ["--target", "ghcr.io/example/workbench", "--skip-missing"]
+    )
 
     assert rc == 0
     assert len(verified) == len(plan) - 5

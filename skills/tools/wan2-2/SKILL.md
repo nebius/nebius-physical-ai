@@ -122,11 +122,15 @@ verified manifest may name `wan2.2_verified_rerun_recording`.
 
 ## Licensing
 
-Track official source, baked dependencies, run-time model/tokenizer, and data
-separately. Source/model declarations do not classify a built image. Before
-public publication, inspect the emitted runtime inventory and the built image;
-keep model/tokenizer acquisition at run time. Do not add this dynamic BYOF
-candidate to the first-class packaging contract before image promotion.
+Track official source, baked dependencies, runtime-fetched CUDA software,
+run-time model/tokenizer, and data separately. Source/model declarations do not
+classify a built image. The promoted first-class `npa-wan2-2` contract is public
+eligible only when a pushed digest proves all `nvidia-*`, CUDA/cuDNN/NCCL,
+checkpoint, credential, and cache bytes absent from every layer and history via
+`npa/scripts/scan_image_wan_payload.py`. The operator must explicitly accept
+current NVIDIA terms before `wan-runtime` writes the CUDA stack to its volume;
+model/tokenizer acquisition remains runtime-only. Do not treat automation as
+human legal approval and never publish merely because the Dockerfile looks clean.
 
 ## Validation
 

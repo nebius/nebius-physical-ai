@@ -10,12 +10,14 @@ import pytest
 
 from npa.workflows.wan_rerun import (
     MULTI_GPU_LAYOUT,
+    SINGLE_GPU_LAYOUT,
     RRD_CAPABILITY,
     RRD_MANIFEST_SCHEMA,
     WanRrdError,
     build_wan_rrd,
     publish_wan_rrd_from_s3,
 )
+from npa.solutions.wan2_2 import rerun as wan_rerun
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -92,6 +94,7 @@ def _materialize_multigpu_run(root: Path) -> None:
             "created_unix": 1.0,
         },
     )
+
     _write_json(
         root / "npa_source_metadata.json",
         {
@@ -213,6 +216,94 @@ def _materialize_multigpu_run(root: Path) -> None:
     )
 
 
+def _materialize_single_gpu_run(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    video = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 64
+    (root / SINGLE_GPU_LAYOUT.video_filename).write_bytes(video)
+    _write_json(
+        root / "npa_byof_summary.json",
+        {
+            "status": "success",
+            "tool": "byof",
+            "workload": "solution-smoke-wan22-rtxpro-gpu",
+            "run_id": "wan-single-run",
+            "solution_name": "wan2.2",
+            "capability_name": "wan2.2_ti2v_5b_text_to_video",
+            "smoke_artifact_name": "wan2_2_ti2v_5b_text_to_video.json",
+            "smoke_exit_code": 0,
+            "created_unix": 1.0,
+        },
+    )
+    _write_json(
+        root / "npa_source_metadata.json",
+        {
+            "source": "oss-byof",
+            "repo": "https://github.com/Wan-Video/Wan2.2.git",
+            "ref": "42bf4cfaa384bc21833865abc2f9e6c0e67233dc",
+        },
+    )
+    _write_json(
+        root / "wan2_2_ti2v_5b_text_to_video.json",
+        {
+            "schema": "npa.workbench.byof.wan2_2_ti2v_5b.v1",
+            "solution": "wan2.2",
+            "upstream_repo": "https://github.com/Wan-Video/Wan2.2.git",
+            "upstream_ref": "42bf4cfaa384bc21833865abc2f9e6c0e67233dc",
+            "model_id": "Wan-AI/Wan2.2-TI2V-5B",
+            "model_ref": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+            "tokenizer_id": "google/umt5-xxl",
+            "tokenizer_ref": "66cb9e7e85526fe440a945569e42c72fb6cbc0ad",
+            "weights_baked": False,
+            "task": "text-to-video",
+            "prompt": "An abstract color study.",
+            "seed": 42,
+            "requested": {"width": 1280, "height": 704, "frames": 17, "fps": 24.0},
+            "observed": {
+                "width": 1280,
+                "height": 704,
+                "frame_count": 17,
+                "fps": 24.0,
+                "codec": "h264",
+                "max_spatial_std": 46.9,
+                "pixel_range": 255,
+                "mean_temporal_abs_delta": 0.73,
+            },
+            "output_filename": SINGLE_GPU_LAYOUT.video_filename,
+            "output_size_bytes": len(video),
+            "device_topology": {
+                "cuda_device_count": 1,
+                "devices": [{"name": "NVIDIA RTX PRO 6000 Blackwell Server Edition"}],
+                "torch": "2.7.1+cu128",
+                "torch_cuda": "12.8",
+                "driver_versions": ["580.159.04"],
+                "attention_backend": "pytorch_sdpa",
+                "sdpa_source_binding": True,
+            },
+            "capabilities_exercised": [
+                "wan2.2_ti2v_5b_text_to_video",
+                "wan2.2_decoded_mp4_validation",
+            ],
+            "deferred": [],
+        },
+    )
+    _write_json(
+        root / SINGLE_GPU_LAYOUT.inventory_filename,
+        {
+            "schema": "npa.workbench.byof.wan2_2_runtime_inventory.v1",
+            "baked_runtime": {
+                "non_root": True,
+                "venv_readable": True,
+                "large_checkpoint_shaped_files": [],
+            },
+            "runtime_stack": {
+                "torch": "2.7.1+cu128",
+                "torch_cuda": "12.8",
+                "driver_versions": ["580.159.04"],
+            },
+        },
+    )
+
+
 class _MemoryS3:
     def __init__(self, bucket: str, prefix: str, run_dir: Path) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
@@ -265,6 +356,102 @@ def test_build_wan_rrd_embeds_exact_video_and_timestamped_frames(
     entities = {str(chunk.entity_path) for chunk in load_recording(output).chunks()}
     assert "/wan2_2/video/asset" in entities
     assert "/wan2_2/evidence/ranks/rank_3" in entities
+    assert "/wan2_2/evidence/execution" in entities
+    assert "/wan2_2/evidence/distributed" not in entities
+
+
+def test_single_gpu_layout_builds_and_uses_accurate_execution_entity(
+    tmp_path: Path,
+) -> None:
+    from rerun.recording import load_recording
+
+    run_dir = tmp_path / "single"
+    _materialize_single_gpu_run(run_dir)
+    output = tmp_path / SINGLE_GPU_LAYOUT.rrd_filename
+    result = build_wan_rrd(run_dir, output, layout=SINGLE_GPU_LAYOUT)
+
+    assert result["variant"] == "single-gpu"
+    assert result["verification"]["video_frame_reference_count"] == 17
+    entities = {str(chunk.entity_path) for chunk in load_recording(output).chunks()}
+    assert "/wan2_2/evidence/execution" in entities
+    assert not any("/distributed" in entity for entity in entities)
+
+
+def test_single_gpu_schema_drift_fails_with_structured_error(tmp_path: Path) -> None:
+    run_dir = tmp_path / "single"
+    _materialize_single_gpu_run(run_dir)
+    artifact = run_dir / "wan2_2_ti2v_5b_text_to_video.json"
+    payload = json.loads(artifact.read_text())
+    payload.pop("tokenizer_id")
+    _write_json(artifact, payload)
+
+    with pytest.raises(WanRrdError, match="tokenizer identity"):
+        build_wan_rrd(run_dir, tmp_path / "broken.rrd", layout=SINGLE_GPU_LAYOUT)
+
+
+def test_single_gpu_publish_manifest_and_source_roles(tmp_path: Path) -> None:
+    run_dir = tmp_path / "single"
+    _materialize_single_gpu_run(run_dir)
+    bucket = "test-bucket"
+    prefix = "oss-solutions/wan2.2/wan-single-run/"
+    s3 = _MemoryS3(bucket, prefix, run_dir)
+
+    result = publish_wan_rrd_from_s3(
+        f"s3://{bucket}/{prefix}", variant="single", s3_client=s3
+    )
+    manifest = json.loads(
+        s3.objects[(bucket, prefix + SINGLE_GPU_LAYOUT.manifest_filename)]
+    )
+    assert result["status"] == "verified"
+    assert manifest["variant"] == "single-gpu"
+    assert len(manifest["source_objects"]) == 5
+    assert not any(
+        item["role"].startswith("distributed") for item in manifest["source_objects"]
+    )
+
+
+@pytest.mark.parametrize(
+    "stats",
+    [
+        "num_chunks = 3\nnum_entity_paths = 4\nnum_rows = 9\n",
+        "chunks: 3; entities: 4; rows: 9; static: 2",
+        "",
+    ],
+)
+def test_rerun_stats_format_drift_fails_closed(stats: str) -> None:
+    with pytest.raises(WanRrdError, match="missing required field"):
+        wan_rerun._stats_fields(stats)
+
+
+def test_blueprint_is_supplied_exactly_once(tmp_path: Path, monkeypatch) -> None:
+    import rerun as rr
+
+    run_dir = tmp_path / "single"
+    _materialize_single_gpu_run(run_dir)
+    evidence = wan_rerun.validate_wan_run(run_dir, SINGLE_GPU_LAYOUT)
+    calls = {"save": 0, "send": 0}
+
+    class Recording:
+        def save(self, _path, *, default_blueprint=None):
+            assert default_blueprint is not None
+            calls["save"] += 1
+
+        def send_blueprint(self, _blueprint):
+            calls["send"] += 1
+
+        def log(self, *_args, **_kwargs):
+            return None
+
+        def flush(self):
+            return None
+
+        def disconnect(self):
+            return None
+
+    monkeypatch.setattr(rr, "RecordingStream", lambda *_args, **_kwargs: Recording())
+    monkeypatch.setattr(rr, "set_time", lambda *_args, **_kwargs: None)
+    wan_rerun._log_recording(tmp_path / "once.rrd", evidence)
+    assert calls == {"save": 1, "send": 0}
 
 
 def test_build_wan_rrd_rejects_rank_evidence_disagreement(tmp_path: Path) -> None:

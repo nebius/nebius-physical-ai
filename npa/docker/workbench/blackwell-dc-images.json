@@ -1,6 +1,6 @@
 {
   "format": "npa_blackwell_dc_image_manifest_v1",
-  "as_of": "2026-08-03T05:05:26Z",
+  "as_of": "2026-08-08T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
   "registry_note": "Resolve the registry through npa.deploy.images / npa configure. Additive tags are pushed to both the primary (eu-north1) and mirror (us-central1) registries; never hardcode a registry id here.",
   "target": {
@@ -189,6 +189,18 @@
         "sm_100",
         "sm_120"
       ]
+    },
+    {
+      "name": "npa-wan2-2",
+      "dockerfile": "wan2-2/Dockerfile",
+      "build_script": "wan2-2/build.sh",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "redistribution": "public",
+      "torch": "2.7.1+cu128, fetched into the operator-owned runtime volume after explicit terms acceptance",
+      "source_compiled_extensions": [],
+      "smoke": "official Wan TI2V-5B generation through torchrun on four B200s with NCCL, FULL_SHARD T5/DiT, Ulysses collectives, decoded H.264 MP4 validation, and verified Rerun evidence",
+      "notes": "The public-eligible image itself is CPU-only. Its pinned cu128 runtime closure reports sm_100 for the B200 path; the dedicated live E2E must pass before validation can become validated. The separate RTX PRO 6000 path requires sm_120 and native PyTorch SDPA. No GPU result is inferred from either architecture for the other."
     },
     {
       "name": "npa-cosmos3-reason",

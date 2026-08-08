@@ -50,6 +50,7 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: and then dies at the upload with
 #: ``botocore.exceptions.NoCredentialsError: Unable to locate credentials``.
 DEFAULT_SECRET_ENVS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+OPERATOR_RUNTIME_ENVS = ("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",)
 
 
 def resolve_secret_envs(explicit: list[str] | None) -> list[str]:
@@ -62,7 +63,6 @@ def resolve_secret_envs(explicit: list[str] | None) -> list[str]:
 
     names = list(explicit or DEFAULT_SECRET_ENVS)
     return [name for name in dict.fromkeys(names) if os.environ.get(name)]
-
 
 
 def _normalize_s3_bucket(value: str) -> str:
@@ -96,8 +96,12 @@ def _normalize_output_root(value: str, *, default_prefix: str = "byof") -> str:
     return f"s3://{bucket}/{remainder or default_prefix}"
 
 
-DEFAULT_BUCKET = _normalize_s3_bucket(os.environ.get("NPA_S3_BUCKET", "")) or "your-bucket-name"
-DEFAULT_OUTPUT_ROOT = _normalize_output_root(os.environ.get("NPA_BYOF_OUTPUT_ROOT", ""), default_prefix="byof")
+DEFAULT_BUCKET = (
+    _normalize_s3_bucket(os.environ.get("NPA_S3_BUCKET", "")) or "your-bucket-name"
+)
+DEFAULT_OUTPUT_ROOT = _normalize_output_root(
+    os.environ.get("NPA_BYOF_OUTPUT_ROOT", ""), default_prefix="byof"
+)
 TERMINAL_STATUSES = {
     "SUCCEEDED",
     "CANCELLED",
@@ -132,6 +136,10 @@ def render_workflow(
         envs["BYOF_SOLUTION_NAME"] = solution_name
         envs["BYOF_CAPABILITY_NAME"] = capability_name
         envs["BYOF_SMOKE_ARTIFACT_NAME"] = smoke_artifact_name
+        for name in OPERATOR_RUNTIME_ENVS:
+            value = os.environ.get(name, "").strip()
+            if value:
+                envs[name] = value
         normalized_root = _normalize_output_root(output_root)
         envs["S3_OUTPUT_PREFIX"] = normalized_root.rstrip("/") + f"/{run_id}/"
         bucket = _normalize_s3_bucket(normalized_root) or _normalize_s3_bucket(
@@ -153,7 +161,9 @@ def render_workflow(
                 os.environ.get(key, "").strip(),
                 storage_env.get(key, "").strip(),
             ):
-                if candidate and not (candidate.startswith("${") and candidate.endswith("}")):
+                if candidate and not (
+                    candidate.startswith("${") and candidate.endswith("}")
+                ):
                     value = candidate
                     break
             if not value:
@@ -174,20 +184,31 @@ def render_workflow(
 
 
 def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:
-    docs = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc is not None]
+    docs = [
+        doc
+        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
     if not docs:
         raise ValueError(f"empty SkyPilot YAML: {path}")
     return docs
 
 
 def _task_docs(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if len(docs) > 1 and isinstance(docs[0], dict) and "execution" in docs[0] and "run" not in docs[0]:
+    if (
+        len(docs) > 1
+        and isinstance(docs[0], dict)
+        and "execution" in docs[0]
+        and "run" not in docs[0]
+    ):
         return docs[1:]
     return docs
 
 
 def _write_yaml_documents(path: Path, docs: list[dict[str, Any]]) -> None:
-    path.write_text(yaml.safe_dump_all(_task_docs(docs), sort_keys=False), encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump_all(_task_docs(docs), sort_keys=False), encoding="utf-8"
+    )
 
 
 def _default_run_id() -> str:
@@ -237,7 +258,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--submit-timeout", type=int, default=600)
-    parser.add_argument("--wait-timeout", type=int, default=3600)
+    parser.add_argument(
+        "--wait-timeout",
+        type=int,
+        default=3600,
+        help="0 checks once, positive values bound the wait, and -1 waits until terminal.",
+    )
     parser.add_argument("--poll-interval", type=int, default=30)
     parser.add_argument("--isolated-config-dir", default="")
     parser.add_argument("--render-only", action="store_true")
@@ -246,7 +272,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=os.environ.get("NPA_BYOF_DIRECT_LAUNCH", "1") != "0",
     )
-    parser.add_argument("--cleanup", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--cleanup", action=argparse.BooleanOptionalAction, default=True
+    )
     return parser.parse_args(argv)
 
 
@@ -254,9 +282,63 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
         return _submit_and_wait(args)
-    except (SkyPilotNotInstalledError, SkyPilotConfigError, SkyPilotVersionError) as exc:
+    except (
+        SkyPilotNotInstalledError,
+        SkyPilotConfigError,
+        SkyPilotVersionError,
+    ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
+
+
+def _wait_for_terminal(
+    run_id: str,
+    *,
+    sky_bin: str,
+    wait_timeout: int,
+    poll_interval: int,
+) -> tuple[Any, dict[str, Any]]:
+    """Poll with explicit immediate, bounded, or indefinite semantics."""
+
+    if wait_timeout < -1:
+        raise ValueError("--wait-timeout must be -1, zero, or a positive number")
+    mode = (
+        "indefinite"
+        if wait_timeout == -1
+        else ("immediate" if wait_timeout == 0 else "bounded")
+    )
+    deadline = None if wait_timeout == -1 else time.time() + wait_timeout
+    statuses: list[str] = []
+    final = workflow_status(run_id, sky_bin=sky_bin)
+    statuses.append(final.status)
+    polls = 1
+    while (
+        final.status not in TERMINAL_STATUSES
+        and wait_timeout != 0
+        and (deadline is None or time.time() < deadline)
+    ):
+        time.sleep(max(poll_interval, 1))
+        final = workflow_status(run_id, sky_bin=sky_bin)
+        statuses.append(final.status)
+        polls += 1
+    diagnostics = {
+        "mode": mode,
+        "polls": polls,
+        "statuses": statuses,
+        "terminal": final.status in TERMINAL_STATUSES,
+        "deadline_exhausted": bool(
+            wait_timeout > 0
+            and final.status not in TERMINAL_STATUSES
+            and deadline is not None
+            and time.time() >= deadline
+        ),
+    }
+    if not diagnostics["terminal"]:
+        diagnostics["stuck_state"] = final.status
+        diagnostics["hint"] = (
+            "workflow is not terminal; inspect SkyPilot controller/job and pod events"
+        )
+    return final, diagnostics
 
 
 def _submit_and_wait(args: argparse.Namespace) -> int:
@@ -282,13 +364,24 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         render_dir = Path(tempfile.mkdtemp(prefix=f"npa-byof-container-{run_id}-"))
         rendered_yaml = render_dir / "byof-container.rendered.yaml"
         _write_yaml_documents(rendered_yaml, docs)
-        print(json.dumps({"run_id": run_id, "rendered_yaml": str(rendered_yaml), "outputs": outputs}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "rendered_yaml": str(rendered_yaml),
+                    "outputs": outputs,
+                },
+                indent=2,
+            )
+        )
         return 0
 
     with tempfile.TemporaryDirectory(prefix=f"npa-byof-container-{run_id}-") as tmp:
         tmp_path = Path(tmp)
         previous_kubeconfig = os.environ.get("KUBECONFIG")
-        sky_bin = str(resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN")))
+        sky_bin = str(
+            resolve_sky_bin(args.sky_bin or os.environ.get("NPA_SKYPILOT_BIN"))
+        )
         try:
             _normalize_kubeconfig_current_context(tmp_path)
             rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
@@ -312,38 +405,48 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 sky_bin=sky_bin,
                 poll_interval=max(float(args.poll_interval), 0.0),
             )
-            previous_handlers = install_teardown_signal_handlers(teardown_guard.teardown)
+            previous_handlers = install_teardown_signal_handlers(
+                teardown_guard.teardown
+            )
             summary: dict[str, Any] | None = None
             return_code = 1
             try:
                 teardown_guard.mark_launched()
+                submit_config_path = Path(config_path) if config_path else None
                 result = submit_workflow(
                     rendered_yaml,
                     run_id,
                     isolated_config_dir=args.isolated_config_dir,
-                    config_path=config_path,
+                    config_path=submit_config_path,
                     sky_bin=sky_bin,
                     infra=infra,
                     secret_envs=resolve_secret_envs(args.secret_env),
                     timeout=args.submit_timeout,
                 )
-                config_path = Path(result.log_paths["config"]) if result.log_paths.get("config") else None
-                teardown_guard.mark_launched(config_path=config_path)
-                summary = {"run_id": run_id, "submit": result.__dict__, "outputs": outputs}
-                # A non-positive timeout means "wait until terminal". Long model
-                # downloads and video generation are normal solution-smoke work;
-                # callers must opt into a deadline instead of inheriting a hidden
-                # one-hour cap from the generic container verifier.
-                deadline = None if args.wait_timeout <= 0 else time.time() + args.wait_timeout
-                final = workflow_status(run_id, sky_bin=sky_bin)
-                while final.status not in TERMINAL_STATUSES and (
-                    deadline is None or time.time() < deadline
-                ):
-                    time.sleep(max(args.poll_interval, 1))
-                    final = workflow_status(run_id, sky_bin=sky_bin)
+                submitted_config_path = (
+                    Path(result.log_paths["config"])
+                    if result.log_paths.get("config")
+                    else None
+                )
+                teardown_guard.mark_launched(config_path=submitted_config_path)
+                summary = {
+                    "run_id": run_id,
+                    "submit": result.__dict__,
+                    "outputs": outputs,
+                }
+                final, wait_diagnostics = _wait_for_terminal(
+                    run_id,
+                    sky_bin=sky_bin,
+                    wait_timeout=args.wait_timeout,
+                    poll_interval=args.poll_interval,
+                )
                 summary["final"] = final.__dict__
+                summary["wait"] = wait_diagnostics
                 return_code = 0 if final.status == "SUCCEEDED" else 1
-                if os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1" and final.status == "FAILED_PRECHECKS":
+                if (
+                    os.environ.get("NPA_ISAAC_LAB_ACCEPT_PRECHECK_FAILURE") == "1"
+                    and final.status == "FAILED_PRECHECKS"
+                ):
                     return_code = 0
             finally:
                 restore_signal_handlers(previous_handlers)
@@ -430,9 +533,10 @@ def _direct_launch(
 
 
 def _default_infra() -> str:
-    configured = os.environ.get("NPA_BYOF_INFRA", "").strip() or os.environ.get(
-        "NPA_SKYPILOT_INFRA", ""
-    ).strip()
+    configured = (
+        os.environ.get("NPA_BYOF_INFRA", "").strip()
+        or os.environ.get("NPA_SKYPILOT_INFRA", "").strip()
+    )
     if configured:
         return configured
     context = (
@@ -477,7 +581,9 @@ def _write_default_k8s_config(tmp_path: Path, infra: str) -> str:
                 "kubernetes": {
                     "pod_config": {
                         "spec": {
-                            "imagePullSecrets": [{"name": name} for name in DEFAULT_IMAGE_PULL_SECRETS],
+                            "imagePullSecrets": [
+                                {"name": name} for name in DEFAULT_IMAGE_PULL_SECRETS
+                            ],
                         }
                     }
                 }
@@ -517,7 +623,9 @@ def _ensure_infra_enabled(*, sky_bin: str, infra: str, config_path: str = "") ->
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
-        raise SkyPilotConfigError(f"SkyPilot Kubernetes check failed before BYOF smoke submission: {detail}")
+        raise SkyPilotConfigError(
+            f"SkyPilot Kubernetes check failed before BYOF smoke submission: {detail}"
+        )
 
 
 if __name__ == "__main__":

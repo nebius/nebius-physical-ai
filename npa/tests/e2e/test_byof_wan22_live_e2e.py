@@ -1,7 +1,7 @@
 """Contract and gated live RTX PRO E2E for the Wan 2.2 BYOF solution spec.
 
-The always-on test plans/renders the checked-in spec. The live test builds and
-pushes the image from that spec's repo/ref/base/build command, launches its own
+The always-on test plans/renders the checked-in spec. The live test consumes the
+separately built, scanned canonical image by immutable tag, launches its own
 RTX PRO 6000 resource profile, then verifies the named JSON and directly decodes the
 published MP4. No live capability is inferred from the local test.
 
@@ -31,6 +31,7 @@ import pytest
 import yaml
 
 from npa.clients.config import resolve_container_registry
+from npa.deploy.images import container_image_for_tool
 from npa.clients.project_credentials import storage_env_for_project
 from npa.workflows.byof.live import (
     resolve_byof_kubernetes_target,
@@ -210,12 +211,11 @@ def _verify_published_rrd(
     assert manifest["run_id"] == run_id
     assert manifest["rrd"]["size_bytes"] == rrd_head["ContentLength"]
     assert manifest["rrd"]["sha256"] == rrd_sha256
-    assert manifest["video"]["source_sha256"] == hashlib.sha256(
-        video_path.read_bytes()
-    ).hexdigest()
-    assert manifest["video"]["embedded_sha256"] == manifest["video"][
-        "source_sha256"
-    ]
+    assert (
+        manifest["video"]["source_sha256"]
+        == hashlib.sha256(video_path.read_bytes()).hexdigest()
+    )
+    assert manifest["video"]["embedded_sha256"] == manifest["video"]["source_sha256"]
     assert manifest["verification"]["remote_size_and_sha256_match"] is True
     assert manifest["verification"]["remote_rrd_parse"] == "passed"
     assert verification["rerun_cli_verify"] == "passed"
@@ -237,12 +237,10 @@ def test_wan22_spec_plans_the_real_pinned_rtxpro_workload() -> None:
 
     assert config["repo_url"] == "https://github.com/Wan-Video/Wan2.2.git"
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
-    assert config["base_image"] == "ubuntu:22.04"
-    assert (
-        config["resource_profile_yaml"]
-        == "byof-solution-smoke-wan22-rtxpro-gpu"
-    )
-    assert "--wait-timeout 0" in rendered
+    assert config["base_profile"] == "prebuilt"
+    assert config["base_image"] == "tool://wan2-2"
+    assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-rtxpro-gpu"
+    assert "--wait-timeout -1" in rendered
     assert "WanTI2V" in rendered and "generator.generate(" in rendered
     assert "cv2.VideoCapture" in rendered and "wan2_2_ti2v_5b.mp4" in rendered
     assert str(config["prompt"]) in rendered
@@ -252,10 +250,7 @@ def test_wan22_spec_plans_the_real_pinned_rtxpro_workload() -> None:
 
     payload = _spec_payload()
     resources = payload["resources"]["gpu"]
-    assert (
-        resources["accelerators"]
-        == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
-    )
+    assert resources["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
     assert resources["disk_size"] == 200
     profile = PROFILE_DIR / f"{config['resource_profile_yaml']}.yaml"
     assert profile.is_file()
@@ -274,7 +269,7 @@ def test_wan22_spec_plans_the_real_pinned_rtxpro_workload() -> None:
     ),
 )
 @pytest.mark.e2e
-def test_wan22_live_rtxpro_build_push_generate_and_decode(
+def test_wan22_live_rtxpro_candidate_generate_and_decode(
     e2e_project: str | None,
     tmp_path: Path,
 ) -> None:
@@ -284,14 +279,9 @@ def test_wan22_live_rtxpro_build_push_generate_and_decode(
     reuse_image = os.environ.get("NPA_BYOF_WAN22_REUSE_IMAGE", "").strip()
     if reuse_image:
         assert reuse_image.startswith(registry.rstrip("/") + "/"), reuse_image
-        run_id = reuse_image.rsplit(":", 1)[-1]
-        assert run_id.startswith("byof-wan22-e2e-"), run_id
-    else:
-        run_id = "byof-wan22-e2e-" + datetime.now(timezone.utc).strftime(
-            "%Y%m%dT%H%M%SZ"
-        )
+    run_id = "byof-wan22-e2e-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     planned = _planned_byof_args(run_id)
-    image = reuse_image or f"{registry.rstrip('/')}/npa-byof:{run_id}"
+    image = reuse_image or container_image_for_tool("wan2-2", registry=registry)
     profile = PROFILE_DIR / f"{planned['--yaml']}.yaml"
     out_bucket = live_bucket(e2e_project)
     output_root = f"s3://{out_bucket}/oss-solutions/wan2.2"
@@ -307,7 +297,7 @@ def test_wan22_live_rtxpro_build_push_generate_and_decode(
         "--base-profile",
         str(planned["--base-profile"]),
         "--base-image",
-        str(planned["--base-image"]),
+        image,
         "--build-command",
         str(planned["--build-command"]),
         "--project",
@@ -339,8 +329,6 @@ def test_wan22_live_rtxpro_build_push_generate_and_decode(
     config_path = skypilot_config_for_project(e2e_project)
     if config_path:
         cmd.extend(["--config-path", config_path])
-    if reuse_image:
-        cmd.extend(["--skip-build", "--skip-push"])
 
     env = dict(os.environ)
     env["NPA_E2E_PROJECT"] = e2e_project or env.get("NPA_E2E_PROJECT", "")
@@ -369,10 +357,7 @@ def test_wan22_live_rtxpro_build_push_generate_and_decode(
     assert runner["status"] == "ok"
     assert runner["image"] == image
     assert runner["repo_ref"] == planned["--repo-ref"]
-    if reuse_image:
-        assert runner["build"] == {"ok": True, "skipped": True}
-    else:
-        assert runner["build"] == {"ok": True, "pushed": True}
+    assert runner["build"] == {"ok": True, "skipped": True}
     assert image.startswith(registry.rstrip("/") + "/")
 
     s3 = _s3_client(e2e_project)
@@ -443,10 +428,7 @@ def test_wan22_live_rtxpro_build_push_generate_and_decode(
     assert runtime_stack["sdpa_source_binding"] is True
     assert runtime_stack["sdpa_probe"]["finite"] is True
     assert inventory["runtime_acquisition"]["weights_baked"] is False
-    assert (
-        inventory["runtime_acquisition"]["model"]["ref"]
-        == artifact["model_ref"]
-    )
+    assert inventory["runtime_acquisition"]["model"]["ref"] == artifact["model_ref"]
     installed = {
         package["name"].lower(): package["version"]
         for package in inventory["baked_runtime"]["python_packages"]

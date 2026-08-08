@@ -605,6 +605,30 @@ containers:
       timeout_seconds: 300
       status: ready
 
+  wan2-2:
+    image: npa-wan2-2
+    dockerfile: npa/docker/workbench/wan2-2/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Official Wan 2.2 TI2V-5B text/video generation on one Blackwell GPU or
+        four-rank FSDP/Ulysses execution on B200.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.10-slim-bookworm (digest pinned)
+      network: runtime-only PyTorch CUDA, Hugging Face model/tokenizer, and S3
+      external_fetch: [pytorch-cu128-after-operator-acceptance, huggingface, s3]
+      notes: >-
+        Ships no CUDA/NVIDIA Python distribution or model bytes. The no-GPU
+        golden eval proves source/health and refusal; accepted CUDA execution is
+        a dedicated live workflow gate.
+    golden_eval:
+      kind: container-smoke
+      command: bash /opt/npa/wan2-2/smoke.sh
+      gpu: none
+      timeout_seconds: 120
+      status: ready
+
   envgen:
     image: npa-envgen
     dockerfile: npa/docker/workbench/sim2real-envgen/Dockerfile

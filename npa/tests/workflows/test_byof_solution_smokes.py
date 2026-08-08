@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIR = ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
-SKILL_PATH = ROOT / "skills" / "workflows" / "oss-solution-registry-onboard" / "SKILL.md"
+SKILL_PATH = (
+    ROOT / "skills" / "workflows" / "oss-solution-registry-onboard" / "SKILL.md"
+)
 CATALOG_PATH = ROOT / "docs" / "workbench" / "oss-solution-catalog.md"
+WAN_INPUT_CONTRACT_PATH = (
+    ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "input_contract.py"
+)
 SOLUTION_SPECS = sorted(
-    path
-    for path in WORKFLOW_DIR.glob("byof-*.yaml")
-    if path.name != "byof.yaml"
+    path for path in WORKFLOW_DIR.glob("byof-*.yaml") if path.name != "byof.yaml"
 )
 
 # Primary capability contracts for onboarded and pending-live solution candidates
@@ -97,7 +103,6 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         "capability_name": "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
         "smoke_artifact_name": "wan2_2_ti2v_5b_multigpu.json",
         "spec": "byof-wan2.2-multigpu.yaml",
-        "documented": True,
         "must_exercise": [
             "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
             "wan2.2_distributed_rank_topology_validation",
@@ -113,6 +118,17 @@ def _load_config(path: Path) -> dict[str, object]:
     config = payload.get("config")
     assert isinstance(config, dict), path
     return config
+
+
+def _load_wan_input_contract():
+    spec = importlib.util.spec_from_file_location(
+        "npa_wan_input_contract_test", WAN_INPUT_CONTRACT_PATH
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_byof_solution_specs_have_capability_smokes() -> None:
@@ -163,8 +179,6 @@ def test_registry_skill_is_solution_specific_not_taxonomy() -> None:
     assert "Capability Testing Built Into Onboarding" in text
     assert "Capability Families (required taxonomy)" not in text
     for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
-        if expected.get("documented", True) is False:
-            continue
         assert expected["capability_name"] in text or expected["spec"] in text, solution
         assert f"byof-{solution}.yaml" in text or expected["spec"] in text
 
@@ -174,8 +188,6 @@ def test_oss_catalog_lists_solution_specific_capabilities() -> None:
     assert "Native Capabilities Per Container" in text
     assert "shared taxonomy" in text.lower() or "solution-specific" in text.lower()
     for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
-        if expected.get("documented", True) is False:
-            continue
         assert expected["capability_name"] in text, solution
         assert expected["smoke_artifact_name"] in text, solution
 
@@ -184,14 +196,15 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
     config = _load_config(WORKFLOW_DIR / "byof-wan2.2.yaml")
     build = str(config["build_command"])
     smoke = str(config["smoke_command"])
+    spec_text = (WORKFLOW_DIR / "byof-wan2.2.yaml").read_text(encoding="utf-8")
 
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
-    assert config["base_image"] == "ubuntu:22.04"
-    assert (
-        config["resource_profile_yaml"]
-        == "byof-solution-smoke-wan22-rtxpro-gpu"
-    )
-    assert config["wait_timeout"] == "0"
+    assert config["base_profile"] == "prebuilt"
+    assert config["base_image"] == "tool://wan2-2"
+    assert config["pip_extra"] == "viz"
+    assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-rtxpro-gpu"
+    assert config["wait_timeout"] == "-1"
+    assert build == ""
     assert "snapshot_download" not in build
     assert "Wan-AI/" not in build
     assert "snapshot_download" in smoke
@@ -200,12 +213,7 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
     assert "wan2_2_runtime_inventory.json" in smoke
     assert "large_checkpoint_shaped_files" in smoke
     assert "python_packages" in smoke and "os_packages" in smoke
-    assert "chmod -R a+rX /opt/byof/.venv /opt/byof" in build
-    assert "flash_attn" not in build
-    assert "from .attention import attention as flash_attention" in build
-    assert "py_compile.compile('/opt/byof/wan/textimage2video.py', doraise=True)" in build
-    assert "from wan.textimage2video import WanTI2V" not in build
-    assert "torch.cuda.current_device" not in build
+    assert "wan-runtime ensure" in smoke
     assert "scaled_dot_product_attention" in smoke
     assert '"sm_120" not in torch_cuda_arch_list' in smoke
     assert 'devices[0]["compute_capability"] != [12, 0]' in smoke
@@ -218,7 +226,9 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
     assert "cv2.VideoCapture" in smoke
     assert "frames are temporally uniform" in smoke
     assert "wan2.2_ti2v_5b_image_to_video (pending separate live" in smoke
-    assert "Wan input mode and declared BYOF contract disagree" in smoke
+    assert "resolve_wan_input_contract" in smoke
+    assert "capability_name=wan2.2_ti2v_5b_image_to_video" in spec_text
+    assert "smoke_artifact_name=wan2_2_ti2v_5b_image_to_video.json" in spec_text
     assert "wan2_2_ti2v_5b_image_to_video.json" in smoke
     assert '"wan2.2_action_prediction"' in smoke
     assert "action_prediction" not in str(config["capability_name"])
@@ -226,18 +236,36 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
     assert config["rrd_manifest_uri"].endswith("wan2_2_ti2v_5b_rrd_manifest.json")
 
 
-def test_wan22_zero_wait_reaches_the_terminal_state_without_a_hidden_cap() -> None:
-    repo_runner = (ROOT / "npa" / "scripts" / "run_byof_repo.py").read_text(
-        encoding="utf-8"
-    )
-    verify_runner = (
-        ROOT / "npa" / "scripts" / "run_byof_container_verify.py"
-    ).read_text(encoding="utf-8")
+def test_wan22_context_image_config_contract_fails_closed() -> None:
+    contract = _load_wan_input_contract()
+    config = _load_config(WORKFLOW_DIR / "byof-wan2.2.yaml")
 
-    assert "str(min(args.wait_timeout, 3600))" not in repo_runner
-    assert "str(args.wait_timeout)" in repo_runner
-    assert "None if args.wait_timeout <= 0" in verify_runner
-    assert "deadline is None or time.time() < deadline" in verify_runner
+    selected = contract.resolve_wan_input_contract(
+        context_image_uri=str(config["context_image_uri"]),
+        declared_capability=str(config["capability_name"]),
+        declared_artifact=str(config["smoke_artifact_name"]),
+    )
+    assert selected is contract.TEXT_TO_VIDEO
+
+    with pytest.raises(contract.WanInputContractError, match="must be an s3://"):
+        contract.resolve_wan_input_contract(
+            context_image_uri="https://example.invalid/context.png",
+            declared_capability=contract.IMAGE_TO_VIDEO.capability_name,
+            declared_artifact=contract.IMAGE_TO_VIDEO.artifact_name,
+        )
+    with pytest.raises(contract.WanInputContractError, match="contract disagree"):
+        contract.resolve_wan_input_contract(
+            context_image_uri="s3://project-bucket/inputs/context.png",
+            declared_capability=str(config["capability_name"]),
+            declared_artifact=str(config["smoke_artifact_name"]),
+        )
+
+    selected = contract.resolve_wan_input_contract(
+        context_image_uri="s3://project-bucket/inputs/context.png",
+        declared_capability=contract.IMAGE_TO_VIDEO.capability_name,
+        declared_artifact=contract.IMAGE_TO_VIDEO.artifact_name,
+    )
+    assert selected is contract.IMAGE_TO_VIDEO
 
 
 def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
@@ -249,10 +277,14 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
 
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-b200-4gpu"
-    assert config["wait_timeout"] == "0"
+    assert config["base_profile"] == "prebuilt"
+    assert config["base_image"] == "tool://wan2-2"
+    assert config["pip_extra"] == "viz"
+    assert config["wait_timeout"] == "-1"
+    assert "wan-runtime ensure" in smoke
     assert "--nproc_per_node=4" in smoke
     assert "--dit_fsdp --t5_fsdp --ulysses_size 4" in smoke
-    assert "runpy.run_path(\"/opt/byof/generate.py\"" in smoke
+    assert 'runpy.run_path("/opt/byof/generate.py"' in smoke
     assert "ShardingStrategy.FULL_SHARD" in smoke
     assert "ulysses_all_to_all_calls" in smoke
     assert "all_gather_object" in smoke
@@ -262,6 +294,7 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
     assert "ffprobe" in smoke and 'ffprobe != "h264"' in smoke
     assert "wan2_2_multigpu_topology.json" in smoke
     assert "snapshot_download" not in str(config["build_command"])
+    assert config["build_command"] == ""
     assert '"weights_baked": False' in smoke
     assert payload["resources"]["gpu"]["accelerators"] == "B200:4"
     assert payload["resources"]["gpu"]["memory"] == "256Gi"

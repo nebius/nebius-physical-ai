@@ -137,7 +137,10 @@ Official Alibaba generative-video baseline, pinned to
 `Wan-Video/Wan2.2@42bf4cfaa384bc21833865abc2f9e6c0e67233dc` with the
 official `Wan-AI/Wan2.2-TI2V-5B` checkpoint pinned to
 `921dbaf3f1674a56f47e83fb80a34bac8a8f203e`. Checkpoint and tokenizer files are
-fetched at run time; they are not baked into the BYOF image. The checked-in
+fetched at run time; they are not baked into the canonical `npa-wan2-2` image.
+CUDA-enabled PyTorch and its `nvidia-*` closure are likewise installed only in
+an operator-owned volume after explicit terms acceptance; the image contains
+the pinned source and OSS CPU dependency base. The checked-in
 single-GPU profile targets one RTX PRO 6000 Blackwell (`sm_120`) and the
 upstream PyTorch SDPA fallback. The separate distributed profile requests four
 B200s in one pod. It invokes the pinned official `torchrun` entrypoint with
@@ -169,11 +172,12 @@ distributed workflow emits `wan2_2_ti2v_5b_multigpu.json`,
 `wan2_2_multigpu_runtime_inventory.json`, and
 `wan2_2_ti2v_5b_multigpu.mp4`. The successful BYOF path then publishes
 `wan2_2_ti2v_5b_multigpu.rrd` and its verified manifest. The recording embeds
-the exact MP4 and exposes the real run evidence in the NPA agent's Rerun viewer. The accepted
-distributed run used the same immutable private image bytes as the single-GPU
-run (digest `sha256:2baaa063…cbb3`) and independently proved its baked
-`sm_100` support at run time. These live capability results do not by
-themselves authorize public image publication. See
+the exact MP4 and exposes the real run evidence in the NPA agent's Rerun viewer.
+The historical distributed run used the same prior private image bytes as the
+historical single-GPU run (digest `sha256:2baaa063…cbb3`). That old image is not
+a publication candidate because it baked CUDA Python distributions; the
+runtime-fetch candidate requires fresh GPU evidence. Live capability results do
+not by themselves authorize public image publication. See
 [`wan2.2.md`](wan2.2.md) for the workflow, RRD, licensing, and validation
 contracts.
 

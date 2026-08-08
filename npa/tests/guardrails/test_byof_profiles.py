@@ -78,7 +78,12 @@ def test_profile_is_a_single_task(path: Path) -> None:
 def test_the_readme_explains_the_boundary() -> None:
     text = (PROFILES / "README.md").read_text(encoding="utf-8")
 
-    for token in ("resource profiles", "byof.yaml", "workbench.byof.repo", "npa.workflow"):
+    for token in (
+        "resource profiles",
+        "byof.yaml",
+        "workbench.byof.repo",
+        "npa.workflow",
+    ):
         assert token in text, f"profiles README should mention {token!r}"
 
 
@@ -113,7 +118,9 @@ def test_runner_defaults_point_at_the_profiles_directory() -> None:
     }
     for name, profile in scripts.items():
         text = (REPO_ROOT / "npa" / "scripts" / name).read_text(encoding="utf-8")
-        assert '"profiles"' in text, f"{name} should resolve DEFAULT_YAML under profiles/"
+        assert '"profiles"' in text, (
+            f"{name} should resolve DEFAULT_YAML under profiles/"
+        )
         assert profile in text, f"{name} should still name {profile}"
         assert '"skypilot"' not in text, (
             f"{name} still resolves a path under the retiring skypilot catalog"
