@@ -4,47 +4,52 @@ kind: Workflow
 metadata:
   name: groot-1-7-finetune
   description: >
-    Fine-tune NVIDIA GR00T N1.7 on a GR00T-format LeRobot dataset, validate the
-    resulting distributed/checkpoint evidence, and publish factual training
-    telemetry as independently inspectable MCAP and RRD recordings. This is not
-    a policy rollout evaluation.
+    Run a leakage-free GR00T N1.7 learning experiment: deterministic episode
+    split, real starting-checkpoint and post-training held-out inference,
+    meaningful multi-GPU fine-tuning, factual improvement gate, and synchronized
+    MCAP/Rerun/video replay. This workflow is offline evaluation, not rollout.
 
 config:
   bucket: example-bucket
   prefix: "groot-1-7-finetune/{{run.id}}"
-
-  # Reproducible GR00T N1.7 contract. The npa-groot:0.1.0 image also pins the
-  # Isaac-GR00T source revision checked by the finetune command at runtime.
   base_model: nvidia/GR00T-N1.7-3B
   robot_embodiment: NEW_EMBODIMENT
 
-  # This validated example defaults to one 8-GPU node. Override both with
-  # `workflow submit --var gpu_type=... --var gpu_count=N` for any positive
-  # single-node world size, including gpu_count=1.
-  # gpu_count must resolve to a positive integer. global_batch_size follows it
-  # by default so every positive count satisfies GR00T's divisibility contract;
-  # operators may override it with any positive multiple of gpu_count.
   gpu_type: H100
   gpu_count: "8"
-  global_batch_size: "{{config.gpu_count}}"
-  # Keep NCCL's native transport selection by default. Use `socket` for a
-  # single-node compatibility fallback that disables NCCL P2P and SHM.
+  global_batch_size: "8"
   nccl_transport: auto
-
-  data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
-  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/"
-  training_manifest_uri: "{{config.checkpoint_uri}}npa_groot_finetune_manifest.json"
-  visualization_source_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/visualization-source/manifest.json"
-  mcap_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/groot-training.mcap"
-  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/groot-training.rrd"
-  visualization_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/visualization-manifest.json"
-  workflow_uri: "s3://{{config.bucket}}/{{config.prefix}}/workflow.yaml"
-  visualization_max_frames: "8"
-  visualization_fps: "10"
   dataloader_num_workers: "8"
-  max_steps: "10000"
-  save_steps: "1000"
-  save_total_limit: "5"
+
+  split_seed: groot17-learning-v1
+  train_episodes: "24"
+  heldout_episodes: "6"
+  # 3,354 samples / global batch 8 = ceil(...) = 420 optimizer steps. This is
+  # one complete pass over the deterministic training cohort, not a demo count.
+  max_steps: "420"
+  save_steps: "420"
+  save_total_limit: "1"
+  action_horizon: "16"
+  denoising_steps: "4"
+
+  source_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/source-data/"
+  train_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/train/"
+  heldout_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/heldout/"
+  data_uri: "{{config.train_data_uri}}"
+  split_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/split/manifest.json"
+  baseline_checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/baseline/"
+  baseline_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/baseline/evaluation.json"
+  baseline_arrays_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/baseline/actions.npz"
+  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/posttrain/"
+  training_manifest_uri: "{{config.checkpoint_uri}}npa_groot_finetune_manifest.json"
+  posttrain_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/posttrain/evaluation.json"
+  posttrain_arrays_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/posttrain/actions.npz"
+  learning_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/learning-report.json"
+  comparison_video_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/offline-heldout-comparison.mp4"
+  mcap_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/groot-learning.mcap"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/groot-learning.rrd"
+  publish_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/publish-manifest.json"
+  workflow_uri: "s3://{{config.bucket}}/{{config.prefix}}/workflow.yaml"
 
 resources:
   trainer-gpu:
@@ -52,52 +57,143 @@ resources:
     accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
     cpus: 32
     memory: 200Gi
-  visualization-cpu:
+    kubernetes:
+      # The redistributable GR00T image declares an unprivileged runtime user,
+      # while SkyPilot's Kubernetes bootstrap must install its SSH/runtime
+      # prerequisites. Run the task pod as root; the trainer itself remains the
+      # pinned vendor code and no host privilege or device passthrough is added.
+      pod_config:
+        spec:
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+  evaluator-gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:1"
+    cpus: 16
+    memory: 96Gi
+    kubernetes:
+      pod_config:
+        spec:
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+  replay-cpu:
     cloud: kubernetes
     cpus: 8
     memory: 32Gi
 
-initial: finetune
+initial: prepare_split
 
 states:
+  prepare_split:
+    description: >
+      Validate real observations, state/action tensors, camera metadata, and FPS;
+      then materialize a deterministic episode-level split with train-only
+      normalization statistics, content hashes, and zero episode overlap.
+    toolRef: workflow.groot.prepare_split
+    resources: replay-cpu
+    inputs:
+      - uri: "{{config.source_data_uri}}"
+        schema: nvidia.groot.lerobot.v2
+    outputs:
+      - uri: "{{config.train_data_uri}}"
+        schema: nvidia.groot.lerobot.v2.train-split
+      - uri: "{{config.heldout_data_uri}}"
+        schema: nvidia.groot.lerobot.v2.heldout-split
+      - uri: "{{config.split_manifest_uri}}"
+        schema: npa.groot.episode_split.v1
+    next: baseline_eval
+
+  baseline_eval:
+    description: >
+      Initialize the custom embodiment from the pinned starting checkpoint using
+      train-only statistics and run real Gr00tPolicy.get_action forwards over all
+      held-out episodes, preserving aligned predicted and expert action tensors.
+    toolRef: workbench.groot.baseline_eval
+    resources: evaluator-gpu
+    inputs:
+      - uri: "{{config.split_manifest_uri}}"
+        schema: npa.groot.episode_split.v1
+      - uri: "{{config.heldout_data_uri}}"
+        schema: nvidia.groot.lerobot.v2.heldout-split
+    outputs:
+      - uri: "{{config.baseline_checkpoint_uri}}"
+        schema: nvidia.groot.n1.7.custom-embodiment-checkpoint
+      - uri: "{{config.baseline_eval_uri}}"
+        schema: npa.groot.offline_eval.v1
+      - uri: "{{config.baseline_arrays_uri}}"
+        schema: numpy.npz.predicted-expert-state.v1
+    next: finetune
+
   finetune:
-    description: Run the real pinned GR00T N1.7 trainer in this GPU stage.
+    description: >
+      Fine-tune the pinned GR00T N1.7 implementation on the training split only,
+      across the configured co-located GPU world, for one complete train-cohort
+      pass while recording ranks, collectives, optimizer steps, and loss history.
     toolRef: workbench.groot.finetune
     resources: trainer-gpu
     inputs:
-      - uri: "{{config.data_uri}}"
-        schema: nvidia.groot.lerobot.v2
+      - uri: "{{config.train_data_uri}}"
+        schema: nvidia.groot.lerobot.v2.train-split
     outputs:
       - uri: "{{config.training_manifest_uri}}"
         schema: npa.groot.finetune.v1
-    next: validate
+      - uri: "{{config.checkpoint_uri}}"
+        schema: nvidia.groot.n1.7.finetuned-checkpoint
+    next: posttrain_eval
 
-  validate:
+  posttrain_eval:
     description: >
-      Fail closed unless the manifest, checkpoint bytes, finite loss, optimizer
-      step, world size, rank evidence, and distinct GPU collective are valid;
-      then decode representative frames from the real LeRobot dataset.
-    toolRef: workflow.groot.validate
-    resources: visualization-cpu
+      Run the identical real model-forward evaluation on the trained checkpoint
+      and the untouched held-out episodes, retaining per-dimension errors and
+      exactly aligned predictions, expert actions, states, and sample identities.
+    toolRef: workbench.groot.posttrain_eval
+    resources: evaluator-gpu
     inputs:
+      - uri: "{{config.split_manifest_uri}}"
+        schema: npa.groot.episode_split.v1
+      - uri: "{{config.checkpoint_uri}}"
+        schema: nvidia.groot.n1.7.finetuned-checkpoint
+      - uri: "{{config.heldout_data_uri}}"
+        schema: nvidia.groot.lerobot.v2.heldout-split
+    outputs:
+      - uri: "{{config.posttrain_eval_uri}}"
+        schema: npa.groot.offline_eval.v1
+      - uri: "{{config.posttrain_arrays_uri}}"
+        schema: numpy.npz.predicted-expert-state.v1
+    next: compare_learning
+
+  compare_learning:
+    description: >
+      Recalculate the factual before/after action metrics, expose every
+      per-dimension regression, require primary held-out MSE improvement, validate
+      training coverage, and render a truthfully labelled offline comparison video.
+    toolRef: workflow.groot.compare_learning
+    resources: replay-cpu
+    inputs:
+      - uri: "{{config.baseline_eval_uri}}"
+        schema: npa.groot.offline_eval.v1
+      - uri: "{{config.posttrain_eval_uri}}"
+        schema: npa.groot.offline_eval.v1
       - uri: "{{config.training_manifest_uri}}"
         schema: npa.groot.finetune.v1
-      - uri: "{{config.data_uri}}"
-        schema: nvidia.groot.lerobot.v2
     outputs:
-      - uri: "{{config.visualization_source_uri}}"
-        schema: npa.groot.visualization_source.v1
+      - uri: "{{config.learning_report_uri}}"
+        schema: npa.groot.learning.v1
+      - uri: "{{config.comparison_video_uri}}"
+        schema: video.mp4.offline-heldout-comparison
     next: emit_mcap
 
   emit_mcap:
     description: >
-      Emit real MCAP messages from the validated source bundle using Foxglove
-      CompressedImage and Log schemas plus factual numeric metric topics.
-    toolRef: workflow.groot.emit_mcap
-    resources: visualization-cpu
+      Emit a real Foxglove-schema camera/log replay plus factual predicted action,
+      expert action, action error, held-out before/after, and training-loss topics.
+    toolRef: workflow.groot.emit_learning_mcap
+    resources: replay-cpu
     inputs:
-      - uri: "{{config.visualization_source_uri}}"
-        schema: npa.groot.visualization_source.v1
+      - uri: "{{config.learning_report_uri}}"
+        schema: npa.groot.learning.v1
     outputs:
       - uri: "{{config.mcap_uri}}"
         schema: mcap.v1
@@ -105,13 +201,13 @@ states:
 
   emit_rrd:
     description: >
-      Derive a native Rerun recording from the validated MCAP so camera, log,
-      scalar, timeline, and provenance semantics stay serially identical.
-    toolRef: workflow.groot.emit_rrd
-    resources: visualization-cpu
+      Emit native Rerun camera/action/error/metric archetypes with a useful
+      replay-first blueprint and dataset-time timeline that opens on a real frame.
+    toolRef: workflow.groot.emit_learning_rrd
+    resources: replay-cpu
     inputs:
-      - uri: "{{config.mcap_uri}}"
-        schema: mcap.v1
+      - uri: "{{config.learning_report_uri}}"
+        schema: npa.groot.learning.v1
     outputs:
       - uri: "{{config.rrd_uri}}"
         schema: rerun.rrd.v1
@@ -119,26 +215,24 @@ states:
 
   publish:
     description: >
-      Terminally inspect both recordings and index their checksums, provenance,
-      timestamp semantics, exact submitted workflow, and factual training evidence.
-    toolRef: workflow.groot.publish
-    resources: visualization-cpu
+      Independently parse, validate, hash, and index the learning report,
+      comparison video, MCAP, RRD, exact submitted workflow, and provenance.
+    toolRef: workflow.groot.publish_learning
+    resources: replay-cpu
     inputs:
-      - uri: "{{config.visualization_source_uri}}"
-        schema: npa.groot.visualization_source.v1
+      - uri: "{{config.learning_report_uri}}"
+        schema: npa.groot.learning.v1
       - uri: "{{config.mcap_uri}}"
         schema: mcap.v1
       - uri: "{{config.rrd_uri}}"
         schema: rerun.rrd.v1
+      - uri: "{{config.comparison_video_uri}}"
+        schema: video.mp4.offline-heldout-comparison
       - uri: "{{config.workflow_uri}}"
         schema: npa.workflow/v0.0.1
     outputs:
-      - uri: "{{config.mcap_uri}}"
-        schema: mcap.v1
-      - uri: "{{config.rrd_uri}}"
-        schema: rerun.rrd.v1
-      - uri: "{{config.visualization_manifest_uri}}"
-        schema: npa.groot.visualization.v1
-      - uri: "{{config.workflow_uri}}"
-        schema: npa.workflow/v0.0.1
+      - uri: "{{config.learning_report_uri}}"
+        schema: npa.groot.learning.v1
+      - uri: "{{config.publish_manifest_uri}}"
+        schema: npa.groot.learning_publish.v1
     terminal: true

@@ -20,6 +20,7 @@ from npa.cli.groot import (
     GROOT_ENV_FILE,
     GROOT_FINETUNE_MANIFEST,
     GROOT_MODEL_VERSION,
+    GROOT_REPO,
     GROOT_REPO_REF,
     GROOT_RUNTIME_VERSION,
     GROOT_RELEASE,
@@ -1339,6 +1340,7 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     assert "--query-gpu=uuid" in cmd
     assert "npa_groot_distributed_evidence.json" in cmd
     assert "gr00t/experiment/launch_finetune.py" in cmd
+    assert f"git -c safe.directory={GROOT_REPO} rev-parse HEAD" in cmd
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B --revision 2fc962b973bccdd5d8ce4f67cc63b264d6886495" in cmd
     assert f"--base-model-path {GROOT_DATA_MOUNT}/models/nvidia--GR00T-N1.7-3B" in cmd
     assert f"--dataset-path {GROOT_DATA_MOUNT}/data_cache/bucket_datasets_train" in cmd

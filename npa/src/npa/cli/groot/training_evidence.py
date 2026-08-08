@@ -90,9 +90,13 @@ evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
 training_log = (output_dir / "training.log").read_text(encoding="utf-8", errors="replace")
 loss_values = []
 for pattern in (
-    r"(?i)(?:train[_ ]?)?loss[^0-9+.-]{{0,6}}([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)",
+    r"[\\x27\\x22]loss[\\x27\\x22]\\s*:\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)",
+    r"[\\x27\\x22]train_loss[\\x27\\x22]\\s*:\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)",
 ):
     loss_values.extend(float(value) for value in re.findall(pattern, training_log))
+if not loss_values:
+    fallback = r"(?i)(?:train[_ ]?)?loss[^0-9+.-]{{0,6}}([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)"
+    loss_values.extend(float(value) for value in re.findall(fallback, training_log))
 finite_losses = [value for value in loss_values if math.isfinite(value)]
 checkpoint_steps = []
 for path in output_dir.rglob("checkpoint-*"):
@@ -106,6 +110,21 @@ loss = finite_losses[-1] if finite_losses else None
 loss_finite = loss is not None and math.isfinite(loss)
 optimizer_step_ok = training_step >= 1 and loss_finite
 manifest = {manifest_literal}
+logging_steps = 10
+loss_history = [
+    {{
+        "optimizer_step": min((index + 1) * logging_steps, training_step),
+        "loss": value,
+    }}
+    for index, value in enumerate(finite_losses)
+]
+loss_history = [
+    item
+    for index, item in enumerate(loss_history)
+    if index == 0 or item["loss"] != loss_history[index - 1]["loss"]
+]
+if loss_history and training_step > 0:
+    loss_history[-1]["optimizer_step"] = training_step
 manifest.update({{
     "world_size": int(evidence.get("world_size") or 0),
     "distinct_gpu_count": int(evidence.get("distinct_gpu_count") or 0),
@@ -118,6 +137,11 @@ manifest.update({{
     "optimizer_step_ok": optimizer_step_ok,
     "loss": loss,
     "loss_finite": loss_finite,
+    "loss_history": loss_history,
+    "initial_loss": loss_history[0]["loss"] if loss_history else None,
+    "final_loss": loss_history[-1]["loss"] if loss_history else None,
+    "training_examples": training_step * int(manifest.get("global_batch_size") or 0),
+    "gpu_model": (evidence.get("ranks") or [{{}}])[0].get("cuda_device_name", ""),
     "checkpoint_object_count": checkpoint_objects,
     "checkpoint_bytes": checkpoint_bytes,
 }})

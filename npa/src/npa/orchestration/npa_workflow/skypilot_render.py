@@ -70,6 +70,8 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
     "workbench.sonic": "sonic",
+    "workflow.groot.emit_learning_rrd": "viz",
+    "workflow.groot.publish_learning": "viz",
     "workflow.groot.emit_rrd": "viz",
     "workflow.groot.publish": "viz",
 }
@@ -85,6 +87,26 @@ TOOL_REF_PIP_EXTRAS: dict[str, str] = {
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    # The redistributable image security layer upgrades Transformers with
+    # ``--no-deps``. GR00T commit 3df8b382 pins 4.57.3; Transformers 5.3 changes
+    # PretrainedConfig dataclass behavior and the pinned GR00T model config then
+    # fails during import. Restore the upstream runtime exactly for real model
+    # stages. A normal targeted install also restores its Hub/tokenizers closure
+    # while leaving torch and the vendor GR00T package untouched.
+    "workbench.groot": (
+        (
+            'python:transformers;assert(__import__("importlib.metadata").metadata.version("transformers")=="4.57.3")',
+            "transformers==4.57.3",
+        ),
+    ),
+    "workflow.groot.prepare_split": (("python:pyarrow", "pyarrow>=15,<22"),),
+    "workflow.groot.compare_learning": (
+        ("python:av", "av>=12,<17"),
+        ("python:PIL", "Pillow>=10,<12"),
+    ),
+    "workflow.groot.emit_learning_mcap": (("python:av", "av>=12,<17"),),
+    "workflow.groot.emit_learning_rrd": (("python:av", "av>=12,<17"),),
+    "workflow.groot.publish_learning": (("python:av", "av>=12,<17"),),
     "workflow.groot.validate": (("python:av", "av>=12,<17"),),
     "workbench.cosmos.fetch": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
     "workbench.cosmos.check": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
@@ -121,6 +143,8 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
+    "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
     # Isaac Lab's simulator packages live in the Omniverse kit environment, not in the image's
     # system python. Live job 267 installed npa into /usr/bin/python3 and the stage died with
@@ -355,7 +379,8 @@ def render_pip_requirements_setup(requirements: Sequence[tuple[str, str]]) -> st
             f"  echo 'installing {requirement} for {label}' >&2\n"
             f"  \"$npa_req_python\" -m pip install -q '{requirement}' \\\n"
             f"    || \"$npa_req_python\" -m pip install -q '{requirement}' --break-system-packages \\\n"
-            f"    || \"$npa_req_python\" -m pip install -q '{requirement}' --user\n"
+            f"    || \"$npa_req_python\" -m pip install -q '{requirement}' --user \\\n"
+            f"    || uv pip install -q --python \"$npa_req_python\" '{requirement}'\n"
             "fi\n"
         )
     return "".join(lines)

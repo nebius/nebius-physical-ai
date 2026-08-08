@@ -554,6 +554,7 @@ def inspect_rrd(
     application_id: str,
     recording_id: str,
     expected_entities: Iterable[str],
+    timeline: str = RERUN_TIMELINE,
     runner: Any = subprocess.run,
 ) -> dict[str, Any]:
     """Verify an RRD with Rerun's supported CLI and inspect its printed contents."""
@@ -585,7 +586,7 @@ def inspect_rrd(
             f"Rerun could not inspect RRD: {printed.stderr[-1000:]}"
         )
     text = f"{printed.stdout}\n{printed.stderr}"
-    required = [application_id, recording_id, RERUN_TIMELINE, *expected_entities]
+    required = [application_id, recording_id, timeline, *expected_entities]
     missing = [value for value in required if value and value not in text]
     if missing:
         raise GrootVisualizationError(
@@ -597,7 +598,7 @@ def inspect_rrd(
         "bytes": target.stat().st_size,
         "application_id": application_id,
         "recording_id": recording_id,
-        "timelines": [RERUN_TIMELINE],
+        "timelines": [timeline],
         "entities": list(expected_entities),
         "verify_stdout": verify.stdout.strip()[-1000:],
     }

@@ -144,6 +144,65 @@ def test_infer_visual_domain_hints_from_metadata_not_uri_allowlist() -> None:
     assert "blank" in prompt.lower()  # guidance warns against false blank calls
 
 
+def test_groot_learning_hint_forbids_rollout_or_sim_inference() -> None:
+    hints = vf.infer_visual_domain_hints(
+        {
+            "run_id": "groot17-learning-test",
+            "artifact_key": "reports/groot-learning.rrd",
+            "note": "offline heldout policy evaluation",
+        }
+    )
+    assert len(hints) == 1
+    hint = hints[0].lower()
+    assert "offline held-out" in hint
+    assert "not a simulator/robot rollout" in hint
+    assert "do not infer synthetic imagery" in hint
+    assert "rollout view in sim" not in hint
+
+
+def test_learning_visual_reply_fails_closed_on_origin_contradictions() -> None:
+    meta = {
+        "run_id": "groot17-learning-test",
+        "artifact_key": "reports/groot-learning.rrd",
+        "note": "Rerun recording ready",
+        "origin": "Original visual evidence is a persisted held-out LeRobot video.",
+        "provenance": "Synchronized learning replay — Rerun + MCAP",
+    }
+    assert vf.learning_visual_reply_needs_correction(
+        "This indicates a synthetic simulation; the absence of an original input is expected.",
+        meta,
+    )
+    assert not vf.learning_visual_reply_needs_correction(
+        "The low-resolution camera frame is aligned with expert actions.",
+        meta,
+    )
+    reply = vf.truthful_learning_visual_reply(meta)
+    for heading in ("What I see", "Where it comes from", "Likely meaning", "Operator feedback", "Next actions"):
+        assert f"### {heading}" in reply
+    assert "persisted held-out LeRobot video" in reply
+    assert "offline held-out policy comparison" in reply
+    assert "not a robot or simulator rollout" in reply
+    assert "synthetic simulation" not in reply
+
+
+def test_metadata_only_describe_keeps_structured_visual_feedback_path() -> None:
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    assert "if origin_reply and not visual_turn and not has_image_content" in source
+    ui = _embedded_ui_html(source)
+    assert "explicitly an offline held-out policy evaluation" in ui
+    assert "do not infer synthetic imagery or task behavior from the GR00T name" in ui
+    assert "The camera pixels come from the persisted held-out LeRobot observation videos" in ui
+    assert "Never say the original input is absent" in ui
+    assert "rerunRecordingActivatedAt" in ui
+    assert "window.Cypress ? 0 : 8000" in ui
+    fact_block = vf.learning_visual_fact_block(
+        {"run_id": "groot17-learning-test", "origin": "held-out LeRobot observations"}
+    )
+    assert "NON-NEGOTIABLE FACTS FOR THIS LEARNING REPLAY" in fact_block
+    assert "The original visual inputs are present" in fact_block
+    assert "A single frame does not prove motion" in fact_block
+
+
 def test_normalize_messages_for_llm_preserves_image_parts() -> None:
     data_url = "data:image/png;base64," + ("A" * 32)
     messages = [

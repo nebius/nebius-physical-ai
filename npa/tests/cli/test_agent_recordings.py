@@ -27,6 +27,9 @@ def test_groot_training_recording_detected_as_run_specific():
     assert R.is_groot_training_recording("run/reports/groot-training.rrd") is True
     assert R.is_groot_training_recording("run/reports/groot-training.mcap") is True
     assert R.is_groot_training_recording("run/reports/other.rrd") is False
+    assert R.is_groot_learning_recording("run/reports/groot-learning.rrd") is True
+    assert R.is_groot_learning_recording("run/reports/groot-learning.mcap") is True
+    assert R.is_groot_learning_recording("run/reports/groot-training.rrd") is False
 
 
 def test_empty_or_none_is_not_ready():

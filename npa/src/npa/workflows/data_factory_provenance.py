@@ -13,7 +13,10 @@ Transfer 2.5 on GPU vs a CPU appearance stand-in).
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
+
+_LOG = logging.getLogger(__name__)
 
 # Canonical stage order + the component that produces each stage's artifacts.
 # runtime is where the compute actually runs (grounds the "which needs a GPU" story).
@@ -49,6 +52,12 @@ def build_run_provenance(
 ) -> dict[str, Any]:
     """Return {run_id, components:[...], summary} describing where the run's data
     came from and which components produced it."""
+    if _is_groot_learning_run(keys, run_id):
+        return _build_groot_learning_provenance(
+            keys,
+            run_id=run_id,
+            read_json=read_json,
+        )
     present: set[str] = set()
     counts: dict[str, int] = {}
     stage_key_sample: dict[str, str] = {}
@@ -134,6 +143,192 @@ def build_run_provenance(
         "components": components,
         "summary": summary,
         "origin": origin,
+    }
+
+
+def _scoped_key(key: str, run_id: str) -> str:
+    text = str(key or "")
+    marker = "/" + str(run_id or "") + "/"
+    idx = text.find(marker)
+    if idx >= 0:
+        return text[idx + len(marker):]
+    prefix = str(run_id or "") + "/"
+    return text[len(prefix):] if run_id and text.startswith(prefix) else text
+
+
+def _is_groot_learning_run(keys: list[str], run_id: str) -> bool:
+    scoped = {_scoped_key(key, run_id) for key in keys}
+    return (
+        "reports/learning-report.json" in scoped
+        and any(key.startswith("eval/baseline/") for key in scoped)
+        and any(key.startswith("eval/posttrain/") for key in scoped)
+    )
+
+
+def _build_groot_learning_provenance(
+    keys: list[str],
+    *,
+    run_id: str,
+    read_json: Callable[[str], dict | None] | None,
+) -> dict[str, Any]:
+    """Describe the real GR00T learning phases without data-factory labels.
+
+    Learning artifacts share the agent's generic provenance endpoint with the
+    data-factory workflow. Falling through to ``_STAGE_COMPONENTS`` used to call
+    every ``reports/`` artifact "Visualize + finalize" and encouraged Describe
+    this to mislabel offline held-out evidence as a simulator rollout.
+    """
+
+    scoped = [(_scoped_key(key, run_id), key) for key in keys]
+
+    def _count(*prefixes: str) -> int:
+        return sum(1 for relative, _ in scoped if any(relative.startswith(prefix) for prefix in prefixes))
+
+    report_key = next(
+        (key for relative, key in scoped if relative == "reports/learning-report.json"),
+        "",
+    )
+    report: dict[str, Any] = {}
+    if read_json and report_key:
+        try:
+            candidate = read_json(report_key)
+            if isinstance(candidate, dict):
+                report = candidate
+        except Exception:  # noqa: BLE001 - provenance remains best effort
+            _LOG.debug("Unable to read GR00T learning report provenance", exc_info=True)
+    training = report.get("training") if isinstance(report.get("training"), dict) else {}
+    evaluation = report.get("evaluation") if isinstance(report.get("evaluation"), dict) else {}
+    dataset = report.get("dataset") if isinstance(report.get("dataset"), dict) else {}
+    gpu_count = training.get("distinct_gpu_count") or training.get("gpu_count")
+    gpu_detail = f"{gpu_count} GPUs" if gpu_count else "multi-GPU"
+    components = [
+        {
+            "stage": "Prepare leakage-free split",
+            "stage_key": "prepare_split",
+            "component": "Deterministic episode-level splitter + train-only statistics",
+            "runtime": "CPU",
+            "artifact_count": _count("data/train/", "data/heldout/", "reports/split/"),
+            "detail": "episode-disjoint train/held-out manifests with content hashes",
+        },
+        {
+            "stage": "Baseline held-out inference",
+            "stage_key": "baseline_eval",
+            "component": "GR00T N1.7 starting checkpoint",
+            "runtime": "GPU (Nebius K8s)",
+            "artifact_count": _count("eval/baseline/", "checkpoints/baseline/"),
+            "detail": "real Gr00tPolicy forwards on held-out episodes",
+        },
+        {
+            "stage": "Multi-GPU policy training",
+            "stage_key": "finetune",
+            "component": "GR00T N1.7 distributed fine-tune",
+            "runtime": f"GPU (Nebius K8s, {gpu_detail})",
+            "artifact_count": _count("checkpoints/posttrain/"),
+            "detail": str(training.get("coverage_criterion") or "training cohort coverage recorded"),
+        },
+        {
+            "stage": "Post-training held-out inference",
+            "stage_key": "posttrain_eval",
+            "component": "Trained GR00T N1.7 checkpoint",
+            "runtime": "GPU (Nebius K8s)",
+            "artifact_count": _count("eval/posttrain/"),
+            "detail": "identical held-out model-forward protocol",
+        },
+        {
+            "stage": "Compare learning",
+            "stage_key": "compare_learning",
+            "component": "Before/after action-error gate",
+            "runtime": "CPU",
+            "artifact_count": _count("reports/learning-report.json", "reports/offline-heldout-comparison.mp4"),
+            "detail": (
+                f"{evaluation.get('metric_name') or 'primary metric'} improvement with "
+                "per-dimension regressions disclosed"
+            ),
+        },
+        {
+            "stage": "Synchronized learning replay",
+            "stage_key": "emit_replay",
+            "component": "Rerun + MCAP synchronized evaluation replay",
+            "runtime": "CPU",
+            "artifact_count": _count("reports/groot-learning.rrd", "reports/groot-learning.mcap"),
+            "detail": "camera, expert/predicted actions, errors, metrics, loss, and provenance",
+        },
+        {
+            "stage": "Validate and publish",
+            "stage_key": "publish",
+            "component": "Schema/hash/index validator",
+            "runtime": "CPU",
+            "artifact_count": _count("reports/publish-manifest.json", "workflow.yaml"),
+            "detail": "public-safe artifact index and submitted workflow provenance",
+        },
+    ]
+    components = [component for component in components if component["artifact_count"] > 0]
+    summary = (
+        "Offline held-out GR00T policy evaluation (not a rollout): "
+        + "; ".join(
+            f"{component['stage']} — {component['component']} [{component['runtime']}]"
+            for component in components
+        )
+    )
+    origin = _build_groot_learning_origin(keys, run_id=run_id, dataset=dataset)
+    return {"run_id": run_id, "components": components, "summary": summary, "origin": origin}
+
+
+def _build_groot_learning_origin(
+    keys: list[str],
+    *,
+    run_id: str,
+    dataset: dict[str, Any],
+) -> dict[str, Any]:
+    heldout_videos = sorted(
+        key
+        for key in keys
+        if _scoped_key(key, run_id).startswith("data/heldout/videos/")
+        and _artifact_kind(key) == "video"
+    )
+    train_videos = sorted(
+        key
+        for key in keys
+        if _scoped_key(key, run_id).startswith("data/train/videos/")
+        and _artifact_kind(key) == "video"
+    )
+    originals = [
+        {"key": key, "stage": "data/heldout", "kind": "video"}
+        for key in heldout_videos
+    ]
+    camera_names = dataset.get("camera_names") if isinstance(dataset.get("camera_names"), list) else []
+    cameras = ", ".join(str(name) for name in camera_names) or "recorded camera"
+    resolution = str(dataset.get("source_resolution") or "native dataset resolution")
+    heldout_episodes = dataset.get("heldout_episodes") or len(heldout_videos)
+    fps = dataset.get("fps")
+    timing = f", {fps} FPS/index time" if fps else ", dataset index time"
+    summary = (
+        f"Original visual evidence for run `{run_id}` is the episode-disjoint held-out "
+        f"LeRobot observation video: {heldout_episodes} held-out episode(s), {cameras} camera, "
+        f"{resolution} native{timing}. The Rerun/MCAP/video artifacts align those dataset "
+        "observations with expert actions and real GR00T model predictions. This is an offline "
+        "held-out policy evaluation, not a simulator/robot rollout or closed-loop execution."
+    )
+    earliest = None
+    if heldout_videos:
+        earliest = {
+            "stage": "Prepare leakage-free split",
+            "component": "Held-out LeRobot observation.image videos",
+            "runtime": "dataset input",
+            "keys": heldout_videos[:8],
+            "count": len(heldout_videos),
+        }
+    return {
+        "run_id": run_id,
+        "original_present": bool(heldout_videos),
+        "original_inputs": originals,
+        "earliest_visual": earliest,
+        "augment": None,
+        "config_variables": None,
+        "labeled_from": "",
+        "label_model": "",
+        "train_visual_count": len(train_videos),
+        "summary": summary,
     }
 
 

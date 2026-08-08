@@ -66,6 +66,7 @@ def _summary_documents_for_run(s3, bucket: str, artifacts: list) -> dict:
         "evidence/capacity.json",
         "evidence/collective.json",
         "checkpoints/npa_groot_finetune_manifest.json",
+        "reports/learning-report.json",
     }
     documents = {}
     for artifact in artifacts:

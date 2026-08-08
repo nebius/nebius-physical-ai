@@ -38,6 +38,7 @@ from npa.clients.network import (
 )
 from npa.clients.ssh import SSHClient, SSHError
 from npa.agent_backend.shipping import render_shipped_backend_install
+from npa.cli.agent_source_embed import embedded_module_source
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
@@ -73,7 +74,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026080602"
+AGENT_UI_VERSION = "2026080809"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -208,47 +209,19 @@ AGENT_READABLE_COLOR_CONTRACT = (
 
 
 def _embedded_agent_workflow_source() -> str:
-    """Return agent_workflow.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_workflow.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_workflow.py"))
 
 
 def _embedded_agent_routing_source() -> str:
-    """Return agent_routing.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_routing.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_routing.py"))
 
 
 def _embedded_agent_chat_source() -> str:
-    """Return agent_chat.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_chat.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_chat.py"))
 
 
 def _embedded_agent_recordings_source() -> str:
-    """Return agent_recordings.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_recordings.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_recordings.py"))
 
 
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
@@ -268,14 +241,7 @@ _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
 
 def _embedded_agent_stages_source() -> str:
-    """Return agent_stages.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_stages.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_stages.py"))
 
 
 def rendered_agent_ui_html() -> str:
@@ -292,74 +258,33 @@ def rendered_agent_ui_html() -> str:
 
 
 def _embedded_agent_visual_feedback_source() -> str:
-    """Return agent_visual_feedback.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_visual_feedback.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_visual_feedback.py"))
 
 
 def _embedded_agent_rrd_proxy_source() -> str:
-    """Return agent_rrd_proxy.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_rrd_proxy.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_rrd_proxy.py"))
 
 
 def _embedded_agent_state_source() -> str:
-    """Return agent_state.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_state.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_state.py"))
 
 
 def _embedded_agent_s3_guard_source() -> str:
-    """Return agent_s3_guard.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_s3_guard.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_s3_guard.py"))
 
 
 def _embedded_agent_artifacts_source() -> str:
-    import re
-
     path = Path(__file__).resolve().parents[1] / "workflows" / "artifacts.py"
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(path)
 
 
 def _embedded_agent_artifact_content_source() -> str:
-    import re
-    raw = Path(__file__).with_name("agent_artifact_content.py").read_text(encoding="utf-8")
-    return re.sub(r"^from __future__ import annotations\s*\n", "", re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL))  # noqa: E501
+    return embedded_module_source(Path(__file__).with_name("agent_artifact_content.py"))
 
 
 def _embedded_agent_provenance_source() -> str:
-    """Return workflows/data_factory_provenance.py source embedded into the backend."""
-    import re
-
     path = Path(__file__).resolve().parents[1] / "workflows" / "data_factory_provenance.py"
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(path)
 
 
 @dataclass(frozen=True)
@@ -3540,6 +3465,8 @@ def _apply_loaded_artifact(
         and not is_neural_reconstruction_recording(key)
     ):
         camera = _sim2real_pipeline_camera_label(camera)
+    elif render == "rerun" and is_groot_learning_recording(key):
+        camera = GROOT_LEARNING_CAMERA_LABEL
     elif render == "rerun" and is_groot_training_recording(key):
         # A training-telemetry recording must not inherit a previous policy
         # rollout's held-out camera label or preview entity.
@@ -3563,6 +3490,13 @@ def _apply_loaded_artifact(
     )
     if render == "rerun":
         _publish_rrd_recording(local_path)
+        # The systemd Rerun service opens RRD_PATH, while nginx serves
+        # RECORDING_PATH. Keep both atomically on the selected real artifact;
+        # otherwise restarting the viewer re-opened the stock ~58KB demo even
+        # though the public recording path briefly held the requested run.
+        rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")
+        shutil.copy2(local_path, rrd_tmp)
+        rrd_tmp.replace(RRD_PATH)
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
@@ -3570,7 +3504,10 @@ def _apply_loaded_artifact(
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"))
         sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
-        if is_groot_training_recording(key):
+        if is_groot_learning_recording(key):
+            sim_viz["preview_entity"] = "camera/front"
+            sim_viz["visualization_note"] = GROOT_LEARNING_RERUN_NOTE
+        elif is_groot_training_recording(key):
             sim_viz["preview_entity"] = GROOT_TRAINING_CAMERA_LABEL
             sim_viz["visualization_note"] = (
                 "GR00T training telemetry loaded. Entities contain representative "
@@ -3622,7 +3559,9 @@ def _apply_loaded_artifact(
             sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
             sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
             sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
-            if is_groot_training_recording(key):
+            if is_groot_learning_recording(key):
+                sim_viz["visualization_note"] = GROOT_LEARNING_MCAP_NOTE
+            elif is_groot_training_recording(key):
                 sim_viz["visualization_note"] = (
                     "GR00T training telemetry MCAP loaded in the embedded Lichtblick "
                     "viewer. It contains real dataset frames, safe training logs, and "
@@ -5600,7 +5539,7 @@ def chat(payload: dict):
     origin_reply, origin_apis = _maybe_origin_reply(
         last_content, visual_context=visual_context, state=state
     )
-    if origin_reply and not has_image_content(llm_messages):
+    if origin_reply and not visual_turn and not has_image_content(llm_messages):
         history = [*merged_history, {{"role": "assistant", "content": origin_reply}}][-80:]
         session.update(
             {{
@@ -5883,6 +5822,8 @@ def chat(payload: dict):
     visual_block = format_visual_context_block(visual_context)
     if visual_block:
         system_content += "\\n\\n" + visual_block
+    if visual_turn:
+        system_content += learning_visual_fact_block(visual_context)
     if origin_reply:
         # Ground the "Where it comes from" / original-input story with real facts.
         system_content += (
@@ -5945,6 +5886,9 @@ def chat(payload: dict):
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="LLM response missing assistant message") from exc
     reply, reasoning = _split_reasoning(message)
+    if visual_turn and learning_visual_reply_needs_correction(reply, visual_context):
+        reply = truthful_learning_visual_reply(visual_context)
+        reasoning = None
     if not reply and reasoning:
         reply = reasoning
         reasoning = None

@@ -55,6 +55,13 @@ NON_CLI_ARGV = frozenset(
         "workflow.groot.emit_rrd",
         "workflow.groot.publish",
         "workflow.groot.validate",
+        "workflow.groot.prepare_split",
+        "workbench.groot.baseline_eval",
+        "workbench.groot.posttrain_eval",
+        "workflow.groot.compare_learning",
+        "workflow.groot.emit_learning_mcap",
+        "workflow.groot.emit_learning_rrd",
+        "workflow.groot.publish_learning",
     }
 )
 
@@ -77,6 +84,13 @@ AUDITED_ELSEWHERE = frozenset(
         "workflow.groot.emit_rrd",
         "workflow.groot.publish",
         "workflow.groot.validate",
+        "workflow.groot.prepare_split",
+        "workbench.groot.baseline_eval",
+        "workbench.groot.posttrain_eval",
+        "workflow.groot.compare_learning",
+        "workflow.groot.emit_learning_mcap",
+        "workflow.groot.emit_learning_rrd",
+        "workflow.groot.publish_learning",
     }
 )
 
