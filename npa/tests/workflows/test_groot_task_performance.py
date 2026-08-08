@@ -13,11 +13,13 @@ from npa.workbench.foxglove.mcap_writer import FrameInput, MetricsInput, write_r
 from npa.workflows.groot_task_performance import (
     _paired_replay_timebase,
     _policy_observation,
+    _canonical_initial_state,
     _verify_checkpoint_identity,
     deterministic_seeds,
     paired_bootstrap,
 )
 from npa.workflows.groot_visualization import GrootVisualizationError
+from npa.workflows import groot_task_performance as task_performance
 
 
 @dataclass
@@ -65,6 +67,21 @@ def test_checkpoint_identity_uses_canonical_directory_sha256_and_fails_closed() 
         _verify_checkpoint_identity({"identity_sha256": "immutable"}, "immutable")
 
 
+def test_initial_state_canonicalization_excludes_only_derived_coverage() -> None:
+    step = {
+        "pusher_xy": [77.0, 212.0],
+        "object_xy": [195.0, 336.0],
+        "object_angle_rad": -1.9,
+        "goal_xy": [256.0, 256.0],
+        "goal_angle_rad": 0.785,
+        "coverage": 0.25958774978670296,
+    }
+    changed_coverage = {**step, "coverage": 0.2595877497867031}
+    assert _canonical_initial_state(step) == _canonical_initial_state(changed_coverage)
+    changed_physics = {**step, "object_xy": [196.0, 336.0]}
+    assert _canonical_initial_state(step) != _canonical_initial_state(changed_physics)
+
+
 def test_paired_evidence_excludes_zero_for_consistent_improvement() -> None:
     evidence = paired_bootstrap([0.05 + index / 10_000 for index in range(24)], samples=10_000)
     assert evidence["mean_delta"] > 0
@@ -108,3 +125,113 @@ def test_mcap_inputs_can_request_exact_rollout_topics(tmp_path) -> None:
     assert summary.channels["/rollout/baseline/action"] == 1
     assert "/rollout/baseline/camera" in inspected.channels
     assert "/rollout/baseline/action" in inspected.channels
+
+
+def test_trained_checkpoint_resolution_requires_completed_gpu_step_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documents = {
+        "s3://bucket/training.json": {
+            "schema": "npa.groot.finetune.v1",
+            "status": "completed",
+            "run_id": "run",
+            "checkpoint_uri": "s3://bucket/checkpoint/",
+            "optimizer_step_ok": True,
+            "collective_ok": True,
+            "num_gpus": 7,
+            "world_size": 7,
+            "distinct_gpu_count": 7,
+            "max_steps": 6000,
+            "training_step": 6000,
+            "global_batch_size": 7,
+            "training_examples": 42_000,
+        },
+        "s3://bucket/split.json": {
+            "schema": "npa.groot.episode_split.v1",
+            "status": "prepared",
+            "run_id": "run",
+            "training_plan": {
+                "configured_max_steps": 6000,
+                "effective_max_steps": 6000,
+                "global_batch_size": 7,
+            },
+        },
+    }
+    written = {}
+    monkeypatch.setattr(task_performance, "_read_s3_json", lambda _client, uri: documents[uri])
+    monkeypatch.setattr(task_performance, "_download_prefix", lambda *_args: [])
+    monkeypatch.setattr(
+        task_performance,
+        "_checkpoint_identity",
+        lambda _path: {"sha256": "a" * 64, "objects": 38, "bytes": 13_000},
+    )
+    monkeypatch.setattr(
+        task_performance, "_put_json", lambda _client, uri, payload: written.update({uri: payload})
+    )
+
+    result = task_performance.resolve_trained_checkpoint(
+        "s3://bucket/training.json",
+        "s3://bucket/split.json",
+        "s3://bucket/checkpoint/",
+        "s3://bucket/reference.json",
+        "run",
+        expected_gpu_count=7,
+        expected_max_steps=6000,
+        s3_client=object(),
+    )
+    assert result["checkpoint"]["sha256"] == "a" * 64
+    assert written["s3://bucket/reference.json"]["training"]["optimizer_steps"] == 6000
+
+    documents["s3://bucket/training.json"]["training_step"] = 5999
+    with pytest.raises(GrootVisualizationError, match="did not complete"):
+        task_performance.resolve_trained_checkpoint(
+            "s3://bucket/training.json",
+            "s3://bucket/split.json",
+            "s3://bucket/checkpoint/",
+            "s3://bucket/reference.json",
+            "run",
+            expected_gpu_count=7,
+            expected_max_steps=6000,
+            s3_client=object(),
+        )
+
+
+def test_selection_requires_passed_closed_loop_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    report = {
+        "schema": task_performance.REPORT_SCHEMA,
+        "status": "passed",
+        "run_id": "run",
+        "performance": {"improvement_gate_passed": True},
+        "paired_evaluation": {"seed_set_sha256": "validation-seeds"},
+    }
+    reference = {
+        "schema": task_performance.CHECKPOINT_REF_SCHEMA,
+        "status": "resolved",
+        "run_id": "run",
+        "checkpoint": {"uri": "s3://bucket/checkpoint/", "sha256": "b" * 64},
+    }
+    docs = {"s3://bucket/validation.json": report, "s3://bucket/ref.json": reference}
+    written = {}
+    monkeypatch.setattr(task_performance, "_read_s3_json", lambda _client, uri: docs[uri])
+    monkeypatch.setattr(
+        task_performance, "_put_json", lambda _client, uri, payload: written.update({uri: payload})
+    )
+    selected = task_performance.select_checkpoint(
+        "s3://bucket/validation.json",
+        "s3://bucket/ref.json",
+        "s3://bucket/selected.json",
+        "run",
+        s3_client=object(),
+    )
+    assert selected["status"] == "selected"
+    assert selected["validation_seed_set_sha256"] == "validation-seeds"
+
+    report["performance"]["improvement_gate_passed"] = False
+    with pytest.raises(GrootVisualizationError, match="passed validation"):
+        task_performance.select_checkpoint(
+            "s3://bucket/validation.json",
+            "s3://bucket/ref.json",
+            "s3://bucket/selected.json",
+            "run",
+            s3_client=object(),
+        )

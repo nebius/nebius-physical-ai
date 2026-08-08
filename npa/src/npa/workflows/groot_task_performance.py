@@ -45,6 +45,8 @@ EVALUATION_SCHEMA = "npa.groot.closed_loop_eval.v1"
 REPORT_SCHEMA = "npa.groot.task_performance.v1"
 RENDER_SCHEMA = "npa.groot.task_rollouts.v1"
 PUBLISH_SCHEMA = "npa.groot.task_performance_publish.v1"
+CHECKPOINT_REF_SCHEMA = "npa.groot.checkpoint_ref.v1"
+SELECTION_SCHEMA = "npa.groot.checkpoint_selection.v1"
 DATASET_ID = "lerobot/pusht"
 DATASET_REVISION = "7628202a2180972f291ba1bc6723834921e72c19"
 DATASET_TASK = "Push the T-shaped block onto the T-shaped target."
@@ -58,6 +60,13 @@ FPS = 10.0
 SUCCESS_THRESHOLD = 0.95
 SEMANTIC_PHASES = [
     "resolve_task_contract",
+    "prepare_retraining_split",
+    "retrain_task_policy",
+    "resolve_trained_checkpoint",
+    "evaluate_validation_baseline",
+    "evaluate_validation_candidate",
+    "analyze_validation_outcomes",
+    "select_checkpoint",
     "evaluate_baseline_closed_loop",
     "evaluate_trained_closed_loop",
     "analyze_paired_outcomes",
@@ -443,16 +452,146 @@ def _environment_state(env: Any) -> dict[str, Any]:
     }
 
 
+def _canonical_initial_state(step: Mapping[str, Any]) -> dict[str, Any]:
+    """Canonicalize physical reset state, excluding derived GEOS coverage noise."""
+
+    return {
+        "pusher_xy": [float(value) for value in step["pusher_xy"]],
+        "object_xy": [float(value) for value in step["object_xy"]],
+        "object_angle_rad": float(step["object_angle_rad"]),
+        "goal_xy": [float(value) for value in step["goal_xy"]],
+        "goal_angle_rad": float(step["goal_angle_rad"]),
+    }
+
+
+def _paired_initial_state_hash(client: Any, before: Mapping[str, Any], after: Mapping[str, Any]) -> str:
+    """Prove paired reset state even if derived polygon coverage differs by machine epsilon."""
+
+    before_doc = _read_s3_json(client, str(before["trajectory"]["uri"]))
+    after_doc = _read_s3_json(client, str(after["trajectory"]["uri"]))
+    before_steps = before_doc.get("steps") or []
+    after_steps = after_doc.get("steps") or []
+    if not before_steps or not after_steps:
+        raise GrootVisualizationError("paired rollout lacks an initial trajectory state")
+    before_state = _canonical_initial_state(before_steps[0])
+    after_state = _canonical_initial_state(after_steps[0])
+    if before_state != after_state:
+        raise GrootVisualizationError("paired rollouts did not start from the same physical state")
+    return _sha256(_json_bytes(before_state))
+
+
+def resolve_trained_checkpoint(
+    training_manifest_uri: str,
+    split_manifest_uri: str,
+    checkpoint_uri: str,
+    output_uri: str,
+    run_id: str,
+    *,
+    expected_gpu_count: int = 7,
+    expected_max_steps: int = 0,
+    s3_client: Any | None = None,
+) -> dict[str, Any]:
+    """Resolve an immutable identity for the exact uploaded trainer output."""
+
+    client = _s3_client(s3_client)
+    manifest = _read_s3_json(client, training_manifest_uri)
+    split = _read_s3_json(client, split_manifest_uri)
+    if (
+        manifest.get("schema") != "npa.groot.finetune.v1"
+        or manifest.get("status") != "completed"
+        or manifest.get("run_id") != run_id
+        or manifest.get("checkpoint_uri") != checkpoint_uri
+        or manifest.get("optimizer_step_ok") is not True
+        or manifest.get("collective_ok") is not True
+    ):
+        raise GrootVisualizationError("trainer manifest lacks completed immutable-run evidence")
+    gpu_count = int(manifest.get("num_gpus") or 0)
+    world_size = int(manifest.get("world_size") or 0)
+    distinct_gpu_count = int(manifest.get("distinct_gpu_count") or 0)
+    if {gpu_count, world_size, distinct_gpu_count} != {int(expected_gpu_count)}:
+        raise GrootVisualizationError("trainer did not use the required distinct GPU world")
+    configured_steps = int(manifest.get("max_steps") or 0)
+    completed_steps = int(manifest.get("training_step") or 0)
+    training_plan = split.get("training_plan") or {}
+    if (
+        split.get("schema") != "npa.groot.episode_split.v1"
+        or split.get("run_id") != run_id
+        or split.get("status") != "prepared"
+        or int(training_plan.get("configured_max_steps") or 0) != int(expected_max_steps)
+        or int(training_plan.get("effective_max_steps") or 0) != int(expected_max_steps)
+        or int(training_plan.get("global_batch_size") or 0)
+        != int(manifest.get("global_batch_size") or 0)
+    ):
+        raise GrootVisualizationError("trainer and split preflight step contracts differ")
+    if int(expected_max_steps) <= 0 or configured_steps != int(expected_max_steps):
+        raise GrootVisualizationError("trainer max_steps differs from the preflight contract")
+    if completed_steps != configured_steps:
+        raise GrootVisualizationError("trainer did not complete the configured optimizer steps")
+
+    with tempfile.TemporaryDirectory(prefix="npa-groot-checkpoint-ref-") as tmp:
+        checkpoint_path = Path(tmp) / "checkpoint"
+        _download_prefix(client, checkpoint_uri, checkpoint_path)
+        identity = _checkpoint_identity(checkpoint_path)
+    result = {
+        "schema": CHECKPOINT_REF_SCHEMA,
+        "status": "resolved",
+        "run_id": run_id,
+        "checkpoint": {"uri": checkpoint_uri, **identity},
+        "training_manifest_uri": training_manifest_uri,
+        "split_manifest_uri": split_manifest_uri,
+        "training": {
+            "base_model": manifest.get("base_model"),
+            "base_model_revision": manifest.get("base_model_revision"),
+            "groot_repo_ref": manifest.get("groot_repo_ref"),
+            "gpu_model": manifest.get("gpu_model"),
+            "gpu_count": gpu_count,
+            "world_size": world_size,
+            "distinct_gpu_count": distinct_gpu_count,
+            "optimizer_steps": completed_steps,
+            "global_batch_size": int(manifest.get("global_batch_size") or 0),
+            "training_examples": int(manifest.get("training_examples") or 0),
+            "aggregate_train_loss": manifest.get("aggregate_train_loss"),
+            "final_step_loss": manifest.get("final_step_loss", manifest.get("final_loss")),
+        },
+    }
+    _put_json(client, output_uri, result)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return result
+
+
+def _checkpoint_from_ref(
+    client: Any, checkpoint_ref_uri: str, *, run_id: str, allow_selection: bool
+) -> tuple[str, str]:
+    reference = _read_s3_json(client, checkpoint_ref_uri)
+    permitted = {CHECKPOINT_REF_SCHEMA}
+    if allow_selection:
+        permitted.add(SELECTION_SCHEMA)
+    if (
+        reference.get("schema") not in permitted
+        or reference.get("run_id") != run_id
+        or reference.get("status") not in {"resolved", "selected"}
+    ):
+        raise GrootVisualizationError("checkpoint reference does not belong to this run")
+    checkpoint = reference.get("checkpoint") or {}
+    uri = str(checkpoint.get("uri") or "")
+    sha256 = str(checkpoint.get("sha256") or "")
+    if not uri.startswith("s3://") or len(sha256) != 64:
+        raise GrootVisualizationError("checkpoint reference lacks an immutable S3 identity")
+    return uri, sha256
+
+
 def evaluate_closed_loop(
     contract_uri: str,
-    checkpoint_uri: str,
+    checkpoint_uri: str | None,
     output_uri: str,
     rollout_prefix_uri: str,
     run_id: str,
     phase: str,
-    checkpoint_sha256: str,
+    checkpoint_sha256: str | None,
     seed_namespace: str,
     *,
+    checkpoint_ref_uri: str | None = None,
+    allow_selection_ref: bool = False,
     episodes: int = 20,
     horizon: int = HORIZON,
     policy_batch_size: int = 4,
@@ -474,6 +613,17 @@ def evaluate_closed_loop(
     if not torch.cuda.is_available():
         raise GrootVisualizationError("closed-loop GR00T evaluation requires CUDA")
     client = _s3_client(s3_client)
+    if checkpoint_ref_uri:
+        if checkpoint_uri or checkpoint_sha256:
+            raise GrootVisualizationError("checkpoint URI and reference are mutually exclusive")
+        checkpoint_uri, checkpoint_sha256 = _checkpoint_from_ref(
+            client,
+            checkpoint_ref_uri,
+            run_id=run_id,
+            allow_selection=allow_selection_ref,
+        )
+    if not checkpoint_uri or not checkpoint_sha256:
+        raise GrootVisualizationError("evaluation requires an immutable checkpoint identity")
     contract = _read_s3_json(client, contract_uri)
     if contract.get("schema") != CONTRACT_SCHEMA or contract.get("proven") is not True:
         raise GrootVisualizationError("evaluation refuses an unproven task contract")
@@ -673,6 +823,52 @@ def evaluate_closed_loop(
     return result
 
 
+def select_checkpoint(
+    validation_report_uri: str,
+    checkpoint_ref_uri: str,
+    output_uri: str,
+    run_id: str,
+    *,
+    s3_client: Any | None = None,
+) -> dict[str, Any]:
+    """Select only a candidate that passed the separate paired validation gate."""
+
+    client = _s3_client(s3_client)
+    report = _read_s3_json(client, validation_report_uri)
+    reference = _read_s3_json(client, checkpoint_ref_uri)
+    if (
+        report.get("schema") != REPORT_SCHEMA
+        or report.get("run_id") != run_id
+        or report.get("status") != "passed"
+        or report.get("performance", {}).get("improvement_gate_passed") is not True
+    ):
+        raise GrootVisualizationError("candidate selection requires passed validation outcomes")
+    if (
+        reference.get("schema") != CHECKPOINT_REF_SCHEMA
+        or reference.get("run_id") != run_id
+        or reference.get("status") != "resolved"
+    ):
+        raise GrootVisualizationError("candidate checkpoint reference is invalid")
+    checkpoint = dict(reference.get("checkpoint") or {})
+    if len(str(checkpoint.get("sha256") or "")) != 64:
+        raise GrootVisualizationError("candidate checkpoint is not immutable")
+    result = {
+        "schema": SELECTION_SCHEMA,
+        "status": "selected",
+        "run_id": run_id,
+        "checkpoint": checkpoint,
+        "checkpoint_ref_uri": checkpoint_ref_uri,
+        "validation_report_uri": validation_report_uri,
+        "validation_seed_set_sha256": report.get("paired_evaluation", {}).get(
+            "seed_set_sha256"
+        ),
+        "selection_predicate": "paired closed-loop validation improvement gate passed",
+    }
+    _put_json(client, output_uri, result)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return result
+
+
 def paired_bootstrap(
     deltas: Sequence[float], *, samples: int = 50_000, seed: int = 17
 ) -> dict[str, float | int | str]:
@@ -751,12 +947,14 @@ def analyze_paired_outcomes(
     for seed in baseline["seeds"]:
         before = baseline_by_seed[int(seed)]
         after = trained_by_seed[int(seed)]
-        if before["initial_state_sha256"] != after["initial_state_sha256"]:
-            raise GrootVisualizationError(f"seed {seed} did not start from the same initial state")
+        physical_initial_hash = _paired_initial_state_hash(client, before, after)
         paired.append(
             {
                 "seed": int(seed),
-                "initial_state_sha256": before["initial_state_sha256"],
+                "initial_state_sha256": physical_initial_hash,
+                "recorded_initial_hashes_equal": (
+                    before["initial_state_sha256"] == after["initial_state_sha256"]
+                ),
                 "baseline_success": bool(before["success"]),
                 "trained_success": bool(after["success"]),
                 "success_delta": int(bool(after["success"])) - int(bool(before["success"])),
@@ -1650,12 +1848,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     evaluate = commands.add_parser("evaluate-closed-loop")
     evaluate.add_argument("--contract-uri", required=True)
-    evaluate.add_argument("--checkpoint-uri", required=True)
+    evaluate.add_argument("--checkpoint-uri")
+    evaluate.add_argument("--checkpoint-ref-uri")
     evaluate.add_argument("--output-uri", required=True)
     evaluate.add_argument("--rollout-prefix-uri", required=True)
     evaluate.add_argument("--run-id", required=True)
     evaluate.add_argument("--phase", choices=("baseline", "trained"), required=True)
-    evaluate.add_argument("--checkpoint-sha256", required=True)
+    evaluate.add_argument("--checkpoint-sha256")
+    evaluate.add_argument("--allow-selection-ref", action="store_true")
     evaluate.add_argument("--seed-namespace", required=True)
     evaluate.add_argument("--episodes", type=int, default=20)
     evaluate.add_argument("--horizon", type=int, default=HORIZON)
@@ -1667,6 +1867,21 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--trained-uri", required=True)
     analyze.add_argument("--output-uri", required=True)
     analyze.add_argument("--run-id", required=True)
+
+    checkpoint = commands.add_parser("resolve-trained-checkpoint")
+    checkpoint.add_argument("--training-manifest-uri", required=True)
+    checkpoint.add_argument("--split-manifest-uri", required=True)
+    checkpoint.add_argument("--checkpoint-uri", required=True)
+    checkpoint.add_argument("--output-uri", required=True)
+    checkpoint.add_argument("--run-id", required=True)
+    checkpoint.add_argument("--expected-gpu-count", type=int, required=True)
+    checkpoint.add_argument("--expected-max-steps", type=int, required=True)
+
+    select = commands.add_parser("select-checkpoint")
+    select.add_argument("--validation-report-uri", required=True)
+    select.add_argument("--checkpoint-ref-uri", required=True)
+    select.add_argument("--output-uri", required=True)
+    select.add_argument("--run-id", required=True)
 
     render = commands.add_parser("render-task-rollouts")
     render.add_argument("--report-uri", required=True)
@@ -1708,6 +1923,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         evaluate_closed_loop(**values)
     elif command == "analyze-paired-outcomes":
         analyze_paired_outcomes(**values)
+    elif command == "resolve-trained-checkpoint":
+        resolve_trained_checkpoint(**values)
+    elif command == "select-checkpoint":
+        select_checkpoint(**values)
     elif command == "render-task-rollouts":
         render_task_rollouts(**values)
     elif command == "emit-mcap":

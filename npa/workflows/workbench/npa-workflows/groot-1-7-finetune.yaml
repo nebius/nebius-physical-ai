@@ -4,11 +4,11 @@ kind: Workflow
 metadata:
   name: groot-1-7-finetune
   description: >
-    Prove the exact canonical PushT task contract, execute immutable baseline
-    and trained GR00T N1.7 checkpoints in paired closed-loop gym-pusht physics,
-    require statistically supported task-outcome improvement, and publish
-    synchronized real rollout video, MCAP, and Rerun artifacts. The platform is
-    simulation; this workflow makes no physical-robot claim.
+    Prove canonical PushT provenance, retrain GR00T N1.7 on a leakage-free
+    cohort with seven GPUs, select only on separate paired closed-loop
+    validation seeds, then score untouched paired final seeds in live physics
+    and publish synchronized task-outcome artifacts. This is simulation and
+    makes no physical-robot claim.
 
 config:
   bucket: example-bucket
@@ -16,15 +16,41 @@ config:
   source_data_uri: "s3://{{config.bucket}}/groot-1-7-finetune/source/data/"
   baseline_checkpoint_uri: "s3://{{config.bucket}}/groot-1-7-finetune/checkpoints/baseline/"
   baseline_checkpoint_sha256: ae0edc5d0b8e8e13b7c892e18dd126d16feb9f1fb90a8dc64e7f4f55847143fb
-  trained_checkpoint_uri: "s3://{{config.bucket}}/groot-1-7-finetune/checkpoints/posttrain/"
-  trained_checkpoint_sha256: 7b7e91c989cdcc25611cab296b406de1a9cff81ab922120d3ecd8b099b5a4603
+  base_model: nvidia/GR00T-N1.7-3B
+  robot_embodiment: NEW_EMBODIMENT
   gpu_type: RTXPRO6000
+  gpu_count: "7"
+  global_batch_size: "7"
+  nccl_transport: socket
+  dataloader_num_workers: "0"
+  split_seed: groot17-pusht-retrain-v2-20260808
+  train_episodes: "180"
+  heldout_episodes: "26"
+  max_steps: "6000"
+  save_steps: "6000"
+  save_total_limit: "1"
+  validation_episodes: "24"
+  validation_seed_namespace: groot17-pusht-validation-v2-20260808
   paired_episodes: "24"
+  final_seed_namespace: groot17-pusht-final-v2-20260808
   horizon: "300"
   policy_batch_size: "4"
-  final_seed_namespace: "groot17-pusht-final-v1-20260808"
 
   task_contract_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/task-contract.json"
+  train_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/train/"
+  heldout_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/heldout/"
+  data_uri: "{{config.train_data_uri}}"
+  split_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/split/manifest.json"
+  candidate_checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/candidate/"
+  checkpoint_uri: "{{config.candidate_checkpoint_uri}}"
+  training_manifest_uri: "{{config.candidate_checkpoint_uri}}npa_groot_finetune_manifest.json"
+  candidate_checkpoint_ref_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/candidate-checkpoint.json"
+  validation_baseline_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation/baseline/evaluation.json"
+  validation_baseline_rollout_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation/baseline/rollouts/"
+  validation_candidate_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation/candidate/evaluation.json"
+  validation_candidate_rollout_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation/candidate/rollouts/"
+  validation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation/report.json"
+  selected_checkpoint_ref_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/selected-checkpoint.json"
   baseline_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/baseline/evaluation.json"
   baseline_rollout_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/baseline/"
   trained_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/trained/evaluation.json"
@@ -38,6 +64,15 @@ config:
   workflow_uri: "s3://{{config.bucket}}/{{config.prefix}}/workflow.yaml"
 
 resources:
+  trainer-gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    cpus: 32
+    memory: 200Gi
+    kubernetes:
+      pod_config:
+        spec:
+          securityContext: {runAsUser: 0, runAsGroup: 0}
   evaluator-gpu:
     cloud: kubernetes
     accelerators: "{{config.gpu_type}}:1"
@@ -46,9 +81,7 @@ resources:
     kubernetes:
       pod_config:
         spec:
-          securityContext:
-            runAsUser: 0
-            runAsGroup: 0
+          securityContext: {runAsUser: 0, runAsGroup: 0}
   artifact-cpu:
     cloud: kubernetes
     cpus: 8
@@ -58,145 +91,175 @@ initial: resolve_task_contract
 
 states:
   resolve_task_contract:
-    description: >
-      Compare every converted logical data row with immutable lerobot/pusht,
-      prove task text, shapes, action meaning, and current simulator frames,
-      and pin gym-pusht package and source revisions.
+    description: Prove dataset, task, observation/action, embodiment, and simulator provenance.
     toolRef: workflow.groot.resolve_task_contract
     resources: artifact-cpu
     inputs:
-      - uri: "{{config.source_data_uri}}"
-        schema: nvidia.groot.lerobot.v2
+      - {uri: "{{config.source_data_uri}}", schema: nvidia.groot.lerobot.v2}
     outputs:
-      - uri: "{{config.task_contract_uri}}"
-        schema: npa.groot.task_contract.v1
+      - {uri: "{{config.task_contract_uri}}", schema: npa.groot.task_contract.v1}
+    next: prepare_retraining_split
+
+  prepare_retraining_split:
+    description: >
+      Materialize 180 train and 26 held-out episodes with train-only statistics;
+      derive the required optimizer budget and fail before GPU use if 6000 is insufficient.
+    toolRef: workflow.groot.prepare_split
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.source_data_uri}}", schema: nvidia.groot.lerobot.v2}
+    outputs:
+      - {uri: "{{config.train_data_uri}}", schema: nvidia.groot.lerobot.v2.train-split}
+      - {uri: "{{config.heldout_data_uri}}", schema: nvidia.groot.lerobot.v2.heldout-split}
+      - {uri: "{{config.split_manifest_uri}}", schema: npa.groot.episode_split.v1}
+    next: retrain_task_policy
+
+  retrain_task_policy:
+    description: Run real GR00T N1.7 fine-tuning for the preflighted budget on seven distinct GPUs.
+    toolRef: workbench.groot.finetune
+    resources: trainer-gpu
+    inputs:
+      - {uri: "{{config.train_data_uri}}", schema: nvidia.groot.lerobot.v2.train-split}
+      - {uri: "{{config.split_manifest_uri}}", schema: npa.groot.episode_split.v1}
+    outputs:
+      - {uri: "{{config.candidate_checkpoint_uri}}", schema: nvidia.groot.n1.7.finetuned-checkpoint}
+      - {uri: "{{config.training_manifest_uri}}", schema: npa.groot.finetune.v1}
+    next: resolve_trained_checkpoint
+
+  resolve_trained_checkpoint:
+    description: Verify trainer completion, seven-GPU evidence, step contract, and immutable checkpoint hash.
+    toolRef: workflow.groot.resolve_trained_checkpoint
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.training_manifest_uri}}", schema: npa.groot.finetune.v1}
+      - {uri: "{{config.split_manifest_uri}}", schema: npa.groot.episode_split.v1}
+      - {uri: "{{config.candidate_checkpoint_uri}}", schema: nvidia.groot.n1.7.finetuned-checkpoint}
+    outputs:
+      - {uri: "{{config.candidate_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_ref.v1}
+    next: evaluate_validation_baseline
+
+  evaluate_validation_baseline:
+    description: Run the baseline policy in live PushT physics on selection-only validation seeds.
+    toolRef: workbench.groot.evaluate_baseline_closed_loop.validation
+    resources: evaluator-gpu
+    inputs:
+      - {uri: "{{config.task_contract_uri}}", schema: npa.groot.task_contract.v1}
+      - {uri: "{{config.baseline_checkpoint_uri}}", schema: nvidia.groot.n1.7.custom-embodiment-checkpoint}
+    outputs:
+      - {uri: "{{config.validation_baseline_eval_uri}}", schema: npa.groot.closed_loop_eval.v1}
+      - {uri: "{{config.validation_baseline_rollout_prefix_uri}}", schema: npa.groot.live_rollouts.v1}
+    next: evaluate_validation_candidate
+
+  evaluate_validation_candidate:
+    description: Run only candidate model outputs on the identical validation initial states.
+    toolRef: workbench.groot.evaluate_trained_closed_loop.validation
+    resources: evaluator-gpu
+    inputs:
+      - {uri: "{{config.candidate_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_ref.v1}
+    outputs:
+      - {uri: "{{config.validation_candidate_eval_uri}}", schema: npa.groot.closed_loop_eval.v1}
+      - {uri: "{{config.validation_candidate_rollout_prefix_uri}}", schema: npa.groot.live_rollouts.v1}
+    next: analyze_validation_outcomes
+
+  analyze_validation_outcomes:
+    description: Gate candidate selection on paired closed-loop validation improvement with uncertainty.
+    toolRef: workflow.groot.analyze_validation_outcomes
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.validation_baseline_eval_uri}}", schema: npa.groot.closed_loop_eval.v1}
+      - {uri: "{{config.validation_candidate_eval_uri}}", schema: npa.groot.closed_loop_eval.v1}
+    outputs:
+      - {uri: "{{config.validation_report_uri}}", schema: npa.groot.task_performance.v1}
+    next: select_checkpoint
+
+  select_checkpoint:
+    description: Freeze the candidate only after the selection-only validation gate passes.
+    toolRef: workflow.groot.select_checkpoint
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.validation_report_uri}}", schema: npa.groot.task_performance.v1}
+      - {uri: "{{config.candidate_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_ref.v1}
+    outputs:
+      - {uri: "{{config.selected_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_selection.v1}
     next: evaluate_baseline_closed_loop
 
   evaluate_baseline_closed_loop:
-    description: >
-      Load and identity-check the immutable zero-update GR00T checkpoint, then
-      use its actual forward outputs for every transition in live PushT physics
-      on the reserved deterministic seed set.
+    description: Run baseline model actions on the untouched deterministic final seeds.
     toolRef: workbench.groot.evaluate_baseline_closed_loop
     resources: evaluator-gpu
     inputs:
-      - uri: "{{config.task_contract_uri}}"
-        schema: npa.groot.task_contract.v1
-      - uri: "{{config.baseline_checkpoint_uri}}"
-        schema: nvidia.groot.n1.7.custom-embodiment-checkpoint
+      - {uri: "{{config.task_contract_uri}}", schema: npa.groot.task_contract.v1}
+      - {uri: "{{config.baseline_checkpoint_uri}}", schema: nvidia.groot.n1.7.custom-embodiment-checkpoint}
     outputs:
-      - uri: "{{config.baseline_eval_uri}}"
-        schema: npa.groot.closed_loop_eval.v1
-      - uri: "{{config.baseline_rollout_prefix_uri}}"
-        schema: npa.groot.live_rollouts.v1
+      - {uri: "{{config.baseline_eval_uri}}", schema: npa.groot.closed_loop_eval.v1}
+      - {uri: "{{config.baseline_rollout_prefix_uri}}", schema: npa.groot.live_rollouts.v1}
     next: evaluate_trained_closed_loop
 
   evaluate_trained_closed_loop:
-    description: >
-      Load and identity-check the immutable trained GR00T checkpoint and repeat
-      the identical model-controlled benchmark with the same initial states,
-      horizon, observations, action postprocessing, and success predicate.
-    toolRef: workbench.groot.evaluate_trained_closed_loop
+    description: Run selected trained model actions on exactly the same untouched final initial states.
+    toolRef: workbench.groot.evaluate_trained_closed_loop.selected
     resources: evaluator-gpu
     inputs:
-      - uri: "{{config.task_contract_uri}}"
-        schema: npa.groot.task_contract.v1
-      - uri: "{{config.trained_checkpoint_uri}}"
-        schema: nvidia.groot.n1.7.finetuned-checkpoint
+      - {uri: "{{config.selected_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_selection.v1}
     outputs:
-      - uri: "{{config.trained_eval_uri}}"
-        schema: npa.groot.closed_loop_eval.v1
-      - uri: "{{config.trained_rollout_prefix_uri}}"
-        schema: npa.groot.live_rollouts.v1
+      - {uri: "{{config.trained_eval_uri}}", schema: npa.groot.closed_loop_eval.v1}
+      - {uri: "{{config.trained_rollout_prefix_uri}}", schema: npa.groot.live_rollouts.v1}
     next: analyze_paired_outcomes
 
   analyze_paired_outcomes:
-    description: >
-      Verify pairing and execution truth, calculate per-episode task outcomes,
-      paired percentile-bootstrap confidence intervals and a one-sided paired
-      sign-randomization test, and fail unless actual outcomes improve.
+    description: Enforce paired final outcome improvement with confidence interval and paired test.
     toolRef: workflow.groot.analyze_paired_outcomes
     resources: artifact-cpu
     inputs:
-      - uri: "{{config.baseline_eval_uri}}"
-        schema: npa.groot.closed_loop_eval.v1
-      - uri: "{{config.trained_eval_uri}}"
-        schema: npa.groot.closed_loop_eval.v1
+      - {uri: "{{config.baseline_eval_uri}}", schema: npa.groot.closed_loop_eval.v1}
+      - {uri: "{{config.trained_eval_uri}}", schema: npa.groot.closed_loop_eval.v1}
     outputs:
-      - uri: "{{config.task_performance_report_uri}}"
-        schema: npa.groot.task_performance.v1
+      - {uri: "{{config.task_performance_report_uri}}", schema: npa.groot.task_performance.v1}
     next: render_task_rollouts
 
   render_task_rollouts:
-    description: >
-      Decode actual paired environment recordings and burn task, simulation,
-      seed, step, score, outcome, and termination labels into synchronized
-      baseline/trained comparisons containing successes and failures.
+    description: Render synchronized actual final rollouts with task, simulation, seed, score, and outcome labels.
     toolRef: workflow.groot.render_task_rollouts
     resources: artifact-cpu
     inputs:
-      - uri: "{{config.task_performance_report_uri}}"
-        schema: npa.groot.task_performance.v1
+      - {uri: "{{config.task_performance_report_uri}}", schema: npa.groot.task_performance.v1}
     outputs:
-      - uri: "{{config.comparison_video_uri}}"
-        schema: video.mp4.closed-loop-paired-comparison
-      - uri: "{{config.render_manifest_uri}}"
-        schema: npa.groot.task_rollouts.v1
+      - {uri: "{{config.comparison_video_uri}}", schema: video.mp4.closed-loop-paired-comparison}
+      - {uri: "{{config.render_manifest_uri}}", schema: npa.groot.task_rollouts.v1}
     next: emit_mcap
 
   emit_mcap:
-    description: >
-      Package actual rollout frames, model actions, object and goal poses,
-      progress, success, paired deltas, rates, and logs into named Lichtblick
-      topics with a common rollout clock.
+    description: Emit actual rollout frames, model actions, task state, progress, outcomes, and paired metrics.
     toolRef: workflow.groot.emit_task_mcap
     resources: artifact-cpu
     inputs:
-      - uri: "{{config.task_performance_report_uri}}"
-        schema: npa.groot.task_performance.v1
-      - uri: "{{config.render_manifest_uri}}"
-        schema: npa.groot.task_rollouts.v1
+      - {uri: "{{config.task_performance_report_uri}}", schema: npa.groot.task_performance.v1}
+      - {uri: "{{config.render_manifest_uri}}", schema: npa.groot.task_rollouts.v1}
     outputs:
-      - uri: "{{config.mcap_uri}}"
-        schema: mcap.v1
+      - {uri: "{{config.mcap_uri}}", schema: mcap.v1}
     next: emit_rrd
 
   emit_rrd:
-    description: >
-      Emit a native Rerun task-performance blueprint with synchronized paired
-      cameras, object/goal trajectories, coverage, success state, aggregate
-      rates, paired-delta distribution, confidence interval, and outcome log.
+    description: Emit a replay-first Rerun blueprint with paired cameras, state, score, outcome, and uncertainty.
     toolRef: workflow.groot.emit_task_rrd
     resources: artifact-cpu
     inputs:
-      - uri: "{{config.task_performance_report_uri}}"
-        schema: npa.groot.task_performance.v1
-      - uri: "{{config.render_manifest_uri}}"
-        schema: npa.groot.task_rollouts.v1
+      - {uri: "{{config.task_performance_report_uri}}", schema: npa.groot.task_performance.v1}
+      - {uri: "{{config.render_manifest_uri}}", schema: npa.groot.task_rollouts.v1}
     outputs:
-      - uri: "{{config.rrd_uri}}"
-        schema: rerun.rrd.v1
+      - {uri: "{{config.rrd_uri}}", schema: rerun.rrd.v1}
     next: publish
 
   publish:
-    description: >
-      Independently decode and inspect the report, paired video, exact MCAP
-      topics, Rerun entities/blueprint, and submitted workflow; publish only
-      after every closed-loop truth, performance, and visualization gate passes.
+    description: Independently inspect every truth, performance, media, and workflow gate before publication.
     toolRef: workflow.groot.publish_task_performance
     resources: artifact-cpu
     inputs:
-      - uri: "{{config.task_performance_report_uri}}"
-        schema: npa.groot.task_performance.v1
-      - uri: "{{config.comparison_video_uri}}"
-        schema: video.mp4.closed-loop-paired-comparison
-      - uri: "{{config.mcap_uri}}"
-        schema: mcap.v1
-      - uri: "{{config.rrd_uri}}"
-        schema: rerun.rrd.v1
-      - uri: "{{config.workflow_uri}}"
-        schema: npa.workflow.v0.0.1
+      - {uri: "{{config.task_performance_report_uri}}", schema: npa.groot.task_performance.v1}
+      - {uri: "{{config.comparison_video_uri}}", schema: video.mp4.closed-loop-paired-comparison}
+      - {uri: "{{config.mcap_uri}}", schema: mcap.v1}
+      - {uri: "{{config.rrd_uri}}", schema: rerun.rrd.v1}
+      - {uri: "{{config.workflow_uri}}", schema: npa.workflow.v0.0.1}
     outputs:
-      - uri: "{{config.publish_manifest_uri}}"
-        schema: npa.groot.task_performance_publish.v1
+      - {uri: "{{config.publish_manifest_uri}}", schema: npa.groot.task_performance_publish.v1}
     terminal: true

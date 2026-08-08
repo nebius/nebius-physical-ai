@@ -7,9 +7,12 @@ runs real `Gr00tPolicy.get_action` outputs in live `gym_pusht/PushT-v0` physics;
 it is not offline dataset replay or action-regression scoring. Its serial graph is:
 
 ```text
-resolve_task_contract -> evaluate_baseline_closed_loop ->
-evaluate_trained_closed_loop -> analyze_paired_outcomes ->
-render_task_rollouts -> emit_mcap -> emit_rrd -> publish
+resolve_task_contract -> prepare_retraining_split -> retrain_task_policy ->
+resolve_trained_checkpoint -> evaluate_validation_baseline ->
+evaluate_validation_candidate -> analyze_validation_outcomes ->
+select_checkpoint -> evaluate_baseline_closed_loop ->
+evaluate_trained_closed_loop -> analyze_paired_outcomes -> render_task_rollouts ->
+emit_mcap -> emit_rrd -> publish
 ```
 
 Both checkpoints use the same reserved deterministic seeds, initial states,
@@ -56,14 +59,16 @@ npa workbench workflow submit "$SPEC" \
   --plan-only
 ```
 
-The plan must show the exact eight semantic phases. Both evaluator stages use
-one compatible GPU and identical `paired_episodes >= 20`, `horizon=300`, and
-`final_seed_namespace` values.
+The plan must show all 15 semantic phases. Retraining uses the preflighted
+`max_steps` value on seven GPUs. Validation and final evaluation each use at
+least 20 paired episodes, distinct seed namespaces, and identical conditions
+within each pair.
 
 ## Submit evaluation
 
-The source data and both checkpoints must exist at immutable refs. Override all
-three together when adapting this reference to another proven task:
+The source data and baseline checkpoint must exist at immutable refs. The
+workflow materializes the split, trains and hashes the candidate, selects it on
+validation seeds, and evaluates fresh final seeds:
 
 ```bash
 npa workbench workflow submit "$SPEC" \
@@ -72,8 +77,10 @@ npa workbench workflow submit "$SPEC" \
   --var source_data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
   --var baseline_checkpoint_uri=s3://<bucket>/checkpoints/baseline/ \
   --var baseline_checkpoint_sha256=<identity> \
-  --var trained_checkpoint_uri=s3://<bucket>/checkpoints/trained/ \
-  --var trained_checkpoint_sha256=<identity> \
+  --var train_episodes=180 \
+  --var heldout_episodes=26 \
+  --var max_steps=6000 \
+  --var validation_episodes=24 \
   --var paired_episodes=24 \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
   --secret-env HF_TOKEN \
@@ -102,6 +109,10 @@ With the default prefix, checkpoints and provenance are under:
 
 ```text
 s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/task-contract.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/split/manifest.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/checkpoints/candidate/
+s3://<bucket>/groot-1-7-task-performance/<run-id>/validation/report.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/selected-checkpoint.json
 s3://<bucket>/groot-1-7-task-performance/<run-id>/eval/baseline/evaluation.json
 s3://<bucket>/groot-1-7-task-performance/<run-id>/eval/trained/evaluation.json
 s3://<bucket>/groot-1-7-task-performance/<run-id>/rollouts/{baseline,trained}/
