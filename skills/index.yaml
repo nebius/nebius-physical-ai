@@ -343,6 +343,17 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - npa/workflows/workbench/npa-workflows/byof-open-dreamer.yaml
+  - name: wan2-2
+    category: tools
+    when_to_use: "Package, run, review, or extend the Alibaba Wan 2.2 TI2V-5B BYOF solution, its generated video evidence, or its verified Rerun recording."
+    path: skills/tools/wan2-2/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/wan2.2.md
+      - type: npa_workflow_yaml
+        paths:
+          - npa/workflows/workbench/npa-workflows/byof-wan2.2.yaml
+          - npa/workflows/workbench/npa-workflows/byof-wan2.2-multigpu.yaml
   - name: retargeting
     category: tools
     when_to_use: "Motion retargeting, SONIC retargeted motion artifacts, SkyPilot retargeting YAMLs, or CLI behavior."

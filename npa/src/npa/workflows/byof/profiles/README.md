@@ -18,6 +18,8 @@ means editing the spec; picking a *pod shape* means picking a profile here.
 | `byof-datagen-rtxpro-smoke.yaml` | `datagen` smoke | RTX PRO, scripted LeIsaac datagen |
 | `byof-container-smoke-rtxpro.yaml` | `container-verify` / `solution-smoke` | CPU only |
 | `byof-solution-smoke-rtxpro-gpu.yaml` | `solution-smoke` needing CUDA/EGL/Vulkan | RTX PRO |
+| `byof-solution-smoke-wan22-rtxpro-gpu.yaml` | Wan TI2V-5B tensor-only `solution-smoke` with SM120-tested PyTorch SDPA | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` |
+| `byof-solution-smoke-wan22-b200-4gpu.yaml` | Wan TI2V-5B distributed `solution-smoke` with FSDP + Ulysses | one Kubernetes pod, `B200:4` |
 | `skypilot-kubernetes-rtxpro.yaml` | *not a task* — SkyPilot **global config** (`--config`) setting `imagePullSecrets` | — |
 
 ## Why they are here and not in the SkyPilot catalog
@@ -38,3 +40,8 @@ Selection lives in `npa/src/npa/workflows/byof/live.py::resolve_byof_resource_ya
 If you find yourself chaining stages, that is a workflow: author an
 `npa.workflow/v0.0.1` spec under `npa/workflows/workbench/npa-workflows/` instead.
 `npa/tests/guardrails/test_byof_profiles.py` keeps these files single-task.
+
+The Wan profiles upload the GPU smoke outputs normally. Once that job succeeds,
+the outer BYOF runner uses `npa.workflows.wan_rerun` to build and publish the
+verified RRD and manifest from the uploaded artifacts; the resource profile
+does not duplicate that postprocessing logic.
