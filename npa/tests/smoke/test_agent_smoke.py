@@ -77,6 +77,7 @@ def test_agent_bootstrap_source_smoke() -> None:
     assert '@app.get("/foxglove/config")' in routes_source
     assert '@app.post("/foxglove/load-artifact")' in routes_source
     assert '@app.post("/foxglove/convert-run")' in routes_source
+    assert '@app.post("/foxglove/export")' in routes_source
     assert 'id="chatSend"' in bundled
     assert 'id="chatForm"' in bundled
     assert 'id="chatSessionSelect"' in bundled

@@ -155,6 +155,10 @@ AGENT_FOXGLOVE_CONTRACT = (
     "captureFoxgloveContext",
     "convertRunToMcap",
     "/api/foxglove/convert-run",
+    "exportMcap",
+    "/api/foxglove/export",
+    'id="foxgloveOpenWeb"',
+    'id="foxgloveOpenDesktop"',
     # Two backends behind one pane: the official app (SDK) and the self-hosted
     # OSS viewer that renders MCAP without a Foxglove account.
     "mountSelfHostedViewer",

@@ -15,10 +15,12 @@ CREDENTIALS_PATH = Path.home() / ".npa" / "credentials.yaml"
 NGC_ENV_KEYS = ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
 AI_CLOUD_ENV_KEY = "NEBIUS_AI_CLOUD_KEY"
 TOKEN_FACTORY_ENV_KEY = "NEBIUS_TOKEN_FACTORY_KEY"
+FOXGLOVE_API_TOKEN_ENV_KEY = "FOXGLOVE_API_TOKEN"
 KNOWN_TOKEN_KEYS = (
     "HF_TOKEN",
     AI_CLOUD_ENV_KEY,
     TOKEN_FACTORY_ENV_KEY,
+    FOXGLOVE_API_TOKEN_ENV_KEY,
     *NGC_ENV_KEYS,
 )
 HF_TOKEN_MISSING_WARNING = (
@@ -50,6 +52,7 @@ class CredentialsConfig:
     s3_secret_access_key: str = ""
     s3_endpoint: str = ""
     s3_bucket: str = ""
+    foxglove_api_token: str = field(default="", repr=False)
 
     @property
     def hf_token(self) -> str:
@@ -258,6 +261,10 @@ def load_credentials(
         value = env_value if env_value else file_tokens.get(key, "")
         if value:
             tokens[key] = value
+    # Foxglove API credentials are deliberately kept out of the generic token
+    # map: SSHConfig and shared workbench helpers forward that map to remote
+    # environments. This scoped token stays in the local/server-side field only.
+    foxglove_api_token = tokens.pop(FOXGLOVE_API_TOKEN_ENV_KEY, "")
 
     for message in warnings:
         if warn is not None:
@@ -282,6 +289,7 @@ def load_credentials(
             or file_storage.get("endpoint", "")
         ),
         s3_bucket=env.get("NPA_CHECKPOINT_BUCKET") or env.get("NEBIUS_S3_BUCKET") or file_storage.get("bucket", ""),
+        foxglove_api_token=foxglove_api_token,
     )
 
 

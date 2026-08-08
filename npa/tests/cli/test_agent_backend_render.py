@@ -319,6 +319,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "/foxglove/status",
         "/foxglove/load-artifact",
         "/foxglove/convert-run",
+        "/foxglove/export",
         "/foxglove/live",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
