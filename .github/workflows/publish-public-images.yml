@@ -106,8 +106,11 @@ jobs:
 
       - name: Plan (dry run — always)
         env:
-          SOURCE_REGISTRY: ${{ inputs.source_registry }}
-          SELECTED_TOOL: ${{ inputs.tool }}
+          # Repository-variable fallbacks let a branch add these inputs before the
+          # workflow-dispatch schema reaches the default branch. Operators must remove
+          # one-off variables after the run; explicit inputs always win once available.
+          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           args=(--target "${{ steps.target.outputs.value }}")
           if [ -n "$SOURCE_REGISTRY" ]; then
@@ -142,7 +145,7 @@ jobs:
           # It is deliberately separate so a release never overwrites the standing CI
           # credential, and must be removed immediately after the dispatch.
           NEBIUS_OVERRIDE_CR_TOKEN: ${{ secrets.NEBIUS_OVERRIDE_CR_TOKEN }}
-          SOURCE_REGISTRY: ${{ inputs.source_registry }}
+          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           # A dry run without secrets still reports the plan and says what it could not check.
           REQUIRE_CREDENTIAL: ${{ inputs.dry_run == false }}
         run: |
@@ -161,8 +164,8 @@ jobs:
       - name: Preflight the source registry credential and every pinned tag
         if: ${{ steps.source-login.outputs.available == 'true' }}
         env:
-          SOURCE_REGISTRY: ${{ inputs.source_registry }}
-          SELECTED_TOOL: ${{ inputs.tool }}
+          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           args=(--target "${{ steps.target.outputs.value }}")
           if [ -n "$SOURCE_REGISTRY" ]; then
@@ -189,7 +192,7 @@ jobs:
       # Also runs in dry-run (it only reads), so the rehearsal exercises the whole safety
       # chain rather than leaving the gate to fire for the first time on the real run.
       - name: Gate — the Isaac canonical tags must not be Omniverse-baked
-        if: ${{ steps.source-login.outputs.available == 'true' }}
+        if: ${{ steps.source-login.outputs.available == 'true' && (inputs.tool || vars.NPA_PUBLISH_TOOL) == '' }}
         run: |
           set -euo pipefail
           source_registry="cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw"
@@ -227,8 +230,8 @@ jobs:
       - name: Publish and verify
         if: ${{ inputs.dry_run == false }}
         env:
-          SOURCE_REGISTRY: ${{ inputs.source_registry }}
-          SELECTED_TOOL: ${{ inputs.tool }}
+          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           args=(--target "${{ steps.target.outputs.value }}")
           if [ -n "$SOURCE_REGISTRY" ]; then
