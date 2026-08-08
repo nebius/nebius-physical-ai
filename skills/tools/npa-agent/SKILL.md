@@ -234,6 +234,14 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
 - `POST /api/sim-viz/load-artifact` loads an explicit artifact (`s3_uri` or `run_id` + `key`).
 - Unknown types are still listed and selectable (`render="download"` fallback).
 
+`artifacts/run` returns exactly one native S3 page per request, capped at 1,000
+objects. Its `count`, `artifacts`, and `preferred` fields are page-local. Clients
+that previously treated the first response as the complete run must follow
+`next_cursor` with the same `resolved_prefix` and `resource_bucket`; cursors are
+opaque and stable only for the S3 listing they came from. The UI does this via
+**Load next artifact page**. A run that changes while pages are being followed
+inherits native S3 listing consistency and may require a fresh first-page load.
+
 ### Stage evidence contract
 
 `GET /api/workflows/sim2real/runs/{run_id}` and the matching status endpoint
@@ -294,8 +302,12 @@ tenant editors-group membership when the operator can manage IAM; when that is
 not possible, bootstrap reuses available credentials and the access report shows
 their actual narrower reach.
 
-Tenant-wide access is read-only at the agent product boundary. Workflow submit,
-artifact writes and deletion remain scoped to the deployment project. An
+Tenant-wide access is read-only at the agent product boundary. This is enforced
+by the application, not by structurally read-only IAM credentials: the attached
+service account may still hold tenant-level editors-group grants and must be
+handled as privileged. Workflow submission and artifact writes remain scoped by
+the application to the configured home/deployment project; artifact deletion is
+not exposed. An
 arbitrary caller-supplied S3 URI is still limited to configured buckets. The
 only cross-project exception is an exact object key selected from a requested
 discovered run; it is verified against effective bucket access before loading.
