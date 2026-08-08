@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import tempfile
 import time
 from enum import Enum
@@ -125,6 +124,7 @@ from npa.workbench.training_config import (
     render_overrides,
     shell_env_exports,
 )
+from npa.cli.groot.finetune_runtime import run_local_finetune as _run_local_finetune
 from npa.cli.groot.training_evidence import (
     render_distributed_probe,
     render_training_manifest_script,
@@ -1792,19 +1792,6 @@ echo NPA_GROOT_FINETUNE_COMPLETE
 echo {shlex.quote(output_dir)}
 """
     return _remote_bash(script)
-
-
-def _run_local_finetune(command: str, *, stream: bool) -> tuple[int, str, str]:
-    """Run the pinned GR00T trainer in the current GPU container."""
-
-    completed = subprocess.run(
-        shlex.split(command),
-        text=True,
-        stdout=None if stream else subprocess.PIPE,
-        stderr=None if stream else subprocess.PIPE,
-        check=False,
-    )
-    return completed.returncode, completed.stdout or "", completed.stderr or ""
 
 
 def _build_offline_eval_command(
