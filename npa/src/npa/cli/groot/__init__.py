@@ -1746,6 +1746,14 @@ set -euo pipefail
 cd {GROOT_REPO}
 {training_env}
 mkdir -p {GROOT_DATA_CACHE} {GROOT_CHECKPOINT_CACHE} {GROOT_DATA_MOUNT}/checkpoints {GROOT_CONFIG_CACHE}
+# Finetuning must not rely on the Hugging Face checkpoint downloader's
+# incidental ``uv run`` sync.  S3/local continuation checkpoints bypass that
+# downloader, so synchronize the pinned upstream environment explicitly before
+# any distributed probe or trainer process starts.
+uv sync --python {GROOT_VENV}/bin/python
+uv pip install --quiet --python {GROOT_VENV}/bin/python boto3
+{GROOT_VENV}/bin/python -c 'import boto3, wandb'
+echo NPA_GROOT_TRAIN_ENV_SYNC_OK
 actual_groot_version=$({GROOT_VENV}/bin/python -c 'from importlib.metadata import version; print(version("gr00t"))')
 if [ "$actual_groot_version" != {shlex.quote(GROOT_RUNTIME_VERSION)} ]; then
   echo "ERROR: expected GR00T runtime {GROOT_RUNTIME_VERSION}, got $actual_groot_version" >&2

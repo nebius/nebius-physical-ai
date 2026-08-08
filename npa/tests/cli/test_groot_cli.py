@@ -1327,6 +1327,13 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     script = shlex.split(cmd)[2]
 
     assert "uv run --no-sync torchrun --nproc_per_node=2" in cmd
+    assert f"uv sync --python {GROOT_VENV}/bin/python" in cmd
+    assert f"uv pip install --quiet --python {GROOT_VENV}/bin/python boto3" in cmd
+    assert "import boto3, wandb" in cmd
+    assert "NPA_GROOT_TRAIN_ENV_SYNC_OK" in cmd
+    assert cmd.index(f"uv sync --python {GROOT_VENV}/bin/python") < cmd.index(
+        "npa_groot_distributed_probe.py"
+    )
     assert "export NCCL_P2P_DISABLE=1" in cmd
     assert "export NCCL_SHM_DISABLE=1" in cmd
     assert "export NCCL_IB_DISABLE=1" in cmd
@@ -1367,6 +1374,36 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     assert "training.log" in script
     assert GROOT_FINETUNE_MANIFEST in cmd
     assert "upload_file" in cmd
+
+
+def test_groot_finetune_s3_continuation_syncs_upstream_environment(mocker) -> None:
+    """An S3 base checkpoint must not depend on HF download side effects."""
+
+    mocker.patch("npa.cli.groot.time.time", return_value=1234.0)
+    cmd = _build_finetune_command(
+        input_path="s3://bucket/datasets/train/",
+        output_path="s3://bucket/checkpoints/continued/",
+        base_model="s3://bucket/checkpoints/candidate/",
+        robot_embodiment="NEW_EMBODIMENT",
+        num_gpus=7,
+        config="",
+        endpoint_url="https://storage.example",
+        run_id="groot-continuation",
+        max_steps=6000,
+        global_batch_size=7,
+    )
+
+    download_marker = "npa_s3_download_done"
+    sync = f"uv sync --python {GROOT_VENV}/bin/python"
+    launcher = "uv run --no-sync torchrun --nproc_per_node=7"
+    assert "checkpoints/candidate" in cmd
+    assert download_marker in cmd
+    assert sync in cmd
+    assert f"uv pip install --quiet --python {GROOT_VENV}/bin/python boto3" in cmd
+    assert "import boto3, wandb" in cmd
+    assert "NPA_GROOT_TRAIN_ENV_SYNC_OK" in cmd
+    assert cmd.index(sync) < cmd.index(launcher)
+    assert cmd.index(download_marker) < cmd.index(launcher)
 
 
 def test_groot_finetune_runs_ssh_command(mocker) -> None:
@@ -1482,6 +1519,10 @@ def test_groot_finetune_local_runtime_uses_real_two_gpu_launcher(mocker) -> None
     command = local.call_args.args[0]
     script = shlex.split(command)[2]
     assert "uv run --no-sync torchrun --nproc_per_node=2" in command
+    assert f"uv sync --python {GROOT_VENV}/bin/python" in command
+    assert f"uv pip install --quiet --python {GROOT_VENV}/bin/python boto3" in command
+    assert "import boto3, wandb" in command
+    assert "NPA_GROOT_TRAIN_ENV_SYNC_OK" in command
     assert "--master_port=29501 /tmp/npa_groot_distributed_probe.py" in command
     assert "export NCCL_P2P_DISABLE=1" in command
     assert "export NCCL_SHM_DISABLE=1" in command
