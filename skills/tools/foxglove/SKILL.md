@@ -74,6 +74,7 @@ Published names are random (`<token>-<stem>.mcap`) and pruned to the newest few.
 | `GET /api/foxglove/status` | Readiness + active recording (also grounds the `foxglove_viewer` chat intent) |
 | `POST /api/foxglove/load-artifact` | Load an `.mcap`/`.bag`/`.db3`/`.ulg`/`.ulog` artifact (`s3_uri` or `run_id`+`key`) |
 | `POST /api/foxglove/convert-run` | Convert the active run's local artifacts to MCAP and load it |
+| `POST /api/foxglove/export` | Reuse or convert the active run MCAP, then return download + official Foxglove web/desktop remote-file links |
 | `POST /api/foxglove/live` | Point the viewer at a public `ws://`/`wss://` Foxglove or ROS-bridge URL |
 
 Configuration (no secrets): `NPA_FOXGLOVE_EMBED_SRC`, `NPA_FOXGLOVE_ORG_SLUG`,
@@ -87,8 +88,21 @@ Configuration (no secrets): `NPA_FOXGLOVE_EMBED_SRC`, `NPA_FOXGLOVE_ORG_SLUG`,
 npa workbench foxglove config --output json
 npa workbench foxglove install-sdk --dest /opt/npa-agent/foxglove/sdk
 npa workbench foxglove convert-run --input-path <run-dir> --output-path run.mcap --fps 10
+npa workbench foxglove export-run --input-path <run-dir> --output-path run.mcap --recording-url https://<agent>/foxglove/data/<random>.mcap
+npa workbench foxglove open --recording-url https://<agent>/foxglove/data/<random>.mcap --target desktop
 npa workbench foxglove inspect --input-path run.mcap
 ```
+
+`open` uses Foxglove's official `remote-file` share-link contract. The URL must
+be absolute HTTPS and reachable from the user's browser or desktop app. No
+Foxglove Cloud upload or `@foxglove/embed` plan is required. The recording URL
+is deliberately unauthenticated for cross-origin CORS + byte-range reads; anyone
+holding its random URL can read it until pruning removes the publication.
+
+An optional server-side API token may be stored as
+`tokens.FOXGLOVE_API_TOKEN` in `~/.npa/credentials.yaml` (mode `0600`). It is not
+part of browser config, deep links, subprocess arguments, shared workbench env,
+or the agent's `foxglove.env`; Open in Foxglove does not use it.
 
 `convert-run` packs real artifacts into Foxglove well-known schemas:
 `foxglove.CompressedImage` on `/camera/<name>` (PNG/JPEG passed through, PPM/BMP/TIFF
@@ -125,6 +139,10 @@ It has no authentication of its own: keep it cluster-internal or behind an auth 
 - **`ds.url` must be absolute.** The self-hosted viewer's `remote-file` source
   silently ignores a relative URL (no range request, "No data source"), so always
   pin it onto the browsed origin.
+- **Hosted-app links require public HTTPS.** Do not create a link from a relative,
+  HTTP, credential-bearing, private-only, or untrusted-certificate URL. The
+  browser/desktop app fetches the recording directly; NPA does not proxy that
+  request through Foxglove Cloud.
 - **No implicit hosted app.** An unset `NPA_FOXGLOVE_EMBED_SRC` means "no official
   app", not `embed.foxglove.dev` — otherwise a stock deploy shows a sign-in wall
   instead of rendering.

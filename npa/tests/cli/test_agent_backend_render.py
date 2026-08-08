@@ -919,6 +919,7 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
         "/foxglove/status",
         "/foxglove/load-artifact",
         "/foxglove/convert-run",
+        "/foxglove/export",
         "/foxglove/live",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"

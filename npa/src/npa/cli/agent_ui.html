@@ -1951,9 +1951,13 @@
                   <button id="loadLichtblickViewer" class="btn" type="button" title="Reload the Lichtblick MCAP recording">Reload Lichtblick data</button>
                   <button id="describeVisual" class="btn btn-primary" type="button" title="Capture the current viewer and ask the agent for feedback">Describe this</button>
                   <button id="foxgloveConvertRun" class="btn" type="button" title="Pack this run's local frames, metrics and logs into an MCAP recording for the Foxglove viewer">Convert run → MCAP</button>
+                  <button id="foxgloveExportMcap" class="btn" type="button" title="Export the active run as MCAP and download it">Export / download MCAP</button>
+                  <a id="foxgloveOpenWeb" class="btn" href="#" target="_blank" rel="noopener" hidden>Open in Foxglove web</a>
+                  <a id="foxgloveOpenDesktop" class="btn" href="#" target="_blank" rel="noopener" hidden>Open in Foxglove desktop</a>
                   <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&theme=dark&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
                   <a id="openFullLichtblick" class="btn" href="/lichtblick/" target="_blank" rel="noopener">Open full Lichtblick</a>
                 </div>
+                <p id="foxgloveExportNote" class="hint" hidden></p>
                 <p id="simvizCta" class="cta">Embedded recording uses a same-origin iframe with a public `.rrd` URL (Rerun wasm cannot send basic auth).</p>
               </div>
               <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
@@ -2922,6 +2926,7 @@
         });
         setRenderMode("rerun");
         bindClick("foxgloveConvertRun", convertRunToMcap);
+        bindClick("foxgloveExportMcap", exportMcap);
         const mobileToggle = document.getElementById("mobilePanelsToggle");
         if (mobileToggle) {
           mobileToggle.addEventListener("click", () => {
@@ -5151,6 +5156,7 @@
       let foxgloveConfig = null;
       let foxgloveMountPromise = null;
       let foxgloveLastSourceKey = "";
+      let foxgloveExport = null;
       function setFoxgloveStatus(text, kind) {
         const el = document.getElementById("foxgloveStatus");
         if (!el) return;
@@ -5203,6 +5209,7 @@
       async function loadFoxgloveConfig() {
         try {
           foxgloveConfig = await loadJson("/api/foxglove/config");
+          applyFoxgloveExport((foxgloveConfig && foxgloveConfig.export) || null);
         } catch (err) {
           foxgloveConfig = {
             available: false,
@@ -5210,6 +5217,28 @@
           };
         }
         return foxgloveConfig;
+      }
+      function applyFoxgloveExport(exportInfo) {
+        foxgloveExport = exportInfo && exportInfo.available ? exportInfo : null;
+        const web = document.getElementById("foxgloveOpenWeb");
+        const desktop = document.getElementById("foxgloveOpenDesktop");
+        const note = document.getElementById("foxgloveExportNote");
+        if (web) {
+          web.hidden = !foxgloveExport;
+          web.href = foxgloveExport ? String(foxgloveExport.web_url || "#") : "#";
+        }
+        if (desktop) {
+          desktop.hidden = !foxgloveExport;
+          desktop.href = foxgloveExport ? String(foxgloveExport.desktop_url || "#") : "#";
+        }
+        if (note) {
+          note.hidden = !foxgloveExport;
+          note.textContent = foxgloveExport
+            ? "Free-tier remote-file flow: no Foxglove Cloud upload is required. " +
+              String(foxgloveExport.public_access_note || "") + " " +
+              String(foxgloveExport.reachability_note || "")
+            : "";
+        }
       }
       async function ensureFoxgloveViewer(options) {
         const opts = options || {};
@@ -5366,6 +5395,41 @@
         } catch (err) {
           const message = String((err && err.message) || err);
           showToast("MCAP conversion failed: " + message, "error");
+          setStatus("Ready");
+          return false;
+        }
+      }
+      async function exportMcap() {
+        // The backend reuses the active published MCAP, or performs the same
+        // conversion as Convert run → MCAP when this run has no recording yet.
+        const runId = String(activeRunId || "").trim();
+        setStatus("Exporting active run to MCAP…");
+        showToast("Preparing MCAP export…", "info");
+        try {
+          const data = await apiJson("/api/foxglove/export", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(runId ? { run_id: runId } : {}),
+          });
+          const info = data && data.export;
+          if (!info || !info.available || !info.download_url) {
+            throw new Error(String((info && info.reason) || "MCAP export is unavailable"));
+          }
+          applyFoxgloveExport(info);
+          const download = document.createElement("a");
+          download.href = String(info.download_url);
+          download.download = String((data && data.run_id) || "npa-run") + ".mcap";
+          download.rel = "noopener";
+          document.body.appendChild(download);
+          download.click();
+          download.remove();
+          await refreshFoxgloveViewer();
+          showToast("MCAP downloaded. Foxglove web and desktop links are ready.", "success");
+          setStatus("Ready");
+          return true;
+        } catch (err) {
+          const message = String((err && err.message) || err);
+          showToast("MCAP export failed: " + message, "error");
           setStatus("Ready");
           return false;
         }

@@ -189,6 +189,50 @@ def test_convert_run_writes_publishes_and_updates_state(harness) -> None:
     assert harness["saved"] and harness["recorded"]
 
 
+def test_export_reuses_active_mcap_and_returns_open_links(harness) -> None:
+    harness["state"]["sim_viz"].update(
+        {
+            "foxglove_url": "/foxglove/data/random-active.mcap",
+            "foxglove_ready": True,
+        }
+    )
+
+    response = harness["client"].post("/foxglove/export", json={})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["converted"] is False
+    assert body["export"]["requires_cloud_upload"] is False
+    assert body["export"]["recording_url"] == (
+        "https://agent.example/foxglove/data/random-active.mcap"
+    )
+    assert "ds=remote-file" in body["export"]["web_url"]
+    assert "openIn=desktop" in body["export"]["desktop_url"]
+    assert harness["convert_calls"] == []
+
+
+def test_export_converts_active_run_when_no_mcap_is_published(harness) -> None:
+    (harness["runs_dir"] / "run-1").mkdir()
+
+    response = harness["client"].post("/foxglove/export", json={})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["converted"] is True
+    assert body["summary"]["message_count"] == 6
+    assert body["export"]["available"] is True
+    assert harness["convert_calls"]
+
+
+def test_export_reports_missing_active_run(harness) -> None:
+    harness["state"]["sim_viz"] = {}
+
+    response = harness["client"].post("/foxglove/export", json={})
+
+    assert response.status_code == 400
+    assert "no active run" in response.json()["detail"]
+
+
 def test_live_route_validates_and_uses_session_state(harness, monkeypatch) -> None:
     import os
 

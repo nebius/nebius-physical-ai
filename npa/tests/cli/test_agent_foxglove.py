@@ -23,6 +23,7 @@ from npa.cli.agent_foxglove import (
     data_source_for_state,
     describe_foxglove_context,
     foxglove_status_payload,
+    foxglove_deep_links,
     is_foxglove_artifact,
     live_data_source,
     live_url_allowed,
@@ -148,6 +149,49 @@ def test_remote_file_data_source_shape() -> None:
         "startTime": 12.5,
     }
     assert remote_file_data_source([]) is None
+
+
+def test_foxglove_deep_links_encode_remote_file_for_web_and_desktop() -> None:
+    recording = "https://agent.example/foxglove/data/a run+1.mcap?sig=a&part=2"
+    links = foxglove_deep_links(recording)
+
+    assert links["available"] is True
+    assert links["requires_cloud_upload"] is False
+    assert links["download_url"] == recording
+    from urllib.parse import parse_qs, urlparse
+
+    web = urlparse(links["web_url"])
+    desktop = urlparse(links["desktop_url"])
+    assert web.scheme == "https" and web.netloc == "app.foxglove.dev"
+    assert parse_qs(web.query) == {"ds": ["remote-file"], "ds.url": [recording]}
+    assert parse_qs(desktop.query)["openIn"] == ["desktop"]
+    assert parse_qs(desktop.query)["ds.url"] == [recording]
+
+
+@pytest.mark.parametrize(
+    "recording,reason",
+    [
+        ("", "No active"),
+        ("/foxglove/data/x.mcap", "absolute HTTPS"),
+        ("http://agent.example/x.mcap", "absolute HTTPS"),
+        ("https://user:pass@agent.example/x.mcap", "embedded credentials"),
+    ],
+)
+def test_foxglove_deep_links_reject_unreachable_or_unsafe_urls(
+    recording: str, reason: str
+) -> None:
+    links = foxglove_deep_links(recording)
+    assert links["available"] is False
+    assert reason in links["reason"]
+    assert links["web_url"] == links["desktop_url"] == ""
+
+
+def test_foxglove_deep_links_absolutize_agent_recording() -> None:
+    links = foxglove_deep_links(
+        "/foxglove/data/random.mcap", origin="https://agent.example"
+    )
+    assert links["available"] is True
+    assert links["recording_url"] == "https://agent.example/foxglove/data/random.mcap"
 
 
 @pytest.mark.parametrize(
@@ -325,6 +369,8 @@ def test_status_payload_and_describe_context(tmp_path: Path) -> None:
     assert status["data_source_type"] == "remote-file"
     assert status["artifact_key"] == "run-7/reports/session.mcap"
     assert status["recording_url"].endswith("/foxglove/data/tok-run.mcap")
+    assert status["export"]["available"] is True
+    assert "openIn=desktop" in status["export"]["desktop_url"]
 
     context = describe_foxglove_context(config, sim_viz)
     assert "cross-origin" in context

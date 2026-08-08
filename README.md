@@ -231,9 +231,10 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 - **`workflow validate-spec` / `plan-spec` / `run-spec` / `submit`** operate on
   customer-facing `npa.workflow/v0.0.1` specs — see
   [Author and submit workflows](#author-and-submit-workflows).
-- **`foxglove`** packs run frames/metrics/logs into MCAP and installs the pinned
-  [`@foxglove/embed`](https://docs.foxglove.dev/docs/embed/typescript-sdk) assets
-  behind the agent's embedded Foxglove viewer — see
+- **`foxglove`** packs run frames/metrics/logs into MCAP, exports/downloads an
+  active recording, and builds official Foxglove web/desktop remote-file links.
+  The Free-tier link flow needs no cloud upload or paid embed — see
+  [Foxglove MCAP export](docs/workbench/foxglove-export.md) and
   [docs/cli/foxglove.md](docs/cli/foxglove.md).
 - **`trigger`** watches S3-compatible prefixes and retriggers workflows.
 - **`golden-eval`** runs per-container hello-world reruns as a CI gate.

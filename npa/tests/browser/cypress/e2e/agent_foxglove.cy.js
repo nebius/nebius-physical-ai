@@ -36,6 +36,16 @@ function foxgloveConfig(overrides) {
       run_id: "mock-run",
       artifact_key: "mock-run/reports/session.mcap",
       recording_url: MCAP_URL,
+      export: {
+        available: true,
+        recording_url: `${window.location.origin}${MCAP_URL}`,
+        download_url: `${window.location.origin}${MCAP_URL}`,
+        web_url: `https://app.foxglove.dev/~/view?ds=remote-file&ds.url=${encodeURIComponent(`${window.location.origin}${MCAP_URL}`)}`,
+        desktop_url: `https://app.foxglove.dev/~/view?ds=remote-file&ds.url=${encodeURIComponent(`${window.location.origin}${MCAP_URL}`)}&openIn=desktop`,
+        requires_cloud_upload: false,
+        public_access_note: "Anyone with the random URL can read it until it is pruned.",
+        reachability_note: "The app must be able to reach the HTTPS agent URL.",
+      },
       updated_at: "2026-07-30T00:00:00+00:00",
     },
     overrides || {}
@@ -140,6 +150,38 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
         // Data-source URLs must be absolute: the viewer fetches them cross-origin.
         expect(source.urls[0]).to.eq(`${window.location.origin}${MCAP_URL}`);
       });
+  });
+
+  it("exports the active run and offers correctly encoded web and desktop links", () => {
+    const config = stubFoxgloveApis();
+    cy.intercept("POST", "/api/foxglove/export", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        converted: false,
+        run_id: "mock-run",
+        artifact_key: config.artifact_key,
+        export: config.export,
+      },
+    }).as("foxgloveExport");
+    cy.window().then((win) => {
+      cy.stub(win.HTMLAnchorElement.prototype, "click").as("downloadClick");
+    });
+
+    cy.get("#tabRerun").click();
+    cy.get("#renderModeFoxglove").click();
+    cy.wait("@foxgloveConfig");
+    cy.get("#foxgloveExportMcap").click();
+    cy.wait("@foxgloveExport");
+
+    cy.get("@downloadClick").should("have.been.calledOnce");
+    cy.get("#foxgloveOpenWeb").should("not.have.attr", "hidden");
+    cy.get("#foxgloveOpenWeb").should("have.attr", "href", config.export.web_url);
+    cy.get("#foxgloveOpenDesktop").should("not.have.attr", "hidden");
+    cy.get("#foxgloveOpenDesktop").should("have.attr", "href", config.export.desktop_url);
+    cy.get("#foxgloveExportNote")
+      .should("contain.text", "no Foxglove Cloud upload")
+      .and("contain.text", "Anyone with the random URL");
   });
 
   it("keeps the Rerun viewer mounted while Foxglove is active", () => {
