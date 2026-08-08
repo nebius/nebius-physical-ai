@@ -99,6 +99,12 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     # stages. A normal targeted install also restores its Hub/tokenizers closure
     # while leaving torch and the vendor GR00T package untouched.
     "workbench.groot": (
+        # The redistributable image's uv-created Python 3.10 environment has no
+        # pip. A source overlay can expose the current CLI while its conditional
+        # Python <3.11 dependency is still absent; live job 446 then failed on
+        # ``import tomli`` before the trainer started. The common installer's uv
+        # fallback targets the exact recorded interpreter.
+        ("python:tomli", "tomli>=2.0.0"),
         (
             'python:transformers;assert(__import__("importlib.metadata").metadata.version("transformers")=="4.57.3")',
             "transformers==4.57.3",
