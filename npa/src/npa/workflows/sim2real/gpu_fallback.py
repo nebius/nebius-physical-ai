@@ -47,6 +47,8 @@ _LAST_APPLIED_ANNOTATION = "kubectl.kubernetes.io/last-applied-configuration"
 _CLIENT_JOB_ATTEMPT_LABEL = "npa.nebius.ai/job-attempt-id"
 _TRANSIENT_KUBERNETES_API_MARKERS = (
     "etcdserver: leader changed",
+    "etcdserver: request timed out",
+    "context deadline exceeded",
     "too many requests",
     "service unavailable",
     "server is currently unable to handle the request",
@@ -56,6 +58,11 @@ _TRANSIENT_KUBERNETES_API_MARKERS = (
     "i/o timeout",
     "unexpected eof",
 )
+
+
+def _is_transient_kubernetes_api_error(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(marker in lowered for marker in _TRANSIENT_KUBERNETES_API_MARKERS)
 
 
 class GpuCapacityExhausted(RuntimeError):
@@ -530,8 +537,7 @@ def _delete_job_and_wait(
             return
         raw_detail = str(result.stderr or result.stdout or "")
         detail = " ".join(raw_detail.split())[:800]
-        lowered = raw_detail.lower()
-        if any(marker in lowered for marker in _TRANSIENT_KUBERNETES_API_MARKERS):
+        if _is_transient_kubernetes_api_error(raw_detail):
             retry_count = (
                 int(provenance.get("transient_kubernetes_api_retry_count") or 0) + 1
             )
@@ -554,6 +560,139 @@ def _delete_job_and_wait(
             f"{detail or 'kubectl delete returned no API detail'}",
             provenance=provenance,
         )
+
+
+def _job_matches_create_attempt(payload: str, manifest: dict[str, Any]) -> bool:
+    """Return whether an observed Job belongs to this exact client create.
+
+    A timed-out POST is ambiguous: etcd may have committed the Job even though
+    kubectl did not receive the response.  The create-safe manifest carries a
+    client-owned manual selector, so it is sufficient (and safer than issuing a
+    blind replacement) to adopt an observed object only when its name and every
+    selector label match the submitted Job and pod template.
+    """
+
+    try:
+        observed = json.loads(payload or "{}")
+    except json.JSONDecodeError:
+        return False
+    expected_metadata = manifest.get("metadata") or {}
+    expected_spec = manifest.get("spec") or {}
+    expected_selector = (expected_spec.get("selector") or {}).get("matchLabels") or {}
+    observed_metadata = observed.get("metadata") or {}
+    observed_spec = observed.get("spec") or {}
+    observed_selector = (observed_spec.get("selector") or {}).get("matchLabels") or {}
+    observed_template_labels = (
+        (observed_spec.get("template") or {}).get("metadata") or {}
+    ).get("labels") or {}
+    if observed_metadata.get("name") != expected_metadata.get("name"):
+        return False
+    if not expected_selector:
+        return False
+    return all(
+        observed_selector.get(key) == value
+        and observed_template_labels.get(key) == value
+        for key, value in expected_selector.items()
+    )
+
+
+def _create_job_with_transient_retry(
+    kubectl: Kubectl,
+    *,
+    manifest: dict[str, Any],
+    job_name: str,
+    namespace: str,
+    provenance: dict[str, Any],
+) -> None:
+    """Create one Job, recovering ambiguous transient API responses in place.
+
+    The retry never changes GPU product or Job identity.  After a transient
+    create response it first checks whether the exact client-selector Job was
+    committed.  Only a confirmed NotFound causes the same manifest to be posted
+    again; AlreadyExists is accepted solely for that exact create attempt.
+    """
+
+    try:
+        retry_delay_s = max(
+            0.0,
+            float(os.environ.get("NPA_SIM2REAL_K8S_API_RETRY_SECONDS", "2")),
+        )
+    except ValueError:
+        retry_delay_s = 2.0
+    serialized = json.dumps(manifest)
+    while True:
+        create = kubectl(
+            ["create", "-f", "-"],
+            stdin=serialized,
+            timeout_s=120,
+        )
+        if create.returncode == 0:
+            return
+        raw_detail = str(create.stderr or create.stdout or "")
+        detail = " ".join(raw_detail.split())[:800]
+        lowered = raw_detail.lower()
+        retryable = _is_transient_kubernetes_api_error(raw_detail)
+        already_exists = "alreadyexists" in lowered or "already exists" in lowered
+        if not retryable and not already_exists:
+            raise GpuJobFailure(
+                f"Kubernetes create failed for {job_name}: "
+                f"{detail or 'no API detail'}; refusing GPU product fallback",
+                provenance=provenance,
+            )
+
+        observed = kubectl(
+            ["get", "job", job_name, "-n", namespace, "-o", "json"],
+            timeout_s=120,
+        )
+        if observed.returncode == 0:
+            if _job_matches_create_attempt(observed.stdout or "", manifest):
+                provenance["transient_kubernetes_api_recovered_create"] = {
+                    "job_name": job_name,
+                    "detail": detail,
+                    "resolution": "exact_client_selector_job_observed",
+                }
+                print(
+                    "transient Kubernetes API response while creating "
+                    f"{job_name}; exact client-selector Job exists, continuing "
+                    f"without changing GPU product: {detail}",
+                    flush=True,
+                )
+                return
+            raise GpuJobFailure(
+                f"Kubernetes create for {job_name} returned {detail or 'an ambiguous error'} "
+                "and a different existing Job owns that name; refusing to adopt or "
+                "change GPU product",
+                provenance=provenance,
+            )
+
+        observed_detail = str(observed.stderr or observed.stdout or "")
+        observed_lower = observed_detail.lower()
+        not_found = "notfound" in observed_lower or "not found" in observed_lower
+        if not not_found and not _is_transient_kubernetes_api_error(observed_detail):
+            compact_observed = " ".join(observed_detail.split())[:800]
+            raise GpuJobFailure(
+                f"Kubernetes create for {job_name} returned {detail or 'an ambiguous error'}; "
+                "the ownership check then failed with "
+                f"{compact_observed or 'no API detail'}; refusing GPU product fallback",
+                provenance=provenance,
+            )
+
+        retry_count = (
+            int(provenance.get("transient_kubernetes_api_retry_count") or 0) + 1
+        )
+        provenance["transient_kubernetes_api_retry_count"] = retry_count
+        provenance["last_transient_kubernetes_api_retry"] = {
+            "operation": "create_job",
+            "job_name": job_name,
+            "detail": detail,
+        }
+        print(
+            "transient Kubernetes API error while creating "
+            f"{job_name}; exact Job not observed yet, retrying the same manifest "
+            f"without changing GPU product (attempt={retry_count}): {detail}",
+            flush=True,
+        )
+        time.sleep(retry_delay_s)
 
 
 def _fresh_job_manifest(manifest: dict[str, Any], *, job_name: str) -> dict[str, Any]:
@@ -752,11 +891,6 @@ def run_gpu_job_with_fallback(
         # exceed Kubernetes' 256 KiB aggregate annotation limit. We delete and
         # wait for the same-name Job above, so a plain create is both sufficient
         # and compatible with the deliberately create-only agent service account.
-        create = kubectl(
-            ["create", "-f", "-"],
-            stdin=json.dumps(manifest),
-            timeout_s=120,
-        )
         attempt: dict[str, Any] = {
             "product": product,
             "job_name": job_name,
@@ -765,18 +899,21 @@ def run_gpu_job_with_fallback(
             "scheduling_reason": "",
         }
         attempts.append(attempt)
-        if create.returncode != 0:
-            detail = " ".join(str(create.stderr or create.stdout or "").split())[:800]
-            attempt.update(
-                status="create_failed",
-                scheduling_reason=detail,
-                duration_s=round(time.monotonic() - attempt_started, 3),
-            )
-            raise GpuJobFailure(
-                f"Kubernetes create failed for {job_name}: {detail or 'no API detail'}; "
-                "refusing GPU product fallback",
+        try:
+            _create_job_with_transient_retry(
+                kubectl,
+                manifest=manifest,
+                job_name=job_name,
+                namespace=namespace,
                 provenance=provenance,
             )
+        except GpuJobFailure as exc:
+            attempt.update(
+                status="create_failed",
+                scheduling_reason=str(exc),
+                duration_s=round(time.monotonic() - attempt_started, 3),
+            )
+            raise
 
         deadline = time.monotonic() + probe_s
         capacity_reason = ""

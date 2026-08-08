@@ -812,6 +812,145 @@ def test_transient_api_leader_change_retries_same_job_deletion(
     }
 
 
+def test_transient_create_timeout_retries_same_manifest_when_job_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    monkeypatch.setenv("NPA_SIM2REAL_K8S_API_RETRY_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "success"})
+    create_calls = 0
+
+    def transient_create(
+        args: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal create_calls
+        if args[:2] == ["create", "-f"]:
+            create_calls += 1
+            if create_calls == 1:
+                return subprocess.CompletedProcess(
+                    args, 1, "", "Error from server: etcdserver: request timed out"
+                )
+        if args[:2] == ["get", "job"] and create_calls == 1:
+            return subprocess.CompletedProcess(
+                args, 1, "", 'Error from server (NotFound): jobs.batch "x" not found'
+            )
+        return scheduler(args, **kwargs)
+
+    result = run_gpu_job_with_fallback(
+        kubectl=transient_create,
+        manifest_factory=_manifest,
+        base_job_name="s2r-transient-create-absent",
+        namespace="default",
+        image="registry/image@sha256:abc123",
+        preferred_product=RTX,
+        explicit_candidates=(),
+        workload="isaac",
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+        timeout_s=10,
+    )
+
+    assert create_calls == 2
+    assert scheduler.applied_products == [RTX]
+    assert result["selected_product"] == RTX
+    assert result["transient_kubernetes_api_retry_count"] == 1
+    assert result["last_transient_kubernetes_api_retry"] == {
+        "operation": "create_job",
+        "job_name": "s2r-transient-create-absent",
+        "detail": "Error from server: etcdserver: request timed out",
+    }
+
+
+def test_transient_create_timeout_adopts_exact_committed_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    monkeypatch.setenv("NPA_SIM2REAL_K8S_API_RETRY_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "success"})
+    submitted: dict[str, Any] = {}
+    create_calls = 0
+
+    def committed_create(
+        args: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal create_calls
+        if args[:2] == ["create", "-f"]:
+            create_calls += 1
+            submitted.update(json.loads(kwargs.get("stdin") or "{}"))
+            scheduler(args, **kwargs)
+            return subprocess.CompletedProcess(
+                args, 1, "", "Error from server: etcdserver: request timed out"
+            )
+        if args[:2] == ["get", "job"]:
+            return subprocess.CompletedProcess(args, 0, json.dumps(submitted), "")
+        return scheduler(args, **kwargs)
+
+    result = run_gpu_job_with_fallback(
+        kubectl=committed_create,
+        manifest_factory=_manifest,
+        base_job_name="s2r-transient-create-committed",
+        namespace="default",
+        image="registry/image@sha256:abc123",
+        preferred_product=RTX,
+        explicit_candidates=(),
+        workload="isaac",
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+        timeout_s=10,
+    )
+
+    assert create_calls == 1
+    assert scheduler.applied_products == [RTX]
+    assert result["selected_product"] == RTX
+    assert result["transient_kubernetes_api_recovered_create"] == {
+        "job_name": "s2r-transient-create-committed",
+        "detail": "Error from server: etcdserver: request timed out",
+        "resolution": "exact_client_selector_job_observed",
+    }
+
+
+def test_transient_create_timeout_refuses_different_existing_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "success"})
+
+    def conflicting_create(
+        args: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["create", "-f"]:
+            return subprocess.CompletedProcess(
+                args, 1, "", "Error from server: etcdserver: request timed out"
+            )
+        if args[:2] == ["get", "job"]:
+            conflicting = _manifest(RTX, "s2r-transient-create-conflict")
+            conflicting["spec"]["manualSelector"] = True
+            conflicting["spec"]["selector"] = {
+                "matchLabels": {"npa.nebius.ai/job-attempt-id": "different"}
+            }
+            conflicting["spec"]["template"]["metadata"] = {
+                "labels": {"npa.nebius.ai/job-attempt-id": "different"}
+            }
+            return subprocess.CompletedProcess(args, 0, json.dumps(conflicting), "")
+        return scheduler(args, **kwargs)
+
+    with pytest.raises(GpuJobFailure, match="different existing Job owns that name"):
+        run_gpu_job_with_fallback(
+            kubectl=conflicting_create,
+            manifest_factory=_manifest,
+            base_job_name="s2r-transient-create-conflict",
+            namespace="default",
+            image="registry/image@sha256:abc123",
+            preferred_product=RTX,
+            explicit_candidates=(),
+            workload="isaac",
+            gpu_resource="nvidia.com/gpu",
+            gpu_count=1,
+            timeout_s=10,
+        )
+    assert scheduler.applied_products == []
+
+
 def test_zero_timeout_detects_terminal_job_failure_without_product_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
