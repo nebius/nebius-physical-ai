@@ -19,21 +19,25 @@ from pathlib import Path
 from typing import Any, Callable
 
 try:  # agent VM: /opt/npa-agent is on sys.path and the package is flat there
+    from agent_backend.foxglove_cloud import FoxgloveCloudError
     from agent_backend.foxglove import (
         convert_run_request,
         converted_recording_update,
         foxglove_status_payload,
-        foxglove_deep_links,
+        foxglove_download_export,
+        foxglove_recording_link,
         is_foxglove_artifact,
         live_source_update,
         prune_published,
     )
 except ImportError:  # repo / local tests
+    from npa.agent_backend.foxglove_cloud import FoxgloveCloudError
     from npa.agent_backend.foxglove import (
         convert_run_request,
         converted_recording_update,
         foxglove_status_payload,
-        foxglove_deep_links,
+        foxglove_download_export,
+        foxglove_recording_link,
         is_foxglove_artifact,
         live_source_update,
         prune_published,
@@ -56,6 +60,8 @@ class FoxgloveDeps:
     runs_dir: Path
     keep_published: int = 3
     set_live_url: Callable[[str], None] | None = None
+    ensure_cloud_recording: Callable[..., dict] | None = None
+    prepare_canonical_mcap: Callable[..., dict] | None = None
 
 
 def _sim_viz(state: dict) -> dict:
@@ -103,8 +109,9 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
 
     @app.post("/foxglove/convert-run")
     def foxglove_convert_run_route(payload: dict | None = None) -> dict:
-        # Convert the active run's downloaded artifacts into a real MCAP and load
-        # it into the viewer (same code path as `npa workbench foxglove`).
+        # Resolve one canonical S3 artifact.  A valid native
+        # reports/sim2real.mcap is authoritative; otherwise the callback stages
+        # the run's real S3 artifacts, converts once, and persists that same key.
         state = deps.load_state()
         sim_viz = _sim_viz(state)
         request = convert_run_request(payload, sim_viz)
@@ -115,14 +122,72 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             run_id = deps.validate_run_id(run_id)
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             raise http_error(status_code=400, detail=str(exc))
+        if deps.prepare_canonical_mcap is not None:
+            try:
+                canonical = deps.prepare_canonical_mcap(
+                    run_id=run_id,
+                    run_ref=request["run_ref"],
+                    fps=request["fps"],
+                    max_frames=request["max_frames"],
+                )
+            except Exception as exc:  # noqa: BLE001 - operator-triggered S3/conversion path
+                status_code = int(getattr(exc, "status_code", 422) or 422)
+                detail = str(getattr(exc, "detail", "") or exc)
+                raise http_error(
+                    status_code=status_code,
+                    detail=f"canonical MCAP export failed: {detail}",
+                )
+            artifact_key = str(canonical.get("artifact_key") or "")
+            s3_uri = str(canonical.get("s3_uri") or "")
+            output_path = Path(str(canonical.get("local_path") or ""))
+            summary = dict(canonical.get("summary") or {})
+            if not artifact_key or not s3_uri or not output_path.is_file():
+                raise http_error(
+                    status_code=502,
+                    detail="canonical MCAP persistence returned an incomplete contract",
+                )
+            load_request = {"run_id": run_id, "key": artifact_key}
+            if request["run_ref"]:
+                load_request["run_ref"] = request["run_ref"]
+            loaded = deps.load_artifact(load_request)
+            if not isinstance(loaded, dict) or not loaded.get("ok"):
+                raise http_error(
+                    status_code=502,
+                    detail="canonical MCAP was stored but could not be loaded",
+                )
+            state = deps.load_state()
+            sim_viz = _sim_viz(state)
+            sim_viz.update(
+                {
+                    "canonical_mcap_s3_uri": s3_uri,
+                    "canonical_mcap_key": artifact_key,
+                    "canonical_mcap_sha256": str(canonical.get("sha256") or ""),
+                    "canonical_mcap_size_bytes": int(canonical.get("size_bytes") or 0),
+                    "canonical_mcap_provenance": dict(
+                        canonical.get("provenance") or {}
+                    ),
+                    "canonical_mcap_source": str(canonical.get("source") or ""),
+                    "transport_state": "published-local-cache",
+                }
+            )
+            state["sim_viz"] = sim_viz
+            deps.record_run(state, sim_viz)
+            deps.save_state(state)
+            return {
+                "ok": True,
+                "summary": summary,
+                "canonical": {k: v for k, v in canonical.items() if k != "local_path"},
+                "sim_viz": sim_viz,
+                "foxglove": foxglove_status_payload(
+                    deps.foxglove_config(state), sim_viz
+                ),
+            }
+
+        # Compatibility path for callers embedding the route module without S3.
         source_dir = deps.runs_dir / run_id
         if not source_dir.is_dir():
             raise http_error(
-                status_code=404,
-                detail=(
-                    f"no local artifacts for run {run_id}; load the run's artifacts "
-                    "first so there are frames/metrics/logs to convert"
-                ),
+                status_code=404, detail=f"no local artifacts for run {run_id}"
             )
         name = f"{secrets.token_hex(8)}-{run_id}.mcap"
         output_path = deps.data_dir / name
@@ -164,27 +229,102 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
         state = deps.load_state()
         sim_viz = _sim_viz(state)
         requested_run = str(body.get("run_id") or sim_viz.get("run_id") or "").strip()
+        if not requested_run:
+            raise http_error(status_code=400, detail="no active run to export")
+        try:
+            deps.validate_run_id(requested_run)
+        except Exception as exc:  # noqa: BLE001 - validator message is operator-facing
+            raise http_error(status_code=400, detail=str(exc))
         active_url = str(sim_viz.get("foxglove_url") or "").strip()
         active_run = str(sim_viz.get("run_id") or "").strip()
-        force = bool(body.get("force_convert"))
-        if force or not active_url or (requested_run and requested_run != active_run):
+        active_path = deps.data_dir / Path(active_url).name if active_url else None
+        # The S3 resolver is idempotent and validates native MCAPs, so ask it on
+        # every explicit export. This repairs missing local transport caches and
+        # guarantees export never falls back to a stale previous-run publication.
+        if deps.prepare_canonical_mcap is not None or (
+            bool(body.get("force_convert"))
+            or not active_url
+            or requested_run != active_run
+            or active_path is None
+            or not active_path.is_file()
+        ):
             converted = foxglove_convert_run_route(body)
             sim_viz = dict(converted.get("sim_viz") or {})
             state = dict(state)
             state["sim_viz"] = sim_viz
             summary = converted.get("summary")
+            canonical = dict(converted.get("canonical") or {})
+            active_url = str(sim_viz.get("foxglove_url") or "").strip()
+            active_path = deps.data_dir / Path(active_url).name if active_url else None
         else:
             summary = None
+            canonical = {}
         config = deps.foxglove_config(state)
-        export = foxglove_deep_links(str(config.get("recording_url") or ""))
+        export = foxglove_download_export(str(config.get("recording_url") or ""))
         if not export["available"]:
             raise http_error(status_code=409, detail=export["reason"])
+        if active_path is None or not active_path.is_file():
+            raise http_error(
+                status_code=404, detail="exported MCAP is missing on the agent VM"
+            )
+        export["size_bytes"] = active_path.stat().st_size
+        export["canonical_s3_uri"] = str(sim_viz.get("canonical_mcap_s3_uri") or "")
+        export["sha256"] = str(sim_viz.get("canonical_mcap_sha256") or "")
+        export["provenance"] = dict(sim_viz.get("canonical_mcap_provenance") or {})
+        if bool(body.get("open_web")):
+            if deps.ensure_cloud_recording is None:
+                raise http_error(
+                    status_code=503,
+                    detail="Foxglove Cloud upload is not configured on this agent.",
+                )
+            try:
+                cloud = deps.ensure_cloud_recording(
+                    active_path,
+                    requested_run,
+                    provenance=dict(sim_viz.get("canonical_mcap_provenance") or {}),
+                )
+            except FoxgloveCloudError as exc:
+                raise http_error(
+                    status_code=int(getattr(exc, "status_code", 502)), detail=str(exc)
+                )
+            provenance = dict(sim_viz.get("canonical_mcap_provenance") or {})
+            layout = dict(cloud.get("layout") or {})
+            web = foxglove_recording_link(
+                str(cloud.get("recording_id") or ""),
+                layout_id=str(layout.get("layout_id") or "")
+                if layout.get("available")
+                else "",
+                start_time_ns=int(provenance.get("start_time_ns") or 0),
+                end_time_ns=int(provenance.get("end_time_ns") or 0),
+            )
+            if not web["available"]:
+                raise http_error(status_code=502, detail=web["reason"])
+            export.update(web)
+            export["cloud"] = cloud
+            expected_key = f"npa-{str(sim_viz.get('canonical_mcap_sha256') or '')}"
+            cloud_key = str(cloud.get("recording_key") or "")
+            if expected_key != "npa-" and cloud_key != expected_key:
+                raise http_error(
+                    status_code=502,
+                    detail="Foxglove Cloud indexed content does not match the canonical MCAP hash",
+                )
+            sim_viz["foxglove_cloud"] = dict(cloud)
+            sim_viz["foxglove_cloud"]["web_url"] = str(web.get("web_url") or "")
+            sim_viz["foxglove_cloud"]["sha256"] = str(
+                sim_viz.get("canonical_mcap_sha256") or ""
+            )
+            state["sim_viz"] = sim_viz
+            deps.save_state(state)
         return {
             "ok": True,
-            "converted": summary is not None,
+            "converted": bool(canonical.get("created"))
+            if canonical
+            else summary is not None,
             "summary": summary,
             "run_id": str(sim_viz.get("run_id") or ""),
             "artifact_key": str(sim_viz.get("artifact_key") or ""),
+            "size_bytes": active_path.stat().st_size,
+            "sim_viz": sim_viz,
             "export": export,
         }
 

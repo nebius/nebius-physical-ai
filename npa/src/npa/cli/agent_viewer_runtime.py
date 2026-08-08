@@ -25,6 +25,7 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         RECORDING_PATH,
         _ARTIFACT_LOAD_LOCK,
         _copy_artifact_preview,
+        clear_cross_run_mcap_state,
         _is_data_factory_recording,
         _is_sim2real_pipeline_recording,
         _lichtblick_iframe_url,
@@ -42,7 +43,7 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         _sim2real_pipeline_camera_label,
         _wait_rerun_web_viewer_healthy,
         is_neural_reconstruction_recording,
-    ) = (None,) * 26
+    ) = (None,) * 27
 # NPA_EMBED_STANDALONE_END
 
 
@@ -133,7 +134,10 @@ def _stage_label(stage_key: str) -> str:
     key = str(stage_key or "").strip()
     if key in _STAGE_LABELS:
         return _STAGE_LABELS[key]
-    cleaned = key.replace("_", " ").replace("/", " / ").replace("-", " ").strip() or "Artifacts"
+    cleaned = (
+        key.replace("_", " ").replace("/", " / ").replace("-", " ").strip()
+        or "Artifacts"
+    )
     return cleaned[:1].upper() + cleaned[1:]
 
 
@@ -235,14 +239,17 @@ def _apply_loaded_artifact(
         sim_viz.update(current)
     # Never let a previous RRD's binding survive a later media load.
     sim_viz.pop("served_recording_sha256", None)
+    clear_cross_run_mcap_state(sim_viz, run_id)
     camera = str(sim_viz.get("camera") or "workspace")
     # Keep the data-factory exclusion on one line: npa/tests/cli/test_agent.py
     # guards that exact expression as source text.
+    # fmt: off
     if (
         render == "rerun"
         and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)
         and not is_neural_reconstruction_recording(key)
     ):
+        # fmt: on
         camera = _sim2real_pipeline_camera_label(camera)
     elif render == "rerun" and is_neural_reconstruction_recording(key):
         # A NuRec run following Sim2Real must not inherit "heldout-sim".
@@ -274,7 +281,9 @@ def _apply_loaded_artifact(
     )
     if render == "rerun":
         capability_path = _publish_rrd_recording(local_path)
-        sim_viz["served_recording_sha256"] = hashlib.sha256(RECORDING_PATH.read_bytes()).hexdigest()
+        sim_viz["served_recording_sha256"] = hashlib.sha256(
+            RECORDING_PATH.read_bytes()
+        ).hexdigest()
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{RECORDING_PATH}"
@@ -318,10 +327,27 @@ def _apply_loaded_artifact(
         if is_mcap:
             _publish_mcap_recording(local_path)
             mcap_url = _lichtblick_recording_url()
+            start_time_ns = 0
+            end_time_ns = 0
+            try:
+                from npa.workbench.foxglove.inspect import summarize_mcap
+
+                mcap_info = summarize_mcap(local_path)
+                start_time_ns = int(mcap_info.start_time_ns)
+                end_time_ns = int(mcap_info.end_time_ns)
+            except (ImportError, OSError, RuntimeError, ValueError):
+                # The artifact was already validated as MCAP by its renderer. A
+                # reader-side timing failure must not suppress the download or
+                # viewer; it only removes the initial seek optimization.
+                pass
             sim_viz["mcap_uri"] = f"file://{MCAP_RECORDING_PATH}"
             sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
             sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
-            sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
+            sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(
+                mcap_url=mcap_url,
+                start_time_ns=start_time_ns,
+                end_time_ns=end_time_ns,
+            )
             sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
             sim_viz["visualization_note"] = (
                 "MCAP recording loaded: it plays in the embedded Lichtblick "
@@ -331,7 +357,9 @@ def _apply_loaded_artifact(
             )
         else:
             sim_viz["lichtblick_ready"] = False
-            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(local_path, key)
+            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(
+                local_path, key
+            )
             sim_viz["artifact_download_url"] = sim_viz["artifact_preview_url"]
             sim_viz["visualization_note"] = (
                 f"Recording loaded ({Path(key).suffix.lower() or 'unknown'}). Foxglove-family "

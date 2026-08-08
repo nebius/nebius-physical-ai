@@ -101,7 +101,11 @@ LOG_SCHEMA: dict[str, Any] = {
         "message": {"type": "string", "description": "Log message"},
         "name": {"type": "string", "description": "Process or node name"},
         "file": {"type": "string", "description": "Filename"},
-        "line": {"type": "integer", "minimum": 0, "description": "Line number in the file"},
+        "line": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Line number in the file",
+        },
     },
 }
 
@@ -149,6 +153,8 @@ class McapSummary:
     frames: int = 0
     logs: int = 0
     metrics: int = 0
+    pointclouds: int = 0
+    transforms: int = 0
     skipped: list[str] = field(default_factory=list)
     start_time_ns: int = 0
     end_time_ns: int = 0
@@ -164,6 +170,8 @@ class McapSummary:
             "frames": self.frames,
             "logs": self.logs,
             "metrics": self.metrics,
+            "pointclouds": self.pointclouds,
+            "transforms": self.transforms,
             "skipped": list(self.skipped),
             "start_time_ns": self.start_time_ns,
             "end_time_ns": self.end_time_ns,
@@ -340,13 +348,22 @@ def write_run_mcap(
 
     rate = float(fps) if float(fps) > 0 else 10.0
     step_ns = int(NS_PER_S / rate)
-    base_ns = int(start_time_ns) if int(start_time_ns) > 0 else _default_start_ns(
-        frame_list, metric_list, log_list
+    base_ns = (
+        int(start_time_ns)
+        if int(start_time_ns) > 0
+        else _default_start_ns(frame_list, metric_list, log_list)
     )
 
+    explicit_frame_times = sum(frame.timestamp_ns is not None for frame in frame_list)
+    if explicit_frame_times == len(frame_list) and not metric_list and not log_list:
+        timestamp_mode = "source"
+    elif explicit_frame_times:
+        timestamp_mode = "source-and-synthetic-fps"
+    else:
+        timestamp_mode = "synthetic-fps"
     summary = McapSummary(
         output=str(output),
-        timestamps="synthetic-fps",
+        timestamps=timestamp_mode,
         fps=rate,
     )
 
@@ -365,11 +382,48 @@ def write_run_mcap(
         log_schema_id: int | None = None
         camera_channels: dict[str, int] = {}
         metric_channels: dict[str, int] = {}
+        pointcloud_channel_id: int | None = None
+        transform_channel_id: int | None = None
         log_channel_id: int | None = None
         first_ns = 0
         last_ns = 0
 
-        for index, frame in enumerate(frame_list):
+        # Streams from different camera folders are concurrent views.  Their
+        # synthetic clocks therefore share one epoch and advance independently;
+        # a global append counter would make only the final camera current at the
+        # end of playback.  A real stream named ``camera`` owns the conventional
+        # ``/camera`` topic used by the default viewer layout; other streams keep
+        # their descriptive names under ``/camera/<name>``.
+        camera_names = sorted({str(frame.camera or "camera") for frame in frame_list})
+        primary_camera = (
+            "camera"
+            if "camera" in camera_names
+            else (camera_names[0] if camera_names else "")
+        )
+        camera_indices: dict[str, int] = {}
+        frame_schedule: list[tuple[int, str, int, FrameInput]] = []
+        for frame in frame_list:
+            camera_name = str(frame.camera or "camera")
+            topic = (
+                str(camera_topic_prefix or "/camera").rstrip("/") or "/camera"
+                if camera_name == primary_camera
+                else safe_topic(camera_name, prefix=camera_topic_prefix)
+            )
+            topic_index = camera_indices.get(topic, 0)
+            timestamp_ns = (
+                int(frame.timestamp_ns)
+                if frame.timestamp_ns is not None
+                else base_ns + topic_index * step_ns
+            )
+            camera_indices[topic] = topic_index + 1
+            frame_schedule.append((timestamp_ns, topic, topic_index, frame))
+        # MCAP order stays deterministic and chronological even though each
+        # topic owns its own frame counter.
+        frame_schedule.sort(
+            key=lambda item: (item[0], item[1], item[2], item[3].path.as_posix())
+        )
+
+        for timestamp_ns, topic, topic_index, frame in frame_schedule:
             try:
                 loaded = _read_image(frame.path)
             except OSError as exc:
@@ -379,16 +433,10 @@ def write_run_mcap(
                 summary.skipped.append(f"{frame.path.name}: unsupported image format")
                 continue
             payload, image_format = loaded
-            topic = safe_topic(frame.camera, prefix=camera_topic_prefix)
             if topic not in camera_channels:
                 camera_channels[topic] = writer.register_channel(
                     topic=topic, message_encoding="json", schema_id=image_schema_id
                 )
-            timestamp_ns = (
-                int(frame.timestamp_ns)
-                if frame.timestamp_ns is not None
-                else base_ns + index * step_ns
-            )
             # Shared message builder: identical wire shape to the Lichtblick writer.
             message: dict[str, Any] = compressed_image_message(
                 payload, fmt=image_format, stamp_ns=timestamp_ns, frame_id=frame.camera
@@ -398,7 +446,7 @@ def write_run_mcap(
                 log_time=timestamp_ns,
                 data=json.dumps(message).encode("utf-8"),
                 publish_time=timestamp_ns,
-                sequence=index,
+                sequence=topic_index,
             )
             summary.frames += 1
             summary.channels[topic] = summary.channels.get(topic, 0) + 1
@@ -410,6 +458,99 @@ def write_run_mcap(
                 raw = json.loads(metric.path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
                 summary.skipped.append(f"{metric.path.name}: {exc}")
+                continue
+            if (
+                isinstance(raw, dict)
+                and raw.get("schema") == "npa.foxglove.pointcloud-series.v1"
+            ):
+                from npa.workbench.lichtblick import (
+                    _FRAME_TRANSFORM_SCHEMA,
+                    _POINTCLOUD_SCHEMA,
+                    frame_transform_message,
+                    pointcloud_message,
+                )
+
+                samples = raw.get("samples")
+                frame_id = str(raw.get("frame_id") or "state_space")
+                if not isinstance(samples, list) or not samples:
+                    summary.skipped.append(
+                        f"{metric.path.name}: empty point-cloud series"
+                    )
+                    continue
+                pointcloud_schema_id = writer.register_schema(
+                    name="foxglove.PointCloud",
+                    encoding="jsonschema",
+                    data=json.dumps(_POINTCLOUD_SCHEMA).encode("utf-8"),
+                )
+                transform_schema_id = writer.register_schema(
+                    name="foxglove.FrameTransform",
+                    encoding="jsonschema",
+                    data=json.dumps(_FRAME_TRANSFORM_SCHEMA).encode("utf-8"),
+                )
+                pointcloud_channel_id = (
+                    pointcloud_channel_id
+                    or writer.register_channel(
+                        topic="/trajectory",
+                        message_encoding="json",
+                        schema_id=pointcloud_schema_id,
+                    )
+                )
+                transform_channel_id = transform_channel_id or writer.register_channel(
+                    topic="/tf", message_encoding="json", schema_id=transform_schema_id
+                )
+                # Run artifacts normally carry source-relative sample time.  Keep
+                # every converted topic on the common MCAP clock unless the
+                # producer explicitly declares absolute source timestamps.
+                absolute_timestamps = raw.get("timestamps") == "absolute_ns"
+                first_sample = samples[0] if isinstance(samples[0], dict) else {}
+                transform_stamp = (
+                    int(first_sample.get("timestamp_ns") or base_ns)
+                    if absolute_timestamps
+                    else base_ns
+                )
+                transform = frame_transform_message(
+                    parent_frame_id="world",
+                    child_frame_id=frame_id,
+                    stamp_ns=transform_stamp,
+                )
+                writer.add_message(
+                    channel_id=transform_channel_id,
+                    log_time=transform_stamp,
+                    publish_time=transform_stamp,
+                    data=json.dumps(transform).encode("utf-8"),
+                )
+                summary.transforms += 1
+                summary.channels["/tf"] = summary.channels.get("/tf", 0) + 1
+                first_ns = (
+                    transform_stamp if not first_ns else min(first_ns, transform_stamp)
+                )
+                last_ns = max(last_ns, transform_stamp)
+                for offset, sample in enumerate(samples):
+                    if not isinstance(sample, dict):
+                        continue
+                    stamp = (
+                        int(sample.get("timestamp_ns") or (base_ns + offset * step_ns))
+                        if absolute_timestamps
+                        else base_ns + offset * step_ns
+                    )
+                    points = sample.get("points") or []
+                    colors = sample.get("colors") or [[36, 184, 255] for _ in points]
+                    message = pointcloud_message(
+                        points, colors, stamp_ns=stamp, frame_id=frame_id
+                    )
+                    writer.add_message(
+                        channel_id=pointcloud_channel_id,
+                        log_time=stamp,
+                        publish_time=stamp,
+                        sequence=offset,
+                        data=json.dumps(message).encode("utf-8"),
+                    )
+                    summary.pointclouds += 1
+                    summary.channels["/trajectory"] = (
+                        summary.channels.get("/trajectory", 0) + 1
+                    )
+                    first_ns = stamp if not first_ns else min(first_ns, stamp)
+                    last_ns = max(last_ns, stamp)
                 continue
             # A JSON object is a single sample; a JSON array of objects is a real
             # time series (reward per episode, score per step, ...) and becomes one
@@ -429,7 +570,9 @@ def write_run_mcap(
             topic = safe_topic(metric.name, prefix=metrics_topic_prefix)
             for offset, record in enumerate(records):
                 flat = _flatten_metric_payload(record)
-                timestamp_ns = base_ns + (index if len(records) == 1 else offset) * step_ns
+                timestamp_ns = (
+                    base_ns + (index if len(records) == 1 else offset) * step_ns
+                )
                 if topic not in metric_channels:
                     schema_id = writer.register_schema(
                         name=f"npa.RunMetrics.{metric.name}",
@@ -505,22 +648,43 @@ def write_run_mcap(
                 "producer": "npa workbench foxglove convert-run",
                 "run_id": str(run_id or ""),
                 # Be explicit: these are not sensor capture times.
-                "timestamps": "synthetic-fps",
+                "timestamps": timestamp_mode,
                 "fps": str(rate),
                 "frames": str(summary.frames),
                 "metrics": str(summary.metrics),
                 "logs": str(summary.logs),
+                "pointclouds": str(summary.pointclouds),
+                "transforms": str(summary.transforms),
+                "synthetic_timeline": "shared-epoch-per-topic-frame-index",
+                "primary_image_topic": (
+                    str(camera_topic_prefix or "/camera").rstrip("/") or "/camera"
+                    if camera_names
+                    else ""
+                ),
             },
         )
         writer.finish()
 
-    if summary.frames + summary.metrics + summary.logs == 0:
+    if (
+        summary.frames
+        + summary.metrics
+        + summary.logs
+        + summary.pointclouds
+        + summary.transforms
+        == 0
+    ):
         target.unlink(missing_ok=True)
         raise McapWriteError(
             "no artifacts could be converted (all inputs were unreadable or unsupported)"
         )
 
-    summary.message_count = summary.frames + summary.metrics + summary.logs
+    summary.message_count = (
+        summary.frames
+        + summary.metrics
+        + summary.logs
+        + summary.pointclouds
+        + summary.transforms
+    )
     summary.size_bytes = target.stat().st_size
     summary.start_time_ns = first_ns
     summary.end_time_ns = last_ns
@@ -554,7 +718,9 @@ def convert_run_directory(
     run_id: str = "",
 ) -> McapSummary:
     """Discover a run directory's artifacts and write them as one MCAP file."""
-    frames, metrics, logs, skipped = collect_run_inputs(input_path, max_frames=max_frames)
+    frames, metrics, logs, skipped = collect_run_inputs(
+        input_path, max_frames=max_frames
+    )
     summary = write_run_mcap(
         output=output,
         frames=frames,

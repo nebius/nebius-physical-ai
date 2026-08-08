@@ -38,7 +38,9 @@ def foxglove_nginx_locations(*, asset_root: str = FOXGLOVE_ASSET_ROOT) -> str:
     default_type application/octet-stream;
     # Byte ranges carry MCAP playback; a compressed response would break them.
     gzip off;
-    add_header Accept-Ranges bytes always;
+    # nginx's static module already emits exactly one `Accept-Ranges: bytes`.
+    # Adding it here produces `bytes, bytes` in browser clients and can make
+    # strict MCAP data-source capability checks reject the recording.
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
     add_header Access-Control-Allow-Headers "Range, If-Range, Content-Type" always;
@@ -71,10 +73,10 @@ LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER = (
 def _lichtblick_default_layout_json() -> str:
     """Return the compact JSON for the embedded viewer's default layout.
 
-    A 3D panel with ``/heldout/points`` made visible (colored by its RGBA fields)
-    and framed on the workspace, alongside an Image panel bound to ``/camera``. The
-    JSON is single-quote-free so it can be injected as an nginx ``sub_filter``
-    replacement without escaping.
+    A 3D panel exposes either the established ``/heldout/points`` scene or the
+    converter's real ``/trajectory`` state-space cloud, alongside two synchronized
+    cameras and a real execution-metrics Plot. The JSON is single-quote-free so it
+    can be injected as an nginx ``sub_filter`` replacement without escaping.
 
     ``rgba-fields`` requires the cloud to carry all four of red/green/blue/alpha;
     ``npa.workbench.lichtblick.pack_pointcloud_bytes`` emits the opaque alpha
@@ -92,15 +94,13 @@ def _lichtblick_default_layout_json() -> str:
                     "perspective": True,
                     "phi": 55.0,
                     "target": [0.0, 0.0, 0.0],
-                    # Orbit around the fixed-camera reconstruction's workspace
-                    # centroid so the cloud is framed on load (follow-none).
                     "targetOffset": [2.3, -1.2, -0.15],
                     "thetaOffset": 45.0,
                     "fovy": 45.0,
                     "near": 0.1,
                     "far": 5000.0,
                 },
-                "followTf": "sim2real",
+                "followTf": "world",
                 "followMode": "follow-none",
                 "scene": {},
                 "topics": {
@@ -108,7 +108,12 @@ def _lichtblick_default_layout_json() -> str:
                         "visible": True,
                         "colorMode": "rgba-fields",
                         "pointSize": 4.0,
-                    }
+                    },
+                    "/trajectory": {
+                        "visible": True,
+                        "colorMode": "rgba-fields",
+                        "pointSize": 7.0,
+                    },
                 },
                 "layers": {
                     "npa-grid": {
@@ -128,15 +133,35 @@ def _lichtblick_default_layout_json() -> str:
                 },
             },
             "Image!npacamera": {"imageMode": {"imageTopic": "/camera"}},
+            "Image!npaworkspace": {"imageMode": {"imageTopic": "/camera/workspace"}},
+            "Plot!npametrics": {
+                "paths": [
+                    {"value": "/metrics/execution.reward", "enabled": True},
+                    {"value": "/metrics/execution.progress", "enabled": True},
+                    {"value": "/metrics/execution.state_norm", "enabled": True},
+                ],
+                "showLegend": True,
+                "isSynced": True,
+            },
         },
         "globalVariables": {},
         "userNodes": {},
         "playbackConfig": {"speed": 1.0},
         "layout": {
-            "first": "3D!npasim2real",
-            "second": "Image!npacamera",
+            "first": {
+                "first": "Image!npacamera",
+                "second": "Image!npaworkspace",
+                "direction": "column",
+                "splitPercentage": 50,
+            },
+            "second": {
+                "first": "3D!npasim2real",
+                "second": "Plot!npametrics",
+                "direction": "column",
+                "splitPercentage": 62,
+            },
             "direction": "row",
-            "splitPercentage": 62,
+            "splitPercentage": 50,
         },
     }
     return json.dumps(layout, separators=(",", ":"))
@@ -240,23 +265,36 @@ def nginx_agent_site_body(
     proxy_send_timeout 300s;
     add_header Cache-Control "public, max-age=3600" always;
   }}
-  location /lichtblick/recordings/ {{
+  location = /lichtblick/recordings/sim2real.mcap {{
     auth_basic off;
-    alias /opt/npa-agent/recordings/;
-    default_type application/octet-stream;
-    add_header Cache-Control "no-cache" always;
-    # nginx's static module already emits `Accept-Ranges: bytes`; do NOT add it again
-    # (a duplicate makes the browser join it to "bytes, bytes", which fails Lichtblick's
-    # `headers.get("accept-ranges") === "bytes"` range-support check).
+    proxy_pass http://127.0.0.1:{backend_port}/lichtblick-recordings/sim2real.mcap;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Range $http_range;
+    proxy_set_header If-Range $http_if_range;
+    proxy_force_ranges on;
+    gzip off;
+    # Keep binary identity intact through browser/test proxies. Transforming the
+    # response to Brotli/chunked removes Content-Length and makes Lichtblick abort
+    # before its first byte-range request.
+    add_header Cache-Control "no-store, no-transform" always;
+    # Lichtblick opens the remote file from a browser worker. Chromium applies
+    # the CORS-exposed-header filter there even when the viewer is reverse-
+    # proxied under this host. Permit only this exact agent origin (never `*`)
+    # and expose the size/range headers its BrowserHttpReader requires.
+    add_header Access-Control-Allow-Origin "$scheme://$http_host" always;
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Range, If-Range" always;
+    add_header Access-Control-Expose-Headers "Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified, X-NPA-File-Size" always;
+    # FileResponse emits one Accept-Ranges header, Content-Length on HEAD, and
+    # Content-Range for partial GETs. Do not duplicate those headers in nginx.
     #
-    # Deliberately NO Access-Control-* headers here. A run's MCAP carries camera
-    # frames, VLM critiques and reward signals, and this location is unauthenticated
-    # (wasm/worker fetches cannot carry basic auth). Granting `Allow-Origin: *` would
-    # let any web page a viewer visits read those recordings off this host. The embed
-    # never needs it: the viewer document is proxied from this same origin under
-    # /lichtblick/ and the UI pins ds.url to window.location.origin, so the fetch is
-    # same-origin — which also makes Accept-Ranges readable without Expose-Headers.
+    # The location is unauthenticated because the worker cannot send basic auth,
+    # so never reflect arbitrary Origin values or use wildcard CORS.
     add_header Cross-Origin-Resource-Policy "same-origin" always;
+    if ($request_method = OPTIONS) {{
+      return 204;
+    }}
   }}
   location = /lichtblick/ {{
     # Exact-match the viewer document so we can inject the sim2real default layout
@@ -281,9 +319,18 @@ def nginx_agent_site_body(
     proxy_pass http://127.0.0.1:{lichtblick_port}/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
+    # BrowserHttpReader normally requires Content-Length on its initial GET.
+    # Some browser automation/network intermediaries expose a truthful chunked
+    # response instead. Lichtblick 1.26 has no fallback header, so teach this
+    # pinned static bundle to accept the canonical file's X-NPA-File-Size. The
+    # replacement does not alter the MCAP transport or its subsequent ranges.
+    proxy_set_header Accept-Encoding "";
     proxy_connect_timeout 30s;
     proxy_read_timeout 300s;
     proxy_send_timeout 300s;
+    sub_filter_once on;
+    sub_filter_types application/javascript text/javascript;
+    sub_filter 'const c=i.headers.get("content-length");if(c==null)' 'const c=i.headers.get("content-length")??i.headers.get("x-npa-file-size");if(c==null)';
     add_header Cache-Control "public, max-age=3600" always;
   }}
   location / {{

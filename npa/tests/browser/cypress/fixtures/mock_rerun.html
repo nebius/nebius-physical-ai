@@ -95,6 +95,16 @@
         };
 
         window.__NPA_MOCK_RERUN__.setMode(mode);
+        // Rerun continuously presents its canvas. Keep the protocol fixture
+        // faithful to that behavior so a captureStream created just after a
+        // mode switch receives a presented frame instead of racing the one-off
+        // synchronous paint above.
+        function presentFrame() {
+          if (window.__NPA_MOCK_RERUN__.mode === "content") paintContent();
+          else paintGray();
+          window.requestAnimationFrame(presentFrame);
+        }
+        window.requestAnimationFrame(presentFrame);
       })();
     </script>
   </body>

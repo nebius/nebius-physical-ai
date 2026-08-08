@@ -564,6 +564,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.window().then((win) => {
       cy.stub(win, "open").as("windowOpen");
     });
+  });
+
+  it("embeds the Lichtblick MCAP viewer as a Viewer render mode", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
 
@@ -578,15 +581,6 @@ describe("NPA agent UI with mocked APIs", () => {
       .and("include", "ds.url");
     // The embedded Lichtblick app renders the MCAP data source (mock fixture).
     cy.get("#lichtblickFrame").its("0.contentWindow.__NPA_MOCK_LICHTBLICK__", { timeout: 15000 }).should("exist");
-
-    // "Open in Lichtblick" opens the same-origin viewer URL in a new tab.
-    cy.get("#openLichtblick").click();
-    cy.get("@windowOpen").should("have.been.called");
-
-    // Reload stays on the Lichtblick pane and re-mounts the iframe.
-    cy.get("#loadLichtblickViewer").click();
-    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
-    cy.get("#lichtblickFrame").should("have.attr", "src").and("include", "/lichtblick/");
 
     // Switching back to Rerun deactivates the Lichtblick pane (both stay mounted).
     cy.get("#renderModeRerun").click();
@@ -1941,6 +1935,29 @@ describe("NPA agent UI with mocked APIs", () => {
       const quality = await api.waitForQualityRerunFrame(4000);
       expect(quality.quality).to.eq("rendered");
       expect(quality.dataUrl.length).to.be.greaterThan(4000);
+    });
+  });
+
+  it("falls back to 30 fps when captureStream(0) lacks requestFrame", () => {
+    cy.window().then((win) => {
+      const api = win.__NPA_AGENT_TEST__;
+      const rates = [];
+      const stopped = cy.stub();
+      const fallback = { getVideoTracks: () => [{ requestFrame() {} }], getTracks: () => [] };
+      const partial = {
+        getVideoTracks: () => [{}],
+        getTracks: () => [{ stop: stopped }],
+      };
+      const canvas = {
+        captureStream(rate) {
+          rates.push(rate);
+          return rate === 0 ? partial : fallback;
+        },
+      };
+
+      expect(api.captureStreamWithFrameFallback(canvas)).to.eq(fallback);
+      expect(rates).to.deep.eq([0, 30]);
+      expect(stopped).to.have.been.calledOnce;
     });
   });
 

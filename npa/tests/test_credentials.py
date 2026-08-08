@@ -233,7 +233,9 @@ def test_load_credentials_ignores_legacy_ai_cloud_alias(tmp_path: Path) -> None:
     assert "NEBIUS_AI_CLOUD_KEY" not in shared_credential_env(resolved)
 
 
-def test_write_credentials_file_does_not_normalize_legacy_ai_cloud_key(tmp_path: Path) -> None:
+def test_write_credentials_file_does_not_normalize_legacy_ai_cloud_key(
+    tmp_path: Path,
+) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(
         yaml.safe_dump({"tokens": {"NEBIUS_API_KEY": "ai-legacy-file"}})
@@ -386,7 +388,9 @@ def test_load_credentials_warns_when_readable_by_other_users(tmp_path: Path) -> 
     ]
 
 
-def test_cosmos_deploy_dry_run_fails_when_hf_token_missing(tmp_path: Path, mocker) -> None:
+def test_cosmos_deploy_dry_run_fails_when_hf_token_missing(
+    tmp_path: Path, mocker
+) -> None:
     mocker.patch("npa.cli.workbench.load_credentials", return_value=CredentialsConfig())
     mocker.patch("npa.cli.cosmos.resolve_credentials", return_value=CredentialsConfig())
     apply = mocker.patch("npa.cli.cosmos.provisioner.apply")
@@ -419,7 +423,9 @@ def test_cosmos_deploy_dry_run_fails_when_hf_token_missing(tmp_path: Path, mocke
     apply.assert_not_called()
 
 
-def test_cosmos_deploy_dry_run_prints_redacted_shared_credentials(tmp_path: Path, mocker) -> None:
+def test_cosmos_deploy_dry_run_prints_redacted_shared_credentials(
+    tmp_path: Path, mocker
+) -> None:
     credentials = CredentialsConfig(
         tokens={"HF_TOKEN": "hf_123456789"},
         s3_access_key_id="AKIA123456",
@@ -481,7 +487,9 @@ def test_ssh_forwards_tokens_into_remote_environment(mocker) -> None:
     paramiko_client.get_transport.return_value = transport
     paramiko_client.open_sftp.return_value = sftp
     mocker.patch("paramiko.SSHClient", return_value=paramiko_client)
-    mocker.patch("npa.clients.ssh.uuid.uuid4", return_value=SimpleNamespace(hex="abc123"))
+    mocker.patch(
+        "npa.clients.ssh.uuid.uuid4", return_value=SimpleNamespace(hex="abc123")
+    )
 
     client = SSHClient(
         SSHConfig(

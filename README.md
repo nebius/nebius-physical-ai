@@ -64,6 +64,8 @@ source .venv/bin/activate
 pip install -e npa
 ```
 
+> **Managed deployments support Terraform CLI 1.x on `PATH`: verify it with `terraform version`; commands such as `npa agent fresh-setup` require it, and `pip install -e npa` does not install it. An existing 1.x minor/patch is accepted; agent bootstrap installs the tested 1.13.3 baseline only when Terraform is absent.**
+
 Verify: `npa --version`.
 
 > The base install is the core CLI, with no GPU or database wheels. Before
@@ -232,8 +234,8 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
   customer-facing `npa.workflow/v0.0.1` specs — see
   [Author and submit workflows](#author-and-submit-workflows).
 - **`foxglove`** packs run frames/metrics/logs into MCAP, exports/downloads an
-  active recording, and builds official Foxglove web/desktop remote-file links.
-  The Free-tier link flow needs no cloud upload or paid embed — see
+  active recording, and opens an indexed recording in official Foxglove Web.
+  The web action uploads once by content key and reuses unchanged recordings — see
   [Foxglove MCAP export](docs/workbench/foxglove-export.md) and
   [docs/cli/foxglove.md](docs/cli/foxglove.md).
 - **`trigger`** watches S3-compatible prefixes and retriggers workflows.

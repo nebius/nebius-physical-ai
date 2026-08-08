@@ -171,7 +171,9 @@ def _nebius_profile_ready(*, runner: Callable[..., object] = subprocess.run) -> 
     return getattr(result, "returncode", 1) == 0
 
 
-def _list_nebius_profiles(*, runner: Callable[..., object] = subprocess.run) -> list[str]:
+def _list_nebius_profiles(
+    *, runner: Callable[..., object] = subprocess.run
+) -> list[str]:
     """Return local Nebius CLI profile names, or [] when listing is unavailable."""
 
     if not shutil.which("nebius"):
@@ -462,8 +464,12 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
     existing_default_alias = default_project_name()
     existing_stanza = existing_projects.get(existing_default_alias, {}) or {}
 
-    project_id = ask("Nebius project id", default=str(existing_stanza.get("project_id", "")))
-    tenant_id = ask("Nebius tenant id", default=str(existing_stanza.get("tenant_id", "")))
+    project_id = ask(
+        "Nebius project id", default=str(existing_stanza.get("project_id", ""))
+    )
+    tenant_id = ask(
+        "Nebius tenant id", default=str(existing_stanza.get("tenant_id", ""))
+    )
     existing_registry = str(existing_stanza.get("container_registry", ""))
     # Only hit Nebius for registry discovery when we don't already have one saved
     # (an idempotent re-run should not make an avoidable CLI call).
@@ -530,7 +536,8 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             ),
             "endpoint_url": ask(
                 "S3 endpoint URL",
-                default=existing_credentials.s3_endpoint or _endpoint_for_region(region),
+                default=existing_credentials.s3_endpoint
+                or _endpoint_for_region(region),
             ),
             "bucket": ask(
                 "S3 bucket URI (e.g. s3://<your-bucket>/)",
@@ -859,10 +866,16 @@ def app_entry() -> None:
     except KeyboardInterrupt:
         sys.exit(130)
     except ServerlessClientError as exc:
-        print(format_error_for_user(exc, output_format=_detect_error_format()), file=sys.stderr)
+        print(
+            format_error_for_user(exc, output_format=_detect_error_format()),
+            file=sys.stderr,
+        )
         sys.exit(1)
     except Exception as exc:
-        print(format_error_for_user(exc, output_format=_detect_error_format()), file=sys.stderr)
+        print(
+            format_error_for_user(exc, output_format=_detect_error_format()),
+            file=sys.stderr,
+        )
         if os.environ.get("NPA_DEBUG"):
             traceback.print_exc()
         else:
@@ -876,7 +889,9 @@ def _detect_error_format() -> str:
         return env_format
     args = sys.argv[1:]
     for index, value in enumerate(args):
-        if value in {"--output", "--output-format", "--format"} and index + 1 < len(args):
+        if value in {"--output", "--output-format", "--format"} and index + 1 < len(
+            args
+        ):
             if args[index + 1].lower() == "json":
                 return "json"
         if value in {"--output=json", "--output-format=json", "--format=json"}:

@@ -50,12 +50,6 @@ class OutputFormat(str, Enum):
     json = "json"
 
 
-class OpenTarget(str, Enum):
-    none = "none"
-    web = "web"
-    desktop = "desktop"
-
-
 def _fail(message: str) -> None:
     typer.echo(message, err=True)
     raise typer.Exit(1)
@@ -71,12 +65,16 @@ def _emit(payload: dict[str, Any], *, output: OutputFormat, text: str) -> None:
 @app.command("convert-run")
 def convert_run_cmd(
     input_path: str = typer.Option(
-        ..., "--input-path", help="Directory of run artifacts (frames, metrics JSON, logs)."
+        ...,
+        "--input-path",
+        help="Directory of run artifacts (frames, metrics JSON, logs).",
     ),
     output_path: str = typer.Option(
         ..., "--output-path", help="Destination .mcap file."
     ),
-    run_id: str = typer.Option("", "--run-id", help="Run id recorded in MCAP metadata."),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Run id recorded in MCAP metadata."
+    ),
     fps: float = typer.Option(
         10.0,
         "--fps",
@@ -85,7 +83,9 @@ def convert_run_cmd(
     max_frames: int = typer.Option(
         0, "--max-frames", help="Cap the number of image frames (0 = all)."
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Convert a run's artifacts into an MCAP recording the Foxglove viewer can open."""
     from npa.sdk.workbench.foxglove import convert_run
@@ -120,7 +120,9 @@ def convert_run_cmd(
 @app.command("inspect")
 def inspect_cmd(
     input_path: str = typer.Option(..., "--input-path", help="MCAP file to inspect."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Report the channels, schemas, and message counts inside an MCAP recording."""
     from npa.sdk.workbench.foxglove import inspect_mcap
@@ -141,31 +143,27 @@ def export_run_cmd(
     input_path: str = typer.Option(
         ..., "--input-path", help="Directory of run artifacts to pack into MCAP."
     ),
-    output_path: str = typer.Option(..., "--output-path", help="Destination .mcap file."),
-    recording_url: str = typer.Option(
-        "",
-        "--recording-url",
-        help=(
-            "Absolute public HTTPS URL where output will be served; enables "
-            "Foxglove web/desktop links without uploading to Foxglove Cloud."
-        ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Destination .mcap file."
     ),
-    run_id: str = typer.Option("", "--run-id", help="Run id recorded in MCAP metadata."),
-    fps: float = typer.Option(10.0, "--fps", help="Synthetic frame rate for timestamps."),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Run id recorded in MCAP metadata."
+    ),
+    fps: float = typer.Option(
+        10.0, "--fps", help="Synthetic frame rate for timestamps."
+    ),
     max_frames: int = typer.Option(0, "--max-frames", help="Frame cap (0 = all)."),
-    open_in: OpenTarget = typer.Option(
-        OpenTarget.none, "--open", help="Open the generated remote-file link after export."
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
 ) -> None:
-    """Export run artifacts to MCAP and produce safe Foxglove open links."""
+    """Export run artifacts to MCAP."""
     from npa.sdk.workbench.foxglove import export_run
 
     try:
         payload = export_run(
             input_path=input_path,
             output_path=output_path,
-            recording_url=recording_url,
             fps=fps,
             max_frames=max_frames,
             run_id=run_id,
@@ -173,63 +171,41 @@ def export_run_cmd(
     except Exception as exc:  # noqa: BLE001
         _fail(f"MCAP export failed: {exc}")
         return
-    links = payload["export"]
-    if recording_url and not links["available"]:
-        _fail(str(links["reason"]))
-    if open_in != OpenTarget.none:
-        url = str(links.get(f"{open_in.value}_url") or "")
-        if not url:
-            _fail("--open requires a reachable absolute HTTPS --recording-url")
-        if not webbrowser.open(url):
-            _fail(f"Could not open the Foxglove {open_in.value} link")
     summary = payload["summary"]
     text_lines = [f"wrote {summary['output']} ({summary['size_bytes']} bytes)"]
-    if links["available"]:
-        text_lines.extend(
-            [
-                f"download: {links['download_url']}",
-                f"web: {links['web_url']}",
-                f"desktop: {links['desktop_url']}",
-                "Foxglove Cloud upload: not required",
-                str(links["public_access_note"]),
-            ]
-        )
-    else:
-        text_lines.append("No open links: pass --recording-url with the public HTTPS URL.")
     _emit(payload, output=output, text="\n".join(text_lines))
 
 
 @app.command("open")
 def open_cmd(
-    recording_url: str = typer.Option(
-        ..., "--recording-url", help="Absolute public HTTPS .mcap/.bag recording URL."
-    ),
-    target: OpenTarget = typer.Option(
-        OpenTarget.web, "--target", help="Foxglove web or desktop destination."
+    recording_id: str = typer.Option(
+        ..., "--recording-id", help="Indexed Foxglove Cloud recording ID."
     ),
     launch: bool = typer.Option(
         False, "--launch/--no-launch", help="Open the link with the system URL handler."
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
-    """Build (and optionally launch) an official Foxglove remote-file deep link."""
-    from npa.sdk.workbench.foxglove import foxglove_deep_links
+    """Build (and optionally launch) an official Foxglove Web recording link."""
+    from npa.sdk.workbench.foxglove import foxglove_recording_link
 
-    if target == OpenTarget.none:
-        _fail("--target must be web or desktop")
-    payload = foxglove_deep_links(recording_url)
+    payload = foxglove_recording_link(recording_id)
     if not payload["available"]:
         _fail(str(payload["reason"]))
-    url = str(payload[f"{target.value}_url"])
+    url = str(payload["web_url"])
     if launch and not webbrowser.open(url):
-        _fail(f"Could not open the Foxglove {target.value} link")
+        _fail("Could not open the Foxglove Web link")
     _emit(payload, output=output, text=url)
 
 
 @app.command("install-sdk")
 def install_sdk_cmd(
     dest: str = typer.Option(
-        ..., "--dest", help="Directory to install the @foxglove/embed browser assets into."
+        ...,
+        "--dest",
+        help="Directory to install the @foxglove/embed browser assets into.",
     ),
     version: str = typer.Option(
         FOXGLOVE_EMBED_SDK_VERSION, "--version", help="Pinned @foxglove/embed release."
@@ -240,9 +216,13 @@ def install_sdk_cmd(
         help="npm dist.integrity digest verified after download.",
     ),
     registry: str = typer.Option(
-        FOXGLOVE_EMBED_DEFAULT_REGISTRY, "--registry", help="npm registry (or mirror) base URL."
+        FOXGLOVE_EMBED_DEFAULT_REGISTRY,
+        "--registry",
+        help="npm registry (or mirror) base URL.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Install the pinned, sha512-verified Foxglove embed SDK assets."""
     if not INSTALL_SCRIPT.is_file():
@@ -286,13 +266,22 @@ def config_cmd(
     assets_dir: str = typer.Option(
         "", "--assets-dir", help="Installed SDK asset directory to probe (optional)."
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show the resolved Foxglove embed settings for this environment."""
-    embed_src = os.environ.get("NPA_FOXGLOVE_EMBED_SRC", "").strip() or DEFAULT_FOXGLOVE_EMBED_SRC
+    embed_src = (
+        os.environ.get("NPA_FOXGLOVE_EMBED_SRC", "").strip()
+        or DEFAULT_FOXGLOVE_EMBED_SRC
+    )
     org_slug = os.environ.get("NPA_FOXGLOVE_ORG_SLUG", "").strip()
     live_url = os.environ.get("NPA_FOXGLOVE_LIVE_URL", "").strip()
-    ready, reason = (sdk_assets_present(assets_dir) if assets_dir else (False, "no --assets-dir given"))
+    ready, reason = (
+        sdk_assets_present(assets_dir)
+        if assets_dir
+        else (False, "no --assets-dir given")
+    )
     payload = {
         "sdk_version": FOXGLOVE_EMBED_SDK_VERSION,
         "sdk_integrity": FOXGLOVE_EMBED_SDK_INTEGRITY,

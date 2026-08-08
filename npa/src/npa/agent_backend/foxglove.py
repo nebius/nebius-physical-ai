@@ -28,6 +28,7 @@ import os
 import re
 import secrets
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
@@ -43,7 +44,13 @@ FOXGLOVE_SDK_MANIFEST = "npa-sdk-manifest.json"
 FOXGLOVE_DEFAULT_EMBED_SRC = "https://embed.foxglove.dev/"
 FOXGLOVE_DEFAULT_LAYOUT_KEY = "npa-agent-foxglove"
 FOXGLOVE_WEB_APP_URL = "https://app.foxglove.dev/~/view"
-FOXGLOVE_ARTIFACT_EXTENSIONS: tuple[str, ...] = (".mcap", ".bag", ".db3", ".ulg", ".ulog")
+FOXGLOVE_ARTIFACT_EXTENSIONS: tuple[str, ...] = (
+    ".mcap",
+    ".bag",
+    ".db3",
+    ".ulg",
+    ".ulog",
+)
 MCAP_MAGIC = b"\x89MCAP0\r\n"
 
 # Viewer backends the pane can mount.
@@ -175,6 +182,12 @@ def convert_run_request(payload: dict | None, sim_viz: dict | None) -> dict:
         max_frames = 0
     return {
         "run_id": str(body.get("run_id") or state.get("run_id") or "").strip(),
+        "run_ref": str(
+            body.get("run_ref")
+            or state.get("artifact_run_ref")
+            or state.get("run_ref")
+            or ""
+        ).strip(),
         "fps": fps if fps > 0 else 10.0,
         "max_frames": max(0, max_frames),
     }
@@ -225,7 +238,8 @@ def live_source_update(
     """
     body = payload if isinstance(payload, dict) else {}
     source = live_data_source(
-        str(body.get("url") or "").strip(), protocol=str(body.get("protocol") or "").strip()
+        str(body.get("url") or "").strip(),
+        protocol=str(body.get("protocol") or "").strip(),
     )
     if source is None:
         return None
@@ -332,13 +346,44 @@ def remote_file_data_source(
     return source
 
 
-def foxglove_deep_links(recording_url: str, *, origin: str = "") -> dict:
-    """Build official Foxglove web/desktop links for a remotely served recording.
+def public_https_url_allowed(url: str) -> bool:
+    """Return whether a URL is public HTTPS with no embedded credentials."""
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return False
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        return False
+    host = str(parsed.hostname).strip().lower()
+    if host in _BLOCKED_HOSTNAMES or host.endswith(".internal"):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return not (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_unspecified
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+    )
 
-    Foxglove fetches the file from its own origin, so relative URLs and insecure
-    HTTP endpoints are unusable from the hosted application. Credentials must
-    never be embedded in the URL; the agent's recording path is intentionally
-    unauthenticated and protected by a random filename instead.
+
+def foxglove_download_export(recording_url: str, *, origin: str = "") -> dict:
+    """Build the public MCAP download contract used by the export route.
+
+    The URL is not used by Foxglove Web. The official app opens the indexed
+    Cloud recording returned by :func:`foxglove_recording_link`.
     """
     absolute = _absolute(recording_url, origin)
     try:
@@ -351,10 +396,15 @@ def foxglove_deep_links(recording_url: str, *, origin: str = "") -> dict:
     elif parsed.scheme != "https" or not parsed.hostname:
         reason = (
             "Foxglove remote-file links require an absolute HTTPS recording URL "
-            "that the browser or desktop app can reach."
+            "that the browser can reach."
         )
     elif parsed.username or parsed.password:
         reason = "Recording URLs with embedded credentials are not supported."
+    elif not public_https_url_allowed(absolute):
+        reason = (
+            "MCAP export requires a public HTTPS origin; loopback, private, "
+            "link-local, reserved, and metadata hosts are refused."
+        )
     if reason:
         return {
             "available": False,
@@ -364,32 +414,63 @@ def foxglove_deep_links(recording_url: str, *, origin: str = "") -> dict:
             # state, logs, snapshots, or copied links.
             "recording_url": "",
             "download_url": "",
-            "web_url": "",
-            "desktop_url": "",
         }
-
-    query = [("ds", "remote-file"), ("ds.url", absolute)]
-    web_url = f"{FOXGLOVE_WEB_APP_URL}?{urlencode(query)}"
-    desktop_url = f"{FOXGLOVE_WEB_APP_URL}?{urlencode([*query, ('openIn', 'desktop')])}"
     return {
         "available": True,
         "reason": "",
         "recording_url": absolute,
         "download_url": absolute,
-        "web_url": web_url,
-        "desktop_url": desktop_url,
-        "data_source": "remote-file",
-        "requires_cloud_upload": False,
+        "size_bytes": 0,
         "public_access_note": (
-            "This random recording URL is served without authentication so the "
-            "cross-origin Foxglove app can issue CORS byte-range requests. Anyone "
-            "with the URL can read it until the agent prunes the publication."
+            "This random recording URL is served without authentication for MCAP "
+            "download and transport checks. Anyone with the URL can read it until "
+            "the agent prunes the publication."
         ),
-        "reachability_note": (
-            "The browser or desktop app must be able to reach this HTTPS URL; "
-            "private networks may require VPN access and self-signed certificates "
-            "must be trusted first."
-        ),
+    }
+
+
+def _rfc3339_ns(value: int) -> str:
+    seconds, nanos = divmod(int(value), 1_000_000_000)
+    stamp = datetime.fromtimestamp(seconds, tz=timezone.utc)
+    return f"{stamp.strftime('%Y-%m-%dT%H:%M:%S')}.{nanos:09d}Z"
+
+
+def foxglove_recording_link(
+    recording_id: str,
+    *,
+    layout_id: str = "",
+    start_time_ns: int = 0,
+    end_time_ns: int = 0,
+) -> dict:
+    """Build the official web-only deep link for an indexed Cloud recording."""
+    cleaned = str(recording_id or "").strip()
+    if not cleaned or not re.fullmatch(r"[A-Za-z0-9_-]+", cleaned):
+        return {
+            "available": False,
+            "reason": "Foxglove did not return a safe indexed recording ID.",
+            "web_url": "",
+        }
+    query = [("ds", "foxglove-stream"), ("ds.recordingId", cleaned)]
+    safe_layout = str(layout_id or "").strip()
+    if safe_layout and re.fullmatch(r"[A-Za-z0-9_-]+", safe_layout):
+        query.append(("layoutId", safe_layout))
+    if start_time_ns > 0 and end_time_ns >= start_time_ns:
+        start = _rfc3339_ns(start_time_ns)
+        end = _rfc3339_ns(end_time_ns)
+        seek_ns = min(end_time_ns, start_time_ns + 250_000_000)
+        query.extend(
+            [("ds.start", start), ("ds.end", end), ("time", _rfc3339_ns(seek_ns))]
+        )
+    return {
+        "available": True,
+        "reason": "",
+        "web_url": f"{FOXGLOVE_WEB_APP_URL}?{urlencode(query)}",
+        "data_source": "foxglove-stream",
+        "recording_id": cleaned,
+        "layout_id": safe_layout
+        if re.fullmatch(r"[A-Za-z0-9_-]+", safe_layout)
+        else "",
+        "web_open_mode": "foxglove-cloud",
     }
 
 
@@ -469,9 +550,10 @@ def resolve_foxglove_config(
         str(environ.get("NPA_FOXGLOVE_LAYOUT_STORAGE_KEY", "")).strip()
         or FOXGLOVE_DEFAULT_LAYOUT_KEY
     )
-    live_url = str(state.get("foxglove_live_url") or "").strip() or str(
-        environ.get("NPA_FOXGLOVE_LIVE_URL", "")
-    ).strip()
+    live_url = (
+        str(state.get("foxglove_live_url") or "").strip()
+        or str(environ.get("NPA_FOXGLOVE_LIVE_URL", "")).strip()
+    )
     if live_url and not live_url_allowed(live_url):
         live_url = ""
 
@@ -493,7 +575,9 @@ def resolve_foxglove_config(
     data_source = data_source_for_state(state, origin=origin, env=environ)
     # The in-page OSS viewer must read a same-origin recording; the published
     # Lichtblick path is exactly that (the CORS copy is for the official app).
-    self_hosted_recording = str(state.get("mcap_uri") and LICHTBLICK_RECORDING_PATH or "")
+    self_hosted_recording = str(
+        state.get("mcap_uri") and LICHTBLICK_RECORDING_PATH or ""
+    )
     self_hosted_url = (
         self_hosted_viewer_url(self_hosted_recording)
         if backend == FOXGLOVE_BACKEND_SELF_HOSTED
@@ -509,7 +593,8 @@ def resolve_foxglove_config(
         "enabled": enabled,
         "sdk_url": FOXGLOVE_SDK_URL,
         "host_module_url": FOXGLOVE_HOST_MODULE_URL,
-        "sdk_version": assets["version"] or str(environ.get("NPA_FOXGLOVE_SDK_VERSION", "")).strip(),
+        "sdk_version": assets["version"]
+        or str(environ.get("NPA_FOXGLOVE_SDK_VERSION", "")).strip(),
         "sdk_integrity": assets["integrity"],
         "sdk_source": assets["source"],
         "sdk_ready": bool(assets["ready"]),
@@ -530,9 +615,6 @@ def resolve_foxglove_config(
             "MIT-licensed @foxglove/embed SDK and the recording."
         ),
     }
-    payload["export"] = foxglove_deep_links(
-        str(state.get("foxglove_url") or ""), origin=origin
-    )
     return payload
 
 
@@ -577,19 +659,33 @@ def select_viewer_backend(
     )
 
 
-def self_hosted_viewer_url(recording_url: str, *, base: str = FOXGLOVE_SELF_HOSTED_BASE) -> str:
+def self_hosted_viewer_url(
+    recording_url: str,
+    *,
+    base: str = FOXGLOVE_SELF_HOSTED_BASE,
+    start_time_ns: int = 0,
+    end_time_ns: int = 0,
+) -> str:
     """Return the self-hosted viewer URL that opens ``recording_url``.
 
     Same contract the Lichtblick pane uses: ``?ds=remote-file&ds.url=<mcap>``.
     The recording must be same-origin for the in-page viewer to read it.
     """
-    from urllib.parse import quote
-
     root = str(base or FOXGLOVE_SELF_HOSTED_BASE)
     recording = str(recording_url or "").strip()
     if not recording:
         return root
-    return f"{root}?ds=remote-file&ds.url={quote(recording, safe='')}"
+    query = [("ds", "remote-file"), ("ds.url", recording)]
+    if start_time_ns > 0 and end_time_ns >= start_time_ns:
+        seek_ns = min(end_time_ns, start_time_ns + 250_000_000)
+        query.extend(
+            [
+                ("ds.start", _rfc3339_ns(start_time_ns)),
+                ("ds.end", _rfc3339_ns(end_time_ns)),
+                ("time", _rfc3339_ns(seek_ns)),
+            ]
+        )
+    return f"{root}?{urlencode(query)}"
 
 
 def _valid_embed_src(src: str) -> bool:
@@ -620,11 +716,17 @@ def foxglove_status_payload(config: dict, sim_viz: dict | None = None) -> dict:
         "run_id": str(state.get("run_id") or ""),
         "artifact_key": str(state.get("artifact_key") or ""),
         "artifact_render": str(state.get("artifact_render") or ""),
+        "canonical_mcap_s3_uri": str(state.get("canonical_mcap_s3_uri") or ""),
+        "canonical_mcap_key": str(state.get("canonical_mcap_key") or ""),
+        "canonical_mcap_sha256": str(state.get("canonical_mcap_sha256") or ""),
+        "canonical_mcap_size_bytes": int(state.get("canonical_mcap_size_bytes") or 0),
+        "canonical_mcap_source": str(state.get("canonical_mcap_source") or ""),
+        "transport_state": str(state.get("transport_state") or ""),
+        "cloud": dict(state.get("foxglove_cloud") or {}),
         "recording_url": str(config.get("recording_url") or ""),
         "updated_at": str(state.get("mcap_updated_at") or ""),
         "data_source_type": str((source or {}).get("type") or ""),
         "data_source": source,
-        "export": dict(config.get("export") or {}),
     }
 
 
@@ -673,7 +775,9 @@ def describe_foxglove_context(config: dict | None, sim_viz: dict | None = None) 
 
 
 __all__ = [
-    "foxglove_deep_links",
+    "foxglove_download_export",
+    "foxglove_recording_link",
+    "public_https_url_allowed",
     "self_hosted_viewer_url",
     "select_viewer_backend",
     "LICHTBLICK_RECORDING_PATH",

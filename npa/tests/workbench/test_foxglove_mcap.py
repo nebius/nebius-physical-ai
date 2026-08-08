@@ -56,10 +56,14 @@ def _run_fixture(tmp_path: Path, *, frames: int = 3) -> Path:
             root / "camera" / "wrist" / f"{index:04d}.ppm"
         )
     (root / "reports" / "metrics.json").write_text(
-        json.dumps({"success_rate": 0.82, "episodes": 12, "gate": "promote", "extra": {"a": 1}}),
+        json.dumps(
+            {"success_rate": 0.82, "episodes": 12, "gate": "promote", "extra": {"a": 1}}
+        ),
         encoding="utf-8",
     )
-    (root / "reports" / "run.log").write_text("stage 1 ok\nstage 2 ok\n\nstage 3 warn\n", encoding="utf-8")
+    (root / "reports" / "run.log").write_text(
+        "stage 1 ok\nstage 2 ok\n\nstage 3 warn\n", encoding="utf-8"
+    )
     (root / "reports" / "opaque.bin").write_bytes(b"\x00\x01\x02")
     return root
 
@@ -130,12 +134,12 @@ def test_convert_run_directory_round_trip(tmp_path: Path) -> None:
     assert summary.timestamps == "synthetic-fps"
     assert summary.fps == 5.0
     assert "reports/opaque.bin" in summary.skipped
-    assert summary.channels["/camera/front"] == 3
+    assert summary.channels["/camera"] == 3
 
     # Read it back the way Foxglove would.
     info = summarize_mcap(output)
     assert info.message_count == 10
-    assert info.schemas["/camera/front"] == "foxglove.CompressedImage"
+    assert info.schemas["/camera"] == "foxglove.CompressedImage"
     assert info.schemas["/camera/wrist"] == "foxglove.CompressedImage"
     assert info.schemas["/log"] == "foxglove.Log"
     assert info.schemas["/metrics/metrics"].startswith("npa.RunMetrics")
@@ -143,6 +147,9 @@ def test_convert_run_directory_round_trip(tmp_path: Path) -> None:
     # Timestamp provenance must be recorded, not implied.
     assert info.metadata["npa"]["timestamps"] == "synthetic-fps"
     assert info.duration_s > 0
+    assert (
+        info.channel_time_ranges["/camera"] == info.channel_time_ranges["/camera/wrist"]
+    )
     assert "foxglove.CompressedImage" in format_mcap_info(info)
 
     # Message payloads must be real, decodable images / values.
@@ -154,7 +161,7 @@ def test_convert_run_directory_round_trip(tmp_path: Path) -> None:
             seen.setdefault(channel.topic, []).append(json.loads(message.data))
             timestamps.append(message.log_time)
 
-    front = seen["/camera/front"][0]
+    front = seen["/camera"][0]
     assert front["format"] == "png"
     assert front["frame_id"] == "front"
     assert base64.b64decode(front["data"])[:8] == b"\x89PNG\r\n\x1a\n"
@@ -177,6 +184,59 @@ def test_convert_run_directory_round_trip(tmp_path: Path) -> None:
     assert len(set(timestamps)) > 1
 
 
+def test_camera_topics_share_synthetic_epoch_and_primary_camera_topic(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("mcap")
+    from PIL import Image
+
+    root = tmp_path / "images"
+    root.mkdir()
+    inputs: list[FrameInput] = []
+    for camera, count in (("camera", 1), ("front", 3), ("wrist", 2)):
+        for index in range(count):
+            path = root / f"{camera}-{index}.png"
+            Image.new("RGB", (4, 4), (index * 20, 40, 80)).save(path)
+            inputs.append(FrameInput(path=path, camera=camera))
+
+    output = tmp_path / "overlap.mcap"
+    summary = write_run_mcap(output=output, frames=inputs, fps=2, start_time_ns=10_000)
+    info = summarize_mcap(output)
+
+    assert summary.channels == {"/camera": 1, "/camera/front": 3, "/camera/wrist": 2}
+    assert info.channel_time_ranges["/camera"]["start_time_ns"] == 10_000
+    assert info.channel_time_ranges["/camera/front"]["start_time_ns"] == 10_000
+    assert info.channel_time_ranges["/camera/wrist"]["start_time_ns"] == 10_000
+    assert info.channel_time_ranges["/camera/front"]["end_time_ns"] == 1_000_010_000
+    assert info.channel_time_ranges["/camera/wrist"]["end_time_ns"] == 500_010_000
+    assert info.metadata["npa"]["synthetic_timeline"] == (
+        "shared-epoch-per-topic-frame-index"
+    )
+    assert info.metadata["npa"]["primary_image_topic"] == "/camera"
+
+
+def test_source_frame_timestamps_are_preserved(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    from PIL import Image
+
+    image = tmp_path / "frame.png"
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(image)
+    output = tmp_path / "source-time.mcap"
+    summary = write_run_mcap(
+        output=output,
+        frames=[FrameInput(path=image, camera="camera", timestamp_ns=123_456_789)],
+        fps=30,
+    )
+    info = summarize_mcap(output)
+
+    assert summary.timestamps == "source"
+    assert info.channel_time_ranges["/camera"] == {
+        "start_time_ns": 123_456_789,
+        "end_time_ns": 123_456_789,
+    }
+    assert info.metadata["npa"]["timestamps"] == "source"
+
+
 def test_write_run_mcap_reports_unreadable_inputs(tmp_path: Path) -> None:
     pytest.importorskip("mcap")
     root = _run_fixture(tmp_path, frames=1)
@@ -195,7 +255,9 @@ def test_write_run_mcap_reports_unreadable_inputs(tmp_path: Path) -> None:
     # The good frame is written; the bad inputs are reported, never faked.
     assert summary.frames == 1
     assert any("broken.json" in item for item in summary.skipped)
-    assert any("broken.png" in item and "unsupported" in item for item in summary.skipped)
+    assert any(
+        "broken.png" in item and "unsupported" in item for item in summary.skipped
+    )
 
 
 def test_inspect_rejects_non_mcap(tmp_path: Path) -> None:
@@ -208,7 +270,9 @@ def test_inspect_rejects_non_mcap(tmp_path: Path) -> None:
         summarize_mcap(tmp_path / "missing.mcap")
 
 
-def test_missing_mcap_dependency_degrades_with_guidance(tmp_path: Path, monkeypatch) -> None:
+def test_missing_mcap_dependency_degrades_with_guidance(
+    tmp_path: Path, monkeypatch
+) -> None:
     import builtins
 
     real_import = builtins.__import__
@@ -232,7 +296,9 @@ def test_image_encoding_is_shared_with_the_lichtblick_writer(tmp_path: Path) -> 
 
     from npa.workbench.foxglove import mcap_writer
 
-    source = Path(inspect_module_source := mcap_writer.__file__).read_text(encoding="utf-8")
+    source = Path(inspect_module_source := mcap_writer.__file__).read_text(
+        encoding="utf-8"
+    )
     assert "encode_frame_to_compressed_bytes" in source, inspect_module_source
     assert "compressed_image_message" in source
 
@@ -260,7 +326,10 @@ def test_metric_field_named_timestamp_is_preserved(tmp_path: Path) -> None:
             json.loads(msg.data) for _s, _c, msg in make_reader(handle).iter_messages()
         )
     # The time struct owns "timestamp"; the payload field keeps its value.
-    assert message["timestamp"] == {"sec": message["timestamp"]["sec"], "nsec": message["timestamp"]["nsec"]}
+    assert message["timestamp"] == {
+        "sec": message["timestamp"]["sec"],
+        "nsec": message["timestamp"]["nsec"],
+    }
     assert message["timestamp_value"] == 12.5
     assert message["success_rate"] == 0.9
 
@@ -278,7 +347,8 @@ def test_metric_series_becomes_a_plottable_curve(tmp_path: Path) -> None:
 
     series = tmp_path / "reward_curve.json"
     series.write_text(
-        json.dumps([{"episode": i, "reward": i * 0.5} for i in range(5)]), encoding="utf-8"
+        json.dumps([{"episode": i, "reward": i * 0.5} for i in range(5)]),
+        encoding="utf-8",
     )
     output = tmp_path / "series.mcap"
 
@@ -289,15 +359,85 @@ def test_metric_series_becomes_a_plottable_curve(tmp_path: Path) -> None:
     assert summary.metrics == 5
     assert summary.channels["/metrics/reward_curve"] == 5
     with output.open("rb") as handle:
-        messages = [json.loads(m.data) for _s, _c, m in make_reader(handle).iter_messages()]
+        messages = [
+            json.loads(m.data) for _s, _c, m in make_reader(handle).iter_messages()
+        ]
     assert [m["episode"] for m in messages] == [0, 1, 2, 3, 4]
     assert [m["reward"] for m in messages] == [0.0, 0.5, 1.0, 1.5, 2.0]
     # Each sample carries its own timestamp so the Plot panel can draw a curve.
-    stamps = [m["timestamp"]["sec"] * 1_000_000_000 + m["timestamp"]["nsec"] for m in messages]
+    stamps = [
+        m["timestamp"]["sec"] * 1_000_000_000 + m["timestamp"]["nsec"] for m in messages
+    ]
     assert stamps == sorted(stamps) and len(set(stamps)) == 5
 
 
-def test_metric_document_that_is_neither_object_nor_records_is_reported(tmp_path: Path) -> None:
+def test_real_state_series_emits_synchronized_pointcloud_and_transform(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    trajectory = tmp_path / "trajectory.json"
+    trajectory.write_text(
+        json.dumps(
+            {
+                "schema": "npa.foxglove.pointcloud-series.v1",
+                "frame_id": "isaac_observation_state",
+                "coordinate_semantics": "state vector grouped into XYZ triples",
+                "samples": [
+                    {
+                        # Must not split this topic from the converter's common
+                        # clock unless the producer declares absolute_ns.
+                        "timestamp_ns": 123,
+                        "points": [[0, 0, 0], [1, 2, 3]],
+                        "colors": [[36, 184, 255], [255, 120, 36]],
+                    },
+                    {
+                        "timestamp_ns": 456,
+                        "points": [[0.1, 0.2, 0.3], [1.1, 2.1, 3.1]],
+                        "colors": [[36, 184, 255], [255, 120, 36]],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "trajectory.mcap"
+    base_ns = 1_786_363_200_000_000_000
+
+    summary = write_run_mcap(
+        output=output,
+        metrics=[MetricsInput(path=trajectory, name="trajectory")],
+        fps=4,
+        start_time_ns=base_ns,
+    )
+
+    assert summary.pointclouds == 2
+    assert summary.transforms == 1
+    assert summary.channels == {"/tf": 1, "/trajectory": 2}
+    info = summarize_mcap(output)
+    assert info.schemas["/trajectory"] == "foxglove.PointCloud"
+    assert info.schemas["/tf"] == "foxglove.FrameTransform"
+    assert info.channel_time_ranges["/trajectory"] == {
+        "start_time_ns": base_ns,
+        "end_time_ns": base_ns + 250_000_000,
+    }
+    with output.open("rb") as handle:
+        messages = [
+            (channel.topic, json.loads(message.data))
+            for _schema, channel, message in make_reader(handle).iter_messages()
+        ]
+    cloud = next(payload for topic, payload in messages if topic == "/trajectory")
+    assert cloud["frame_id"] == "isaac_observation_state"
+    assert cloud["pose"]["orientation"]["w"] == 1
+    transform = next(payload for topic, payload in messages if topic == "/tf")
+    assert transform["parent_frame_id"] == "world"
+    assert transform["child_frame_id"] == "isaac_observation_state"
+
+
+def test_metric_document_that_is_neither_object_nor_records_is_reported(
+    tmp_path: Path,
+) -> None:
     pytest.importorskip("mcap")
     bad = tmp_path / "weird.json"
     bad.write_text("[1, 2, 3]", encoding="utf-8")
@@ -306,7 +446,10 @@ def test_metric_document_that_is_neither_object_nor_records_is_reported(tmp_path
 
     summary = write_run_mcap(
         output=tmp_path / "x.mcap",
-        metrics=[MetricsInput(path=bad, name="weird"), MetricsInput(path=good, name="ok")],
+        metrics=[
+            MetricsInput(path=bad, name="weird"),
+            MetricsInput(path=good, name="ok"),
+        ],
     )
 
     assert summary.metrics == 1

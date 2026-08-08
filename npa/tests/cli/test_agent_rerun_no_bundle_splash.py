@@ -12,7 +12,9 @@ from npa.agent_rerun_bundle_check import (
 from npa.cli.agent import AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT, AGENT_UI_VERSION
 
 AGENT_MODULE = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent.py"
-OLD_MOUNT_BEFORE_WARM = 'Mount the viewer immediately so "Loading application bundle" starts early'
+OLD_MOUNT_BEFORE_WARM = (
+    'Mount the viewer immediately so "Loading application bundle" starts early'
+)
 
 
 def _embedded_ui_html(source: str = "") -> str:
@@ -20,7 +22,6 @@ def _embedded_ui_html(source: str = "") -> str:
     from npa.cli.agent import rendered_agent_ui_html
 
     return rendered_agent_ui_html()
-
 
 
 def test_agent_rerun_no_bundle_splash_contract_in_source() -> None:
@@ -58,18 +59,38 @@ def test_bundle_check_required_markers_include_cover() -> None:
 
     mod_text = Path(bundle_mod.__file__).read_text(encoding="utf-8")
     assert "intentional string-match regression guards" in mod_text
-    assert any("Mount the viewer immediately" in marker for marker in FORBIDDEN_UI_MARKERS)
-    assert any("await waitUntilRerunPastBundleSplash" in marker for marker in FORBIDDEN_UI_MARKERS)
+    assert any(
+        "Mount the viewer immediately" in marker for marker in FORBIDDEN_UI_MARKERS
+    )
+    assert any(
+        "await waitUntilRerunPastBundleSplash" in marker
+        for marker in FORBIDDEN_UI_MARKERS
+    )
 
 
 def test_boot_page_warms_before_mount() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
     ui_html = _embedded_ui_html(source)
-    boot = ui_html.split("async function bootPage")[1].split("function startPeriodicRefresh")[0]
-    assert "await Promise.all([refreshPromise, artifactsPromise, accessPromise, warmPromise])" in boot
+    boot = ui_html.split("async function bootPage")[1].split(
+        "function startPeriodicRefresh"
+    )[0]
+    assert (
+        "await Promise.all([refreshPromise, artifactsPromise, accessPromise, warmPromise])"
+        in boot
+    )
     assert "await ensureFrankaRerunLoaded()" in boot
+    # A restored run can require an expensive exact lookup across tenant S3.
+    # Desktop first paint stays independent of that background discovery.
+    assert 'refreshPromise.then(() => refreshArtifactRuns(""))' in boot
+    assert "await Promise.all([refreshPromise, accessPromise])" in boot
+    assert (
+        "if (defaultRunDiscoveryPromise) return defaultRunDiscoveryPromise" in ui_html
+    )
     # Must not race mount with warm anymore.
-    assert "Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise])" not in boot
+    assert (
+        "Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise])"
+        not in boot
+    )
 
 
 def test_no_loading_application_bundle_without_mount_latency() -> None:
@@ -98,5 +119,7 @@ def test_run_load_soft_swaps_recording_without_wasm_remount() -> None:
         "async function mountRerunIframeUntilSuccess"
     )[0]
     assert "await swapRerunRecordingInPlace" in mount_src
-    load_art = ui_html.split("async function loadArtifact(payload)")[1].split("async function refresh()")[0]
+    load_art = ui_html.split("async function loadArtifact(payload, uiState)")[1].split(
+        "async function refresh()"
+    )[0]
     assert "swapRerunRecordingInPlace" in load_art

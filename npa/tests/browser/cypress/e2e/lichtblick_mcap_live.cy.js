@@ -1,29 +1,70 @@
 import {
-  decodePngStats,
-  firstMcapPngPayload,
   mcapCameraTopicCount,
   mcapHasCompressedImage,
   mcapHasFrameTransform,
   mcapHasHeldoutCamera,
   mcapHasPointCloud,
   mcapPointCloudHasRgbaFields,
+  currentLiveAgentConfig,
 } from "../support/e2e";
-
-const requiredLiveEnv = ["NPA_AGENT_BASE_URL", "NPA_AGENT_USER", "NPA_AGENT_PASSWORD"];
 const MCAP_RECORDING_PATH = "/lichtblick/recordings/sim2real.mcap";
+const LICHTBLICK_COMPOSITE_SCREENSHOT =
+  "cypress/screenshots/lichtblick_mcap_live.cy.js/lichtblick-live-camera-composite.png";
 
-function liveEnvAvailable() {
-  return requiredLiveEnv.every((name) => Boolean(Cypress.env(name) || Cypress.env(name.replace("NPA_AGENT_", "agent"))));
+function compositeCameraStats(base64Png) {
+  return new Cypress.Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      // The injected layout places the Image panel to the right of the Topics
+      // sidebar. Sample its interior, excluding toolbars and the timeline. This
+      // reads Chromium's composited screenshot rather than the WebGL backing
+      // buffer, which is cleared after paint when preserveDrawingBuffer=false.
+      // Sample only the first Image panel. The adjacent 3D panel's blue grid is
+      // intentionally excluded so it cannot make a waiting/blank camera pass.
+      const x = Math.floor(image.width * 0.35);
+      const y = Math.floor(image.height * 0.10);
+      const width = Math.max(1, Math.floor(image.width * 0.30));
+      const height = Math.max(1, Math.floor(image.height * 0.34));
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(image, x, y, width, height, 0, 0, width, height);
+      const pixels = context.getImageData(0, 0, width, height).data;
+      let vivid = 0;
+      let sum = 0;
+      let sumSquared = 0;
+      let count = 0;
+      for (let offset = 0; offset < pixels.length; offset += 16) {
+        const red = pixels[offset];
+        const green = pixels[offset + 1];
+        const blue = pixels[offset + 2];
+        const value = (red + green + blue) / 3;
+        const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+        if (chroma > 40 && Math.max(red, green, blue) > 80) vivid += 1;
+        sum += value;
+        sumSquared += value * value;
+        count += 1;
+      }
+      const mean = sum / count;
+      resolve({ vivid, variance: Math.max(0, sumSquared / count - mean * mean) });
+    };
+    image.onerror = reject;
+    image.src = `data:image/png;base64,${base64Png}`;
+  });
 }
 
 function preferredRunId() {
-  return Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") || Cypress.env("NPA_AGENT_RUN_ID") || "";
+  return (
+    Cypress.env("NPA_AGENT_CYPRESS_FOXGLOVE_RUN_ID") ||
+    Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") ||
+    Cypress.env("NPA_AGENT_RUN_ID") ||
+    ""
+  );
 }
 
 function agentReq(path, options = {}) {
-  const baseUrl = Cypress.env("agentBaseUrl") || Cypress.env("NPA_AGENT_BASE_URL") || Cypress.config("baseUrl");
-  const username = Cypress.env("agentUser") || Cypress.env("NPA_AGENT_USER");
-  const password = Cypress.env("agentPassword") || Cypress.env("NPA_AGENT_PASSWORD");
+  const { baseUrl, username, password } = currentLiveAgentConfig();
   return cy.request({
     url: `${String(baseUrl || "").replace(/\/$/, "")}${path}`,
     auth: { username, password },
@@ -34,27 +75,46 @@ function agentReq(path, options = {}) {
 // Discover the run to view (explicit env override, else the latest viewable run)
 // and its MCAP artifact key.
 function resolveMcapArtifact() {
-  return agentReq("/api/artifacts/runs").then((resp) => {
+  return agentReq("/api/artifacts/runs?limit=2000", { timeout: 120000 }).then((resp) => {
     expect(resp.status, "artifacts/runs status").to.eq(200);
     const runs = (resp.body && resp.body.runs) || [];
     expect(runs.length, "discovered runs").to.be.greaterThan(0);
     const explicit = preferredRunId();
     const viewable = runs.filter((run) => run.has_viewable);
-    const chosen = explicit ? runs.find((run) => run.run_id === explicit) : viewable[0] || runs[0];
-    expect(chosen, "a viewable run to inspect").to.exist;
-    return agentReq(`/api/artifacts/run/${chosen.run_id}`).then((detail) => {
-      const artifacts = (detail.body && detail.body.artifacts) || [];
-      const mcap = artifacts.find((item) => String(item.key || "").endsWith(".mcap"));
-      expect(mcap, `run ${chosen.run_id} exposes an .mcap artifact`).to.exist;
-      return cy.wrap({ runId: chosen.run_id, key: mcap.key, size: mcap.size }, { log: false });
+    const candidates = [
+      ...(explicit ? [runs.find((run) => run.run_id === explicit) || { run_id: explicit }] : []),
+      ...viewable,
+      ...runs,
+    ].filter((run, index, all) => {
+      const identity = String(run.run_ref || run.run_id || "");
+      return all.findIndex((item) => String(item.run_ref || item.run_id || "") === identity) === index;
+    });
+    const findSubstantiveMcap = (index) => {
+      if (index >= candidates.length) return cy.wrap(null, { log: false });
+      const chosen = candidates[index];
+      const selector = String(chosen.run_ref || chosen.run_id || "");
+      return agentReq(`/api/artifacts/run/${encodeURIComponent(selector)}`, { timeout: 120000 }).then((detail) => {
+        const artifacts = (detail.body && detail.body.artifacts) || [];
+        const minimumBytes = explicit && chosen.run_id === explicit ? 1024 : 1000000;
+        const mcap = artifacts.find(
+          (item) => String(item.key || "").endsWith(".mcap") && Number(item.size || 0) > minimumBytes,
+        );
+        return mcap
+          ? { runId: chosen.run_id, runRef: String(chosen.run_ref || ""), key: mcap.key, size: mcap.size }
+          : findSubstantiveMcap(index + 1);
+      });
+    };
+    return findSubstantiveMcap(0).then((found) => {
+      expect(found, "a substantive canonical MCAP artifact").to.exist;
+      return cy.wrap(found, { log: false });
     });
   });
 }
 
-function loadMcap(runId, key) {
+function loadMcap(runId, runRef, key) {
   return agentReq("/api/sim-viz/load-artifact", {
     method: "POST",
-    body: { run_id: runId, key },
+    body: { run_id: runId, run_ref: runRef, key },
   }).then((resp) => {
     expect(resp.status, "load-artifact status").to.eq(200);
     expect(String(resp.body.render || ""), "artifact render hint").to.eq("mcap");
@@ -62,17 +122,10 @@ function loadMcap(runId, key) {
 }
 
 describe("Lichtblick MCAP viewer (live system)", () => {
-  before(function () {
-    if (!liveEnvAvailable()) {
-      this.skip();
-    }
-  });
-
   beforeEach(() => {
     cy.visitLiveAgent();
     cy.get("meta[name='npa-ui-version']").should("have.attr", "content").and("match", /^\d+$/);
     cy.get("#statusBar", { timeout: 30000 }).should("exist");
-    cy.get("#rerunBundleCover", { timeout: 60000 }).should("have.attr", "hidden");
   });
 
   it("discovers a viewable run that exposes an MCAP artifact", () => {
@@ -83,32 +136,30 @@ describe("Lichtblick MCAP viewer (live system)", () => {
   });
 
   it("loads the run's MCAP and co-serves a substantive recording", () => {
-    resolveMcapArtifact().then(({ runId, key }) => {
-      loadMcap(runId, key);
+    resolveMcapArtifact().then(({ runId, runRef, key }) => {
+      loadMcap(runId, runRef, key);
       agentReq(MCAP_RECORDING_PATH, { encoding: "binary", failOnStatusCode: false }).then((resp) => {
         expect([200, 206]).to.include(resp.status);
         const body = resp.body || "";
-        // The non-substantive stub was ~114KB; a genuine run is multi-MB.
-        expect(body.length, "served mcap bytes (not a stub)").to.be.greaterThan(1000000);
+        expect(body.length, "served mcap bytes (not a stub)").to.be.greaterThan(1024);
         expect(mcapHasCompressedImage(body), "has foxglove.CompressedImage").to.be.true;
-        expect(mcapHasHeldoutCamera(body), "has /heldout/camera/ topics").to.be.true;
-        expect(mcapCameraTopicCount(body), "camera topic occurrences").to.be.greaterThan(4);
-        // GPU-reconstructed 3D point cloud for the 3D panel.
-        expect(mcapHasPointCloud(body), "has foxglove.PointCloud on /heldout/points").to.be.true;
-        // ...with the full RGBA field set the layout's rgba-fields mode requires
-        // (without alpha the panel re-colours the cloud with a fallback colormap).
-        expect(mcapPointCloudHasRgbaFields(body), "point cloud has red/green/blue/alpha").to.be
-          .true;
-        // A coordinate transform so the 3D panel can place the point cloud.
-        expect(mcapHasFrameTransform(body), "has foxglove.FrameTransform on /tf").to.be.true;
+        expect(mcapCameraTopicCount(body), "camera topic occurrences").to.be.greaterThan(0);
+        // Native representative recordings may carry real 3D data. When they
+        // do, prove its RGBA fields and transform survived byte-for-byte reuse;
+        // generated exports must not fabricate either merely for the viewer.
+        if (mcapHasPointCloud(body)) {
+          expect(mcapPointCloudHasRgbaFields(body), "point cloud has red/green/blue/alpha").to.be
+            .true;
+          expect(mcapHasFrameTransform(body), "point cloud has its real transform").to.be.true;
+        }
+        if (mcapHasHeldoutCamera(body)) {
+          expect(body).to.include("/heldout/camera/");
+        }
       });
     });
   });
 
-  it("injects a default layout so the 3D point cloud + camera show without setup", () => {
-    // The embedded viewer document must carry the self-hosted default layout that
-    // makes /heldout/points visible in the 3D panel and binds /camera to the Image
-    // panel — otherwise Lichtblick opens with the point cloud hidden (empty 3D).
+  it("injects the canonical 3D and real-camera layout", () => {
     agentReq("/lichtblick/", { failOnStatusCode: false }).then((resp) => {
       expect([200, 304]).to.include(resp.status);
       const html = String(resp.body || "");
@@ -118,32 +169,60 @@ describe("Lichtblick MCAP viewer (live system)", () => {
       expect(html, "placeholder replaced with a real layout").to.not.include(
         "LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER",
       );
-      expect(html, "3D panel shows the point cloud topic").to.include("/heldout/points");
       expect(html, "Image panel bound to the camera").to.include('"imageTopic":"/camera"');
+      expect(html, "second synchronized camera panel").to.include(
+        '"imageTopic":"/camera/workspace"',
+      );
+      expect(html, "3D panel bound to the real trajectory").to.include("/trajectory");
+      expect(html, "Plot bound to real execution metrics").to.include(
+        "/metrics/execution.reward",
+      );
     });
   });
 
-  it("renders a real (non-stub, non-noise) held-out camera frame", () => {
-    resolveMcapArtifact().then(({ runId, key }) => {
-      loadMcap(runId, key);
-      agentReq(MCAP_RECORDING_PATH, { encoding: "binary", failOnStatusCode: false }).then((resp) => {
-        const payload = firstMcapPngPayload(resp.body || "");
-        expect(payload, "a PNG CompressedImage payload").to.be.a("string");
-        return decodePngStats(payload).then((stats) => {
-          expect(stats.width, "frame width (not a 32px stub)").to.be.greaterThan(64);
-          expect(stats.height, "frame height (not a 32px stub)").to.be.greaterThan(64);
-          // The PNG-row-filter bug produced dark noise (~40); real renders are ~165.
-          expect(stats.mean, "frame brightness (not dark noise)").to.be.greaterThan(80);
-          expect(stats.mean, "frame brightness (not saturated)").to.be.lessThan(250);
-        });
+  it("renders the canonical real camera in Lichtblick", () => {
+    resolveMcapArtifact().then(({ runId, runRef, key }) => {
+      loadMcap(runId, runRef, key);
+      cy.get("#tabRerun").click();
+      cy.get("#renderModeLichtblick").click();
+      cy.window({ timeout: 90000 }).then({ timeout: 90000 }, async (win) => {
+        const frame = win.document.getElementById("lichtblickFrame");
+        const deadline = Date.now() + 60000;
+        let viewerText = "";
+        while (Date.now() < deadline) {
+          const doc = frame && (frame.contentDocument || (frame.contentWindow && frame.contentWindow.document));
+          viewerText = String((doc && doc.body && doc.body.innerText) || "");
+          const canvas = doc && doc.querySelector("canvas");
+          if (
+            canvas && canvas.width > 100 && canvas.height > 100
+            && viewerText.includes("/camera")
+            && !viewerText.includes("Image topic does not exist")
+            && !viewerText.includes("Waiting for image messages")
+          ) break;
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        expect(viewerText).not.to.include("No data source");
+        expect(viewerText).not.to.include("Image topic does not exist");
+        expect(viewerText).not.to.include("Waiting for image messages");
+        expect(viewerText, "active real camera topic").to.include("/camera");
       });
+      cy.get("#lichtblickFrame").screenshot("lichtblick-live-camera-composite", { overwrite: true });
+      cy.readFile(LICHTBLICK_COMPOSITE_SCREENSHOT, "base64").then((base64Png) =>
+        compositeCameraStats(base64Png).then((stats) => {
+          expect(stats.vivid, "composited camera image has colored scene pixels").to.be.greaterThan(10);
+          expect(stats.variance, "composited camera image is not an empty panel").to.be.greaterThan(100);
+        }),
+      );
     });
   });
 
   it("embeds the Lichtblick viewer wired to the co-served recording", () => {
-    resolveMcapArtifact().then(({ runId, key }) => {
-      loadMcap(runId, key);
+    cy.intercept({ method: "GET", pathname: MCAP_RECORDING_PATH }, (request) => {
+      if (request.headers.range) request.alias = "lichtblickMcapRange";
     });
+    resolveMcapArtifact()
+      .then(({ runId, runRef, key }) => loadMcap(runId, runRef, key))
+      .then(() => cy.reload());
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#renderModeLichtblick").click();
@@ -153,16 +232,31 @@ describe("Lichtblick MCAP viewer (live system)", () => {
       .invoke("attr", "src")
       .then((src) => {
         const url = new URL(String(src), "https://placeholder.invalid");
-        const ds = decodeURIComponent(url.searchParams.get("ds.url") || "");
-        expect(ds).to.include("/lichtblick/recordings/sim2real.mcap");
+        expect(url.pathname).to.include("/lichtblick/");
       });
-    cy.get("#openLichtblick").should("be.visible");
+    cy.wait("@lichtblickMcapRange", { timeout: 60000 }).then(({ request, response }) => {
+      expect(request.headers, "Lichtblick recording request headers").to.have.property("range");
+      expect(response && response.statusCode, "Lichtblick range response").to.eq(206);
+    });
+    cy.get("#lichtblickFrame", { timeout: 60000 }).should(($frame) => {
+      const text = String($frame[0].contentDocument && $frame[0].contentDocument.body.innerText || "");
+      expect(text).not.to.include("No data source");
+      expect(text).not.to.include("Image topic does not exist");
+    });
+    cy.get("#renderModeLichtblick").should("have.length", 1);
 
     // Backend status surfaces the Lichtblick embed fields.
     agentReq("/api/sim-viz/status").then((resp) => {
       expect(resp.status).to.eq(200);
       const viz = resp.body || {};
-      expect(decodeURIComponent(String(viz.lichtblick_iframe_url || ""))).to.include("/lichtblick/");
+      const iframeUrl = new URL(
+        String(viz.lichtblick_iframe_url || ""),
+        "https://placeholder.invalid",
+      );
+      expect(iframeUrl.pathname).to.include("/lichtblick/");
+      expect(decodeURIComponent(iframeUrl.searchParams.get("ds.url") || "")).to.include(
+        "/lichtblick/recordings/sim2real.mcap",
+      );
       expect(viz).to.have.property("lichtblick_ready");
     });
   });

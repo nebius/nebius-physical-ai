@@ -27,6 +27,16 @@ from npa.cli.agent import (
 runner = CliRunner()
 
 
+def _terraform_pass_result():
+    from npa.workflows.sim2real_health import CheckResult, PASS
+
+    return CheckResult(
+        name="terraform",
+        status=PASS,
+        summary="Terraform CLI 1.13.3 satisfies the supported 1.x policy.",
+    )
+
+
 def test_artifact_only_live_probe_is_read_only_and_state_stable() -> None:
     from npa.cli.agent import _artifact_only_http_probe
 
@@ -72,7 +82,8 @@ def test_fresh_deploy_refuses_nonempty_remote_state_before_apply(
 
     applied = False
     monkeypatch.setattr(
-        "npa.cli.agent.provisioner.prepare_working_dir", lambda *_args, **_kwargs: tmp_path
+        "npa.cli.agent.provisioner.prepare_working_dir",
+        lambda *_args, **_kwargs: tmp_path,
     )
     monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
     monkeypatch.setattr(
@@ -86,7 +97,9 @@ def test_fresh_deploy_refuses_nonempty_remote_state_before_apply(
         return {}
 
     monkeypatch.setattr("npa.cli.agent.provisioner.apply", apply)
-    with pytest.raises(DeploymentIdentityError, match="no matching immutable agent record"):
+    with pytest.raises(
+        DeploymentIdentityError, match="no matching immutable agent record"
+    ):
         _apply_agent_terraform(
             project="project-a",
             name="agent-a",
@@ -144,7 +157,8 @@ def _mock_fresh_deploy_until_terraform(monkeypatch, tmp_path) -> tuple[dict, lis
         lambda _key: SimpleNamespace(status="PASS"),
     )
     monkeypatch.setattr(
-        "npa.clients.nebius.bootstrap_agent_environment", lambda *_args, **_kwargs: creds
+        "npa.clients.nebius.bootstrap_agent_environment",
+        lambda *_args, **_kwargs: creds,
     )
     monkeypatch.setattr(
         "npa.cli.agent._resolve_deploy_storage_credentials", lambda **_kwargs: creds
@@ -262,7 +276,9 @@ def test_fresh_deploy_remote_state_refusal_leaves_no_record(
 def test_destroy_refuses_terraform_state_without_agent_record(monkeypatch) -> None:
     destroyed = False
     monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
-    monkeypatch.setattr("npa.cli.agent._agent_terraform_state_exists", lambda *_args: True)
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_terraform_state_exists", lambda *_args: True
+    )
 
     def destroy(*_args, **_kwargs):
         nonlocal destroyed
@@ -298,7 +314,9 @@ def test_deploy_refuses_local_state_without_agent_record(monkeypatch) -> None:
         "npa.cli.agent.build_deployment_manifest", lambda **_kwargs: deployment
     )
     monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
-    monkeypatch.setattr("npa.cli.agent._agent_terraform_state_exists", lambda *_args: True)
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_terraform_state_exists", lambda *_args: True
+    )
 
     def store(*_args, **_kwargs):
         nonlocal mutated
@@ -353,9 +371,13 @@ def test_status_is_unhealthy_on_live_deployment_mismatch(monkeypatch) -> None:
     live = dict(deployment)
     live["commit"] = "c" * 40
     monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: record)
-    monkeypatch.setattr("npa.cli.agent._load_auth_secret", lambda _path: ("npa", "secret"))
+    monkeypatch.setattr(
+        "npa.cli.agent._load_auth_secret", lambda _path: ("npa", "secret")
+    )
     monkeypatch.setattr("npa.cli.agent._health", lambda *_args, **_kwargs: (True, 200))
-    monkeypatch.setattr("npa.cli.agent.fetch_live_deployment", lambda *_args, **_kwargs: live)
+    monkeypatch.setattr(
+        "npa.cli.agent.fetch_live_deployment", lambda *_args, **_kwargs: live
+    )
     result = runner.invoke(
         app, ["status", "--project", "project-a", "--name", "agent", "--json"]
     )
@@ -844,7 +866,9 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(
         "npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "model-a")
     )
-    monkeypatch.setattr("npa.cli.agent._resolve_operator_credentials", lambda: ("", ""))
+    monkeypatch.setattr(
+        "npa.cli.agent._resolve_operator_credentials", lambda: ("", "", "")
+    )
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **_kwargs: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **_kwargs: None)
     monkeypatch.setattr("npa.cli.agent.write_config", _write_config)
@@ -854,6 +878,7 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr("npa.cli.agent._agent_terraform_result", _terraform_pass_result)
 
     deploy_cmd(
         project="fresh",
@@ -904,6 +929,16 @@ def test_bootstrap_nginx_serves_rerun_recording_to_same_origin_wasm() -> None:
         "location ~* ^/rerun/", 1
     )[0]
     assert "return 404;" in denied_location
+    assert "location = /lichtblick/recordings/sim2real.mcap" in source
+    assert (
+        "proxy_pass http://127.0.0.1:{backend_port}/lichtblick-recordings/sim2real.mcap;"
+        in source
+    )
+    assert (
+        '@app.api_route("/lichtblick-recordings/sim2real.mcap", methods=["GET", "HEAD"])'
+        in source
+    )
+    assert '"X-NPA-File-Size": str(MCAP_RECORDING_PATH.stat().st_size)' in source
     rerun_viewer_location = source.split("location /rerun/ {{", 1)[1].split(
         "location / {{", 1
     )[0]
@@ -917,7 +952,7 @@ def test_bootstrap_nginx_serves_rerun_recording_to_same_origin_wasm() -> None:
 def test_bootstrap_embeds_lichtblick_viewer() -> None:
     source = _agent_source()
     # nginx: co-serve the MCAP same-origin and proxy the viewer sidecar.
-    assert "location /lichtblick/recordings/" in source
+    assert "location = /lichtblick/recordings/sim2real.mcap" in source
     assert "location /lichtblick/ {{" in source
     assert "proxy_pass http://127.0.0.1:{lichtblick_port}/;" in source
     # backend: sim-viz status carries the Lichtblick embed fields.
@@ -926,6 +961,7 @@ def test_bootstrap_embeds_lichtblick_viewer() -> None:
         in source
     )
     assert "def _lichtblick_iframe_url" in source
+    assert "start_time_ns=start_time_ns" in source
     assert '"lichtblick_ready": False,' in source
     assert '"lichtblick_iframe_url": "/lichtblick/",' in source
     assert "def _publish_mcap_recording" in source
@@ -941,20 +977,38 @@ def test_bootstrap_embeds_lichtblick_viewer() -> None:
     assert "npa-lichtblick image acquired from" in source
 
 
-def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
-    """The MCAP alias is unauthenticated, so it must not be CORS-readable.
+def test_foxglove_recording_emits_only_nginx_native_accept_ranges() -> None:
+    """Do not duplicate nginx's native static-file Accept-Ranges header."""
+
+    source = _agent_source()
+    recording_location = source.split("location /foxglove/data/ {{", 1)[1].split(
+        "location /foxglove/ {{", 1
+    )[0]
+    directives = [
+        line.strip()
+        for line in recording_location.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    assert "add_header Accept-Ranges bytes always;" not in directives
+    expose_header = (
+        "add_header Access-Control-Expose-Headers "
+        '"Accept-Ranges, Content-Range, Content-Length" always;'
+    )
+    assert expose_header in directives
+
+
+def test_lichtblick_recordings_grant_only_same_agent_origin_read() -> None:
+    """The unauthenticated MCAP must never be readable by arbitrary origins.
 
     A run's MCAP carries camera frames, VLM critiques and reward signals, and the
-    location runs with ``auth_basic off`` (wasm/worker fetches cannot carry basic
-    auth). A wildcard ``Access-Control-Allow-Origin`` would let any page a viewer
-    visits read those recordings off this host; the embed is same-origin and needs
-    no CORS grant at all.
+    Browser workers need size/range response headers exposed, but the allowed
+    origin is pinned to this exact agent scheme/host rather than reflected or `*`.
     """
 
     source = _agent_source()
-    recordings_location = source.split("location /lichtblick/recordings/ {{", 1)[
-        1
-    ].split("location = /lichtblick/ {{", 1)[0]
+    recordings_location = source.split(
+        "location = /lichtblick/recordings/sim2real.mcap {{", 1
+    )[1].split("location = /lichtblick/ {{", 1)[0]
     # Compare directives only: the block's comment names these headers to explain
     # why they are absent, so a bare substring check would match the prose.
     directives = [
@@ -963,9 +1017,35 @@ def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
         if line.strip() and not line.strip().startswith("#")
     ]
     assert "auth_basic off;" in directives
-    granted = [line for line in directives if "Access-Control" in line]
-    assert not granted, f"recordings must grant no CORS access, got {granted}"
+    assert (
+        'add_header Access-Control-Allow-Origin "$scheme://$http_host" always;'
+        in directives
+    )
+    assert "add_header Access-Control-Allow-Origin * always;" not in directives
+    assert not any("$http_origin" in line for line in directives)
+    assert any(
+        "Access-Control-Expose-Headers" in line
+        and "Content-Length" in line
+        and "X-NPA-File-Size" in line
+        for line in directives
+    )
+    assert 'add_header Cache-Control "no-store, no-transform" always;' in directives
     assert 'add_header Cross-Origin-Resource-Policy "same-origin" always;' in directives
+
+
+def test_lichtblick_bundle_accepts_truthful_canonical_size_fallback() -> None:
+    """A chunked initial GET must not prevent Lichtblick's range reader."""
+
+    source = _agent_source()
+    viewer_location = source.split("location /lichtblick/ {{", 1)[1].split(
+        "location / {{", 1
+    )[0]
+    assert 'proxy_set_header Accept-Encoding "";' in viewer_location
+    assert "sub_filter_types application/javascript text/javascript;" in viewer_location
+    assert (
+        'i.headers.get("content-length")??i.headers.get("x-npa-file-size")'
+        in viewer_location
+    )
 
 
 def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
@@ -997,12 +1077,15 @@ def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() ->
     assert "if (lichtblickNeedsLayoutSeed()) {" in mount
     reset_calls = mount.count("resetLichtblickLayoutStorage()")
     assert reset_calls == 1, f"expected one guarded wipe, found {reset_calls}"
+    assert 'let lichtblickPendingSrc = "";' in source
+    assert "if (!lichtblickResetInFlight)" in mount
+    assert 'iframe.setAttribute("src", lichtblickPendingSrc || "/lichtblick/")' in mount
 
 
 def test_bootstrap_injects_lichtblick_default_layout() -> None:
     source = _agent_source()
     # The viewer document is exact-matched so nginx can inject a default layout via
-    # the upstream-provided placeholder, so the point cloud + camera show on load.
+    # the upstream-provided placeholder, retaining the current 3D + camera layout.
     assert "location = /lichtblick/ {{" in source
     assert (
         "sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';"
@@ -1014,11 +1097,24 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
 
     layout = json.loads(agent_site_module._lichtblick_default_layout_json())
     panels = layout["configById"]
-    three_d = next(v for k, v in panels.items() if k.startswith("3D!"))
-    assert three_d["topics"]["/heldout/points"]["visible"] is True
-    assert three_d["followTf"] == "sim2real"
-    image = next(v for k, v in panels.items() if k.startswith("Image!"))
-    assert image["imageMode"]["imageTopic"] == "/camera"
+    assert any(k.startswith("3D!") for k in panels)
+    image_topics = {
+        value["imageMode"]["imageTopic"]
+        for key, value in panels.items()
+        if key.startswith("Image!")
+    }
+    assert image_topics == {"/camera", "/camera/workspace"}
+    scene = panels["3D!npasim2real"]
+    assert scene["followTf"] == "world"
+    assert scene["topics"]["/trajectory"]["visible"] is True
+    plot = panels["Plot!npametrics"]
+    assert [path["value"] for path in plot["paths"]] == [
+        "/metrics/execution.reward",
+        "/metrics/execution.progress",
+        "/metrics/execution.state_norm",
+    ]
+    assert layout["layout"]["first"]["first"] == "Image!npacamera"
+    assert layout["layout"]["second"]["first"] == "3D!npasim2real"
 
 
 def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
@@ -1027,20 +1123,48 @@ def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
     assert 'data-render-mode="lichtblick"' in source
     assert 'id="lichtblickFrame"' in source
     assert 'id="viewerPaneLichtblick"' in source
-    assert 'bindClick("openLichtblick"' in source
-    assert 'bindClick("loadLichtblickViewer"' in source
+    assert source.count('id="renderModeLichtblick"') == 1
+    assert 'id="openFullLichtblick"' not in source
+    assert 'id="openLichtblick"' not in source
+    assert 'id="loadLichtblickViewer"' not in source
     assert "function applyLichtblickSimViz" in source
     assert "function mountLichtblickIframe" in source
     assert "View in Lichtblick" in source
 
 
+def test_ui_prefers_secure_run_key_resolution_over_advertised_s3_uri() -> None:
+    source = _agent_ui_bundle()
+    loader = source.split("async function loadArtifact(payload, uiState)", 1)[1].split(
+        "async function", 1
+    )[0]
+    assert 's3_uri: (runRef || (runId && key)) ? "" :' in loader
+    assert "run_ref: runRef" in loader
+    assert "expectedTabGeneration" in loader
+    assert "_expected_tab_generation" not in loader
+
+
 def test_bootstrap_ui_lichtblick_autoloads_run_mcap() -> None:
-    # Clicking the Lichtblick tab / reload finds and loads the run's .mcap directly,
+    # Clicking the Lichtblick tab finds and loads the run's .mcap directly,
     # and the artifact type filter exposes an 'mcap' option so it is discoverable.
     source = _agent_ui_bundle()
     assert "function ensureLichtblickForActiveRun" in source
     assert '<option value="mcap">' in source
     assert "ensureLichtblickForActiveRun()" in source
+
+
+def test_canonical_mcap_ui_refresh_and_stale_run_contract() -> None:
+    source = _agent_ui_bundle()
+    from npa.cli import agent_viewer_runtime
+
+    viewer_source = Path(agent_viewer_runtime.__file__).read_text(encoding="utf-8")
+
+    assert "Persistent S3 canonical:" in source
+    assert "Ephemeral transport:" in source
+    assert "Foxglove Cloud:" in source
+    assert "suppressPreferredAutoload" in source
+    assert "The active run changed while MCAP export was running" in source
+    assert "clear_cross_run_mcap_state(sim_viz, run_id)" in viewer_source
+    assert "**CANONICAL_MCAP_DEFAULT_STATE" in source
 
 
 def test_bootstrap_artifact_file_transcodes_ppm_to_png() -> None:
@@ -1463,8 +1587,10 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "reference proxy context" in source
     from npa.cli import agent as agent_module
 
-    stage_runtime = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
-        encoding="utf-8"
+    stage_runtime = (
+        Path(agent_module.__file__)
+        .with_name("agent_stage_runtime.py")
+        .read_text(encoding="utf-8")
     )
     assert "def _artifact_backed_run_details" in stage_runtime
     assert "def _workflow_stage_defs_from_state" in stage_runtime
@@ -1473,7 +1599,9 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "runDetailsRequestId" in source
     assert "runDetailsAbortController" in source
     assert "execution status unavailable" in source
-    assert "Never let a sparse update erase richer artifact fields from load-run" in source
+    assert (
+        "Never let a sparse update erase richer artifact fields from load-run" in source
+    )
     assert "Read-only: do not _record/_save here" in source
     assert (
         "Always use the stock demo run id and clear any prior media-artifact preview"
@@ -1716,17 +1844,22 @@ def test_default_run_discovery_is_generic_not_hardcoded() -> None:
     """Default (no-prefix) run discovery must scan the bucket generically
     (enumerate category folders under every root from S3), NOT hardcode any
     workflow path, and drop the agent's own infra roots from the listing."""
+    from npa.agent_backend import artifact_routes
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    # Generic scan across all roots in configured buckets; no hardcoded workflow
-    # prefixes. The no-prefix endpoint calls the multi-bucket cached wrapper.
-    assert "list_runs_cached_multi(" in source
-    assert "exclude=_discovery_exclude_roots()" in source
+    route_source = Path(artifact_routes.__file__).read_text(encoding="utf-8")
+    # Generic scan across all bucket roots AND every accessible bucket; no
+    # hardcoded workflow prefixes. The no-prefix endpoint calls the multi-bucket
+    # cached wrapper (which discovers via list_all_runs per bucket under the hood).
+    assert "deps.list_runs_cached_multi(" in route_source
+    assert "exclude=deps.discovery_excludes()" in route_source
     assert "AGENT_DEFAULT_WORKFLOW_PREFIXES" not in source
     # Per-run lookup falls back to a generic cross-category, cross-bucket find.
-    runtime = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
-        encoding="utf-8"
+    runtime = (
+        Path(agent_module.__file__)
+        .with_name("agent_stage_runtime.py")
+        .read_text(encoding="utf-8")
     )
     assert "find_run_artifacts_across_buckets(" in runtime
 
@@ -1738,19 +1871,24 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     """
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
-        encoding="utf-8"
+    source = (
+        Path(agent_module.__file__)
+        .with_name("agent_stage_runtime.py")
+        .read_text(encoding="utf-8")
     )
     # Backend resolves the run generically across categories (no prefix needed).
     assert "def _artifact_backed_run_details(" in source
-    assert "resource_bucket: str = \"\"" in source
+    assert 'resource_bucket: str = ""' in source
     assert "find_run_artifacts_across_buckets(" in source
     # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
     assert "body: JSON.stringify({ run_id: targetRunId, run_ref: targetRunRef })" in ui
     assert 'entry.source_type === "artifact_storage"' in ui
-    assert "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })" in ui
+    assert (
+        "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })"
+        in ui
+    )
     assert "prefix: artifactPrefixValue()" not in ui
     assert 'params.set("resource_bucket", resourceBucket)' in ui
     assert 'params.set("resolved_prefix", resolvedPrefix)' in ui
@@ -2047,7 +2185,12 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp({"ok": True, "agent_npa_ready": True})
         if url_s.endswith("/api/workflows/sim2real/status"):
             workflow_status_timeouts.append(float(_kwargs["timeout"]))
-            return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
+            return _Resp(
+                {
+                    "latest_submit": {"run_id": "agent-run-123"},
+                    "sim_viz": {"stage": "demo"},
+                }
+            )
         if url_s.endswith("/welcome"):
             return _Resp("<html>NPA Agent is running</html>", status_code=200)
         if url_s.endswith("/healthz"):
@@ -2067,7 +2210,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<div id="stagesPanel"><h3>Stages</h3>'
                 '<div class="stages-run-picker">'
                 '<select id="stagesRunSelect"></select>'
-                '<label>Search NPA workflow/artifact runs</label>'
+                "<label>Search NPA workflow/artifact runs</label>"
                 '<input id="stagesRunInput" />'
                 '<button id="stagesLoadRun"></button></div></div>'
                 "<script>function loadSelectedRun(){} function syncRunChooserFields(){} "
@@ -2593,6 +2736,63 @@ def test_bootstrap_installs_boto3_for_artifact_endpoints() -> None:
     assert "pip install fastapi uvicorn httpx pyyaml boto3" in source
 
 
+def test_bootstrap_waits_for_backend_health_before_identity_probe() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "until curl -fsS http://127.0.0.1:{backend_port}/health" in source
+    assert source.index(
+        "until curl -fsS http://127.0.0.1:{backend_port}/health"
+    ) < source.index("verify_remote_deployment(ssh, deployment")
+
+
+def test_standard_live_cypress_runner_includes_every_live_spec() -> None:
+    browser_root = Path(__file__).parents[1] / "browser"
+    package = json.loads((browser_root / "package.json").read_text(encoding="utf-8"))
+    command = package["scripts"]["cy:live"]
+    live_specs = sorted((browser_root / "cypress" / "e2e").glob("*_live.cy.js"))
+
+    for path in live_specs:
+        assert f"cypress/e2e/{path.name}" in command
+    assert any(path.name == "agent_foxglove_live.cy.js" for path in live_specs)
+    assert live_specs
+    runner = (
+        Path(__file__).parents[2] / "scripts" / "run_agent_cypress.sh"
+    ).read_text()
+    assert 'if [[ -n "${LIVE_ARTIFACT_KEY}" ]]' in runner
+    assert 'if [[ -z "${LIVE_RUN_ID}" ]]' in runner
+
+
+def test_standard_mock_cypress_runner_includes_every_mock_relevant_spec() -> None:
+    browser_root = Path(__file__).parents[1] / "browser"
+    package = json.loads((browser_root / "package.json").read_text(encoding="utf-8"))
+    command = package["scripts"]["cy:mock"]
+    required = {
+        "agent_mocked.cy.js",
+        "agent_foxglove.cy.js",
+    }
+
+    for name in required:
+        assert f"cypress/e2e/{name}" in command
+    assert command.count("agent_foxglove.cy.js") == 1
+
+
+def test_ui_keeps_one_accessible_common_foxglove_web_action() -> None:
+    html = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
+    ).read_text(encoding="utf-8")
+
+    assert html.count('id="foxgloveOpenWeb"') == 1
+    assert html.count('data-testid="open-foxglove-web"') == 1
+    assert html.count(">Open in Foxglove Web</button>") == 1
+    assert 'aria-describedby="foxgloveExportNote"' in html
+    assert 'aria-busy="false" disabled' in html
+    assert "Foxglove Desktop" not in html
+    assert html.count('id="renderModeLichtblick"') == 1
+    assert 'id="openLichtblick"' not in html
+    assert 'id="openFullLichtblick"' not in html
+
+
 def test_bootstrap_installs_nebius_cli_and_sa_profile() -> None:
     from npa.cli import agent as agent_module
 
@@ -2601,9 +2801,15 @@ def test_bootstrap_installs_nebius_cli_and_sa_profile() -> None:
     assert "--token-file /mnt/cloud-metadata/token" in source
     assert 'nebius_profile = "cursor-sa"' in source
     assert "--profile {nebius_profile}" in source
-    assert '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null' in source
+    assert (
+        '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null'
+        in source
+    )
     assert 'sudo -H "$NEBIUS_BIN" profile create' in source
-    assert 'sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token' in source
+    assert (
+        'sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token'
+        in source
+    )
     assert "nebius CLI binary not found after install" in source
     assert "--parent-id" in source
 
@@ -2773,7 +2979,7 @@ def test_bootstrap_verifies_attached_identity_and_tenant_inventory() -> None:
     assert "expected_sa={expected_agent_service_account_id}" in source
     assert "isinstance(value, str) and value == expected" in source
     assert '[[ "$whoami_json" != *"$expected_sa"* ]]' not in source
-    assert "iam project list --parent-id \"$expected_tenant\" --all" in source
+    assert 'iam project list --parent-id "$expected_tenant" --all' in source
     assert "env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN" in source
 
 
@@ -2939,7 +3145,9 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
         "npa.cli.agent._resolve_deploy_llm_credentials",
         lambda: ("tf-key", "nvidia/Cosmos3-Super-Reasoner"),
     )
-    monkeypatch.setattr("npa.cli.agent._resolve_operator_credentials", lambda: ("", ""))
+    monkeypatch.setattr(
+        "npa.cli.agent._resolve_operator_credentials", lambda: ("", "", "")
+    )
     monkeypatch.setattr("npa.cli.agent._bootstrap_agent_stack", lambda **k: None)
     monkeypatch.setattr("npa.cli.agent.ensure_ingress", lambda **k: None)
     monkeypatch.setattr(
@@ -2951,6 +3159,7 @@ def test_deploy_seeds_cost_ordered_ladder_without_explicit_models(
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr("npa.cli.agent._agent_terraform_result", _terraform_pass_result)
 
     deploy_cmd(
         project="agent-live",
@@ -2986,6 +3195,13 @@ def test_agent_preflight_all_pass(monkeypatch, tmp_path) -> None:
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
     (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        agent_module.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            a[0], 0, '{"terraform_version":"1.13.3"}', ""
+        ),
+    )
     monkeypatch.setattr(
         agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
     )
@@ -3038,6 +3254,13 @@ def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
     monkeypatch.setattr(
+        agent_module.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            a[0], 0, '{"terraform_version":"1.13.3"}', ""
+        ),
+    )
+    monkeypatch.setattr(
         agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
     )
 
@@ -3060,6 +3283,72 @@ def test_agent_preflight_json_output(monkeypatch, tmp_path) -> None:
         "ssh_private_key",
         "token_factory",
     }
+
+    conventional = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--skip-nebius",
+            "--output",
+            "json",
+            "--ssh-public-key-path",
+            str(tmp_path / "id_ed25519.pub"),
+        ],
+    )
+    assert conventional.exit_code == 0, conventional.output
+    assert json.loads(conventional.output) == payload
+
+    invalid = runner.invoke(app, ["preflight", "--output", "yaml"])
+    assert invalid.exit_code == 2
+    assert "Invalid value" in invalid.output
+
+
+def test_agent_preflight_checks_terraform_cli_major_contract(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+
+    (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "id_ed25519").write_text("priv\n")
+    monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        agent_module.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            a[0], 0, '{"terraform_version":"0.14.11"}', ""
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module, "_resolve_deploy_llm_credentials", lambda: ("tf-key", "m")
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "preflight",
+            "--skip-nebius",
+            "--ssh-public-key-path",
+            str(tmp_path / "id_ed25519.pub"),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "supported range is 1.x" in result.output
+
+
+@pytest.mark.parametrize("version", ["1.0.0", "1.12.2", "1.13.3", "1.99.0"])
+def test_terraform_preflight_accepts_supported_1x_patch_and_minor(version: str) -> None:
+    from npa.cli.agent_prereqs import terraform_cli_result
+
+    result = terraform_cli_result(
+        "/usr/bin/terraform",
+        run=lambda *a, **k: subprocess.CompletedProcess(
+            a[0], 0, json.dumps({"terraform_version": version}), ""
+        ),
+    )
+
+    assert result.status == "PASS"
+    assert version in result.summary
 
 
 def test_agent_preflight_nebius_fail(monkeypatch, tmp_path) -> None:
@@ -3087,6 +3376,7 @@ def test_agent_preflight_nebius_fail(monkeypatch, tmp_path) -> None:
 
 def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
     """Deploy aborts on a missing SSH key BEFORE any cloud IAM side effects."""
+    from npa.cli import agent as agent_module
     from npa.cli.agent import deploy_cmd
 
     stored: list[dict] = []
@@ -3111,6 +3401,7 @@ def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
         "npa.cli.agent._agent_terraform_state_exists", lambda *_args: False
     )
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(agent_module, "_agent_terraform_result", _terraform_pass_result)
     monkeypatch.setattr(
         "npa.cli.agent._store_agent_record",
         lambda _project, _name, record: stored.append(record),
@@ -3243,6 +3534,7 @@ def test_deploy_warns_on_missing_token_factory_key(
     (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA test\n")
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr("npa.cli.agent._agent_terraform_result", _terraform_pass_result)
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
         lambda *a, **k: SimpleNamespace(
@@ -3310,8 +3602,10 @@ def test_run_details_surface_per_stage_workflow_logs() -> None:
     from the npa.workflow run manifest so operators can view logs of each stage."""
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
-        encoding="utf-8"
+    source = (
+        Path(agent_module.__file__)
+        .with_name("agent_stage_runtime.py")
+        .read_text(encoding="utf-8")
     )
     assert "def _workflow_run_steps(" in source
     assert "/npa-workflow/manifest.json" in source

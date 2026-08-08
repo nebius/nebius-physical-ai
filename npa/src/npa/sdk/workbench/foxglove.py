@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from npa.agent_backend.foxglove import foxglove_deep_links
+from npa.agent_backend.foxglove import foxglove_recording_link
 
 from npa.workbench.foxglove import (
     DEFAULT_FOXGLOVE_EMBED_SRC,
@@ -48,7 +48,7 @@ __all__ = [
     "collect_run_inputs",
     "convert_run",
     "export_run",
-    "foxglove_deep_links",
+    "foxglove_recording_link",
     "has_mcap_magic",
     "inspect_mcap",
     "sdk_assets_present",
@@ -84,16 +84,11 @@ def export_run(
     *,
     input_path: str | Path,
     output_path: str | Path,
-    recording_url: str = "",
     fps: float = 10.0,
     max_frames: int = 0,
     run_id: str = "",
 ) -> dict:
-    """Convert run artifacts to MCAP and optionally build Foxglove open links.
-
-    ``recording_url`` is the public HTTPS URL where the caller will serve the
-    resulting file. NPA does not upload it to Foxglove Cloud.
-    """
+    """Convert run artifacts to an exportable MCAP."""
     summary = convert_run(
         input_path=input_path,
         output_path=output_path,
@@ -103,5 +98,4 @@ def export_run(
     )
     return {
         "summary": summary.to_dict(),
-        "export": foxglove_deep_links(recording_url),
     }

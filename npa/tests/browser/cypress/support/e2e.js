@@ -392,8 +392,8 @@ const STATIC_BUTTON_IDS = [
   "artifactLoadRunArtifacts",
   "openRerun",
   "loadRerunViewer",
-  "openLichtblick",
-  "loadLichtblickViewer",
+  "downloadMcap",
+  "foxgloveOpenWeb",
   "describeVisual",
 ];
 
@@ -1176,13 +1176,36 @@ Cypress.Commands.add("visitMockAgent", () => {
   cy.get("#statusBar").should("exist");
 });
 
-Cypress.Commands.add("visitLiveAgent", () => {
-  const baseUrl = Cypress.env("agentBaseUrl") || Cypress.env("NPA_AGENT_BASE_URL") || Cypress.config("baseUrl");
-  const username = Cypress.env("agentUser") || Cypress.env("NPA_AGENT_USER");
-  const password = Cypress.env("agentPassword") || Cypress.env("NPA_AGENT_PASSWORD");
-  if (!baseUrl || !username || !password) {
-    throw new Error("Set NPA_AGENT_BASE_URL, NPA_AGENT_USER, and NPA_AGENT_PASSWORD for live Cypress.");
+function resolveLiveAgentConfig(readValue) {
+  const read = typeof readValue === "function" ? readValue : (name) => readValue && readValue[name];
+  const config = {
+    baseUrl: read("agentBaseUrl") || read("NPA_AGENT_BASE_URL") || "",
+    username: read("agentUser") || read("NPA_AGENT_USER") || "",
+    password: read("agentPassword") || read("NPA_AGENT_PASSWORD") || "",
+  };
+  const present = Object.values(config).filter(Boolean).length;
+  if (present && present !== 3) {
+    throw new Error(
+      "Live Cypress configuration is incomplete; set agentBaseUrl/agentUser/agentPassword " +
+      "or NPA_AGENT_BASE_URL/NPA_AGENT_USER/NPA_AGENT_PASSWORD."
+    );
   }
+  return present === 3 ? config : null;
+}
+
+function currentLiveAgentConfig() {
+  const config = resolveLiveAgentConfig((name) => Cypress.env(name));
+  if (!config) {
+    throw new Error(
+      "Live Cypress requires agentBaseUrl, agentUser, and agentPassword " +
+      "(or their NPA_AGENT_* equivalents)."
+    );
+  }
+  return config;
+}
+
+Cypress.Commands.add("visitLiveAgent", () => {
+  const { baseUrl, username, password } = currentLiveAgentConfig();
   cy.visit({
     url: baseUrl,
     auth: { username, password },
@@ -1205,6 +1228,7 @@ export {
   firstMcapPngPayload,
   GENERIC_WORKFLOW_RUN_DETAILS,
   GENERIC_WORKFLOW_YAML,
+  currentLiveAgentConfig,
   mcapCameraTopicCount,
   mcapHasCompressedImage,
   mcapHasFrameTransform,
@@ -1214,6 +1238,7 @@ export {
   mcapPointCloudHasRgbaFields,
   NON_STOCK_ARTIFACTS,
   NON_STOCK_RUN_ID,
+  resolveLiveAgentConfig,
   SIM_VIZ,
   STATIC_BUTTON_IDS,
   WORKFLOW_YAML,

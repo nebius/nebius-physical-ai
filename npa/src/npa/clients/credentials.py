@@ -27,9 +27,7 @@ HF_TOKEN_MISSING_WARNING = (
     "Warning: HF_TOKEN not found in ~/.npa/credentials.yaml. "
     "Gated model downloads will fail."
 )
-PERMISSIONS_WARNING = (
-    "credentials.yaml is readable by other users. Run chmod 600 ~/.npa/credentials.yaml."
-)
+PERMISSIONS_WARNING = "credentials.yaml is readable by other users. Run chmod 600 ~/.npa/credentials.yaml."
 _TOKEN_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 UK_SOUTH1_STORAGE_ENDPOINT = "storage.uk-south1.nebius.cloud"
 EU_NORTH1_STORAGE_ENDPOINT = "storage.eu-north1.nebius.cloud"
@@ -186,7 +184,10 @@ def _read_file_storage(path: Path) -> dict[str, str]:
     tokens = data.get("tokens", {})
     if not isinstance(tokens, dict):
         tokens = {}
-    storage = data.get("storage", data.get("s3", data.get("object-storage", data.get("object_storage", {}))))
+    storage = data.get(
+        "storage",
+        data.get("s3", data.get("object-storage", data.get("object_storage", {}))),
+    )
     if not isinstance(storage, dict):
         storage = {}
 
@@ -277,18 +278,28 @@ def load_credentials(
     return CredentialsConfig(
         tokens=tokens,
         warnings=warnings,
-        ssh_host=env.get("NPA_BYOVM_HOST") or env.get("NPA_SSH_HOST") or file_ssh.get("host", ""),
-        ssh_user=env.get("NPA_BYOVM_SSH_USER") or env.get("NPA_SSH_USER") or file_ssh.get("user", ""),
-        ssh_key_path=env.get("NPA_BYOVM_SSH_KEY") or env.get("NPA_SSH_KEY") or file_ssh.get("key_path", ""),
-        s3_access_key_id=env.get("AWS_ACCESS_KEY_ID") or file_storage.get("access_key_id", ""),
-        s3_secret_access_key=env.get("AWS_SECRET_ACCESS_KEY") or file_storage.get("secret_access_key", ""),
+        ssh_host=env.get("NPA_BYOVM_HOST")
+        or env.get("NPA_SSH_HOST")
+        or file_ssh.get("host", ""),
+        ssh_user=env.get("NPA_BYOVM_SSH_USER")
+        or env.get("NPA_SSH_USER")
+        or file_ssh.get("user", ""),
+        ssh_key_path=env.get("NPA_BYOVM_SSH_KEY")
+        or env.get("NPA_SSH_KEY")
+        or file_ssh.get("key_path", ""),
+        s3_access_key_id=env.get("AWS_ACCESS_KEY_ID")
+        or file_storage.get("access_key_id", ""),
+        s3_secret_access_key=env.get("AWS_SECRET_ACCESS_KEY")
+        or file_storage.get("secret_access_key", ""),
         s3_endpoint=(
             env.get("AWS_ENDPOINT_URL")
             or env.get("NEBIUS_S3_ENDPOINT")
             or env.get("NPA_STORAGE_ENDPOINT")
             or file_storage.get("endpoint", "")
         ),
-        s3_bucket=env.get("NPA_CHECKPOINT_BUCKET") or env.get("NEBIUS_S3_BUCKET") or file_storage.get("bucket", ""),
+        s3_bucket=env.get("NPA_CHECKPOINT_BUCKET")
+        or env.get("NEBIUS_S3_BUCKET")
+        or file_storage.get("bucket", ""),
         foxglove_api_token=foxglove_api_token,
     )
 

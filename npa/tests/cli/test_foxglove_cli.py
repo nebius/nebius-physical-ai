@@ -30,7 +30,14 @@ def _make_run(tmp_path: Path) -> Path:
 def test_foxglove_help_lists_commands() -> None:
     result = runner.invoke(app, ["workbench", "foxglove", "--help"])
     assert result.exit_code == 0, result.output
-    for command in ("convert-run", "export-run", "open", "inspect", "install-sdk", "config"):
+    for command in (
+        "convert-run",
+        "export-run",
+        "open",
+        "inspect",
+        "install-sdk",
+        "config",
+    ):
         assert command in result.output
 
 
@@ -86,21 +93,28 @@ def test_convert_run_and_inspect_round_trip(tmp_path: Path) -> None:
 
     inspected = runner.invoke(
         app,
-        ["workbench", "foxglove", "inspect", "--input-path", str(output), "--output", "json"],
+        [
+            "workbench",
+            "foxglove",
+            "inspect",
+            "--input-path",
+            str(output),
+            "--output",
+            "json",
+        ],
     )
     assert inspected.exit_code == 0, inspected.output
     info = json.loads(inspected.output)
     assert info["message_count"] == 3
-    assert info["schemas"]["/camera/front"] == "foxglove.CompressedImage"
+    assert info["schemas"]["/camera"] == "foxglove.CompressedImage"
     assert info["metadata"]["npa"]["run_id"] == "cli-run"
 
 
-def test_export_run_writes_mcap_and_reports_encoded_links(tmp_path: Path) -> None:
+def test_export_run_writes_mcap(tmp_path: Path) -> None:
     pytest.importorskip("mcap")
     pytest.importorskip("PIL")
     root = _make_run(tmp_path)
     output = tmp_path / "export.mcap"
-    recording_url = "https://agent.example/foxglove/data/run one+two.mcap?x=1&y=2"
 
     result = runner.invoke(
         app,
@@ -112,8 +126,6 @@ def test_export_run_writes_mcap_and_reports_encoded_links(tmp_path: Path) -> Non
             str(root),
             "--output-path",
             str(output),
-            "--recording-url",
-            recording_url,
             "--output",
             "json",
         ],
@@ -123,19 +135,17 @@ def test_export_run_writes_mcap_and_reports_encoded_links(tmp_path: Path) -> Non
     payload = json.loads(result.output)
     assert output.is_file()
     assert payload["summary"]["message_count"] == 3
-    assert payload["export"]["recording_url"] == recording_url
-    assert "openIn=desktop" in payload["export"]["desktop_url"]
-    assert "run+one%2Btwo.mcap%3Fx%3D1%26y%3D2" in payload["export"]["web_url"]
+    assert set(payload) == {"summary"}
 
 
-def test_open_prints_or_launches_official_deep_link(monkeypatch) -> None:
+def test_open_prints_or_launches_official_web_recording_link(monkeypatch) -> None:
     opened: list[str] = []
     monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url) or True)
-    recording = "https://agent.example/foxglove/data/abc.mcap"
+    recording_id = "rec_abc123"
 
     printed = runner.invoke(
         app,
-        ["workbench", "foxglove", "open", "--recording-url", recording],
+        ["workbench", "foxglove", "open", "--recording-id", recording_id],
     )
     launched = runner.invoke(
         app,
@@ -143,10 +153,8 @@ def test_open_prints_or_launches_official_deep_link(monkeypatch) -> None:
             "workbench",
             "foxglove",
             "open",
-            "--recording-url",
-            recording,
-            "--target",
-            "desktop",
+            "--recording-id",
+            recording_id,
             "--launch",
         ],
     )
@@ -154,17 +162,22 @@ def test_open_prints_or_launches_official_deep_link(monkeypatch) -> None:
     assert printed.exit_code == 0, printed.output
     assert "https://app.foxglove.dev/~/view?" in printed.output
     assert launched.exit_code == 0, launched.output
-    assert len(opened) == 1 and "openIn=desktop" in opened[0]
+    assert "ds=foxglove-stream" in printed.output
+    assert "ds.recordingId=rec_abc123" in printed.output
+    assert len(opened) == 1 and "openIn" not in opened[0]
 
 
-def test_open_rejects_relative_or_insecure_recording_urls() -> None:
-    for recording in ("/foxglove/data/abc.mcap", "http://agent.example/abc.mcap"):
+def test_open_rejects_unsafe_recording_ids() -> None:
+    for recording_id in ("", "../abc", "rec x"):
         result = runner.invoke(
             app,
-            ["workbench", "foxglove", "open", "--recording-url", recording],
+            ["workbench", "foxglove", "open", "--recording-id", recording_id],
         )
         assert result.exit_code == 1
-        assert "absolute HTTPS" in result.output
+        assert (
+            "safe indexed recording ID" in result.output
+            or "Missing option" in result.output
+        )
 
 
 def test_convert_run_fails_cleanly_on_missing_input(tmp_path: Path) -> None:

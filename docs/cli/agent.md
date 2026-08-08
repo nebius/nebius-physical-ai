@@ -10,7 +10,7 @@ Deploy and operate a public NPA chat agent VM.
 Options
 --help  Show this message and exit.
 Commands
-preflight  Check Route C prerequisites before `npa agent deploy` / `fresh-setup`.
+preflight  Check deploy prerequisites without cloud side effects; fail on hard errors.
 deploy  Provision VM + bootstrap the public NPA agent stack.
 fresh-setup  Initialize fresh project config and deploy a new agent from scratch.
 bootstrap  Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform).
@@ -29,7 +29,7 @@ verify-live  Exit 0 only when live infra checks and tests pass.
 
 | Command | Description |
 | --- | --- |
-| `preflight` | Check Route C prerequisites before `npa agent deploy` / `fresh-setup`. |
+| `preflight` | Check deploy prerequisites without cloud side effects; fail on hard errors. |
 | `deploy` | Provision VM + bootstrap the public NPA agent stack. |
 | `fresh-setup` | Initialize fresh project config and deploy a new agent from scratch. |
 | `bootstrap` | Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform). |

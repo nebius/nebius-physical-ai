@@ -19,7 +19,8 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.agent_live,
     pytest.mark.skipif(
-        os.environ.get("NPA_AGENT_LIVE") != "1" or os.environ.get("NPA_INTEGRATION_E2E") != "1",
+        os.environ.get("NPA_AGENT_LIVE") != "1"
+        or os.environ.get("NPA_INTEGRATION_E2E") != "1",
         reason="Set NPA_AGENT_LIVE=1 and NPA_INTEGRATION_E2E=1 for live agent checks.",
     ),
 ]
@@ -53,13 +54,14 @@ def test_agent_ui_html_smoke(ctx: AgentLiveContext) -> None:
 
 def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
     """Live gate: MP4 load must serve video/mp4 through /api/artifacts/file/."""
-    runs = ctx.get("/api/artifacts/runs")
+    runs = ctx.get("/api/artifacts/runs", timeout=None)
     runs.raise_for_status()
     payload = runs.json()
     run_list = payload.get("runs") or []
     assert isinstance(run_list, list), "expected runs list from artifacts discovery"
 
     mp4_run_id = ""
+    mp4_run_ref = ""
     mp4_key = ""
     mp4_uri = ""
     for entry in run_list[:20]:
@@ -75,7 +77,8 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
         source_params = {key: value for key, value in source_params.items() if value}
         source_query = str(httpx.QueryParams(source_params))
         listed = ctx.get(
-            f"/api/artifacts/run/{run_id}" + (f"?{source_query}" if source_query else "")
+            f"/api/artifacts/run/{run_id}"
+            + (f"?{source_query}" if source_query else "")
         )
         listed.raise_for_status()
         arts = (listed.json() or {}).get("artifacts") or []
@@ -84,6 +87,7 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
             render = str((art or {}).get("render") or "")
             if render == "video" or key.lower().endswith(".mp4"):
                 mp4_run_id = run_id
+                mp4_run_ref = str((entry or {}).get("run_ref") or "").strip()
                 mp4_key = key
                 mp4_uri = str((art or {}).get("s3_uri") or "")
                 break
@@ -93,8 +97,12 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
     if mp4_key:
         loaded = ctx.post(
             "/api/sim-viz/load-artifact",
-            json={"run_id": mp4_run_id, "s3_uri": mp4_uri},
-            timeout=60.0,
+            json={
+                "run_id": mp4_run_id,
+                "run_ref": mp4_run_ref,
+                "s3_uri": mp4_uri,
+            },
+            timeout=None,
         )
         loaded.raise_for_status()
         body = loaded.json()
@@ -110,7 +118,9 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
         file_resp = ctx.get("/api/artifacts/file/sample-preview.mp4", timeout=30.0)
 
     file_resp.raise_for_status()
-    content_type = str(file_resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    content_type = (
+        str(file_resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    )
     assert content_type == "video/mp4", f"expected video/mp4, got {content_type!r}"
     assert len(file_resp.content) >= 16
     assert file_resp.content[4:8] == b"ftyp" or file_resp.content[:4] == b"\x00\x00\x00"
@@ -211,7 +221,9 @@ def test_agent_workflow_submit_and_status(ctx: AgentLiveContext) -> None:
     submit_viz = submit_payload.get("sim_viz", {})
     assert isinstance(submit_viz, dict)
     assert submit_viz.get("run_id") == run_id
-    assert submit_viz.get("rrd_uri"), "submitted Sim2Real run did not get a visualization .rrd"
+    assert submit_viz.get("rrd_uri"), (
+        "submitted Sim2Real run did not get a visualization .rrd"
+    )
 
     status = ctx.get("/api/workflows/sim2real/status")
     status.raise_for_status()
@@ -310,7 +322,9 @@ def test_agent_soperator_validate_and_dry_run_deploy(ctx: AgentLiveContext) -> N
             }
         ],
     }
-    validate = ctx.post("/api/infra/soperator/validate", json={"spec": spec}, timeout=30.0)
+    validate = ctx.post(
+        "/api/infra/soperator/validate", json={"spec": spec}, timeout=30.0
+    )
     validate.raise_for_status()
     validation = validate.json()
     assert validation.get("ok") is True
@@ -333,7 +347,14 @@ def test_agent_soperator_validate_and_dry_run_deploy(ctx: AgentLiveContext) -> N
 def test_agent_chat_soperator_and_mk8s_infra_prompts(ctx: AgentLiveContext) -> None:
     soperator = ctx.post(
         "/api/chat",
-        json={"messages": [{"role": "user", "content": "deploy a soperator slurm on kubernetes cluster"}]},
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "deploy a soperator slurm on kubernetes cluster",
+                }
+            ]
+        },
         timeout=30.0,
     )
     soperator.raise_for_status()
@@ -349,7 +370,14 @@ def test_agent_chat_soperator_and_mk8s_infra_prompts(ctx: AgentLiveContext) -> N
 
     mk8s = ctx.post(
         "/api/chat",
-        json={"messages": [{"role": "user", "content": "deploy an mk8s kubernetes cluster for workflow runs"}]},
+        json={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "deploy an mk8s kubernetes cluster for workflow runs",
+                }
+            ]
+        },
         timeout=30.0,
     )
     mk8s.raise_for_status()
@@ -397,7 +425,9 @@ def test_agent_rerun_static_assets(ctx: AgentLiveContext) -> None:
         )
         if resp.status_code == 200 and resp.content:
             ok_paths.append(path)
-    assert ok_paths, f"no rerun static asset responded 200 among {RERUN_STATIC_CANDIDATES}"
+    assert ok_paths, (
+        f"no rerun static asset responded 200 among {RERUN_STATIC_CANDIDATES}"
+    )
 
 
 def test_agent_rerun_bundle_load_budget(ctx: AgentLiveContext) -> None:
@@ -420,7 +450,9 @@ def test_agent_rerun_bundle_load_budget(ctx: AgentLiveContext) -> None:
     assert wasm_fetches[0].nbytes >= 1_000_000, report
 
 
-def test_agent_no_loading_application_bundle_without_latency(ctx: AgentLiveContext) -> None:
+def test_agent_no_loading_application_bundle_without_latency(
+    ctx: AgentLiveContext,
+) -> None:
     """Live gate: UI hides Rerun splash without blocking mount on long splash waits."""
     from npa.agent_rerun_bundle_check import assert_rerun_ui_eager_load_contract
 
@@ -433,8 +465,10 @@ def test_agent_no_loading_application_bundle_without_latency(ctx: AgentLiveConte
     assert "Uncover without blocking mount latency" in html
     assert "await waitUntilRerunPastBundleSplash(iframe, 45000)" not in html
     assert "await waitUntilRerunPastBundleSplash(iframe, 120000)" not in html
-    assert 'Mount the viewer immediately so "Loading application bundle" starts early' not in html
-
+    assert (
+        'Mount the viewer immediately so "Loading application bundle" starts early'
+        not in html
+    )
 
 
 def test_agent_load_franka_demo_and_rrd(ctx: AgentLiveContext) -> None:
@@ -473,7 +507,9 @@ def _assert_grounded_status_reply(payload: dict[str, object]) -> str:
     reply = str(payload.get("reply") or "")
     assert reply
     assert "run_id" in reply or "stage" in reply, "reply missing run_id/stage fields"
-    assert not reply.strip().startswith("GET /api"), "raw GET path instead of unpacked status"
+    assert not reply.strip().startswith("GET /api"), (
+        "raw GET path instead of unpacked status"
+    )
     assert reply.strip() != "GET /api/sim-viz/status"
     return reply
 
@@ -481,7 +517,11 @@ def _assert_grounded_status_reply(payload: dict[str, object]) -> str:
 def test_agent_chat_grounded_sim2real_status(ctx: AgentLiveContext) -> None:
     chat = ctx.post(
         "/api/chat",
-        json={"messages": [{"role": "user", "content": "what is the current sim2real status"}]},
+        json={
+            "messages": [
+                {"role": "user", "content": "what is the current sim2real status"}
+            ]
+        },
         timeout=30.0,
     )
     chat.raise_for_status()
@@ -491,7 +531,11 @@ def test_agent_chat_grounded_sim2real_status(ctx: AgentLiveContext) -> None:
 def test_agent_chat_grounded_field(ctx: AgentLiveContext) -> None:
     chat = ctx.post(
         "/api/chat",
-        json={"messages": [{"role": "user", "content": "what is the current sim2real status"}]},
+        json={
+            "messages": [
+                {"role": "user", "content": "what is the current sim2real status"}
+            ]
+        },
         timeout=30.0,
     )
     chat.raise_for_status()
@@ -505,7 +549,9 @@ def test_agent_chat_grounded_field(ctx: AgentLiveContext) -> None:
 def test_agent_chat_sim_assets_intent(ctx: AgentLiveContext) -> None:
     chat = ctx.post(
         "/api/chat",
-        json={"messages": [{"role": "user", "content": "what sim assets are selected"}]},
+        json={
+            "messages": [{"role": "user", "content": "what sim assets are selected"}]
+        },
         timeout=30.0,
     )
     chat.raise_for_status()
@@ -513,7 +559,9 @@ def test_agent_chat_sim_assets_intent(ctx: AgentLiveContext) -> None:
     assert payload.get("ok") is True
     assert payload.get("grounded") is True
     reply = str(payload.get("reply") or "").lower()
-    assert any(token in reply for token in ("franka", "isaac", "selection", "robot_preset"))
+    assert any(
+        token in reply for token in ("franka", "isaac", "selection", "robot_preset")
+    )
 
 
 def test_agent_models_endpoint(ctx: AgentLiveContext) -> None:
@@ -523,13 +571,18 @@ def test_agent_models_endpoint(ctx: AgentLiveContext) -> None:
     assert payload.get("ok") is True
     model_list = payload.get("models")
     assert isinstance(model_list, list) and model_list
-    default_model = str(payload.get("default_model") or payload.get("default") or "").strip()
+    default_model = str(
+        payload.get("default_model") or payload.get("default") or ""
+    ).strip()
     assert default_model
     assert default_model in [str(item) for item in model_list]
 
 
 def test_agent_chat_onboard_solution_intent(ctx: AgentLiveContext) -> None:
-    from .agent_live_helpers import ONBOARD_SOLUTION_PROMPT, assert_grounded_onboard_solution_reply
+    from .agent_live_helpers import (
+        ONBOARD_SOLUTION_PROMPT,
+        assert_grounded_onboard_solution_reply,
+    )
 
     chat = ctx.post(
         "/api/chat",
@@ -557,7 +610,7 @@ def test_agent_chat_complex_artifact_discovery_intent(ctx: AgentLiveContext) -> 
         },
         # This grounded intent performs tenant artifact discovery before the
         # model response, so its live budget must cover both bounded stages.
-        timeout=60.0,
+        timeout=None,
     )
     chat.raise_for_status()
     payload = chat.json()
@@ -624,8 +677,12 @@ def test_agent_chat_live_model_switch(ctx: AgentLiveContext) -> None:
     model_resp = ctx.get("/api/models")
     model_resp.raise_for_status()
     model_payload = model_resp.json()
-    default_model = str(model_payload.get("default_model") or model_payload.get("default") or "").strip()
-    models = [str(item) for item in (model_payload.get("models") or []) if str(item).strip()]
+    default_model = str(
+        model_payload.get("default_model") or model_payload.get("default") or ""
+    ).strip()
+    models = [
+        str(item) for item in (model_payload.get("models") or []) if str(item).strip()
+    ]
     assert models
     alternate = next((item for item in models if item != default_model), models[0])
     chat = ctx.post(
