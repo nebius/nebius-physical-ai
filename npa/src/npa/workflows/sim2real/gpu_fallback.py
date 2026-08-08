@@ -45,6 +45,17 @@ _SERVER_MANAGED_JOB_LABELS = frozenset(
 )
 _LAST_APPLIED_ANNOTATION = "kubectl.kubernetes.io/last-applied-configuration"
 _CLIENT_JOB_ATTEMPT_LABEL = "npa.nebius.ai/job-attempt-id"
+_TRANSIENT_KUBERNETES_API_MARKERS = (
+    "etcdserver: leader changed",
+    "too many requests",
+    "service unavailable",
+    "server is currently unable to handle the request",
+    "connection refused",
+    "connection reset by peer",
+    "tls handshake timeout",
+    "i/o timeout",
+    "unexpected eof",
+)
 
 
 class GpuCapacityExhausted(RuntimeError):
@@ -494,27 +505,55 @@ def _delete_job_and_wait(
 ) -> None:
     """Delete a same-name Job completely before another create can race it."""
 
-    result = kubectl(
-        [
-            "delete",
-            "job",
-            job_name,
-            "-n",
-            namespace,
-            "--ignore-not-found=true",
-            "--wait=true",
-            "--timeout=120s",
-        ],
-        timeout_s=180,
-    )
-    if result.returncode == 0:
-        return
-    detail = " ".join(str(result.stderr or result.stdout or "").split())[:800]
-    raise GpuJobFailure(
-        f"Kubernetes Job {job_name} did not finish deleting before create: "
-        f"{detail or 'kubectl delete returned no API detail'}",
-        provenance=provenance,
-    )
+    try:
+        retry_delay_s = max(
+            0.0,
+            float(os.environ.get("NPA_SIM2REAL_K8S_API_RETRY_SECONDS", "2")),
+        )
+    except ValueError:
+        retry_delay_s = 2.0
+    while True:
+        result = kubectl(
+            [
+                "delete",
+                "job",
+                job_name,
+                "-n",
+                namespace,
+                "--ignore-not-found=true",
+                "--wait=true",
+                "--timeout=120s",
+            ],
+            timeout_s=180,
+        )
+        if result.returncode == 0:
+            return
+        raw_detail = str(result.stderr or result.stdout or "")
+        detail = " ".join(raw_detail.split())[:800]
+        lowered = raw_detail.lower()
+        if any(marker in lowered for marker in _TRANSIENT_KUBERNETES_API_MARKERS):
+            retry_count = (
+                int(provenance.get("transient_kubernetes_api_retry_count") or 0) + 1
+            )
+            provenance["transient_kubernetes_api_retry_count"] = retry_count
+            provenance["last_transient_kubernetes_api_retry"] = {
+                "operation": "delete_job_and_wait",
+                "job_name": job_name,
+                "detail": detail,
+            }
+            print(
+                "transient Kubernetes API error while deleting "
+                f"{job_name}; retrying without changing GPU product "
+                f"(attempt={retry_count}): {detail}",
+                flush=True,
+            )
+            time.sleep(retry_delay_s)
+            continue
+        raise GpuJobFailure(
+            f"Kubernetes Job {job_name} did not finish deleting before create: "
+            f"{detail or 'kubectl delete returned no API detail'}",
+            provenance=provenance,
+        )
 
 
 def _fresh_job_manifest(manifest: dict[str, Any], *, job_name: str) -> dict[str, Any]:

@@ -767,6 +767,51 @@ def test_stuck_same_name_job_deletion_fails_before_create(
     assert scheduler.applied_products == []
 
 
+def test_transient_api_leader_change_retries_same_job_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    monkeypatch.setenv("NPA_SIM2REAL_K8S_API_RETRY_SECONDS", "0")
+    scheduler = _Scheduler({RTX: "success"})
+    delete_calls = 0
+
+    def transient_delete(
+        args: list[str], **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal delete_calls
+        if args and args[0] == "delete":
+            delete_calls += 1
+            if delete_calls == 1:
+                return subprocess.CompletedProcess(
+                    args, 1, "", "Error from server: etcdserver: leader changed"
+                )
+        return scheduler(args, **kwargs)
+
+    result = run_gpu_job_with_fallback(
+        kubectl=transient_delete,
+        manifest_factory=_manifest,
+        base_job_name="s2r-transient-delete",
+        namespace="default",
+        image="registry/image@sha256:abc123",
+        preferred_product=RTX,
+        explicit_candidates=(),
+        workload="isaac",
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+        timeout_s=10,
+    )
+
+    assert delete_calls == 2
+    assert scheduler.applied_products == [RTX]
+    assert result["selected_product"] == RTX
+    assert result["transient_kubernetes_api_retry_count"] == 1
+    assert result["last_transient_kubernetes_api_retry"] == {
+        "operation": "delete_job_and_wait",
+        "job_name": "s2r-transient-delete",
+        "detail": "Error from server: etcdserver: leader changed",
+    }
+
+
 def test_zero_timeout_detects_terminal_job_failure_without_product_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
