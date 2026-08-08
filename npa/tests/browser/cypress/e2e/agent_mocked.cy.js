@@ -186,6 +186,212 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simRunId").should("contain.text", "mock-run");
   });
 
+  it("selects one escaped project detail at a time and preserves the stable project ID", () => {
+    const projectCapabilities = (artifactStatus, artifactReason, readStatus, readReason, submitStatus, submitReason) => ({
+      project_metadata: { status: "available", reason: "Project identity was returned by tenant discovery." },
+      storage_resource_discovery: { status: "available", reason: "Object storage resources visible in this project were listed." },
+      artifact_discovery: { status: artifactStatus, reason: artifactReason, scope: "read_only" },
+      artifact_read: { status: readStatus, reason: readReason, scope: "read_only" },
+      workflow_submission: { status: submitStatus, reason: submitReason, scope: "deployment_project" },
+    });
+    const resource = (id, name, readStatus = "available", readReason = "Object reads were verified.") => ({
+      type: "object_storage_bucket",
+      id,
+      name,
+      capabilities: {
+        artifact_discovery: { status: "available", reason: "Object listing was verified.", scope: "read_only" },
+        artifact_read: { status: readStatus, reason: readReason, scope: "read_only" },
+      },
+    });
+    const hostileProjectId = 'project-x"><svg/onload=window.__npaXss=1>';
+    const hostileBucket = 'bucket-<img src=x onerror=window.__npaXss=2>-&"\'';
+    const projects = [
+      {
+        id: "project-d",
+        name: "Empty Bucket",
+        deployment_project: false,
+        status: "partial",
+        capabilities: projectCapabilities(
+          "available",
+          "The empty bucket remains searchable.",
+          "unverified",
+          "Read access is unverified because the empty bucket has no object to probe.",
+          "unavailable",
+          "Tenant-wide discovery does not enable workflow submission in this project.",
+        ),
+        resources: [resource(
+          "resource-empty",
+          "empty-artifacts",
+          "unverified",
+          "Object listing succeeded; the empty bucket has no object to verify read access.",
+        )],
+      },
+      {
+        id: "project-b",
+        name: "Foreign Project",
+        deployment_project: false,
+        status: "available",
+        capabilities: projectCapabilities(
+          "available",
+          "At least one project bucket is searchable.",
+          "available",
+          "Artifact object reads were verified.",
+          "unavailable",
+          "Tenant-wide discovery does not enable workflow submission in this project.",
+        ),
+        resources: [resource("resource-b", "foreign-artifacts")],
+      },
+      {
+        id: "project-f",
+        name: "Duplicate Name",
+        deployment_project: false,
+        status: "available",
+        capabilities: projectCapabilities("unavailable", "No searchable object storage bucket was verified.", "unavailable", "No reads were verified.", "unavailable", "Home project only."),
+        resources: [],
+      },
+      {
+        id: "project-a",
+        name: "Project Alpha",
+        deployment_project: true,
+        status: "available",
+        capabilities: projectCapabilities("available", "At least one project bucket is searchable.", "available", "Artifact object reads were verified.", "available", "Workflow submission remains scoped to the deployment project."),
+        resources: [resource("resource-a", "project-artifacts")],
+      },
+      {
+        id: "project-c",
+        name: "No Bucket",
+        deployment_project: false,
+        status: "partial",
+        capabilities: projectCapabilities("unavailable", "No searchable object storage bucket was verified for this project.", "unavailable", "Artifact object reads were not verified.", "unavailable", "Tenant-wide discovery does not enable workflow submission in this project."),
+        resources: [],
+      },
+      {
+        id: "project-e",
+        name: "Duplicate Name",
+        deployment_project: false,
+        status: "available",
+        capabilities: projectCapabilities("unavailable", "No searchable object storage bucket was verified.", "unavailable", "No reads were verified.", "unavailable", "Home project only."),
+        resources: [],
+      },
+      {
+        id: hostileProjectId,
+        name: '<img src=x onerror="window.__npaXss=3">',
+        deployment_project: false,
+        status: "partial",
+        capabilities: projectCapabilities("available", '<script>window.__npaXss=4</script> searchable.', "unverified", 'No object named "<probe>" exists.', "unavailable", '<img src=x onerror="window.__npaXss=5"> home project only.'),
+        resources: [resource("resource-hostile", hostileBucket, "unverified", '<svg onload="window.__npaXss=6">empty</svg>')],
+      },
+    ];
+    const accessPayload = {
+      apiVersion: "npa.agent.access/v1",
+      identity: {
+        tenant_id: "tenant-test",
+        deployment_project_id: "project-a",
+        deployment_project_name: "Project Alpha",
+      },
+      status: "partial",
+      scope: "partial_tenant",
+      capabilities: { artifact_discovery: { status: "partial", reason: "Accessible projects are searched; specific gaps are reported." } },
+      projects,
+      errors: [{ message: '<img src=x onerror="window.__npaXss=7"> access probe unavailable.' }],
+    };
+    cy.intercept("GET", "/api/access*", { statusCode: 200, body: accessPayload }).as("selectorAccess");
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@selectorAccess");
+
+    cy.get('label[for="agentAccessProjectSelect"]').should("contain.text", "Project");
+    cy.get("#agentAccessProjectSelect")
+      .should("have.prop", "tagName", "SELECT")
+      .and("be.enabled")
+      .and("have.value", "project-a");
+    cy.get("#agentAccessProjectSelect option").should("have.length", projects.length).then(($options) => {
+      expect([...$options].map((option) => option.value)).to.deep.equal([
+        "project-a",
+        "project-b",
+        "project-c",
+        "project-d",
+        "project-e",
+        "project-f",
+        hostileProjectId,
+      ]);
+    });
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
+      .and("contain.text", "Project Alpha")
+      .and("contain.text", "project-a")
+      .and("contain.text", "deployment project");
+    cy.get("#agentAccessPanel").should(($panel) => {
+      expect($panel.text()).not.to.match(/\bpartial\b/i);
+    });
+
+    cy.get("#agentAccessProjectSelect").select("project-b");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
+      .and("contain.text", "Foreign Project")
+      .and("contain.text", "foreign-artifacts")
+      .and("contain.text", "tenant read-only")
+      .and("not.contain.text", "project-artifacts");
+    cy.get('#agentAccessProjects button[data-access-action="list"]')
+      .should("have.attr", "data-project-id", "project-b")
+      .and("have.attr", "data-resource-bucket", "foreign-artifacts");
+
+    cy.get("#agentAccessProjectSelect").select("project-c");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
+      .and("contain.text", "No searchable artifact bucket.")
+      .and("contain.text", "No Bucket")
+      .and("not.contain.text", "foreign-artifacts");
+    cy.get("#agentAccessProjects button[data-access-action]").should("not.exist");
+
+    cy.get("#agentAccessProjectSelect").select("project-d");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
+      .and("contain.text", "Empty Bucket")
+      .and("contain.text", "empty-artifacts")
+      .and("contain.text", "Read: Unverified")
+      .and("contain.text", "empty bucket has no object to verify read access")
+      .and("not.contain.text", "No searchable artifact bucket.");
+    cy.get('#agentAccessProjects button[data-access-action="list"]').should("be.enabled");
+    cy.get('#agentAccessProjects button[data-access-action="read"]').should("be.disabled");
+
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@selectorAccess");
+    cy.get("#agentAccessProjectSelect").should("have.value", "project-d");
+    cy.reload();
+    cy.wait("@selectorAccess");
+    cy.get("#agentAccessProjectSelect").should("have.value", "project-d");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1).and("contain.text", "Empty Bucket");
+
+    cy.get("#agentAccessProjectSelect option").then(($options) => {
+      const duplicateLabels = [...$options].filter((option) => option.textContent.includes("Duplicate Name"));
+      expect(duplicateLabels.map((option) => option.textContent)).to.deep.equal([
+        "Duplicate Name — project-e",
+        "Duplicate Name — project-f",
+      ]);
+    });
+    cy.get("#agentAccessProjectSelect").invoke("val", hostileProjectId).trigger("change");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
+      .and("contain.text", hostileProjectId)
+      .and("contain.text", hostileBucket)
+      .and("contain.text", "window.__npaXss=4");
+    cy.get("#agentAccessPanel").find("script, img, svg").should("not.exist");
+    cy.window().its("__npaXss").should("not.exist");
+    cy.get("#agentAccessProjectSelect").focus().should("be.focused");
+
+    cy.viewport(375, 667);
+    cy.get("#agentAccessProjectSelect").should("be.visible").then(($select) => {
+      const selectRect = $select[0].getBoundingClientRect();
+      const panelRect = $select[0].closest("#agentAccessPanel").getBoundingClientRect();
+      expect(selectRect.left).to.be.at.least(panelRect.left);
+      expect(selectRect.right).to.be.at.most(panelRect.right + 1);
+    });
+
+    cy.intercept("GET", "/api/access*", {
+      statusCode: 200,
+      body: { ...accessPayload, projects: projects.filter((project) => project.id !== hostileProjectId) },
+    }).as("selectorAccessMissing");
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@selectorAccessMissing");
+    cy.get("#agentAccessProjectSelect").should("have.value", "project-a");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1).and("contain.text", "Project Alpha");
+  });
+
   it("makes available access capabilities semantic mouse and keyboard actions", () => {
     cy.get('#agentAccessProjects button[data-access-action="list"][data-resource-bucket="project-artifacts"]')
       .should("have.prop", "tagName", "BUTTON")

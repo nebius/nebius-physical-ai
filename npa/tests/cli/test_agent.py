@@ -1418,6 +1418,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<body>'
                 '<div id="tabMain"></div><div id="tabRerun"></div>'
                 '<div id="agentAccessPanel"></div><button id="agentAccessRefresh"></button>'
+                '<select id="agentAccessProjectSelect"></select>'
+                '<article class="access-project-detail">No searchable artifact bucket.</article>'
                 '<script>function refreshAccess(){ fetch("/api/access"); }</script>'
                 '<div id="stagesPanel"><h3>Stages</h3>'
                 '<div class="stages-run-picker">'

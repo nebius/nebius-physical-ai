@@ -78,7 +78,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026080801"
+AGENT_UI_VERSION = "2026080802"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -9763,7 +9763,7 @@ def verify_live_cmd(
         'id="tabRerun"',
         'id="stagesPanel"',
         'id="agentAccessPanel"',
-        'id="agentAccessRefresh"',
+        'id="agentAccessProjectSelect"',
         "/api/access",
         "<h3>Stages</h3>",
         'id="stagesRunSelect"',

@@ -169,6 +169,12 @@
       }
       .access-head h3 { margin-bottom: 4px; }
       .access-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+      .access-overview-status {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.4;
+      }
       .access-status {
         display: inline-flex;
         align-items: center;
@@ -185,6 +191,28 @@
       .access-status.available { background: var(--ok-bg); color: var(--ok-text); border-color: #b4dc70; }
       .access-status.partial, .access-status.unverified { background: #fef3c7; color: #7c4a03; border-color: #f4ca64; }
       .access-status.denied, .access-status.unavailable { background: #fee2e2; color: #991b1b; border-color: #f4aaaa; }
+      .access-project-picker {
+        display: grid;
+        gap: 5px;
+        margin-top: 12px;
+        max-width: 720px;
+      }
+      .access-project-picker label {
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .access-project-picker select {
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 8px 10px;
+        background: #fff;
+        color: var(--text);
+      }
       .access-projects { display: grid; gap: 8px; margin-top: 10px; }
       .access-project {
         border: 1px solid var(--border);
@@ -195,6 +223,8 @@
       .access-project-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       .access-project-name { font-weight: 750; color: var(--ink-strong); }
       .access-project-id { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+      .access-project-scopes { display: grid; gap: 5px; margin-top: 8px; }
+      .access-project-scope { color: var(--muted); font-size: 12px; line-height: 1.45; }
       .access-resources { margin-top: 7px; display: grid; gap: 5px; }
       .access-resource {
         display: grid;
@@ -1711,12 +1741,19 @@
               <p class="hint">Effective tenant, project, and storage access for this running agent.</p>
             </div>
             <div class="btn-row">
-              <span id="agentAccessStatus" class="access-status unverified">Loading</span>
+              <span id="agentAccessStatus" class="access-overview-status" role="status">Loading access…</span>
               <button id="agentAccessRefresh" class="btn" type="button">Refresh access</button>
             </div>
           </div>
           <div id="agentAccessSummary" class="access-summary" aria-live="polite"></div>
-          <div id="agentAccessProjects" class="access-projects"></div>
+          <div class="access-project-picker">
+            <label for="agentAccessProjectSelect">Project</label>
+            <select id="agentAccessProjectSelect" aria-describedby="agentAccessProjectHint" disabled>
+              <option value="">Loading projects…</option>
+            </select>
+            <span id="agentAccessProjectHint" class="hint">Choose a project to inspect its effective read access and available actions.</span>
+          </div>
+          <div id="agentAccessProjects" class="access-projects" aria-live="polite"></div>
           <div id="agentAccessErrors" class="access-errors" role="status"></div>
           <div id="agentAccessActionResult" class="access-action-result" role="status" aria-live="polite" aria-busy="false" hidden></div>
         </section>
@@ -2257,11 +2294,54 @@
           ? status
           : "unavailable";
       }
+      function accessStatusLabel(value) {
+        const status = accessStatusClass(value);
+        if (status === "partial") return "Limited";
+        return status.charAt(0).toUpperCase() + status.slice(1);
+      }
+      function accessScopeLabel(value) {
+        const scope = String(value || "single_project");
+        if (scope === "tenant") return "Tenant-wide read discovery";
+        if (scope === "partial_tenant") return "Tenant read discovery with specific gaps";
+        return "Deployment-project discovery";
+      }
+      function sortedAccessProjects(report) {
+        const projects = Array.isArray(report && report.projects) ? report.projects.slice() : [];
+        return projects.sort((left, right) => {
+          const leftId = String((left && left.id) || "");
+          const rightId = String((right && right.id) || "");
+          if (leftId < rightId) return -1;
+          if (leftId > rightId) return 1;
+          const leftName = String((left && left.name) || "");
+          const rightName = String((right && right.name) || "");
+          if (leftName < rightName) return -1;
+          if (leftName > rightName) return 1;
+          return 0;
+        });
+      }
+      const ACCESS_PROJECT_STORAGE_KEY = "npa.agent.access.selected-project-id";
+      function storedAccessProjectId() {
+        try {
+          return String(window.sessionStorage.getItem(ACCESS_PROJECT_STORAGE_KEY) || "").trim();
+        } catch (_err) {
+          return "";
+        }
+      }
+      function persistAccessProjectId(projectId) {
+        try {
+          if (projectId) window.sessionStorage.setItem(ACCESS_PROJECT_STORAGE_KEY, projectId);
+          else window.sessionStorage.removeItem(ACCESS_PROJECT_STORAGE_KEY);
+        } catch (_err) {
+          // Storage may be disabled; in-memory selection still survives access refreshes.
+        }
+      }
       let accessActionRequestId = 0;
       let accessActionController = null;
       let accessRefreshRequestId = 0;
       let accessRefreshController = null;
       let selectedAccessResource = null;
+      let selectedAccessProjectId = storedAccessProjectId();
+      let currentAccessReport = null;
       function accessSelectionFromButton(button) {
         return {
           projectId: String(button.getAttribute("data-project-id") || "").trim(),
@@ -2489,82 +2569,154 @@
         }
         return false;
       }
+      function renderSelectedAccessProject() {
+        const projectsHost = document.getElementById("agentAccessProjects");
+        if (!projectsHost) return;
+        const projects = sortedAccessProjects(currentAccessReport);
+        const projectIndex = projects.findIndex(
+          (item) => String((item && item.id) || "") === selectedAccessProjectId,
+        );
+        const project = projectIndex >= 0 ? projects[projectIndex] : null;
+        if (!project) {
+          projectsHost.innerHTML = '<p class="hint">No project identity is visible to this agent.</p>';
+          return;
+        }
+        const capabilities = (project && project.capabilities) || {};
+        const discovery = capabilities.artifact_discovery || {};
+        const readScope = capabilities.artifact_read || {};
+        const submit = capabilities.workflow_submission || {};
+        const storageDiscovery = capabilities.storage_resource_discovery || {};
+        const resources = Array.isArray(project && project.resources) ? project.resources : [];
+        const projectId = String(project.id || "");
+        const projectName = String(project.name || projectId || "project");
+        const scopeHtml = (label, capability) => {
+          const capStatus = accessStatusClass(capability.status);
+          return '<div class="access-project-scope"><strong>' + escapeHtml(label) + ": " +
+            escapeHtml(accessStatusLabel(capStatus)) + "</strong> — " +
+            escapeHtml(String(capability.reason || "No capability reason was reported.")) + "</div>";
+        };
+        const resourceHtml = resources.length ? resources.map((resource, resourceIndex) => {
+          const caps = (resource && resource.capabilities) || {};
+          const list = caps.artifact_discovery || {};
+          const read = caps.artifact_read || {};
+          const bucket = String(resource.name || "unnamed bucket");
+          const capabilityHtml = (name, capability, action, label) => {
+            const capStatus = accessStatusClass(capability.status);
+            const reasonId = "accessReason-" + String(projectIndex) + "-" + String(resourceIndex) + "-" + action;
+            const enabled = capStatus === "available";
+            return '<div class="access-capability"><span class="access-status ' + capStatus + '">' +
+              escapeHtml(name + ": " + accessStatusLabel(capStatus)) + "</span>" +
+              '<button class="btn" type="button" data-access-action="' + action + '" data-capability-status="' + capStatus + '"' +
+              ' data-project-id="' + escapeHtml(projectId) + '" data-project-name="' + escapeHtml(projectName) + '"' +
+              ' data-resource-bucket="' + escapeHtml(bucket) + '" data-read-status="' + escapeHtml(String(read.status || "unavailable")) + '"' +
+              ' data-read-reason="' + escapeHtml(String(read.reason || "")) + '" aria-describedby="' + reasonId + '"' +
+              ' aria-label="' + escapeHtml(label + " in " + bucket + " (project " + projectName + ")") + '"' +
+              (enabled ? "" : ' disabled aria-disabled="true"') + ">" + escapeHtml(label) + "</button>" +
+              '<span id="' + reasonId + '" class="access-capability-reason">' +
+              escapeHtml(String(capability.reason || "No capability reason was reported.")) + "</span></div>";
+          };
+          return '<div class="access-resource">' +
+            '<div class="access-resource-head"><span class="pill">object storage</span><code>' + escapeHtml(bucket) + "</code></div>" +
+            '<div class="access-capabilities">' +
+            capabilityHtml("List", list, "list", "List artifacts") +
+            capabilityHtml("Read", read, "read", "Browse / preview") +
+            "</div></div>";
+        }).join("") : '<div class="access-resource-empty"><strong>No searchable artifact bucket.</strong> <span class="hint">' +
+          escapeHtml(String(storageDiscovery.reason || discovery.reason || "No object-storage resource was returned for this project.")) +
+          "</span></div>";
+        projectsHost.innerHTML = '<article class="access-project access-project-detail" data-project-id="' + escapeHtml(projectId) + '">' +
+          '<div class="access-project-head"><span class="access-project-name">' + escapeHtml(projectName) + "</span>" +
+          (project.deployment_project ? '<span class="pill">deployment project</span>' : '<span class="pill">tenant read-only</span>') +
+          "</div>" +
+          '<div class="access-project-id">Stable project ID: <code>' + escapeHtml(projectId) + "</code></div>" +
+          '<div class="access-project-scopes">' +
+          scopeHtml("Artifact discovery", discovery) +
+          scopeHtml("Artifact reads", readScope) +
+          scopeHtml("Workflow submission", submit) +
+          "</div>" +
+          '<div class="access-resources">' + resourceHtml + "</div></article>";
+      }
+      function selectAccessProject(projectId, options) {
+        const opts = options || {};
+        const projects = sortedAccessProjects(currentAccessReport);
+        const requested = String(projectId || "").trim();
+        const selected = projects.find((item) => String((item && item.id) || "") === requested);
+        if (!selected) return false;
+        if (selectedAccessProjectId !== requested && !opts.renderOnly) {
+          cancelAccessAction(true);
+        }
+        selectedAccessProjectId = requested;
+        persistAccessProjectId(requested);
+        const picker = document.getElementById("agentAccessProjectSelect");
+        if (picker && picker.value !== requested) picker.value = requested;
+        renderSelectedAccessProject();
+        return true;
+      }
       function renderAccessReport(report) {
         const panel = document.getElementById("agentAccessPanel");
         const statusEl = document.getElementById("agentAccessStatus");
         const summary = document.getElementById("agentAccessSummary");
-        const projectsHost = document.getElementById("agentAccessProjects");
+        const picker = document.getElementById("agentAccessProjectSelect");
         const errorsHost = document.getElementById("agentAccessErrors");
         const identity = (report && report.identity) || {};
-        const status = accessStatusClass(report && report.status);
+        const projects = sortedAccessProjects(report);
+        const resourceCount = projects.reduce(
+          (count, project) => count + (Array.isArray(project && project.resources) ? project.resources.length : 0),
+          0,
+        );
+        currentAccessReport = report || {};
         if (panel) panel.setAttribute("aria-busy", "false");
         if (statusEl) {
-          statusEl.className = "access-status " + status;
-          statusEl.textContent = status;
+          statusEl.className = "access-overview-status";
+          statusEl.textContent = String(projects.length) + " project" + (projects.length === 1 ? "" : "s") +
+            " · " + String(resourceCount) + " discovered bucket" + (resourceCount === 1 ? "" : "s");
           statusEl.title = String((((report || {}).capabilities || {}).artifact_discovery || {}).reason || "");
         }
         if (summary) {
           const tenant = String(identity.tenant_id || "not available");
           const deployment = String(identity.deployment_project_name || identity.deployment_project_id || "not available");
-          const scope = String((report && report.scope) || "single_project");
+          const scope = accessScopeLabel(report && report.scope);
           const serviceAccount = String(identity.service_account_id || "not reported");
           const credentialSource = String(identity.credential_source || "not reported");
           const credentialProfile = String(identity.credential_profile || "not reported");
           const refreshState = String((((report || {}).refresh || {}).state) || "current");
           summary.innerHTML =
             '<span class="pill">tenant <strong>' + escapeHtml(tenant) + "</strong></span>" +
+            '<span class="pill">visible projects <strong>' + String(projects.length) + "</strong></span>" +
+            '<span class="pill">discovered buckets <strong>' + String(resourceCount) + "</strong></span>" +
             '<span class="pill">deployment project <strong>' + escapeHtml(deployment) + "</strong></span>" +
-            '<span class="pill">scope <strong>' + escapeHtml(scope.replaceAll("_", " ")) + "</strong></span>" +
+            '<span class="pill">scope <strong>' + escapeHtml(scope) + "</strong></span>" +
             '<span class="pill">service account <strong>' + escapeHtml(serviceAccount) + "</strong></span>" +
             '<span class="pill">credentials <strong>' + escapeHtml(credentialSource + " / " + credentialProfile) + "</strong></span>" +
             '<span class="pill">refresh <strong>' + escapeHtml(refreshState) + "</strong></span>" +
             '<div class="hint">Tenant discovery is application-enforced read-only. Workflow submission and writes remain home-project-only.</div>';
         }
-        const projects = Array.isArray(report && report.projects) ? report.projects : [];
-        if (projectsHost) {
-          projectsHost.innerHTML = projects.length ? projects.map((project, projectIndex) => {
-            const capabilities = (project && project.capabilities) || {};
-            const discovery = capabilities.artifact_discovery || {};
-            const submit = capabilities.workflow_submission || {};
-            const resources = Array.isArray(project && project.resources) ? project.resources : [];
-            const resourceHtml = resources.length ? resources.map((resource, resourceIndex) => {
-              const caps = (resource && resource.capabilities) || {};
-              const list = caps.artifact_discovery || {};
-              const read = caps.artifact_read || {};
-              const bucket = String(resource.name || "unnamed bucket");
-              const projectId = String(project.id || "");
-              const projectName = String(project.name || projectId || "project");
-              const capabilityHtml = (name, capability, action, label) => {
-                const capStatus = accessStatusClass(capability.status);
-                const reasonId = "accessReason-" + String(projectIndex) + "-" + String(resourceIndex) + "-" + action;
-                const enabled = capStatus === "available";
-                return '<div class="access-capability"><span class="access-status ' + capStatus + '">' + escapeHtml(name + ": " + capStatus) + "</span>" +
-                  '<button class="btn" type="button" data-access-action="' + action + '" data-capability-status="' + capStatus + '"' +
-                  ' data-project-id="' + escapeHtml(projectId) + '" data-project-name="' + escapeHtml(projectName) + '"' +
-                  ' data-resource-bucket="' + escapeHtml(bucket) + '" data-read-status="' + escapeHtml(String(read.status || "unavailable")) + '"' +
-                  ' data-read-reason="' + escapeHtml(String(read.reason || "")) + '" aria-describedby="' + reasonId + '"' +
-                  ' aria-label="' + escapeHtml(label + " in " + bucket + " (project " + projectName + ")") + '"' +
-                  (enabled ? "" : ' disabled aria-disabled="true"') + ">" + escapeHtml(label) + "</button>" +
-                  '<span id="' + reasonId + '" class="access-capability-reason">' + escapeHtml(String(capability.reason || "No capability reason was reported.")) + "</span></div>";
-              };
-              return '<div class="access-resource">' +
-                '<div class="access-resource-head"><span class="pill">object storage</span><code>' + escapeHtml(bucket) + "</code></div>" +
-                '<div class="access-capabilities">' +
-                capabilityHtml("List", list, "list", "List artifacts") +
-                capabilityHtml("Read", read, "read", "Browse / preview") +
-                "</div>" +
-                "</div>";
-            }).join("") : '<div class="hint" style="margin-top:6px;">No searchable storage resource was reported.</div>';
-            return '<article class="access-project">' +
-              '<div class="access-project-head"><span class="access-project-name">' + escapeHtml(String(project.name || project.id || "project")) + "</span>" +
-              (project.deployment_project ? '<span class="pill">deployment</span>' : "") +
-              '<span class="access-status ' + accessStatusClass(project.status) + '">' + escapeHtml(String(project.status || "unavailable")) + "</span></div>" +
-              '<div class="access-project-id">' + escapeHtml(String(project.id || "")) + "</div>" +
-              '<div class="hint" style="margin-top:5px;">Artifacts: <strong>' + escapeHtml(String(discovery.status || "unavailable")) +
-              "</strong> — " + escapeHtml(String(discovery.reason || "")) +
-              " · Workflow submission: <strong>" + escapeHtml(String(submit.status || "unavailable")) + "</strong></div>" +
-              '<div class="access-resources">' + resourceHtml + "</div></article>";
-          }).join("") : '<p class="hint">No project identity is visible to this agent.</p>';
+        if (picker) {
+          picker.replaceChildren();
+          projects.forEach((project) => {
+            const option = document.createElement("option");
+            const projectId = String((project && project.id) || "");
+            const projectName = String((project && project.name) || projectId || "project");
+            option.value = projectId;
+            option.textContent = projectName + " — " + projectId;
+            option.setAttribute("data-project-id", projectId);
+            picker.appendChild(option);
+          });
+          picker.disabled = !projects.length;
+        }
+        const deploymentId = String(identity.deployment_project_id || "");
+        const retained = projects.some(
+          (project) => String((project && project.id) || "") === selectedAccessProjectId,
+        ) ? selectedAccessProjectId : "";
+        const deployment = projects.some(
+          (project) => String((project && project.id) || "") === deploymentId,
+        ) ? deploymentId : "";
+        const nextSelection = retained || deployment || String(((projects[0] || {}).id) || "");
+        if (nextSelection) selectAccessProject(nextSelection, { renderOnly: true });
+        else {
+          selectedAccessProjectId = "";
+          persistAccessProjectId("");
+          renderSelectedAccessProject();
         }
         const errors = Array.isArray(report && report.errors) ? report.errors : [];
         if (errorsHost) {
@@ -2589,8 +2741,8 @@
         const errorsHost = document.getElementById("agentAccessErrors");
         if (panel) panel.setAttribute("aria-busy", "true");
         if (statusEl) {
-          statusEl.className = "access-status unverified";
-          statusEl.textContent = force ? "Refreshing" : "Loading";
+          statusEl.className = "access-overview-status";
+          statusEl.textContent = force ? "Refreshing access…" : "Loading access…";
         }
         try {
           const report = await apiJson("/api/access" + (force ? "?refresh=true" : ""), {
@@ -2603,8 +2755,8 @@
           if (refreshId !== accessRefreshRequestId) return false;
           if (panel) panel.setAttribute("aria-busy", "false");
           if (statusEl) {
-            statusEl.className = "access-status unavailable";
-            statusEl.textContent = "Unavailable";
+            statusEl.className = "access-overview-status";
+            statusEl.textContent = "Access unavailable";
           }
           if (errorsHost) {
             errorsHost.textContent = "Access refresh failed. Existing project-scoped operations are unchanged; retry refresh for current diagnostics.";
@@ -2778,6 +2930,13 @@
         bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
         bindClick("workflowSubmitYaml", submitWorkflowYaml, "Submit workflow YAML");
         bindClick("agentAccessRefresh", () => refreshAccess(true), "Refresh agent access");
+        const accessProjectSelect = document.getElementById("agentAccessProjectSelect");
+        if (accessProjectSelect) {
+          accessProjectSelect.addEventListener("change", (event) => {
+            const value = String((event.target && event.target.value) || "");
+            selectAccessProject(value);
+          });
+        }
         const accessPanel = document.getElementById("agentAccessPanel");
         if (accessPanel) {
           // One delegated handler owns all dynamically-rendered access actions.

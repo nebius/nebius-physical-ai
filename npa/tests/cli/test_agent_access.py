@@ -252,6 +252,8 @@ def test_access_model_is_embedded_with_api_ui_and_read_boundary() -> None:
     assert "def _resolve_accessible_run_artifact(" in runtime
     assert "cross-project s3_uri requires a run_id and exact discovered artifact" in runtime
     assert 'id="agentAccessPanel"' in ui_source
+    assert 'id="agentAccessProjectSelect"' in ui_source
+    assert 'for="agentAccessProjectSelect"' in ui_source
     assert 'apiJson("/api/access"' in ui_source
     assert 'data-access-action="' in ui_source
     assert 'data-capability-status="' in ui_source
@@ -262,6 +264,12 @@ def test_access_model_is_embedded_with_api_ui_and_read_boundary() -> None:
     assert "accessActionController.abort()" in ui_source
     assert 'event.key !== "Enter" && event.key !== " "' in ui_source
     assert 'id="agentAccessActionResult"' in ui_source
+    assert 'if (status === "partial") return "Limited"' in ui_source
+    assert "picker.replaceChildren()" in ui_source
+    assert 'class="access-project access-project-detail"' in ui_source
+    assert "window.sessionStorage.setItem(ACCESS_PROJECT_STORAGE_KEY, projectId)" in ui_source
+    assert "const nextSelection = retained || deployment" in ui_source
+    assert "No searchable artifact bucket." in ui_source
 
 
 def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) -> None:
