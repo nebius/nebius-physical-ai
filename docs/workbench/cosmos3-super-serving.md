@@ -111,8 +111,16 @@ writable. The entrypoint checks this before any download starts, because
 otherwise the failure surfaces as a lock error partway through fetching 17 GB of
 guardrail weights.
 
+Budget the cache before first start: the `Cosmos3-Super` checkpoint is about
+124 GB on disk plus 17 GB of guardrail weights, so plan roughly 145 GB. The
+first-ever download is its own cost, separate from and larger than the
+readiness figures below, which were measured with weights already on disk.
+
 `--ipc=host` and the `nofile` ulimit are the vendor runtime's requirements, not
-this layer's.
+this layer's. To run the vendor runtime bare, without this image's preflights,
+the serve command the Dockerfile assembles works directly against
+`vllm/vllm-omni:cosmos3`; the measured behavior on this page applies to both,
+because they run the same server.
 
 ### Configuration surface
 
@@ -133,7 +141,18 @@ The parallel configuration is **pinned**, not exposed:
 is the configuration the model card recommends for 8x H200, H100, or A100, and
 measurement on 8x H200 backed it: it was the fastest of five strategies tried,
 about 9% faster than plain `--tensor-parallel-size 8` at both 35 and 50 steps.
-The measured block is in
+
+| Configuration | 35 steps | 50 steps |
+| --- | --- | --- |
+| Pinned config above | ~121 s | ~166 s |
+| `--tensor-parallel-size 8` | ~131 s | ~181 s |
+
+Server-reported generation times at 1280x720, 189 frames, guardrails off;
+client wall time adds roughly 3 to 4 seconds. Every measured cell fits
+`latency ~= 14.4s + steps x per_step` to within 0.3%: the ~14.4 s outside the
+denoise loop is the same across every strategy tried, and the entire difference
+between configurations is denoise-step rate (3.03 to 3.06 s/step for the pinned
+config, 3.33 to 3.36 for tensor parallelism). The full measured block is in
 [vllm-project/vllm-omni#5909](https://github.com/vllm-project/vllm-omni/pull/5909).
 `NPA_COSMOS3_SERVE_EXTRA_ARGS` is the escape hatch for anyone who wants a
 different strategy, and `NPA_COSMOS3_SERVE_GPUS` has to be set to match.
@@ -166,7 +185,11 @@ This is the operational fact most likely to be got wrong. Measured on 8x H200,
 HSDP-sharded configurations reached `Application startup complete` in roughly
 280 to 290 seconds with the model weights already in the host page cache, and
 about 320 seconds longer than that on a cold cache. `--init-timeout 1800` was
-never approached.
+never approached. The 280 to 290 second figure is a property of HSDP-sharded
+weight loading: the one non-HSDP strategy measured, `--tensor-parallel-size 8`
+on a single boot, reached readiness in about 90 seconds warm, so anyone
+overriding the parallel configuration through `NPA_COSMOS3_SERVE_EXTRA_ARGS`
+should re-measure readiness rather than inherit these numbers.
 
 This image's own validation run reached readiness in 592 seconds on a cold cache,
 which is the number to plan against for a node that has just been started.
@@ -201,8 +224,10 @@ clip generated with them on is not the same clip generated with them off.
 Within one running server, output is bitwise reproducible at a fixed seed.
 Across a restart it is not: the same seed and configuration produce a different
 clip, at a magnitude comparable to the difference between two adjacent frames of
-the same video. Same-seed comparisons are only valid inside one server instance,
-which matters for any evaluation harness that restarts servers between arms.
+the same video (median 28 dB PSNR against the pre-restart clip, versus 27.9 dB
+between adjacent frames within one clip). Same-seed comparisons are only valid
+inside one server instance, which matters for any evaluation harness that
+restarts servers between arms.
 
 ## Concurrency
 
@@ -211,6 +236,22 @@ Cosmos 3 models do not support step-level batching in vLLM-Omni
 lists Step Execution as unsupported for them). Concurrent requests queue and
 serialize rather than sharing GPU work, so client-side queue depth and timeouts
 are the design surface, not server-side batch tuning.
+
+Measured at 1280x720, 189 frames, 35 steps, guardrails on:
+
+| Concurrency | Throughput | Mean latency | Median latency | Peak memory |
+| --- | --- | --- | --- | --- |
+| 1 | 28.21 clips/hr | 127.6 s | 127.6 s | 38,562 MB |
+| 2 | 30.43 clips/hr | 208.2 s | 230.1 s | 38,562 MB |
+| 4 | 30.78 clips/hr | 382.0 s | 461.4 s | 38,564 MB |
+| 8 | 30.96 clips/hr | 729.0 s | 923.3 s | 38,564 MB |
+
+Peak memory holding flat within 2 MB across an eightfold increase in in-flight
+work is the hard evidence for the no-batching design. Throughput gains from 1
+to 8 concurrent requests are under 10% and nearly all collected at concurrency
+2, while median latency doubles at each step. There is little reason to run
+this server above concurrency 2 unless the marginal 9.8% of throughput is worth
+a 7.2x median-latency cost.
 
 ## Validated on real GPUs
 
@@ -229,10 +270,23 @@ The generation figure sits inside the band already measured for this
 configuration and prompt on the same hardware without the container wrapper, so
 the wrapper adds no measurable cost.
 
+The base pin is not currently load-bearing for that cell: re-checked on the
+vendor's `v0.26.0` image, the same flags produced 124 s against 123 s on the
+pinned image (guardrails off, one run per image), with output parity inside the
+same-configuration restart band.
+
 All three preflight refusals were exercised against real conditions rather than
 simulated ones: a missing token, a host cache genuinely owned by a different uid
 than the container's runtime user, and four GPUs against the pinned 8-GPU
 config. Each refused before the server started.
+
+## Artifact handoff
+
+The served endpoint returns bytes and keeps no record. `npa workbench cosmos3
+generate` writes a `generate.json` manifest recording prompt, seed, guardrail
+posture, and shape alongside each artifact; this server does not. A workload
+that needs that provenance should record the request fields and the response's
+sha256 on the client side and upload them alongside the clip.
 
 ## Troubleshooting
 
