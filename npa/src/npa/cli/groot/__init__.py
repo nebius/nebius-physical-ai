@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import tempfile
 import time
 from enum import Enum
@@ -124,6 +125,10 @@ from npa.workbench.training_config import (
     render_overrides,
     shell_env_exports,
 )
+from npa.cli.groot.training_evidence import (
+    render_distributed_probe,
+    render_training_manifest_script,
+)
 
 app = typer.Typer(
     name="groot",
@@ -138,6 +143,8 @@ _workbench_name: str = ""
 
 GROOT_RELEASE = "0.1.0"
 GROOT_RUNTIME_VERSION = "0.1.0"
+GROOT_MODEL_VERSION = "1.7"
+GROOT_NCCL_RUNTIME_VERSION = "2.30.7"
 GROOT_PYPI_PACKAGE = f"nvidia-gr00t-sdk=={GROOT_RUNTIME_VERSION}"
 GROOT_REPO_URL = "https://github.com/NVIDIA/Isaac-GR00T.git"
 GROOT_REPO_REF = "3df8b3825d67f755e69141446f4315f281b9b7e6"
@@ -183,6 +190,7 @@ GROOT_CREDENTIAL_ENV_NAMES = (
     "NEBIUS_S3_BUCKET",
 )
 DEFAULT_MODEL = "nvidia/GR00T-N1.7-3B"
+GROOT_FINETUNE_MANIFEST = "npa_groot_finetune_manifest.json"
 HF_MODEL_REVISIONS = {
     DEFAULT_MODEL: "2fc962b973bccdd5d8ce4f67cc63b264d6886495",
     COSMOS_REASON_MODEL: COSMOS_REASON_REVISION,
@@ -333,6 +341,16 @@ class WorkbenchRuntime(str, Enum):
     container = "container"
     byovm = "byovm"
     serverless = "serverless"
+
+
+class FinetuneRuntime(str, Enum):
+    remote = "remote"
+    local = "local"
+
+
+class NcclTransport(str, Enum):
+    auto = "auto"
+    socket = "socket"
 
 
 class InferenceMode(str, Enum):
@@ -1607,6 +1625,8 @@ def _build_finetune_command(
     config: str,
     endpoint_url: str,
     checkpoint_endpoint_url: str = "",
+    run_id: str = "",
+    nccl_transport: str = NcclTransport.auto.value,
     max_steps: int | None = None,
     global_batch_size: int | None = None,
     dataloader_num_workers: int | None = None,
@@ -1653,9 +1673,23 @@ def _build_finetune_command(
     )
     tag = _normalize_embodiment_tag(robot_embodiment)
     if num_gpus > 1:
-        launcher = f"uv run torchrun --nproc_per_node={num_gpus} --master_port=29500 gr00t/experiment/launch_finetune.py"
+        launcher = f"uv run --no-sync torchrun --nproc_per_node={num_gpus} --master_port=29500 gr00t/experiment/launch_finetune.py"
+        probe_launcher = f"uv run --no-sync torchrun --nproc_per_node={num_gpus} --master_port=29501 /tmp/npa_groot_distributed_probe.py"
     else:
         launcher = "uv run python gr00t/experiment/launch_finetune.py"
+        probe_launcher = "uv run python /tmp/npa_groot_distributed_probe.py"
+    nccl_env = ""
+    if num_gpus > 1 and nccl_transport == NcclTransport.socket.value:
+        nccl_env = f"""\
+export NCCL_P2P_DISABLE=1
+export NCCL_SHM_DISABLE=1
+export NCCL_IB_DISABLE=1
+export NCCL_NET=Socket
+export NCCL_CUMEM_ENABLE=0
+export NCCL_CUMEM_HOST_ENABLE=0
+uv pip install --quiet --python {GROOT_VENV}/bin/python nvidia-nccl-cu12=={GROOT_NCCL_RUNTIME_VERSION}
+echo NPA_GROOT_NCCL_TRANSPORT socket
+"""
     train_args = ""
     if max_steps is not None:
         train_args += f" \\\n  --max-steps {max_steps}"
@@ -1673,12 +1707,50 @@ def _build_finetune_command(
     if override_args:
         train_args += f" \\\n  {override_args}"
     training_env = shell_env_exports(training.env())
+    model_revision = HF_MODEL_REVISIONS.get(base_model.split("@", 1)[0], "")
+    manifest_path = f"{output_dir}/{GROOT_FINETUNE_MANIFEST}"
+    probe_script = render_distributed_probe(output_dir)
+    manifest_script = render_training_manifest_script(
+        output_dir=output_dir,
+        manifest_path=manifest_path,
+        manifest_fields={
+            "schema": "npa.groot.finetune.v1",
+            "status": "completed",
+            "run_id": run_id,
+            "groot_model_version": GROOT_MODEL_VERSION,
+            "groot_runtime_version": GROOT_RUNTIME_VERSION,
+            "nccl_runtime_version": GROOT_NCCL_RUNTIME_VERSION,
+            "groot_repo_ref": GROOT_REPO_REF,
+            "base_model": base_model,
+            "base_model_revision": model_revision,
+            "robot_embodiment": tag,
+            "num_gpus": num_gpus,
+            "nccl_transport": nccl_transport,
+            "global_batch_size": global_batch_size,
+            "max_steps": max_steps,
+            "data_path": input_path,
+            "checkpoint_uri": output_path,
+            "training_log_uri": output_path.rstrip("/") + "/training.log",
+            "distributed_evidence_uri": output_path.rstrip("/")
+            + "/npa_groot_distributed_evidence.json",
+        },
+    )
     script = f"""\
 set -euo pipefail
 cd {GROOT_REPO}
 {training_env}
 mkdir -p {GROOT_DATA_CACHE} {GROOT_CHECKPOINT_CACHE} {GROOT_DATA_MOUNT}/checkpoints {GROOT_CONFIG_CACHE}
-{dataset_setup}{base_setup}{config_setup}modality_config_path={shlex.quote(resolved_config)}
+actual_groot_version=$({GROOT_VENV}/bin/python -c 'from importlib.metadata import version; print(version("gr00t"))')
+if [ "$actual_groot_version" != {shlex.quote(GROOT_RUNTIME_VERSION)} ]; then
+  echo "ERROR: expected GR00T runtime {GROOT_RUNTIME_VERSION}, got $actual_groot_version" >&2
+  exit 1
+fi
+actual_groot_ref=$(git -c safe.directory={shlex.quote(GROOT_REPO)} rev-parse HEAD)
+if [ "$actual_groot_ref" != {shlex.quote(GROOT_REPO_REF)} ]; then
+  echo "ERROR: expected Isaac-GR00T ref {GROOT_REPO_REF}, got $actual_groot_ref" >&2
+  exit 1
+fi
+{dataset_setup}{base_setup}{config_setup}{nccl_env}modality_config_path={shlex.quote(resolved_config)}
 if [ -z "$modality_config_path" ] && [ -f {shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py ]; then
   modality_config_path={shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py
 fi
@@ -1686,18 +1758,39 @@ modality_config_arg=()
 if [ -n "$modality_config_path" ]; then
   modality_config_arg=(--modality-config-path "$modality_config_path")
 fi
+mkdir -p {shlex.quote(output_dir)}
+cat > /tmp/npa_groot_distributed_probe.py <<'PY'
+{probe_script}
+PY
+{probe_launcher}
 {launcher} \
   --base-model-path {shlex.quote(resolved_base)} \
   --dataset-path {shlex.quote(dataset_dir)} \
   --embodiment-tag {shlex.quote(tag)} \
   --num-gpus {num_gpus} \
   --output-dir {shlex.quote(output_dir)} \
-  "${{modality_config_arg[@]}}"{train_args}
+  "${{modality_config_arg[@]}}"{train_args} 2>&1 | tee {shlex.quote(output_dir)}/training.log
+{GROOT_VENV}/bin/python - <<'PY'
+{manifest_script}
+PY
 {upload_cmd}
 echo NPA_GROOT_FINETUNE_COMPLETE
 echo {shlex.quote(output_dir)}
 """
     return _remote_bash(script)
+
+
+def _run_local_finetune(command: str, *, stream: bool) -> tuple[int, str, str]:
+    """Run the pinned GR00T trainer in the current GPU container."""
+
+    completed = subprocess.run(
+        shlex.split(command),
+        text=True,
+        stdout=None if stream else subprocess.PIPE,
+        stderr=None if stream else subprocess.PIPE,
+        check=False,
+    )
+    return completed.returncode, completed.stdout or "", completed.stderr or ""
 
 
 def _build_offline_eval_command(
@@ -3362,6 +3455,14 @@ def reload_env_cmd(
 
 @app.command("finetune")
 def finetune_cmd(
+    runtime: FinetuneRuntime = typer.Option(
+        FinetuneRuntime.remote,
+        "--runtime",
+        help=(
+            "Execution location: remote uses the configured GR00T workbench; "
+            "local trains in the current GR00T GPU container."
+        ),
+    ),
     input_path: str = typer.Option(
         "", "--input-path", help="Compatibility alias for --data-path."
     ),
@@ -3393,8 +3494,21 @@ def finetune_cmd(
     num_gpus: int = typer.Option(
         1, "--num-gpus", help="Number of GPUs for PyTorch fine-tuning."
     ),
+    nccl_transport: NcclTransport = typer.Option(
+        NcclTransport.auto,
+        "--nccl-transport",
+        help=(
+            "NCCL intra-node transport: auto uses NCCL topology selection; "
+            "socket disables P2P and SHM for compatibility diagnostics."
+        ),
+    ),
     config: str = typer.Option(
         "", "--config", help="Optional GR00T modality/training config path."
+    ),
+    run_id: str = typer.Option(
+        "",
+        "--run-id",
+        help="Run identifier recorded in the uploaded GR00T training manifest.",
     ),
     max_steps: int | None = typer.Option(
         None, "--max-steps", help="Override GR00T training max_steps."
@@ -3421,6 +3535,13 @@ def finetune_cmd(
     """Fine-tune a GR00T action head on demonstration data with PyTorch."""
     if num_gpus <= 0:
         _fail(f"--num-gpus must be positive, got {num_gpus}")
+    if global_batch_size is not None and global_batch_size <= 0:
+        _fail(f"--global-batch-size must be positive, got {global_batch_size}")
+    if global_batch_size is not None and global_batch_size % num_gpus:
+        _fail(
+            "--global-batch-size must be divisible by --num-gpus for the "
+            f"GR00T 1.7 trainer, got {global_batch_size} and {num_gpus}"
+        )
     try:
         training_config = build_training_config(
             data_path=data_path,
@@ -3461,47 +3582,79 @@ def finetune_cmd(
             )
     except (PathContractError, TrainingConfigError) as exc:
         _fail(str(exc))
-    cfg = _get_ssh_config()
-    ssh = _ssh_client(cfg, extra_tokens=training_config.env())
+    runtime_value = runtime.value
+    effective_run_id = run_id or os.environ.get("NPA_WORKFLOW_RUN_ID", "")
     tag = _normalize_embodiment_tag(robot_embodiment)
-    cmd = _runtime_command(
-        cfg,
-        _build_finetune_command(
-            input_path=effective_input_path,
-            output_path=checkpoint_output_path,
-            base_model=base_model,
-            robot_embodiment=tag,
-            num_gpus=num_gpus,
-            config=config,
-            endpoint_url=cfg.storage.endpoint_url,
-            checkpoint_endpoint_url=training_config.checkpoint_s3.endpoint_url,
-            max_steps=max_steps,
-            global_batch_size=global_batch_size,
-            dataloader_num_workers=dataloader_num_workers,
-            save_steps=save_steps,
-            save_total_limit=save_total_limit,
-            save_only_model=save_only_model,
-            training_config=training_config,
-        ),
-        pass_env=(*GROOT_REMOTE_ENV_NAMES, *tuple(training_config.env().keys())),
+    cfg = None
+    ssh = None
+    endpoint_url = (
+        training_config.checkpoint_s3.endpoint_url
+        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
+        or os.environ.get("AWS_ENDPOINT_URL", "")
     )
+    if runtime_value == FinetuneRuntime.remote.value:
+        cfg = _get_ssh_config()
+        ssh = _ssh_client(cfg, extra_tokens=training_config.env())
+        endpoint_url = cfg.storage.endpoint_url
+
+    train_command = _build_finetune_command(
+        input_path=effective_input_path,
+        output_path=checkpoint_output_path,
+        base_model=base_model,
+        robot_embodiment=tag,
+        num_gpus=num_gpus,
+        config=config,
+        endpoint_url=endpoint_url,
+        checkpoint_endpoint_url=training_config.checkpoint_s3.endpoint_url,
+        run_id=effective_run_id,
+        nccl_transport=nccl_transport.value,
+        max_steps=max_steps,
+        global_batch_size=global_batch_size,
+        dataloader_num_workers=dataloader_num_workers,
+        save_steps=save_steps,
+        save_total_limit=save_total_limit,
+        save_only_model=save_only_model,
+        training_config=training_config,
+    )
+    cmd = train_command
+    if cfg is not None:
+        cmd = _runtime_command(
+            cfg,
+            train_command,
+            pass_env=(*GROOT_REMOTE_ENV_NAMES, *tuple(training_config.env().keys())),
+        )
 
     start = time.time()
     try:
-        exit_code, stdout, stderr = ssh.run(cmd, stream=output != OutputFormat.json)
-    except SSHError as exc:
-        _fail(f"SSH error: {exc}")
+        if ssh is None:
+            exit_code, stdout, stderr = _run_local_finetune(
+                cmd, stream=output != OutputFormat.json
+            )
+        else:
+            exit_code, stdout, stderr = ssh.run(
+                cmd, stream=output != OutputFormat.json
+            )
+    except (SSHError, OSError) as exc:
+        _fail(f"GR00T execution error: {exc}")
         return
 
     result = {
         "status": "success" if exit_code == 0 else "failed",
         "exit_code": exit_code,
+        "run_id": effective_run_id,
+        "runtime": runtime_value,
         "input_path": effective_input_path,
         "data_path": training_config.data_path,
         "output_path": checkpoint_output_path,
+        "manifest_path": f"{checkpoint_output_path.rstrip('/')}/{GROOT_FINETUNE_MANIFEST}",
         "base_model": base_model,
+        "base_model_revision": HF_MODEL_REVISIONS.get(base_model.split("@", 1)[0], ""),
+        "groot_model_version": GROOT_MODEL_VERSION,
+        "groot_runtime_version": GROOT_RUNTIME_VERSION,
+        "groot_repo_ref": GROOT_REPO_REF,
         "robot_embodiment": tag,
         "num_gpus": num_gpus,
+        "nccl_transport": nccl_transport.value,
         "training_config": training_config.public_dict(),
         "duration_seconds": round(time.time() - start, 1),
     }

@@ -38,6 +38,7 @@ from npa.clients.network import (
 )
 from npa.clients.ssh import SSHClient, SSHError
 from npa.agent_backend.shipping import render_shipped_backend_install
+from npa.cli.agent_source_embed import embedded_module_source
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
@@ -73,7 +74,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026073001"
+AGENT_UI_VERSION = "2026080809"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -83,7 +84,10 @@ _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
 # silently disappear after a bootstrap drift or template edit.
 AGENT_MEDIA_PREVIEW_CONTRACT = (
     "authenticatedPreviewObjectUrl",
-    "Loading video preview…",
+    "artifactContentUrl",
+    "video.src = contentUrl",
+    "No RRD/MCAP recording; use the artifacts below",
+    "pre.textContent = String(payload.text || \"\")",
     'data-preview-url="',
     "Keep the Rerun iframe mounted under the media pane",
     'id="renderModeVideo"',
@@ -91,6 +95,9 @@ AGENT_MEDIA_PREVIEW_CONTRACT = (
     'id="viewerPaneMedia"',
     "URL.createObjectURL(blob)",
     '@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])',
+    '@app.api_route("/artifacts/content", methods=["GET", "HEAD"])',
+    "parse_http_byte_range",
+    "X-Content-Type-Options",
     "artifact_media_type(",
 )
 
@@ -202,47 +209,19 @@ AGENT_READABLE_COLOR_CONTRACT = (
 
 
 def _embedded_agent_workflow_source() -> str:
-    """Return agent_workflow.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_workflow.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_workflow.py"))
 
 
 def _embedded_agent_routing_source() -> str:
-    """Return agent_routing.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_routing.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_routing.py"))
 
 
 def _embedded_agent_chat_source() -> str:
-    """Return agent_chat.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_chat.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_chat.py"))
 
 
 def _embedded_agent_recordings_source() -> str:
-    """Return agent_recordings.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_recordings.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_recordings.py"))
 
 
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
@@ -250,6 +229,7 @@ _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
 _AGENT_BACKEND_SHIP = "__NPA_AGENT_BACKEND_SHIP__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
+_AGENT_ARTIFACT_CONTENT_EMBED = "__NPA_AGENT_ARTIFACT_CONTENT_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
@@ -261,14 +241,7 @@ _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
 
 def _embedded_agent_stages_source() -> str:
-    """Return agent_stages.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_stages.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_stages.py"))
 
 
 def rendered_agent_ui_html() -> str:
@@ -285,69 +258,33 @@ def rendered_agent_ui_html() -> str:
 
 
 def _embedded_agent_visual_feedback_source() -> str:
-    """Return agent_visual_feedback.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_visual_feedback.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_visual_feedback.py"))
 
 
 def _embedded_agent_rrd_proxy_source() -> str:
-    """Return agent_rrd_proxy.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_rrd_proxy.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_rrd_proxy.py"))
 
 
 def _embedded_agent_state_source() -> str:
-    """Return agent_state.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_state.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_state.py"))
 
 
 def _embedded_agent_s3_guard_source() -> str:
-    """Return agent_s3_guard.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_s3_guard.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(Path(__file__).with_name("agent_s3_guard.py"))
 
 
 def _embedded_agent_artifacts_source() -> str:
-    """Return workflows/artifacts.py source embedded into the remote agent backend."""
-    import re
-
     path = Path(__file__).resolve().parents[1] / "workflows" / "artifacts.py"
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(path)
+
+
+def _embedded_agent_artifact_content_source() -> str:
+    return embedded_module_source(Path(__file__).with_name("agent_artifact_content.py"))
 
 
 def _embedded_agent_provenance_source() -> str:
-    """Return workflows/data_factory_provenance.py source embedded into the backend."""
-    import re
-
     path = Path(__file__).resolve().parents[1] / "workflows" / "data_factory_provenance.py"
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_module_source(path)
 
 
 @dataclass(frozen=True)
@@ -1812,6 +1749,7 @@ def _bootstrap_agent_stack(
     agent_backend_ship_script = render_shipped_backend_install()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
+    agent_artifact_content_source = _embedded_agent_artifact_content_source()
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
@@ -1955,8 +1893,8 @@ from urllib.parse import quote
 
 import httpx
 import yaml
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 app = FastAPI(title="npa-agent")
 TOOL_CATALOG = {catalog_json}
@@ -2354,22 +2292,26 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
                     snapshot[key] = ""
             snapshot["foxglove_ready"] = bool(payload.get("foxglove_ready"))
     else:
-        # Never let a sparse update erase richer artifact fields from load-run.
-        for key in (
-            "artifact_render",
-            "artifact_key",
-            "artifact_uri",
-            "artifact_preview_url",
-            "artifact_download_url",
-            "rrd_uri",
-            "rerun_iframe_url",
-            "visualization_note",
-            "preview_entity",
-            "foxglove_url",
-            "mcap_updated_at",
-        ):
-            if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
-                snapshot[key] = existing[key]
+        no_preview = str(payload.get("preview_status") or "").strip() == "no_previewable_recording"
+        # Never let a sparse update erase richer artifact fields from load-run,
+        # except when selecting a run explicitly establishes the honest
+        # no-preview-but-artifacts state (which must clear a stale artifact).
+        if not no_preview:
+            for key in (
+                "artifact_render",
+                "artifact_key",
+                "artifact_uri",
+                "artifact_preview_url",
+                "artifact_download_url",
+                "rrd_uri",
+                "rerun_iframe_url",
+                "visualization_note",
+                "preview_entity",
+                "foxglove_url",
+                "mcap_updated_at",
+            ):
+                if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
+                    snapshot[key] = existing[key]
         if not payload.get("foxglove_ready") and existing.get("foxglove_ready") and str(snapshot.get("foxglove_url") or "").strip():
             snapshot["foxglove_ready"] = True
     runs[run_id] = snapshot
@@ -3523,6 +3465,12 @@ def _apply_loaded_artifact(
         and not is_neural_reconstruction_recording(key)
     ):
         camera = _sim2real_pipeline_camera_label(camera)
+    elif render == "rerun" and is_groot_learning_recording(key):
+        camera = GROOT_LEARNING_CAMERA_LABEL
+    elif render == "rerun" and is_groot_training_recording(key):
+        # A training-telemetry recording must not inherit a previous policy
+        # rollout's held-out camera label or preview entity.
+        camera = GROOT_TRAINING_CAMERA_LABEL
     elif render == "rerun" and is_neural_reconstruction_recording(key):
         # Do not inherit the previous run's label: the agent keeps sim_viz state
         # across loads, so a NuRec run following a Sim2Real one would report
@@ -3542,6 +3490,13 @@ def _apply_loaded_artifact(
     )
     if render == "rerun":
         _publish_rrd_recording(local_path)
+        # The systemd Rerun service opens RRD_PATH, while nginx serves
+        # RECORDING_PATH. Keep both atomically on the selected real artifact;
+        # otherwise restarting the viewer re-opened the stock ~58KB demo even
+        # though the public recording path briefly held the requested run.
+        rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")
+        shutil.copy2(local_path, rrd_tmp)
+        rrd_tmp.replace(RRD_PATH)
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
@@ -3549,7 +3504,19 @@ def _apply_loaded_artifact(
         sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
         sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"))
         sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
-        if _is_data_factory_recording(key):
+        if is_groot_learning_recording(key):
+            sim_viz["preview_entity"] = "camera/front"
+            sim_viz["visualization_note"] = GROOT_LEARNING_RERUN_NOTE
+        elif is_groot_training_recording(key):
+            sim_viz["preview_entity"] = GROOT_TRAINING_CAMERA_LABEL
+            sim_viz["visualization_note"] = (
+                "GR00T training telemetry loaded. Entities contain representative "
+                "frames decoded from the run's real LeRobot dataset, validated "
+                "training metrics, safe logs, and provenance. Frame time is "
+                "dataset/synthetic-fps, not robot capture time; this is not a "
+                "policy rollout evaluation."
+            )
+        elif _is_data_factory_recording(key):
             sim_viz["preview_entity"] = "augmented"
             sim_viz["visualization_note"] = (
                 "Physical AI Data Factory recording loaded. Entities: input/<clip> "
@@ -3592,12 +3559,23 @@ def _apply_loaded_artifact(
             sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
             sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
             sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
-            sim_viz["visualization_note"] = (
-                "MCAP recording loaded: it plays in the embedded Lichtblick "
-                "(Foxglove-compatible, OSS) viewer — rollout camera, VLM critiques and "
-                "reward/advantage signals — and the same file is published on a CORS + "
-                "byte-range path for the official Foxglove app."
-            )
+            if is_groot_learning_recording(key):
+                sim_viz["visualization_note"] = GROOT_LEARNING_MCAP_NOTE
+            elif is_groot_training_recording(key):
+                sim_viz["visualization_note"] = (
+                    "GR00T training telemetry MCAP loaded in the embedded Lichtblick "
+                    "viewer. It contains real dataset frames, safe training logs, and "
+                    "factual metrics on dataset/synthetic-fps time; it is not a policy "
+                    "rollout or robot-capture recording. The same file is also published "
+                    "on a CORS + byte-range path for Foxglove-compatible clients."
+                )
+            else:
+                sim_viz["visualization_note"] = (
+                    "MCAP recording loaded: it plays in the embedded Lichtblick "
+                    "(Foxglove-compatible, OSS) viewer — rollout camera, VLM critiques and "
+                    "reward/advantage signals — and the same file is published on a CORS + "
+                    "byte-range path for the official Foxglove app."
+                )
         else:
             sim_viz["lichtblick_ready"] = False
             sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(local_path, key)
@@ -3624,6 +3602,7 @@ def _apply_loaded_artifact(
     _record_sim_viz_run(state, sim_viz)
     _save_state(state)
     return sim_viz
+
 
 _RERUN_RESTART_MIN_INTERVAL_S = 8.0
 _last_rerun_restart_monotonic = 0.0
@@ -5560,7 +5539,7 @@ def chat(payload: dict):
     origin_reply, origin_apis = _maybe_origin_reply(
         last_content, visual_context=visual_context, state=state
     )
-    if origin_reply and not has_image_content(llm_messages):
+    if origin_reply and not visual_turn and not has_image_content(llm_messages):
         history = [*merged_history, {{"role": "assistant", "content": origin_reply}}][-80:]
         session.update(
             {{
@@ -5843,6 +5822,8 @@ def chat(payload: dict):
     visual_block = format_visual_context_block(visual_context)
     if visual_block:
         system_content += "\\n\\n" + visual_block
+    if visual_turn:
+        system_content += learning_visual_fact_block(visual_context)
     if origin_reply:
         # Ground the "Where it comes from" / original-input story with real facts.
         system_content += (
@@ -5905,6 +5886,9 @@ def chat(payload: dict):
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="LLM response missing assistant message") from exc
     reply, reasoning = _split_reasoning(message)
+    if visual_turn and learning_visual_reply_needs_correction(reply, visual_context):
+        reply = truthful_learning_visual_reply(visual_context)
+        reasoning = None
     if not reply and reasoning:
         reply = reasoning
         reasoning = None
@@ -6937,7 +6921,14 @@ def sim_viz_status(run_id: str = ""):
     mode = str(payload.get("mode") or "static").strip().lower()
     payload["mode"] = "live" if mode == "live" else "static"
     artifact_render = str(payload.get("artifact_render") or "").strip().lower()
-    if artifact_render and artifact_render != "rerun":
+    preview_status = str(payload.get("preview_status") or "").strip().lower()
+    if preview_status == "no_previewable_recording":
+        # Do not let a shared/stale recording file turn a training run's honest
+        # no-preview state back into rerun_ready=true on the next status poll.
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        payload["rerun_iframe_url"] = ""
+    elif artifact_render and artifact_render != "rerun":
         payload["rrd_uri"] = ""
         payload["rerun_ready"] = False
         payload["rerun_iframe_url"] = ""
@@ -7053,7 +7044,12 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
         if str(item.get("run_id") or "").strip()
     ]
     render = str(payload.get("artifact_render") or "").strip().lower()
-    if render and render != "rerun":
+    preview_status = str(payload.get("preview_status") or "").strip().lower()
+    if preview_status == "no_previewable_recording":
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        payload["rerun_iframe_url"] = ""
+    elif render and render != "rerun":
         payload["rrd_uri"] = ""
         payload["rerun_ready"] = False
         if not payload.get("rerun_iframe_url"):
@@ -7101,6 +7097,7 @@ def sim_viz_load_run(payload: dict | None = None):
             _save_state(state)
         return {{"ok": True, "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id)}}
 
+    artifact_error = ""
     try:
         s3, settings = _agent_s3_client()
         requested_prefix = str(body.get("prefix") or "")
@@ -7108,11 +7105,11 @@ def sim_viz_load_run(payload: dict | None = None):
         if requested_prefix:
             effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
             artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
-        # Generic fallback: find the run across all category folders under the run
-        # root so a mismatched/absent prefix does not hide a mountable .rrd.
+        # Generic S3-only fallback: locate and merge every exact run-id namespace
+        # across accessible buckets (completed outputs + clearly labelled inputs).
         if not artifacts:
-            artifacts = find_run_artifacts(
-                settings["bucket"],
+            _run_bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
                 run_id=validate_run_id(run_id),
                 s3=s3,
@@ -7141,10 +7138,47 @@ def sim_viz_load_run(payload: dict | None = None):
                 "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id),
                 "preferred": preferred.to_dict(),
             }}
-    except Exception:
-        # Fall back to the historical in-memory run selector below; callers still
-        # get a useful 404 if the run has never been seen.
-        pass
+        if artifacts:
+            # Training and other non-visual runs are still real selectable runs.
+            # Record an honest context without fabricating a Rerun recording; the
+            # UI lists/downloads artifacts independently from preview readiness.
+            role_counts = artifact_inventory_counts(artifacts)
+            state = _load_state()
+            sim_viz = dict(DEFAULT_SIM_VIZ)
+            sim_viz.update({{
+                "run_id": run_id,
+                "stage": "artifacts",
+                "camera": camera,
+                "rrd_uri": "",
+                "rerun_ready": False,
+                "rerun_iframe_url": "",
+                "artifact_key": "",
+                "artifact_uri": "",
+                "artifact_render": "",
+                "artifact_count": len(artifacts),
+                "output_artifact_count": role_counts["output"],
+                "input_artifact_count": role_counts["input"],
+                "metadata_artifact_count": role_counts["metadata"],
+                "preview_status": "no_previewable_recording",
+                "visualization_note": "No RRD/MCAP recording; use the artifacts below",
+                "rrd_updated_at": _now_iso(),
+            }})
+            state["active_run_id"] = run_id
+            state["sim_viz"] = sim_viz
+            _record_sim_viz_run(state, sim_viz)
+            _save_state(state)
+            return {{
+                "ok": True,
+                "artifacts_available": True,
+                "artifact_count": len(artifacts),
+                "output_artifact_count": role_counts["output"],
+                "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id),
+                "preferred": preferred.to_dict() if preferred else None,
+            }}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        artifact_error = str(exc)
 
     state = _load_state()
     runs = state.get("sim_viz_runs")
@@ -7155,6 +7189,8 @@ def sim_viz_load_run(payload: dict | None = None):
     # Never invent phantom run ids — require a known sim-viz or sim2real run.
     if not isinstance(selected, dict) or not selected:
         if run_id not in sim2real_runs:
+            if artifact_error:
+                raise HTTPException(status_code=502, detail=f"S3 artifact discovery failed: {{artifact_error}}")
             raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
         selected = {{"run_id": run_id}}
     else:
@@ -7256,6 +7292,30 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
+def _resolved_run_artifacts(s3, settings, run_id: str, *, prefix: str = ""):
+    normalized_run = validate_run_id(run_id)
+    effective_prefix = _artifact_discovery_prefix(settings, prefix)
+    artifacts = []
+    run_bucket = settings["bucket"]
+    if prefix:
+        artifacts = list_artifacts(
+            settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3
+        )
+    if not artifacts:
+        run_bucket, artifacts = find_run_artifacts_across_buckets(
+            _agent_s3_buckets(s3, settings),
+            base_prefix=settings.get("prefix", ""),
+            run_id=normalized_run,
+            s3=s3,
+        )
+    if not run_bucket or not artifacts:
+        raise HTTPException(status_code=404, detail="run artifacts not found in accessible S3 storage")
+    return normalized_run, run_bucket, artifacts, effective_prefix
+
+
+{_AGENT_ARTIFACT_CONTENT_EMBED}
+
+
 @app.get("/artifacts/run/{{run_id:path}}")
 def artifacts_for_run(run_id: str, prefix: str = ""):
     try:
@@ -7264,23 +7324,16 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         s3, settings = _agent_s3_client()
-        effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        artifacts = []
-        run_bucket = settings["bucket"]
-        if prefix:
-            artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3)
-        # Generic fallback: locate the run across EVERY accessible bucket and its
-        # category folders (no hardcoded workflow path, no single-bucket assumption).
-        if not artifacts:
-            run_bucket, artifacts = find_run_artifacts_across_buckets(
-                _agent_s3_buckets(s3, settings),
-                base_prefix=settings.get("prefix", ""),
-                run_id=normalized_run,
-                s3=s3,
-            )
-            if not run_bucket:
-                run_bucket = settings["bucket"]
+        normalized_run, run_bucket, artifacts, effective_prefix = _resolved_run_artifacts(
+            s3, settings, normalized_run, prefix=prefix
+        )
         preferred = select_preferred_artifact(artifacts)
+        role_counts = artifact_inventory_counts(artifacts)
+        summary = build_run_summary(
+            normalized_run,
+            artifacts,
+            _summary_documents_for_run(s3, run_bucket, artifacts),
+        )
         return {{
             "ok": True,
             "bucket": run_bucket,
@@ -7288,8 +7341,15 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
             "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
             "count": len(artifacts),
+            "output_artifact_count": role_counts["output"],
+            "input_artifact_count": role_counts["input"],
+            "metadata_artifact_count": role_counts["metadata"],
+            "namespaces": sorted({{item.namespace for item in artifacts if item.namespace}}),
             "artifacts": [item.to_dict() for item in artifacts],
             "preferred": preferred.to_dict() if preferred else None,
+            "summary": summary,
+            "no_recording": not bool(summary.get("has_recording")),
+            "recording_state": str(summary.get("recording_state") or ""),
         }}
     except HTTPException:
         raise
@@ -7436,84 +7496,6 @@ def artifacts_run_provenance(run_id: str, prefix: str = ""):
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
-@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])
-def artifact_file(filename: str):
-    safe_name = Path(str(filename)).name
-    if safe_name != filename:
-        raise HTTPException(status_code=400, detail="invalid artifact filename")
-    target = RECORDINGS_DIR / safe_name
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail=f"artifact file not found: {{filename}}")
-    # Browsers cannot render Netpbm (.ppm/.pgm/.pbm/.pnm), .bmp, or .tiff. Sim
-    # rollout camera frames are saved as .ppm, so transcode to PNG on the way out
-    # to make them viewable in the Rerun/Image panes and artifact previews.
-    if needs_image_transcode(safe_name):
-        try:
-            import io as _io
-
-            from PIL import Image as _Image
-
-            with _Image.open(target) as _im:
-                _buf = _io.BytesIO()
-                _im.convert("RGB").save(_buf, format="PNG")
-            return Response(content=_buf.getvalue(), media_type="image/png")
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"image transcode failed: {{exc}}") from exc
-    # artifact_media_type comes from the embedded workflows/artifacts.py module.
-    return FileResponse(str(target), media_type=artifact_media_type(safe_name))
-
-
-@app.get("/artifacts/download")
-def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket: str = ""):
-    # Direct download of ANY run artifact (every object is downloadable, not just
-    # the viewer-loadable ones). Streams the S3 object back with an attachment
-    # Content-Disposition so the browser saves it under its real filename. Unlike
-    # /sim-viz/load-artifact this does not mutate viewer state. Bucket resolves
-    # from s3_uri (preferred, bucket-qualified) > explicit bucket param > the
-    # run's bucket (resolved across all accessible buckets) > primary.
-    requested_uri = str(s3_uri or "").strip()
-    requested_key = str(key or "").strip()
-    requested_bucket = str(bucket or "").strip()
-    if not requested_uri and not requested_key:
-        raise HTTPException(status_code=400, detail="Provide s3_uri or key")
-    try:
-        s3, settings = _agent_s3_client()
-        if requested_uri:
-            obj_bucket, obj_key = parse_s3_uri(requested_uri)
-            # Restrict caller-supplied URIs to the configured agent bucket(s) only
-            # (never ListBuckets / every credential-readable bucket).
-            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
-            uri = requested_uri
-        else:
-            obj_key = _safe_artifact_key(requested_key)
-            obj_bucket = requested_bucket or settings["bucket"]
-            if not requested_bucket and str(run_id or "").strip():
-                try:
-                    rb, _arts = find_run_artifacts_across_buckets(
-                        _agent_s3_buckets(s3, settings),
-                        base_prefix=settings.get("prefix", ""),
-                        run_id=validate_run_id(run_id),
-                        s3=s3,
-                    )
-                    if rb:
-                        obj_bucket = rb
-                except Exception:
-                    pass
-            uri = f"s3://{{obj_bucket}}/{{obj_key}}"
-        local_path = RECORDINGS_DIR / _artifact_filename(obj_key)
-        download_s3_uri(uri, local_path, s3=s3)
-        leaf = Path(obj_key).name or "artifact.bin"
-        return FileResponse(
-            str(local_path),
-            media_type=artifact_media_type(leaf),
-            filename=leaf,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
-
-
 @app.post("/sim-viz/load-artifact")
 def sim_viz_load_artifact(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
@@ -7525,43 +7507,50 @@ def sim_viz_load_artifact(payload: dict | None = None):
     try:
         s3, settings = _agent_s3_client()
         if requested_uri:
-            bucket, key = parse_s3_uri(requested_uri)
-            # Configured agent bucket only — blocks arbitrary-bucket exfil.
-            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
-            run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
-            run_id = validate_run_id(run_guess) if run_guess else "artifact"
-            s3_uri = requested_uri
+            if not requested_run:
+                raise HTTPException(status_code=400, detail="run_id is required with s3_uri")
+            uri_bucket, uri_key = parse_s3_uri(requested_uri)
+            if requested_key and requested_key != uri_key:
+                raise HTTPException(status_code=400, detail="s3_uri and key do not match")
+            run_id, bucket, artifact = _resolved_artifact_for_content(
+                s3,
+                settings,
+                run_id=requested_run,
+                key=uri_key,
+                requested_bucket=uri_bucket,
+            )
         else:
-            run_id = validate_run_id(requested_run)
-            key = _safe_artifact_key(requested_key)
-            # Resolve the run's bucket across all accessible buckets so a run in a
-            # non-primary bucket still loads (no copy required).
-            bucket = settings["bucket"]
-            try:
-                rb, _arts = find_run_artifacts_across_buckets(
-                    _agent_s3_buckets(s3, settings),
-                    base_prefix=settings.get("prefix", ""),
-                    run_id=run_id,
-                    s3=s3,
-                )
-                if rb:
-                    bucket = rb
-            except Exception:
-                pass
-            s3_uri = f"s3://{{bucket}}/{{key}}"
-        local_name = _artifact_filename(key)
-        local_path = RECORDINGS_DIR / local_name
-        download_s3_uri(s3_uri, local_path, s3=s3)
-        render = render_hint_for_object(key=key)
+            run_id, bucket, artifact = _resolved_artifact_for_content(
+                s3,
+                settings,
+                run_id=requested_run,
+                key=requested_key,
+            )
+        key = str(artifact.key)
+        s3_uri = str(artifact.s3_uri)
+        render = str(artifact.render or render_hint_for_object(key=key))
         state = _load_state()
-        sim_viz = _apply_loaded_artifact(
-            state=state,
-            run_id=run_id,
-            key=key,
-            s3_uri=s3_uri,
-            render=render,
-            local_path=local_path,
-        )
+        if render in {{"rerun", "mcap"}}:
+            local_name = _artifact_filename(key)
+            local_path = RECORDINGS_DIR / local_name
+            download_s3_uri(s3_uri, local_path, s3=s3)
+            sim_viz = _apply_loaded_artifact(
+                state=state,
+                run_id=run_id,
+                key=key,
+                s3_uri=s3_uri,
+                render=render,
+                local_path=local_path,
+            )
+        else:
+            sim_viz = _apply_content_artifact(
+                state=state,
+                run_id=run_id,
+                key=key,
+                bucket=bucket,
+                s3_uri=s3_uri,
+                render=render,
+            )
         return {{"ok": True, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri}}
     except HTTPException:
         raise
@@ -8593,6 +8582,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_BACKEND_SHIP, agent_backend_ship_script)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
+        .replace(_AGENT_ARTIFACT_CONTENT_EMBED, agent_artifact_content_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)

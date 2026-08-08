@@ -50,6 +50,24 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     assert "syncRunChooserFields" in load_fn
 
 
+def test_artifact_run_load_is_independent_from_workflow_stage_controls() -> None:
+    """Loading an artifact-backed training run must not depend on stage state or Rerun."""
+    ui = _embedded_ui_html()
+    assert "function selectedArtifactRunIdFromUi" in ui
+    assert "function selectedStagesRunIdFromUi" in ui
+    assert 'id="artifactRoleFilter"' in ui
+
+    load_fn = ui.split("async function loadRunData")[1].split("async function selectCamera")[0]
+    assert "selectedArtifactRunIdFromUi()" in load_fn
+    assert "await loadArtifactsForSelectedRun(runId)" in load_fn
+    assert "No RRD/MCAP recording; use the artifacts below" in load_fn
+
+    stages_handler = ui.split('bindClick("stagesLoadRun"')[1].split(', "Show workflow stages"')[0]
+    assert "loadRunDetails(chosen)" in stages_handler
+    assert "loadSelectedRun(chosen)" not in stages_handler
+    assert "loadArtifactsForSelectedRun" not in stages_handler
+
+
 def test_artifact_backed_stages_skip_unrelated_draft_overlay() -> None:
     """Historical capture runs must not inherit an unrelated workflow draft as pending."""
     source = AGENT_MODULE.read_text(encoding="utf-8")

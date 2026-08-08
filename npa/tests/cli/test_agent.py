@@ -63,10 +63,12 @@ def _agent_source() -> str:
     from npa.cli import agent as agent_module
     from npa.cli import agent_site as agent_site_module
 
-    return "\n".join(
+    sources = [
         Path(module.__file__).read_text(encoding="utf-8")
         for module in (agent_module, agent_site_module)
-    )
+    ]
+    sources.append(Path(agent_module.__file__).with_name("agent_artifact_content.py").read_text(encoding="utf-8"))
+    return "\n".join(sources)
 
 
 def _agent_ui_bundle() -> str:
@@ -500,7 +502,8 @@ def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
     assert "function pinLichtblickDsToSameOrigin" in source
     assert "window.location.origin" in source
     # The iframe URL always flows through the rewrite.
-    assert "return pinLichtblickDsToSameOrigin(url) || \"/lichtblick/\";" in source
+    assert "const pinned = pinLichtblickDsToSameOrigin(url) || \"/lichtblick/\";" in source
+    assert 'viewer.searchParams.set("npa.layout", lichtblickLayoutKind(simViz));' in source
 
 
 def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() -> None:
@@ -517,7 +520,7 @@ def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() ->
     mount = source.split("function mountLichtblickIframe", 1)[1].split(
         "async function ensureLichtblickForActiveRun", 1
     )[0]
-    assert "if (lichtblickNeedsLayoutSeed()) {" in mount
+    assert "if (lichtblickNeedsLayoutSeed(simViz)) {" in mount
     reset_calls = mount.count("resetLichtblickLayoutStorage()")
     assert reset_calls == 1, f"expected one guarded wipe, found {reset_calls}"
 
@@ -539,6 +542,14 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     assert three_d["followTf"] == "sim2real"
     image = next(v for k, v in panels.items() if k.startswith("Image!"))
     assert image["imageMode"]["imageTopic"] == "/camera"
+    learning_layout = json.loads(agent_site_module._lichtblick_learning_layout_json())
+    learning_image = next(
+        v for k, v in learning_layout["configById"].items() if k.startswith("Image!")
+    )
+    assert learning_layout["layout"].startswith("Image!")
+    assert learning_image["imageMode"]["imageTopic"] == "/camera/front"
+    script = agent_site_module._lichtblick_default_layout_script()
+    assert 'get("npa.layout")==="learning"' in script
 
 
 def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
@@ -564,9 +575,7 @@ def test_bootstrap_ui_lichtblick_autoloads_run_mcap() -> None:
 
 
 def test_bootstrap_artifact_file_transcodes_ppm_to_png() -> None:
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # .ppm/.bmp/.tiff are transcoded to PNG on serve so the browser can render them.
     assert "needs_image_transcode(safe_name)" in source
     assert 'media_type="image/png"' in source
@@ -913,7 +922,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert '"/api/sim-viz/status?run_id="' in source
     # Media preview uses authenticated blob URLs; Rerun still avoids parent blob URLs for wasm.
     assert "does not reliably consume parent-created blob URLs" in source
-    assert "media_type=artifact_media_type(safe_name)" in source
+    assert "local_media_type = artifact_media_type(safe_name)" in source
     assert "apis_used" in source
     assert "format_live_context_block" in source
     assert "match_chat_intent" in source
@@ -971,10 +980,10 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '@app.post("/sim-viz/load-artifact")' in source
     # Every artifact must be directly downloadable: streaming download endpoint
     # + a per-artifact Download button wired to it.
-    assert '@app.get("/artifacts/download")' in source
+    assert '@app.api_route("/artifacts/download", methods=["GET", "HEAD"])' in source
     assert "data-action=\"download-artifact\"" in source or "data-action='download-artifact'" in source
-    assert "async function downloadArtifact(" in source
-    assert "/api/artifacts/download?" in source
+    assert "function downloadArtifact(" in source
+    assert "/api/artifacts/content?" in source
     # Clicking a stage describes it and inlines its artifacts/info/configs.
     assert '@app.get("/artifacts/stage/{{run_id:path}}")' in source
     assert "async function showStageDetail(" in source
@@ -1040,6 +1049,25 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     assert "artifactPrefixValue" not in source
 
 
+def test_artifact_backed_training_run_loads_without_rerun_recording() -> None:
+    source = _agent_ui_bundle()
+    backend = Path(__file__).resolve().parents[2].joinpath("src/npa/cli/agent.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"output_artifact_count"' in backend
+    assert '"preview_status": "no_previewable_recording"' in backend
+    assert '"artifacts_available": True' in backend
+    status_body = backend.split('@app.get("/sim-viz/status")', 1)[1].split(
+        '@app.get("/sim-viz/runs")', 1
+    )[0]
+    assert 'preview_status == "no_previewable_recording"' in status_body
+    assert 'payload["rerun_ready"] = False' in status_body
+    assert 'state: "no-preview-artifacts"' in source
+    assert 'placeholder.setAttribute("data-state"' in source
+    assert "No RRD/MCAP recording; use the artifacts below" in source
+
+
 def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     """The stages/artifact browser must let you choose a workflow-progress step.
 
@@ -1058,7 +1086,7 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     assert "function runStageWrapper(artifacts, runId)" in source
     # Stage participates in filtering and re-renders on change.
     assert "if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;" in source
-    assert '["artifactStageFilter", "artifactTypeFilter", "artifactSort"]' in source
+    assert '["artifactStageFilter", "artifactTypeFilter", "artifactRoleFilter", "artifactSort"]' in source
     # Timeline stage rows are tagged and clickable to drive the stage filter.
     assert "stage_key: stageKey," in source
     assert 'data-stage-key="' in source
@@ -1093,6 +1121,23 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
     assert "Physical AI Data Factory recording loaded." in source
     # The Sim2Real camera label must NOT be applied to DF recordings.
     assert "_is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)" in source
+
+
+def test_groot_learning_recording_activates_real_rrd_and_truthful_note() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    branch = source.split('if render == "rerun":', 1)[1].split('elif render == "mcap":', 1)[0]
+    assert "is_groot_learning_recording(key)" in branch
+    assert 'sim_viz["preview_entity"] = "camera/front"' in branch
+    assert 'sim_viz["visualization_note"] = GROOT_LEARNING_RERUN_NOTE' in branch
+    assert (
+        "Offline held-out GR00T policy evaluation loaded (not a rollout)"
+        in agent_module._embedded_agent_visual_feedback_source()
+    )
+    assert 'rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")' in branch
+    assert "shutil.copy2(local_path, rrd_tmp)" in branch
+    assert branch.index("rrd_tmp.replace(RRD_PATH)") < branch.index("_restart_rerun_serve(force=True)")
 
 
 def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
@@ -2369,9 +2414,7 @@ def test_run_details_surface_per_stage_workflow_logs() -> None:
 def test_artifact_file_transcodes_non_web_images_to_png() -> None:
     """Non-web images (.ppm sim camera frames, .bmp, .tiff) must be transcoded to
     PNG by the artifact file endpoint so they are viewable in the Rerun/Image panes."""
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "needs_image_transcode(safe_name)" in source
     assert 'format="PNG"' in source
     assert 'media_type="image/png"' in source

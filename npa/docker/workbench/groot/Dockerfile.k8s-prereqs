@@ -1,0 +1,40 @@
+# Kubernetes-schedulability prerequisites for an ALREADY BUILT npa-groot image.
+#
+# This is the small derived-build form of the prerequisite layer enabled in the
+# canonical Dockerfile. It lets an operator repair an existing, multi-GB GR00T
+# image without rebuilding the unchanged CUDA, PyTorch, and GR00T layers:
+#
+#   scripts/build-workbench-image-in-cluster.sh \
+#     --base <registry>/npa-groot:0.1.0 \
+#     --tag <registry>/npa-groot:0.1.0-sky1 \
+#     --dockerfile npa/docker/workbench/groot/Dockerfile.k8s-prereqs
+#
+# SkyPilot's Kubernetes bootstrap executes as the final non-root user. It needs
+# a system Python, rsync, an SSH client, netcat, and passwordless sudo before it
+# can start its runtime. Without sudo the pod exits during apt-ssh-setup and the
+# controller reports only `container not found ("ray-node")`.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+USER root
+
+# The historical 0.1.0 image force-purged linux-libc-dev while retaining
+# libc6-dev. That intentionally minimized the runtime surface but left dpkg with
+# an unsatisfied dependency, so every later apt install fails. A derived repair
+# must restore package consistency before it can install the SkyPilot tools.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --fix-broken
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         python3 python3-venv python3-pip rsync curl openssh-client sudo netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && python3 --version \
+    && sudo -V >/dev/null
+
+USER ubuntu
+WORKDIR /opt/groot
+ENTRYPOINT ["/bin/bash"]

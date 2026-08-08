@@ -29,6 +29,12 @@ RUN_ENTITY_MARKERS: tuple[bytes, ...] = (
     b"/scores",
     b"/signals",
     b"outer_loop",
+    # Factual GR00T training-telemetry recordings. The GR00T workflow emits
+    # these run-scoped entities after validating the checkpoint, distributed
+    # evidence, optimizer step, and finite loss. They are not present in the
+    # stock Franka scene recording.
+    b"metrics/loss",
+    b"run/provenance",
     # Neural-reconstruction (NuRec/NRE) run entities: rig-offset novel views
     # rendered from the trained Gaussians, NRE's validation renders, and the
     # Gaussian quality summary. None of these appear in the stock demo recording.
@@ -56,6 +62,16 @@ _SAFE_RUN_ID_RE = re.compile(r"[^A-Za-z0-9._:-]")
 #: scan it belongs with, and keeps the agent module off its size ratchet.
 PIPELINE_RECORDING_SUFFIX = "/reports/sim2real.rrd"
 NEURAL_RECONSTRUCTION_APP_ID = "neural-reconstruction"
+GROOT_TRAINING_RECORDING_SUFFIXES = (
+    "/reports/groot-training.rrd",
+    "/reports/groot-training.mcap",
+)
+GROOT_TRAINING_CAMERA_LABEL = "camera"
+GROOT_LEARNING_RECORDING_SUFFIXES = (
+    "/reports/groot-learning.rrd",
+    "/reports/groot-learning.mcap",
+)
+GROOT_LEARNING_CAMERA_LABEL = "front"
 
 #: Preview entity and viewer note for a NuRec run. A reconstruction has no
 #: held-out-simulation camera, so the generic Sim2Real note would be actively
@@ -91,6 +107,17 @@ def is_neural_reconstruction_recording(key: str) -> bool:
     return is_pipeline_recording(key) and (
         NEURAL_RECONSTRUCTION_APP_ID + "/"
     ) in str(key or "")
+
+
+def is_groot_training_recording(key: str) -> bool:
+    """True for the factual GR00T training-telemetry RRD or MCAP."""
+    normalized = str(key or "")
+    return normalized.endswith(GROOT_TRAINING_RECORDING_SUFFIXES)
+
+
+def is_groot_learning_recording(key: str) -> bool:
+    """True for the offline held-out GR00T learning RRD or MCAP."""
+    return str(key or "").endswith(GROOT_LEARNING_RECORDING_SUFFIXES)
 
 
 def recording_has_run_entities(data: bytes | None) -> bool:

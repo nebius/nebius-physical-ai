@@ -18,6 +18,10 @@ from npa.cli.groot import (
     GROOT_CONTAINER_NAME,
     GROOT_DATA_MOUNT,
     GROOT_ENV_FILE,
+    GROOT_FINETUNE_MANIFEST,
+    GROOT_MODEL_VERSION,
+    GROOT_REPO,
+    GROOT_REPO_REF,
     GROOT_RUNTIME_VERSION,
     GROOT_RELEASE,
     GROOT_VENV,
@@ -1311,6 +1315,8 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
         num_gpus=2,
         config="s3://bucket/configs/groot.yaml",
         endpoint_url="https://storage.example",
+        run_id="groot-run-2gpu",
+        nccl_transport="socket",
         max_steps=2,
         global_batch_size=1,
         dataloader_num_workers=0,
@@ -1318,9 +1324,23 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
         save_total_limit=1,
         save_only_model=True,
     )
+    script = shlex.split(cmd)[2]
 
-    assert "uv run torchrun --nproc_per_node=2" in cmd
+    assert "uv run --no-sync torchrun --nproc_per_node=2" in cmd
+    assert "export NCCL_P2P_DISABLE=1" in cmd
+    assert "export NCCL_SHM_DISABLE=1" in cmd
+    assert "export NCCL_IB_DISABLE=1" in cmd
+    assert "export NCCL_NET=Socket" in cmd
+    assert "export NCCL_CUMEM_ENABLE=0" in cmd
+    assert "export NCCL_CUMEM_HOST_ENABLE=0" in cmd
+    assert "nvidia-nccl-cu12==2.30.7" in cmd
+    assert "NPA_GROOT_NCCL_TRANSPORT socket" in cmd
+    assert "npa_groot_distributed_probe.py" in cmd
+    assert "dist.all_reduce" in cmd
+    assert "--query-gpu=uuid" in cmd
+    assert "npa_groot_distributed_evidence.json" in cmd
     assert "gr00t/experiment/launch_finetune.py" in cmd
+    assert f"git -c safe.directory={GROOT_REPO} rev-parse HEAD" in cmd
     assert "huggingface-cli download nvidia/GR00T-N1.7-3B --revision 2fc962b973bccdd5d8ce4f67cc63b264d6886495" in cmd
     assert f"--base-model-path {GROOT_DATA_MOUNT}/models/nvidia--GR00T-N1.7-3B" in cmd
     assert f"--dataset-path {GROOT_DATA_MOUNT}/data_cache/bucket_datasets_train" in cmd
@@ -1334,6 +1354,18 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     assert "--save-steps 1" in cmd
     assert "--save-total-limit 1" in cmd
     assert "--save-only-model" in cmd
+    assert f"expected GR00T runtime {GROOT_RUNTIME_VERSION}" in cmd
+    assert f"expected Isaac-GR00T ref {GROOT_REPO_REF}" in cmd
+    assert f'"groot_model_version": {GROOT_MODEL_VERSION!r}' in script
+    assert '"run_id": \'groot-run-2gpu\'' in script
+    assert '"nccl_transport": \'socket\'' in script
+    assert '"world_size": int(evidence.get("world_size") or 0)' in script
+    assert '"distinct_gpu_count": int(evidence.get("distinct_gpu_count") or 0)' in script
+    assert '"collective_ok": evidence.get("collective_ok") is True' in script
+    assert '"optimizer_step_ok": optimizer_step_ok' in script
+    assert '"loss_finite": loss_finite' in script
+    assert "training.log" in script
+    assert GROOT_FINETUNE_MANIFEST in cmd
     assert "upload_file" in cmd
 
 
@@ -1401,6 +1433,116 @@ def test_groot_finetune_container_runtime_execs_inside_container(mocker) -> None
     assert "-e AWS_ACCESS_KEY_ID" in cmd
     assert "launch_finetune.py" in cmd
     assert f"{GROOT_DATA_MOUNT}/data_cache" in cmd
+
+
+def test_groot_finetune_local_runtime_uses_real_two_gpu_launcher(mocker) -> None:
+    local = mocker.patch(
+        "npa.cli.groot._run_local_finetune",
+        return_value=(0, "NPA_GROOT_FINETUNE_COMPLETE", ""),
+    )
+    resolve_ssh = mocker.patch("npa.cli.groot.resolve_ssh_config")
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "finetune",
+            "--runtime",
+            "local",
+            "--data-path",
+            "s3://bucket/datasets/train/",
+            "--checkpoint-s3-uri",
+            "s3://bucket/checkpoints/groot-run/",
+            "--run-id",
+            "groot-run-2gpu",
+            "--num-gpus",
+            "2",
+            "--nccl-transport",
+            "socket",
+            "--global-batch-size",
+            "2",
+            "--max-steps",
+            "1",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["runtime"] == "local"
+    assert payload["run_id"] == "groot-run-2gpu"
+    assert payload["num_gpus"] == 2
+    assert payload["nccl_transport"] == "socket"
+    assert payload["groot_model_version"] == "1.7"
+    assert payload["groot_runtime_version"] == GROOT_RUNTIME_VERSION
+    assert payload["groot_repo_ref"] == GROOT_REPO_REF
+    command = local.call_args.args[0]
+    script = shlex.split(command)[2]
+    assert "uv run --no-sync torchrun --nproc_per_node=2" in command
+    assert "--master_port=29501 /tmp/npa_groot_distributed_probe.py" in command
+    assert "export NCCL_P2P_DISABLE=1" in command
+    assert "export NCCL_SHM_DISABLE=1" in command
+    assert "--num-gpus 2" in command
+    assert '"run_id": \'groot-run-2gpu\'' in script
+    assert GROOT_FINETUNE_MANIFEST in command
+    resolve_ssh.assert_not_called()
+    ssh_cls.assert_not_called()
+
+
+@pytest.mark.parametrize("num_gpus", ["0", "-1"])
+def test_groot_finetune_rejects_non_positive_gpu_count(mocker, num_gpus: str) -> None:
+    local = mocker.patch("npa.cli.groot._run_local_finetune")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "finetune",
+            "--runtime",
+            "local",
+            "--data-path",
+            "s3://bucket/datasets/train/",
+            "--checkpoint-s3-uri",
+            "s3://bucket/checkpoints/groot-run/",
+            "--num-gpus",
+            num_gpus,
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--num-gpus must be positive" in result.output
+    local.assert_not_called()
+
+
+def test_groot_finetune_rejects_batch_not_divisible_by_world_size(mocker) -> None:
+    local = mocker.patch("npa.cli.groot._run_local_finetune")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "finetune",
+            "--runtime",
+            "local",
+            "--data-path",
+            "s3://bucket/datasets/train/",
+            "--checkpoint-s3-uri",
+            "s3://bucket/checkpoints/groot-run/",
+            "--num-gpus",
+            "2",
+            "--global-batch-size",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "must be divisible by --num-gpus" in result.output
+    local.assert_not_called()
 
 
 def test_groot_eval_offline_requires_dataset_path(mocker) -> None:

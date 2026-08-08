@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.predicates import PREDICATES
@@ -389,9 +390,18 @@ def _validate_resource_profiles(spec: NpaWorkflowSpec) -> None:
     rather than at provision time.
     """
 
+    from npa.orchestration.npa_workflow.interpreter import _make_context
+
+    context = _make_context(spec, run_id="validate-run")
     for name, profile in spec.resources.items():
         if not isinstance(profile, dict):
             raise NpaWorkflowError(f"resource profile {name!r} must be a mapping")
+        resolve_resource_profile(
+            str(name),
+            profile,
+            config=context.config,
+            run=context.run,
+        )
         raw = profile.get("num_nodes")
         if raw in (None, ""):
             continue
@@ -415,6 +425,72 @@ def _validate_resource_profiles(spec: NpaWorkflowSpec) -> None:
                 f"got {value} (a gang-scheduled block this large is almost always a typo; "
                 "it would sit PENDING rather than fail)"
             )
+
+
+def resolve_resource_profile(
+    name: str,
+    profile: Mapping[str, Any],
+    *,
+    config: Mapping[str, Any],
+    run: Mapping[str, Any],
+    state_outputs: Mapping[str, Mapping[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Resolve resource tokens and reject non-positive accelerator counts."""
+
+    from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
+
+    resolved: dict[str, Any] = {}
+    for key, value in profile.items():
+        try:
+            resolved[key] = (
+                resolve_tokens(
+                    value,
+                    config=config,
+                    run=run,
+                    state_outputs=state_outputs,
+                )
+                if isinstance(value, str)
+                else value
+            )
+        except TokenError as exc:
+            raise NpaWorkflowError(f"resource profile {name!r}: {key}: {exc}") from exc
+
+    accelerators = resolved.get("accelerators")
+    raw_accelerators = profile.get("accelerators")
+    if isinstance(accelerators, str):
+        match = re.fullmatch(r"\s*[^,:\s]+\s*:\s*([+-]?\d+)\s*", accelerators)
+        if match:
+            count = int(match.group(1))
+            if count < 1:
+                raise NpaWorkflowError(
+                    f"resource profile {name!r}: accelerator count must be >= 1, "
+                    f"got {count}"
+                )
+        elif isinstance(raw_accelerators, str) and "{{" in raw_accelerators:
+            raise NpaWorkflowError(
+                f"resource profile {name!r}: resolved accelerators must use "
+                f"'<type>:<positive-count>', got {accelerators!r}"
+            )
+    elif isinstance(accelerators, Mapping):
+        for accelerator, raw_count in accelerators.items():
+            if isinstance(raw_count, bool):
+                raise NpaWorkflowError(
+                    f"resource profile {name!r}: accelerator {accelerator!r} "
+                    "count must be a positive integer"
+                )
+            try:
+                count = int(raw_count)
+            except (TypeError, ValueError) as exc:
+                raise NpaWorkflowError(
+                    f"resource profile {name!r}: accelerator {accelerator!r} "
+                    f"count must be a positive integer, got {raw_count!r}"
+                ) from exc
+            if count < 1:
+                raise NpaWorkflowError(
+                    f"resource profile {name!r}: accelerator {accelerator!r} "
+                    f"count must be >= 1, got {count}"
+                )
+    return resolved
 
 
 def _validate_parallel_group(spec: NpaWorkflowSpec, state: StateSpec) -> None:

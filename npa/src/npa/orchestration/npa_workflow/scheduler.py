@@ -9,6 +9,8 @@ from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 
 
 def resources_for_step(spec: NpaWorkflowSpec, step: PlanStep) -> dict[str, Any]:
+    if step.resources_profile:
+        return dict(step.resources_profile)
     profile = step.resources or "default"
     raw = spec.resources.get(profile) or spec.resources.get("default") or {}
     return dict(raw) if isinstance(raw, dict) else {}

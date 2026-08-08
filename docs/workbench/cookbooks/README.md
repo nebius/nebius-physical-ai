@@ -9,6 +9,9 @@ workflows with Nebius Physical AI Workbench.
 
 ## Available Cookbooks
 
+- [GR00T N1.7 Training](groot-1-7-training.md): validate, plan, and submit
+  reproducible single- or multi-GPU fine-tuning, then recover the run ID and
+  inspect the checkpoint provenance manifest.
 - [BDD100K SkyPilot Pipeline](bdd100k-pipeline.md): provision the object store,
   Kubernetes cluster, GPU node groups, and in-cluster LanceDB/detection-training
   services, then run the BDD100K ingest, UDF backfill, CLIP embedding,

@@ -445,6 +445,30 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
         requires_token_factory=True,
     ),
+    # --- Multi-stage multi-GPU training and visualization ---
+    SubmitLiveCase(
+        "groot-1-7-finetune.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        image_tool="groot",
+        config_vars=(
+            ("gpu_count", "2"),
+            ("nccl_transport", "socket"),
+            ("max_steps", "1"),
+            ("dataloader_num_workers", "0"),
+            ("save_steps", "1"),
+            ("save_total_limit", "1"),
+        ),
+        notes=(
+            "Runs the real pinned GR00T N1.7 launch_finetune.py inside one "
+            "two-GPU stage. The same gpu_count renders H100:2 and drives "
+            "torchrun --nproc_per_node=2. The one-step live matrix uses the "
+            "socket NCCL compatibility transport, then validates distributed/"
+            "checkpoint evidence, emits real MCAP and RRD telemetry serially, "
+            "and publishes only after both inspect. NPA_E2E_GROOT_DATASET_SRC "
+            "supplies a real GR00T-format LeRobot dataset."
+        ),
+    ),
     # --- Multi-stage GPU ---
     SubmitLiveCase(
         "sonic-export-eval.yaml",

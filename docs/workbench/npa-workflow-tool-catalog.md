@@ -35,6 +35,18 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.retargeting.run` | `npa workbench sonic retargeting run` | `config.motion_uri` | `config.retargeted_uri` | no |
 | `workbench.mjlab.eval` | `npa workbench mjlab eval` | `config.motion_uri`, `config.checkpoint_uri` | `config.mjlab_uri` | no |
 | `workbench.sonic.train` | `npa workbench sonic train` | `config.checkpoint_uri`, `config.data_uri` | training checkpoint | no |
+| `workflow.groot.prepare_split` | `npa.workflows.groot_learning prepare-split` | source GR00T LeRobot dataset | hashed, episode-disjoint train/held-out datasets + split manifest with train-only statistics | no |
+| `workbench.groot.baseline_eval` | `npa.workflows.groot_learning baseline-eval` | split manifest, train/held-out datasets, pinned N1.7 base model | zero-update custom-embodiment checkpoint + real held-out predictions/expert actions/metrics | yes (real `Gr00tPolicy.get_action` forwards) |
+| `workbench.groot.finetune` | `npa workbench groot finetune --runtime local` | GR00T-format LeRobot dataset at `config.data_uri`, pinned N1.7 base model, positive `config.gpu_count` | vendor checkpoints + `npa_groot_finetune_manifest.json` at `config.checkpoint_uri` | yes (real upstream multi-GPU trainer) |
+| `workbench.groot.posttrain_eval` | `npa.workflows.groot_learning posttrain-eval` | trained checkpoint and unchanged held-out split | aligned real held-out predictions/expert actions plus aggregate/per-dimension errors | yes (real `Gr00tPolicy.get_action` forwards) |
+| `workflow.groot.compare_learning` | `npa.workflows.groot_learning compare-learning` | baseline/post evaluations, split and training manifests | fail-closed `learning-report.json` and offline held-out comparison video | no |
+| `workflow.groot.emit_learning_mcap` | `npa.workflows.groot_learning emit-mcap` | passed learning report and aligned evaluation tensors | inspected camera/action/error/metric `groot-learning.mcap` | no |
+| `workflow.groot.emit_learning_rrd` | `npa.workflows.groot_learning emit-rrd` | passed learning report and aligned evaluation tensors | native-archetype `groot-learning.rrd` with camera/action/error blueprint | no |
+| `workflow.groot.publish_learning` | `npa.workflows.groot_learning publish` | learning report, MCAP, RRD, video, exact workflow YAML | hashed `publish-manifest.json` and validated report index | no |
+| `workflow.groot.validate` | `npa.workflows.groot_visualization.validate_visualization_source` | training manifest, uploaded checkpoint prefix, real LeRobot dataset | validated source manifest, redacted log, factual metrics, decoded dataset frames | no |
+| `workflow.groot.emit_mcap` | `npa.workflows.groot_visualization.emit_mcap` | validated GR00T visualization source | inspected Foxglove-schema `groot-training.mcap` | no |
+| `workflow.groot.emit_rrd` | `npa.workflows.groot_visualization.emit_rrd` | validated `groot-training.mcap` | inspected native-archetype `groot-training.rrd` | no |
+| `workflow.groot.publish` | `npa.workflows.groot_visualization.publish_visualizations` | source manifest, MCAP, RRD, exact workflow YAML | terminal `visualization-manifest.json` artifact index | no |
 | `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` | `config.onnx_uri` | no |
 | `workbench.sonic.eval` | `npa workbench sonic eval` | `config.onnx_uri` | eval report | no |
 | `workbench.lerobot.policy_rollout` | `python3 -m npa.workbench.lerobot.policy_container eval` | `config.policy_checkpoint`, `config.rollout_episodes` | rendered episodes under `config.rollouts_uri` | no |

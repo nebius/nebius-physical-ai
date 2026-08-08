@@ -24,6 +24,44 @@ MAX_IMAGE_DATA_URL_CHARS = 2_500_000
 
 VISUAL_KINDS = frozenset({"rerun", "foxglove", "video", "image", "data", "unknown"})
 
+GROOT_LEARNING_RERUN_NOTE = (
+    "Offline held-out GR00T policy evaluation loaded (not a rollout). "
+    "The Rerun blueprint aligns the real dataset camera/front frames with expert "
+    "and baseline/post-training predicted actions, action error, held-out metrics, "
+    "training loss, and split/checkpoint provenance. Dataset FPS/index time is not "
+    "wall-clock sensor time."
+)
+GROOT_LEARNING_MCAP_NOTE = (
+    "Offline held-out GR00T policy-evaluation MCAP loaded (not a rollout). It "
+    "contains the real dataset camera, aligned expert and model-predicted actions, "
+    "per-sample error, held-out before/after metrics, training loss, and provenance "
+    "on dataset index time. The same file is published for both embedded viewers."
+)
+
+
+def learning_visual_fact_block(visual_context: Mapping[str, Any] | None) -> str:
+    """Return fail-closed facts for an offline GR00T learning replay."""
+
+    facts = " ".join(
+        str((visual_context or {}).get(key) or "")
+        for key in ("run_id", "artifact_key", "note", "provenance", "origin")
+    ).lower()
+    if not (
+        ("groot-learning" in facts or "groot17-learning" in facts)
+        and ("heldout" in facts or "held-out" in facts)
+    ):
+        return ""
+    return (
+        "\n\nNON-NEGOTIABLE FACTS FOR THIS LEARNING REPLAY:\n"
+        "- It is offline held-out model evaluation, not simulator/robot rollout or closed-loop execution.\n"
+        "- Its camera pixels originate in persisted held-out LeRobot observation videos; "
+        "simple geometry or 96x96 resolution is not evidence of synthetic generation.\n"
+        "- The original visual inputs are present. Never claim they are absent or generated "
+        "inside a simulator.\n"
+        "- A single frame does not prove motion, control behavior, or task success.\n"
+        "Any response contradicting these facts is incorrect."
+    )
+
 # Token → operator-facing hint. Matched against joined metadata text only.
 _DOMAIN_HINT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (
@@ -180,6 +218,8 @@ def _meta_blob(meta: Mapping[str, Any] | None) -> str:
         "camera",
         "artifact_render",
         "text_excerpt",
+        "provenance",
+        "origin",
     ):
         value = meta.get(key)
         if value is None:
@@ -197,11 +237,92 @@ def infer_visual_domain_hints(meta: Mapping[str, Any] | None) -> list[str]:
         return []
     # Soft-normalize separators so gr00t_n1 / isaac-lab match token rules.
     normalized = re.sub(r"[_\-/.:]+", " ", blob)
+    if (
+        ("groot learning" in normalized or "learning report" in normalized)
+        and ("heldout" in normalized or "held out" in normalized)
+    ):
+        return [
+            "This is explicitly an offline held-out GR00T policy evaluation, not a "
+            "simulator/robot rollout or closed-loop execution. Describe the recorded "
+            "dataset camera frame, expert-versus-predicted action plots, action error, "
+            "training loss, and evaluation provenance that are actually visible; do "
+            "not infer synthetic imagery or task behavior from the GR00T name alone."
+        ]
     hints: list[str] = []
     for tokens, hint in _DOMAIN_HINT_RULES:
         if any(token in normalized for token in tokens):
             hints.append(hint)
     return hints[:4]
+
+
+_LEARNING_REPLY_CONTRADICTIONS: tuple[str, ...] = (
+    "synthetic simulation",
+    "generated synthetically",
+    "absence of an original input",
+    "no original input",
+    "nature of the simulation",
+    "simulation environment itself",
+    "controlling the robot",
+    "robotic arm's movements",
+)
+
+
+def learning_visual_reply_needs_correction(
+    reply: str | None,
+    meta: Mapping[str, Any] | None,
+) -> bool:
+    """Reject visual prose that contradicts a learning run's grounded facts."""
+    blob = _meta_blob(meta)
+    learning = ("groot-learning" in blob or "groot17-learning" in blob) and (
+        "heldout" in blob or "held-out" in blob
+    )
+    if not learning:
+        return False
+    lowered = str(reply or "").lower()
+    return any(phrase in lowered for phrase in _LEARNING_REPLY_CONTRADICTIONS)
+
+
+def truthful_learning_visual_reply(meta: Mapping[str, Any] | None) -> str:
+    """Fail-closed Describe-this reply for a factual offline learning replay.
+
+    This intentionally describes only the visible, blueprint-backed panels and
+    supplied provenance. It does not infer task behavior or image origin from a
+    low-resolution frame's visual style.
+    """
+    values = meta if isinstance(meta, Mapping) else {}
+    origin = str(values.get("origin") or "").strip()
+    provenance = str(values.get("provenance") or "").strip()
+    source = origin or (
+        "The camera observation comes from the persisted episode-disjoint held-out "
+        "dataset and is aligned with expert actions and real model predictions."
+    )
+    stage = "Synchronized learning replay"
+    if provenance and "Synchronized learning replay" not in provenance:
+        stage = "the artifact-backed learning replay"
+    return (
+        "### What I see\n\n"
+        "A non-blank Rerun frame with a low-resolution `camera/front` observation and "
+        "the labeled learning panels: expert versus baseline/post-training predicted "
+        "actions, per-sample absolute/squared action error, held-out before/after "
+        "metrics, training loss, and evaluation provenance. The camera frame's simple "
+        "appearance does not establish that it is synthetic.\n\n"
+        "### Where it comes from\n\n"
+        f"The recording was produced by **{stage}**. {source}\n\n"
+        "### Likely meaning\n\n"
+        "This is an offline held-out policy comparison. The plots show how real model "
+        "predictions differ from expert actions and how the primary held-out metric "
+        "changed after training. A single replay frame does not demonstrate motion, "
+        "task success, or closed-loop control.\n\n"
+        "### Operator feedback\n\n"
+        "The viewer is substantive and synchronized: camera evidence, action traces, "
+        "errors, before/after metrics, training loss, and provenance are present. "
+        "Treat it as offline evaluation evidence, not a robot or simulator rollout.\n\n"
+        "### Next actions\n\n"
+        "Scrub `dataset_time`, compare both action dimensions before and after training, "
+        "inspect error peaks against `camera/front`, and use the MCAP/video views for "
+        "the same aligned samples. Run closed-loop evaluation only when a compatible "
+        "simulator or robot execution path is available."
+    )
 
 
 def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> str:

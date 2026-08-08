@@ -456,6 +456,19 @@ def test_rendered_backend_labels_nurec_camera_without_inheriting(monkeypatch) ->
     assert "camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
 
 
+def test_rendered_backend_labels_groot_training_without_rollout_claim(monkeypatch) -> None:
+    body = _render_backend_body(monkeypatch)
+
+    assert 'GROOT_TRAINING_CAMERA_LABEL = "camera"' in body
+    assert "camera = GROOT_TRAINING_CAMERA_LABEL" in body
+    assert "GR00T training telemetry loaded." in body
+    assert "dataset/synthetic-fps, not robot capture time; this is not a " in body
+    assert "policy rollout evaluation." in body
+    assert "GR00T training telemetry MCAP loaded" in body
+    assert "factual metrics on dataset/synthetic-fps time; it is not a policy " in body
+    assert "rollout or robot-capture recording." in body
+
+
 def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None:
     """The UI HEADs /api/sim-viz/rrd-blob; a GET-only route answers 405.
 

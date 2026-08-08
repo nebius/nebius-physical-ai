@@ -161,14 +161,16 @@ describe("Lichtblick MCAP viewer (mocked smoke)", () => {
           .querySelector("meta[name='npa-ui-version']")
           .getAttribute("content");
 
-        expect(win.localStorage.getItem(key), "seeded with the UI version").to.eq(version);
+        expect(win.localStorage.getItem(key), "seeded with the UI version and layout kind").to.eq(
+          `${version}:sim2real`,
+        );
         expect(api.lichtblickNeedsLayoutSeed(), "already seeded, no further wipe").to.be.false;
 
         // A UI redeploy bumps the version tag, which re-seeds so a changed default lands.
         win.localStorage.setItem(key, "0");
         expect(api.lichtblickNeedsLayoutSeed(), "stale seed re-seeds").to.be.true;
         api.markLichtblickLayoutSeeded();
-        expect(win.localStorage.getItem(key)).to.eq(version);
+        expect(win.localStorage.getItem(key)).to.eq(`${version}:sim2real`);
 
         // Behavioural check: with the seed in place, mounting a different recording
         // must leave a layout the user arranged in the embed untouched.
