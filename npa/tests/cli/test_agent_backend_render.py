@@ -88,6 +88,9 @@ def test_rendered_backend_ast_has_no_undefined_globals(monkeypatch) -> None:
     interpreter_globals = {
         "__builtins__",
         "__cached__",
+        # Python 3.14's PEP 649 annotation scopes expose this compiler-owned
+        # binding through symtable even though it is not a backend dependency.
+        "__conditional_annotations__",
         "__file__",
         "__loader__",
         "__name__",
