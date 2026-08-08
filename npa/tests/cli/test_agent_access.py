@@ -129,12 +129,12 @@ def test_denied_access_has_no_searchable_storage() -> None:
     payload = report.to_dict()
 
     assert payload["status"] == "denied"
-    assert payload["scope"] == "single_project"
+    assert payload["scope"] == "partial_tenant"
     assert payload["capabilities"]["project_discovery"]["status"] == "denied"
     assert accessible_artifact_buckets(report) == []
 
 
-def test_no_tenant_project_listing_permission_preserves_single_project_fallback() -> None:
+def test_no_tenant_project_listing_permission_never_claims_single_project_success() -> None:
     def deny_projects(_tenant: str):
         raise AccessProbeError("denied", "list tenant projects")
 
@@ -149,7 +149,7 @@ def test_no_tenant_project_listing_permission_preserves_single_project_fallback(
     payload = report.to_dict()
 
     assert payload["status"] == "partial"
-    assert payload["scope"] == "single_project"
+    assert payload["scope"] == "partial_tenant"
     assert [item["id"] for item in payload["projects"]] == ["project-a"]
     assert payload["projects"][0]["resources"][0]["source"] == "agent_configuration"
     assert accessible_artifact_buckets(report) == ["bucket-a"]
@@ -168,6 +168,46 @@ def test_existing_single_project_behavior_stays_available() -> None:
     assert project["capabilities"]["workflow_submission"]["status"] == "available"
     assert project["capabilities"]["artifact_write"]["status"] == "unverified"
     assert report.to_dict()["capabilities"]["artifact_write"]["status"] == "unverified"
+
+
+def test_empty_bucket_read_probe_does_not_shrink_complete_tenant_scope() -> None:
+    report = _discover(
+        probe_bucket=lambda _bucket: BucketProbe(
+            "available",
+            "unverified",
+            "Object listing succeeded; empty bucket has no read probe object.",
+        )
+    )
+
+    assert report.status == "available"
+    assert report.scope == "tenant"
+    assert len(report.projects) == 2
+    assert accessible_artifact_buckets(report) == ["bucket-a", "bucket-b"]
+    assert (
+        report.to_dict()["projects"][0]["resources"][0]["capabilities"]["artifact_read"][
+            "status"
+        ]
+        == "unverified"
+    )
+
+
+def test_access_identity_reports_non_secret_credential_provenance() -> None:
+    payload = _discover(
+        service_account_id="serviceaccount-test",
+        credential_source="instance_metadata",
+        credential_profile="cursor-sa",
+        credential_config="/root/.nebius/config.yaml",
+    ).to_dict()
+
+    assert payload["identity"] == {
+        "tenant_id": "tenant-test",
+        "deployment_project_id": "project-a",
+        "deployment_project_name": "deployment",
+        "service_account_id": "serviceaccount-test",
+        "credential_source": "instance_metadata",
+        "credential_profile": "cursor-sa",
+        "credential_config": "/root/.nebius/config.yaml",
+    }
 
 
 def test_cross_project_mutations_remain_unavailable() -> None:
@@ -404,6 +444,57 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
     assert exc_info.value.status == "unavailable"
     assert canary not in str(exc_info.value)
     assert seen["timeout"] == runtime._AGENT_NEBIUS_TIMEOUT_SECONDS
+
+
+def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    config = tmp_path / ".nebius" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("profiles: {}\n", encoding="utf-8")
+    canary = secrets.token_urlsafe(24)
+    seen: dict[str, object] = {}
+
+    class Result:
+        returncode = 0
+        stdout = '{"items": []}'
+        stderr = ""
+
+    def run(command, **kwargs):
+        seen["command"] = list(command)
+        seen["env"] = dict(kwargs["env"])
+        return Result()
+
+    monkeypatch.setenv("NPA_NEBIUS_CONFIG", str(config))
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cursor-sa")
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
+    monkeypatch.setattr(
+        runtime,
+        "_agent_command_env",
+        lambda: {
+            "NEBIUS_IAM_TOKEN": canary,
+            "NPA_NEBIUS_IAM_TOKEN": canary,
+            "TF_VAR_iam_token": canary,
+            "NPA_REUSE_IAM_TOKEN": "1",
+            "NEBIUS_PROFILE": "stale-profile",
+        },
+    )
+    monkeypatch.setattr(runtime.subprocess, "run", run)
+
+    assert runtime._agent_nebius_json(
+        ["iam", "project", "list", "--parent-id", "tenant-test"],
+        operation="list tenant projects",
+    ) == {"items": []}
+    command = seen["command"]
+    env = seen["env"]
+    assert command[:5] == ["/bin/true", "--config", str(config), "--profile", "cursor-sa"]
+    assert env["NEBIUS_PROFILE"] == "cursor-sa"
+    assert env["HOME"] == str(tmp_path)
+    assert not (runtime._AMBIENT_NEBIUS_TOKEN_KEYS & set(env))
+    assert canary not in repr(command)
+    assert canary not in repr(env)
 
 
 def test_access_cache_refresh_is_singleflight_after_expiry(monkeypatch) -> None:

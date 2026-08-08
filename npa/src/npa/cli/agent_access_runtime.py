@@ -7,6 +7,7 @@ the deployment CLI/bootstrap template from becoming the access domain model.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -65,6 +66,74 @@ _MAX_ARTIFACT_MEMBERSHIP_BUCKETS = 32
 _AGENT_ACCESS_CACHE = {"report": None, "expires_at": 0.0, "refreshing": False}
 _AGENT_ACCESS_LOCK = threading.Lock()
 _AGENT_ACCESS_CONDITION = threading.Condition(_AGENT_ACCESS_LOCK)
+_AMBIENT_NEBIUS_TOKEN_KEYS = frozenset(
+    {
+        "NEBIUS_IAM_TOKEN",
+        "NPA_NEBIUS_IAM_TOKEN",
+        "TF_VAR_iam_token",
+        "NPA_REUSE_IAM_TOKEN",
+        "IAM_TOKEN",
+    }
+)
+
+
+def _artifact_run_cursor(offset: int) -> str:
+    return base64.urlsafe_b64encode(str(max(0, int(offset))).encode("ascii")).decode(
+        "ascii"
+    ).rstrip("=")
+
+
+def _artifact_run_cursor_offset(cursor: str) -> int:
+    value = str(cursor or "").strip()
+    if not value:
+        return 0
+    try:
+        padded = value + ("=" * (-len(value) % 4))
+        offset = int(base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid run-list cursor") from exc
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="invalid run-list cursor")
+    return offset
+
+
+def _artifact_search_scope_complete(report) -> bool:
+    payload = report.to_dict() if hasattr(report, "to_dict") else report
+    if not isinstance(payload, dict):
+        return False
+    project_discovery = (payload.get("capabilities") or {}).get("project_discovery") or {}
+    if project_discovery.get("status") != "available":
+        return False
+    return all(
+        isinstance(project, dict)
+        and (
+            ((project.get("capabilities") or {}).get("storage_resource_discovery") or {}).get(
+                "status"
+            )
+            == "available"
+        )
+        for project in payload.get("projects") or []
+    )
+
+
+def _agent_inventory_credential_context() -> tuple[dict[str, str], str, str, str]:
+    """Return a deterministic metadata-profile environment for read inventory."""
+    base = _agent_command_env() if callable(_agent_command_env) else dict(os.environ)
+    env = {str(key): str(value) for key, value in dict(base or {}).items()}
+    for key in _AMBIENT_NEBIUS_TOKEN_KEYS:
+        env.pop(key, None)
+    config_path = str(
+        os.environ.get("NPA_NEBIUS_CONFIG") or "/root/.nebius/config.yaml"
+    ).strip()
+    profile = str(os.environ.get("NPA_NEBIUS_PROFILE") or "cursor-sa").strip()
+    env["HOME"] = str(Path(config_path).parent.parent) if config_path else "/root"
+    env["NEBIUS_PROFILE"] = profile
+    try:
+        metadata_available = Path("/mnt/cloud-metadata/token").is_file()
+    except OSError:
+        metadata_available = False
+    source = "instance_metadata" if metadata_available else "configured_profile"
+    return env, profile, config_path, source
 
 
 def _access_probe_error(operation: str, detail: str = ""):
@@ -92,13 +161,20 @@ def _agent_nebius_json(args: list[str], *, operation: str) -> dict:
     # Prefer the attached service-account metadata profile. Unlike the staged
     # bootstrap token, metadata credentials rotate and reflect the running VM's
     # current tenant/project grants.
-    if Path("/mnt/cloud-metadata/token").is_file():
-        command.extend(["--profile", "cursor-sa"])
+    env, profile, config_path, _source = _agent_inventory_credential_context()
+    try:
+        config_available = bool(config_path and Path(config_path).is_file())
+    except OSError:
+        config_available = False
+    if config_available:
+        command.extend(["--config", config_path])
+    if profile:
+        command.extend(["--profile", profile])
     command.extend([*args, "--all", "--format", "json"])
     try:
         proc = subprocess.run(
             command,
-            env=_agent_command_env(),
+            env=env,
             text=True,
             capture_output=True,
             check=False,
@@ -201,6 +277,9 @@ def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
             name = item.strip()
             if name and name not in configured:
                 configured.append(name)
+        _inventory_env, inventory_profile, inventory_config, credential_source = (
+            _agent_inventory_credential_context()
+        )
         report = discover_agent_access(
             tenant_id=str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
             deployment_project_id=str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip(),
@@ -211,6 +290,12 @@ def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
             list_projects=_agent_list_tenant_projects,
             list_buckets=_agent_list_project_buckets,
             probe_bucket=lambda bucket: _agent_probe_bucket(s3, bucket),
+            service_account_id=str(
+                os.environ.get("NEBIUS_SERVICE_ACCOUNT_ID") or ""
+            ).strip(),
+            credential_source=credential_source,
+            credential_profile=inventory_profile,
+            credential_config=inventory_config,
         )
     except BaseException:
         with _AGENT_ACCESS_CONDITION:
@@ -277,7 +362,14 @@ def _agent_access_api_response(refresh: bool = False):
         report = _agent_access_report(refresh=bool(refresh))
         if refresh:
             _run_list_cache_clear()
-        return {"ok": True, **report.to_dict()}
+        return {
+            "ok": True,
+            **report.to_dict(),
+            "refresh": {
+                "requested": bool(refresh),
+                "state": "refreshed" if refresh else "cached_or_current",
+            },
+        }
     except Exception:
         # Raw cloud or credential errors are never part of the public contract.
         return JSONResponse(

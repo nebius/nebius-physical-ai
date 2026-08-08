@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from npa.cli.agent import rendered_agent_ui_html
 
+import base64
 import json
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -996,10 +998,12 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     assert "const runFilter = runFilterValue().toLowerCase();" in source
     assert 'runFilterInput.addEventListener("input"' in source
     # Discovery is generic (no ?prefix= path); the old prefix-path helper is gone.
-    # The picker loads the full run list by default (not just the newest 100) so
-    # older runs show without the operator having to guess a search fragment.
-    assert "const ARTIFACT_RUN_LIST_LIMIT = 2000;" in source
+    # The picker follows every bounded server cursor, rather than assuming one
+    # oversized response is the whole tenant inventory.
+    assert "const ARTIFACT_RUN_LIST_LIMIT = 200;" in source
     assert '"/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT' in source
+    assert 'cursor = String(data.next_cursor || "");' in source
+    assert "} while (cursor);" in source
     # Typing in the box also triggers a SERVER-side search so runs beyond the
     # newest page (by name/ID) are findable, not just client-side filtering.
     assert "&q=" in source
@@ -1158,7 +1162,7 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
     assert "body: JSON.stringify({ run_id: targetRunId })" in ui
     assert 'entry.source_type === "artifact_storage"' in ui
-    assert "loadArtifactsForSelectedRun(chosen, null, entry)" in ui
+    assert "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })" in ui
     assert "prefix: artifactPrefixValue()" not in ui
     assert 'params.set("resource_bucket", resourceBucket)' in ui
     assert 'params.set("resolved_prefix", resolvedPrefix)' in ui
@@ -1417,7 +1421,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<div id="stagesPanel"><h3>Stages</h3>'
                 '<div class="stages-run-picker">'
                 '<select id="stagesRunSelect"></select>'
-                '<label>Search or paste run ID</label>'
+                '<label>Search NPA workflow/artifact runs</label>'
                 '<input id="stagesRunInput" />'
                 '<button id="stagesLoadRun"></button></div></div>'
                 '<script>function loadSelectedRun(){} function syncRunChooserFields(){} '
@@ -1931,6 +1935,21 @@ def test_resolve_agent_storage_credentials_prefers_record() -> None:
     assert sa_id == "serviceaccount-abc"
 
 
+def test_credential_refresh_cannot_replace_recorded_service_account() -> None:
+    from npa.cli.agent_access import consistent_agent_service_account_id
+
+    assert (
+        consistent_agent_service_account_id("serviceaccount-a", "serviceaccount-a")
+        == "serviceaccount-a"
+    )
+    assert (
+        consistent_agent_service_account_id("serviceaccount-a", "")
+        == "serviceaccount-a"
+    )
+    with pytest.raises(ValueError, match="different service account"):
+        consistent_agent_service_account_id("serviceaccount-a", "serviceaccount-b")
+
+
 def test_bootstrap_stages_nebius_env_and_record_ssh_key() -> None:
     from npa.cli import agent as agent_module
 
@@ -1942,6 +1961,52 @@ def test_bootstrap_stages_nebius_env_and_record_ssh_key() -> None:
     assert "--ssh-key" in source
     assert "_resolve_agent_ssh_key" in source
     assert "_creds_from_terraform_state" in source
+
+
+def test_agent_nebius_env_uses_metadata_profile_without_static_iam_token() -> None:
+    from npa.cli import agent as agent_module
+
+    commands: list[str] = []
+
+    class SSH:
+        def run_or_raise(self, command: str) -> None:
+            commands.append(command)
+
+    agent_module._write_agent_nebius_env(
+        SSH(),
+        project_alias="agent-project",
+        agent_name="agent",
+        project_id="project-test",
+        tenant_id="tenant-test",
+        region="eu-north1",
+        service_account_id="serviceaccount-test",
+        bucket="bucket-test",
+        endpoint="https://storage.example",
+        access_key="synthetic-access",
+        secret_key="synthetic-secret",
+        iam_token="synthetic-stale-token",
+    )
+
+    assert len(commands) == 1
+    encoded = shlex.split(commands[0])[1]
+    env_text = base64.b64decode(encoded).decode("utf-8")
+    assert "NEBIUS_PROFILE=cursor-sa" in env_text
+    assert "NPA_NEBIUS_CONFIG=/root/.nebius/config.yaml" in env_text
+    assert "NPA_NEBIUS_CREDENTIAL_SOURCE=instance_metadata" in env_text
+    assert "NEBIUS_IAM_TOKEN" not in env_text
+    assert "NPA_NEBIUS_IAM_TOKEN" not in env_text
+    assert "TF_VAR_iam_token" not in env_text
+    assert "synthetic-stale-token" not in env_text
+
+
+def test_bootstrap_verifies_attached_identity_and_tenant_inventory() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "attached service-account verification failed" in source
+    assert "expected_sa={expected_agent_service_account_id}" in source
+    assert "iam project list --parent-id \"$expected_tenant\" --all" in source
+    assert "env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN" in source
 
 
 def test_creds_from_terraform_state(monkeypatch) -> None:

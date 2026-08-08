@@ -37,7 +37,11 @@ from npa.clients.network import (
 )
 from npa.clients.ssh import SSHClient, SSHError
 from npa.agent_backend.shipping import render_shipped_backend_install
-from npa.cli.agent_access import ACCESS_SCHEMA, ACCESS_STATES
+from npa.cli.agent_access import (
+    ACCESS_SCHEMA,
+    ACCESS_STATES,
+    consistent_agent_service_account_id,
+)
 from npa.cli.agent_embed import without_embedded_standalone_block
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
@@ -74,7 +78,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026080702"
+AGENT_UI_VERSION = "2026080801"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -192,7 +196,7 @@ AGENT_STAGES_RUN_PICKER_CONTRACT = (
     "loadSelectedRun",
     "syncRunChooserFields",
     "filterStagesRunSelect",
-    "Search or paste run ID",
+    "Search NPA workflow/artifact runs",
 )
 
 AGENT_READABLE_COLOR_CONTRACT = (
@@ -1446,7 +1450,13 @@ def _write_agent_nebius_env(
     secret_key: str,
     iam_token: str = "",
 ) -> None:
-    """Stage long-lived Nebius project credentials on the agent VM."""
+    """Stage deterministic metadata-profile and S3 settings on the agent VM.
+
+    ``iam_token`` is retained for call compatibility but is deliberately never
+    persisted: a bootstrap token is short-lived and can shadow the VM's rotating
+    attached-service-account profile in the systemd process.
+    """
+    del iam_token
     if not (project_id.strip() and access_key.strip() and secret_key.strip()):
         return
     env_lines = [
@@ -1456,51 +1466,22 @@ def _write_agent_nebius_env(
         f"NEBIUS_TENANT_ID={tenant_id.strip()}",
         f"NEBIUS_REGION={region.strip() or 'eu-north1'}",
         f"NEBIUS_SERVICE_ACCOUNT_ID={service_account_id.strip()}",
+        "NEBIUS_PROFILE=cursor-sa",
+        "NPA_NEBIUS_PROFILE=cursor-sa",
+        "NPA_NEBIUS_CONFIG=/root/.nebius/config.yaml",
+        "NPA_NEBIUS_CREDENTIAL_SOURCE=instance_metadata",
         f"NEBIUS_S3_BUCKET={bucket.strip()}",
         f"NEBIUS_S3_ENDPOINT={endpoint.strip()}",
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
     ]
-    if iam_token.strip():
-        env_lines.extend(
-            [
-                "NEBIUS_PROFILE=agent-bootstrap",
-                f"NEBIUS_IAM_TOKEN={iam_token.strip()}",
-                f"NPA_NEBIUS_IAM_TOKEN={iam_token.strip()}",
-                f"TF_VAR_iam_token={iam_token.strip()}",
-                "NPA_REUSE_IAM_TOKEN=1",
-            ]
-        )
     env_lines.append("")
     env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
     ssh.run_or_raise(
         f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/nebius.env >/dev/null "
         "&& sudo chmod 600 /opt/npa-agent/nebius.env"
     )
-    if iam_token.strip():
-        ssh.run_or_raise(
-            "sudo bash -lc "
-            + shlex.quote(
-                "\n".join(
-                    [
-                        "set -euo pipefail",
-                        "set -a",
-                        ". /opt/npa-agent/nebius.env",
-                        "set +a",
-                        "mkdir -p /root/.npa",
-                        "printf '%s' \"$NEBIUS_IAM_TOKEN\" > /root/.npa/nebius-token",
-                        "chmod 600 /root/.npa/nebius-token",
-                        "NEBIUS_BIN=\"$(command -v nebius || true)\"",
-                        "if [ -z \"$NEBIUS_BIN\" ] && [ -x /usr/local/bin/nebius ]; then NEBIUS_BIN=/usr/local/bin/nebius; fi",
-                        "if [ -n \"$NEBIUS_BIN\" ]; then",
-                        "  \"$NEBIUS_BIN\" profile create --endpoint api.eu.nebius.cloud --token-file /root/.npa/nebius-token --profile agent-bootstrap --parent-id \"$NEBIUS_PROJECT_ID\" >/dev/null 2>&1 || true",
-                        "  NEBIUS_PROFILE=agent-bootstrap \"$NEBIUS_BIN\" iam get-access-token >/dev/null",
-                        "fi",
-                    ]
-                )
-            )
-        )
 
 
 def _env_line_value(value: str) -> str:
@@ -1866,6 +1847,8 @@ server {{
 """
     nebius_profile = "cursor-sa"
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
+    expected_agent_service_account_id = shlex.quote(service_account_id.strip())
+    expected_agent_tenant_id = shlex.quote((nebius_tenant_id or tenant_id).strip())
     lichtblick_port = DEFAULT_LICHTBLICK_PORT
     lichtblick_image = str(
         os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip() or "npa-lichtblick:1.26.0"
@@ -1917,6 +1900,19 @@ if [ -s /mnt/cloud-metadata/token ]; then
   # merely because bootstrap itself ran through the SSH user's home.
   if ! sudo -H "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
     sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
+  fi
+  # Inventory must use the exact attached identity and its rotating metadata
+  # token. Scrub any operator/bootstrap token inherited by SSH before verifying.
+  expected_sa={expected_agent_service_account_id}
+  expected_tenant={expected_agent_tenant_id}
+  inventory_env=(env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN -u TF_VAR_iam_token -u NPA_REUSE_IAM_TOKEN HOME=/root NEBIUS_PROFILE={nebius_profile})
+  whoami_json="$(sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam whoami --format json)"
+  if [ -n "$expected_sa" ] && [[ "$whoami_json" != *"$expected_sa"* ]]; then
+    echo "attached service-account verification failed" >&2
+    exit 1
+  fi
+  if [ -n "$expected_tenant" ]; then
+    sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam project list --parent-id "$expected_tenant" --all --format json >/dev/null
   fi
 fi
 sudo mkdir -p /opt/npa-agent
@@ -7013,7 +7009,7 @@ def sim_viz_recordings():
 
 @app.get("/artifacts/runs")
 def artifacts_runs(
-    prefix: str = "", limit: int = 50, q: str = "",
+    prefix: str = "", limit: int = 50, q: str = "", cursor: str = "",
     resource_bucket: str = "", project_id: str = "",
 ):
     # q: case-insensitive substring search over run ids, applied across ALL runs
@@ -7028,6 +7024,37 @@ def artifacts_runs(
             access_report, resource_bucket, project_id
         )
         query = str(q or "").strip()
+        page_size = max(1, min(int(limit), 500))
+        offset = _artifact_run_cursor_offset(cursor)
+        discovery_limit = 10_000
+
+        def _page_response(page, *, effective_prefix: str):
+            end = min(offset + page_size, len(page.runs))
+            visible = page.runs[offset:end]
+            has_more = end < int(page.total_runs)
+            next_cursor = _artifact_run_cursor(end) if has_more else ""
+            return {{
+                "ok": True,
+                "bucket": settings["bucket"],
+                "buckets": buckets,
+                "resource_scope": selected_scope,
+                "prefix": effective_prefix,
+                "base_prefix": settings.get("prefix", ""),
+                "query": query,
+                "summary_mode": "artifact_index",
+                "namespace": "npa_workflow_artifact_run",
+                "namespace_help": "Searches discovered NPA workflow/artifact runs; Codex maintenance job IDs are a separate operator-local namespace.",
+                "access": access_diagnostics,
+                "runs": [item.to_dict() for item in visible],
+                "count": len(visible),
+                "total_runs": page.total_runs,
+                "limit": page_size,
+                "cursor": cursor,
+                "next_cursor": next_cursor,
+                "truncated": bool(has_more or not page.discovery_complete),
+                "pagination_complete": bool(not has_more and page.discovery_complete),
+                "source_errors": [dict(item) for item in page.source_errors],
+            }}
         if prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
             # Cached (TTL + stale-while-revalidate): the run list is polled on every
@@ -7038,13 +7065,13 @@ def artifacts_runs(
                 buckets,
                 prefix=effective_prefix,
                 base_prefix=settings.get("prefix", ""),
-                limit=limit,
+                limit=discovery_limit,
                 contains=query,
                 bucket_projects=bucket_projects,
                 lightweight=not bool(query),
                 s3=s3,
             )
-            return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "resource_scope": selected_scope, "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, "summary_mode": "prefixes" if not query else "objects", "access": access_diagnostics, **page.to_dict()}}
+            return _page_response(page, effective_prefix=effective_prefix)
         # No user prefix: discover runs generically across ALL bucket roots.
         # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
         # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
@@ -7058,14 +7085,14 @@ def artifacts_runs(
         page = list_runs_cached_multi(
             buckets,
             base_prefix=base,
-            limit=limit,
+            limit=discovery_limit,
             exclude=_discovery_exclude_roots(),
             contains=query,
             bucket_projects=bucket_projects,
             lightweight=not bool(query),
             s3=s3,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "resource_scope": selected_scope, "prefix": base, "base_prefix": base, "query": query, "summary_mode": "prefixes" if not query else "objects", "access": access_diagnostics, **page.to_dict()}}
+        return _page_response(page, effective_prefix=base)
     except HTTPException:
         raise
     except Exception as exc:
@@ -7079,6 +7106,7 @@ def artifacts_for_run(
     cursor: str = "",
     resolved_prefix: str = "",
     resource_bucket: str = "",
+    project_id: str = "",
 ):
     try:
         normalized_run = validate_run_id(run_id)
@@ -7088,67 +7116,79 @@ def artifacts_for_run(
         s3, settings = _agent_s3_client()
         access_report = _agent_access_report()
         bucket_projects = artifact_bucket_projects(access_report)
-        effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        page = ArtifactListPage([], False, "", 1000)
-        artifact_prefix = _validated_resolved_prefix(resolved_prefix)
-        run_bucket = settings["bucket"]
-        if cursor or resolved_prefix:
-            if not resource_bucket:
-                raise HTTPException(
-                    status_code=400,
-                    detail="resource_bucket is required for continuation",
-                )
-            if resource_bucket not in _agent_s3_buckets(s3, settings):
-                raise HTTPException(
-                    status_code=400,
-                    detail="artifact bucket is outside effective agent access",
-                )
-            run_bucket = str(resource_bucket).strip()
-            page = list_artifacts_page(
-                run_bucket,
-                normalized_run,
-                prefix=artifact_prefix,
-                cursor=cursor,
-                s3=s3,
+        allowed_buckets, _selected_scope = _agent_artifact_list_scope(
+            access_report, resource_bucket, project_id
+        )
+        requested_prefix = _validated_resolved_prefix(resolved_prefix or prefix)
+        matches, source_errors, discovery_complete = find_run_sources_across_buckets(
+            allowed_buckets,
+            base_prefix=settings.get("prefix", ""),
+            run_id=normalized_run,
+            exclude=_discovery_exclude_roots(),
+            bucket_projects=bucket_projects,
+            s3=s3,
+        )
+        if resource_bucket:
+            matches = [item for item in matches if item.bucket == resource_bucket]
+        if project_id:
+            matches = [item for item in matches if item.project_id == project_id]
+        if requested_prefix:
+            matches = [item for item in matches if item.resolved_prefix == requested_prefix]
+        if not matches:
+            complete = bool(
+                discovery_complete
+                and not source_errors
+                and _artifact_search_scope_complete(access_report)
             )
-        elif resource_bucket:
-            if resource_bucket not in _agent_s3_buckets(s3, settings):
-                raise HTTPException(
-                    status_code=400,
-                    detail="artifact bucket is outside effective agent access",
-                )
-            run_bucket = str(resource_bucket).strip()
-            artifact_prefix, page = find_run_artifact_page(
-                run_bucket,
-                base_prefix=settings.get("prefix", ""),
-                run_id=normalized_run,
-                s3=s3,
+            code = "run_not_discovered" if complete else "artifact_search_incomplete"
+            status_code = 404 if complete else 503
+            message = (
+                "No discovered NPA workflow/artifact run has this identifier. "
+                "Identifiers under /home/ubuntu/codex-runs are Codex maintenance job IDs, not NPA run IDs."
+                if complete
+                else "The run could not be resolved because one or more tenant artifact sources are inaccessible or incomplete."
             )
-        elif prefix:
-            artifact_prefix = effective_prefix
-            page = list_artifacts_page(
-                settings["bucket"],
-                normalized_run,
-                prefix=effective_prefix,
-                s3=s3,
+            return JSONResponse(
+                status_code=status_code,
+                content={{
+                    "ok": False,
+                    "error": {{"code": code, "message": message}},
+                    "run_id": normalized_run,
+                    "namespace": "npa_workflow_artifact_run",
+                    "access": _agent_access_diagnostics(access_report),
+                    "source_errors": [dict(item) for item in source_errors],
+                }},
             )
-        # Generic fallback: locate the run across EVERY accessible bucket and its
-        # category folders (no hardcoded workflow path, no single-bucket assumption).
-        if not page.artifacts and not cursor and not resource_bucket:
-            run_bucket, artifact_prefix, page = find_run_artifact_page_across_buckets(
-                _agent_s3_buckets(s3, settings),
-                base_prefix=settings.get("prefix", ""),
-                run_id=normalized_run,
-                s3=s3,
+        if len(matches) > 1:
+            return JSONResponse(
+                status_code=409,
+                content={{
+                    "ok": False,
+                    "error": {{
+                        "code": "ambiguous_run_id",
+                        "message": "This run ID exists in multiple artifact sources; select a project, bucket, and resolved prefix.",
+                    }},
+                    "run_id": normalized_run,
+                    "sources": [item.to_dict() for item in matches],
+                    "access": _agent_access_diagnostics(access_report),
+                }},
             )
-            if not run_bucket:
-                run_bucket = settings["bucket"]
+        selected = matches[0]
+        run_bucket = selected.bucket
+        artifact_prefix = selected.resolved_prefix
+        page = list_artifacts_page(
+            run_bucket,
+            normalized_run,
+            prefix=artifact_prefix,
+            cursor=cursor,
+            s3=s3,
+        )
         preferred = select_preferred_artifact(page.artifacts)
         return {{
             "ok": True,
             "bucket": run_bucket,
             "project_id": str(bucket_projects.get(run_bucket) or ""),
-            "prefix": effective_prefix,
+            "prefix": artifact_prefix,
             "resolved_prefix": artifact_prefix,
             "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
@@ -8622,13 +8662,6 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         s3_secret_key=s3_secret_key,
         service_account_id=service_account_id,
     )
-    agent_iam_token = ""
-    try:
-        from npa.clients.nebius import get_iam_token
-
-        agent_iam_token = get_iam_token()
-    except Exception:
-        agent_iam_token = ""
     _write_agent_nebius_env(
         ssh,
         project_alias=project_alias,
@@ -8641,7 +8674,6 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         endpoint=s3_endpoint,
         access_key=s3_access_key,
         secret_key=s3_secret_key,
-        iam_token=agent_iam_token,
     )
     if (
         tf_api_key.strip()
@@ -9188,12 +9220,22 @@ def bootstrap_cmd(
             _fail("Nebius credential refresh failed and no terraform_state fallback is configured")
         creds = _resolve_deploy_storage_credentials(region=region, bootstrap_creds=creds)
         agent_credentials = _agent_credentials_payload(creds)
+        refreshed_service_account_id = str(
+            agent_credentials.get("service_account_id") or ""
+        ).strip()
+        try:
+            refreshed_service_account_id = consistent_agent_service_account_id(
+                service_account_id, refreshed_service_account_id
+            )
+        except ValueError as exc:
+            _fail(f"{exc}; refusing to replace the attached identity")
         s3_bucket = agent_credentials["s3_bucket"]
         s3_prefix = agent_credentials.get("s3_prefix", "")
         s3_endpoint = agent_credentials["s3_endpoint"]
         s3_access_key = agent_credentials["access_key"]
         s3_secret_key = agent_credentials["secret_key"]
-        service_account_id = agent_credentials["service_account_id"]
+        service_account_id = refreshed_service_account_id
+        agent_credentials["service_account_id"] = service_account_id
         if not service_account_id:
             service_account_id = _resolve_agent_service_account_id(project, record)
             agent_credentials["service_account_id"] = service_account_id
@@ -9731,7 +9773,7 @@ def verify_live_cmd(
         "loadSelectedRun",
         "stages-run-picker",
         "filterStagesRunSelect",
-        "Search or paste run ID",
+        "Search NPA workflow/artifact runs",
         "function sendChat(",
         "function wireUi(",
         "activateMainTab",

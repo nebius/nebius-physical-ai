@@ -430,8 +430,10 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     called: dict[str, object] = {}
 
     class _RunPage:
-        def to_dict(self):
-            return {"runs": [], "total_runs": 0, "truncated": False, "limit": 20}
+        runs = []
+        total_runs = 0
+        discovery_complete = True
+        source_errors = ()
 
     def _list_runs(buckets, **kwargs):
         called["buckets"] = list(buckets)
@@ -455,6 +457,40 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "project_id": "project-test",
         "bucket": "bucket-test",
     }
+
+    indexed_runs = [
+        module.RunSummary(
+            f"indexed-run-{index}",
+            f"2031-01-0{index + 1}T00:00:00Z",
+            1,
+            False,
+            bucket="bucket-test",
+            project_id="project-test",
+            resolved_prefix=f"category-{index}",
+        )
+        for index in range(3)
+    ]
+
+    class _PagedRunPage:
+        runs = indexed_runs
+        total_runs = 3
+        discovery_complete = True
+        source_errors = ()
+
+    monkeypatch.setattr(module, "list_runs_cached_multi", lambda *_args, **_kwargs: _PagedRunPage())
+    first_runs = module.artifacts_runs(limit=2)
+    second_runs = module.artifacts_runs(limit=2, cursor=first_runs["next_cursor"])
+    assert first_runs["count"] == 2
+    assert first_runs["pagination_complete"] is False
+    assert second_runs["count"] == 1
+    assert second_runs["pagination_complete"] is True
+    assert {item["run_id"] for item in [*first_runs["runs"], *second_runs["runs"]]} == {
+        "indexed-run-0",
+        "indexed-run-1",
+        "indexed-run-2",
+    }
+    assert second_runs["runs"][0]["resolved_prefix"]
+
     with pytest.raises(module.HTTPException) as exc_info:
         module.artifacts_runs(resource_bucket="caller-bucket", project_id="project-test")
     assert exc_info.value.status_code == 403
@@ -480,10 +516,24 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         next_cursor="opaque-page-two",
         page_size=1000,
     )
+    source = module.RunSummary(
+        "foreign-run-1",
+        "2026-08-07T00:00:00Z",
+        3,
+        False,
+        bucket="bucket-test",
+        project_id="project-test",
+        resolved_prefix="foreign",
+    )
     monkeypatch.setattr(
         module,
-        "find_run_artifact_page",
-        lambda *_args, **_kwargs: ("foreign", first_artifact_page),
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([source], (), True),
+    )
+    monkeypatch.setattr(
+        module,
+        "list_artifacts_page",
+        lambda *_args, **_kwargs: first_artifact_page,
     )
     first_page = module.artifacts_for_run(
         "foreign-run-1",
@@ -520,6 +570,44 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     assert cursor_call == {"prefix": "foreign", "cursor": "opaque-page-two"}
     assert second_page["count"] == 2
     assert second_page["truncated"] is False
+
+    duplicate = module.RunSummary(
+        "foreign-run-1",
+        "2026-08-07T00:00:00Z",
+        1,
+        False,
+        bucket="bucket-test",
+        project_id="project-test",
+        resolved_prefix="other",
+    )
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([source, duplicate], (), True),
+    )
+    ambiguous = module.artifacts_for_run("foreign-run-1")
+    assert ambiguous.status_code == 409
+    assert b'"code":"ambiguous_run_id"' in ambiguous.body
+    assert b'"resolved_prefix":"foreign"' in ambiguous.body
+    assert b'"resolved_prefix":"other"' in ambiguous.body
+
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([], (), True),
+    )
+    maintenance = module.artifacts_for_run("codex-maintenance-20310102T030405Z")
+    assert maintenance.status_code == 404
+    assert b'"code":"run_not_discovered"' in maintenance.body
+    assert b"Codex maintenance job IDs" in maintenance.body
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([], ({"code": "artifact_discovery_unavailable"},), False),
+    )
+    incomplete = module.artifacts_for_run("unseen-run-20310102T030405Z")
+    assert incomplete.status_code == 503
+    assert b'"code":"artifact_search_incomplete"' in incomplete.body
 
     monkeypatch.setattr(
         module,

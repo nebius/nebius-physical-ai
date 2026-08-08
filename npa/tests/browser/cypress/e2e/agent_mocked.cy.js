@@ -27,7 +27,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#stagesPanel").should("exist");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
-    cy.get("#stagesPanel .hint").should("contain.text", "timeline, result, and logs");
+    cy.get("#stagesPanel .hint").should("contain.text", "evidence-backed timeline and artifacts");
     cy.get("#stagesPanel .hint").should("not.contain.text", "Sim2Real-only");
     cy.get("#stageList").should("have.attr", "aria-label", "Workflow stages");
     cy.get("#stageList").should("contain.text", "Select assets");
@@ -130,7 +130,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#workflowValidate").click();
     cy.wait("@workflowValidate");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
-    cy.get("#stagesPanel .hint").should("contain.text", "timeline, result, and logs");
+    cy.get("#stagesPanel .hint").should("contain.text", "evidence-backed timeline and artifacts");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
   });
 
@@ -1210,6 +1210,30 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runSummary").should("contain.text", "mock-run");
   });
 
+  it("keeps current-run evidence separate from a failed maintenance-job lookup", () => {
+    const maintenanceId = "codex-maintenance-20310102T030405Z-deadbeef";
+    cy.intercept("GET", `/api/artifacts/run/${maintenanceId}*`, {
+      statusCode: 404,
+      body: {
+        ok: false,
+        error: {
+          code: "run_not_discovered",
+          message: "No discovered NPA workflow/artifact run has this identifier. Identifiers under /home/ubuntu/codex-runs are Codex maintenance job IDs, not NPA run IDs.",
+        },
+      },
+    }).as("maintenanceNotFound");
+
+    cy.get("#runSummary").should("contain.text", "mock-run");
+    cy.get("#stagesRunInput").clear().type(maintenanceId, { delay: 0 });
+    cy.get("#stagesLoadRun").click();
+    cy.wait("@maintenanceNotFound");
+    cy.get("#runSummary").should("contain.text", "currently loaded run");
+    cy.get("#runSummary").should("contain.text", "mock-run");
+    cy.get("#runSummary").should("not.contain.text", maintenanceId);
+    cy.get("#stagesRunSearchResult").should("contain.text", "Codex maintenance job IDs");
+    cy.get("#stagesRunSearchResult").should("contain.text", "Currently loaded run remains mock-run");
+  });
+
   it("surfaces an old run beyond the newest page via server-side (q=) search", () => {
     // Reproduces the real-world "run doesn't show" case: the run is older than
     // the newest page the default listing returns, so it only appears when the
@@ -1266,8 +1290,8 @@ describe("NPA agent UI with mocked APIs", () => {
     });
     // …but typing a fragment triggers a debounced server search that finds it.
     cy.get("#artifactPrefix").clear().type(FRAGMENT, { delay: 0 });
-    cy.get("#runSummary").should("not.contain.text", "mock-run");
-    cy.get("#artifactList").should("contain.text", "Select a run");
+    cy.get("#runSummary").should("contain.text", "currently loaded run");
+    cy.get("#runSummary").should("contain.text", "mock-run");
     cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
     cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
@@ -1277,6 +1301,7 @@ describe("NPA agent UI with mocked APIs", () => {
     // Stages tab: same server-search path must populate the stages picker.
     cy.get("#tabMain").click();
     cy.get("#stagesRunInput").clear().type(FRAGMENT, { delay: 0 });
+    cy.get("#stagesRunSearchResult").should("contain.text", "separate from the currently loaded run mock-run");
     cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
     cy.get("#stagesRunSelect option").should(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
@@ -1284,11 +1309,9 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   });
 
-  it("loads the full run list into the picker by default (no search needed)", () => {
-    // Guards the "runs don't show" fix: the default (no-query) discovery must
-    // request a high limit and render EVERY run — including ones far older than
-    // the historical 100-run cap — so the operator never has to guess a search
-    // fragment just to see a run that exists.
+  it("follows every server cursor into the default run picker", () => {
+    // The API owns bounded pagination. The browser must follow every cursor and
+    // render runs beyond the first page without requiring a guessed search term.
     const bigList = Array.from({ length: 150 }, (_unused, i) => {
       const idx = String(i).padStart(3, "0");
       return {
@@ -1300,12 +1323,22 @@ describe("NPA agent UI with mocked APIs", () => {
         last_modified: `2026-06-${String((i % 27) + 1).padStart(2, "0")}T00:00:${idx.slice(-2)}Z`,
       };
     });
-    let capturedUrl = "";
+    const capturedUrls = [];
     cy.intercept("GET", "/api/artifacts/runs*", (req) => {
-      capturedUrl = String(req.url || "");
+      capturedUrls.push(String(req.url || ""));
+      const cursor = String((req.query && req.query.cursor) || "");
+      const start = cursor ? 100 : 0;
+      const visible = bigList.slice(start, start + 100);
       req.reply({
         statusCode: 200,
-        body: { ok: true, runs: bigList, total_runs: bigList.length, truncated: false },
+        body: {
+          ok: true,
+          runs: visible,
+          total_runs: bigList.length,
+          next_cursor: start + visible.length < bigList.length ? "page-two" : "",
+          truncated: start + visible.length < bigList.length,
+          pagination_complete: start + visible.length >= bigList.length,
+        },
       });
     }).as("artifactRunsFull");
 
@@ -1313,10 +1346,12 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRunsFull");
+    cy.wait("@artifactRunsFull");
     cy.wrap(null).should(() => {
-      const limitMatch = capturedUrl.match(/[?&]limit=(\d+)/);
+      const limitMatch = capturedUrls[0].match(/[?&]limit=(\d+)/);
       expect(limitMatch, "default discovery sends a limit").to.not.eq(null);
       expect(Number(limitMatch[1]), "default discovery limit exceeds the old 100 cap").to.be.greaterThan(100);
+      expect(capturedUrls[1], "second request follows the cursor").to.include("cursor=page-two");
     });
     cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);

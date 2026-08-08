@@ -27,7 +27,9 @@ def test_stages_panel_has_run_picker_and_load() -> None:
     stages = ui.split('id="stagesPanel"')[1].split('id="panelRerun"')[0]
     assert 'id="stagesRunSelect"' in stages
     assert 'id="stagesLoadRun"' in stages
-    assert "Search or paste run ID" in stages
+    assert "Search NPA workflow/artifact runs" in stages
+    assert "Codex maintenance job IDs" in stages
+    assert 'id="stagesRunSearchResult"' in stages
     assert "filterStagesRunSelect" in ui
     assert "resolveStagesRunChoice" in ui
     assert "mergedRunsCache" in ui
@@ -51,8 +53,18 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     # compatible load path instead of blindly POSTing every run to load-run.
     assert 'entry.source_type === "local_demo"' in load_fn
     assert 'entry.source_type === "artifact_storage"' in load_fn
-    assert "loadArtifactsForSelectedRun(chosen, null, entry)" in load_fn
+    assert "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })" in load_fn
     assert "loadWorkflowHistoryRun(chosen)" in load_fn
+
+
+def test_failed_exact_search_is_separate_from_currently_loaded_run() -> None:
+    ui = _embedded_ui_html()
+
+    assert "currently loaded run <strong>" in ui
+    assert "Currently loaded run remains" in ui
+    assert "until lookup succeeds" in ui
+    assert "Exact NPA run lookup failed" in ui
+    assert 'clearVisibleRunState("Search changed.' not in ui
 
 
 def test_artifact_backed_stages_skip_unrelated_draft_overlay() -> None:

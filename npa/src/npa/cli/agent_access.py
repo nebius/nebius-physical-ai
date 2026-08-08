@@ -13,6 +13,17 @@ ACCESS_STATES = frozenset({"available", "partial", "denied", "unavailable", "unv
 ACCESS_DISCOVERY_MAX_WORKERS = 8
 
 
+def consistent_agent_service_account_id(existing: str, refreshed: str) -> str:
+    """Keep bootstrap identity deterministic across credential refreshes."""
+    expected = str(existing or "").strip()
+    candidate = str(refreshed or "").strip()
+    if expected and candidate and expected != candidate:
+        raise ValueError(
+            "credential refresh resolved a different service account than the existing agent record"
+        )
+    return candidate or expected
+
+
 class AccessProbeError(RuntimeError):
     """A classified, public-safe access probe failure."""
 
@@ -97,6 +108,10 @@ class AgentAccessReport:
     projects: tuple[ProjectAccess, ...] = ()
     errors: tuple[dict[str, str], ...] = ()
     refreshed_at: str = ""
+    service_account_id: str = ""
+    credential_source: str = ""
+    credential_profile: str = ""
+    credential_config: str = ""
     schema: str = ACCESS_SCHEMA
 
     def to_dict(self) -> dict[str, Any]:
@@ -106,6 +121,10 @@ class AgentAccessReport:
                 "tenant_id": self.tenant_id,
                 "deployment_project_id": self.deployment_project_id,
                 "deployment_project_name": self.deployment_project_name,
+                "service_account_id": self.service_account_id,
+                "credential_source": self.credential_source,
+                "credential_profile": self.credential_profile,
+                "credential_config": self.credential_config,
             },
             "status": self.status,
             "scope": self.scope,
@@ -197,6 +216,10 @@ def discover_agent_access(
     list_projects: Callable[[str], list[Any]],
     list_buckets: Callable[[str], list[Any]],
     probe_bucket: Callable[[str], BucketProbe | dict[str, str]],
+    service_account_id: str = "",
+    credential_source: str = "",
+    credential_profile: str = "",
+    credential_config: str = "",
     now: Callable[[], str] = _now_iso,
 ) -> AgentAccessReport:
     """Discover effective access with injected Nebius and S3 clients.
@@ -471,9 +494,17 @@ def discover_agent_access(
     overall = _aggregate_status([project_listing_status, artifact_status])
     if project_listing_status != "available" and artifact_status in {"available", "partial"}:
         overall = "partial"
-    if len(projects) <= 1:
+    # A tenant-configured agent whose tenant inventory failed is *not* a healthy
+    # single-project agent. The deployment-project fallback stays usable, but
+    # its scope remains explicitly partial so operators see the failed promise.
+    if tenant and project_listing_status != "available":
+        scope = "partial_tenant"
+    elif len(projects) <= 1:
         scope = "single_project"
-    elif overall == "available":
+    elif all(
+        item.capabilities["storage_resource_discovery"].status == "available"
+        for item in projects
+    ):
         scope = "tenant"
     else:
         scope = "partial_tenant"
@@ -522,6 +553,10 @@ def discover_agent_access(
         projects=tuple(projects),
         errors=tuple(errors),
         refreshed_at=now(),
+        service_account_id=str(service_account_id or "").strip(),
+        credential_source=str(credential_source or "").strip(),
+        credential_profile=str(credential_profile or "").strip(),
+        credential_config=str(credential_config or "").strip(),
     )
 
 

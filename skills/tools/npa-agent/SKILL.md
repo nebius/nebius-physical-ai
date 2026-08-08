@@ -222,17 +222,32 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
 
 ### Artifact-first discovery + load
 
-- `GET /api/artifacts/runs?prefix=&limit=100` discovers run prefixes from every
-  project bucket with verified effective list access. The Agent access panel's
+- `GET /api/artifacts/runs?prefix=&limit=100` discovers artifact-backed run
+  prefixes from every bounded native S3 page in every project bucket with
+  verified effective list access. The Agent access panel's
   **List artifacts** / **Browse / preview** actions add the selected
   `project_id` and `resource_bucket`; the backend verifies that pair against
-  effective access before searching and returns the selected provenance.
+  effective access before searching and returns the selected provenance. Follow
+  `next_cursor` until it is empty; `pagination_complete=false` means a bounded
+  source scan or access scope was incomplete. Category/state/source-cache roots
+  are not runs.
 - `GET /api/artifacts/run/{run_id}` returns an S3-native artifact page with
   `render` hints. Follow `next_cursor` with the returned `resolved_prefix` and
   `bucket` (as `resource_bucket`) until `truncated=false`; the UI exposes this
   as **Load next artifact page** so large runs do not block the backend.
 - `POST /api/sim-viz/load-artifact` loads an explicit artifact (`s3_uri` or `run_id` + `key`).
 - Unknown types are still listed and selectable (`render="download"` fallback).
+
+Exact lookup returns `409 ambiguous_run_id` when the same ID has multiple
+`(project_id, bucket, resolved_prefix)` sources, `404 run_not_discovered` only
+after complete effective-scope discovery, and an access/incomplete error when a
+source could not be searched. Select the returned source explicitly rather than
+accepting an arbitrary first match.
+
+The search field is exclusively for discovered NPA workflow/artifact runs.
+Directories under `/home/ubuntu/codex-runs/...` identify Codex maintenance jobs
+on an operator machine; they are not NPA run IDs and are never published into
+customer artifact storage merely to make them searchable.
 
 `artifacts/run` returns exactly one native S3 page per request, capped at 1,000
 objects. Its `count`, `artifacts`, and `preferred` fields are page-local. Clients
@@ -277,7 +292,11 @@ the UI's **Agent access** panel:
   "identity": {
     "tenant_id": "<tenant-id>",
     "deployment_project_id": "<project-id>",
-    "deployment_project_name": "<project-alias>"
+    "deployment_project_name": "<project-alias>",
+    "service_account_id": "<service-account-id>",
+    "credential_source": "instance_metadata",
+    "credential_profile": "cursor-sa",
+    "credential_config": "/root/.nebius/config.yaml"
   },
   "status": "partial",
   "scope": "partial_tenant",
@@ -289,8 +308,9 @@ Effective access is evaluated in layers: list projects visible under the tenant,
 list object-storage resources separately for each project, then verify S3 list
 and read access without writing. A denied/unavailable project remains in the
 report and does not hide accessible projects. If tenant/project listing is not
-permitted, the configured deployment project and bucket retain legacy
-single-project behavior and the report explains the limitation. Use
+permitted, the configured deployment project and bucket may remain usable, but
+a tenant-configured agent reports `partial_tenant`; it never silently calls that
+fallback healthy `single_project` scope. Use
 `GET /api/access?refresh=true` after IAM changes.
 `npa agent verify-live` validates this schema and the matching UI wiring on a
 bootstrapped VM.
@@ -301,6 +321,12 @@ that should be searchable. `npa agent deploy` continues to request the existing
 tenant editors-group membership when the operator can manage IAM; when that is
 not possible, bootstrap reuses available credentials and the access report shows
 their actual narrower reach.
+
+Bootstrap creates and verifies the root `cursor-sa` profile against the exact
+attached service-account ID, scrubs ambient/static IAM-token variables for
+inventory commands, and verifies tenant project listing before calling a
+tenant-configured deployment successful. Short-lived bootstrap IAM tokens are
+not staged into the backend systemd environment.
 
 Tenant-wide access is read-only at the agent product boundary. This is enforced
 by the application, not by structurally read-only IAM credentials: the attached
