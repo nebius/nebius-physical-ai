@@ -7,6 +7,7 @@ import subprocess
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
 from npa import teardown_receipts
 from npa.clients.storage_validation import probe_terraform_backend
@@ -476,6 +477,322 @@ def test_project_destroy_continues_independent_work_but_preserves_dependencies(
     assert statuses["controller"] == "skipped_dependency"
     assert statuses["bucket"] == "skipped_dependency"
     assert statuses["forget_alias"] == "skipped_dependency"
+
+
+def test_project_destroy_skips_not_submitted_workflow_cancellation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.clients import config
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "demo",
+                "projects": {"demo": {"project_id": "project-a"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    commands: list[list[str]] = []
+
+    def runner(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        commands.append(list(cmd))
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "runs": [
+                        {
+                            "run_id": "run-not-submitted",
+                            "status": "NOT_SUBMITTED",
+                            "submission_state": "NOT_SUBMITTED",
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+    result = execute_project_destroy(
+        "demo",
+        [DestroyPhase("workflows", (("npa", "workflow-list"),), "inventory")],
+        runner=runner,
+    )
+
+    assert result["status"] == "success"
+    assert commands == [["npa", "workflow-list"]]
+
+
+def test_full_mocked_project_lifecycle_is_exact_isolated_and_idempotent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa import controller_ownership, project_destroy
+    from npa.cli import main as main_module
+    from npa.cli.main import app
+    from npa.clients import config, credentials
+    from npa.cluster import state as cluster_state
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    config_path = tmp_path / ".npa" / "config.yaml"
+    credentials_path = tmp_path / ".npa" / "credentials.yaml"
+    clusters_dir = tmp_path / ".npa" / "clusters"
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(credentials, "CREDENTIALS_PATH", credentials_path)
+    monkeypatch.setattr(controller_ownership, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cluster_state, "CLUSTERS_DIR", clusters_dir)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "target",
+                "projects": {
+                    "target": {
+                        "project_id": "project-target",
+                        "tenant_id": "tenant-target",
+                        "region": "eu-test1",
+                        "terraform_state": {
+                            "bucket": "bucket-target",
+                            "endpoint": "https://storage.example.invalid",
+                        },
+                        "agents": {
+                            "agent": {
+                                "instance_id": "instance-target",
+                                "project_id": "project-target",
+                                "region": "eu-test1",
+                            }
+                        },
+                    },
+                    "unrelated": {
+                        "project_id": "project-unrelated",
+                        "tenant_id": "tenant-unrelated",
+                        "region": "eu-test2",
+                        "agents": {
+                            "agent": {
+                                "instance_id": "instance-unrelated",
+                                "project_id": "project-unrelated",
+                            }
+                        },
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "storage_iam": {
+                    "service_account_id": "serviceaccount-target",
+                    "service_account_name": "lerobot-training",
+                    "service_account_project_id": "project-target",
+                    "service_account_managed_by": "npa",
+                },
+                "storage_setup": {
+                    "version": 1,
+                    "projects": {
+                        "project-unrelated": {
+                            "status": "partial",
+                            "phase": "rollback_incomplete",
+                            "resources": {
+                                "service_account": {
+                                    "id": "serviceaccount-unrelated",
+                                    "name": "lerobot-training",
+                                    "created_by": "npa",
+                                    "project_id": "project-unrelated",
+                                    "attempt_id": "attempt-unrelated",
+                                }
+                            },
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    target_cluster = cluster_state.ClusterState(
+        name="cluster-target",
+        cluster_id="cluster-target-id",
+        project_id="project-target",
+        region="eu-test1",
+        node_count=1,
+        node_platform="cpu-d3",
+        node_preset="4vcpu-16gb",
+        k8s_version="1.31",
+        subnet_id="subnet-target",
+        created_at="2026-08-08T00:00:00Z",
+    )
+    unrelated_cluster = cluster_state.ClusterState(
+        name="cluster-unrelated",
+        cluster_id="cluster-unrelated-id",
+        project_id="project-unrelated",
+        region="eu-test2",
+        node_count=1,
+        node_platform="cpu-d3",
+        node_preset="4vcpu-16gb",
+        k8s_version="1.31",
+        subnet_id="subnet-unrelated",
+        created_at="2026-08-08T00:00:00Z",
+    )
+    cluster_state.save_cluster_state(target_cluster)
+    cluster_state.save_cluster_state(unrelated_cluster)
+    bind_controller_owner(
+        ControllerOwner(
+            project_alias="target",
+            project_id="project-target",
+            cluster_id="cluster-target-id",
+            cluster_name="cluster-target",
+            context="cluster-target",
+            context_fingerprint="fingerprint-target",
+        )
+    )
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        resume_command="",
+        project_alias="target",
+        project_id="project-target",
+        tenant_id="tenant-target",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        backend={
+            "bucket": "bucket-target",
+            "endpoint": "https://storage.example.invalid",
+            "state_key": "npa/target/agent.tfstate",
+            "credential_source": "project_saved",
+        },
+    )
+    teardown_receipts.record_teardown_event(
+        phase="workflow",
+        resource="run-not-submitted",
+        terminal_state="not_submitted",
+        project_alias="target",
+        project_id="project-target",
+        identity={
+            "project_alias": "target",
+            "project_id": "project-target",
+            "run_id": "run-not-submitted",
+            "submission_status": "NOT_SUBMITTED",
+        },
+    )
+
+    provider = {
+        "instances": {"instance-target", "instance-unrelated"},
+        "controllers": {"cluster-target-id", "cluster-unrelated-id"},
+        "clusters": {"cluster-target-id", "cluster-unrelated-id"},
+        "buckets": {"bucket-target", "bucket-unrelated"},
+        "service_accounts": {
+            "serviceaccount-target",
+            "serviceaccount-unrelated",
+        },
+        "access_keys": {"accesskey-target", "accesskey-unrelated"},
+    }
+    commands: list[list[str]] = []
+
+    def fake_runner(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        command = list(cmd)
+        commands.append(command)
+        if command[1:5] == ["workbench", "workflow", "list", "--project"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps(
+                    {
+                        "runs": [
+                            {
+                                "run_id": "run-not-submitted",
+                                "status": "NOT_SUBMITTED",
+                                "submission_state": "NOT_SUBMITTED",
+                            }
+                        ]
+                    }
+                ),
+                stderr="",
+            )
+        if command[1:3] == ["agent", "destroy"]:
+            assert command[command.index("--project") + 1] == "target"
+            provider["instances"].discard("instance-target")
+        elif command[1:3] == ["skypilot", "cleanup-controller"]:
+            assert command[command.index("--cluster-id") + 1] == "cluster-target-id"
+            provider["controllers"].discard("cluster-target-id")
+        elif command[1:3] == ["cluster", "down"]:
+            assert command[command.index("--cluster-id") + 1] == "cluster-target-id"
+            provider["clusters"].discard("cluster-target-id")
+            cluster_state.state_file("cluster-target").unlink(missing_ok=True)
+        elif command[1:4] == ["storage", "bucket", "delete"]:
+            assert command[command.index("--name") + 1] == "bucket-target"
+            provider["buckets"].discard("bucket-target")
+        elif command[1:4] == ["storage", "service-account", "delete"]:
+            provider["service_accounts"].discard("serviceaccount-target")
+            provider["access_keys"].discard("accesskey-target")
+        elif command[1:3] == ["configure", "--forget-project"]:
+            main_module._forget_project("target")
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    real_execute = project_destroy.execute_project_destroy
+    monkeypatch.setattr(
+        project_destroy,
+        "execute_project_destroy",
+        lambda project, phases, on_phase=None: real_execute(
+            project, phases, runner=fake_runner, on_phase=on_phase
+        ),
+    )
+    real_record = teardown_receipts.record_teardown_event
+
+    def fallback_receipt(**kwargs):  # noqa: ANN003, ANN202
+        identity = kwargs.get("identity") or {}
+        if kwargs.get("phase") == "project_config" and identity.get("operations"):
+            raise ValueError("simulated full receipt persistence failure")
+        return real_record(**kwargs)
+
+    monkeypatch.setattr(teardown_receipts, "record_teardown_event", fallback_receipt)
+
+    result = CliRunner().invoke(
+        app, ["destroy", "--project", "target", "--all", "--yes"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "wrote a minimal safe cleanup receipt" in result.output
+    assert not any(
+        command[1:4] == ["workbench", "workflow", "cancel"]
+        for command in commands
+    )
+    assert provider == {
+        "instances": {"instance-unrelated"},
+        "controllers": {"cluster-unrelated-id"},
+        "clusters": {"cluster-unrelated-id"},
+        "buckets": {"bucket-unrelated"},
+        "service_accounts": {"serviceaccount-unrelated"},
+        "access_keys": {"accesskey-unrelated"},
+    }
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["default_project"] == "unrelated"
+    assert set(saved["projects"]) == {"unrelated"}
+    assert "controller_owner" not in saved.get("skypilot", {})
+    assert cluster_state.load_cluster_state("cluster-target") is None
+    assert cluster_state.load_cluster_state("cluster-unrelated") is not None
+
+    destructive_commands = [
+        command
+        for command in commands
+        if tuple(command[1:3])
+        in {
+            ("agent", "destroy"),
+            ("skypilot", "cleanup-controller"),
+            ("cluster", "down"),
+            ("storage", "bucket"),
+            ("storage", "service-account"),
+        }
+    ]
+    before_retry = {key: set(value) for key, value in provider.items()}
+    for command in destructive_commands:
+        assert fake_runner(command).returncode == 0
+    assert provider == before_retry
 
 
 def test_bucket_name_reuse_is_terminal_verification_failure(

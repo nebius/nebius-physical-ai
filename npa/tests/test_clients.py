@@ -721,7 +721,16 @@ def test_access_key_inventory_exposes_only_cli_allowlisted_jsonpath_fields(
         }
     ]
     args = run.call_args_list[0].args[0]
-    assert args[:4] == ["iam", "v2", "access-key", "list"]
+    command_index = args.index("iam")
+    assert args[command_index : command_index + 4] == [
+        "iam",
+        "v2",
+        "access-key",
+        "list",
+    ]
+    assert command_index == 2
+    assert args[0] == "--profile"
+    assert args[1]
     assert "--all" in args
     output_format = args[args.index("--format") + 1]
     assert output_format.startswith("jsonpath=")

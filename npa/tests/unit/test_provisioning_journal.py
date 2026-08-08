@@ -14,6 +14,7 @@ from npa.provisioning_journal import (
     OperationJournalError,
     ProvisioningOperation,
     current_operation,
+    list_operations,
     operation_context,
 )
 
@@ -71,6 +72,26 @@ def test_long_requested_name_produces_a_valid_retry_path(journal_root: Path) -> 
 
     assert retry.path.parent.name == retry.operation_id
     assert retry.operation_id.endswith("-r1")
+
+
+def test_list_operations_uses_operation_id_to_break_timestamp_ties(
+    journal_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "npa.provisioning_journal.utc_now", lambda: "2026-08-08T00:00:00Z"
+    )
+    first = _prepare(requested_name="agent-a")
+    second = _prepare(requested_name="agent-b")
+
+    listed = list_operations(project_id="project-a", resource_type="agent")
+
+    assert {item.operation_id for item in listed} == {
+        first.operation_id,
+        second.operation_id,
+    }
+    assert [item.operation_id for item in listed] == sorted(
+        [first.operation_id, second.operation_id], reverse=True
+    )
 
 
 def test_journal_is_private_atomic_secret_free_and_identity_guarded(

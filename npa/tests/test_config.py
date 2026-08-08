@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -856,6 +857,167 @@ def test_write_config_locks_down_file_and_directory(tmp_path, monkeypatch) -> No
 
     assert stat_module.S_IMODE(config_path.stat().st_mode) == 0o600
     assert stat_module.S_IMODE(config_path.parent.stat().st_mode) == 0o700
+
+
+def test_config_writer_rejects_keys_strict_readers_would_reject(
+    isolated_config: Path,
+) -> None:
+    with pytest.raises(config.ConfigError, match="typo_key.*Valid keys"):
+        config.write_config({"skypilot": {"typo_key": True}})
+
+    assert not isolated_config.exists()
+
+
+def test_skypilot_cleanup_preserves_valid_controller_metadata(
+    isolated_config: Path,
+) -> None:
+    owner = {
+        "schema_version": "npa.controller-owner.v1",
+        "project_alias": "demo",
+        "project_id": "project-a",
+        "cluster_id": "cluster-a",
+        "context": "npa-cluster",
+    }
+    config.write_config(
+        {"skypilot": {"sky_bin": "/tmp/sky", "controller_owner": owner}}
+    )
+
+    assert config.clear_skypilot_bin()
+    saved = yaml.safe_load(isolated_config.read_text(encoding="utf-8"))
+    assert saved["skypilot"] == {"controller_owner": owner}
+
+
+def test_config_mutations_do_not_bypass_the_schema_validating_gateway() -> None:
+    source_root = PACKAGE_ROOT / "src" / "npa"
+    offenders: set[tuple[str, int, str]] = set()
+    for path in source_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else ""
+            )
+            target = ast.unparse(node.args[0]) if node.args else ""
+            if name in {"update_private_yaml", "write_private_yaml"} and (
+                "CONFIG_PATH" in target
+            ):
+                offenders.add(
+                    (str(path.relative_to(PACKAGE_ROOT)), node.lineno, name)
+                )
+            if (
+                name in {"open", "write_text", "write_bytes"}
+                and isinstance(node.func, ast.Attribute)
+                and "CONFIG_PATH" in ast.unparse(node.func.value)
+            ):
+                offenders.add(
+                    (str(path.relative_to(PACKAGE_ROOT)), node.lineno, name)
+                )
+
+    assert offenders == set()
+
+
+@pytest.mark.parametrize("fallback_succeeds", [True, False])
+def test_forget_project_converges_when_cleanup_receipt_persistence_fails(
+    isolated_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fallback_succeeds: bool,
+) -> None:
+    from typer.testing import CliRunner
+
+    from npa import teardown_receipts
+    from npa.cli.main import app
+    from npa.provisioning_journal import ProvisioningOperation
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "target",
+                "projects": {
+                    "target": {
+                        "project_id": "project-target",
+                        "tenant_id": "tenant-target",
+                        "region": "eu-test1",
+                    },
+                    "unrelated": {
+                        "project_id": "project-unrelated",
+                        "tenant_id": "tenant-unrelated",
+                        "region": "eu-test2",
+                    },
+                },
+                "skypilot": {
+                    "controller_owner": {
+                        "schema_version": "npa.controller-owner.v1",
+                        "project_alias": "target",
+                        "project_id": "project-target",
+                        "cluster_id": "cluster-target",
+                        "cluster_name": "npa-target",
+                        "context": "npa-target",
+                        "context_fingerprint": "fingerprint-target",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        resume_command="",
+        project_alias="target",
+        project_id="project-target",
+        tenant_id="tenant-target",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        backend={
+            "bucket": "state-bucket",
+            "endpoint": "https://storage.example.invalid",
+            "state_key": "npa/target/agent.tfstate",
+            "credential_source": "project_saved",
+        },
+    )
+    real_record = teardown_receipts.record_teardown_event
+
+    def flaky_record(**kwargs):  # noqa: ANN003, ANN202
+        if not fallback_succeeds or (kwargs.get("identity") or {}).get("operations"):
+            raise ValueError("simulated receipt validation/write failure")
+        return real_record(**kwargs)
+
+    monkeypatch.setattr(teardown_receipts, "record_teardown_event", flaky_record)
+
+    result = CliRunner().invoke(
+        app, ["configure", "--forget-project", "target"]
+    )
+
+    assert result.exit_code == 0, result.output
+    saved = yaml.safe_load(isolated_config.read_text(encoding="utf-8"))
+    assert saved["default_project"] == "unrelated"
+    assert set(saved["projects"]) == {"unrelated"}
+    assert saved["projects"]["unrelated"]["project_id"] == "project-unrelated"
+    assert "controller_owner" not in saved.get("skypilot", {})
+    assert "Removed project 'target'" in result.output
+    if fallback_succeeds:
+        assert "wrote a minimal safe cleanup receipt" in result.output
+        [receipt] = teardown_receipts.list_teardown_receipts(
+            project_id="project-target", legacy="exclude"
+        )
+        assert receipt["identity"] == {
+            "parent_id": "project-target",
+            "project_alias": "target",
+            "project_id": "project-target",
+        }
+    else:
+        assert "degraded audit evidence" in result.output
+        assert not (tmp_path / "receipts").exists()
 
 
 def test_config_permissions_warning_flags_a_world_readable_file(

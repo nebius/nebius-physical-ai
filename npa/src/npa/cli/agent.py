@@ -578,8 +578,7 @@ def _store_agent_record(project_alias: str, name: str, payload: dict[str, Any]) 
 def _remove_agent_record(project_alias: str, name: str) -> None:
     from copy import deepcopy
 
-    from npa.clients.config import CONFIG_PATH
-    from npa.clients.credentials import update_private_yaml
+    from npa.clients.config import update_config_document
 
     def remove(current: dict[str, Any]) -> dict[str, Any]:
         data = deepcopy(current)
@@ -601,7 +600,7 @@ def _remove_agent_record(project_alias: str, name: str) -> None:
         data["projects"] = projects
         return data
 
-    update_private_yaml(CONFIG_PATH, remove)
+    update_config_document(remove)
 
 
 def _agent_extra_ingress_ports(

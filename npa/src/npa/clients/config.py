@@ -28,11 +28,12 @@ import os
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
 from npa.clients.credentials import CredentialsConfig, load_credentials
+from npa.config_schema import STRICT_CONFIG_SECTION_KEYS, unknown_config_keys
 from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
 CONFIG_PATH = Path.home() / ".npa" / "config.yaml"
@@ -607,10 +608,45 @@ def config_permissions_warning(path: Path | None = None) -> str:
 
 def write_config(data: dict[str, Any]) -> Path:
     """Deep-merge *data* into ``~/.npa/config.yaml`` and write."""
+    return update_config_document(lambda existing: _deep_merge(existing, data))
+
+
+def _validate_strict_config_sections(data: dict[str, Any]) -> None:
+    """Keep NPA-owned writes compatible with every strict section reader."""
+
+    for section, allowed in STRICT_CONFIG_SECTION_KEYS.items():
+        value = data.get(section)
+        if value in (None, ""):
+            continue
+        if not isinstance(value, dict):
+            raise ConfigError(f"NPA config {section} section must be a mapping")
+        unknown = unknown_config_keys(section, value)
+        if unknown:
+            keys = ", ".join(unknown)
+            valid = ", ".join(sorted(allowed))
+            raise ConfigError(
+                f"Unrecognized {section} config key(s): {keys}. Valid keys: {valid}"
+            )
+
+
+def update_config_document(
+    updater: Callable[[dict[str, Any]], dict[str, Any]], *, path: Path | None = None
+) -> Path:
+    """Atomically mutate config after enforcing all strict section schemas."""
+
     from npa.clients.credentials import update_private_yaml
 
-    update_private_yaml(CONFIG_PATH, lambda existing: _deep_merge(existing, data))
-    return CONFIG_PATH
+    target = path or CONFIG_PATH
+
+    def validated(existing: dict[str, Any]) -> dict[str, Any]:
+        updated = updater(existing)
+        if not isinstance(updated, dict):
+            raise ConfigError("NPA config must be a mapping")
+        _validate_strict_config_sections(updated)
+        return updated
+
+    update_private_yaml(target, validated)
+    return target
 
 
 def _write_config_replace(data: dict[str, Any]) -> Path:
@@ -620,10 +656,7 @@ def _write_config_replace(data: dict[str, Any]) -> Path:
     remove a stanza (a deleted bucket's ``terraform_state``, an uninstalled
     SkyPilot ``sky_bin``, a forgotten project) rewrite the whole file instead.
     """
-    from npa.clients.credentials import update_private_yaml
-
-    update_private_yaml(CONFIG_PATH, lambda _existing: data)
-    return CONFIG_PATH
+    return update_config_document(lambda _existing: data)
 
 
 def _bucket_key(value: str) -> str:
@@ -831,6 +864,20 @@ def forget_project(alias: str) -> bool:
             f"{cleaned} --dry-run`, complete guarded deletion/verification, then "
             "retry forgetting the project."
         )
+    project_id = (
+        str(project.get("project_id", "") or "")
+        if isinstance(project, dict)
+        else ""
+    )
+    skypilot = yml.get("skypilot")
+    owner = skypilot.get("controller_owner") if isinstance(skypilot, dict) else None
+    if isinstance(owner, dict):
+        owner_project_id = str(owner.get("project_id", "") or "")
+        owner_alias = str(owner.get("project_alias", "") or "")
+        if (project_id and owner_project_id == project_id) or (
+            not owner_project_id and owner_alias == cleaned
+        ):
+            skypilot.pop("controller_owner", None)
     del projects[cleaned]
     yml["projects"] = projects
     if yml.get("default_project") == cleaned:

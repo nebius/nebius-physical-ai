@@ -11,12 +11,17 @@ from typing import Any
 
 import yaml
 
+from npa.config_schema import (
+    SKYPILOT_CONFIG_KEYS,
+    SKYPILOT_RUNTIME_CONFIG_KEYS,
+    unknown_config_keys,
+)
+
 SkyBin = str | os.PathLike[str] | None
 
 _SETUP_DOC = "docs/orchestration/skypilot-setup.md"
 CONFIG_PATH = Path.home() / ".npa" / "config.yaml"
 REQUIRED_SKYPILOT_VERSION = "0.12.2"
-_SKYPILOT_CONFIG_KEYS = frozenset({"sky_bin", "global_config_path", "isolated_config_dir"})
 _VERSION_CHECK_CACHE: set[str] = set()
 
 
@@ -162,12 +167,14 @@ def _load_skypilot_file_config(path: Path) -> dict[str, Any]:
         return {}
     if not isinstance(section, dict):
         raise SkyPilotConfigError(f"NPA config skypilot section must be a mapping: {path}")
-    unknown = sorted(set(section) - _SKYPILOT_CONFIG_KEYS)
+    unknown = unknown_config_keys("skypilot", section)
     if unknown:
-        valid = ", ".join(sorted(_SKYPILOT_CONFIG_KEYS))
+        valid = ", ".join(sorted(SKYPILOT_CONFIG_KEYS))
         keys = ", ".join(unknown)
         raise SkyPilotConfigError(f"Unrecognized SkyPilot config key(s): {keys}. Valid keys: {valid}")
-    return section
+    # NPA-owned controller metadata shares the section for atomic persistence,
+    # but never becomes a runtime setting or participates in runtime precedence.
+    return {key: section[key] for key in SKYPILOT_RUNTIME_CONFIG_KEYS if key in section}
 
 
 def _first_config_value(*candidates: tuple[Any, str]) -> tuple[Any | None, str]:

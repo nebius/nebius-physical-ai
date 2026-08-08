@@ -1986,7 +1986,7 @@ def list_access_keys_for_service_account(
     strict: bool = False,
     profile: str | None = None,
 ) -> list[dict[str, str]]:
-    """Return ``[{"id", "name", "state"}]`` for every access key owned by *sa_id*.
+    """Return safe metadata for every access key proven to be owned by *sa_id*.
 
     Teardown needs the full list (not just the active one `ensure_access_key`
     reuses): an agent VM's long-lived key outlives its VM otherwise.
@@ -2013,6 +2013,7 @@ def list_access_keys_for_service_account(
                 "id": str(metadata.get("id", "") or ""),
                 "name": str(metadata.get("name", "") or ""),
                 "state": str((item.get("status", {}) or {}).get("state", "") or ""),
+                "service_account_id": str(item_sa_id),
             }
         )
     return [key for key in keys if key["id"]]

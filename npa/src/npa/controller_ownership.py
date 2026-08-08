@@ -6,8 +6,12 @@ from dataclasses import dataclass
 import hashlib
 from typing import Any
 
-from npa.clients.config import CONFIG_PATH, default_project_name, resolve_environment
-from npa.clients.credentials import update_private_yaml
+from npa.clients.config import (
+    CONFIG_PATH,
+    default_project_name,
+    resolve_environment,
+    update_config_document,
+)
 from npa.cluster.state import load_cluster_state
 
 
@@ -208,7 +212,7 @@ def bind_controller_owner(
         payload["projects"] = projects
         return payload
 
-    update_private_yaml(CONFIG_PATH, mutate)
+    update_config_document(mutate, path=CONFIG_PATH)
     return candidate
 
 
@@ -310,5 +314,5 @@ def clear_controller_owner(
         changed = True
         return payload
 
-    update_private_yaml(CONFIG_PATH, mutate)
+    update_config_document(mutate, path=CONFIG_PATH)
     return changed

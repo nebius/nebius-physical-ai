@@ -8,6 +8,7 @@ import inspect
 import json
 import logging
 import os
+from pathlib import Path
 import shlex
 import shutil
 import subprocess
@@ -1910,27 +1911,68 @@ def _forget_project(alias: str) -> None:
     from npa.cleanup_identity import project_cleanup_identity_snapshot
     from npa.teardown_receipts import record_teardown_event
 
+    def persist_receipt(
+        *,
+        terminal_state: str,
+        configured_project_found: bool,
+        full_identity: dict[str, Any],
+    ) -> Path | None:
+        event = {
+            "phase": "project_config",
+            "resource": cleaned,
+            "terminal_state": terminal_state,
+            "project_alias": cleaned,
+            "project_id": project_id,
+            "precheck": {"configured_project_found": configured_project_found},
+            "action": {"kind": "forget_project_configuration"},
+            "verification": {"config_removed": terminal_state == "completed"},
+        }
+        try:
+            return record_teardown_event(**event, identity=full_identity)
+        except (OSError, RuntimeError, ValueError) as exc:
+            typer.echo(
+                "Warning: full cleanup receipt could not be written; trying a "
+                f"minimal safe fallback: {type(exc).__name__}: {exc}",
+                err=True,
+            )
+        fallback = {
+            "project_alias": cleaned,
+            "project_id": project_id,
+            "parent_id": project_id,
+        }
+        try:
+            path = record_teardown_event(**event, identity=fallback)
+        except (OSError, RuntimeError, ValueError) as exc:
+            typer.echo(
+                "Warning: minimal cleanup receipt also failed; local cleanup will "
+                "continue with degraded audit evidence: "
+                f"{type(exc).__name__}: {exc}",
+                err=True,
+            )
+            return None
+        typer.echo(
+            "Warning: wrote a minimal safe cleanup receipt; detailed recovery "
+            "evidence is degraded.",
+            err=True,
+        )
+        return path
+
     cleaned = alias.strip()
     environment = resolve_environment(cleaned)
     project_id = str(getattr(environment, "project_id", "") or "")
     identity = project_cleanup_identity_snapshot(cleaned)
     # The intent/evidence lands outside config before the destructive rewrite.
-    receipt_path = record_teardown_event(
-        phase="project_config",
-        resource=cleaned,
+    receipt_path = persist_receipt(
         terminal_state="in_progress",
-        project_alias=cleaned,
-        project_id=project_id,
-        precheck={"configured_project_found": environment is not None},
-        action={"kind": "forget_project_configuration"},
-        verification={"config_removed": False},
-        identity=identity,
+        configured_project_found=environment is not None,
+        full_identity=identity,
     )
-    typer.echo(
-        f"Durable cleanup identity: {receipt_path.stem}. Resume after config removal "
-        f"with `npa agent destroy --receipt {receipt_path.stem} --name <name> --yes` "
-        "or the matching cluster/storage/controller command."
-    )
+    if receipt_path is not None:
+        typer.echo(
+            f"Durable cleanup identity: {receipt_path.stem}. Resume after config removal "
+            f"with `npa agent destroy --receipt {receipt_path.stem} --name <name> --yes` "
+            "or the matching cluster/storage/controller command."
+        )
     try:
         forgotten = forget_project(cleaned)
     except ConfigError as exc:
@@ -1943,16 +1985,10 @@ def _forget_project(alias: str) -> None:
         )
     else:
         typer.echo(f"No project '{cleaned}' in ~/.npa/config.yaml; nothing to remove.")
-    record_teardown_event(
-        phase="project_config",
-        resource=cleaned,
+    persist_receipt(
         terminal_state="completed",
-        project_alias=cleaned,
-        project_id=project_id,
-        precheck={"configured_project_found": bool(forgotten)},
-        action={"kind": "forget_project_configuration"},
-        verification={"config_removed": True},
-        identity=identity,
+        configured_project_found=bool(forgotten),
+        full_identity=identity,
     )
 
 

@@ -298,6 +298,14 @@ def execute_project_destroy(
                         )
                         if not run_id:
                             continue
+                        submission_state = str(
+                            row.get("submission_state")
+                            or row.get("status")
+                            or row.get("submission_status")
+                            or ""
+                        ).upper()
+                        if submission_state in {"NOT_SUBMITTED", "PLAN_ONLY"}:
+                            continue
                         cancel_command = (
                             "npa",
                             "workbench",

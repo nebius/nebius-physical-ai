@@ -38,6 +38,24 @@ _CONFLICT_FIELDS = frozenset(
     }
 )
 
+_CLEANUP_BACKEND_FIELDS = (
+    "bucket",
+    "endpoint",
+    "region",
+    "state_key",
+    "addressing_style",
+)
+_CLEANUP_RESOURCE_FIELDS = (
+    "resource_type",
+    "provider_id",
+    "requested_name",
+    "project_id",
+    "ownership",
+    "ownership_source",
+    "creation_window_start",
+    "creation_window_end",
+)
+
 
 def _present(value: object) -> bool:
     return value not in (None, "", [], {})
@@ -49,6 +67,54 @@ def _clean(values: Mapping[str, Any] | None) -> dict[str, Any]:
         for key, value in dict(values or {}).items()
         if _present(value.strip() if isinstance(value, str) else value)
     }
+
+
+def provisioning_operation_cleanup_identity(
+    payload: Mapping[str, Any], *, state_paths: list[str] | None = None
+) -> dict[str, Any]:
+    """Project one provisioning journal into non-secret cleanup evidence.
+
+    Operation journals intentionally contain runtime backend classifiers and may
+    grow additional implementation fields. Receipts are a narrower recovery
+    contract, so only immutable selectors needed to find state/resources cross
+    that boundary. In particular, credential material and ``credential_source``
+    never enter teardown identity.
+    """
+
+    backend = payload.get("backend")
+    safe_backend = (
+        {
+            key: str(backend.get(key) or "")
+            for key in _CLEANUP_BACKEND_FIELDS
+            if _present(backend.get(key))
+        }
+        if isinstance(backend, Mapping)
+        else {}
+    )
+    resources = payload.get("resources")
+    safe_resources = [
+        {
+            key: str(item.get(key) or "")
+            for key in _CLEANUP_RESOURCE_FIELDS
+            if _present(item.get(key))
+        }
+        for item in (resources if isinstance(resources, list) else [])
+        if isinstance(item, Mapping)
+    ]
+    return _clean(
+        {
+            "operation_id": str(payload.get("operation_id") or ""),
+            "resource_type": str(payload.get("resource_type") or ""),
+            "requested_name": str(payload.get("requested_name") or ""),
+            "project_alias": str(payload.get("project_alias") or ""),
+            "project_id": str(payload.get("project_id") or ""),
+            "tenant_id": str(payload.get("tenant_id") or ""),
+            "region": str(payload.get("region") or ""),
+            "backend": safe_backend,
+            "resources": safe_resources,
+            "state_paths": list(state_paths or []),
+        }
+    )
 
 
 def _merge_with_conflicts(
@@ -302,19 +368,17 @@ def project_cleanup_identity_snapshot(alias: str) -> dict[str, Any]:
         identity["operations"] = []
         for operation in operations:
             payload = operation.read()
+            payload = {
+                **payload,
+                "operation_id": operation.operation_id,
+                "project_alias": str(payload.get("project_alias") or cleaned),
+                "project_id": str(payload.get("project_id") or project_id),
+            }
             identity["operations"].append(
-                {
-                    "operation_id": operation.operation_id,
-                    "resource_type": str(payload.get("resource_type") or ""),
-                    "requested_name": str(payload.get("requested_name") or ""),
-                    "project_alias": str(payload.get("project_alias") or cleaned),
-                    "project_id": str(payload.get("project_id") or project_id),
-                    "tenant_id": str(payload.get("tenant_id") or ""),
-                    "region": str(payload.get("region") or ""),
-                    "backend": dict(payload.get("backend") or {}),
-                    "resources": list(payload.get("resources") or []),
-                    "state_paths": [str(path) for path in operation.state_copies()],
-                }
+                provisioning_operation_cleanup_identity(
+                    payload,
+                    state_paths=[str(path) for path in operation.state_copies()],
+                )
             )
     except (OSError, RuntimeError, ValueError):
         identity["operations"] = []
@@ -362,5 +426,6 @@ __all__ = [
     "CleanupIdentity",
     "CleanupIdentityError",
     "project_cleanup_identity_snapshot",
+    "provisioning_operation_cleanup_identity",
     "resolve_cleanup_identity",
 ]

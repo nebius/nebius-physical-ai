@@ -148,7 +148,9 @@ def list_buckets_cmd(
     typer.echo("Delete one with `npa storage bucket delete --name <bucket>`.")
 
 
-def _storage_service_account_record() -> tuple[_OwnedStorageServiceAccount | None, str]:
+def _storage_service_account_record(
+    *, account_id: str = "", project_id: str = ""
+) -> tuple[_OwnedStorageServiceAccount | None, str]:
     """Read the persisted ownership proof for NPA-created storage IAM.
 
     A legacy ``nebius.service_account_id`` is not enough: configure has always
@@ -248,6 +250,31 @@ def _storage_service_account_record() -> tuple[_OwnedStorageServiceAccount | Non
                     "service_account_managed_by": account.get("created_by"),
                 },
                 f"storage setup journal for {journal_project}",
+            )
+
+    selected_id = str(account_id or "").strip()
+    selected_project = str(project_id or "").strip()
+    if selected_id:
+        exact_id_candidates = [
+            item for item in candidates if item.account_id == selected_id
+        ]
+        wrong_projects = sorted(
+            {item.project_id for item in exact_id_candidates if item.project_id != selected_project}
+        )
+        if selected_project and wrong_projects:
+            return None, (
+                f"NPA ownership evidence for {selected_id} names project(s) "
+                f"{', '.join(wrong_projects)}, not selected project {selected_project}."
+            )
+        candidates = [
+            item
+            for item in exact_id_candidates
+            if not selected_project or item.project_id == selected_project
+        ]
+        if not candidates:
+            return None, (
+                f"No trustworthy NPA storage IAM ownership record proves exact "
+                f"service account {selected_id} in project {selected_project or '<unknown>'}."
             )
 
     unique = {(item.account_id, item.project_id) for item in candidates}
@@ -474,7 +501,19 @@ def _observe_storage_iam(
         get_service_account_identity,
     )
 
-    record, ownership_note = _storage_service_account_record()
+    record, ownership_note = _storage_service_account_record(
+        account_id=context.account_id,
+        project_id=context.project_id,
+    )
+    if context.account_id and record is None:
+        return _StorageIamObservation(
+            outcome="verification_failed",
+            context=context,
+            account_id=context.account_id,
+            ownership="unverified",
+            ownership_note=ownership_note,
+            detail=ownership_note,
+        )
     if record is not None and record.project_id != context.project_id:
         return _StorageIamObservation(
             outcome="verification_failed",
@@ -488,12 +527,12 @@ def _observe_storage_iam(
             ),
         )
     candidates = (
-        {record.account_id}
+        {context.account_id}
+        if context.account_id
+        else {record.account_id}
         if record is not None
         else set(_untrusted_storage_account_ids())
     )
-    if context.account_id:
-        candidates.add(context.account_id)
     marker = storage_iam_residue(context.alias) if context.alias else {}
     if record is None:
         marker_id = str(marker.get("service_account_id", "") or "").strip()
@@ -569,6 +608,28 @@ def _observe_storage_iam(
             ),
             ownership_note=ownership_note,
             detail="The provider authoritatively returned NotFound for the exact immutable ID.",
+        )
+    provider_mismatches: list[str] = []
+    if identity.account_id != candidate:
+        provider_mismatches.append("service-account ID")
+    if identity.name != DEFAULT_SERVICE_ACCOUNT_NAME:
+        provider_mismatches.append("service-account name")
+    if identity.project_id != context.project_id:
+        provider_mismatches.append("parent project")
+    if context.tenant_id and identity.tenant_id != context.tenant_id:
+        provider_mismatches.append("parent tenant")
+    if provider_mismatches:
+        return _StorageIamObservation(
+            outcome="verification_failed",
+            context=context,
+            account_id=candidate,
+            account_name=identity.name,
+            ownership="npa" if record is not None else "unverified",
+            ownership_note=ownership_note,
+            detail=(
+                "Provider identity did not match the selected cleanup target: "
+                + ", ".join(provider_mismatches)
+            ),
         )
     return _StorageIamObservation(
         outcome="present",
@@ -1045,7 +1106,10 @@ def delete_service_account_cmd(
         )
     if observation.verified_absent:
         payload["result"] = "already_absent"
-        record, _note = _storage_service_account_record()
+        record, _note = _storage_service_account_record(
+            account_id=context.account_id,
+            project_id=context.project_id,
+        )
         from npa.clients.config import storage_iam_residue
 
         has_residue_marker = bool(context.alias and storage_iam_residue(context.alias))
@@ -1099,7 +1163,10 @@ def delete_service_account_cmd(
             )
         return
 
-    record, note = _storage_service_account_record()
+    record, note = _storage_service_account_record(
+        account_id=context.account_id,
+        project_id=context.project_id,
+    )
     if (
         observation.ownership != "npa"
         or record is None
@@ -1215,6 +1282,21 @@ def delete_service_account_cmd(
         _partial_cleanup(
             "provider/auth verification failed while inspecting access keys for "
             f"NPA-owned service account {record.account_id}; nothing was deleted: {exc}"
+        )
+    mismatched_keys = [
+        str((key or {}).get("id", "") or "").strip() or "<missing-id>"
+        for key in keys
+        if str((key or {}).get("service_account_id", "") or "").strip()
+        != record.account_id
+    ]
+    if mismatched_keys:
+        _partial_cleanup(
+            "access-key inventory did not prove the selected service-account "
+            "relationship for key(s) "
+            + ", ".join(mismatched_keys)
+            + "; nothing was deleted.",
+            output_json=output_json,
+            payload=payload,
         )
     key_ids = [str((key or {}).get("id", "") or "").strip() for key in keys]
     key_ids = [key_id for key_id in key_ids if key_id]
@@ -1562,7 +1644,10 @@ def reconcile_service_account_cmd(
         "recovery": recovery,
     }
     write_private_yaml(CREDENTIALS_PATH, data)
-    record, record_error = _storage_service_account_record()
+    record, record_error = _storage_service_account_record(
+        account_id=identity.account_id,
+        project_id=identity.project_id,
+    )
     if record is None or record.account_id != identity.account_id:
         _partial_cleanup(
             f"Recovery journal failed its ownership validation and deletion remains blocked: {record_error}"

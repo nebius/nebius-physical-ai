@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import pytest
+import yaml
 
+from npa import controller_ownership as ownership
+from npa.controller_ownership import ControllerOwner, bind_controller_owner, controller_owner
 from npa.orchestration.skypilot import _bin as bin_module
 from npa.orchestration.skypilot._bin import (
     REQUIRED_SKYPILOT_VERSION,
@@ -124,6 +128,164 @@ def test_resolve_config_rejects_unknown_config_keys(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(SkyPilotConfigError, match="typo_key.*Valid keys"):
         resolve_config()
+
+
+def _controller_owner() -> ControllerOwner:
+    return ControllerOwner(
+        project_alias="demo",
+        project_id="project-a",
+        cluster_id="cluster-a",
+        cluster_name="npa-cluster",
+        context="npa-cluster",
+        context_fingerprint="immutable-fingerprint",
+        operation_id="operation-a",
+    )
+
+
+def test_production_owner_writer_remains_readable_by_runtime_resolver(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky = _executable(tmp_path / "sky")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {"demo": {"project_id": "project-a"}},
+                "skypilot": {"sky_bin": str(sky)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ownership, "CONFIG_PATH", config)
+
+    owner = _controller_owner()
+    bind_controller_owner(owner)
+    resolved = resolve_config(npa_config_path=config)
+
+    assert resolved.sky_bin == sky.resolve()
+    assert controller_owner() == owner
+    saved = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert saved["skypilot"]["controller_owner"] == owner.to_dict()
+
+
+def test_owner_metadata_survives_cancel_verify_and_controller_cleanup_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.skypilot import cleanup, workflow
+
+    sky = _executable(tmp_path / "sky")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {"demo": {"project_id": "project-a"}},
+                "skypilot": {"sky_bin": str(sky)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ownership, "CONFIG_PATH", config)
+    monkeypatch.setattr(bin_module, "CONFIG_PATH", config)
+    monkeypatch.setattr(workflow, "ensure_skypilot_version", lambda value: value)
+    monkeypatch.setattr(cleanup, "ensure_skypilot_version", lambda value: value)
+    owner = _controller_owner()
+    bind_controller_owner(owner)
+
+    workflow_calls: list[list[str]] = []
+
+    def workflow_run(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        workflow_calls.append(list(cmd))
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='[{"job_id":"job-1","status":"SUCCEEDED"}]',
+            stderr="",
+        )
+
+    cleanup_calls: list[list[str]] = []
+
+    def cleanup_run(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        cleanup_calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(workflow.subprocess, "run", workflow_run)
+    monkeypatch.setattr(cleanup, "_run", cleanup_run)
+
+    status = workflow.workflow_status("job-1")
+    cancelled = cleanup._cancel_job(
+        "job-1", isolated_config_dir=None, config_path=None, sky_bin=None
+    )
+    controller = cleanup._down_jobs_controller(
+        "sky-jobs-controller-target",
+        isolated_config_dir=None,
+        config_path=None,
+        sky_bin=None,
+    )
+
+    assert status.status == "SUCCEEDED"
+    assert cancelled.ok
+    assert controller.ok
+    assert any(call[1:3] == ["jobs", "queue"] for call in workflow_calls)
+    assert any(call[1:3] == ["jobs", "cancel"] for call in cleanup_calls)
+    assert any(call[1:3] == ["down", "--yes"] for call in cleanup_calls)
+    assert controller_owner() == owner
+    assert ownership.clear_controller_owner(
+        "demo", project_id="project-a", cluster_id="cluster-a"
+    )
+    assert controller_owner() is None
+    assert resolve_config(npa_config_path=config).sky_bin == sky.resolve()
+
+
+def test_legacy_project_owner_migrates_without_blocking_runtime_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky = _executable(tmp_path / "sky")
+    owner = _controller_owner()
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "controller_owner": owner.to_dict(),
+                    }
+                },
+                "skypilot": {"sky_bin": str(sky)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ownership, "CONFIG_PATH", config)
+
+    bind_controller_owner(owner)
+
+    assert resolve_config(npa_config_path=config).sky_bin == sky.resolve()
+    saved = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert saved["skypilot"]["controller_owner"] == owner.to_dict()
+    assert "controller_owner" not in saved["projects"]["demo"]
+
+
+def test_malformed_owner_is_left_to_ownership_validation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky = _executable(tmp_path / "sky")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "skypilot": {
+                    "sky_bin": str(sky),
+                    "controller_owner": {"project_alias": "incomplete"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ownership, "CONFIG_PATH", config)
+
+    assert resolve_config(npa_config_path=config).sky_bin == sky.resolve()
+    assert controller_owner() is None
 
 
 def test_ensure_skypilot_version_accepts_required_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

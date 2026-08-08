@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from npa.cleanup_identity import CleanupIdentityError, resolve_cleanup_identity
+from npa.cleanup_identity import (
+    CleanupIdentityError,
+    provisioning_operation_cleanup_identity,
+    resolve_cleanup_identity,
+)
 from npa.teardown_receipts import record_teardown_event
 
 
@@ -69,3 +73,61 @@ def test_exact_identity_precedence_is_complementary_but_conflicts_fail(
             phase="agent",
             resource="agent",
         )
+
+
+def test_provisioning_cleanup_projection_is_typed_and_never_copies_credentials() -> None:
+    identity = provisioning_operation_cleanup_identity(
+        {
+            "operation_id": "operation-a",
+            "resource_type": "agent",
+            "requested_name": "agent",
+            "project_alias": "target",
+            "project_id": "project-target",
+            "tenant_id": "tenant-target",
+            "region": "eu-test1",
+            "backend": {
+                "bucket": "state-bucket",
+                "endpoint": "https://storage.example.invalid",
+                "region": "eu-test1",
+                "state_key": "npa/target/agent.tfstate",
+                "addressing_style": "path",
+                "credential_source": "project_saved",
+                "access_key": "must-not-persist",
+                "secret_key": "must-not-persist",
+                "future_unknown": "must-not-persist",
+            },
+            "resources": [
+                {
+                    "resource_type": "agent_instance",
+                    "provider_id": "instance-target",
+                    "requested_name": "agent-target",
+                    "project_id": "project-target",
+                    "ownership": "created_by_this_operation",
+                    "ownership_source": "provider-create-response",
+                    "labels": {"credential_hint": "must-not-persist"},
+                    "future_unknown": "must-not-persist",
+                }
+            ],
+        },
+        state_paths=["/safe/local-state.tfstate"],
+    )
+
+    assert identity["backend"] == {
+        "bucket": "state-bucket",
+        "endpoint": "https://storage.example.invalid",
+        "region": "eu-test1",
+        "state_key": "npa/target/agent.tfstate",
+        "addressing_style": "path",
+    }
+    assert identity["resources"] == [
+        {
+            "resource_type": "agent_instance",
+            "provider_id": "instance-target",
+            "requested_name": "agent-target",
+            "project_id": "project-target",
+            "ownership": "created_by_this_operation",
+            "ownership_source": "provider-create-response",
+        }
+    ]
+    assert "credential_source" not in str(identity)
+    assert "must-not-persist" not in str(identity)

@@ -980,7 +980,13 @@ class ProvisioningOperation:
         self.transition("committed")
         payload = self.read()
         try:
+            from npa.cleanup_identity import provisioning_operation_cleanup_identity
             from npa.teardown_receipts import record_teardown_event
+
+            operation_identity = provisioning_operation_cleanup_identity(
+                payload,
+                state_paths=[str(path) for path in self.state_copies()],
+            )
 
             record_teardown_event(
                 phase=f"provision-{payload.get('resource_type', 'resource')}",
@@ -998,20 +1004,7 @@ class ProvisioningOperation:
                     "parent_id": str(payload.get("project_id") or ""),
                     "tenant_id": str(payload.get("tenant_id") or ""),
                     "region": str(payload.get("region") or ""),
-                    "operations": [
-                        {
-                            "operation_id": self.operation_id,
-                            "resource_type": str(payload.get("resource_type") or ""),
-                            "requested_name": str(payload.get("requested_name") or ""),
-                            "project_alias": str(payload.get("project_alias") or ""),
-                            "project_id": str(payload.get("project_id") or ""),
-                            "tenant_id": str(payload.get("tenant_id") or ""),
-                            "region": str(payload.get("region") or ""),
-                            "backend": dict(payload.get("backend") or {}),
-                            "resources": list(payload.get("resources") or []),
-                            "state_paths": [str(path) for path in self.state_copies()],
-                        }
-                    ],
+                    "operations": [operation_identity],
                 },
             )
         except (OSError, RuntimeError, ValueError) as exc:
@@ -1058,7 +1051,14 @@ def list_operations(
         if requested_name and payload.get("requested_name") != requested_name:
             continue
         matches.append((str(payload.get("updated_at") or ""), operation))
-    return [item[1] for item in sorted(matches, reverse=True)]
+    return [
+        item[1]
+        for item in sorted(
+            matches,
+            key=lambda item: (item[0], item[1].operation_id),
+            reverse=True,
+        )
+    ]
 
 
 _CURRENT_OPERATION: ContextVar[ProvisioningOperation | None] = ContextVar(
