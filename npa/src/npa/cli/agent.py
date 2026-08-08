@@ -38,6 +38,7 @@ from npa.clients.network import (
 from npa.clients.ssh import SSHClient, SSHError
 from npa.agent_backend.shipping import render_shipped_backend_install
 from npa.cli.agent_access import ACCESS_SCHEMA, ACCESS_STATES
+from npa.cli.agent_embed import without_embedded_standalone_block
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
@@ -263,19 +264,6 @@ _AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
 
-def _without_embedded_standalone_block(source: str) -> str:
-    """Remove direct-test sentinels so rendered-name checks remain meaningful."""
-    start = "# NPA_EMBED_STANDALONE_START"
-    end = "# NPA_EMBED_STANDALONE_END"
-    before, marker, remainder = source.partition(start)
-    if not marker:
-        return source
-    _standalone, closing, after = remainder.partition(end)
-    if not closing:
-        raise ValueError("embedded module has an unterminated standalone block")
-    return before.rstrip() + "\n" + after.lstrip("\n")
-
-
 def _embedded_agent_stages_source() -> str:
     """Return agent_stages.py source embedded into the remote agent backend."""
     import re
@@ -295,7 +283,7 @@ def _embedded_agent_stage_runtime_source() -> str:
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return _without_embedded_standalone_block(raw)
+    return without_embedded_standalone_block(raw)
 
 
 def rendered_agent_ui_html() -> str:
@@ -374,7 +362,7 @@ def _embedded_agent_access_file(filename: str) -> str:
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return _without_embedded_standalone_block(raw)
+    return without_embedded_standalone_block(raw)
 
 
 def _embedded_agent_access_source() -> str:
