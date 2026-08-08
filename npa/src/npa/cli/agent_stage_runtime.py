@@ -200,16 +200,15 @@ def _redact_inline_workflow_secret(value: str) -> str:
 
 
 def _public_workflow_command(argv) -> str:
-    # Render manifest argv without reflecting embedded or following secrets. A
-    # pending value is consumed only when the next argv item is not another flag.
+    # Render manifest argv without reflecting embedded or following secrets.
+    # A bare sensitive option consumes its next argv item even when the secret
+    # begins with "-"; completed inline assignments never create pending state.
     values = argv if isinstance(argv, list) else [argv]
     public = []
     pending = ""
     for raw in values:
         value = str(raw or "")
-        if pending and value.startswith("-"):
-            pending = ""
-        elif pending == "authorization" and value.lower() == "bearer":
+        if pending == "authorization" and value.lower() == "bearer":
             public.append("Bearer")
             pending = "secret"
             continue

@@ -461,6 +461,7 @@ def test_public_workflow_command_redacts_separator_and_inline_canaries() -> None
     from npa.cli.agent_stage_runtime import _public_workflow_command
 
     canaries = [secrets.token_urlsafe(32) for _index in range(11)]
+    canaries[2] = "--" + canaries[2]
     command = _public_workflow_command(
         [
             "tool",
