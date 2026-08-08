@@ -13,11 +13,15 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
 from npa.workflows.byof.live import resolve_byof_profile_path
-from npa.clients.project_credentials import storage_env_for_project
+from npa.clients.project_credentials import (
+    s3_client_for_project,
+    storage_env_for_project,
+)
 from npa.orchestration.skypilot import submit_workflow, workflow_status
 from npa.orchestration.skypilot._bin import (
     SkyPilotConfigError,
@@ -49,19 +53,28 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: rendered YAML). Without this a run provisions, pulls the image, executes the profile
 #: and then dies at the upload with
 #: ``botocore.exceptions.NoCredentialsError: Unable to locate credentials``.
-DEFAULT_SECRET_ENVS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
 OPERATOR_RUNTIME_ENVS = ("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",)
+DEFAULT_SECRET_ENVS = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+)
 
 
 def resolve_secret_envs(explicit: list[str] | None) -> list[str]:
     """Return the secret env names to forward to SkyPilot.
 
-    Explicit ``--secret-env`` wins; otherwise forward the S3 credentials when they are
-    present in the environment. Names with no value are dropped, since SkyPilot rejects
-    a secret it cannot resolve.
+    An explicit ``--secret-env`` list replaces the default storage names. An explicitly
+    set operator-runtime gate is appended in either case so acceptance cannot fall back
+    to rendered YAML. Names with no value are dropped, since SkyPilot rejects a secret
+    it cannot resolve.
     """
 
-    names = list(explicit or DEFAULT_SECRET_ENVS)
+    names = list(explicit if explicit is not None else DEFAULT_SECRET_ENVS)
+    # Operator acceptance is runtime state, not workflow configuration. Always
+    # carry an explicitly set gate through SkyPilot's redacted secret channel,
+    # even when a caller supplies an otherwise explicit secret allowlist.
+    names.extend(OPERATOR_RUNTIME_ENVS)
     return [name for name in dict.fromkeys(names) if os.environ.get(name)]
 
 
@@ -136,10 +149,6 @@ def render_workflow(
         envs["BYOF_SOLUTION_NAME"] = solution_name
         envs["BYOF_CAPABILITY_NAME"] = capability_name
         envs["BYOF_SMOKE_ARTIFACT_NAME"] = smoke_artifact_name
-        for name in OPERATOR_RUNTIME_ENVS:
-            value = os.environ.get(name, "").strip()
-            if value:
-                envs[name] = value
         normalized_root = _normalize_output_root(output_root)
         envs["S3_OUTPUT_PREFIX"] = normalized_root.rstrip("/") + f"/{run_id}/"
         bucket = _normalize_s3_bucket(normalized_root) or _normalize_s3_bucket(
@@ -149,9 +158,6 @@ def render_workflow(
             envs["NPA_S3_BUCKET"] = bucket
         storage_env = _resolved_storage_env()
         for key in (
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
             "AWS_ENDPOINT_URL",
             "NEBIUS_S3_ENDPOINT",
             "NPA_S3_BUCKET",
@@ -228,6 +234,46 @@ def _resolved_storage_env() -> dict[str, str]:
     except Exception as exc:  # noqa: BLE001 - best-effort for render/launch paths
         print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
         return {}
+
+
+def preflight_output_storage(*, output_root: str, run_id: str) -> None:
+    """Prove the selected S3 run prefix is writable before provisioning compute."""
+
+    parsed = urlparse(_normalize_output_root(output_root))
+    bucket = parsed.netloc.strip()
+    if parsed.scheme != "s3" or not bucket:
+        raise ValueError("BYOF output root must be a valid s3:// URI")
+    prefix = parsed.path.strip("/")
+    key = "/".join(part for part in (prefix, run_id, ".npa-write-preflight") if part)
+    project = (
+        os.environ.get("NPA_E2E_PROJECT", "").strip()
+        or os.environ.get("NPA_PROJECT", "").strip()
+        or os.environ.get("NPA_BYOF_PROJECT", "").strip()
+    )
+    client = s3_client_for_project(project or None, allow_host_creds=True)
+    created = False
+    try:
+        client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=b"npa BYOF write preflight\n",
+            ContentType="text/plain",
+        )
+        created = True
+        head = client.head_object(Bucket=bucket, Key=key)
+        if int(head.get("ContentLength", -1)) <= 0:
+            raise RuntimeError("S3 write preflight object is unexpectedly empty")
+        client.delete_object(Bucket=bucket, Key=key)
+        created = False
+    except Exception as exc:  # noqa: BLE001 - preserve provider error as launch blocker
+        if created:
+            try:
+                client.delete_object(Bucket=bucket, Key=key)
+            except Exception:  # noqa: BLE001 - retain the original preflight failure
+                pass
+        raise RuntimeError(
+            f"BYOF output storage preflight failed for s3://{bucket}/{prefix}: {exc}"
+        ) from exc
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -376,6 +422,8 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
         )
         return 0
 
+    preflight_output_storage(output_root=output_root, run_id=run_id)
+
     with tempfile.TemporaryDirectory(prefix=f"npa-byof-container-{run_id}-") as tmp:
         tmp_path = Path(tmp)
         previous_kubeconfig = os.environ.get("KUBECONFIG")
@@ -398,6 +446,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     infra=infra,
                     config_path=config_path,
                     cleanup=args.cleanup,
+                    secret_envs=resolve_secret_envs(args.secret_env),
                 )
             teardown_guard = SignalTeardown(
                 run_id=run_id,
@@ -481,6 +530,7 @@ def _direct_launch(
     infra: str,
     config_path: str = "",
     cleanup: bool = True,
+    secret_envs: list[str] | None = None,
 ) -> int:
     cmd = [
         sky_bin,
@@ -499,8 +549,11 @@ def _direct_launch(
         cmd.extend(["--infra", infra])
     if config_path:
         cmd.extend(["--config", config_path])
-    cmd.append(str(rendered_yaml))
     launch_env = sky_environment(None)
+    for secret_name in secret_envs or ():
+        if launch_env.get(secret_name):
+            cmd.extend(["--secret", secret_name])
+    cmd.append(str(rendered_yaml))
     # Ensure kubeconfig is visible to sky even when only KUBECONTEXT was set.
     if not launch_env.get("KUBECONFIG"):
         default_kube = Path.home() / ".kube" / "config"

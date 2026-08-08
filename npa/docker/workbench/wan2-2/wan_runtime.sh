@@ -78,7 +78,7 @@ for name, expected in {
     "nvidia-cusolver-cu12": "11.7.2.55",
     "nvidia-cusparse-cu12": "12.5.7.53",
     "nvidia-cusparselt-cu12": "0.6.3",
-    "nvidia-nccl-cu12": "2.26.2",
+    "nvidia-nccl-cu12": "2.27.7",
     "nvidia-nvjitlink-cu12": "12.8.61",
     "nvidia-nvtx-cu12": "12.8.55",
 }.items():

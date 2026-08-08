@@ -165,8 +165,17 @@ config:
         raise SystemExit(f"native PyTorch SDPA probe was non-finite: {sdpa_probe_result}")
     del q, sdpa_probe
 
+    # The runtime venv deliberately exposes base-image site packages. Resolve one
+    # active distribution per normalized project name through this interpreter's
+    # sys.path ordering so shadowed baked metadata (for example CPU Torch) cannot
+    # overwrite the CUDA runtime that actually executed inference.
+    python_package_names = {}
+    for discovered in importlib.metadata.distributions():
+        discovered_name = discovered.metadata.get("Name") or discovered.name
+        python_package_names.setdefault(discovered_name.lower(), discovered_name)
     python_packages = []
-    for distribution in importlib.metadata.distributions():
+    for package_name in sorted(python_package_names.values(), key=str.lower):
+        distribution = importlib.metadata.distribution(package_name)
         metadata = distribution.metadata
         license_classifiers = [
             value.removeprefix("License :: ")
@@ -212,7 +221,7 @@ config:
             "interpreter_accessible": os.access(
                 "/opt/byof/.venv/bin/python", os.R_OK | os.X_OK
             ),
-            "python_packages": sorted(python_packages, key=lambda item: item["name"].lower()),
+            "python_packages": python_packages,
             "os_packages": sorted(os_packages, key=lambda item: item["name"]),
             "large_checkpoint_shaped_files": baked_weight_candidates,
         },

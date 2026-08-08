@@ -31,6 +31,30 @@ config:
     export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
     export WAN22_EXPECTED_WORLD_SIZE="4"
     export WAN22_OUTPUT_NAME="wan2_2_ti2v_5b_multigpu.mp4"
+    # The runtime pins NCCL 2.27.7: the formerly pinned 2.26.2 initialized all
+    # four B200 ranks but hung on the first all-reduce, while the same isolated
+    # probe passed on every rank after the 2.27.7 correction. Keep the supported
+    # legacy device allocator and shared-memory host fallback used by that probe.
+    export NCCL_CUMEM_ENABLE="0"
+    export NCCL_CUMEM_HOST_ENABLE="0"
+    # The eight-B200 host exposes NVSwitch, but an unprivileged four-GPU
+    # subset cannot reliably allocate NVLink SHARP resources on every rank.
+    # Disable only the NVLS offload; NCCL still uses the NVLink P2P topology.
+    export NCCL_NVLS_ENABLE="0"
+    # The Kubernetes pod exposes eth0 together with host InfiniBand HCAs. Pin
+    # bootstrap to the pod's routable IPv4 interface and bypass IB verbs for
+    # this single-node run. GPU payload traffic still uses NVLink P2P; the
+    # socket path is only the safe fallback when a peer transport is needed.
+    export NCCL_SOCKET_IFNAME="=eth0"
+    export NCCL_SOCKET_FAMILY="AF_INET"
+    export NCCL_IB_DISABLE="1"
+    # PyTorch 2.7 supports NCCL's asynchronous communicator initialization.
+    # Use it to avoid blocking ncclCommInitRank on this containerized B200
+    # driver/runtime combination while keeping async errors fail-closed.
+    export TORCH_NCCL_USE_COMM_NONBLOCKING="1"
+    export NCCL_DEBUG="INFO"
+    export NCCL_DEBUG_SUBSYS="INIT,COLL,ENV"
+    export NCCL_DEBUG_FILE="${NPA_SMOKE_OUTPUT_DIR}/wan2_2_nccl.%h.%p.log"
     wan-runtime ensure
     OUT_DIR="${NPA_SMOKE_OUTPUT_DIR}"
     CHECKPOINT_FILE="${OUT_DIR}/checkpoint_dir.txt"
@@ -73,14 +97,6 @@ config:
     PY
     CHECKPOINT_DIR="$(tr -d '\n' < "${CHECKPOINT_FILE}")"
 
-    # The pinned Ulysses module names flash_attention directly. The immutable
-    # image already binds the Wan model to its native PyTorch SDPA wrapper; make
-    # the same upstream-compatible binding for Ulysses at run time.
-    sed -i \
-      's/^from \.\.modules\.attention import flash_attention$/from ..modules.attention import attention as flash_attention/' \
-      /opt/byof/wan/distributed/ulysses.py
-    grep -Fxq 'from ..modules.attention import attention as flash_attention' /opt/byof/wan/distributed/ulysses.py
-
     cat > "${WRAPPER}" <<'PY'
     from __future__ import annotations
 
@@ -90,11 +106,17 @@ config:
     import runpy
     import socket
     import subprocess
+    import sys
+    import time
     from pathlib import Path
 
     import torch
     import torch.distributed as dist
     from torch.distributed.fsdp import FullyShardedDataParallel, ShardingStrategy
+
+    # torch.distributed.run executes this generated wrapper by path, which puts
+    # the run directory (not the immutable checkout) at sys.path[0].
+    sys.path.insert(0, "/opt/byof")
 
     expected = int(os.environ["WAN22_EXPECTED_WORLD_SIZE"])
     rank = int(os.environ["RANK"])
@@ -103,6 +125,27 @@ config:
     out_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     if expected != 4 or world_size != expected:
         raise SystemExit(f"required WORLD_SIZE=4, observed {world_size}")
+
+    progress_path = out_dir / f"wan2_2_multigpu_progress_rank_{rank}.json"
+
+    def record_progress(stage: str) -> None:
+        progress_path.write_text(
+            json.dumps(
+                {
+                    "rank": rank,
+                    "local_rank": local_rank,
+                    "world_size": world_size,
+                    "stage": stage,
+                    "time_ns": time.time_ns(),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    record_progress("wrapper_started")
 
     evidence = {
         "rank": rank,
@@ -117,6 +160,13 @@ config:
         "ulysses_all_to_all_calls": 0,
         "barrier_calls": 0,
         "observer_final_barrier": False,
+        "nccl_cumem_enable": os.environ.get("NCCL_CUMEM_ENABLE"),
+        "nccl_cumem_host_enable": os.environ.get("NCCL_CUMEM_HOST_ENABLE"),
+        "nccl_nvls_enable": os.environ.get("NCCL_NVLS_ENABLE"),
+        "nccl_socket_ifname": os.environ.get("NCCL_SOCKET_IFNAME"),
+        "nccl_socket_family": os.environ.get("NCCL_SOCKET_FAMILY"),
+        "nccl_ib_disable": os.environ.get("NCCL_IB_DISABLE"),
+        "torch_nccl_use_comm_nonblocking": os.environ.get("TORCH_NCCL_USE_COMM_NONBLOCKING"),
     }
 
     original_init = dist.init_process_group
@@ -124,10 +174,13 @@ config:
     original_destroy = dist.destroy_process_group
 
     def instrumented_init(*args, **kwargs):
+        record_progress("process_group_init_started")
         result = original_init(*args, **kwargs)
+        record_progress("process_group_initialized")
         if dist.get_world_size() != expected or dist.get_rank() != rank:
             raise RuntimeError("NCCL process-group rank/world mismatch")
         probe = torch.tensor(float(rank + 1), device=f"cuda:{local_rank}")
+        record_progress("nccl_probe_started")
         dist.all_reduce(probe)
         wanted = expected * (expected + 1) / 2
         finite = bool(torch.isfinite(probe).item())
@@ -137,6 +190,7 @@ config:
         evidence["process_group_initialized"] = True
         evidence["backend"] = str(dist.get_backend())
         evidence["nccl_all_reduce"] = {"finite": finite, "observed_sum": observed, "expected_sum": wanted}
+        record_progress("nccl_probe_completed")
         return result
 
     def instrumented_barrier(*args, **kwargs):
@@ -147,14 +201,19 @@ config:
     dist.init_process_group = instrumented_init
     dist.barrier = instrumented_barrier
 
-    # Import after the runtime SDPA patch, then wrap the exact bindings used by
-    # WanTI2V rather than substituting another execution path.
+    # Wrap the exact bindings used by WanTI2V rather than substituting another
+    # execution path. Wan's package initializer eagerly imports Ulysses, so
+    # replace the Ulysses module global directly after import. Its
+    # distributed_attention function resolves this global on every call.
     import wan.distributed.sequence_parallel as sequence_parallel
     import wan.distributed.ulysses as ulysses
     import wan.textimage2video as textimage2video
-
-    attention_binding = ulysses.flash_attention
     from wan.modules import attention as attention_module
+
+    record_progress("upstream_modules_imported")
+
+    ulysses.flash_attention = attention_module.attention
+    attention_binding = ulysses.flash_attention
     if attention_binding is not attention_module.attention:
         raise RuntimeError("Ulysses is not bound to Wan native PyTorch SDPA")
 
@@ -252,6 +311,13 @@ config:
                         or item["ulysses_all_to_all_calls"] <= 0
                         or item["barrier_calls"] <= 0
                         or not item["observer_final_barrier"]
+                        or item["nccl_cumem_enable"] != "0"
+                        or item["nccl_cumem_host_enable"] != "0"
+                        or item["nccl_nvls_enable"] != "0"
+                        or item["nccl_socket_ifname"] != "=eth0"
+                        or item["nccl_socket_family"] != "AF_INET"
+                        or item["nccl_ib_disable"] != "1"
+                        or item["torch_nccl_use_comm_nonblocking"] != "1"
                         or len(wrappers) != 2
                         or "WanModel" not in wrapper_sources
                         or not any(wrapper["sequence_parallel_active_before_wrap"] for wrapper in wrappers)
@@ -285,13 +351,17 @@ config:
         result = original_destroy(*args, **kwargs)
         if validation_error[0]:
             raise RuntimeError(f"distributed evidence validation failed: {validation_error[0]}")
+        record_progress("process_group_destroyed")
         return result
 
     dist.destroy_process_group = instrumented_destroy
     runpy.run_path("/opt/byof/generate.py", run_name="__main__")
     PY
 
-    /opt/byof/.venv/bin/torchrun \
+    # Invoke the launcher as a module so its interpreter is the accepted
+    # runtime environment. Console-script shebangs are not relocatable when
+    # that environment is copied from the runtime cache into the work pod.
+    /opt/byof/.venv/bin/python -m torch.distributed.run \
       --standalone --nnodes=1 --nproc_per_node=4 \
       "${WRAPPER}" \
       --task ti2v-5B \
@@ -375,7 +445,7 @@ config:
         "upstream": {
             "repo": "https://github.com/Wan-Video/Wan2.2.git",
             "ref": "42bf4cfaa384bc21833865abc2f9e6c0e67233dc",
-            "entrypoint": "torchrun --standalone --nnodes=1 --nproc_per_node=4 generate.py",
+            "entrypoint": "python -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node=4 generate.py",
         },
         "model": {"id": "Wan-AI/Wan2.2-TI2V-5B", "ref": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e", "weights_baked": False},
         "tokenizer": {"id": "google/umt5-xxl", "ref": "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"},

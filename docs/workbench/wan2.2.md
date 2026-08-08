@@ -148,7 +148,7 @@ local plus remote verification results. Only a verified manifest names the
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260805T191659Z`, real 1280×704 output on RTX PRO 6000 Blackwell |
+| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260808T172003Z`, fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
 | `wan2.2_decoded_mp4_validation` | accepted | same run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
 | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | `byof-wan22-multigpu-e2e-20260806T024353Z`, official four-rank path on 4×B200 |
 | `wan2.2_distributed_rank_topology_validation` | accepted | same run proved unique ranks/devices, NCCL, T5/DiT FULL_SHARD, Ulysses calls, and terminal barriers |

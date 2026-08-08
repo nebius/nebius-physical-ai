@@ -104,6 +104,15 @@ def test_wan22_multigpu_spec_plans_the_real_official_path() -> None:
     assert "ShardingStrategy.FULL_SHARD" in smoke
     assert "ulysses_all_to_all_calls" in smoke
     assert "observer_final_barrier" in smoke
+    assert 'export NCCL_CUMEM_ENABLE="0"' in smoke
+    assert 'export NCCL_CUMEM_HOST_ENABLE="0"' in smoke
+    assert 'export NCCL_NVLS_ENABLE="0"' in smoke
+    assert 'export NCCL_SOCKET_IFNAME="=eth0"' in smoke
+    assert 'export NCCL_SOCKET_FAMILY="AF_INET"' in smoke
+    assert 'export NCCL_IB_DISABLE="1"' in smoke
+    assert 'export TORCH_NCCL_USE_COMM_NONBLOCKING="1"' in smoke
+    assert "wan2_2_nccl.%h.%p.log" in smoke
+    assert "wan2_2_multigpu_progress_rank_" in smoke
     assert "wan2_2_multigpu_topology.json" in smoke
     assert str(config["prompt"]) in smoke
     assert "{{config." not in smoke
@@ -298,6 +307,13 @@ def test_wan22_live_four_b200_fsdp_ulysses_generate_and_decode(
         assert item["ulysses_all_to_all_calls"] > 0
         assert item["barrier_calls"] > 0
         assert item["observer_final_barrier"] is True
+        assert item["nccl_cumem_enable"] == "0"
+        assert item["nccl_cumem_host_enable"] == "0"
+        assert item["nccl_nvls_enable"] == "0"
+        assert item["nccl_socket_ifname"] == "=eth0"
+        assert item["nccl_socket_family"] == "AF_INET"
+        assert item["nccl_ib_disable"] == "1"
+        assert item["torch_nccl_use_comm_nonblocking"] == "1"
 
     assert (
         inventory["schema"] == "npa.workbench.byof.wan2_2_multigpu_runtime_inventory.v1"

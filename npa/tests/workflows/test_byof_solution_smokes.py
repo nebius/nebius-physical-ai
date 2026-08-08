@@ -17,6 +17,12 @@ CATALOG_PATH = ROOT / "docs" / "workbench" / "oss-solution-catalog.md"
 WAN_INPUT_CONTRACT_PATH = (
     ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "input_contract.py"
 )
+WAN_RUNTIME_REQUIREMENTS_PATH = (
+    ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "runtime-requirements.txt"
+)
+WAN_RUNTIME_SCRIPT_PATH = (
+    ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "wan_runtime.sh"
+)
 SOLUTION_SPECS = sorted(
     path for path in WORKFLOW_DIR.glob("byof-*.yaml") if path.name != "byof.yaml"
 )
@@ -213,6 +219,8 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
     assert "wan2_2_runtime_inventory.json" in smoke
     assert "large_checkpoint_shaped_files" in smoke
     assert "python_packages" in smoke and "os_packages" in smoke
+    assert "importlib.metadata.distribution(package_name)" in smoke
+    assert "python_package_names.setdefault" in smoke
     assert "wan-runtime ensure" in smoke
     assert "scaled_dot_product_attention" in smoke
     assert '"sm_120" not in torch_cuda_arch_list' in smoke
@@ -274,6 +282,8 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
     payload = yaml.safe_load(
         (WORKFLOW_DIR / "byof-wan2.2-multigpu.yaml").read_text(encoding="utf-8")
     )
+    runtime_requirements = WAN_RUNTIME_REQUIREMENTS_PATH.read_text(encoding="utf-8")
+    runtime_script = WAN_RUNTIME_SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert config["repo_ref"] == "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
     assert config["resource_profile_yaml"] == "byof-solution-smoke-wan22-b200-4gpu"
@@ -282,10 +292,47 @@ def test_wan22_multigpu_uses_the_pinned_official_distributed_path() -> None:
     assert config["pip_extra"] == "viz"
     assert config["wait_timeout"] == "-1"
     assert "wan-runtime ensure" in smoke
+    assert "nvidia-nccl-cu12==2.27.7" in runtime_requirements
+    assert '"nvidia-nccl-cu12": "2.27.7"' in runtime_script
+    assert "nvidia-nccl-cu12==2.26.2" not in runtime_requirements
     assert "--nproc_per_node=4" in smoke
     assert "--dit_fsdp --t5_fsdp --ulysses_size 4" in smoke
     assert 'runpy.run_path("/opt/byof/generate.py"' in smoke
     assert "ShardingStrategy.FULL_SHARD" in smoke
+    assert "/opt/byof/.venv/bin/python -m torch.distributed.run" in smoke
+    assert "/opt/byof/.venv/bin/torchrun" not in smoke
+    assert 'export NCCL_CUMEM_ENABLE="0"' in smoke
+    assert 'export NCCL_CUMEM_HOST_ENABLE="0"' in smoke
+    assert 'export NCCL_NVLS_ENABLE="0"' in smoke
+    assert 'export NCCL_SOCKET_IFNAME="=eth0"' in smoke
+    assert 'export NCCL_SOCKET_FAMILY="AF_INET"' in smoke
+    assert 'export NCCL_IB_DISABLE="1"' in smoke
+    assert 'export TORCH_NCCL_USE_COMM_NONBLOCKING="1"' in smoke
+    assert 'export NCCL_DEBUG="INFO"' in smoke
+    assert 'export NCCL_DEBUG_SUBSYS="INIT,COLL,ENV"' in smoke
+    assert "wan2_2_nccl.%h.%p.log" in smoke
+    assert 'item["nccl_cumem_enable"] != "0"' in smoke
+    assert 'item["nccl_cumem_host_enable"] != "0"' in smoke
+    assert 'item["nccl_nvls_enable"] != "0"' in smoke
+    assert 'item["nccl_socket_ifname"] != "=eth0"' in smoke
+    assert 'item["nccl_socket_family"] != "AF_INET"' in smoke
+    assert 'item["nccl_ib_disable"] != "1"' in smoke
+    assert 'item["torch_nccl_use_comm_nonblocking"] != "1"' in smoke
+    for progress_stage in (
+        "wrapper_started",
+        "upstream_modules_imported",
+        "process_group_init_started",
+        "process_group_initialized",
+        "nccl_probe_started",
+        "nccl_probe_completed",
+        "process_group_destroyed",
+    ):
+        assert progress_stage in smoke
+    assert 'sys.path.insert(0, "/opt/byof")' in smoke
+    assert "ulysses.flash_attention = attention_module.attention" in smoke
+    assert "attention_module.flash_attention = attention_module.attention" not in smoke
+    assert "Ulysses is not bound to Wan native PyTorch SDPA" in smoke
+    assert "sed -i" not in smoke
     assert "ulysses_all_to_all_calls" in smoke
     assert "all_gather_object" in smoke
     assert "observer_final_barrier" in smoke

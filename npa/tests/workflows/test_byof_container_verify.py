@@ -62,9 +62,83 @@ def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     assert envs["S3_OUTPUT_PREFIX"] == "s3://bucket/prefix/byof-demo/"
     assert envs["NPA_S3_BUCKET"] == "bucket"
     assert envs["AWS_ENDPOINT_URL"] == "https://storage.example"
-    assert envs["AWS_ACCESS_KEY_ID"] == "AKIA_TEST"
-    assert envs["NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS"] == "YES"
+    assert "AWS_ACCESS_KEY_ID" not in envs
+    assert "AWS_SECRET_ACCESS_KEY" not in envs
+    assert "AWS_SESSION_TOKEN" not in envs
+    assert "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS" not in envs
     assert task["resources"]["image_id"] == "docker:registry.example/npa-byof:demo"
+
+
+def test_wan_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setenv("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS", "YES")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "probe-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "probe-secret")
+
+    assert module.resolve_secret_envs(None) == [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
+    ]
+    assert module.resolve_secret_envs(["HF_TOKEN"]) == [
+        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS"
+    ]
+
+
+def test_output_storage_preflight_writes_reads_and_deletes(monkeypatch) -> None:
+    module = _load_module()
+    calls: list[tuple[str, str, str]] = []
+
+    class FakeS3:
+        def put_object(self, *, Bucket, Key, **_kwargs):
+            calls.append(("put", Bucket, Key))
+
+        def head_object(self, *, Bucket, Key):
+            calls.append(("head", Bucket, Key))
+            return {"ContentLength": 24}
+
+        def delete_object(self, *, Bucket, Key):
+            calls.append(("delete", Bucket, Key))
+
+    monkeypatch.setenv("NPA_E2E_PROJECT", "demo-project")
+    monkeypatch.setattr(
+        module,
+        "s3_client_for_project",
+        lambda project, *, allow_host_creds: (
+            FakeS3()
+            if project == "demo-project" and allow_host_creds
+            else pytest.fail("unexpected S3 credential scope")
+        ),
+    )
+
+    module.preflight_output_storage(
+        output_root="s3://bucket/prefix", run_id="byof-demo"
+    )
+
+    assert calls == [
+        ("put", "bucket", "prefix/byof-demo/.npa-write-preflight"),
+        ("head", "bucket", "prefix/byof-demo/.npa-write-preflight"),
+        ("delete", "bucket", "prefix/byof-demo/.npa-write-preflight"),
+    ]
+
+
+def test_output_storage_preflight_fails_before_launch(monkeypatch) -> None:
+    module = _load_module()
+
+    class DeniedS3:
+        def put_object(self, **_kwargs):
+            raise PermissionError("Access denied")
+
+    monkeypatch.setattr(
+        module,
+        "s3_client_for_project",
+        lambda *_args, **_kwargs: DeniedS3(),
+    )
+
+    with pytest.raises(RuntimeError, match="output storage preflight failed"):
+        module.preflight_output_storage(
+            output_root="s3://bucket/prefix", run_id="byof-demo"
+        )
 
 
 def test_wait_timeout_zero_checks_status_once(monkeypatch) -> None:
@@ -257,6 +331,7 @@ def test_ensure_infra_enabled_skips_non_kubernetes(monkeypatch) -> None:
 
 def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) -> None:
     module = _load_module()
+    monkeypatch.setenv("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS", "YES")
     rendered_yaml = tmp_path / "workflow.yaml"
     rendered_yaml.write_text("name: demo\n", encoding="utf-8")
     seen: dict[str, object] = {}
@@ -275,6 +350,7 @@ def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) 
         infra="k8s/customer-mk8s",
         config_path="/tmp/skypilot.yaml",
         cleanup=True,
+        secret_envs=["NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS"],
     )
 
     assert rc == 0
@@ -291,6 +367,8 @@ def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) 
         "k8s/customer-mk8s",
         "--config",
         "/tmp/skypilot.yaml",
+        "--secret",
+        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
         str(rendered_yaml),
     ]
     output = capsys.readouterr().out
@@ -368,6 +446,7 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
         module, "_write_default_k8s_config", lambda *_a, **_k: "/tmp/skypilot.yaml"
     )
     monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: None)
+    monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: None)
     monkeypatch.setattr(module, "_direct_launch", lambda **_k: 0)
     seen_cmds: list[list[str]] = []
 
