@@ -21,14 +21,27 @@ from npa.cluster.drain import (
     describe_drain_expectation,
     describe_preview_unavailable,
 )
-from npa.provisioning_preflight import ExistingCapacity, QuotaObservation
+from npa.provisioning_preflight import (
+    GIB,
+    NETWORK_SSD_BYTES_QUOTA,
+    ExistingCapacity,
+    QuotaObservation,
+)
 
 
 runner = CliRunner()
 
 
 def _ample_quota_observations(_tenant, _region, names):
-    return {name: QuotaObservation(name=name, used=0, limit=100, state="known") for name in names}
+    return {
+        name: QuotaObservation(
+            name=name,
+            used=0,
+            limit=(20_000 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 100),
+            state="known",
+        )
+        for name in names
+    }
 
 
 # --- `npa cleanup` -----------------------------------------------------------

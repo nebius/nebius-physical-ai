@@ -29,13 +29,22 @@ def _successful_storage_probe(monkeypatch):
         ),
     )
     from npa import provisioning_preflight
-    from npa.provisioning_preflight import QuotaObservation
+    from npa.provisioning_preflight import (
+        GIB,
+        NETWORK_SSD_BYTES_QUOTA,
+        QuotaObservation,
+    )
 
     monkeypatch.setattr(
         provisioning_preflight,
         "read_provider_quotas",
         lambda _tenant, _region, names: {
-            name: QuotaObservation(name=name, used=0, limit=100, state="known")
+            name: QuotaObservation(
+                name=name,
+                used=0,
+                limit=(20_000 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 100),
+                state="known",
+            )
             for name in names
         },
     )

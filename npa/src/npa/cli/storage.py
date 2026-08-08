@@ -279,21 +279,15 @@ def _storage_service_account_record(
             if isinstance(receipt_storage, dict):
                 _candidate(
                     {
-                        "service_account_id": receipt_storage.get(
-                            "service_account_id"
-                        ),
+                        "service_account_id": receipt_storage.get("service_account_id"),
                         "service_account_name": receipt_storage.get(
                             "service_account_name"
                         )
                         or DEFAULT_SERVICE_ACCOUNT_NAME,
-                        "service_account_project_id": receipt_storage.get(
-                            "project_id"
-                        )
+                        "service_account_project_id": receipt_storage.get("project_id")
                         or receipt_payload.get("project_id"),
                         "service_account_managed_by": (
-                            "npa"
-                            if receipt_storage.get("ownership") == "npa"
-                            else ""
+                            "npa" if receipt_storage.get("ownership") == "npa" else ""
                         ),
                         "iam_key_ids": receipt_storage.get("iam_key_ids") or [],
                     },
@@ -311,7 +305,11 @@ def _storage_service_account_record(
             item for item in candidates if item.account_id == selected_id
         ]
         wrong_projects = sorted(
-            {item.project_id for item in exact_id_candidates if item.project_id != selected_project}
+            {
+                item.project_id
+                for item in exact_id_candidates
+                if item.project_id != selected_project
+            }
         )
         if selected_project and wrong_projects:
             return None, (
@@ -555,6 +553,51 @@ def _observe_storage_iam(
         get_service_account_id_by_name,
         get_service_account_identity,
     )
+
+    # Provider-verified deletion is durable teardown truth. After bucket/config
+    # removal there may intentionally be no credentials left with which to repeat
+    # the get. Reuse only the selected receipt's exact project/account evidence;
+    # a stale live alias or a receipt for another key/account cannot satisfy it.
+    if context.receipt_id:
+        from npa.teardown_receipts import load_teardown_receipt
+
+        receipt = load_teardown_receipt(context.receipt_id)
+        identity = receipt.get("identity")
+        identity = identity if isinstance(identity, dict) else {}
+        saved = identity.get("storage_iam")
+        saved = saved if isinstance(saved, dict) else {}
+        saved_account = str(saved.get("service_account_id") or "").strip()
+        exact_match = bool(
+            str(receipt.get("project_id") or "") == context.project_id
+            and saved_account
+            and (not context.account_id or context.account_id == saved_account)
+        )
+        terminal = [
+            event
+            for event in receipt.get("events") or []
+            if isinstance(event, dict)
+            and event.get("phase") == "storage_iam"
+            and str(event.get("terminal_state") or "").lower()
+            in {"verified_absent", "verified_deleted", "deleted"}
+        ]
+        if exact_match and terminal:
+            latest = max(terminal, key=lambda item: str(item.get("recorded_at") or ""))
+            verification = latest.get("verification")
+            verification = verification if isinstance(verification, dict) else {}
+            if (
+                verification.get("provider_outcome") == "verified_absent"
+                or verification.get("exact_service_account_absent") is True
+            ):
+                return _StorageIamObservation(
+                    outcome="verified_absent",
+                    context=context,
+                    account_id=saved_account,
+                    account_name=str(saved.get("service_account_name") or ""),
+                    ownership="npa"
+                    if saved.get("ownership") == "npa"
+                    else "unverified",
+                    detail="Durable exact provider verification proves the service account is absent.",
+                )
 
     record, ownership_note = _storage_service_account_record(
         account_id=context.account_id,
@@ -853,8 +896,7 @@ def _receipt_proves_bucket_cleanup(receipt_id: str, project_id: str) -> bool:
     }
     return any(
         isinstance(event, dict)
-        and str(event.get("phase") or "")
-        in {"bucket", "project_destroy_bucket"}
+        and str(event.get("phase") or "") in {"bucket", "project_destroy_bucket"}
         and str(event.get("terminal_state") or "").lower() in terminal
         for event in receipt.get("events") or []
     )
@@ -1313,9 +1355,7 @@ def delete_service_account_cmd(
                     "interlock": "delete_bucket_first",
                 },
             )
-        configured_bucket = str(
-            getattr(credentials, "s3_bucket", "") or ""
-        ).strip()
+        configured_bucket = str(getattr(credentials, "s3_bucket", "") or "").strip()
         if configured_bucket:
             raise typer.BadParameter(
                 f"Object storage {configured_bucket} is still configured. Run `npa storage "

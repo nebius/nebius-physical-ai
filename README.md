@@ -259,6 +259,16 @@ sequence. Submit repeats its deterministic checks before input/source staging,
 so a missing image or identity mismatch cannot upload the 1,225-file source tree
 or start a paid cluster first.
 
+The plan treats `compute.disk.size.network-ssd` as a byte allowance, separately
+from `compute.disk.count`, and prints exact `required`, `available`, and
+`shortfall` values in bytes and GiB. The default whole path is 1,251 GiB of new
+NETWORK_SSD capacity when nothing exists: 100 GiB for the agent root disk plus
+128 GiB for the CPU node and 1,023 GiB for the GPU node. For example, 21 GiB
+available is blocked with a 1,230 GiB shortfall before Terraform, networking,
+the Kubernetes control plane, VMs, or disks can be created. Proven existing
+resources are deducted on retries; unknown or contradictory quota evidence is
+not permission to mutate.
+
 The browser agent can be deployed independently after the core submit. Its
 failure does not cancel or block PAIDF:
 
@@ -294,7 +304,7 @@ configuration, credentials, and clusters are preserved. The command above asks f
 node and one `gpu-rtx6000` / `1gpu-24vcpu-218gb` RTX PRO 6000 node. On-demand is
 the reliable default. Preemptible capacity is an explicit availability/cost
 choice and can be reclaimed mid-run; it does not bypass hard tenant instance,
-boot-disk, or public-IP quotas. Resume reclaimed work from durable S3 artifacts.
+boot-disk count, NETWORK_SSD byte-capacity, or public-IP quotas. Resume reclaimed work from durable S3 artifacts.
 Select it explicitly with `--preemptible` in place of `--on-demand`; the hard
 quota arithmetic is unchanged.
 
@@ -567,10 +577,17 @@ exact IAM identity is deleted or verified absent.
 For one project-scoped plan, use `npa destroy --project <alias> --all`; it is
 read-only unless `--yes` is supplied. Execution journals the immutable project
 identity and the complete phase plan, continues independent cleanup when one
-phase fails, and blocks dependent phases rather than guessing. It does not
-delete the Nebius project itself (`--delete-project` reports that unsupported
-phase explicitly). The individual commands below remain the exact recovery
-surface for a partial run.
+phase fails, and blocks dependent phases rather than guessing. It retains the
+Nebius project by default. Explicit `--delete-project --yes` additionally deletes
+the exact project ID only when one unique durable NPA provider-create record
+proves ownership and strict provider inventories prove every managed child class
+empty. External/shared/unproven projects, nonempty inventories, unreadable or
+schema-invalid evidence, permission failures, and identity conflicts are refused.
+NotFound is repeat-safe verified absence. The individual commands below remain
+the exact recovery surface for a partial run. If the alias was already forgotten,
+`npa destroy --receipt <id> --all --delete-project --yes` exposes only the narrow
+project-deletion phase and recovers its exact project/tenant/region identity from
+the durable receipt; it does not reopen a deleted Terraform backend.
 
 Storage IAM results are explicit: verified absence/deletion exits 0; missing
 trustworthy ownership or a provider/auth verification failure reports
@@ -597,6 +614,8 @@ npa storage service-account reconcile --project <alias> --id <exact-id> \
   --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
 npa storage service-account delete --project <alias> --dry-run
 npa storage service-account delete --project <alias> --yes
+# Optional and ownership-gated; omit to retain the project (the safe default):
+npa destroy --project <alias> --all --delete-project --yes --json
 npa configure --forget-project <alias>
 npa cleanup --full --yes --project <alias>
 ```
@@ -612,6 +631,8 @@ npa skypilot cleanup-controller --receipt "$RECEIPT" --context <context> --yes
 npa cluster down --receipt "$RECEIPT" --context <context> --force
 npa storage service-account delete --receipt "$RECEIPT" --id <exact-id> --dry-run
 npa workflow cancel <run-id> --receipt "$RECEIPT" --json
+# Optional, after every exact child cleanup has converged:
+npa destroy --receipt "$RECEIPT" --all --delete-project --yes --json
 ```
 
 Cleanup identity precedence is deterministic: exact flags, then the selected

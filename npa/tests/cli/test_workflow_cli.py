@@ -1631,6 +1631,71 @@ def test_verified_never_submitted_status_touches_no_s3_or_skypilot(
     assert payload["verification_status"] == "VERIFIED"
 
 
+def test_prepare_run_persists_current_schema_plan_only_evidence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    spec = REPO_ROOT / "workflows/physical-ai-data-factory.yaml"
+
+    prepared = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "prepare-run",
+            str(spec),
+            "--project",
+            "demo",
+            "--json",
+        ],
+    )
+
+    assert prepared.exit_code == 0, prepared.output
+    payload = json.loads(prepared.output)
+    assert payload["lifecycle_state"] == "PLAN_ONLY"
+    assert payload["submission_state"] == "NOT_SUBMITTED"
+    from npa.orchestration.npa_workflow.submission_state import (
+        SCHEMA_VERSION,
+        load_submission_state,
+    )
+
+    ledger = load_submission_state("demo", payload["run_id"])
+    assert ledger["schema_version"] == SCHEMA_VERSION
+    assert ledger["launch_state"] == "reserved"
+
+
+def test_legacy_first_run_state_alone_remains_untrusted(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from npa.orchestration.npa_workflow.first_run_state import prepare_run
+    from npa.orchestration.npa_workflow.run_resolution import resolve_run
+
+    prepared = prepare_run(
+        project="demo", workflow_identity="legacy-workflow", new_run_id="legacy-run"
+    )
+    assert prepared.run_id == "legacy-run"
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("external verification unavailable")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.resolve_workflow_s3_config",
+        unavailable,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *_a, **_k: ManagedJobEvidence(
+            outcome="unavailable", error="external verification unavailable"
+        ),
+    )
+    resolution = resolve_run(
+        "legacy-run", project="demo", allow_local_not_submitted=True
+    )
+    assert not resolution.not_submitted
+    assert resolution.verification_unavailable
+
+
 def test_paidf_partial_prefix_preserves_exact_workflow_s3_uri(monkeypatch) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)

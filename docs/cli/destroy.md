@@ -8,17 +8,26 @@ Usage: npa destroy [OPTIONS]
 Plan or execute project-scoped teardown through guarded NPA commands.
 
 Options
-*  --project  <str>  Exact configured project alias. [required]
-    --all  Required acknowledgement to plan the full project lifecycle.
-    --yes  -y  Execute the rendered plan.
-    --delete-project  Report provider project-deletion support (currently plan-only/unsupported).
-    --json  Emit JSON.
-    --help  Show this message and exit.
+--project  <str>  Exact configured project alias.
+--receipt  <str>  Opaque durable receipt for post-forget exact project deletion.
+--all  Required acknowledgement to plan the full project lifecycle.
+--yes  -y  Execute the rendered plan.
+--delete-project  Also delete an exact, empty project with durable NPA creation proof.
+--json  Emit JSON.
+--help  Show this message and exit.
 ```
 
 ## Options
 
-No command-specific options are listed by `--help`.
+| Option | Description |
+| --- | --- |
+| `--project` | <str>  Exact configured project alias. |
+| `--receipt` | <str>  Opaque durable receipt for post-forget exact project deletion. |
+| `--all` | Required acknowledgement to plan the full project lifecycle. |
+| `--yes` | -y  Execute the rendered plan. |
+| `--delete-project` | Also delete an exact, empty project with durable NPA creation proof. |
+| `--json` | Emit JSON. |
+| `--help` | Show this message and exit. |
 
 ## Subcommands
 

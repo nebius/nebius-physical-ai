@@ -100,6 +100,104 @@ def test_rolled_back_failure_is_terminal_but_never_success(
     assert retry.read()["resources"] == []
 
 
+def test_rollback_journals_exact_per_resource_outcomes(journal_root: Path) -> None:
+    operation = _prepare(resource_type="cluster", requested_name="gpu")
+    resources = [
+        {
+            "resource_type": "managed_kubernetes_cluster",
+            "requested_name": "gpu",
+            "provider_id": "cluster-exact",
+            "project_id": "project-a",
+            "ownership": "created_by_this_operation",
+            "ownership_source": "terraform-output",
+        },
+        {
+            "resource_type": "managed_kubernetes_node_group",
+            "requested_name": "gpu-ng",
+            "provider_id": "nodegroup-exact",
+            "project_id": "project-a",
+            "ownership": "created_by_this_operation",
+            "ownership_source": "terraform-output",
+        },
+    ]
+    operation.record_rollback(
+        attempted=True,
+        completed=False,
+        removed=[],
+        preserved=resources,
+        outcomes=[
+            {**resources[0], "outcome": "removed"},
+            {
+                **resources[1],
+                "outcome": "rollback_failed",
+                "error": "provider refusal",
+            },
+        ],
+        error="node group cleanup incomplete",
+    )
+
+    rollback = operation.read()["rollback"]
+    assert rollback["attempted"] is True
+    assert rollback["completed"] is False
+    assert rollback["resource_outcomes"] == [
+        {
+            "resource_type": "managed_kubernetes_cluster",
+            "requested_name": "gpu",
+            "provider_id": "cluster-exact",
+            "project_id": "project-a",
+            "ownership": "created_by_this_operation",
+            "ownership_source": "terraform-output",
+            "outcome": "removed",
+        },
+        {
+            "resource_type": "managed_kubernetes_node_group",
+            "requested_name": "gpu-ng",
+            "provider_id": "nodegroup-exact",
+            "project_id": "project-a",
+            "ownership": "created_by_this_operation",
+            "ownership_source": "terraform-output",
+            "outcome": "rollback_failed",
+            "error": "provider refusal",
+        },
+    ]
+
+
+def test_paid_resource_without_cluster_id_is_attempted_incomplete_not_false_absence(
+    journal_root: Path,
+) -> None:
+    from npa.provisioning import _rollback_owned_cluster
+
+    operation = _prepare(resource_type="cluster", requested_name="gpu")
+    operation.transition("mutating")
+    operation.record_resource(
+        resource_type="managed_kubernetes_node_group",
+        requested_name="gpu-ng",
+        provider_id="nodegroup-exact",
+        project_id="project-a",
+        ownership="created_by_this_operation",
+        ownership_source="terraform-output",
+    )
+
+    completed = _rollback_owned_cluster(
+        operation,
+        project_alias="prod",
+        context="gpu",
+        terraform_dir=None,
+        kubeconfig=None,
+        timeout=120,
+    )
+
+    rollback = operation.read()["rollback"]
+    assert completed is False
+    assert rollback["attempted"] is True
+    assert rollback["completed"] is False
+    assert rollback["resource_outcomes"][0]["provider_id"] == "nodegroup-exact"
+    assert rollback["resource_outcomes"][0]["outcome"] == (
+        "preserved_missing_cluster_identity"
+    )
+    assert operation.read()["phase"] == "rollback-incomplete"
+
+
 def test_long_requested_name_produces_a_valid_retry_path(journal_root: Path) -> None:
     requested_name = "project-scoped-bucket-with-a-long-provider-name"
     first = _prepare(requested_name=requested_name)

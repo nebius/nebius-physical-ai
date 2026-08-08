@@ -489,6 +489,114 @@ def test_partial_agent_status_requires_exact_project_and_agent_receipt(
     assert result["project_id"] == "project-new"
 
 
+def test_absent_vm_with_present_owned_service_account_requires_exact_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa import agent_status
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        resume_command="npa agent deploy --project demo --name agent",
+        project_alias="demo",
+        project_id="project-demo",
+        tenant_id="tenant-demo",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+    )
+    operation.record_resource(
+        resource_type="compute_instance",
+        requested_name="agent-demo-agent",
+        provider_id="instance-demo",
+        project_id="project-demo",
+        ownership="created_by_this_operation",
+        ownership_source="terraform-output",
+    )
+    operation.record_resource(
+        resource_type="agent_service_account",
+        requested_name="npa-agent",
+        provider_id="serviceaccount-demo",
+        project_id="project-demo",
+        ownership="created_by_this_operation",
+        ownership_source="create-response",
+    )
+    operation.transition("destroyed")
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_compute_instance_identity", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_service_account_identity",
+        lambda account_id, **_k: {"id": account_id},
+    )
+
+    result = agent_status.partial_agent_status("demo", "agent")
+
+    assert result["classification"] == "CLEANUP_REQUIRED"
+    assert result["lifecycle"] == "partial"
+    assert result["recorded_lifecycle"] == "succeeded"
+    assert result["current_verification"] == "provider_verified_present"
+    assert result["components"]["vm"][0]["state"] == "verified_absent"
+    assert result["components"]["service_account"][0]["state"] == "present"
+    assert (
+        f"--operation-id {operation.operation_id}"
+        in result["recovery"]["exact_cleanup_command"]
+    )
+
+
+def test_21_gib_whole_path_quota_blocks_before_any_mutation_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.agent_quota import _agent_check_whole_path_capacity
+    from npa.provisioning_preflight import (
+        GIB,
+        NETWORK_SSD_BYTES_QUOTA,
+        ExistingCapacity,
+    )
+
+    mutations: list[str] = []
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_project_region", lambda _project: "eu-test1"
+    )
+    monkeypatch.setattr(
+        "npa.provisioning_preflight.discover_existing_capacity",
+        lambda **_kwargs: ExistingCapacity(),
+    )
+
+    def quotas(_tenant: str) -> dict[str, object]:
+        names = {
+            "compute.instance.count": 20,
+            "compute.disk.count": 20,
+            NETWORK_SSD_BYTES_QUOTA: 21 * GIB,
+            "vpc.ipv4-address.public.count": 20,
+            "compute.instance.gpu.rtx6000": 20,
+        }
+        return {
+            "items": [
+                {
+                    "metadata": {"name": name},
+                    "spec": {"region": "eu-test1", "limit": str(limit)},
+                    "status": {"usage": "0"},
+                }
+                for name, limit in names.items()
+            ]
+        }
+
+    monkeypatch.setattr("npa.clients.nebius.list_quota_allowances", quotas)
+
+    def mutate(kind: str) -> None:
+        mutations.append(kind)
+
+    with pytest.raises(Exception, match="1251"):
+        _agent_check_whole_path_capacity(
+            "project-demo", "tenant-demo", "eu-test1", agent_exists=False
+        )
+        mutate("terraform/network/control-plane/vm/disk")
+
+    assert mutations == []
+
+
 def test_project_destroy_continues_independent_work_but_preserves_dependencies(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -624,6 +732,706 @@ def test_project_destroy_skips_not_submitted_workflow_cancellation(
     assert commands == [["npa", "workflow-list"]]
 
 
+def test_project_destroy_exact_empty_inventory_converges_despite_exit_race(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.clients import config
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump({"projects": {"demo": {"project_id": "project-a"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+
+    result = execute_project_destroy(
+        "demo",
+        [DestroyPhase("workflows", (("npa", "workflow-list"),), "inventory")],
+        runner=lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout='{"runs": []}\n',
+            stderr="Warning: SkyPilot update check is unavailable.\n",
+        ),
+    )
+
+    assert result["status"] == "success"
+    assert result["phases"][0]["status"] == "completed"
+
+
+def test_project_destroy_empty_inventory_never_masks_auth_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.clients import config
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump({"projects": {"demo": {"project_id": "project-a"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    result = execute_project_destroy(
+        "demo",
+        [DestroyPhase("workflows", (("npa", "workflow-list"),), "inventory")],
+        runner=lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 1, stdout='{"runs": []}', stderr="Permission denied"
+        ),
+    )
+    assert result["status"] == "partial"
+    assert "permission" in result["phases"][0]["errors"][0]
+
+
+def test_agent_destroy_no_vm_id_continues_exact_owned_iam_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.main import app
+    from npa.clients import config
+    from npa.cli import agent as agent_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "demo",
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                        "agents": {"agent": {"project_id": "project-a"}},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo",
+    )
+    monkeypatch.setattr(
+        agent_module, "_destroy_agent_terraform", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        agent_module, "_cleanup_agent_local_files", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.agent_iam_leftovers",
+        lambda _project: {
+            "project_id": "project-a",
+            "service_account_id": "serviceaccount-agent",
+            "service_account_name": "npa-agent",
+            "access_keys": [{"id": "accesskey-agent"}],
+            "owned_by_npa": True,
+            "inventory_verified": True,
+            "inventory_error": "",
+            "dependents": [],
+        },
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr("npa.clients.nebius.delete_access_key", deleted.append)
+    monkeypatch.setattr("npa.clients.nebius.delete_service_account", deleted.append)
+    monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_a: True)
+
+    result = CliRunner().invoke(
+        app, ["agent", "destroy", "--project", "demo", "--purge-iam", "--yes", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert deleted == ["accesskey-agent", "serviceaccount-agent"]
+    assert json.loads(result.stdout)["infrastructure_absent"] is True
+
+
+def test_destroyed_agent_operation_needs_no_deleted_backend_credentials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="forgotten",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-test1",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="",
+        backend={
+            "bucket": "already-deleted",
+            "endpoint": "https://storage.invalid",
+            "state_key": "agent.tfstate",
+        },
+    )
+    operation.transition("destroyed")
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_destroy_tf_vars",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("stale backend must not be reopened")
+        ),
+    )
+
+    agent_module._destroy_agent_terraform(
+        "forgotten",
+        "agent",
+        operation_id=operation.operation_id,
+        project_id="project-a",
+    )
+
+
+def _owned_project_operation() -> ProvisioningOperation:
+    operation = ProvisioningOperation.prepare(
+        command="npa project create",
+        project_alias="demo",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-test1",
+        resource_type="project",
+        requested_name="demo",
+        resume_command="",
+    )
+    operation.record_resource(
+        resource_type="nebius_project",
+        requested_name="demo",
+        provider_id="project-a",
+        project_id="project-a",
+        ownership="created_by_this_operation",
+        ownership_source="provider-create-response",
+        labels={"tenant_id": "tenant-a"},
+    )
+    return operation
+
+
+def test_owned_empty_project_delete_is_exact_receipted_and_isolated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.clients import config, nebius
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    },
+                    "other": {
+                        "project_id": "project-b",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    _owned_project_operation()
+    observations = iter(
+        [nebius.ProjectIdentity("project-a", "demo", "tenant-a", "eu-test1"), None]
+    )
+    monkeypatch.setattr(
+        nebius, "get_project_identity", lambda *_a, **_k: next(observations)
+    )
+    monkeypatch.setattr(
+        nebius, "list_project_dependencies", lambda *_a, **_k: {"compute_instances": ()}
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        nebius,
+        "delete_project",
+        lambda project_id, **_kwargs: deleted.append(project_id),
+    )
+
+    result = execute_project_destroy(
+        "demo", [DestroyPhase("delete_project", (), "delete")]
+    )
+
+    assert result["status"] == "success"
+    assert deleted == ["project-a"]
+    receipt = teardown_receipts.list_teardown_receipts(project_id="project-a")[0]
+    assert receipt["events"][-1]["terminal_state"] == "completed"
+    assert not teardown_receipts.list_teardown_receipts(project_id="project-b")
+
+
+def test_owned_project_not_found_retry_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.clients import config, nebius
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    _owned_project_operation()
+    monkeypatch.setattr(nebius, "get_project_identity", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        nebius,
+        "delete_project",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("NotFound retry must not delete")
+        ),
+    )
+
+    result = execute_project_destroy(
+        "demo", [DestroyPhase("delete_project", (), "delete")]
+    )
+
+    assert result["status"] == "success"
+
+
+def test_delete_project_requires_yes_before_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa import project_destroy
+    from npa.cli.main import app
+
+    monkeypatch.setattr(
+        project_destroy,
+        "build_project_destroy_plan",
+        lambda *_a, **_k: [DestroyPhase("delete_project", (), "exact delete")],
+    )
+    monkeypatch.setattr(
+        project_destroy,
+        "execute_project_destroy",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("plan-only command must not execute")
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["destroy", "--project", "demo", "--all", "--delete-project", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["status"] == "plan_only"
+
+
+def test_incident_cleanup_order_continues_independent_phases_and_project_delete(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa import project_destroy
+    from npa.clients import config
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    order: list[str] = []
+    phases = [
+        DestroyPhase("workflows", (("npa", "workflow-list"),), "inventory"),
+        DestroyPhase("agents", (("npa", "agent-destroy"),), "agent"),
+        DestroyPhase("clusters", (), "none", ("workflows",)),
+        DestroyPhase(
+            "bucket", (("npa", "bucket-delete"),), "bucket", ("agents", "clusters")
+        ),
+        DestroyPhase("storage_iam", (("npa", "storage-iam"),), "storage", ("bucket",)),
+        DestroyPhase(
+            "delete_project",
+            (),
+            "project",
+            ("workflows", "agents", "clusters", "bucket", "storage_iam"),
+        ),
+    ]
+
+    def runner(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        order.append(cmd[1])
+        if cmd[1] == "workflow-list":
+            return subprocess.CompletedProcess(cmd, 1, stdout='{"runs": []}', stderr="")
+        if cmd[1] == "agent-destroy":
+            return subprocess.CompletedProcess(
+                cmd,
+                2,
+                stdout=json.dumps(
+                    {
+                        "infrastructure_absent": True,
+                        "iam_cleanup_complete": False,
+                    }
+                ),
+                stderr="agent IAM remains",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(
+        project_destroy,
+        "_delete_owned_empty_project",
+        lambda **_kwargs: order.append("project-delete") or {"outcome": "deleted"},
+    )
+    result = execute_project_destroy("demo", phases, runner=runner)
+
+    assert order == [
+        "workflow-list",
+        "agent-destroy",
+        "bucket-delete",
+        "storage-iam",
+        "project-delete",
+    ]
+    statuses = {item["phase"]: item["status"] for item in result["phases"]}
+    assert statuses["agents"] == "degraded"
+    assert statuses["bucket"] == "completed"
+    assert statuses["storage_iam"] == "completed"
+    assert statuses["delete_project"] == "completed"
+
+
+def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.agent_iam import report_agent_iam
+    from npa.cli.main import app
+    from npa.clients import config, nebius
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    },
+                    "unrelated": {
+                        "project_id": "project-b",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    _owned_project_operation()
+    receipt_path = teardown_receipts.record_teardown_event(
+        phase="project_destroy",
+        resource="demo",
+        terminal_state="partial",
+        project_alias="demo",
+        project_id="project-a",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-a",
+            "tenant_id": "tenant-a",
+            "region": "eu-test1",
+            "profile": "test-profile",
+        },
+    )
+    order: list[str] = []
+    phases = [
+        DestroyPhase("workflows", (("npa", "workflow-list"),), "inventory"),
+        DestroyPhase("agents", (("npa", "agent-destroy"),), "agent"),
+        DestroyPhase("clusters", (), "none", ("workflows",)),
+        DestroyPhase(
+            "bucket", (("npa", "bucket-delete"),), "bucket", ("agents", "clusters")
+        ),
+        DestroyPhase("storage_iam", (("npa", "storage-iam"),), "storage", ("bucket",)),
+        DestroyPhase("local_cleanup", (("npa", "local-cleanup"),), "local"),
+        DestroyPhase(
+            "forget_alias",
+            (("npa", "forget-alias"),),
+            "forget",
+            ("workflows", "agents", "clusters", "bucket", "storage_iam"),
+        ),
+    ]
+
+    def runner(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        order.append(cmd[1])
+        if cmd[1] == "workflow-list":
+            return subprocess.CompletedProcess(
+                cmd,
+                1,
+                stdout='{"runs": []}',
+                stderr="Warning: SkyPilot update check skipped",
+            )
+        if cmd[1] == "agent-destroy":
+            return subprocess.CompletedProcess(
+                cmd,
+                2,
+                stdout=json.dumps(
+                    {
+                        "infrastructure_absent": True,
+                        "iam_cleanup_complete": False,
+                    }
+                ),
+                stderr="agent IAM remains",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    initial = execute_project_destroy("demo", phases, runner=runner)
+    assert initial["status"] == "partial"
+    assert order == [
+        "workflow-list",
+        "agent-destroy",
+        "bucket-delete",
+        "storage-iam",
+        "local-cleanup",
+        "forget-alias",
+    ]
+
+    # Model the guarded alias removal while preserving the unrelated project and
+    # the durable receipt/operation journal used by the recovery commands.
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "unrelated": {
+                        "project_id": "project-b",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_iam.agent_iam_leftovers",
+        lambda _project: {
+            "project_id": "project-a",
+            "service_account_id": "serviceaccount-agent",
+            "service_account_name": "npa-agent",
+            "access_keys": [{"id": "accesskey-agent"}],
+            "owned_by_npa": True,
+            "inventory_verified": True,
+            "inventory_error": "",
+            "dependents": [],
+        },
+    )
+    monkeypatch.setattr(
+        nebius,
+        "delete_access_key",
+        lambda key_id: order.append(f"purge-key:{key_id}"),
+    )
+    monkeypatch.setattr(
+        nebius,
+        "delete_service_account",
+        lambda account_id: order.append(f"purge-agent-iam:{account_id}"),
+    )
+    monkeypatch.setattr("npa.cli.agent_iam.remove_agent_iam_resource", lambda *_a: True)
+    monkeypatch.setattr("npa.cli.agent_iam.clear_agent_iam_record", lambda *_a: True)
+    report_agent_iam(
+        project_id="project-a",
+        remaining_agents=0,
+        purge=True,
+        strict=True,
+        on_status=lambda _message: None,
+    )
+
+    observations = iter(
+        [nebius.ProjectIdentity("project-a", "demo", "tenant-a", "eu-test1"), None]
+    )
+    monkeypatch.setattr(
+        nebius, "get_project_identity", lambda *_a, **_k: next(observations)
+    )
+    monkeypatch.setattr(
+        nebius, "list_project_dependencies", lambda *_a, **_k: {"all": ()}
+    )
+    monkeypatch.setattr(
+        nebius,
+        "delete_project",
+        lambda project_id, **_kwargs: order.append(f"delete-project:{project_id}"),
+    )
+    deleted = CliRunner().invoke(
+        app,
+        [
+            "destroy",
+            "--receipt",
+            receipt_path.stem,
+            "--all",
+            "--delete-project",
+            "--yes",
+            "--json",
+        ],
+    )
+    assert deleted.exit_code == 0, deleted.output
+    assert order[-3:] == [
+        "purge-key:accesskey-agent",
+        "purge-agent-iam:serviceaccount-agent",
+        "delete-project:project-a",
+    ]
+    assert yaml.safe_load(config_path.read_text())["projects"] == {
+        "unrelated": {
+            "project_id": "project-b",
+            "tenant_id": "tenant-a",
+            "region": "eu-test1",
+        }
+    }
+
+    # The same receipt remains a safe idempotent recovery selector after the
+    # provider reports NotFound; no second deletion is attempted.
+    monkeypatch.setattr(nebius, "get_project_identity", lambda *_a, **_k: None)
+    repeated = CliRunner().invoke(
+        app,
+        [
+            "destroy",
+            "--receipt",
+            receipt_path.stem,
+            "--all",
+            "--delete-project",
+            "--yes",
+            "--json",
+        ],
+    )
+    assert repeated.exit_code == 0, repeated.output
+    assert order.count("delete-project:project-a") == 1
+
+
+@pytest.mark.parametrize("mode", ["unowned", "children", "ambiguous"])
+def test_project_delete_refuses_unproven_nonempty_or_ambiguous_inventory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: str
+) -> None:
+    from npa.clients import config, nebius
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    if mode != "unowned":
+        _owned_project_operation()
+    monkeypatch.setattr(
+        nebius,
+        "get_project_identity",
+        lambda *_a, **_k: nebius.ProjectIdentity(
+            "project-a", "demo", "tenant-a", "eu-test1"
+        ),
+    )
+    if mode == "children":
+        monkeypatch.setattr(
+            nebius,
+            "list_project_dependencies",
+            lambda *_a, **_k: {"service_accounts": ("sa-a",)},
+        )
+    elif mode == "ambiguous":
+        monkeypatch.setattr(
+            nebius,
+            "list_project_dependencies",
+            lambda *_a, **_k: (_ for _ in ()).throw(
+                nebius.NebiusError("schema-invalid inventory")
+            ),
+        )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        nebius,
+        "delete_project",
+        lambda project_id, **_kwargs: deleted.append(project_id),
+    )
+
+    result = execute_project_destroy(
+        "demo", [DestroyPhase("delete_project", (), "delete")]
+    )
+
+    assert result["status"] == "partial"
+    assert deleted == []
+
+
+def test_project_delete_receipt_failure_prevents_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.clients import config, nebius
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    _owned_project_operation()
+    monkeypatch.setattr(
+        nebius,
+        "get_project_identity",
+        lambda *_a, **_k: nebius.ProjectIdentity(
+            "project-a", "demo", "tenant-a", "eu-test1"
+        ),
+    )
+    monkeypatch.setattr(nebius, "list_project_dependencies", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        teardown_receipts,
+        "record_teardown_event",
+        lambda **_k: (_ for _ in ()).throw(OSError("receipt unavailable")),
+    )
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        nebius,
+        "delete_project",
+        lambda project_id, **_kwargs: deleted.append(project_id),
+    )
+    result = execute_project_destroy(
+        "demo", [DestroyPhase("delete_project", (), "delete")]
+    )
+    assert result["status"] == "partial"
+    assert deleted == []
+
+
 def test_remote_controller_absence_allows_safe_downstream_cleanup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -646,9 +1454,7 @@ def test_remote_controller_absence_allows_safe_downstream_cleanup(
         DestroyPhase(
             "controller", (("npa", "controller"),), "controller", ("workflows",)
         ),
-        DestroyPhase(
-            "clusters", (("npa", "cluster"),), "cluster", ("controller",)
-        ),
+        DestroyPhase("clusters", (("npa", "cluster"),), "cluster", ("controller",)),
         DestroyPhase("bucket", (("npa", "bucket"),), "bucket", ("clusters",)),
     ]
     commands: list[str] = []
@@ -943,8 +1749,12 @@ def test_full_mocked_project_lifecycle_is_exact_isolated_and_idempotent(
     monkeypatch.setattr(
         project_destroy,
         "execute_project_destroy",
-        lambda project, phases, on_phase=None: real_execute(
-            project, phases, runner=fake_runner, on_phase=on_phase
+        lambda project, phases, on_phase=None, exact_identity=None: real_execute(
+            project,
+            phases,
+            runner=fake_runner,
+            on_phase=on_phase,
+            exact_identity=exact_identity,
         ),
     )
     real_record = teardown_receipts.record_teardown_event
@@ -964,8 +1774,7 @@ def test_full_mocked_project_lifecycle_is_exact_isolated_and_idempotent(
     assert result.exit_code == 0, result.output
     assert "wrote a minimal safe cleanup receipt" in result.output
     assert not any(
-        command[1:4] == ["workbench", "workflow", "cancel"]
-        for command in commands
+        command[1:4] == ["workbench", "workflow", "cancel"] for command in commands
     )
     assert provider == {
         "instances": {"instance-unrelated"},

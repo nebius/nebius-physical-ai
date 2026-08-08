@@ -656,6 +656,7 @@ class ProvisioningOperation:
         completed: bool,
         removed: Sequence[Mapping[str, Any]],
         preserved: Sequence[Mapping[str, Any]],
+        outcomes: Sequence[Mapping[str, Any]] = (),
         error: str = "",
     ) -> None:
         """Persist rollback outcome separately from command success/failure."""
@@ -682,6 +683,18 @@ class ProvisioningOperation:
                 "resources_removed": [resource_identity(item) for item in removed],
                 "resources_preserved": [
                     resource_identity(item) for item in preserved
+                ],
+                "resource_outcomes": [
+                    {
+                        **resource_identity(item),
+                        "outcome": str(item.get("outcome") or "unknown"),
+                        **(
+                            {"error": str(_sanitize(item.get("error")))}
+                            if item.get("error")
+                            else {}
+                        ),
+                    }
+                    for item in outcomes
                 ],
                 "error": str(_sanitize(error)) if error else "",
                 "updated_at": utc_now(),
@@ -1241,6 +1254,14 @@ def emit_recovery_summary(
                 f"{bool(rollback.get('completed'))}, resources_removed="
                 f"{len(rollback.get('resources_removed') or [])}"
             )
+            outcomes = rollback.get("resource_outcomes") or []
+            if outcomes:
+                rendered += "\nRollback outcomes: " + ", ".join(
+                    f"{item.get('resource_type', 'resource')}:"
+                    f"{item.get('provider_id', item.get('requested_name', '?'))}="
+                    f"{item.get('outcome', 'unknown')}"
+                    for item in outcomes
+                )
         if summary.get("destroy_command"):
             rendered += f"\nDestroy: {summary['destroy_command']}"
     return rendered

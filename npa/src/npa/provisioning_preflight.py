@@ -19,7 +19,13 @@ from npa.cli.cluster.capacity import gpu_quota_name
 
 INSTANCE_QUOTA = "compute.instance.count"
 DISK_QUOTA = "compute.disk.count"
+NETWORK_SSD_BYTES_QUOTA = "compute.disk.size.network-ssd"
 PUBLIC_IP_QUOTA = "vpc.ipv4-address.public.count"
+
+GIB = 1024**3
+DEFAULT_AGENT_ROOT_DISK_GIB = 100
+DEFAULT_CPU_DISK_GIB = 128
+DEFAULT_GPU_DISK_GIB = 1023
 
 DEFAULT_CPU_NODES = 1
 DEFAULT_CPU_PLATFORM = "cpu-d3"
@@ -44,14 +50,18 @@ class ResolvedTopology:
     agent_exists: bool = False
     control_plane_instances: int = 0
     control_plane_disks: int = 0
+    control_plane_disk_gib: int = 0
+    agent_root_disk_gib: int = DEFAULT_AGENT_ROOT_DISK_GIB
     cpu_nodes: int = DEFAULT_CPU_NODES
     existing_cpu_nodes: int = 0
     cpu_platform: str = DEFAULT_CPU_PLATFORM
     cpu_preset: str = DEFAULT_CPU_PRESET
+    cpu_disk_gib: int = DEFAULT_CPU_DISK_GIB
     gpu_nodes: int = DEFAULT_GPU_NODES
     existing_gpu_nodes: int = 0
     gpu_platform: str = DEFAULT_GPU_PLATFORM
     gpu_preset: str = DEFAULT_GPU_PRESET
+    gpu_disk_gib: int = DEFAULT_GPU_DISK_GIB
     gpu_preemptible: bool = False
     public_node_ips: bool = False
     accelerator: str = "RTXPRO6000:1"
@@ -87,6 +97,17 @@ class ResolvedTopology:
         )
 
     @property
+    def required_network_ssd_bytes(self) -> int:
+        """Incremental NETWORK_SSD bytes for the exact resources still missing."""
+
+        return GIB * (
+            self.new_agent_instances * self.agent_root_disk_gib
+            + max(0, self.control_plane_disks) * self.control_plane_disk_gib
+            + self.new_cpu_nodes * self.cpu_disk_gib
+            + self.new_gpu_nodes * self.gpu_disk_gib
+        )
+
+    @property
     def required_public_ips(self) -> int:
         node_ips = (
             self.new_cpu_nodes + self.new_gpu_nodes if self.public_node_ips else 0
@@ -101,6 +122,7 @@ class ResolvedTopology:
         requirements = {
             INSTANCE_QUOTA: self.required_instances,
             DISK_QUOTA: self.required_disks,
+            NETWORK_SSD_BYTES_QUOTA: self.required_network_ssd_bytes,
             PUBLIC_IP_QUOTA: self.required_public_ips,
         }
         quota_name = gpu_quota_name(self.gpu_platform)
@@ -119,6 +141,10 @@ class ResolvedTopology:
                 "new_gpu_nodes": self.new_gpu_nodes,
                 "required_instances": self.required_instances,
                 "required_disks": self.required_disks,
+                "required_network_ssd_bytes": self.required_network_ssd_bytes,
+                "required_network_ssd_gib": _bytes_to_gib_text(
+                    self.required_network_ssd_bytes
+                ),
                 "required_public_ips": self.required_public_ips,
                 "required_gpus": self.required_gpus,
             }
@@ -151,7 +177,21 @@ class QuotaDecision:
     reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if self.name == NETWORK_SSD_BYTES_QUOTA:
+            payload.update(
+                {
+                    "unit": "bytes",
+                    "required_gib": _bytes_to_gib_text(self.required),
+                    "used_gib": _bytes_to_gib_text(self.used),
+                    "limit_gib": _bytes_to_gib_text(self.limit),
+                    "available_gib": _bytes_to_gib_text(self.available),
+                    "shortfall_gib": _bytes_to_gib_text(self.shortfall),
+                }
+            )
+        else:
+            payload["unit"] = "count"
+        return payload
 
 
 @dataclass(frozen=True)
@@ -260,6 +300,10 @@ def resolve_topology(
     public_node_ips: bool = False,
     control_plane_instances: int = 0,
     control_plane_disks: int = 0,
+    control_plane_disk_gib: int = 0,
+    agent_root_disk_gib: int = DEFAULT_AGENT_ROOT_DISK_GIB,
+    cpu_disk_gib: int = DEFAULT_CPU_DISK_GIB,
+    gpu_disk_gib: int = DEFAULT_GPU_DISK_GIB,
 ) -> ResolvedTopology:
     """Resolve every default once, including the canonical PAIDF shape."""
 
@@ -271,12 +315,17 @@ def resolve_topology(
         agent_exists=bool(agent_exists),
         control_plane_instances=max(0, int(control_plane_instances)),
         control_plane_disks=max(0, int(control_plane_disks)),
+        control_plane_disk_gib=max(0, int(control_plane_disk_gib)),
+        agent_root_disk_gib=_positive_gib(
+            agent_root_disk_gib, "agent_root_disk_gib"
+        ),
         cpu_nodes=DEFAULT_CPU_NODES
         if cpu_nodes is None or cpu_nodes < 0
         else int(cpu_nodes),
         existing_cpu_nodes=max(0, int(existing_cpu_nodes)),
         cpu_platform=str(cpu_platform or DEFAULT_CPU_PLATFORM).strip(),
         cpu_preset=str(cpu_preset or DEFAULT_CPU_PRESET).strip(),
+        cpu_disk_gib=_positive_gib(cpu_disk_gib, "cpu_disk_gib"),
         gpu_nodes=DEFAULT_GPU_NODES
         if gpu_nodes is None or gpu_nodes < 0
         else int(gpu_nodes),
@@ -285,6 +334,7 @@ def resolve_topology(
             gpu_platform or inferred_platform or DEFAULT_GPU_PLATFORM
         ).strip(),
         gpu_preset=str(gpu_preset or inferred_preset or DEFAULT_GPU_PRESET).strip(),
+        gpu_disk_gib=_positive_gib(gpu_disk_gib, "gpu_disk_gib"),
         gpu_preemptible=bool(preemptible) if preemptible is not None else False,
         public_node_ips=bool(public_node_ips),
         accelerator=requested_accelerator or "RTXPRO6000:1",
@@ -437,6 +487,13 @@ def assess_quota(observation: QuotaObservation, *, required: int) -> QuotaDecisi
         f"required={need}, used={observation.used}, limit={observation.limit}, "
         f"available={available}, shortfall={shortfall}; required new limit={required_limit}"
     )
+    if observation.name == NETWORK_SSD_BYTES_QUOTA:
+        reason += (
+            f" bytes (required={_bytes_to_gib_text(need)} GiB, "
+            f"available={_bytes_to_gib_text(available)} GiB, "
+            f"shortfall={_bytes_to_gib_text(shortfall)} GiB); request quota "
+            f"{NETWORK_SSD_BYTES_QUOTA} >= {required_limit} bytes"
+        )
     return QuotaDecision(
         name=observation.name,
         required=need,
@@ -464,8 +521,7 @@ def parse_quota_allowances(
             )
             for name in names
         }
-    matches: dict[str, QuotaObservation] = {}
-    regionless: dict[str, QuotaObservation] = {}
+    candidates: dict[tuple[str, str], list[QuotaObservation]] = {}
     wanted = set(names)
     for raw in items:
         if not isinstance(raw, Mapping):
@@ -481,6 +537,7 @@ def parse_quota_allowances(
             continue
         raw_limit = spec.get("limit")
         raw_usage = status.get("usage", 0)
+        raw_available = status.get("available")
         item_region = str(spec.get("region") or "").strip()
         if str(raw_limit or "").strip().lower() in _UNBOUNDED:
             observation = QuotaObservation(name=name, state="unbounded")
@@ -494,23 +551,58 @@ def parse_quota_allowances(
                     reason="malformed quota allowance: limit/usage is not an integer",
                 )
             else:
-                observation = QuotaObservation(
-                    name=name, used=max(0, usage), limit=max(0, limit), state="known"
+                limit = max(0, limit)
+                usage = max(0, usage)
+                available = (
+                    _int_or_none(raw_available) if raw_available is not None else None
                 )
-        if item_region == region:
-            matches[name] = observation
-        elif not item_region and name not in regionless:
-            regionless[name] = observation
-    return {
-        name: matches.get(name)
-        or regionless.get(name)
-        or QuotaObservation(
-            name=name,
-            state="unsupported",
-            reason=f"quota {name} has no allowance for region {region}",
-        )
-        for name in names
-    }
+                if usage > limit:
+                    observation = QuotaObservation(
+                        name=name,
+                        state="unknown",
+                        reason="contradictory quota allowance: usage exceeds limit",
+                    )
+                elif available is not None and available != limit - usage:
+                    observation = QuotaObservation(
+                        name=name,
+                        state="unknown",
+                        reason=(
+                            "contradictory quota allowance: status.available does "
+                            "not equal spec.limit - status.usage"
+                        ),
+                    )
+                elif raw_available is not None and available is None:
+                    observation = QuotaObservation(
+                        name=name,
+                        state="unknown",
+                        reason="malformed quota allowance: available is not an integer",
+                    )
+                else:
+                    observation = QuotaObservation(
+                        name=name, used=usage, limit=limit, state="known"
+                    )
+        candidates.setdefault((name, item_region), []).append(observation)
+
+    parsed: dict[str, QuotaObservation] = {}
+    for name in names:
+        selected = candidates.get((name, region)) or candidates.get((name, "")) or []
+        if not selected:
+            parsed[name] = QuotaObservation(
+                name=name,
+                state="unsupported",
+                reason=f"quota {name} has no allowance for region {region}",
+            )
+            continue
+        first = selected[0]
+        if any(item != first for item in selected[1:]):
+            parsed[name] = QuotaObservation(
+                name=name,
+                state="unknown",
+                reason="contradictory duplicate quota allowances",
+            )
+        else:
+            parsed[name] = first
+    return parsed
 
 
 def read_provider_quotas(
@@ -609,6 +701,22 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+def _positive_gib(value: Any, name: str) -> int:
+    parsed = _int_or_none(value)
+    if parsed is None or parsed <= 0:
+        raise ValueError(f"{name} must be a positive integer GiB value")
+    return parsed
+
+
+def _bytes_to_gib_text(value: int | None) -> str | None:
+    if value is None:
+        return None
+    quotient, remainder = divmod(int(value), GIB)
+    if remainder == 0:
+        return str(quotient)
+    return f"{int(value) / GIB:.3f}".rstrip("0").rstrip(".")
+
+
 def _gpus_per_node(preset: str) -> int:
     value = str(preset or "").strip().lower()
     if "gpu" not in value:
@@ -634,14 +742,19 @@ def _shape_for_accelerator(accelerator: str) -> tuple[str, str]:
 
 __all__ = [
     "DEFAULT_CPU_NODES",
+    "DEFAULT_AGENT_ROOT_DISK_GIB",
+    "DEFAULT_CPU_DISK_GIB",
     "DEFAULT_CPU_PLATFORM",
     "DEFAULT_CPU_PRESET",
     "DEFAULT_GPU_NODES",
+    "DEFAULT_GPU_DISK_GIB",
     "DEFAULT_GPU_PLATFORM",
     "DEFAULT_GPU_PRESET",
     "DISK_QUOTA",
+    "GIB",
     "ExistingCapacity",
     "INSTANCE_QUOTA",
+    "NETWORK_SSD_BYTES_QUOTA",
     "PUBLIC_IP_QUOTA",
     "PreflightBlockedError",
     "PreflightCheck",

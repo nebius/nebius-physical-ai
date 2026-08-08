@@ -682,14 +682,23 @@ def _preflight_actions(plan) -> list[str]:
         "preflight:"
         f"{plan.decision} cpu={topology.cpu_nodes}x{topology.cpu_platform}/{topology.cpu_preset} "
         f"gpu={topology.gpu_nodes}x{topology.gpu_platform}/{topology.gpu_preset} "
-        f"preemptible={str(topology.gpu_preemptible).lower()} disks={topology.required_disks}"
+        f"preemptible={str(topology.gpu_preemptible).lower()} disks={topology.required_disks} "
+        f"network_ssd_bytes={topology.required_network_ssd_bytes}"
     ]
-    actions.extend(
-        "quota:"
-        f"{quota.name}:{quota.status} required={quota.required} used={quota.used} "
-        f"limit={quota.limit} available={quota.available} shortfall={quota.shortfall}"
-        for quota in plan.quotas
-    )
+    for quota in plan.quotas:
+        rendered = (
+            "quota:"
+            f"{quota.name}:{quota.status} required={quota.required} used={quota.used} "
+            f"limit={quota.limit} available={quota.available} shortfall={quota.shortfall}"
+        )
+        structured = quota.to_dict()
+        if structured.get("unit") == "bytes":
+            rendered += (
+                f" bytes required_gib={structured.get('required_gib')} "
+                f"available_gib={structured.get('available_gib')} "
+                f"shortfall_gib={structured.get('shortfall_gib')}"
+            )
+        actions.append(rendered)
     return actions
 
 
@@ -707,20 +716,39 @@ def _rollback_owned_cluster(
     payload = operation.read()
     if str(payload.get("phase") or "") == "rolled-back":
         return True
-    owned = [
+    created = [
         item
         for item in payload.get("resources", [])
         if isinstance(item, dict)
         and item.get("ownership") == "created_by_this_operation"
-        and item.get("resource_type") == "managed_kubernetes_cluster"
     ]
-    if not owned:
+    owned = [
+        item
+        for item in created
+        if item.get("resource_type") == "managed_kubernetes_cluster"
+    ]
+    if not created:
         operation.record_rollback(
             attempted=False,
             completed=False,
             removed=[],
             preserved=list(payload.get("resources") or []),
         )
+        return False
+    if not owned or not str(owned[0].get("provider_id") or ""):
+        error = (
+            "rollback requires the exact created managed Kubernetes cluster ID; "
+            "owned resources were preserved for exact retry"
+        )
+        operation.record_rollback(
+            attempted=True,
+            completed=False,
+            removed=[],
+            preserved=list(payload.get("resources") or []),
+            outcomes=[{**item, "outcome": "preserved_missing_cluster_identity"} for item in created],
+            error=error,
+        )
+        operation.transition("rollback-incomplete", error=error)
         return False
     terraform_owned = [
         item
@@ -737,6 +765,7 @@ def _rollback_owned_cluster(
         completed=False,
         removed=[],
         preserved=list(payload.get("resources") or []),
+        outcomes=[{**item, "outcome": "rollback_started"} for item in terraform_owned],
     )
     operation.transition("rolling-back")
     try:
@@ -763,6 +792,10 @@ def _rollback_owned_cluster(
             completed=False,
             removed=[],
             preserved=list(payload.get("resources") or []),
+            outcomes=[
+                {**item, "outcome": "rollback_failed", "error": str(exc)}
+                for item in terraform_owned
+            ],
             error=str(exc),
         )
         operation.transition("rollback-incomplete", error=str(exc))
@@ -784,6 +817,10 @@ def _rollback_owned_cluster(
         completed=True,
         removed=terraform_owned,
         preserved=preserved,
+        outcomes=[
+            *({**item, "outcome": "removed"} for item in terraform_owned),
+            *({**item, "outcome": "preserved_not_owned_by_terraform"} for item in preserved),
+        ],
     )
     operation.transition("rolled-back")
     return True

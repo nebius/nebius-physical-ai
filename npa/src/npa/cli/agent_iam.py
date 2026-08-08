@@ -18,6 +18,10 @@ from typing import Any, Callable
 StatusFn = Callable[[str], None]
 
 
+class AgentIAMCleanupError(RuntimeError):
+    """Exact agent infrastructure is absent, but owned IAM did not converge."""
+
+
 def _agent_iam_records() -> tuple[dict[str, Any], Any]:
     """Load the owner-only agent IAM journal and return it with its path."""
 
@@ -390,9 +394,11 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
         NebiusError,
         delete_access_key,
         delete_service_account,
+        is_not_found,
     )
 
     deleted: list[str] = []
+    failures: list[str] = []
     for key in leftovers.get("access_keys") or []:
         key_id = str((key or {}).get("id", "") or "")
         if not key_id:
@@ -400,7 +406,14 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
         try:
             delete_access_key(key_id)
         except NebiusError as exc:
+            if is_not_found(str(exc)):
+                deleted.append(f"access key {key_id}")
+                remove_agent_iam_resource(
+                    str(leftovers.get("project_id", "") or ""), "access_key", key_id
+                )
+                continue
             on_status(f"Warning: could not delete access key {key_id}: {exc}")
+            failures.append(f"access key {key_id}: {exc}")
             continue
         deleted.append(f"access key {key_id}")
     sa_id = str(leftovers.get("service_account_id", "") or "")
@@ -408,7 +421,16 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
         try:
             delete_service_account(sa_id)
         except NebiusError as exc:
-            on_status(f"Warning: could not delete service account {sa_id}: {exc}")
+            if is_not_found(str(exc)):
+                deleted.append(
+                    f"service account {leftovers.get('service_account_name') or sa_id} ({sa_id})"
+                )
+                clear_agent_iam_record(
+                    str(leftovers.get("project_id", "") or ""), sa_id
+                )
+            else:
+                on_status(f"Warning: could not delete service account {sa_id}: {exc}")
+                failures.append(f"service account {sa_id}: {exc}")
         else:
             deleted.append(
                 f"service account {leftovers.get('service_account_name') or sa_id} ({sa_id})"
@@ -416,6 +438,10 @@ def purge_agent_iam(leftovers: dict[str, Any], *, on_status: StatusFn) -> list[s
             clear_agent_iam_record(str(leftovers.get("project_id", "") or ""), sa_id)
     for item in deleted:
         on_status(f"Deleted {item}.")
+    if failures:
+        raise AgentIAMCleanupError(
+            "exact agent IAM cleanup remains partial: " + "; ".join(failures)
+        )
     return deleted
 
 
@@ -438,6 +464,7 @@ def report_destroyed_agent_iam(
         remaining_agents=remaining,
         purge=purge,
         on_status=lambda message: typer.echo(f"  {message}", err=True),
+        strict=purge,
     )
 
 
@@ -447,6 +474,7 @@ def report_agent_iam(
     remaining_agents: int,
     purge: bool,
     on_status: StatusFn,
+    strict: bool = False,
 ) -> list[str]:
     """Report (and optionally delete) the IAM the agent VM left behind.
 
@@ -461,6 +489,11 @@ def report_agent_iam(
             + str(leftovers.get("inventory_error") or "unknown provider error")
             + "). No IAM resources were deleted."
         )
+        if strict and purge:
+            raise AgentIAMCleanupError(
+                "exact provider dependency inventory for agent IAM is unresolved: "
+                + str(leftovers.get("inventory_error") or "unknown provider error")
+            )
         return []
     if not leftovers.get("service_account_id"):
         return []
@@ -474,6 +507,10 @@ def report_agent_iam(
             "Keeping the npa-agent service account: its familiar name is not proof "
             "that NPA created it. No IAM resources were deleted."
         )
+        if strict:
+            raise AgentIAMCleanupError(
+                "agent IAM remains because exact NPA creation ownership is unproven"
+            )
     if purge and not last_agent:
         if provider_dependents:
             on_status(
@@ -484,6 +521,10 @@ def report_agent_iam(
             on_status(
                 "Keeping the npa-agent service account: "
                 f"{remaining_agents} other local agent record(s) still use it."
+            )
+        if strict and provider_dependents:
+            raise AgentIAMCleanupError(
+                "agent IAM remains because exact provider inventory reports dependent VM(s)"
             )
     for line in format_iam_leftovers(
         leftovers, project_id=project_id, last_agent=last_agent

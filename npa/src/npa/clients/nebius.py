@@ -39,6 +39,17 @@ class ServiceAccountIdentity:
     profile: str
 
 
+@dataclass(frozen=True)
+class ProjectIdentity:
+    """Allowlisted immutable identity for exact project teardown."""
+
+    project_id: str
+    name: str
+    tenant_id: str
+    region: str
+    profile: str = ""
+
+
 # ── Low-level CLI runner ─────────────────────────────────────────────────
 
 _NEBIUS_VERSION_CHECKED = False
@@ -560,6 +571,142 @@ def get_project_name(project_id: str) -> str:
     return str(metadata.get("name", "") or "").strip()
 
 
+def get_project_identity(
+    project_id: str, *, tenant_id: str = "", profile: str | None = None
+) -> ProjectIdentity | None:
+    """Strictly get one project by immutable ID; exact NotFound is absence."""
+
+    exact_id = str(project_id or "").strip()
+    expected_tenant = str(tenant_id or "").strip()
+    if not exact_id:
+        raise NebiusError("exact project ID is required")
+    profile_args, resolved_profile = _iam_profile_args(profile)
+    try:
+        payload = _run_json(
+            [*profile_args, "iam", "v2", "project", "get", "--id", exact_id]
+        )
+    except NebiusError as exc:
+        if _is_not_found(str(exc)):
+            return None
+        raise
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    spec = payload.get("spec") if isinstance(payload, dict) else None
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if not isinstance(metadata, dict) or not isinstance(spec, dict):
+        raise NebiusError("Nebius returned schema-invalid project identity")
+    returned_id = str(metadata.get("id") or "").strip()
+    returned_tenant = str(
+        metadata.get("parent_id") or metadata.get("parentId") or ""
+    ).strip()
+    name = str(metadata.get("name") or "").strip()
+    region = (
+        str((status or {}).get("region") if isinstance(status, dict) else "").strip()
+        or str(spec.get("region") or "").strip()
+    )
+    if returned_id != exact_id or not returned_tenant or not name or not region:
+        raise NebiusError("Nebius returned incomplete or mismatched project identity")
+    if expected_tenant and returned_tenant != expected_tenant:
+        raise NebiusError(
+            f"Project {exact_id} belongs to tenant {returned_tenant}, not {expected_tenant}"
+        )
+    return ProjectIdentity(exact_id, name, returned_tenant, region, resolved_profile)
+
+
+_PROJECT_CHILD_LIST_COMMANDS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
+    ("compute_instances", ("compute", "instance", "list"), True),
+    ("compute_disks", ("compute", "disk", "list"), True),
+    ("compute_filesystems", ("compute", "filesystem", "list"), True),
+    ("vpc_networks", ("vpc", "network", "list"), True),
+    ("vpc_subnets", ("vpc", "subnet", "list"), True),
+    ("vpc_security_groups", ("vpc", "security-group", "list"), True),
+    ("vpc_allocations", ("vpc", "allocation", "list"), True),
+    ("mk8s_clusters", ("mk8s", "cluster", "list"), True),
+    ("storage_buckets", ("storage", "bucket", "list"), True),
+    ("registries", ("registry", "list"), True),
+    ("service_accounts", ("iam", "service-account", "list"), True),
+    # Workbench serverless training/inference creates these directly under a
+    # project. The pinned CLI exposes complete list results but no --all flag.
+    ("ai_endpoints", ("ai", "endpoint", "list"), False),
+    ("ai_jobs", ("ai", "job", "list"), False),
+)
+
+
+def list_project_dependencies(
+    project_id: str, *, profile: str | None = None
+) -> dict[str, tuple[str, ...]]:
+    """Authoritatively inventory NPA-managed project child resource classes.
+
+    Every response must contain an ``items`` list with immutable IDs. Unsupported,
+    unreadable, malformed, or partially identifiable inventory raises rather than
+    being mistaken for an empty project.
+    """
+
+    exact_id = str(project_id or "").strip()
+    if not exact_id:
+        raise NebiusError("exact project ID is required for dependency inventory")
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    inventory: dict[str, tuple[str, ...]] = {}
+    for kind, command, supports_all in _PROJECT_CHILD_LIST_COMMANDS:
+        payload = _run_json(
+            [
+                *profile_args,
+                *command,
+                "--parent-id",
+                exact_id,
+                *(("--all",) if supports_all else ()),
+            ]
+        )
+        if payload == {} or payload == {"items": None}:
+            # Pinned Nebius list commands encode a valid empty collection in
+            # either form (the serverless adapter already has this contract).
+            # No other missing/null/extra-field shape is accepted as absence.
+            items: Any = []
+        else:
+            items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            raise NebiusError(f"Nebius returned schema-invalid {kind} inventory")
+        identities: list[str] = []
+        for item in items:
+            metadata = item.get("metadata") if isinstance(item, dict) else None
+            child_id = str(
+                metadata.get("id") if isinstance(metadata, dict) else ""
+            ).strip()
+            if not child_id:
+                raise NebiusError(
+                    f"Nebius returned a {kind} child without immutable identity"
+                )
+            identities.append(child_id)
+        inventory[kind] = tuple(sorted(identities))
+    # Access keys are separately enumerated through the safe allowlisted-field
+    # adapter; never capture the provider's secret-bearing raw list response.
+    keys = _list_access_key_metadata(exact_id, profile=profile)
+    inventory["access_keys"] = tuple(
+        sorted(
+            str((item.get("metadata") or {}).get("id") or "").strip()
+            for item in keys
+            if str((item.get("metadata") or {}).get("id") or "").strip()
+        )
+    )
+    if len(inventory["access_keys"]) != len(keys):
+        raise NebiusError("Nebius returned an access key without immutable identity")
+    return inventory
+
+
+def delete_project(project_id: str, *, profile: str | None = None) -> None:
+    """Delete one project through the supported exact-ID provider adapter."""
+
+    exact_id = str(project_id or "").strip()
+    if not exact_id:
+        raise NebiusError("exact project ID is required")
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    try:
+        _run([*profile_args, "iam", "v2", "project", "delete", "--id", exact_id])
+    except NebiusError as exc:
+        if _is_not_found(str(exc)):
+            return
+        raise
+
+
 def list_quota_allowances(tenant_id: str) -> dict[str, Any]:
     """Return one provider quota snapshot for *tenant_id*.
 
@@ -856,9 +1003,7 @@ def _saved_service_account_id(project_id: str = "") -> str:
         return ""
     nebius = loaded.get("nebius", {})
     if isinstance(nebius, dict):
-        saved_project = str(
-            nebius.get("service_account_project_id", "") or ""
-        ).strip()
+        saved_project = str(nebius.get("service_account_project_id", "") or "").strip()
         if project_id and saved_project != project_id:
             return ""
         return str(nebius.get("service_account_id", "") or "").strip()

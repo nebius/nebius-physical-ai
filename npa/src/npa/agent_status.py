@@ -99,7 +99,12 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
         lifecycle = str(summary.get("lifecycle") or "unknown")
         resources = list(summary.get("resources") or [])
         current_verification, resource_evidence = _verify_created_resources(summary)
-        if phase in {"destroyed", "rolled-back"}:
+        provider_present = [
+            item for item in resource_evidence if item.get("state") == "present"
+        ]
+        if provider_present:
+            classification = "CLEANUP_REQUIRED"
+        elif phase in {"destroyed", "rolled-back"}:
             classification = "VERIFIED_ABSENT"
         elif phase == "rollback-incomplete":
             classification = "ROLLBACK_REQUIRED"
@@ -111,6 +116,21 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
             classification = "RESUMABLE"
         if current_verification == "provider_verified_absent":
             classification = "VERIFIED_ABSENT"
+        effective_lifecycle = (
+            "partial" if classification == "CLEANUP_REQUIRED" else lifecycle
+        )
+        residual_service_accounts = [
+            item
+            for item in provider_present
+            if item.get("resource_type") == "agent_service_account"
+            and item.get("provider_id")
+        ]
+        exact_cleanup_command = ""
+        if residual_service_accounts and summary.get("operation_id"):
+            exact_cleanup_command = (
+                f"npa agent destroy --project {project} --name {name} "
+                f"--operation-id {summary['operation_id']} --yes"
+            )
         return {
             "project": project,
             "name": name,
@@ -118,7 +138,8 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
             "operation_id": summary.get("operation_id", ""),
             "operation_journal": summary.get("journal", ""),
             "phase": phase,
-            "lifecycle": lifecycle,
+            "lifecycle": effective_lifecycle,
+            "recorded_lifecycle": lifecycle,
             "heartbeat_at": summary.get("heartbeat_at", ""),
             "last_error_type": summary.get("last_error_type", ""),
             "last_error": summary.get("last_error", ""),
@@ -129,8 +150,27 @@ def partial_agent_status(project: str, name: str) -> dict[str, Any]:
                 "resume_command": summary.get("resume_command", ""),
                 "destroy_argv": summary.get("destroy_argv", []),
                 "destroy_command": summary.get("destroy_command", ""),
+                "exact_cleanup_command": exact_cleanup_command,
             },
             "current_verification": current_verification,
+            "components": {
+                "vm": [
+                    item
+                    for item in resource_evidence
+                    if item.get("resource_type") == "compute_instance"
+                ],
+                "disk_network": [
+                    item
+                    for item in resource_evidence
+                    if item.get("resource_type")
+                    not in {"compute_instance", "agent_service_account"}
+                ],
+                "service_account": [
+                    item
+                    for item in resource_evidence
+                    if item.get("resource_type") == "agent_service_account"
+                ],
+            },
         }
 
     # A project receipt can contain several agents. Match the exact resource,

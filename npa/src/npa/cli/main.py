@@ -87,7 +87,12 @@ app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 @app.command("destroy", rich_help_panel="Platform utilities")
 def destroy_project_cmd(
     project: str = typer.Option(
-        ..., "--project", help="Exact configured project alias."
+        "", "--project", help="Exact configured project alias."
+    ),
+    receipt: str = typer.Option(
+        "",
+        "--receipt",
+        help="Opaque durable receipt for post-forget exact project deletion.",
     ),
     all_resources: bool = typer.Option(
         False,
@@ -98,7 +103,7 @@ def destroy_project_cmd(
     delete_project: bool = typer.Option(
         False,
         "--delete-project",
-        help="Report provider project-deletion support (currently plan-only/unsupported).",
+        help="Also delete an exact, empty project with durable NPA creation proof.",
     ),
     output_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
@@ -106,9 +111,69 @@ def destroy_project_cmd(
 
     if not all_resources:
         raise typer.BadParameter("Full project teardown requires --all.")
-    from npa.project_destroy import build_project_destroy_plan, execute_project_destroy
+    from npa.project_destroy import (
+        build_project_destroy_plan,
+        build_receipt_project_delete_plan,
+        execute_project_destroy,
+    )
 
-    phases = build_project_destroy_plan(project, delete_project=delete_project)
+    recovery_identity: dict[str, str] | None = None
+    receipt_id = receipt.strip()
+    if receipt_id:
+        if not delete_project:
+            raise typer.BadParameter(
+                "Receipt recovery on `npa destroy` is limited to explicit --delete-project."
+            )
+        from npa.teardown_receipts import TeardownReceiptError, load_teardown_receipt
+
+        try:
+            saved = load_teardown_receipt(receipt_id)
+        except TeardownReceiptError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        identity = saved.get("identity")
+        identity = identity if isinstance(identity, dict) else {}
+        saved_alias = str(
+            saved.get("project_alias") or identity.get("project_alias") or ""
+        ).strip()
+        saved_project_id = str(
+            saved.get("project_id") or identity.get("project_id") or ""
+        ).strip()
+        saved_tenant_id = str(identity.get("tenant_id") or "").strip()
+        saved_region = str(identity.get("region") or "").strip()
+        saved_profile = str(identity.get("profile") or "").strip()
+        if (
+            not saved_alias
+            or not saved_project_id
+            or not saved_tenant_id
+            or not saved_region
+        ):
+            raise typer.BadParameter(
+                "Receipt lacks exact project alias, project ID, tenant ID, or region."
+            )
+        if project.strip() and project.strip() != saved_alias:
+            raise typer.BadParameter(
+                "--project conflicts with the durable receipt project alias."
+            )
+        project = saved_alias
+        recovery_identity = {
+            "project_id": saved_project_id,
+            "tenant_id": saved_tenant_id,
+            "region": saved_region,
+            "profile": saved_profile,
+        }
+        phases = build_receipt_project_delete_plan(
+            project=project,
+            project_id=saved_project_id,
+            tenant_id=saved_tenant_id,
+            receipt_id=receipt_id,
+        )
+    else:
+        if not project.strip():
+            raise typer.BadParameter(
+                "Full project teardown requires --project or --receipt."
+            )
+        project = project.strip()
+        phases = build_project_destroy_plan(project, delete_project=delete_project)
     if not yes:
         payload = {
             "status": "plan_only",
@@ -126,39 +191,62 @@ def destroy_project_cmd(
                     typer.echo("    " + shlex.join(command))
         return
 
-    from npa.clients.config import resolve_environment
+    if recovery_identity is None:
+        from npa.clients.config import resolve_environment
 
-    environment = resolve_environment(project)
-    if environment is None or not environment.project_id:
-        raise typer.BadParameter(
-            f"Project {project!r} has no immutable project identity; refusing teardown."
-        )
+        environment = resolve_environment(project)
+        if environment is None or not environment.project_id:
+            raise typer.BadParameter(
+                f"Project {project!r} has no immutable project identity; refusing teardown."
+            )
+        operation_project_id = str(environment.project_id)
+        operation_tenant_id = str(environment.tenant_id)
+        operation_region = str(environment.region)
+    else:
+        operation_project_id = recovery_identity["project_id"]
+        operation_tenant_id = recovery_identity["tenant_id"]
+        operation_region = recovery_identity["region"]
     operation = ProvisioningOperation.prepare(
         command="npa destroy",
         project_alias=project,
-        project_id=environment.project_id,
-        tenant_id=environment.tenant_id,
-        region=environment.region,
+        project_id=operation_project_id,
+        tenant_id=operation_tenant_id,
+        region=operation_region,
         resource_type="project-teardown",
         requested_name=project,
         ownership_source="project-destroy-cli",
         resume_command="",
-        resume_argv=[
-            "npa",
-            "destroy",
-            "--project",
-            project,
-            "--all",
-            "--yes",
-            "--json",
-        ],
+        resume_argv=(
+            [
+                "npa",
+                "destroy",
+                "--receipt",
+                receipt_id,
+                "--all",
+                "--delete-project",
+                "--yes",
+                "--json",
+            ]
+            if receipt_id
+            else [
+                "npa",
+                "destroy",
+                "--project",
+                project,
+                "--all",
+                *(["--delete-project"] if delete_project else []),
+                "--yes",
+                "--json",
+            ]
+        ),
     )
     operation.record_preflight_plan(
         {
             "project_alias": project,
-            "project_id": environment.project_id,
-            "tenant_id": environment.tenant_id,
-            "region": environment.region,
+            "project_id": operation_project_id,
+            "tenant_id": operation_tenant_id,
+            "region": operation_region,
+            "receipt_id": receipt_id,
             "topology": {"phases": [phase.to_dict() for phase in phases]},
             "decision": "execute",
         }
@@ -170,6 +258,7 @@ def destroy_project_cmd(
                 project,
                 phases,
                 on_phase=lambda phase: operation.heartbeat(details={"phase": phase}),
+                exact_identity=recovery_identity,
             )
             if result["status"] == "success":
                 operation.transition("state-durable")

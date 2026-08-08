@@ -4,7 +4,9 @@ import pytest
 
 from npa.provisioning_preflight import (
     DISK_QUOTA,
+    GIB,
     INSTANCE_QUOTA,
+    NETWORK_SSD_BYTES_QUOTA,
     PUBLIC_IP_QUOTA,
     PreflightBlockedError,
     QuotaObservation,
@@ -21,8 +23,12 @@ def _reader(values):
         return {
             name: QuotaObservation(
                 name=name,
-                used=values.get(name, (0, 20))[0],
-                limit=values.get(name, (0, 20))[1],
+                used=values.get(
+                    name, (0, 20 * 1024 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 20)
+                )[0],
+                limit=values.get(
+                    name, (0, 20 * 1024 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 20)
+                )[1],
                 state="known",
             )
             for name in names
@@ -61,7 +67,9 @@ def test_missing_usage_with_limit_is_zero() -> None:
     assert parsed[INSTANCE_QUOTA].limit == 4
 
 
-@pytest.mark.parametrize("name", [INSTANCE_QUOTA, DISK_QUOTA, PUBLIC_IP_QUOTA])
+@pytest.mark.parametrize(
+    "name", [INSTANCE_QUOTA, DISK_QUOTA, NETWORK_SSD_BYTES_QUOTA, PUBLIC_IP_QUOTA]
+)
 def test_each_hard_quota_can_block(name: str) -> None:
     topology = resolve_topology(public_node_ips=name == PUBLIC_IP_QUOTA)
     plan = _plan(topology=topology, values={name: (10, 10)})
@@ -192,7 +200,134 @@ def test_preemptible_nodes_still_consume_hard_quotas() -> None:
     requirements = topology.quota_requirements()
     assert requirements[INSTANCE_QUOTA] == 2
     assert requirements[DISK_QUOTA] == 2
+    assert requirements[NETWORK_SSD_BYTES_QUOTA] == 1151 * GIB
     assert "compute.instance.gpu.rtx6000" not in requirements
+
+
+def test_whole_path_network_ssd_reproduced_shortfall_is_exact() -> None:
+    topology = resolve_topology(agent_requested=True)
+    plan = _plan(
+        topology=topology,
+        values={NETWORK_SSD_BYTES_QUOTA: (0, 21 * GIB)},
+    )
+    decision = next(
+        item for item in plan.quotas if item.name == NETWORK_SSD_BYTES_QUOTA
+    )
+
+    assert topology.required_network_ssd_bytes == 1251 * GIB
+    assert decision.required == 1251 * GIB
+    assert decision.available == 21 * GIB
+    assert decision.shortfall == 1230 * GIB
+    assert decision.to_dict()["required_gib"] == "1251"
+    assert decision.to_dict()["available_gib"] == "21"
+    assert decision.to_dict()["shortfall_gib"] == "1230"
+    assert plan.decision == "blocked"
+
+
+@pytest.mark.parametrize("available_gib", [1251, 1252])
+def test_network_ssd_exact_boundary_and_sufficient_quota(available_gib: int) -> None:
+    plan = _plan(
+        topology=resolve_topology(agent_requested=True),
+        values={NETWORK_SSD_BYTES_QUOTA: (7 * GIB, (7 + available_gib) * GIB)},
+    )
+    decision = next(
+        item for item in plan.quotas if item.name == NETWORK_SSD_BYTES_QUOTA
+    )
+    assert decision.status == "ready"
+    assert decision.shortfall == 0
+
+
+def test_multiple_node_counts_and_existing_delta_use_exact_disk_bytes() -> None:
+    topology = resolve_topology(
+        agent_requested=True,
+        agent_exists=True,
+        cpu_nodes=3,
+        existing_cpu_nodes=1,
+        gpu_nodes=4,
+        existing_gpu_nodes=2,
+        cpu_disk_gib=64,
+        gpu_disk_gib=512,
+    )
+    assert topology.required_disks == 4
+    assert topology.required_network_ssd_bytes == (2 * 64 + 2 * 512) * GIB
+
+
+def test_preemptible_does_not_change_disk_byte_requirement() -> None:
+    on_demand = resolve_topology(cpu_nodes=2, gpu_nodes=3, preemptible=False)
+    preemptible = resolve_topology(cpu_nodes=2, gpu_nodes=3, preemptible=True)
+    assert (
+        preemptible.required_network_ssd_bytes
+        == on_demand.required_network_ssd_bytes
+    )
+
+
+def test_disk_count_and_disk_bytes_are_independent_quota_decisions() -> None:
+    plan = _plan(
+        values={
+            DISK_QUOTA: (0, 2),
+            NETWORK_SSD_BYTES_QUOTA: (0, 100 * GIB),
+        }
+    )
+    decisions = {item.name: item for item in plan.quotas}
+    assert decisions[DISK_QUOTA].status == "ready"
+    assert decisions[NETWORK_SSD_BYTES_QUOTA].status == "blocked"
+
+
+def test_missing_and_contradictory_disk_byte_allowance_fail_closed() -> None:
+    payload = {
+        "items": [
+            {
+                "metadata": {"name": NETWORK_SSD_BYTES_QUOTA},
+                "spec": {"region": "eu-north1", "limit": str(2 * GIB)},
+                "status": {"usage": "0"},
+            },
+            {
+                "metadata": {"name": NETWORK_SSD_BYTES_QUOTA},
+                "spec": {"region": "eu-north1", "limit": str(3 * GIB)},
+                "status": {"usage": "0"},
+            },
+        ]
+    }
+    parsed = parse_quota_allowances(
+        payload, region="eu-north1", names=[NETWORK_SSD_BYTES_QUOTA]
+    )
+    assert parsed[NETWORK_SSD_BYTES_QUOTA].state == "unknown"
+    assert "contradictory" in parsed[NETWORK_SSD_BYTES_QUOTA].reason
+
+    def reader(_tenant, _region, names):
+        return {name: parsed.get(name, QuotaObservation(name=name)) for name in names}
+
+    plan = build_whole_path_plan(
+        project_alias="p",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region="eu-north1",
+        topology=resolve_topology(),
+        quota_reader=reader,
+        mutation=True,
+    )
+    assert plan.decision == "blocked"
+
+
+def test_provider_available_must_equal_limit_minus_usage() -> None:
+    parsed = parse_quota_allowances(
+        {
+            "items": [
+                {
+                    "metadata": {"name": NETWORK_SSD_BYTES_QUOTA},
+                    "spec": {"region": "eu-north1", "limit": str(100 * GIB)},
+                    "status": {
+                        "usage": str(20 * GIB),
+                        "available": str(79 * GIB),
+                    },
+                }
+            ]
+        },
+        region="eu-north1",
+        names=[NETWORK_SSD_BYTES_QUOTA],
+    )
+    assert parsed[NETWORK_SSD_BYTES_QUOTA].state == "unknown"
+    assert "limit - status.usage" in parsed[NETWORK_SSD_BYTES_QUOTA].reason
 
 
 def test_canonical_paidf_shape_is_exact() -> None:

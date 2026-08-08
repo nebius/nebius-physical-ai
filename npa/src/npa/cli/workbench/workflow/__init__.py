@@ -147,6 +147,25 @@ def prepare_run_cmd(
             workflow_identity=spec.name,
             resume_run=requested,
         )
+        from npa.orchestration.npa_workflow.submission_state import (
+            update_submission_state,
+        )
+
+        update_submission_state(
+            project or "default",
+            prepared.run_id,
+            {
+                "launch_state": "reserved",
+                "workflow": {
+                    "name": spec.name,
+                    "kind": "npa.workflow/v0.0.1",
+                },
+                "planning": {
+                    "state": "durable",
+                    "source": "prepare-run",
+                },
+            },
+        )
     except Exception as exc:
         _fail(str(exc))
         return
@@ -161,6 +180,8 @@ def prepare_run_cmd(
                     "resume_explicit": bool(resume_run),
                     "state_path": prepared.state_path,
                     "previous_run": prepared.previous_run,
+                    "lifecycle_state": "PLAN_ONLY",
+                    "submission_state": "NOT_SUBMITTED",
                 },
                 indent=2,
                 sort_keys=True,

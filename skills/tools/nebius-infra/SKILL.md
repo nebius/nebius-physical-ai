@@ -36,6 +36,12 @@ workflow environment variables.
 
    Real runs may ensure S3 and Kubernetes. Dry runs only resolve settings and
    print intended actions. The command must not teardown or replace resources.
+   Its canonical whole-path quota plan treats
+   `compute.disk.size.network-ssd` as bytes and reports exact bytes plus GiB,
+   independently of `compute.disk.count`. Unknown, missing, malformed, or
+   contradictory disk-capacity evidence blocks mutation. The default cluster is
+   1,151 GiB (128 GiB CPU + 1,023 GiB GPU); adding the default 100 GiB agent root
+   disk makes the README whole path 1,251 GiB.
 
 4. Use `--skip-s3` or `--skip-k8s` when the operator only wants one side
    checked. Use `--sky-smoke` only when live GPU validation is explicitly
@@ -59,6 +65,8 @@ npa storage service-account reconcile --project <alias> --id <exact-id> \
   --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
 npa storage service-account delete --project <alias> --dry-run
 npa storage service-account delete --project <alias> --yes
+# Optional: omit this to retain the project (the safe default).
+npa destroy --project <alias> --all --delete-project --yes --json
 npa configure --forget-project <alias>
 npa cleanup --full --yes --project <alias>
 ```
@@ -77,6 +85,20 @@ immutable ID, expected name, project, tenant, and selected profile, then stores
 non-secret operator/when/reason attestation. It never deletes the resource;
 the existing guarded `delete` command remains the only deletion path. Unresolved
 evidence is journaled in the project stanza and blocks project forgetting.
+Project deletion is separately opt-in and ownership-gated. `npa destroy --all`
+retains the project unless `--delete-project --yes` is explicit. The deletion
+adapter verifies exact project/tenant/region identity, requires one durable
+`provider-create-response` NPA ownership record, inventories every NPA-managed
+child class provider-side, writes deletion intent before mutation, deletes by
+exact ID, and verifies NotFound afterward. Any external/shared or unproven
+identity, remaining child, unsupported/unreadable/schema-invalid inventory,
+permission failure, or pre-mutation receipt failure stops safely.
+After an alias has been forgotten, the narrow recovery form
+`npa destroy --receipt <id> --all --delete-project --yes --json` reads the exact
+project/tenant/region/profile identity from the durable receipt and runs only
+the same ownership-gated, provider-inventoried project phase. It never treats a
+deleted Terraform backend or missing bucket credentials as live infrastructure.
+
 Plain `npa cleanup --yes` keeps credentials; `--full --yes` additionally removes
 the locally saved Hugging Face, Token Factory, and NGC entries and prunes only
 empty NPA-owned local state plus exactly validated NPA Terraform residue. It does
@@ -104,6 +126,8 @@ or provider/auth verification failure is partial cleanup and exits 2.
   with NVIDIA GPU Operator mounted drivers.
 - H100/H200 do not provide RT cores; do not route Isaac Lab or render validation
   there unless the task explicitly avoids rendering.
+- Preemptibility changes the GPU capacity pool only. It never reduces node boot
+  disk count or `compute.disk.size.network-ssd` byte requirements.
 
 ## Gotchas
 

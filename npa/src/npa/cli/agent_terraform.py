@@ -568,6 +568,17 @@ def _destroy_agent_terraform(
             "The selected operation journal does not own this exact agent name; "
             "no resources were changed."
         )
+    # A prior invocation may have completed an exact Terraform no-op/destroy and
+    # then stopped while trying to reconcile IAM (notably when deployment failed
+    # before an instance ID was ever persisted).  The operation journal survives
+    # bucket/config removal and is newer evidence than stale backend settings.
+    # Requiring credentials for an already-destroyed backend would deadlock the
+    # only remaining, independent IAM cleanup.
+    if (
+        operation is not None
+        and str(operation_payload.get("phase") or "") == "destroyed"
+    ):
+        return
     journal_alias = str(operation_payload.get("project_alias") or "")
     if project and journal_alias and project != journal_alias:
         raise ProvisionerError(

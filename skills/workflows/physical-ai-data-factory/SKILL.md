@@ -263,6 +263,13 @@ once (SkyPilot CLI, npa source for image-less steps, placeholder bucket) with
 the command that fixes each. `--plan-only` skips the runtime-only checks;
 `--skip-preflight` bypasses them.
 
+The immutable infrastructure plan also checks boot-disk count and
+`compute.disk.size.network-ssd` byte capacity before any mutation. The shipped
+one-CPU/one-GPU cluster requires 1,151 GiB (128 + 1,023); the README path with a
+new 100 GiB agent requires 1,251 GiB. JSON and human output include exact bytes
+and GiB for required, available, and shortfall. Preemptible GPU selection does
+not change these disk requirements.
+
 ## Key Operational Notes
 
 - **Prepare a verified video before GPU work.** The submit path selects the

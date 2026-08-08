@@ -33,7 +33,9 @@ These remain available as explicit opt-in via `terraform.tfvars`, `TF_VAR_*`, or
   InfiniBand training.
 - **Preemptible GPU nodes:** `gpu_nodes_preemptible = true` draws on the
   preemptible capacity pool instead of on-demand. It does not bypass the hard
-  instance, boot-disk, or public-IP allowances. `npa cluster up` checks all
+  instance, boot-disk-count, `compute.disk.size.network-ssd` byte-capacity, or
+  public-IP allowances. The default 128 GiB CPU disk plus 1,023 GiB GPU disk
+  requires 1,151 GiB of incremental NETWORK_SSD capacity. `npa cluster up` checks all
   cumulative hard quotas before `terraform apply`; capacity advice remains a
   separate availability signal.
 - **Shared Filesystem:** set `enable_filestore = true` (optionally

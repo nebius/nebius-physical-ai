@@ -1936,7 +1936,8 @@ def _preflight_whole_path_capacity(
             f"cpu={topology.cpu_nodes}x{topology.cpu_platform}/{topology.cpu_preset}, "
             f"gpu={topology.gpu_nodes}x{topology.gpu_platform}/{topology.gpu_preset}, "
             f"preemptible={str(topology.gpu_preemptible).lower()}, "
-            f"new instances={topology.required_instances}, disks={topology.required_disks}."
+            f"new instances={topology.required_instances}, disks={topology.required_disks}, "
+            f"network-ssd={topology.required_network_ssd_bytes} bytes."
         )
         return
 
@@ -1968,6 +1969,8 @@ def _preflight_whole_path_capacity(
             _tfvar_value(tfvars, env, "gpu_nodes_preset", "1gpu-24vcpu-218gb") or ""
         ),
         preemptible=_tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False),
+        cpu_disk_gib=int(_tfvar_value(tfvars, env, "cpu_disk_size", 128) or 128),
+        gpu_disk_gib=int(_tfvar_value(tfvars, env, "gpu_disk_size", 1023) or 1023),
         public_node_ips=False,
     )
     checks = []
@@ -1997,6 +2000,8 @@ def _preflight_whole_path_capacity(
         gpu_platform=requested.gpu_platform,
         gpu_preset=requested.gpu_preset,
         preemptible=requested.gpu_preemptible,
+        cpu_disk_gib=requested.cpu_disk_gib,
+        gpu_disk_gib=requested.gpu_disk_gib,
         public_node_ips=requested.public_node_ips,
     )
     plan = build_whole_path_plan(
@@ -2020,7 +2025,8 @@ def _preflight_whole_path_capacity(
         f"cpu={topology.cpu_nodes}x{topology.cpu_platform}/{topology.cpu_preset}, "
         f"gpu={topology.gpu_nodes}x{topology.gpu_platform}/{topology.gpu_preset}, "
         f"preemptible={str(topology.gpu_preemptible).lower()}, "
-        f"new instances={topology.required_instances}, disks={topology.required_disks}."
+        f"new instances={topology.required_instances}, disks={topology.required_disks}, "
+        f"network-ssd={topology.required_network_ssd_bytes} bytes."
     )
 
 

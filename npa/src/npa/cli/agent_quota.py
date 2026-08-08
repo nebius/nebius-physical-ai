@@ -31,20 +31,47 @@ def _agent_check_whole_path_capacity(
     """Apply the shared VM+disk+public-IP plan before agent mutation."""
 
     from npa.clients.nebius import get_project_region
-    from npa.provisioning_preflight import build_whole_path_plan, resolve_topology
+    from npa.provisioning_preflight import (
+        build_whole_path_plan,
+        discover_existing_capacity,
+        resolve_topology,
+    )
 
     region = (get_project_region(project_id) or str(fallback_region or "")).strip()
+    requested = resolve_topology(agent_requested=True, agent_exists=agent_exists)
+    existing = discover_existing_capacity(
+        project_id=project_id,
+        cluster_name=requested.cluster_name,
+        cpu_platform=requested.cpu_platform,
+        cpu_preset=requested.cpu_preset,
+        gpu_platform=requested.gpu_platform,
+        gpu_preset=requested.gpu_preset,
+    )
     plan = build_whole_path_plan(
         project_alias="",
         project_id=project_id,
         tenant_id=tenant_id,
         region=region,
+        # Agent deploy is the first mutating step in the README whole-path flow.
+        # Reserve the same canonical PAIDF cluster shape here so the account is
+        # not left with a paid VM that makes the immediately-following cluster
+        # impossible. Existing resources are deducted by the shared planner at
+        # the provisioning entrypoint; an already-present agent is deducted here.
         topology=resolve_topology(
             agent_requested=True,
             agent_exists=agent_exists,
-            cpu_nodes=0,
-            gpu_nodes=0,
+            cpu_nodes=requested.cpu_nodes,
+            existing_cpu_nodes=min(requested.cpu_nodes, existing.cpu_nodes),
+            cpu_platform=requested.cpu_platform,
+            cpu_preset=requested.cpu_preset,
+            cpu_disk_gib=requested.cpu_disk_gib,
+            gpu_nodes=requested.gpu_nodes,
+            existing_gpu_nodes=min(requested.gpu_nodes, existing.gpu_nodes),
+            gpu_platform=requested.gpu_platform,
+            gpu_preset=requested.gpu_preset,
+            gpu_disk_gib=requested.gpu_disk_gib,
         ),
+        checks=[existing.check],
         mutation=True,
     )
     plan.assert_mutation_ready()
@@ -86,6 +113,7 @@ def _agent_whole_path_capacity_result(
         summary=(
             "Whole-path agent capacity is ready: "
             f"instances={topology.required_instances}, disks={topology.required_disks}, "
+            f"network_ssd_bytes={topology.required_network_ssd_bytes}, "
             f"public_ips={topology.required_public_ips}."
         ),
     )

@@ -256,7 +256,7 @@ and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
 | `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | inspect with `npa skypilot status`, then (after all workflows are terminal) run `npa skypilot cleanup-controller --yes`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
 | `Kube context '<name>' ... is not available` | no cluster for that context: neither your kubeconfig nor `~/.npa/clusters/<name>/` has it | provision one (`npa provision-if-absent --project <alias>`, and read its warnings — it now exits non-zero when it could not) or point `KUBECONFIG` at the cluster you want; `kubectl config get-contexts` lists what is resolvable |
 | A cluster is RUNNING in the console but npa has no kubeconfig for it (interrupted provision) | `up` writes the kubeconfig only after apply finishes | `npa cluster kubeconfig --cluster-name <name> --project <alias>` adopts it (writes the kubeconfig + cluster state), or `npa cluster up` again to resume, or `npa cluster down --force` to remove it |
-| `blocked` quota rows before apply | one or more exact hard quotas (instance, boot disk, public IP, or GPU) cannot cover the cumulative topology | read each row's `used + required = required_limit` arithmetic and reduce the topology or ask the tenant operator to resolve the named allowance; preemptible nodes still consume the hard instance, disk, and public-IP quotas |
+| `blocked` quota rows before apply | one or more exact hard quotas (instance, disk count, `compute.disk.size.network-ssd` bytes, public IP, or GPU) cannot cover the cumulative topology | read each row's exact `required`, `available`, and `shortfall` (disk capacity is also rendered in GiB), reduce the topology, or ask the tenant operator to resolve the named allowance; the default cluster needs 1,151 GiB (128 + 1,023), and the README agent+cluster path needs 1,251 GiB; preemptible nodes consume exactly the same disk bytes |
 | `Nebius refused node group ...` mid-apply | the provider changed after the green preflight or rejected a create | NPA rolls back only this operation's newly created Terraform stack. If the journal says `rollback-incomplete`, use its exact recovery command; pre-existing clusters/storage/credentials are preserved. |
 | `npa cluster status` reports `DEGRADED` with `provider_state: RUNNING` and a non-ready node group | the control plane is up while that node group was never provisioned | the same quota/capacity fix; the cluster bills while it exists, so tear it down (`npa cluster down --force`) if you cannot get the nodes |
 | `npa cluster status` reports `VERIFICATION_UNAVAILABLE` and a DNS/RBAC/auth code | the configured cluster's current provider/API state could not be verified | run the printed NPA retry command after fixing the typed cause; `npa cluster status --cached` is an explicit last-known-only view, not evidence the cluster is healthy |
@@ -766,7 +766,12 @@ npa destroy --project "$PROJECT" --all --yes --json
 
 The orchestrator journals every phase, continues phases that are independent of
 a failure, and leaves blocked phases with exact recovery commands. It never
-silently deletes the Nebius project itself. The equivalent recovery sequence is:
+silently deletes the Nebius project itself. Project retention is the default.
+To remove a project too, review the plan and explicitly use
+`--delete-project --yes`; NPA accepts only an exact ID with unique durable
+NPA-creation proof and a provider-verified empty child inventory. External,
+shared, unproven, nonempty, or unreadable projects fail closed. The equivalent
+recovery sequence is:
 
 First, see what exists:
 
@@ -807,10 +812,13 @@ npa storage service-account reconcile --project "$PROJECT" --id <exact-id> \
 npa storage service-account delete --project "$PROJECT" --dry-run
 npa storage service-account delete --project "$PROJECT" --yes
 
-# 7. Remove the project only after IAM verification/deletion clears its marker.
+# 7. Optional: delete only a proven NPA-created, provider-empty project.
+npa destroy --project "$PROJECT" --all --delete-project --yes --json
+
+# 8. Forget the retained/deleted project's local alias after cloud convergence.
 npa configure --forget-project "$PROJECT"
 
-# 8. Remove known shared-service credentials, caches, the SkyPilot venv/state,
+# 9. Remove known shared-service credentials, caches, the SkyPilot venv/state,
 #    and empty ~/.npa residue. Non-empty/unrelated local data is preserved.
 npa cleanup --full --yes --project "$PROJECT"
 ```
@@ -824,6 +832,8 @@ npa skypilot cleanup-controller --receipt <receipt-id> --context <context> --yes
 npa cluster down --receipt <receipt-id> --context <context> --force
 npa storage service-account delete --receipt <receipt-id> --id <exact-id> --dry-run
 npa workflow cancel <run-id> --receipt <receipt-id> --json
+# Optional, after the provider proves every managed child absent:
+npa destroy --receipt <receipt-id> --all --delete-project --yes --json
 ```
 
 Exact flags override receipt fields, and receipt fields override live config;

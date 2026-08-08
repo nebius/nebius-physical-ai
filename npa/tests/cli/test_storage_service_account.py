@@ -173,9 +173,7 @@ def test_explicit_storage_id_selects_exact_owned_project_and_preserves_unrelated
         "serviceaccount-unrelated"
     )
     assert unrelated["resources"]["access_keys"] == {
-        "accesskey-unrelated": {
-            "service_account_id": "serviceaccount-unrelated"
-        }
+        "accesskey-unrelated": {"service_account_id": "serviceaccount-unrelated"}
     }
 
 
@@ -200,7 +198,9 @@ def test_storage_id_without_exact_ownership_proof_fails_closed(
     )
 
     assert result.exit_code == 2
-    assert "No trustworthy NPA storage IAM ownership record proves exact" in result.output
+    assert (
+        "No trustworthy NPA storage IAM ownership record proves exact" in result.output
+    )
     assert deleted == []
 
 
@@ -1511,3 +1511,48 @@ def test_receipt_only_storage_iam_verifies_parent_and_access_key_after_forget(
     assert payload["result"] == "delete_planned"
     assert payload["service_account_id"] == "serviceaccount-storage"
     assert payload["access_key_ids"] == ["accesskey-storage"]
+
+
+def test_receipt_reuses_exact_durable_storage_iam_absence_without_credentials(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_module
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.teardown_receipts import record_teardown_event
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("projects: {}\n", encoding="utf-8")
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "missing-credentials.yaml"
+    )
+    receipt_path = record_teardown_event(
+        phase="storage_iam",
+        resource="serviceaccount-storage",
+        terminal_state="verified_absent",
+        project_id="project-a",
+        identity={
+            "project_id": "project-a",
+            "tenant_id": "tenant-a",
+            "service_account_id": "serviceaccount-storage",
+            "service_account_name": "lerobot-training",
+            "ownership": "npa",
+            "iam_key_ids": ["accesskey-storage"],
+        },
+        verification={"provider_outcome": "verified_absent"},
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_service_account_identity",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("provider must not run")
+        ),
+    )
+
+    context = storage_module._resolve_storage_iam_context(receipt=receipt_path.stem)
+    observation = storage_module._observe_storage_iam(context)
+
+    assert observation.verified_absent
+    assert observation.account_id == "serviceaccount-storage"

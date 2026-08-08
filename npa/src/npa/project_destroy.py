@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import re
 import subprocess
 import sys
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from npa.clients.json_output import parse_single_json_document
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+
+_FATAL_INVENTORY_DIAGNOSTIC = re.compile(
+    r"(?i)\b(?:unauthenticated|unauthorized|permission denied|access denied|forbidden|"
+    r"timeout|timed out|unreachable|connection (?:refused|reset)|transport error|traceback)\b"
+)
+_BENIGN_INVENTORY_DIAGNOSTIC = re.compile(
+    r"(?i)^(?:warning:\s*)?(?:checking for updates|(?:skypilot\s+)?update check|telemetry|"
+    r"skypilot usage collection|deprecated output formatting).*$"
+)
 
 
 @dataclass(frozen=True)
@@ -19,6 +29,7 @@ class DestroyPhase:
     commands: tuple[tuple[str, ...], ...]
     detail: str
     requires: tuple[str, ...] = ()
+    metadata: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -26,6 +37,7 @@ class DestroyPhase:
             "commands": [list(command) for command in self.commands],
             "detail": self.detail,
             "requires": list(self.requires),
+            "metadata": dict(self.metadata),
         }
 
 
@@ -103,6 +115,16 @@ def build_project_destroy_plan(
         project_alias=project, project_id=project_id, resource_type="cluster"
     ):
         payload = operation.read()
+        rollback = payload.get("rollback")
+        rollback = rollback if isinstance(rollback, dict) else {}
+        if str(payload.get("phase") or "") in {"destroyed", "rolled-back"} and (
+            str(payload.get("phase") or "") == "destroyed"
+            or rollback.get("completed") is True
+        ):
+            # Terminal attempt history is audit evidence, not live inventory.
+            # Re-adding its exact ID produces a false unresolved destroy action
+            # after provider/local inventory has already converged empty.
+            continue
         context = str(payload.get("requested_name") or "").strip()
         for resource in payload.get("resources") or []:
             if not isinstance(resource, dict):
@@ -131,11 +153,7 @@ def build_project_destroy_plan(
             cluster_id,
             "--context",
             context,
-            *(
-                ("--operation-id", operation_id)
-                if operation_id
-                else ()
-            ),
+            *(("--operation-id", operation_id) if operation_id else ()),
             "--force",
             "--json",
         )
@@ -213,51 +231,235 @@ def build_project_destroy_plan(
                 ),
             ),
             "Delete only project-scoped NPA-owned storage IAM.",
-            ("agents", "bucket"),
-        ),
-        DestroyPhase(
-            "local_cleanup",
-            (
-                (
-                    "npa",
-                    "cleanup",
-                    "--project",
-                    project,
-                    "--yes",
-                    "--keep-sky",
-                    "--json",
-                ),
-            ),
-            "Remove only project-scoped local residue; preserve shared runtime state.",
-        ),
-        DestroyPhase(
-            "forget_alias",
-            (("npa", "configure", "--forget-project", project),),
-            "Forget the alias only after cloud and IAM phases converge.",
-            (
-                "workflows",
-                "agents",
-                "controller",
-                "clusters",
-                "bucket",
-                "storage_iam",
-                "local_cleanup",
-            ),
+            ("bucket",),
         ),
     ]
     if delete_project:
+        ownership = _project_ownership_operation(
+            project, project_id, str(getattr(environment, "tenant_id", "") or "")
+        )
         phases.append(
             DestroyPhase(
                 "delete_project",
                 (),
-                "BLOCKED: NPA has no provider-supported project deletion API; plan only.",
+                "Delete the exact provider project only after ownership and empty-child inventory are proven.",
+                (
+                    "workflows",
+                    "agents",
+                    "controller",
+                    "clusters",
+                    "bucket",
+                    "storage_iam",
+                ),
+                {
+                    "deletion_requested": True,
+                    "project_id": project_id,
+                    "ownership_proven": ownership is not None,
+                    "ownership_operation_id": ownership.operation_id
+                    if ownership is not None
+                    else "",
+                    "provider_inventory": "required_before_mutation",
+                },
             )
         )
+    phases.extend(
+        [
+            DestroyPhase(
+                "local_cleanup",
+                (
+                    (
+                        "npa",
+                        "cleanup",
+                        "--project",
+                        project,
+                        "--yes",
+                        "--keep-sky",
+                        "--json",
+                    ),
+                ),
+                "Remove only project-scoped local residue; preserve shared runtime state.",
+                (("delete_project",) if delete_project else ()),
+            ),
+            DestroyPhase(
+                "forget_alias",
+                (("npa", "configure", "--forget-project", project),),
+                "Forget the alias only after cloud and IAM phases converge.",
+                (
+                    "workflows",
+                    "agents",
+                    "controller",
+                    "clusters",
+                    "bucket",
+                    "storage_iam",
+                    *(("delete_project",) if delete_project else ()),
+                    "local_cleanup",
+                ),
+            ),
+        ]
+    )
     return phases
 
 
+def build_receipt_project_delete_plan(
+    *,
+    project: str,
+    project_id: str,
+    tenant_id: str,
+    receipt_id: str,
+) -> list[DestroyPhase]:
+    """Build the narrow post-forget project-deletion recovery plan."""
+
+    ownership = _project_ownership_operation(project, project_id, tenant_id)
+    return [
+        DestroyPhase(
+            "delete_project",
+            (),
+            "Delete the exact provider project after receipt identity, ownership, and empty-child inventory are proven.",
+            metadata={
+                "deletion_requested": True,
+                "project_id": project_id,
+                "receipt_id": receipt_id,
+                "identity_source": "durable_teardown_receipt",
+                "ownership_proven": ownership is not None,
+                "ownership_operation_id": ownership.operation_id
+                if ownership is not None
+                else "",
+                "provider_inventory": "required_before_mutation",
+            },
+        )
+    ]
+
+
+def _project_ownership_operation(project: str, project_id: str, tenant_id: str):
+    """Return exact durable NPA project-creation proof, or ``None``."""
+
+    from npa.provisioning_journal import list_operations
+
+    matches = []
+    for operation in list_operations(project_alias=project, project_id=project_id):
+        payload = operation.read()
+        if str(payload.get("tenant_id") or "") != tenant_id:
+            continue
+        for resource in payload.get("resources") or []:
+            if not isinstance(resource, dict):
+                continue
+            labels = resource.get("labels")
+            if (
+                resource.get("resource_type") == "nebius_project"
+                and resource.get("provider_id") == project_id
+                and resource.get("project_id") == project_id
+                and resource.get("ownership") == "created_by_this_operation"
+                and resource.get("ownership_source") == "provider-create-response"
+                and isinstance(labels, dict)
+                and labels.get("tenant_id") == tenant_id
+            ):
+                matches.append(operation)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _delete_owned_empty_project(
+    *,
+    project: str,
+    project_id: str,
+    tenant_id: str,
+    region: str,
+    profile: str = "",
+) -> dict[str, Any]:
+    """Guard, journal, delete, and verify one exact NPA-owned empty project."""
+
+    from npa.clients.nebius import (
+        NebiusError,
+        delete_project,
+        get_project_identity,
+        list_project_dependencies,
+    )
+    from npa.teardown_receipts import record_teardown_event
+
+    ownership = _project_ownership_operation(project, project_id, tenant_id)
+    if ownership is None:
+        raise RuntimeError(
+            "exact project is external, shared, or lacks unique durable NPA creation proof"
+        )
+    identity = get_project_identity(
+        project_id, tenant_id=tenant_id, profile=profile or None
+    )
+    if identity is None:
+        record_teardown_event(
+            phase="project",
+            resource=project_id,
+            terminal_state="verified_absent",
+            project_alias=project,
+            project_id=project_id,
+            identity={
+                "project_id": project_id,
+                "tenant_id": tenant_id,
+                "region": region,
+            },
+            verification={"exact_project_absent": True},
+        )
+        return {"outcome": "already_absent", "project_id": project_id}
+    if identity.region != region:
+        raise RuntimeError(
+            f"provider project region {identity.region} does not match durable region {region}"
+        )
+    dependencies = list_project_dependencies(project_id, profile=profile or None)
+    remaining = {kind: list(ids) for kind, ids in dependencies.items() if ids}
+    if remaining:
+        raise RuntimeError(
+            "provider dependency inventory is nonempty: "
+            + ", ".join(f"{kind}={len(ids)}" for kind, ids in sorted(remaining.items()))
+        )
+    # This durable intent receipt is a precondition to mutation. If it cannot be
+    # written, deletion does not run. It carries only exact, non-secret identity.
+    record_teardown_event(
+        phase="project",
+        resource=project_id,
+        terminal_state="deletion_approved",
+        project_alias=project,
+        project_id=project_id,
+        identity={
+            "project_id": project_id,
+            "tenant_id": tenant_id,
+            "region": region,
+            "operation_id": ownership.operation_id,
+            "ownership": "npa",
+        },
+        precheck={
+            "provider_identity_verified": True,
+            "child_inventory": "verified_empty",
+        },
+        action={"kind": "delete_exact_project", "project_id": project_id},
+    )
+    try:
+        delete_project(project_id, profile=profile or None)
+        after = get_project_identity(
+            project_id, tenant_id=tenant_id, profile=profile or None
+        )
+    except NebiusError as exc:
+        raise RuntimeError(f"exact provider project deletion failed: {exc}") from exc
+    if after is not None:
+        raise RuntimeError(
+            "provider accepted deletion but exact project remains present"
+        )
+    record_teardown_event(
+        phase="project",
+        resource=project_id,
+        terminal_state="verified_deleted",
+        project_alias=project,
+        project_id=project_id,
+        identity={"project_id": project_id, "tenant_id": tenant_id, "region": region},
+        verification={
+            "exact_project_absent": True,
+            "child_inventory": "verified_empty",
+        },
+    )
+    return {"outcome": "verified_deleted", "project_id": project_id}
+
+
 def _run(command: tuple[str, ...], runner: Runner) -> subprocess.CompletedProcess[str]:
-    argv = _internal_command_argv(command) if runner is subprocess.run else list(command)
+    argv = (
+        _internal_command_argv(command) if runner is subprocess.run else list(command)
+    )
     try:
         return runner(
             argv,
@@ -289,23 +491,91 @@ def _internal_command_argv(command: tuple[str, ...]) -> list[str]:
     return [sys.executable, "-m", "npa", *command[1:]]
 
 
+def _parse_workflow_inventory(
+    completed: subprocess.CompletedProcess[str],
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """Classify the exact project workflow inventory without exit-code races."""
+
+    payload = parse_single_json_document(completed.stdout or "")
+    rows = payload.get("runs") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or set(payload) != {"runs"}:
+        return None, "workflow inventory returned ambiguous JSON"
+    if any(
+        not isinstance(row, dict) or not str(row.get("run_id") or "").strip()
+        for row in rows
+    ):
+        return None, "workflow inventory returned schema-invalid run rows"
+    diagnostic = str(completed.stderr or "").strip()
+    if _FATAL_INVENTORY_DIAGNOSTIC.search(diagnostic):
+        return (
+            None,
+            "workflow inventory failed with authentication, permission, or transport evidence",
+        )
+    if completed.returncode != 0:
+        if rows:
+            return None, "workflow inventory exited nonzero with nonempty evidence"
+        unknown = [
+            line.strip()
+            for line in diagnostic.splitlines()
+            if line.strip() and not _BENIGN_INVENTORY_DIAGNOSTIC.fullmatch(line.strip())
+        ]
+        if unknown:
+            return None, "workflow inventory exited nonzero with unknown diagnostics"
+    return [dict(row) for row in rows], ""
+
+
 def execute_project_destroy(
     project: str,
     phases: list[DestroyPhase],
     *,
     runner: Runner = subprocess.run,
     on_phase: Callable[[str], None] | None = None,
+    exact_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute every independent phase and report complete/partial convergence."""
 
     from npa.clients.config import resolve_environment
 
     environment = resolve_environment(project)
-    if environment is None or not environment.project_id:
-        raise RuntimeError(
-            f"Project {project!r} has no immutable project identity; refusing teardown."
-        )
-    project_id = str(environment.project_id)
+    supplied = dict(exact_identity or {})
+    if supplied:
+        project_id = str(supplied.get("project_id") or "").strip()
+        tenant_id = str(supplied.get("tenant_id") or "").strip()
+        region = str(supplied.get("region") or "").strip()
+        profile = str(supplied.get("profile") or "").strip()
+        if not project_id or not tenant_id or not region:
+            raise RuntimeError(
+                "durable project recovery identity requires exact project, tenant, and region IDs"
+            )
+        if environment is not None:
+            configured = {
+                "project_id": str(getattr(environment, "project_id", "") or ""),
+                "tenant_id": str(getattr(environment, "tenant_id", "") or ""),
+                "region": str(getattr(environment, "region", "") or ""),
+            }
+            conflicts = [
+                key
+                for key, value in configured.items()
+                if value
+                and value
+                != {"project_id": project_id, "tenant_id": tenant_id, "region": region}[
+                    key
+                ]
+            ]
+            if conflicts:
+                raise RuntimeError(
+                    "live project configuration conflicts with durable receipt identity: "
+                    + ", ".join(conflicts)
+                )
+    else:
+        if environment is None or not environment.project_id:
+            raise RuntimeError(
+                f"Project {project!r} has no immutable project identity; refusing teardown."
+            )
+        project_id = str(environment.project_id)
+        tenant_id = str(getattr(environment, "tenant_id", "") or "")
+        region = str(getattr(environment, "region", "") or "")
+        profile = ""
     results: list[dict[str, Any]] = []
     statuses: dict[str, str] = {}
     for phase in phases:
@@ -314,6 +584,7 @@ def execute_project_destroy(
         commands = list(phase.commands)
         phase_errors: list[str] = []
         phase_warnings: list[str] = []
+        phase_evidence: dict[str, Any] = {}
         executed: list[list[str]] = []
         recovery_commands: list[list[str]] = []
         blocked_by = [
@@ -325,53 +596,54 @@ def execute_project_destroy(
             phase_errors.append("dependency not converged: " + ", ".join(blocked_by))
             recovery_commands.extend([list(command) for command in commands])
         elif phase.name == "delete_project":
-            phase_errors.append(phase.detail)
+            from npa.clients.nebius import NebiusError
+
+            try:
+                phase_evidence = _delete_owned_empty_project(
+                    project=project,
+                    project_id=project_id,
+                    tenant_id=tenant_id,
+                    region=region,
+                    profile=profile,
+                )
+                executed.append(["provider-adapter", "delete-project", project_id])
+            except (NebiusError, OSError, RuntimeError, ValueError) as exc:
+                phase_errors.append(str(exc))
         elif phase.name == "workflows" and commands:
             inventory = _run(commands[0], runner)
             executed.append(list(commands[0]))
-            if inventory.returncode != 0:
-                phase_errors.append("workflow inventory failed")
+            rows, inventory_error = _parse_workflow_inventory(inventory)
+            if rows is None:
+                phase_errors.append(inventory_error)
                 recovery_commands.append(list(commands[0]))
             else:
-                payload = parse_single_json_document(inventory.stdout or "")
-                rows = payload.get("runs") if isinstance(payload, dict) else None
-                if not isinstance(rows, list):
-                    phase_errors.append("workflow inventory returned ambiguous JSON")
-                    recovery_commands.append(list(commands[0]))
-                else:
-                    for row in rows:
-                        run_id = (
-                            str(row.get("run_id") or "")
-                            if isinstance(row, dict)
-                            else ""
+                for row in rows:
+                    run_id = str(row.get("run_id") or "")
+                    submission_state = str(
+                        row.get("submission_state")
+                        or row.get("status")
+                        or row.get("submission_status")
+                        or ""
+                    ).upper()
+                    if submission_state in {"NOT_SUBMITTED", "PLAN_ONLY"}:
+                        continue
+                    cancel_command = (
+                        "npa",
+                        "workbench",
+                        "workflow",
+                        "cancel",
+                        run_id,
+                        "--project",
+                        project,
+                        "--json",
+                    )
+                    completed = _run(cancel_command, runner)
+                    executed.append(list(cancel_command))
+                    if completed.returncode != 0:
+                        phase_errors.append(
+                            f"workflow cancellation failed for {run_id}"
                         )
-                        if not run_id:
-                            continue
-                        submission_state = str(
-                            row.get("submission_state")
-                            or row.get("status")
-                            or row.get("submission_status")
-                            or ""
-                        ).upper()
-                        if submission_state in {"NOT_SUBMITTED", "PLAN_ONLY"}:
-                            continue
-                        cancel_command = (
-                            "npa",
-                            "workbench",
-                            "workflow",
-                            "cancel",
-                            run_id,
-                            "--project",
-                            project,
-                            "--json",
-                        )
-                        completed = _run(cancel_command, runner)
-                        executed.append(list(cancel_command))
-                        if completed.returncode != 0:
-                            phase_errors.append(
-                                f"workflow cancellation failed for {run_id}"
-                            )
-                            recovery_commands.append(list(cancel_command))
+                        recovery_commands.append(list(cancel_command))
         else:
             for command in commands:
                 completed = _run(command, runner)
@@ -383,10 +655,20 @@ def execute_project_destroy(
                     and parsed.get("outcome") == "degraded_local_metadata"
                     and parsed.get("remote_absence_verified") is True
                 )
+                infrastructure_only_converged = bool(
+                    phase.name == "agents"
+                    and isinstance(parsed, dict)
+                    and parsed.get("infrastructure_absent") is True
+                    and parsed.get("iam_cleanup_complete") is False
+                )
                 if remote_only_converged:
                     phase_warnings.append(
                         "exact remote controller absence verified; stale local "
                         "metadata remains for idempotent reconciliation"
+                    )
+                elif infrastructure_only_converged:
+                    phase_warnings.append(
+                        "exact agent infrastructure absence verified; agent IAM cleanup remains partial"
                     )
                 elif completed.returncode != 0:
                     phase_errors.append(f"command failed (exit {completed.returncode})")
@@ -410,6 +692,7 @@ def execute_project_destroy(
                 "warnings": phase_warnings,
                 "recovery_commands": recovery_commands,
                 "blocked_by": blocked_by,
+                "evidence": phase_evidence,
             }
         )
         try:

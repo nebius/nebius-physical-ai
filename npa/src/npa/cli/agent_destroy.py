@@ -212,6 +212,7 @@ def destroy_cmd(
             identity_source=identity.source,
         )
         agent_module._fail(f"Terraform destroy failed: {exc}")
+    terraform_noop_absence = False
     if not exact_instance:
         for operation in operations:
             for resource in operation.read().get("resources") or []:
@@ -225,59 +226,71 @@ def destroy_cmd(
             if exact_instance:
                 break
     if not exact_instance:
-        message = (
-            "Terraform accepted the destroy request, but no immutable instance ID "
-            "was available for provider absence verification. Local state and IAM "
-            "were preserved for recovery."
+        # A successful Terraform destroy with no compute resource in any exact
+        # operation is an authoritative no-op: deployment failed before VM-ID
+        # persistence, so there is no VM identity to verify.  Do not invent a
+        # missing identifier and turn valid infrastructure absence into failure.
+        terraform_noop_absence = bool(operations) and not any(
+            isinstance(resource, dict)
+            and resource.get("resource_type") == "compute_instance"
+            for operation in operations
+            for resource in (operation.read().get("resources") or [])
         )
-        agent_module._record_agent_destroy_event(
-            alias,
-            name,
-            terminal_state="verification_failed",
-            error=message,
-            identity=identity.values,
-            project_id=exact_project,
-            identity_source=identity.source,
-        )
-        agent_module._fail(message)
-    try:
-        remote = get_compute_instance_identity(
-            exact_instance,
-            project_id=exact_project,
-            expected_name=(f"agent-{alias}-{name}" if alias else ""),
-            profile=str(identity.get("profile") or "") or None,
-        )
-    except NebiusError as exc:
-        message = (
-            f"Terraform accepted the destroy request, but provider verification for "
-            f"exact instance {exact_instance} is unresolved: {exc}. Local state and "
-            "IAM were preserved for recovery."
-        )
-        agent_module._record_agent_destroy_event(
-            alias,
-            name,
-            terminal_state="verification_failed",
-            error=message,
-            identity=identity.values,
-            project_id=exact_project,
-            identity_source=identity.source,
-        )
-        agent_module._fail(message)
-    if remote is not None:
-        message = (
-            f"Terraform accepted the destroy request, but exact instance "
-            f"{exact_instance} is still present. Local state and IAM were preserved."
-        )
-        agent_module._record_agent_destroy_event(
-            alias,
-            name,
-            terminal_state="verification_failed",
-            error=message,
-            identity=identity.values,
-            project_id=exact_project,
-            identity_source=identity.source,
-        )
-        agent_module._fail(message)
+        if not terraform_noop_absence:
+            message = (
+                "Terraform accepted the destroy request, but no immutable instance ID "
+                "or exact no-resource operation graph was available. Local state and "
+                "IAM were preserved for recovery."
+            )
+            agent_module._record_agent_destroy_event(
+                alias,
+                name,
+                terminal_state="verification_failed",
+                error=message,
+                identity=identity.values,
+                project_id=exact_project,
+                identity_source=identity.source,
+            )
+            agent_module._fail(message)
+    else:
+        try:
+            remote = get_compute_instance_identity(
+                exact_instance,
+                project_id=exact_project,
+                expected_name=(f"agent-{alias}-{name}" if alias else ""),
+                profile=str(identity.get("profile") or "") or None,
+            )
+        except NebiusError as exc:
+            message = (
+                f"Terraform accepted the destroy request, but provider verification for "
+                f"exact instance {exact_instance} is unresolved: {exc}. Local state and "
+                "IAM were preserved for recovery."
+            )
+            agent_module._record_agent_destroy_event(
+                alias,
+                name,
+                terminal_state="verification_failed",
+                error=message,
+                identity=identity.values,
+                project_id=exact_project,
+                identity_source=identity.source,
+            )
+            agent_module._fail(message)
+        if remote is not None:
+            message = (
+                f"Terraform accepted the destroy request, but exact instance "
+                f"{exact_instance} is still present. Local state and IAM were preserved."
+            )
+            agent_module._record_agent_destroy_event(
+                alias,
+                name,
+                terminal_state="verification_failed",
+                error=message,
+                identity=identity.values,
+                project_id=exact_project,
+                identity_source=identity.source,
+            )
+            agent_module._fail(message)
     agent_module._record_agent_destroy_event(
         alias,
         name,
@@ -290,17 +303,46 @@ def destroy_cmd(
     if record:
         agent_module._remove_agent_record(alias, name)
     agent_module._cleanup_agent_local_files(alias, name)
+    iam_error = ""
     if alias:
-        from npa.cli.agent_iam import report_destroyed_agent_iam
+        from npa.cli.agent_iam import AgentIAMCleanupError, report_destroyed_agent_iam
 
-        report_destroyed_agent_iam(
-            alias, name, record=recovery_record or None, purge=purge_iam
+        try:
+            report_destroyed_agent_iam(
+                alias, name, record=recovery_record or None, purge=purge_iam
+            )
+        except AgentIAMCleanupError as exc:
+            iam_error = str(exc)
+            agent_module._record_agent_destroy_event(
+                alias,
+                name,
+                terminal_state="partial",
+                error=iam_error,
+                identity=identity.values,
+                project_id=exact_project,
+                identity_source=identity.source,
+                terraform_graph_absent=True,
+            )
+    if iam_error:
+        _emit(
+            {
+                **identity.to_dict(),
+                "outcome": "partial_iam_cleanup",
+                "verified": False,
+                "infrastructure_absent": True,
+                "iam_cleanup_complete": False,
+                "message": iam_error,
+            },
+            output_json=output_json,
         )
+        raise typer.Exit(code=2)
     _emit(
         {
             **identity.to_dict(),
             "outcome": "verified_deleted",
             "verified": True,
+            "infrastructure_absent": True,
+            "iam_cleanup_complete": bool(purge_iam),
             "no_op": False,
             "message": f"destroyed: {alias}/{name}",
         },

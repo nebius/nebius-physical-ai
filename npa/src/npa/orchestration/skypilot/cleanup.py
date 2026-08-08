@@ -1110,12 +1110,42 @@ def _is_verified_empty_queue_message(
 
     if result.returncode not in {0, 1}:
         return False
-    parts = [
-        " ".join(str(value or "").strip().lower().split())
-        for value in (result.stdout, result.stderr)
-        if str(value or "").strip()
-    ]
-    return len(parts) == 1 and parts[0] in _EMPTY_QUEUE_MESSAGES
+    stdout_lines = _known_empty_queue_lines(result.stdout, stream="stdout")
+    stderr_lines = _known_empty_queue_lines(result.stderr, stream="stderr")
+    if stdout_lines is None or stderr_lines is None:
+        return False
+    lines = [*stdout_lines, *stderr_lines]
+    markers = [line for line in lines if line in _EMPTY_QUEUE_MESSAGES]
+    return len(markers) == 1
+
+
+def _known_empty_queue_lines(value: str, *, stream: str) -> list[str] | None:
+    """Strip only pinned SkyPilot's known empty-queue presentation lines."""
+
+    import re
+
+    ansi = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+    normalized: list[str] = []
+    for raw in str(value or "").splitlines():
+        line = " ".join(ansi.sub("", raw).strip().lower().split())
+        if not line:
+            continue
+        if line in _EMPTY_QUEUE_MESSAGES:
+            normalized.append(line)
+            continue
+        if stream == "stdout" and (
+            line in {"managed jobs", "managed jobs queue"}
+            or re.fullmatch(r"[-=─━]{3,}", line)
+        ):
+            continue
+        if stream == "stderr" and (
+            line.startswith("warning: skypilot telemetry ")
+            or line.startswith("warning: skypilot update check ")
+            or line.startswith("warning: managed jobs output format ")
+        ):
+            continue
+        return None
+    return normalized
 
 
 def _matching_jobs(
@@ -1505,9 +1535,9 @@ def _run(
     env.update(env_extra or {})
     from npa.progress import WaitProgress
 
-    operation = " ".join(
-        [Path(effective_cmd[0]).name, *effective_cmd[1:3]]
-    ).replace(" --config", "")
+    operation = " ".join([Path(effective_cmd[0]).name, *effective_cmd[1:3]]).replace(
+        " --config", ""
+    )
     progress = WaitProgress(f"SkyPilot subprocess ({operation})")
     progress.start(f"attempt=1 timeout={timeout}s")
     stop = threading.Event()
