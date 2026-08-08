@@ -15,8 +15,10 @@ before spending GPU time.
 
 1. Create a Hugging Face account at <https://huggingface.co/join> if you do
    not already have one.
-2. Create a token at <https://huggingface.co/settings/tokens>. A read-scoped
-   token is enough; generation only downloads weights, it never pushes.
+2. Create a token at <https://huggingface.co/settings/tokens>. A read token is
+   enough; generation only downloads weights, it never pushes. If you use a
+   fine-grained token, explicitly grant it read access to every gated repo the
+   serving path downloads.
 3. Export it as `HF_TOKEN` (or set `NPA_COSMOS3_HF_TOKEN_ENV` to the name of
    an env var you already use for a different token).
 4. Accept the license for every gated repo your run touches before the run,
@@ -54,7 +56,7 @@ whether the problem is the token or the license:
 | Request | Status | Meaning |
 | --- | --- | --- |
 | Anonymous request to the gated repo URL | `401` | No valid token reached Hugging Face: it is missing, empty, malformed, or revoked. |
-| Authenticated request with the token you configured | `403` | The token is valid and reached Hugging Face; the account behind it has not accepted this repo's license yet. |
+| Authenticated request with the token you configured | `403` | Hugging Face received the token but denied authorization. Most commonly the account has not accepted/requested access to this repo, but a fine-grained token that omits the repo or an organization token policy can also cause this status. |
 
 Measured signature, from the vLLM-Omni serving path (`nvidia/Cosmos-1.0-Guardrail`,
 before the license was accepted; shown because the same status-code
@@ -72,9 +74,11 @@ RuntimeError: Orchestrator initialization failed: 401 Client Error.
 ```
 
 Before the license was accepted, an authenticated fetch of the same URL
-returned `403` while an anonymous fetch returned `401`; that split is what
-identified the problem as a missing license acceptance rather than a bad
-token, and license acceptance resolved it immediately. On the npa path,
+returned `403` while an anonymous fetch returned `401`; in that measured case,
+the split identified the problem as missing license acceptance, and accepting
+the license resolved it immediately. A 403 is not universally proof of that
+single cause: also check fine-grained repo permissions and any organization
+token policy. On the npa path,
 `require_model_access` catches the no-token case before any download starts;
 if you already have `HF_TOKEN` set and generation still fails partway through
 fetching the guardrail weights, read the HTTP status in the traceback against
@@ -112,17 +116,20 @@ setting the variable unconditionally would silently disable a faster
 download path for environments that do not need it. `npa workbench cosmos3
 generate` checks the installed `hf-xet` and `huggingface_hub` versions in the
 runtime environment and prints a warning naming this workaround only when it
-detects the affected pair; it does not set the variable for you.
+detects the affected pair and Xet is still enabled; it does not set the
+variable for you and stays silent when `HF_HUB_DISABLE_XET` is already active.
 
 ## Checklist
 
-1. Create a Hugging Face account and a read-scoped token.
+1. Create a Hugging Face account and a read token (or a fine-grained token with
+   explicit read access to every required repo).
 2. Export the token as `HF_TOKEN` (or point `NPA_COSMOS3_HF_TOKEN_ENV` at it).
 3. Accept `nvidia/Cosmos-Guardrail1` for the npa generation path, and
    separately accept `nvidia/Cosmos-1.0-Guardrail` if you also serve through
    vLLM-Omni.
 4. If a download fails, check whether an anonymous request to the same URL
    returns `401` (bad/missing token) or an authenticated one returns `403`
-   (unaccepted license) before assuming the token is wrong.
+   (authorization denied: usually repo access/license, but possibly token scope
+   or organization policy) before assuming the token is wrong.
 5. If the failure is `Unable to parse string as hex hash value` from
    `huggingface_hub`'s Xet client, set `HF_HUB_DISABLE_XET=1` and retry.

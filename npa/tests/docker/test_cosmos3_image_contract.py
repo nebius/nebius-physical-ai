@@ -28,6 +28,7 @@ NPA_ROOT = REPO_ROOT / "npa"
 DOCKERFILE = NPA_ROOT / "docker/workbench/cosmos3/Dockerfile"
 SMOKE_SCRIPT = NPA_ROOT / "docker/workbench/cosmos3/smoke_functional.sh"
 CONTRACT = NPA_ROOT / "docker/workbench/packaging-contract.yaml"
+COSMOS3_RELEASE_TAG = "1.2.2-cu130-r2"
 
 # Anything that would pull weight bytes into a build layer.
 WEIGHT_FETCH_PATTERNS = (
@@ -51,6 +52,7 @@ def test_cosmos3_is_registered_as_a_container_tool() -> None:
     assert CONTAINER_IMAGE_NAMES["cosmos3"] == "npa-cosmos3"
 
     pinned = supported_tool_version("cosmos3")
+    assert pinned == COSMOS3_RELEASE_TAG
     pyproject = tomllib.loads((NPA_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert pyproject["tool"]["npa"]["supported-tools"]["cosmos3"] == pinned
 
