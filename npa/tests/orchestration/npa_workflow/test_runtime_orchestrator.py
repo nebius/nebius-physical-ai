@@ -465,6 +465,39 @@ def test_runtime_persists_exact_submitted_workflow_yaml(tmp_path: Path) -> None:
     assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
 
 
+def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    executor = _executor(spec, store=store)
+    workflow_yaml = GATE_LOOP_SPEC.encode("utf-8")
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-executor-workflow-artifact",
+        executor=executor,
+        options=executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=workflow_yaml,
+    )
+
+    assert report.status == "succeeded"
+    assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
+
+
+def test_runtime_rejects_workflow_yaml_without_any_durable_store(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec)
+
+    with pytest.raises(NpaWorkflowError, match="workflow_yaml requires a durable"):
+        run_workflow_runtime(
+            spec,
+            run_id="rt-no-workflow-store",
+            executor=executor,
+            options=executor.options,
+            workflow_yaml=GATE_LOOP_SPEC.encode("utf-8"),
+        )
+
+
 def test_runtime_runs_full_budget_when_gate_keeps_looping(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     submitter = FakeSubmitter()
@@ -721,6 +754,39 @@ def test_timeout_without_cancel_preserves_the_in_flight_job(tmp_path: Path) -> N
     assert not cancels
     assert report.waves[0]["status"] == "running"
     assert report.waves[0]["sky_status"] == "SUBMITTED"
+
+
+def test_timeout_without_cancel_never_retries_a_preserved_job(tmp_path: Path) -> None:
+    """Scratch regression: retries must not turn one preserved job into three."""
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    submitter = FakeSubmitter()
+    cancels: list[dict[str, Any]] = []
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=2,
+        retries=2,
+        retry_backoff_seconds=0,
+        cancel_on_timeout=False,
+    )
+    executor = _executor(
+        spec,
+        submitter=submitter,
+        status_fn=FakeStatus(["RUNNING"] * 20),
+        options=options,
+        cancels=cancels,
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-timeout-preserve-retries", executor=executor, options=options
+    )
+
+    assert report.status == "failed"
+    assert len(submitter.calls) == 1
+    assert cancels == []
+    assert len(report.waves) == 1
+    assert report.waves[0]["status"] == "running"
+    assert executor.ledger.state.in_flight_wave(report.waves[0]["key"]) is not None
 
 
 def test_zero_max_wait_is_unbounded(tmp_path: Path) -> None:

@@ -37,6 +37,36 @@ GROOT_LEARNING_MCAP_NOTE = (
     "per-sample error, held-out before/after metrics, training loss, and provenance "
     "on dataset index time. The same file is published for both embedded viewers."
 )
+GROOT_TASK_PERFORMANCE_NOTE = (
+    "Closed-loop PushT task-performance replay loaded. Both panels are live "
+    "gym-pusht simulation rollouts driven by immutable GR00T checkpoint outputs "
+    "on the same seed. This is simulated task execution, not physical hardware."
+)
+
+
+def task_performance_visual_fact_block(
+    visual_context: Mapping[str, Any] | None,
+) -> str:
+    """Return fail-closed facts for a closed-loop simulated task replay."""
+
+    facts = " ".join(
+        str((visual_context or {}).get(key) or "")
+        for key in ("run_id", "artifact_key", "note", "provenance", "origin")
+    ).lower()
+    if not (
+        ("task-performance" in facts or "closed-loop" in facts)
+        and ("groot" in facts or "pusht" in facts)
+    ):
+        return ""
+    return (
+        "\n\nNON-NEGOTIABLE FACTS FOR THIS TASK-PERFORMANCE REPLAY:\n"
+        "- It is closed-loop PushT execution in gym-pusht simulation, not physical hardware.\n"
+        "- Baseline and trained panels use the same deterministic seed and initial state.\n"
+        "- Every applied action comes from the loaded GR00T checkpoint; no scripted controller is used.\n"
+        "- Camera pixels are current env.render() frames after physics transitions, not dataset video.\n"
+        "- Recognize visible goal coverage, success/failure, score, and termination labels; "
+        "never call the simulated pusher a physical robot."
+    )
 
 
 def learning_visual_fact_block(visual_context: Mapping[str, Any] | None) -> str:
@@ -322,6 +352,65 @@ def truthful_learning_visual_reply(meta: Mapping[str, Any] | None) -> str:
         "inspect error peaks against `camera/front`, and use the MCAP/video views for "
         "the same aligned samples. Run closed-loop evaluation only when a compatible "
         "simulator or robot execution path is available."
+    )
+
+
+def task_performance_visual_reply_needs_correction(
+    reply: str | None,
+    meta: Mapping[str, Any] | None,
+) -> bool:
+    """Reject physical-hardware claims or omission of required operator sections."""
+
+    facts = _meta_blob(meta)
+    is_task = ("task-performance" in facts or "closed-loop" in facts) and (
+        "groot" in facts or "pusht" in facts
+    )
+    if not is_task:
+        return False
+    lowered = str(reply or "").lower()
+    physical_claim = any(
+        phrase in lowered
+        for phrase in (
+            "physical robot",
+            "real robot hardware",
+            "hardware camera",
+            "on the real robot",
+        )
+    ) and not any(
+        phrase in lowered for phrase in ("not physical", "no physical", "simulated")
+    )
+    headings = all(
+        heading in lowered
+        for heading in ("what i see", "likely meaning", "operator feedback", "next actions")
+    )
+    return physical_claim or not headings
+
+
+def truthful_task_performance_visual_reply(meta: Mapping[str, Any] | None) -> str:
+    """Grounded fallback for the nonblank simulated paired-rollout viewer."""
+
+    values = meta if isinstance(meta, Mapping) else {}
+    artifact = str(values.get("artifact_key") or "the task-performance recording")
+    return (
+        "### What I see\n\n"
+        "A non-blank, synchronized PushT task-performance view labeled **Simulated**. "
+        "The baseline and trained panels show the circular pusher, gray T-shaped object, "
+        "green T-shaped goal, same episode seed, step/horizon, task-native coverage score, "
+        "final success/failure, and termination reason. Aggregate panels report paired "
+        "success rates, task-score deltas, and the confidence interval.\n\n"
+        "### Likely meaning\n\n"
+        "This is genuine closed-loop simulator evidence: each checkpoint controls its own "
+        "current gym-pusht environment from the same initial condition. Outcome labels and "
+        "goal coverage establish task behavior; training/offline MSE is secondary. This is "
+        "not physical-robot footage.\n\n"
+        "### Operator feedback\n\n"
+        "Compare object motion and coverage at the same timeline position, then check whether "
+        "the trained outcome and paired confidence interval support the displayed conclusion. "
+        f"The active artifact is `{artifact}`.\n\n"
+        "### Next actions\n\n"
+        "Use the seed selector to inspect trained wins and representative failures, scrub near "
+        "termination, inspect action/object/goal topics in Lichtblick, and download the JSON "
+        "report before promoting the checkpoint."
     )
 
 

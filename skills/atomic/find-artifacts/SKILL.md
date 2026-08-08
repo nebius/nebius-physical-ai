@@ -44,6 +44,7 @@ GET /api/artifacts/run/{run_id}
 ```http
 POST /api/sim-viz/load-artifact
 {
+  "run_id": "run-prefix",
   "s3_uri": "s3://bucket/path/to/object"
 }
 ```
@@ -57,6 +58,11 @@ POST /api/sim-viz/load-artifact
   "key": "run-prefix/reports/output.rrd"
 }
 ```
+
+`s3_uri` intentionally requires `run_id`: the backend authorizes the exact key
+against that run's discovered artifact inventory. URI-only loading is rejected
+with a stable 400 response because bucket membership alone is not run-level
+authorization.
 
 4. Confirm loaded state:
 

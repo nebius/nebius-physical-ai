@@ -163,7 +163,7 @@ def test_standalone_cosmos_case_exercises_conditioned_real_toolref() -> None:
     assert "--condition-on-input" in transfer.argv
 
 
-def test_groot_training_case_is_real_multi_gpu_coverage() -> None:
+def test_groot_case_is_real_closed_loop_task_coverage() -> None:
     case = next(
         case for case in SUBMIT_LIVE_MATRIX if case.spec == "groot-1-7-finetune.yaml"
     )
@@ -171,10 +171,10 @@ def test_groot_training_case_is_real_multi_gpu_coverage() -> None:
     assert case.tier == "multi"
     assert not case.plan_only
     assert case.image_tool == "groot"
-    assert ("gpu_count", "2") in case.config_vars
-    assert ("nccl_transport", "socket") in case.config_vars
-    assert "real pinned GR00T N1.7" in case.notes
-    assert "torchrun --nproc_per_node=2" in case.notes
+    assert not case.config_vars
+    assert ">=20-seed gym-pusht closed-loop benchmark" in case.notes
+    assert "paired task-outcome evidence" in case.notes
+    assert "No smoke override weakens the gate" in case.notes
 
 
 @pytest.mark.parametrize(

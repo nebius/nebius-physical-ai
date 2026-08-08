@@ -1144,6 +1144,13 @@ def _copy_videos_lerobot_to_groot(
     episode_rows: list[dict[str, Any]],
     modality: dict[str, Any],
 ) -> None:
+    """Copy every declared sensor video, failing closed when any source is absent.
+
+    A dataset whose metadata declares a camera but whose bytes are missing is not
+    a usable GR00T input.  Silently skipping it would create a conversion that
+    passes metadata checks and then trains/evaluates without required perception.
+    """
+
     if not modality.get("video"):
         return
     rows_by_episode = {int(row.get("episode_index", idx)): row for idx, row in enumerate(episode_rows)}

@@ -1,23 +1,24 @@
-# GR00T N1.7 training
+# GR00T N1.7 closed-loop task performance
 
-Use the checked-in `groot-1-7-finetune.yaml` workflow to fine-tune NVIDIA GR00T
-N1.7 on a GR00T-format LeRobot dataset. The workflow runs NVIDIA's real
-`gr00t/experiment/launch_finetune.py` and `Gr00tPolicy.get_action` surfaces from
-the `npa-groot:0.1.0` image; it is not a manifest-only training or scoring
-substitute. Its serial stage graph is:
+Use the checked-in `groot-1-7-finetune.yaml` workflow to compare identity-pinned
+baseline and trained NVIDIA GR00T N1.7 checkpoints on the exact task established
+from dataset provenance. The checked-in reference proves canonical PushT and
+runs real `Gr00tPolicy.get_action` outputs in live `gym_pusht/PushT-v0` physics;
+it is not offline dataset replay or action-regression scoring. Its serial graph is:
 
 ```text
-prepare_split -> baseline_eval -> finetune -> posttrain_eval ->
-compare_learning -> emit_mcap -> emit_rrd -> publish
+resolve_task_contract -> evaluate_baseline_closed_loop ->
+evaluate_trained_closed_loop -> analyze_paired_outcomes ->
+render_task_rollouts -> emit_mcap -> emit_rrd -> publish
 ```
 
-The split is deterministic at episode granularity, stores content hashes, uses
-training-only normalization statistics, and proves zero episode overlap. Both
-evaluations retain aligned predicted and expert actions for every held-out
-sample. The primary action-MSE gate must improve after one complete pass over
-the configured training cohort. RRD, MCAP, and comparison video are synchronized
-from those held-out outputs and explicitly labelled offline evaluation, not a
-closed-loop policy rollout.
+Both checkpoints use the same reserved deterministic seeds, initial states,
+horizon, current simulator observations, action clipping, and success predicate.
+Every environment action comes from the corresponding model. The paired report
+includes task success, maximum goal coverage, returns, termination reasons,
+confidence intervals, and a paired test. Publication fails unless actual task
+outcomes improve. The UI and recordings label the platform **Simulated**; they
+make no physical-robot claim.
 
 ## Reproducible contract
 
@@ -29,23 +30,12 @@ The workbench image and command pin and verify:
 - Isaac-GR00T source revision
   `3df8b3825d67f755e69141446f4315f281b9b7e6`.
 
-The trainer writes `npa_groot_finetune_manifest.json` beside the uploaded
-checkpoints after successful training. It records those pins, the run ID,
-embodiment, GPU count, batch size, training steps, input dataset, and output
-URI. It also records per-rank/world-size evidence, distinct visible GPU UUIDs,
-an NCCL all-reduce result, a finite training loss, optimizer-step evidence,
-and actual checkpoint object/byte counts plus a real loss trajectory. The
-`compare_learning` stage fails unless model-forward proof, exact sample/action
-alignment, identical held-out provenance, training coverage, and a factual
-primary-metric improvement are all present. Per-dimension regressions remain
-visible even when the primary gate passes.
-
-For single-node hosts where NCCL peer-to-peer and shared-memory transports are
-not viable, the workflow exposes `nccl_transport=socket`. This sets
-`NCCL_P2P_DISABLE=1` and `NCCL_SHM_DISABLE=1` inside the trainer and records the
-choice in the manifest. Keep the default `auto` on hosts whose native NCCL
-transport passes a collective smoke; the socket mode is a compatibility
-fallback and trades intra-node bandwidth for stability.
+The task-contract stage pins `lerobot/pusht`, `gym-pusht==0.1.6`, the upstream
+source revision, action meaning (absolute pusher x/y in workspace pixels), the
+96×96 RGB plus pusher-position observation, and the exact `coverage > 0.95`
+success implementation. It compares logical data rows to the immutable upstream
+dataset and checks that simulator frames change after a physics transition.
+Checkpoint directory identities are verified before either policy is loaded.
 
 ## Validate and inspect
 
@@ -57,65 +47,43 @@ npa workbench workflow validate-spec "$SPEC"
 npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID"
 ```
 
-Preview the validated eight-GPU render without launching it:
+Preview the validated render without launching it:
 
 ```bash
 npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
-  --var gpu_count=8 \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
   --plan-only
 ```
 
-The plan must show the episode split and two real GPU evaluation phases around
-`finetune`, plus the compare/replay/publish phases. It must show both
-`accelerators: H100:8` and `--num-gpus 8` on `finetune`. Inside that stage, the
-GR00T command converts counts above one to `torchrun --nproc_per_node=8` and
-still passes upstream `--num-gpus 8`.
+The plan must show the exact eight semantic phases. Both evaluator stages use
+one compatible GPU and identical `paired_episodes >= 20`, `horizon=300`, and
+`final_seed_namespace` values.
 
-## Submit training
+## Submit evaluation
 
-The dataset must already use GR00T's LeRobot layout, including the modality
-metadata required for the selected embodiment. Provide the operator's Hugging
-Face and S3 credentials through the normal secret environment mechanism.
-
-Single GPU:
+The source data and both checkpoints must exist at immutable refs. Override all
+three together when adapting this reference to another proven task:
 
 ```bash
 npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
   --var bucket=<bucket> \
   --var source_data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
-  --var gpu_count=1 \
+  --var baseline_checkpoint_uri=s3://<bucket>/checkpoints/baseline/ \
+  --var baseline_checkpoint_sha256=<identity> \
+  --var trained_checkpoint_uri=s3://<bucket>/checkpoints/trained/ \
+  --var trained_checkpoint_sha256=<identity> \
+  --var paired_episodes=24 \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
   --secret-env HF_TOKEN \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Multi-GPU uses the same command with any positive count (the checked-in example defaults to 8):
-
-```bash
-npa workbench workflow submit "$SPEC" \
-  --run-id "$RUN_ID" \
-  --var bucket=<bucket> \
-  --var source_data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
-  --var gpu_count=8 \
-  --registry cr.eu-north1.nebius.cloud/<registry-id> \
-  --secret-env HF_TOKEN \
-  --secret-env AWS_ACCESS_KEY_ID \
-  --secret-env AWS_SECRET_ACCESS_KEY
-```
-
-On RTX PRO 6000 Blackwell hosts where a minimal two-rank NCCL probe fails over
-both P2P and SHM, add `--var nccl_transport=socket`. Validate that fallback with
-a small collective before downloading the full model.
-
-`gpu_count` must be a positive integer. It controls the trainer allocation and
-world size. `global_batch_size` must be a positive multiple of `gpu_count`, as
-required by GR00T. Recalculate `max_steps=ceil(train_samples/global_batch_size)`
-when the cohort or batch changes so the stated coverage remains a complete
-training-cohort pass rather than an arbitrary demo duration.
+Do not reduce `paired_episodes` below 20, substitute a scripted controller, or
+change the final seeds after inspecting their results. Use separate validation
+seeds for any further training or checkpoint selection.
 
 ## Find the run and outputs
 
@@ -126,32 +94,30 @@ runs later from their persisted NPA manifests:
 ```bash
 npa workbench workflow list \
   --s3-bucket <bucket> \
-  --workflow-s3-prefix groot-1-7-finetune \
+  --workflow-s3-prefix groot-1-7-task-performance \
   --json
 ```
 
 With the default prefix, checkpoints and provenance are under:
 
 ```text
-s3://<bucket>/groot-1-7-finetune/<run-id>/reports/split/manifest.json
-s3://<bucket>/groot-1-7-finetune/<run-id>/eval/baseline/evaluation.json
-s3://<bucket>/groot-1-7-finetune/<run-id>/checkpoints/posttrain/
-s3://<bucket>/groot-1-7-finetune/<run-id>/eval/posttrain/evaluation.json
-s3://<bucket>/groot-1-7-finetune/<run-id>/reports/learning-report.json
-s3://<bucket>/groot-1-7-finetune/<run-id>/reports/offline-heldout-comparison.mp4
-s3://<bucket>/groot-1-7-finetune/<run-id>/reports/groot-learning.mcap
-s3://<bucket>/groot-1-7-finetune/<run-id>/reports/groot-learning.rrd
-s3://<bucket>/groot-1-7-finetune/<run-id>/reports/publish-manifest.json
-s3://<bucket>/groot-1-7-finetune/<run-id>/workflow.yaml
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/task-contract.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/eval/baseline/evaluation.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/eval/trained/evaluation.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/rollouts/{baseline,trained}/
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/task-performance-report.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/paired-task-performance.mp4
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/task-performance.mcap
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/task-performance.rrd
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/publish-manifest.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/workflow.yaml
 ```
 
-MCAP uses `foxglove.CompressedImage` on `/camera/<name>`, `foxglove.Log` on
-`/log`, plus `/policy/predicted_action`, `/expert/action`,
-`/metrics/action_error`, `/metrics/heldout_before`,
-`/metrics/heldout_after`, and `/metrics/train_loss`. RRD opens with a camera,
-predicted-versus-expert action plots, error panels, before/after metrics,
-training loss, and provenance on the `dataset_time` timeline. Dataset index/FPS
-is not robot wall-clock time; every output sets `is_robot_capture_time=false`.
+MCAP exposes `/rollout/{baseline,trained}/camera` and action topics, plus
+object/goal pose, task progress, success, aggregate rates, paired deltas, and
+logs. Rerun opens on synchronized baseline/trained cameras, object/goal
+trajectory, coverage, success/termination, aggregate rates, paired deltas, and
+the confidence interval. Training loss and offline action MSE are secondary.
 
 The terminal `publish` stage downloads and independently parses both recording
 formats. It succeeds only after their run IDs, schemas/topics, Rerun identity,

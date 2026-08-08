@@ -3051,7 +3051,7 @@ def _agent_system_prompt() -> str:
         "- POST /api/sim-viz/load-run — switch active run context by run_id",
         "- GET /api/artifacts/runs?prefix=&limit= — discover run prefixes from object storage (no workflow allowlist)",
         "- GET /api/artifacts/run/{{run_id}} — list every object for a run with render hints",
-        "- POST /api/sim-viz/load-artifact — load explicit s3_uri (or run_id+key) into viewer/download",
+        "- POST /api/sim-viz/load-artifact — load run_id+s3_uri or run_id+key into viewer/download",
         "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
         "- GET /api/foxglove/config, /api/foxglove/status — embedded Foxglove viewer config + readiness",
         "- POST /api/foxglove/load-artifact | /api/foxglove/convert-run | /api/foxglove/live —"
@@ -3067,7 +3067,7 @@ def _agent_system_prompt() -> str:
         "To view Franka immediately, tell users to open the **Rerun** tab and click **Load Franka in Rerun**",
         "(or POST /api/sim-viz/load-franka-demo). The UI has two tabs: **Chat** and **Rerun**.",
         "Artifact-first browsing flow: call `/api/artifacts/runs`, inspect `/api/artifacts/run/{{id}}`,",
-        "then `POST /api/sim-viz/load-artifact` with explicit `s3_uri` or `run_id` + `key`.",
+        "then `POST /api/sim-viz/load-artifact` with `run_id` + `s3_uri` or `run_id` + `key`.",
         "The **Rerun** tab embeds the viewer full-bleed beside a run-loading rail (mp4/video preview,",
         "artifact browser, and Load run data). There is no separate Cameras panel in the UI.",
         "Never suggest localhost, 127.0.0.1, or port 8080 — use relative /api/... paths or /rerun/.",
@@ -4949,6 +4949,9 @@ def chat(payload: dict):
     visual_block = format_visual_context_block(visual_context)
     if visual_block:
         system_content += "\\n\\n" + visual_block
+    if visual_turn:
+        system_content += learning_visual_fact_block(visual_context)
+        system_content += task_performance_visual_fact_block(visual_context)
     if origin_reply:
         # Ground the "Where it comes from" / original-input story with real facts.
         system_content += (
@@ -5011,6 +5014,12 @@ def chat(payload: dict):
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="LLM response missing assistant message") from exc
     reply, reasoning = _split_reasoning(message)
+    if visual_turn and learning_visual_reply_needs_correction(reply, visual_context):
+        reply = truthful_learning_visual_reply(visual_context)
+        reasoning = None
+    if visual_turn and task_performance_visual_reply_needs_correction(reply, visual_context):
+        reply = truthful_task_performance_visual_reply(visual_context)
+        reasoning = None
     if not reply and reasoning:
         reply = reasoning
         reasoning = None
@@ -7198,8 +7207,19 @@ def sim_viz_load_artifact(payload: dict | None = None):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
         raise
-    except Exception as exc:
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+    except Exception:
+        logging.getLogger("npa.agent.artifact_load").exception(
+            "Artifact load storage request failed"
+        )
+        return JSONResponse(
+            status_code=502,
+            content={{
+                "ok": False,
+                "error": "artifact storage request failed",
+                "error_code": "artifact_storage_error",
+                "source": "s3",
+            }},
+        )
 
 
 def _foxglove_convert_run(**kwargs):

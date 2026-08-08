@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 # This module is source-embedded after the backend and artifact helpers are
 # defined. Names intentionally resolve in that generated backend namespace.
 # ruff: noqa: F821,E501
+
+_artifact_content_logger = logging.getLogger("npa.agent.artifact_content")
 
 
 def _apply_content_artifact(
@@ -67,6 +71,7 @@ def _summary_documents_for_run(s3, bucket: str, artifacts: list) -> dict:
         "evidence/collective.json",
         "checkpoints/npa_groot_finetune_manifest.json",
         "reports/learning-report.json",
+        "reports/task-performance-report.json",
     }
     documents = {}
     for artifact in artifacts:
@@ -79,7 +84,15 @@ def _summary_documents_for_run(s3, bucket: str, artifacts: list) -> dict:
             if len(raw) > INLINE_TEXT_MAX_BYTES:
                 continue
             documents[relative] = json.loads(raw.decode("utf-8"))
-        except Exception:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
+            _artifact_content_logger.warning(
+                "Ignoring malformed summary document at key %s", artifact.key
+            )
+            continue
+        except Exception:  # contained storage boundary; traceback stays server-side
+            _artifact_content_logger.exception(
+                "Could not read summary document at key %s", artifact.key
+            )
             continue
     return documents
 
@@ -99,8 +112,10 @@ def _resolved_artifact_for_content(
         )
     except HTTPException:
         raise
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(
+            status_code=400, detail="invalid run artifact request"
+        ) from exc
     supplied_bucket = str(requested_bucket or "").strip()
     if supplied_bucket and supplied_bucket != run_bucket:
         raise HTTPException(
@@ -113,8 +128,10 @@ def _resolved_artifact_for_content(
             normalized_key,
             [str(item.key) for item in artifacts],
         )
-    except Exception as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(
+            status_code=404, detail="artifact key is not present in the authorized run inventory"
+        ) from exc
     artifact = next(item for item in artifacts if str(item.key) == normalized_key)
     artifact_bucket, artifact_key = parse_s3_uri(str(artifact.s3_uri))
     if artifact_bucket != run_bucket or artifact_key != normalized_key:
@@ -262,10 +279,16 @@ def artifacts_content(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception:  # contained route boundary; preserve traceback in server logs
+        _artifact_content_logger.exception("Artifact content storage request failed")
         return JSONResponse(
             status_code=502,
-            content={"ok": False, "error": str(exc), "source": "s3"},
+            content={
+                "ok": False,
+                "error": "artifact storage request failed",
+                "error_code": "artifact_storage_error",
+                "source": "s3",
+            },
         )
 
 
@@ -298,9 +321,12 @@ def artifact_file(filename: str):
                     "X-Content-Type-Options": "nosniff",
                 },
             )
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
+            _artifact_content_logger.exception(
+                "Image transcode failed for local artifact %s", safe_name
+            )
             raise HTTPException(
-                status_code=500, detail=f"image transcode failed: {exc}"
+                status_code=500, detail="image transcode failed"
             ) from exc
     local_media_type = artifact_media_type(safe_name)
     local_inline = local_media_type.startswith("image/") or local_media_type.startswith(
@@ -354,8 +380,14 @@ def artifacts_download(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception:  # contained route boundary; preserve traceback in server logs
+        _artifact_content_logger.exception("Artifact download storage request failed")
         return JSONResponse(
             status_code=502,
-            content={"ok": False, "error": str(exc), "source": "s3"},
+            content={
+                "ok": False,
+                "error": "artifact storage request failed",
+                "error_code": "artifact_storage_error",
+                "source": "s3",
+            },
         )

@@ -119,6 +119,7 @@ class FrameInput:
     path: Path
     camera: str = "camera"
     timestamp_ns: int | None = None
+    topic: str | None = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,8 @@ class MetricsInput:
 
     path: Path
     name: str = "metrics"
+    topic: str | None = None
+    timestamp_ns: int | None = None
 
 
 @dataclass
@@ -249,6 +252,8 @@ def _read_image(path: Path) -> tuple[bytes, str] | None:
 def _metric_schema(payload: dict[str, Any], title: str) -> dict[str, Any]:
     properties: dict[str, Any] = {"timestamp": dict(_TIME_SCHEMA)}
     for key, value in payload.items():
+        if key == "_timestamp_ns":
+            continue
         if isinstance(value, bool):
             properties[key] = {"type": "boolean"}
         elif isinstance(value, (int, float)):
@@ -350,9 +355,12 @@ def write_run_mcap(
         for key, value in dict(metadata or {}).items()
         if str(key).strip() and value is not None
     }
+    # ``write_run_mcap`` is also the shared writer for domain-specific
+    # recordings.  Preserve their explicit producer identity; only the generic
+    # convert-run caller gets this default.
+    metadata_payload.setdefault("producer", "npa workbench foxglove convert-run")
     metadata_payload.update(
         {
-            "producer": "npa workbench foxglove convert-run",
             "run_id": str(run_id or ""),
             "timestamps": metadata_payload.get("timestamps", "synthetic-fps"),
             "fps": str(rate),
@@ -394,7 +402,11 @@ def write_run_mcap(
                 summary.skipped.append(f"{frame.path.name}: unsupported image format")
                 continue
             payload, image_format = loaded
-            topic = safe_topic(frame.camera, prefix=camera_topic_prefix)
+            topic = (
+                safe_topic(frame.topic, prefix="")
+                if frame.topic
+                else safe_topic(frame.camera, prefix=camera_topic_prefix)
+            )
             if topic not in camera_channels:
                 camera_channels[topic] = writer.register_channel(
                     topic=topic, message_encoding="json", schema_id=image_schema_id
@@ -441,10 +453,22 @@ def write_run_mcap(
             if not records:
                 summary.skipped.append(f"{metric.path.name}: empty metrics document")
                 continue
-            topic = safe_topic(metric.name, prefix=metrics_topic_prefix)
+            topic = (
+                safe_topic(metric.topic, prefix="")
+                if metric.topic
+                else safe_topic(metric.name, prefix=metrics_topic_prefix)
+            )
             for offset, record in enumerate(records):
                 flat = _flatten_metric_payload(record)
-                timestamp_ns = base_ns + (index if len(records) == 1 else offset) * step_ns
+                record_timestamp = record.get("_timestamp_ns")
+                if isinstance(record_timestamp, (int, float)):
+                    timestamp_ns = int(record_timestamp)
+                else:
+                    timestamp_ns = (
+                        int(metric.timestamp_ns) + offset * step_ns
+                        if metric.timestamp_ns is not None
+                        else base_ns + (index if len(records) == 1 else offset) * step_ns
+                    )
                 if topic not in metric_channels:
                     schema_id = writer.register_schema(
                         name=f"npa.RunMetrics.{metric.name}",

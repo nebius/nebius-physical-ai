@@ -201,6 +201,78 @@ def test_run_summary_parses_safe_completed_training_fields_without_recording() -
     }
 
 
+def test_run_summary_prioritizes_closed_loop_task_performance() -> None:
+    report = {
+        "schema": "npa.groot.task_performance.v1",
+        "status": "passed",
+        "task": {"name": "PushT", "goal": "Push the T-shaped block onto the target."},
+        "platform": {
+            "label": "Simulated",
+            "physical_robot": False,
+            "simulation": True,
+            "environment": {"id": "gym_pusht/PushT-v0", "version": "0.1.6"},
+            "embodiment": {"name": "2D simulated circular pusher"},
+        },
+        "paired_evaluation": {
+            "episode_count": 24,
+            "same_initial_conditions": True,
+            "baseline_checkpoint": {"uri": "s3://bucket/baseline/"},
+            "trained_checkpoint": {"uri": "s3://bucket/trained/"},
+            "episodes": [{"seed": 7, "outcome_category": "trained_win"}],
+        },
+        "performance": {
+            "primary_metric": "maximum_goal_coverage",
+            "baseline_success_rate": 0.1,
+            "trained_success_rate": 0.4,
+            "success_rate_delta": 0.3,
+            "baseline_task_score": 0.2,
+            "trained_task_score": 0.5,
+            "task_score_delta": 0.3,
+            "primary_evidence": {
+                "confidence_level": 0.95,
+                "ci_low": 0.1,
+                "ci_high": 0.5,
+                "paired_test": "paired sign randomization",
+                "p_value": 0.001,
+            },
+            "improvement_gate_passed": True,
+            "conclusion": "PASS",
+        },
+        "action": {
+            "semantics": ["absolute target pusher x", "absolute target pusher y"],
+            "units": ["workspace pixels", "workspace pixels"],
+            "range": [[0, 512], [0, 512]],
+        },
+        "success_definition": {"predicate": "coverage > 0.95"},
+    }
+    artifacts = [
+        _artifact("reports/task-performance-report.json"),
+        _artifact("reports/task-performance.rrd"),
+    ]
+    summary = build_run_summary(
+        RUN_ID, artifacts, {"reports/task-performance-report.json": report}
+    )
+    performance = summary["task_performance"]
+    assert summary["completion_status"] == "passed"
+    assert performance["task_name"] == "PushT"
+    assert performance["badge"] == "Simulated"
+    assert performance["physical_robot"] is False
+    assert performance["paired_episodes"] == 24
+    assert performance["trained_success_rate"] == 0.4
+    assert performance["ci_low"] == 0.1
+    assert performance["improvement_gate_passed"] is True
+
+
+def test_ui_makes_task_performance_primary() -> None:
+    source = AGENT_UI.read_text(encoding="utf-8")
+    assert "Robot task performance" in source
+    assert 'id = "taskPerformanceSeedSelector"' in source
+    assert "paired-rollout-videos" in source
+    assert "Failure gallery" in source
+    assert "Secondary training/offline diagnostics" in source
+    assert "Show grouped raw artifacts" in source
+
+
 def test_secure_content_endpoint_contract_is_s3_only_and_range_aware() -> None:
     source = ARTIFACT_CONTENT_MODULE.read_text(encoding="utf-8")
 
@@ -215,6 +287,28 @@ def test_secure_content_endpoint_contract_is_s3_only_and_range_aware() -> None:
         "def _artifact_stream", 1
     )[0]
     assert "runs_root" not in guard
+
+
+def test_artifact_failures_are_logged_and_never_echo_raw_exception_text() -> None:
+    source = ARTIFACT_CONTENT_MODULE.read_text(encoding="utf-8")
+    assert '_artifact_content_logger.exception("Artifact content storage request failed")' in source
+    assert '"error": "artifact storage request failed"' in source
+    assert '"error_code": "artifact_storage_error"' in source
+    route = source.split("def artifacts_content", 1)[1].split("def artifact_file", 1)[0]
+    assert '"error": str(exc)' not in route
+    download = source.split("def artifacts_download", 1)[1]
+    assert '"error": str(exc)' not in download
+
+
+def test_load_artifact_s3_uri_requires_inventory_run_id_with_stable_error() -> None:
+    source = AGENT_MODULE.read_text(encoding="utf-8")
+    block = source.split("def sim_viz_load_artifact", 1)[1].split(
+        "def _foxglove_convert_run", 1
+    )[0]
+    assert "run_id is required with s3_uri so the object can be authorized" in block
+    assert "_resolved_artifact_for_content(" in block
+    assert '"error": "artifact storage request failed"' in block
+    assert '"error": str(exc)' not in block
 
 
 def test_ui_keeps_artifact_list_after_preview_errors_and_never_requires_recording() -> None:

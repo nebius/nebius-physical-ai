@@ -120,10 +120,124 @@ def deterministic_episode_split(
     return {"train": train, "heldout": heldout, "excluded": order[len(train) + len(heldout) :]}
 
 
+def derive_training_step_contract(
+    *,
+    train_samples: int,
+    global_batch_size: int,
+    configured_max_steps: int | None = None,
+) -> dict[str, int | None]:
+    """Derive the billed GPU step budget from the materialized train split."""
+
+    if int(train_samples) <= 0 or int(global_batch_size) <= 0:
+        raise GrootVisualizationError(
+            "training step derivation requires positive train samples and global batch"
+        )
+    required = math.ceil(int(train_samples) / int(global_batch_size))
+    configured = int(configured_max_steps or 0)
+    if configured < 0:
+        raise GrootVisualizationError("configured max_steps cannot be negative")
+    if configured and configured < required:
+        raise GrootVisualizationError(
+            f"configured max_steps={configured} is insufficient for {train_samples} "
+            f"samples at global batch {global_batch_size}; at least {required} steps "
+            "are required before any GPU training is submitted"
+        )
+    effective = configured or required
+    return {
+        "train_samples": int(train_samples),
+        "global_batch_size": int(global_batch_size),
+        "required_optimizer_steps": required,
+        "configured_max_steps": configured or None,
+        "effective_max_steps": effective,
+    }
+
+
 def _source_object_uri(source_uri: str, relative: str) -> str:
     ref = _split_s3(source_uri, require_key=False)
     key = "/".join(part for part in (ref.key.rstrip("/"), relative.lstrip("/")) if part)
     return f"s3://{ref.bucket}/{key}"
+
+
+def _camera_contract(
+    info: Mapping[str, Any], modality: Mapping[str, Any] | None
+) -> list[dict[str, str]]:
+    """Derive display camera names and original keys from dataset metadata."""
+
+    video_features = {
+        str(key)
+        for key, value in (info.get("features") or {}).items()
+        if isinstance(value, Mapping) and value.get("dtype") == "video"
+    }
+    if not video_features:
+        raise GrootVisualizationError("dataset metadata declares no video observation")
+    cameras: list[dict[str, str]] = []
+    video_modality = (modality or {}).get("video") or {}
+    if isinstance(video_modality, Mapping):
+        for name, value in video_modality.items():
+            if not isinstance(value, Mapping):
+                continue
+            original = str(value.get("original_key") or name)
+            if original in video_features:
+                cameras.append({"name": str(name), "original_key": original})
+    mapped = {item["original_key"] for item in cameras}
+    for original in sorted(video_features - mapped):
+        fallback = original.removeprefix("observation.").replace(".", "_")
+        cameras.append({"name": fallback, "original_key": original})
+    names = [item["name"] for item in cameras]
+    if len(names) != len(set(names)):
+        raise GrootVisualizationError("dataset camera metadata resolves duplicate names")
+    return cameras
+
+
+def _episode_timebase(
+    alignment: Sequence[Mapping[str, Any]], *, fps: float, camera_names: Sequence[str]
+) -> dict[str, Any]:
+    """Build the common camera/action timebase and explicit episode boundaries."""
+
+    if float(fps) <= 0 or not alignment:
+        raise GrootVisualizationError("timebase requires aligned samples at positive FPS")
+    entries: list[dict[str, Any]] = []
+    boundaries: list[dict[str, Any]] = []
+    current_episode: int | None = None
+    for expected_index, row in enumerate(alignment):
+        sample_index = int(row.get("sample_index", -1))
+        if sample_index != expected_index:
+            raise GrootVisualizationError("sample alignment is not contiguous")
+        episode_index = int(row.get("episode_index", -1))
+        frame_index = int(row.get("frame_index", -1))
+        if episode_index < 0 or frame_index < 0:
+            raise GrootVisualizationError("sample alignment lacks episode/frame indices")
+        entry = {
+            "sample_index": sample_index,
+            "episode_index": episode_index,
+            "frame_index": frame_index,
+            "time_seconds": sample_index / float(fps),
+        }
+        entries.append(entry)
+        if episode_index != current_episode:
+            boundaries.append(
+                {
+                    "episode_index": episode_index,
+                    "start_sample": sample_index,
+                    "end_sample_exclusive": sample_index,
+                    "sample_count": 0,
+                }
+            )
+            current_episode = episode_index
+        boundaries[-1]["end_sample_exclusive"] = sample_index + 1
+        boundaries[-1]["sample_count"] = int(boundaries[-1]["sample_count"]) + 1
+    core = {
+        "semantics": "global-heldout-sample-index-at-recorded-fps",
+        "fps": float(fps),
+        "camera_names": list(camera_names),
+        "sample_count": len(entries),
+        "episode_boundaries": boundaries,
+    }
+    return {
+        **core,
+        "id": "sha256:" + _sha256_bytes(_json_bytes(core)),
+        "entries": entries,
+    }
 
 
 def _object_uri(bucket: str, key: str) -> str:
@@ -356,12 +470,17 @@ def prepare_split(
     heldout_episodes: int = 6,
     seed: str = "groot17-learning-v1",
     global_batch_size: int = 8,
+    max_steps: int = 0,
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
     """Materialize a deterministic train/held-out split with train-only stats."""
 
     client = _s3_client(s3_client)
     info = _read_s3_json(client, _source_object_uri(source_uri, "meta/info.json"))
+    modality = _read_s3_json(
+        client, _source_object_uri(source_uri, "meta/modality.json")
+    )
+    cameras = _camera_contract(info, modality)
     episode_lines = _read_s3_bytes(
         client, _source_object_uri(source_uri, "meta/episodes.jsonl")
     ).decode()
@@ -426,7 +545,12 @@ def prepare_split(
         if isinstance(value, Mapping) and value.get("dtype") == "video"
     ]
     resolution = (info.get("features") or {}).get(video_features[0], {}).get("shape") or []
-    optimizer_steps = math.ceil(int(train["samples"]) / int(global_batch_size))
+    step_contract = derive_training_step_contract(
+        train_samples=int(train["samples"]),
+        global_batch_size=int(global_batch_size),
+        configured_max_steps=max_steps,
+    )
+    optimizer_steps = int(step_contract["effective_max_steps"] or 0)
     result = {
         "schema": SPLIT_SCHEMA,
         "status": "prepared",
@@ -439,7 +563,8 @@ def prepare_split(
             "samples": int(info.get("total_frames") or 0),
             "embodiment": str(info.get("robot_type") or ""),
             "fps": float(info.get("fps") or 0),
-            "camera_names": ["front"],
+            "camera_names": [item["name"] for item in cameras],
+            "cameras": cameras,
             "source_resolution": f"{resolution[1]}x{resolution[0]}" if len(resolution) >= 2 else "unknown",
             "action_dimensions": int(action_shape[0]) if action_shape else 0,
         },
@@ -459,6 +584,11 @@ def prepare_split(
         "training_plan": {
             "global_batch_size": int(global_batch_size),
             "optimizer_steps": optimizer_steps,
+            "required_optimizer_steps": int(
+                step_contract["required_optimizer_steps"] or 0
+            ),
+            "configured_max_steps": step_contract["configured_max_steps"],
+            "effective_max_steps": optimizer_steps,
             "training_examples": optimizer_steps * int(global_batch_size),
             "epoch_equivalent": optimizer_steps * int(global_batch_size) / int(train["samples"]),
             "criterion": "one complete pass over the deterministic train cohort",
@@ -1114,15 +1244,89 @@ def _decode_video(path: Path, *, max_frames: int = 0) -> tuple[list[Any], float]
     return frames, fps
 
 
-def _first_video_uri(client: Any, heldout_uri: str) -> str:
-    videos = [
-        item
-        for item in _list_objects(client, heldout_uri)
-        if item["size"] > 0 and item["key"].lower().endswith(".mp4")
-    ]
-    if not videos:
-        raise GrootVisualizationError("held-out split contains no camera video")
-    return _object_uri(videos[0]["bucket"], videos[0]["key"])
+def _heldout_video_inventory(
+    client: Any,
+    heldout_uri: str,
+    *,
+    cameras: Sequence[Mapping[str, str]],
+    episode_count: int,
+) -> list[dict[str, Any]]:
+    """Inventory every camera/episode video declared by held-out metadata."""
+
+    import re
+
+    by_original = {str(item["original_key"]): str(item["name"]) for item in cameras}
+    inventory: list[dict[str, Any]] = []
+    pattern = re.compile(r"/([^/]+)/episode_(\d+)\.mp4$")
+    for item in _list_objects(client, heldout_uri):
+        if int(item["size"]) <= 0 or not str(item["key"]).lower().endswith(".mp4"):
+            continue
+        match = pattern.search("/" + str(item["key"]).lstrip("/"))
+        if not match or match.group(1) not in by_original:
+            continue
+        inventory.append(
+            {
+                "episode_index": int(match.group(2)),
+                "camera_name": by_original[match.group(1)],
+                "original_key": match.group(1),
+                "uri": _object_uri(item["bucket"], item["key"]),
+                "bytes": int(item["size"]),
+            }
+        )
+    expected = {
+        (episode, str(camera["name"]))
+        for episode in range(int(episode_count))
+        for camera in cameras
+    }
+    actual = {(item["episode_index"], item["camera_name"]) for item in inventory}
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise GrootVisualizationError(
+            f"held-out camera inventory mismatch; missing={missing}, extra={extra}"
+        )
+    return sorted(
+        inventory, key=lambda item: (item["episode_index"], item["camera_name"])
+    )
+
+
+def _decode_synchronized_camera(
+    client: Any,
+    inventory: Sequence[Mapping[str, Any]],
+    alignment: Sequence[Mapping[str, Any]],
+    *,
+    camera_name: str,
+    root: Path,
+) -> tuple[list[Any], float]:
+    """Decode every represented episode and align it to action/state samples."""
+
+    frames_by_episode: dict[int, list[Any]] = {}
+    fps_values: set[float] = set()
+    for item in inventory:
+        if str(item["camera_name"]) != camera_name:
+            continue
+        episode = int(item["episode_index"])
+        path = root / f"camera-{camera_name}-episode-{episode:06d}.mp4"
+        _download(client, str(item["uri"]), path)
+        frames, fps = _decode_video(path)
+        frames_by_episode[episode] = frames
+        fps_values.add(round(float(fps), 9))
+    if len(fps_values) != 1:
+        raise GrootVisualizationError("held-out camera episodes do not share one FPS")
+    synchronized: list[Any] = []
+    for row in alignment:
+        episode = int(row["episode_index"])
+        frame = int(row["frame_index"])
+        episode_frames = frames_by_episode.get(episode) or []
+        if frame >= len(episode_frames):
+            raise GrootVisualizationError(
+                f"camera {camera_name!r} episode {episode} has {len(episode_frames)} "
+                f"frames but action/state alignment requires frame {frame}"
+            )
+        synchronized.append(episode_frames[frame])
+    if len(synchronized) != len(alignment):
+        raise GrootVisualizationError("camera/action synchronized sample count mismatch")
+    return synchronized, next(iter(fps_values))
 
 
 def _draw_series(
@@ -1157,12 +1361,40 @@ def _comparison_video(
     baseline_mse: float,
     posttrain_mse: float,
 ) -> dict[str, Any]:
+    images, fps = _decode_video(source_video)
+    return _comparison_video_frames(
+        images,
+        fps,
+        destination,
+        expert=expert,
+        baseline=baseline,
+        posttrain=posttrain,
+        baseline_mse=baseline_mse,
+        posttrain_mse=posttrain_mse,
+    )
+
+
+def _comparison_video_frames(
+    images: Sequence[Any],
+    fps: float,
+    destination: Path,
+    *,
+    expert: Any,
+    baseline: Any,
+    posttrain: Any,
+    baseline_mse: float,
+    posttrain_mse: float,
+) -> dict[str, Any]:
     import av
     import numpy as np
     from PIL import Image, ImageDraw, ImageFont
 
-    images, fps = _decode_video(source_video)
     count = min(len(images), len(expert), len(baseline), len(posttrain))
+    if count != len(expert):
+        raise GrootVisualizationError(
+            f"comparison camera/action synchronization mismatch: {len(images)} "
+            f"frames for {len(expert)} action samples"
+        )
     if count <= 0:
         raise GrootVisualizationError("comparison video has no aligned held-out frames")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1283,14 +1515,36 @@ def compare_learning(
     loss_history = training.get("loss_history") or []
     if len(loss_history) < 2:
         raise GrootVisualizationError("training manifest has no real loss trajectory")
-    first_video_uri = _first_video_uri(client, str(split["heldout"]["uri"]))
+    cameras = list(split["source"].get("cameras") or [])
+    if not cameras:
+        raise GrootVisualizationError("split manifest lacks derived camera metadata")
+    inventory = _heldout_video_inventory(
+        client,
+        str(split["heldout"]["uri"]),
+        cameras=cameras,
+        episode_count=int(split["heldout"]["episodes"]),
+    )
+    timebase = _episode_timebase(
+        baseline["sample_alignment"],
+        fps=float(split["source"]["fps"]),
+        camera_names=[str(item["name"]) for item in cameras],
+    )
+    primary_camera = str(cameras[0]["name"])
     with tempfile.TemporaryDirectory(prefix="npa-groot-compare-") as tmp:
         root = Path(tmp)
-        source_video = root / "heldout.mp4"
         comparison_video = root / "offline-heldout-comparison.mp4"
-        _download(client, first_video_uri, source_video)
-        video_meta = _comparison_video(
-            source_video,
+        images, camera_fps = _decode_synchronized_camera(
+            client,
+            inventory,
+            baseline["sample_alignment"],
+            camera_name=primary_camera,
+            root=root,
+        )
+        if abs(float(camera_fps) - float(split["source"]["fps"])) > 1e-6:
+            raise GrootVisualizationError("decoded camera FPS differs from dataset metadata")
+        video_meta = _comparison_video_frames(
+            images,
+            camera_fps,
             comparison_video,
             expert=before_arrays["expert"],
             baseline=before_arrays["predicted"],
@@ -1313,6 +1567,7 @@ def compare_learning(
         "dataset": {
             "embodiment": split["source"]["embodiment"],
             "camera_names": split["source"]["camera_names"],
+            "cameras": cameras,
             "source_resolution": split["source"]["source_resolution"],
             "fps": split["source"]["fps"],
             "source_episodes": split["source"]["episodes"],
@@ -1358,6 +1613,7 @@ def compare_learning(
             "mcap_uri": "pending emit_mcap",
             "rrd_uri": "pending emit_rrd",
             "timestamp_semantics": TIMESTAMP_SEMANTICS,
+            "timebase": timebase,
             "is_robot_capture_time": False,
             "native_resolution_preserved": True,
         },
@@ -1366,7 +1622,9 @@ def compare_learning(
             "training_manifest_uri": training_manifest_uri,
             "baseline_checkpoint_uri": baseline["checkpoint_uri"],
             "posttrain_checkpoint_uri": posttrain["checkpoint_uri"],
-            "heldout_source_video_uri": first_video_uri,
+            "heldout_source_videos": inventory,
+            "primary_camera": primary_camera,
+            "synchronized_camera_samples": len(baseline["sample_alignment"]),
         },
         "limitations": [
             "No compatible simulator or robot was established for this custom embodiment; closed-loop rollout is deferred.",
@@ -1393,7 +1651,9 @@ def _evaluation_bundle(
     return report, baseline, posttrain, before_arrays, after_arrays
 
 
-def _validate_learning_mcap(path: Path, *, run_id: str) -> dict[str, Any]:
+def _validate_learning_mcap(
+    path: Path, *, run_id: str, camera_name: str = "front"
+) -> dict[str, Any]:
     info = summarize_mcap(path)
     if not info.valid_magic or info.size_bytes <= 0 or info.message_count <= 0:
         raise GrootVisualizationError("learning MCAP is empty or invalid")
@@ -1403,7 +1663,11 @@ def _validate_learning_mcap(path: Path, *, run_id: str) -> dict[str, Any]:
         )
     if not (info.start_time_ns < info.end_time_ns < 1_000_000_000_000):
         raise GrootVisualizationError("learning MCAP relative timeline is invalid")
-    for topic, schema in REQUIRED_MCAP_TOPICS.items():
+    required_topics = {
+        topic.replace("/camera/front", f"/camera/{camera_name}"): schema
+        for topic, schema in REQUIRED_MCAP_TOPICS.items()
+    }
+    for topic, schema in required_topics.items():
         if info.channels.get(topic, 0) <= 0:
             raise GrootVisualizationError(f"learning MCAP lacks required topic {topic}")
         if info.schemas.get(topic) != schema:
@@ -1429,8 +1693,6 @@ def emit_learning_mcap(
 ) -> dict[str, Any]:
     """Emit synchronized held-out camera, action, error, and metric replay."""
 
-    import numpy as np
-
     client = _s3_client(s3_client)
     report, baseline, _posttrain, before_arrays, after_arrays = _evaluation_bundle(
         client, report_uri
@@ -1441,36 +1703,52 @@ def emit_learning_mcap(
     predicted_before = before_arrays["predicted"]
     predicted_after = after_arrays["predicted"]
     dimensions = int(expert.shape[1])
+    timebase = dict(report["visualizations"]["timebase"])
+    entries = list(timebase.get("entries") or [])
+    if len(entries) != len(expert):
+        raise GrootVisualizationError("MCAP timebase/action sample mismatch")
+    primary_camera = str(report["provenance"]["primary_camera"])
     with tempfile.TemporaryDirectory(prefix="npa-groot-learning-mcap-") as tmp:
         root = Path(tmp)
-        source_video = root / "heldout.mp4"
-        _download(
+        images, fps = _decode_synchronized_camera(
             client,
-            str(report["provenance"]["heldout_source_video_uri"]),
-            source_video,
+            report["provenance"]["heldout_source_videos"],
+            baseline["sample_alignment"],
+            camera_name=primary_camera,
+            root=root,
         )
-        images, fps = _decode_video(source_video)
         frame_inputs: list[FrameInput] = []
         timeline_origin_ns = 1
-        for index, image in enumerate(images):
+        for index, (image, time_entry) in enumerate(zip(images, entries, strict=True)):
             path = root / "frames" / f"{index:06d}.png"
             path.parent.mkdir(parents=True, exist_ok=True)
             image.save(path, "PNG")
             frame_inputs.append(
                 FrameInput(
                     path=path,
-                    camera="front",
+                    camera=primary_camera,
                     timestamp_ns=timeline_origin_ns
-                    + round(index / fps * 1_000_000_000),
+                    + round(float(time_entry["time_seconds"]) * 1_000_000_000),
                 )
             )
         predicted_records = []
         expert_records = []
         error_records = []
         for index in range(expert.shape[0]):
-            predicted_record: dict[str, Any] = {"sample_index": index}
-            expert_record: dict[str, Any] = {"sample_index": index}
-            error_record: dict[str, Any] = {"sample_index": index}
+            entry = entries[index]
+            timestamp_ns = timeline_origin_ns + round(
+                float(entry["time_seconds"]) * 1_000_000_000
+            )
+            identity = {
+                "_timestamp_ns": timestamp_ns,
+                "sample_index": index,
+                "episode_index": int(entry["episode_index"]),
+                "frame_index": int(entry["frame_index"]),
+                "timebase_id": str(timebase["id"]),
+            }
+            predicted_record: dict[str, Any] = dict(identity)
+            expert_record: dict[str, Any] = dict(identity)
+            error_record: dict[str, Any] = dict(identity)
             for dimension in range(dimensions):
                 predicted_record[f"baseline_dim_{dimension}"] = float(
                     predicted_before[index, dimension]
@@ -1485,12 +1763,16 @@ def emit_learning_mcap(
                 error_record[f"posttrain_abs_dim_{dimension}"] = float(
                     abs(expert[index, dimension] - predicted_after[index, dimension])
                 )
-            error_record["baseline_mae"] = float(
-                np.mean(np.abs(expert[index] - predicted_before[index]))
+            before_mae, before_mse = _per_sample_action_errors(
+                expert[index], predicted_before[index]
             )
-            error_record["posttrain_mae"] = float(
-                np.mean(np.abs(expert[index] - predicted_after[index]))
+            after_mae, after_mse = _per_sample_action_errors(
+                expert[index], predicted_after[index]
             )
+            error_record["baseline_mae"] = before_mae
+            error_record["posttrain_mae"] = after_mae
+            error_record["baseline_mse"] = before_mse
+            error_record["posttrain_mse"] = after_mse
             predicted_records.append(predicted_record)
             expert_records.append(expert_record)
             error_records.append(error_record)
@@ -1512,7 +1794,15 @@ def emit_learning_mcap(
                     "samples": report["evaluation"]["samples"],
                 }
             ],
-            "metrics/train_loss": report["training"]["loss_history"],
+            "metrics/train_loss": [
+                {
+                    **item,
+                    "_timestamp_ns": timeline_origin_ns
+                    + int(item["optimizer_step"]) * 1_000_000_000,
+                    "clock_domain": "optimizer_step",
+                }
+                for item in report["training"]["loss_history"]
+            ],
         }
         metric_inputs: list[MetricsInput] = []
         for name, records in metric_documents.items():
@@ -1545,12 +1835,22 @@ def emit_learning_mcap(
                 "closed_loop": "false",
                 "split_hash": str(report["dataset"]["split_hash"]),
                 "timestamps": TIMESTAMP_SEMANTICS,
+                "timebase_id": str(timebase["id"]),
+                "episode_boundaries_sha256": _sha256_bytes(
+                    _json_bytes(
+                        {"episode_boundaries": timebase["episode_boundaries"]}
+                    )
+                ),
+                "training_loss_clock": "optimizer_step-as-seconds",
                 "timeline_origin": "relative-zero-plus-1ns",
                 "is_robot_capture_time": "false",
                 "source_resolution": str(report["dataset"]["source_resolution"]),
+                "producer": "npa.groot.offline-learning",
             },
         )
-        inspection = _validate_learning_mcap(output, run_id=run_id)
+        inspection = _validate_learning_mcap(
+            output, run_id=run_id, camera_name=primary_camera
+        )
         artifact = _put_bytes(client, output_uri, output.read_bytes())
     result = {"status": "written", "artifact": artifact, "inspect": inspection}
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -1564,11 +1864,22 @@ def _set_rerun_time(rr: Any, recording: Any, timeline: str, seconds: float) -> N
         rr.set_time(timeline, duration=seconds, recording=recording)
 
 
-def _learning_blueprint(rrb: Any) -> Any:
+def _per_sample_action_errors(expert: Any, predicted: Any) -> tuple[float, float]:
+    """Return MAE and true MSE for one sample's action residual vector."""
+
+    import numpy as np
+
+    residual = np.asarray(expert, dtype=np.float64) - np.asarray(
+        predicted, dtype=np.float64
+    )
+    return float(np.mean(np.abs(residual))), float(np.mean(np.square(residual)))
+
+
+def _learning_blueprint(rrb: Any, camera_name: str = "front") -> Any:
     return rrb.Blueprint(
         rrb.Horizontal(
             rrb.Spatial2DView(
-                origin="heldout/camera/front",
+                origin=f"heldout/camera/{camera_name}",
                 name="Held-out camera (native source pixels)",
             ),
             rrb.Vertical(
@@ -1626,11 +1937,18 @@ def emit_learning_rrd(
         raise GrootVisualizationError("learning report run identity mismatch")
     with tempfile.TemporaryDirectory(prefix="npa-groot-learning-rrd-") as tmp:
         root = Path(tmp)
-        video = root / "heldout.mp4"
         rrd = root / "groot-learning.rrd"
-        _download(client, str(report["provenance"]["heldout_source_video_uri"]), video)
-        images, fps = _decode_video(video)
-        blueprint = _learning_blueprint(rrb)
+        primary_camera = str(report["provenance"]["primary_camera"])
+        images, fps = _decode_synchronized_camera(
+            client,
+            report["provenance"]["heldout_source_videos"],
+            baseline["sample_alignment"],
+            camera_name=primary_camera,
+            root=root,
+        )
+        timebase = dict(report["visualizations"]["timebase"])
+        entries = list(timebase.get("entries") or [])
+        blueprint = _learning_blueprint(rrb, primary_camera)
         recording = rr.RecordingStream(RERUN_APPLICATION_ID, recording_id=run_id)
         rr.save(rrd, default_blueprint=blueprint, recording=recording)
         if hasattr(rr, "send_blueprint"):
@@ -1644,21 +1962,33 @@ def emit_learning_rrd(
             f"- held-out: {report['dataset']['heldout_episodes']} episodes / "
             f"{report['dataset']['heldout_samples']} samples\n"
             f"- checkpoint: `{report['training']['checkpoint_uri']}`\n"
-            f"- source resolution: {report['dataset']['source_resolution']}"
+            f"- source resolution: {report['dataset']['source_resolution']}\n"
+            f"- cameras: {report['dataset']['camera_names']}\n"
+            f"- synchronized samples: {len(entries)}\n"
+            f"- timebase: `{timebase['id']}`"
         )
         rr.log("provenance", rr.TextDocument(provenance), static=True, recording=recording)
+        # Training loss has its own factual optimizer-step clock.  It is logged
+        # before dataset time is ever set so Rerun does not attach a fabricated,
+        # compressed replay timestamp to optimizer evidence.
+        for item in report["training"]["loss_history"]:
+            optimizer_step = float(item["optimizer_step"])
+            _set_rerun_time(rr, recording, "optimizer_step", optimizer_step)
+            rr.log("train/loss", rr.Scalars(float(item["loss"])), recording=recording)
         expert = before_arrays["expert"]
         predicted_before = before_arrays["predicted"]
         predicted_after = after_arrays["predicted"]
-        frame_count = min(len(images), len(expert))
+        if len(images) != len(expert) or len(entries) != len(expert):
+            raise GrootVisualizationError("RRD camera/action/timebase sample mismatch")
         for index in range(len(expert)):
-            _set_rerun_time(rr, recording, RERUN_TIMELINE, index / float(baseline["fps"]))
-            if index < frame_count:
-                rr.log(
-                    "heldout/camera/front",
-                    rr.Image(np.asarray(images[index]), color_model="RGB"),
-                    recording=recording,
-                )
+            _set_rerun_time(
+                rr, recording, RERUN_TIMELINE, float(entries[index]["time_seconds"])
+            )
+            rr.log(
+                f"heldout/camera/{primary_camera}",
+                rr.Image(np.asarray(images[index]), color_model="RGB"),
+                recording=recording,
+            )
             for dimension in range(expert.shape[1]):
                 rr.log(
                     f"actions/expert/dim_{dimension}",
@@ -1675,12 +2005,20 @@ def emit_learning_rrd(
                     rr.Scalars(float(predicted_after[index, dimension])),
                     recording=recording,
                 )
-            before_abs = float(np.mean(np.abs(expert[index] - predicted_before[index])))
-            after_abs = float(np.mean(np.abs(expert[index] - predicted_after[index])))
+            before_abs, before_squared = _per_sample_action_errors(
+                expert[index], predicted_before[index]
+            )
+            after_abs, after_squared = _per_sample_action_errors(
+                expert[index], predicted_after[index]
+            )
             rr.log("error/before/absolute", rr.Scalars(before_abs), recording=recording)
             rr.log("error/after/absolute", rr.Scalars(after_abs), recording=recording)
-            rr.log("error/before/squared", rr.Scalars(before_abs**2), recording=recording)
-            rr.log("error/after/squared", rr.Scalars(after_abs**2), recording=recording)
+            rr.log(
+                "error/before/squared", rr.Scalars(before_squared), recording=recording
+            )
+            rr.log(
+                "error/after/squared", rr.Scalars(after_squared), recording=recording
+            )
         replay_duration = max(
             (len(expert) - 1) / float(baseline["fps"]),
             1.0,
@@ -1697,25 +2035,6 @@ def emit_learning_rrd(
                 rr.Scalars(float(report["evaluation"]["posttrain_value"])),
                 recording=recording,
             )
-        loss_history = report["training"]["loss_history"]
-        max_optimizer_step = max(
-            float(item["optimizer_step"]) for item in loss_history
-        )
-        for item in loss_history:
-            optimizer_step = float(item["optimizer_step"])
-            # Keep optimizer_step as an explicit secondary clock while mapping the
-            # trajectory across dataset_time so it is useful in the default
-            # camera/action/error replay layout instead of collapsing at t=0.
-            _set_rerun_time(
-                rr,
-                recording,
-                RERUN_TIMELINE,
-                replay_duration * optimizer_step / max_optimizer_step,
-            )
-            _set_rerun_time(
-                rr, recording, "optimizer_step", optimizer_step
-            )
-            rr.log("train/loss", rr.Scalars(float(item["loss"])), recording=recording)
         # Rerun writes the footer, manifests, and trailing chunks when the file
         # sink is disconnected.  Inspecting an attached sink races the batching
         # pipeline and yields a truncated, non-replayable RRD.
@@ -1725,7 +2044,10 @@ def emit_learning_rrd(
             rrd,
             application_id=RERUN_APPLICATION_ID,
             recording_id=run_id,
-            expected_entities=REQUIRED_RRD_ENTITIES,
+            expected_entities=[
+                entity.replace("heldout/camera/front", f"heldout/camera/{primary_camera}")
+                for entity in REQUIRED_RRD_ENTITIES
+            ],
             timeline=RERUN_TIMELINE,
         )
         artifact = _put_bytes(client, output_uri, rrd.read_bytes())
@@ -1832,6 +2154,12 @@ def build_parser() -> argparse.ArgumentParser:
     split.add_argument("--heldout-episodes", type=int, default=6)
     split.add_argument("--seed", default="groot17-learning-v1")
     split.add_argument("--global-batch-size", type=int, default=8)
+    split.add_argument(
+        "--max-steps",
+        type=int,
+        default=0,
+        help="Explicit GPU step budget; zero derives exactly one complete train pass.",
+    )
 
     baseline = subparsers.add_parser("baseline-eval")
     baseline.add_argument("--split-manifest-uri", required=True)

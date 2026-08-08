@@ -782,6 +782,51 @@ def build_run_summary(
     capacity = _doc("evidence/capacity.json")
     collective = _doc("evidence/collective.json")
     checkpoint = _doc("checkpoints/npa_groot_finetune_manifest.json")
+    task_performance_doc = _doc("reports/task-performance-report.json")
+    task_performance: dict[str, Any] = {}
+    if task_performance_doc.get("schema") == "npa.groot.task_performance.v1":
+        task = task_performance_doc.get("task") or {}
+        platform = task_performance_doc.get("platform") or {}
+        paired = task_performance_doc.get("paired_evaluation") or {}
+        performance = task_performance_doc.get("performance") or {}
+        evidence = performance.get("primary_evidence") or {}
+        action = task_performance_doc.get("action") or {}
+        success = task_performance_doc.get("success_definition") or {}
+        task_performance = {
+            "task_name": str(task.get("name") or ""),
+            "task_goal": str(task.get("goal") or ""),
+            "badge": str(platform.get("label") or "Simulated"),
+            "physical_robot": platform.get("physical_robot") is True,
+            "simulation": platform.get("simulation") is True,
+            "environment": str((platform.get("environment") or {}).get("id") or ""),
+            "environment_version": str(
+                (platform.get("environment") or {}).get("version") or ""
+            ),
+            "embodiment": str((platform.get("embodiment") or {}).get("name") or ""),
+            "paired_episodes": int(paired.get("episode_count") or 0),
+            "same_initial_conditions": paired.get("same_initial_conditions") is True,
+            "baseline_checkpoint": str((paired.get("baseline_checkpoint") or {}).get("uri") or ""),
+            "trained_checkpoint": str((paired.get("trained_checkpoint") or {}).get("uri") or ""),
+            "baseline_success_rate": float(performance.get("baseline_success_rate") or 0.0),
+            "trained_success_rate": float(performance.get("trained_success_rate") or 0.0),
+            "success_rate_delta": float(performance.get("success_rate_delta") or 0.0),
+            "baseline_task_score": float(performance.get("baseline_task_score") or 0.0),
+            "trained_task_score": float(performance.get("trained_task_score") or 0.0),
+            "task_score_delta": float(performance.get("task_score_delta") or 0.0),
+            "primary_metric": str(performance.get("primary_metric") or ""),
+            "confidence_level": float(evidence.get("confidence_level") or 0.95),
+            "ci_low": float(evidence.get("ci_low") or 0.0),
+            "ci_high": float(evidence.get("ci_high") or 0.0),
+            "paired_test": str(evidence.get("paired_test") or ""),
+            "p_value": float(evidence.get("p_value") or 1.0),
+            "conclusion": str(performance.get("conclusion") or ""),
+            "improvement_gate_passed": performance.get("improvement_gate_passed") is True,
+            "action_semantics": [str(value) for value in action.get("semantics") or []],
+            "action_units": [str(value) for value in action.get("units") or []],
+            "action_range": action.get("range") or [],
+            "success_definition": str(success.get("predicate") or ""),
+            "episodes": paired.get("episodes") or [],
+        }
     learning_doc = _doc("reports/learning-report.json")
     learning: dict[str, Any] = {}
     if learning_doc.get("schema") == "npa.groot.learning.v1":
@@ -839,7 +884,8 @@ def build_run_summary(
             tool_ref = str(step["tool_ref"])
             break
     status = str(
-        learning_doc.get("status")
+        task_performance_doc.get("status")
+        or learning_doc.get("status")
         or training.get("status")
         or training.get("terminal_status")
         or checkpoint.get("status")
@@ -905,6 +951,8 @@ def build_run_summary(
     }
     if learning:
         summary["learning"] = learning
+    if task_performance:
+        summary["task_performance"] = task_performance
     return summary
 
 

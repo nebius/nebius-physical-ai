@@ -74,8 +74,8 @@ TOOL_REF_PIP_EXTRAS: dict[str, str] = {
     "workbench.sonic": "sonic",
     "workflow.groot.emit_learning_rrd": "viz",
     "workflow.groot.publish_learning": "viz",
-    "workflow.groot.emit_rrd": "viz",
-    "workflow.groot.publish": "viz",
+    "workflow.groot.emit_task_rrd": "viz",
+    "workflow.groot.publish_task_performance": "viz",
 }
 
 # Declarative metadata, never a package-string passthrough.
@@ -104,6 +104,60 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
             "transformers==4.57.3",
         ),
     ),
+    "workbench.groot.evaluate_baseline_closed_loop": (
+        (
+            'python:transformers;assert(__import__("importlib.metadata").metadata.version("transformers")=="4.57.3")',
+            "transformers==4.57.3",
+        ),
+        (
+            'python:gym_pusht;assert(__import__("importlib.metadata").metadata.version("gym-pusht")=="0.1.6")',
+            "gym-pusht==0.1.6",
+        ),
+        (
+            'python:pymunk;assert(__import__("importlib.metadata").metadata.version("pymunk")=="6.11.1")',
+            "pymunk==6.11.1",
+        ),
+        ("python:cv2", "opencv-python-headless==4.10.0.84"),
+        ("python:av", "av>=12,<17"),
+    ),
+    "workbench.groot.evaluate_trained_closed_loop": (
+        (
+            'python:transformers;assert(__import__("importlib.metadata").metadata.version("transformers")=="4.57.3")',
+            "transformers==4.57.3",
+        ),
+        (
+            'python:gym_pusht;assert(__import__("importlib.metadata").metadata.version("gym-pusht")=="0.1.6")',
+            "gym-pusht==0.1.6",
+        ),
+        (
+            'python:pymunk;assert(__import__("importlib.metadata").metadata.version("pymunk")=="6.11.1")',
+            "pymunk==6.11.1",
+        ),
+        ("python:cv2", "opencv-python-headless==4.10.0.84"),
+        ("python:av", "av>=12,<17"),
+    ),
+    "workflow.groot.resolve_task_contract": (
+        (
+            'python:gym_pusht;assert(__import__("importlib.metadata").metadata.version("gym-pusht")=="0.1.6")',
+            "gym-pusht==0.1.6",
+        ),
+        (
+            'python:pymunk;assert(__import__("importlib.metadata").metadata.version("pymunk")=="6.11.1")',
+            "pymunk==6.11.1",
+        ),
+        ("python:cv2", "opencv-python-headless==4.10.0.84"),
+        ("python:pyarrow", "pyarrow>=15,<22"),
+    ),
+    "workflow.groot.render_task_rollouts": (
+        ("python:av", "av>=12,<17"),
+        ("python:PIL", "Pillow>=10,<12"),
+    ),
+    "workflow.groot.emit_task_mcap": (
+        ("python:av", "av>=12,<17"),
+        ("python:PIL", "Pillow>=10,<12"),
+    ),
+    "workflow.groot.emit_task_rrd": (("python:av", "av>=12,<17"),),
+    "workflow.groot.publish_task_performance": (("python:av", "av>=12,<17"),),
     "workflow.groot.prepare_split": (("python:pyarrow", "pyarrow>=15,<22"),),
     "workflow.groot.compare_learning": (
         ("python:av", "av>=12,<17"),
@@ -112,7 +166,6 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "workflow.groot.emit_learning_mcap": (("python:av", "av>=12,<17"),),
     "workflow.groot.emit_learning_rrd": (("python:av", "av>=12,<17"),),
     "workflow.groot.publish_learning": (("python:av", "av>=12,<17"),),
-    "workflow.groot.validate": (("python:av", "av>=12,<17"),),
     "workbench.cosmos.fetch": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
     "workbench.cosmos.check": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
     "workbench.lerobot.policy_train": (
@@ -150,6 +203,12 @@ PYTHON_MODULE_PROBE = "python:"
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
+    "workbench.groot.evaluate_baseline_closed_loop": (
+        "/opt/groot/Isaac-GR00T/.venv/bin/python",
+    ),
+    "workbench.groot.evaluate_trained_closed_loop": (
+        "/opt/groot/Isaac-GR00T/.venv/bin/python",
+    ),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
     # Isaac Lab's simulator packages live in the Omniverse kit environment, not in the image's
     # system python. Live job 267 installed npa into /usr/bin/python3 and the stage died with

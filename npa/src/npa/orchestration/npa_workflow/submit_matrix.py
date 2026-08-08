@@ -494,22 +494,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
         image_tool="groot",
-        config_vars=(
-            ("gpu_count", "2"),
-            ("nccl_transport", "socket"),
-            ("max_steps", "1"),
-            ("dataloader_num_workers", "0"),
-            ("save_steps", "1"),
-            ("save_total_limit", "1"),
-        ),
         notes=(
-            "Runs the real pinned GR00T N1.7 launch_finetune.py inside one "
-            "two-GPU stage. The same gpu_count renders H100:2 and drives "
-            "torchrun --nproc_per_node=2. The one-step live matrix uses the "
-            "socket NCCL compatibility transport, then validates distributed/"
-            "checkpoint evidence, emits real MCAP and RRD telemetry serially, "
-            "and publishes only after both inspect. NPA_E2E_GROOT_DATASET_SRC "
-            "supplies a real GR00T-format LeRobot dataset."
+            "Runs two real pinned GR00T N1.7 checkpoints serially on the same "
+            "reserved >=20-seed gym-pusht closed-loop benchmark. It proves the "
+            "canonical task contract, requires paired task-outcome evidence, "
+            "then emits actual rollout video, named MCAP topics, and a native "
+            "Rerun performance blueprint. No smoke override weakens the gate."
         ),
     ),
     # --- Multi-stage GPU ---

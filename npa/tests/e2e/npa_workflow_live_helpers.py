@@ -416,13 +416,9 @@ def seed_live_workflow_inputs(
         return
 
     if spec_name == "groot-1-7-finetune.yaml":
-        src = os.environ.get("NPA_E2E_GROOT_DATASET_SRC", "").strip()
-        if not src:
-            pytest.skip(
-                "NPA_E2E_GROOT_DATASET_SRC not set; point it at a real "
-                "GR00T N1.7-compatible LeRobot dataset directory or S3 prefix"
-            )
-        _seed_prefix_from_source(src, bucket, f"{marker}/data/", client)
+        # The closed-loop reference deliberately consumes immutable shared
+        # canonical data and checkpoint refs.  Synthetic smoke seeding would
+        # invalidate the task-contract and checkpoint-identity gates.
         return
 
     # VLM-eval GPU twins score a rollout: seed a short RGB frame sequence under

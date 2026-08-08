@@ -1728,6 +1728,12 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
             "nccl_transport": nccl_transport,
             "global_batch_size": global_batch_size,
             "max_steps": max_steps,
+            "logging_steps": 10,
+            "logging_steps_source": (
+                "Isaac-GR00T@"
+                + GROOT_REPO_REF
+                + ":gr00t/configs/training/training_config.py"
+            ),
             "data_path": input_path,
             "checkpoint_uri": output_path,
             "training_log_uri": output_path.rstrip("/") + "/training.log",

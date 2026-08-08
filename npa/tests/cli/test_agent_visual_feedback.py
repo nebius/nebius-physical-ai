@@ -186,6 +186,29 @@ def test_learning_visual_reply_fails_closed_on_origin_contradictions() -> None:
     assert "synthetic simulation" not in reply
 
 
+def test_task_performance_visual_feedback_is_simulation_grounded() -> None:
+    meta = {
+        "run_id": "groot17-closed-loop-test",
+        "artifact_key": "reports/task-performance.rrd",
+        "note": "PushT task-performance closed-loop replay",
+    }
+    facts = vf.task_performance_visual_fact_block(meta)
+    assert "closed-loop PushT execution" in facts
+    assert "not physical hardware" in facts
+    assert "env.render()" in facts
+    assert vf.task_performance_visual_reply_needs_correction(
+        "The physical robot succeeds.", meta
+    )
+    reply = vf.truthful_task_performance_visual_reply(meta)
+    for heading in ("What I see", "Likely meaning", "Operator feedback", "Next actions"):
+        assert f"### {heading}" in reply
+    assert "Simulated" in reply
+    assert "not physical-robot footage" in reply
+    ui = _embedded_ui_html()
+    assert "Factual task-performance constraints" in ui
+    assert "current env.render() frames" in ui
+
+
 def test_metadata_only_describe_keeps_structured_visual_feedback_path() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
     assert "if origin_reply and not visual_turn and not has_image_content" in source

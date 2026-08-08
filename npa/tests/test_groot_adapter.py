@@ -608,6 +608,27 @@ def test_lerobot_to_groot_real_g1_writes_canonical_modality(
     assert stats["action.real_g1.navigate_command"]["std"] == [1.0] * 3
 
 
+def test_lerobot_to_groot_fails_closed_when_declared_video_is_missing(
+    real_g1_lerobot_dataset: Path,
+    tmp_path: Path,
+) -> None:
+    source_video = (
+        real_g1_lerobot_dataset
+        / "videos"
+        / "observation.images.color_0"
+        / "chunk-000"
+        / "file-000.mp4"
+    )
+    source_video.unlink()
+
+    with pytest.raises(GR00TAdapterError, match="Missing source video"):
+        lerobot_to_groot(
+            real_g1_lerobot_dataset,
+            tmp_path / "missing-video",
+            robot_embodiment="REAL_G1",
+        )
+
+
 def test_lerobot_to_groot_ignores_appledouble_sidecar_parquets(
     standard_lerobot_dataset: Path,
     tmp_path: Path,

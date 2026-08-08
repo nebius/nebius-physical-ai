@@ -429,6 +429,51 @@
         background: rgba(255, 255, 255, 0.78);
         font-size: 13px;
       }
+      .task-performance-summary {
+        border-color: #0f766e;
+        background: linear-gradient(145deg, #ecfeff, #f0fdf4);
+      }
+      .task-performance-summary .learning-badge { background: #0f766e; }
+      .task-performance-summary .task-conclusion {
+        margin-top: 9px;
+        padding: 9px 10px;
+        border-left: 5px solid #0f766e;
+        background: #fff;
+        font-weight: 800;
+      }
+      .paired-rollout-primary {
+        margin-top: 10px;
+        padding: 10px;
+        border: 1px solid rgba(15, 118, 110, 0.35);
+        border-radius: 10px;
+        background: #07111f;
+        color: #e2e8f0;
+      }
+      .paired-rollout-toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+      .paired-rollout-toolbar select { min-width: 260px; padding: 6px; }
+      .paired-rollout-videos {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .paired-rollout-videos video { width: 100%; max-height: 520px; background: #000; }
+      .paired-rollout-label { font-weight: 800; margin-bottom: 4px; }
+      .failure-gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 6px;
+        margin-top: 9px;
+      }
+      .failure-gallery button { text-align: left; white-space: normal; }
+      @media (max-width: 850px) {
+        .paired-rollout-videos { grid-template-columns: 1fr; }
+      }
       .artifact-list:empty {
         display: flex;
         align-items: center;
@@ -4723,10 +4768,13 @@
         }
         const blob = (meta.artifact_key + " " + meta.note + " " + meta.run_id + " " + meta.camera).toLowerCase();
         const isLearningEval = /groot17-learning|groot-learning/.test(blob) && /heldout|held-out|eval/.test(blob);
+        const isTaskPerformance = /task-performance|closed-loop/.test(blob) && /groot|pusht/.test(blob);
         if (/gr00t|groot|isaac|omniverse|heldout|policy|rollout|genesis|cosmos|g1|trajectory|skeleton|locomotion|sonic/.test(blob)) {
           promptLines.push("");
           promptLines.push("Domain hints from metadata (not pixel labels):");
-          if (isLearningEval) {
+          if (isTaskPerformance) {
+            promptLines.push("- This is a closed-loop PushT task-performance replay in gym-pusht simulation. Baseline and trained checkpoints control matched current environment states; it is not physical hardware.");
+          } else if (isLearningEval) {
             promptLines.push("- This is explicitly an offline held-out policy evaluation, not a simulator/robot rollout or closed-loop execution. Describe only the dataset camera and metric/action panels actually visible; do not infer synthetic imagery or task behavior from the GR00T name.");
           } else {
             if (/gr00t|groot/.test(blob)) promptLines.push("- Metadata suggests foundation-policy / GR00T-style sim views — do not call structured sim frames blank.");
@@ -4744,6 +4792,16 @@
             "- The camera pixels come from the persisted held-out LeRobot observation videos. Their simple appearance or 96x96 resolution is not evidence that they are synthetic.",
             "- The grounded Original input block records episode-disjoint held-out camera videos. Never say the original input is absent when that block says original_present/evidence exists.",
             "- This is offline model inference aligned to expert actions. Never describe motion, control behavior, task success, a simulator rollout, or closed-loop execution that the frame does not prove."
+          );
+        }
+        if (isTaskPerformance) {
+          promptLines.push(
+            "",
+            "Factual task-performance constraints (must not be contradicted):",
+            "- The platform is Simulated gym-pusht, never a physical robot or hardware camera.",
+            "- Baseline and trained panels use the same seed/initial state and every applied action comes from the corresponding GR00T model.",
+            "- Camera pixels are current env.render() frames after live physics transitions, not training-dataset replay.",
+            "- Identify visible pusher/object/goal, coverage or task score, final outcome, and termination reason when present."
           );
         }
         promptLines.push(
@@ -7041,11 +7099,176 @@
         }
         return grouped;
       }
+      function renderTaskPerformanceSummary(host, performance, summary, artifacts) {
+        host.classList.add("learning-summary", "task-performance-summary");
+        const title = document.createElement("div");
+        title.className = "summary-title";
+        title.textContent = "Robot task performance — " + String(performance.task_name || "unknown task") + " — " + String(summary.run_id || "unknown");
+        host.appendChild(title);
+        const badge = document.createElement("div");
+        badge.className = "learning-badge";
+        badge.textContent = String(performance.badge || "Simulated");
+        host.appendChild(badge);
+        const grid = document.createElement("div");
+        grid.className = "summary-grid";
+        const percent = (value) => (100 * Number(value || 0)).toFixed(1) + "%";
+        const fields = [
+          ["Task goal", performance.task_goal || "unknown"],
+          ["Platform", String(performance.environment || "unknown") + " " + String(performance.environment_version || "") + " · " + String(performance.badge || "Simulated")],
+          ["Embodiment", performance.embodiment || "unknown"],
+          ["Paired episodes", String(performance.paired_episodes || 0) + " · same initial conditions=" + String(Boolean(performance.same_initial_conditions))],
+          ["Baseline success", percent(performance.baseline_success_rate)],
+          ["Trained success", percent(performance.trained_success_rate)],
+          ["Absolute success delta", (100 * Number(performance.success_rate_delta || 0)).toFixed(1) + " percentage points"],
+          ["Task score", Number(performance.baseline_task_score || 0).toFixed(4) + " → " + Number(performance.trained_task_score || 0).toFixed(4) + " (Δ " + Number(performance.task_score_delta || 0).toFixed(4) + ")"],
+          ["Paired confidence", "95% CI [" + Number(performance.ci_low || 0).toFixed(4) + ", " + Number(performance.ci_high || 0).toFixed(4) + "]"],
+          ["Paired test", String(performance.paired_test || "unknown") + " · p=" + Number(performance.p_value || 1).toPrecision(4)],
+          ["Actions", String((performance.action_semantics || []).join("; ")) + " · " + String((performance.action_units || []).join("; "))],
+          ["Task success", performance.success_definition || "unknown"],
+          ["Baseline checkpoint", performance.baseline_checkpoint || "unknown"],
+          ["Trained checkpoint", performance.trained_checkpoint || "unknown"],
+        ];
+        for (const [label, value] of fields) {
+          const node = document.createElement("div");
+          node.className = "summary-item";
+          const strong = document.createElement("strong");
+          strong.textContent = label + ": ";
+          node.appendChild(strong);
+          node.appendChild(document.createTextNode(String(value)));
+          grid.appendChild(node);
+        }
+        host.appendChild(grid);
+        const conclusion = document.createElement("div");
+        conclusion.className = "task-conclusion";
+        conclusion.textContent = String(performance.conclusion || (performance.improvement_gate_passed ? "PASS" : "FAIL"));
+        host.appendChild(conclusion);
+
+        const inventory = Array.isArray(artifacts) ? artifacts : [];
+        const episodes = Array.isArray(performance.episodes) ? performance.episodes : [];
+        const replay = document.createElement("div");
+        replay.className = "paired-rollout-primary";
+        const toolbar = document.createElement("div");
+        toolbar.className = "paired-rollout-toolbar";
+        const label = document.createElement("strong");
+        label.textContent = "Paired closed-loop rollout by seed:";
+        const selector = document.createElement("select");
+        selector.id = "taskPerformanceSeedSelector";
+        for (const episode of episodes) {
+          const option = document.createElement("option");
+          option.value = String(episode.seed);
+          option.textContent = "seed " + String(episode.seed) + " · " + String(episode.outcome_category || "paired") + " · Δscore " + Number(episode.task_score_delta || 0).toFixed(4);
+          selector.appendChild(option);
+        }
+        const outcome = document.createElement("span");
+        outcome.id = "taskPerformanceSeedOutcome";
+        toolbar.append(label, selector, outcome);
+        replay.appendChild(toolbar);
+        const videos = document.createElement("div");
+        videos.className = "paired-rollout-videos";
+        const baselineBox = document.createElement("div");
+        const baselineLabel = document.createElement("div");
+        baselineLabel.className = "paired-rollout-label";
+        baselineLabel.textContent = "BASELINE · Simulated";
+        const baselineVideo = document.createElement("video");
+        baselineVideo.id = "taskPerformanceBaselineVideo";
+        baselineVideo.controls = true;
+        baselineVideo.muted = true;
+        baselineVideo.playsInline = true;
+        const trainedBox = document.createElement("div");
+        const trainedLabel = document.createElement("div");
+        trainedLabel.className = "paired-rollout-label";
+        trainedLabel.textContent = "TRAINED · Simulated";
+        const trainedVideo = document.createElement("video");
+        trainedVideo.id = "taskPerformanceTrainedVideo";
+        trainedVideo.controls = true;
+        trainedVideo.muted = true;
+        trainedVideo.playsInline = true;
+        baselineBox.append(baselineLabel, baselineVideo);
+        trainedBox.append(trainedLabel, trainedVideo);
+        videos.append(baselineBox, trainedBox);
+        replay.appendChild(videos);
+        host.appendChild(replay);
+        const updatePair = () => {
+          const seed = String(selector.value || "");
+          const episode = episodes.find((item) => String(item.seed) === seed) || {};
+          const baseline = inventory.find((item) => String(item.key || "").includes("/rollouts/baseline/seed-" + seed + ".mp4"));
+          const trained = inventory.find((item) => String(item.key || "").includes("/rollouts/trained/seed-" + seed + ".mp4"));
+          baselineVideo.src = baseline ? artifactContentUrl(summary.run_id, baseline, false) : "";
+          trainedVideo.src = trained ? artifactContentUrl(summary.run_id, trained, false) : "";
+          outcome.textContent = "baseline " + String(Boolean(episode.baseline_success)).toUpperCase() + " / trained " + String(Boolean(episode.trained_success)).toUpperCase() + " · " + String(episode.baseline_termination_reason || "") + " / " + String(episode.trained_termination_reason || "");
+        };
+        selector.addEventListener("change", updatePair);
+        if (episodes.length) {
+          const preferred = episodes.find((item) => item.outcome_category === "trained_win") || episodes.find((item) => item.outcome_category === "both_failure") || episodes[0];
+          selector.value = String(preferred.seed);
+          updatePair();
+        }
+
+        const failures = episodes.filter((item) => !item.baseline_success || !item.trained_success);
+        if (failures.length) {
+          const heading = document.createElement("div");
+          heading.className = "summary-title";
+          heading.style.marginTop = "10px";
+          heading.textContent = "Failure gallery · termination and final goal coverage";
+          host.appendChild(heading);
+          const gallery = document.createElement("div");
+          gallery.className = "failure-gallery";
+          for (const episode of failures.slice(0, 8)) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "btn";
+            button.textContent = "seed " + String(episode.seed) + " · baseline " + String(episode.baseline_termination_reason) + " coverage=" + Number(episode.baseline_final_coverage || 0).toFixed(3) + " · trained " + String(episode.trained_termination_reason) + " coverage=" + Number(episode.trained_final_coverage || 0).toFixed(3);
+            button.addEventListener("click", () => { selector.value = String(episode.seed); updatePair(); replay.scrollIntoView({ behavior: "smooth", block: "center" }); });
+            gallery.appendChild(button);
+          }
+          host.appendChild(gallery);
+        }
+        const diagnostics = document.createElement("details");
+        diagnostics.innerHTML = "<summary><strong>Secondary training/offline diagnostics</strong></summary><p>Training loss and offline action MSE are engineering diagnostics only. They are not used as this run’s task-performance proof.</p>";
+        host.appendChild(diagnostics);
+        const actions = document.createElement("div");
+        actions.className = "learning-replay-actions";
+        const candidates = [
+          ["Open task RRD", inventory.find((item) => String(item.key || "").endsWith("/reports/task-performance.rrd")), "load"],
+          ["Open task MCAP", inventory.find((item) => String(item.key || "").endsWith("/reports/task-performance.mcap")), "load"],
+          ["Play labeled comparison", inventory.find((item) => String(item.key || "").endsWith("/reports/paired-task-performance.mp4")), "preview"],
+          ["Open JSON report", inventory.find((item) => String(item.key || "").endsWith("/reports/task-performance-report.json")), "preview"],
+        ];
+        for (const [buttonLabel, item, mode] of candidates) {
+          if (!item) continue;
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "btn btn-primary";
+          button.textContent = buttonLabel;
+          button.addEventListener("click", () => Promise.resolve(mode === "load" ? loadArtifact(item) : previewArtifact(item)).catch((err) => showToast(String(err), "error")));
+          actions.appendChild(button);
+        }
+        const rawToggle = document.createElement("button");
+        rawToggle.type = "button";
+        rawToggle.id = "rawArtifactsToggle";
+        rawToggle.className = "btn";
+        rawToggle.textContent = "Show grouped raw artifacts";
+        rawToggle.addEventListener("click", () => {
+          const raw = document.getElementById("artifactList");
+          if (!raw) return;
+          raw.hidden = !raw.hidden;
+          rawToggle.textContent = raw.hidden ? "Show grouped raw artifacts" : "Hide grouped raw artifacts";
+        });
+        actions.appendChild(rawToggle);
+        host.appendChild(actions);
+      }
       function renderArtifactRunSummary(summary, artifacts) {
         const host = document.getElementById("artifactRunSummary");
         if (!host) return;
         host.replaceChildren();
         if (!summary || typeof summary !== "object") return;
+        const performance = summary.task_performance && typeof summary.task_performance === "object" && summary.task_performance.task_name
+          ? summary.task_performance
+          : null;
+        if (performance) {
+          renderTaskPerformanceSummary(host, performance, summary, artifacts);
+          return;
+        }
         const learning = summary.learning && typeof summary.learning === "object" && summary.learning.evaluation_kind
           ? summary.learning
           : null;

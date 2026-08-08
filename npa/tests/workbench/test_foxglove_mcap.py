@@ -202,6 +202,23 @@ def test_write_run_mcap_preserves_explicit_timestamp_provenance(tmp_path: Path) 
     assert info.metadata["npa"]["dataset_source_uri"].endswith("episode.mp4")
 
 
+def test_write_run_mcap_preserves_explicit_producer(tmp_path: Path) -> None:
+    pytest.importorskip("mcap")
+    log = tmp_path / "rollout.log"
+    log.write_text("closed-loop rollout complete\n", encoding="utf-8")
+    output = tmp_path / "task-performance.mcap"
+
+    write_run_mcap(
+        output=output,
+        logs=[LogInput(path=log, name="rollout")],
+        metadata={"producer": "npa.groot.task-performance"},
+    )
+
+    assert summarize_mcap(output).metadata["npa"]["producer"] == (
+        "npa.groot.task-performance"
+    )
+
+
 def test_write_run_mcap_reports_unreadable_inputs(tmp_path: Path) -> None:
     pytest.importorskip("mcap")
     root = _run_fixture(tmp_path, frames=1)

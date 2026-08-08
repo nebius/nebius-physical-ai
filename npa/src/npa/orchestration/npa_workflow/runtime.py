@@ -503,6 +503,12 @@ class SkyPilotWaveExecutor:
                 # record for a later ``--resume`` driver.
                 self._abort_wave(attempt, exc)
                 last_error = attempt.error
+                # ``--no-cancel-on-timeout`` deliberately leaves the managed
+                # job running so a later ``--resume`` can adopt it.  Retrying
+                # this wave in the same driver would submit a duplicate job and
+                # defeat that contract, even when ``retries`` is non-zero.
+                if attempt.status == "running":
+                    return attempt
                 if not isinstance(exc, Exception):
                     raise  # BaseException (Ctrl-C, SystemExit): cancel, then propagate
                 if not isinstance(exc, NpaWorkflowError):
@@ -1460,6 +1466,12 @@ def run_workflow_runtime(
     store = state_store
     if executor is not None:
         ledger = executor.ledger
+        if store is None:
+            store = ledger.store
+        elif ledger.store is not None and store is not ledger.store:
+            raise NpaWorkflowError(
+                "state_store must be the executor ledger store when both are provided"
+            )
     else:
         if store is None:
             store = store_for_config(_resolved_config(spec, run_id), run_id=run_id)
@@ -1481,6 +1493,11 @@ def run_workflow_runtime(
             run_id=run_id,
             api_version=spec.api_version,
             resume=opts.resume,
+        )
+    if workflow_yaml and store is None:
+        raise NpaWorkflowError(
+            "workflow_yaml requires a durable state_store or an executor with a "
+            "durable ledger store"
         )
     if store is not None and workflow_yaml:
         try:

@@ -60,7 +60,7 @@ Reference specs (all pytest-guarded):
 | `cosmos-synth-fanout-curation.yaml` | Fan-out Cosmos Transfer 2.5 synthetic-data shards → Voxel51 (FiftyOne) curation |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
 | `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → MJLab eval |
-| `groot-1-7-finetune.yaml` | Leakage-free GR00T N1.7 baseline/train/post-eval learning experiment with real model forwards, improvement gate, and synchronized offline MCAP/RRD/video replay |
+| `groot-1-7-finetune.yaml` | Provenance-pinned GR00T N1.7 closed-loop PushT benchmark: matched baseline/trained simulator execution, paired outcome gate, actual rollout video, named MCAP topics, and task-first Rerun replay |
 | `mjlab-eval.yaml` / `retargeting.yaml` / `sonic-*.yaml` / `cosmos3-reason.yaml` | Single-tool workbench specs |
 
 ## Document shape

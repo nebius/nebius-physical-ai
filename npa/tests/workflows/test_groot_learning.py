@@ -9,7 +9,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from npa.cli.groot.training_evidence import render_training_manifest_script
+from npa.cli.groot.training_evidence import (
+    parse_training_loss_evidence,
+    render_training_manifest_script,
+)
 from npa.workbench.foxglove.mcap_writer import (
     FrameInput,
     LogInput,
@@ -61,6 +64,90 @@ def test_custom_modality_metadata_is_required_in_each_materialized_split() -> No
     )
 
 
+def test_camera_names_are_derived_from_dataset_modality_metadata() -> None:
+    cameras = learning._camera_contract(
+        {
+            "features": {
+                "observation.images.overhead": {"dtype": "video"},
+                "observation.images.wrist": {"dtype": "video"},
+            }
+        },
+        {
+            "video": {
+                "overhead": {"original_key": "observation.images.overhead"},
+                "wrist_rgb": {"original_key": "observation.images.wrist"},
+            }
+        },
+    )
+
+    assert cameras == [
+        {"name": "overhead", "original_key": "observation.images.overhead"},
+        {"name": "wrist_rgb", "original_key": "observation.images.wrist"},
+    ]
+
+
+def test_episode_timebase_covers_every_episode_and_is_contiguous() -> None:
+    alignment = [
+        {"sample_index": 0, "episode_index": 0, "frame_index": 0},
+        {"sample_index": 1, "episode_index": 0, "frame_index": 1},
+        {"sample_index": 2, "episode_index": 1, "frame_index": 0},
+    ]
+    timebase = learning._episode_timebase(
+        alignment, fps=10.0, camera_names=["overhead"]
+    )
+
+    assert timebase["sample_count"] == 3
+    assert timebase["entries"][-1]["time_seconds"] == pytest.approx(0.2)
+    assert timebase["episode_boundaries"] == [
+        {
+            "episode_index": 0,
+            "start_sample": 0,
+            "end_sample_exclusive": 2,
+            "sample_count": 2,
+        },
+        {
+            "episode_index": 1,
+            "start_sample": 2,
+            "end_sample_exclusive": 3,
+            "sample_count": 1,
+        },
+    ]
+    assert timebase["id"].startswith("sha256:")
+
+
+def test_video_inventory_requires_every_camera_for_every_episode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    objects = [
+        {
+            "bucket": "bucket",
+            "key": f"heldout/videos/chunk-000/observation.image/episode_{episode:06d}.mp4",
+            "size": 10,
+        }
+        for episode in range(2)
+    ]
+    monkeypatch.setattr(learning, "_list_objects", lambda *_args: objects)
+    inventory = learning._heldout_video_inventory(
+        object(),
+        "s3://bucket/heldout/",
+        cameras=[{"name": "front_rgb", "original_key": "observation.image"}],
+        episode_count=2,
+    )
+    assert [item["episode_index"] for item in inventory] == [0, 1]
+    assert {item["camera_name"] for item in inventory} == {"front_rgb"}
+
+    with pytest.raises(learning.GrootVisualizationError, match="inventory mismatch"):
+        learning._heldout_video_inventory(
+            object(),
+            "s3://bucket/heldout/",
+            cameras=[
+                {"name": "front_rgb", "original_key": "observation.image"},
+                {"name": "wrist", "original_key": "observation.wrist"},
+            ],
+            episode_count=2,
+        )
+
+
 def test_custom_modality_loader_fails_closed_when_registration_is_absent(
     tmp_path: Path,
 ) -> None:
@@ -87,6 +174,15 @@ def test_predicted_expert_alignment_rejects_shape_and_nonfinite_values() -> None
     bad[0, 0] = np.nan
     with pytest.raises(learning.GrootVisualizationError, match="non-finite"):
         learning.validate_action_alignment(expert, bad, label="test")
+
+
+def test_rrd_squared_error_is_mean_of_squared_residuals_not_squared_mae() -> None:
+    mae, mse = learning._per_sample_action_errors(
+        np.asarray([0.0, 0.0]), np.asarray([1.0, 3.0])
+    )
+    assert mae == pytest.approx(2.0)
+    assert mse == pytest.approx(5.0)
+    assert mse != pytest.approx(mae**2)
 
 
 def test_comparison_discloses_per_dimension_regression_and_gates_primary_metric() -> None:
@@ -117,6 +213,30 @@ def test_training_coverage_uses_factual_batch_for_maximum_free_gpu_allocation() 
     with pytest.raises(learning.GrootVisualizationError, match="complete train-set pass"):
         learning.calculate_training_coverage(
             optimizer_steps=479, global_batch_size=7, train_samples=3354
+        )
+
+
+def test_training_step_contract_derives_prior_480_step_case() -> None:
+    contract = learning.derive_training_step_contract(
+        train_samples=3354, global_batch_size=7
+    )
+    assert contract["required_optimizer_steps"] == 480
+    assert contract["effective_max_steps"] == 480
+    assert contract["configured_max_steps"] is None
+
+
+def test_training_step_contract_changes_with_dataset_size() -> None:
+    contract = learning.derive_training_step_contract(
+        train_samples=101, global_batch_size=8
+    )
+    assert contract["required_optimizer_steps"] == 13
+    assert contract["effective_max_steps"] == 13
+
+
+def test_training_step_contract_rejects_insufficient_explicit_budget() -> None:
+    with pytest.raises(learning.GrootVisualizationError, match="at least 13 steps"):
+        learning.derive_training_step_contract(
+            train_samples=101, global_batch_size=8, configured_max_steps=12
         )
 
 
@@ -168,13 +288,33 @@ def test_learning_rrd_is_closed_with_a_parseable_footer(
             "heldout_episodes": 1,
             "heldout_samples": 2,
             "source_resolution": "8x6",
+            "camera_names": ["overhead"],
         },
         "training": {
             "checkpoint_uri": "s3://bucket/checkpoint",
             "loss_history": [{"optimizer_step": 1, "loss": 0.5}],
         },
         "evaluation": {"baseline_value": 2.0, "posttrain_value": 1.0},
-        "provenance": {"heldout_source_video_uri": "s3://bucket/video.mp4"},
+        "provenance": {
+            "primary_camera": "overhead",
+            "heldout_source_videos": [
+                {
+                    "episode_index": 0,
+                    "camera_name": "overhead",
+                    "uri": "s3://bucket/video.mp4",
+                }
+            ],
+        },
+        "visualizations": {
+            "timebase": learning._episode_timebase(
+                [
+                    {"sample_index": 0, "episode_index": 0, "frame_index": 0},
+                    {"sample_index": 1, "episode_index": 0, "frame_index": 1},
+                ],
+                fps=10.0,
+                camera_names=["overhead"],
+            )
+        },
     }
     arrays = {
         "expert": np.zeros((2, 1), dtype=np.float32),
@@ -187,13 +327,25 @@ def test_learning_rrd_is_closed_with_a_parseable_footer(
     monkeypatch.setattr(
         learning,
         "_evaluation_bundle",
-        lambda *_args: (report, {"fps": 10.0}, {}, arrays, post_arrays),
+        lambda *_args: (
+            report,
+            {
+                "fps": 10.0,
+                "sample_alignment": [
+                    {"sample_index": 0, "episode_index": 0, "frame_index": 0},
+                    {"sample_index": 1, "episode_index": 0, "frame_index": 1},
+                ],
+            },
+            {},
+            arrays,
+            post_arrays,
+        ),
     )
     monkeypatch.setattr(learning, "_download", lambda *_args: None)
     monkeypatch.setattr(
         learning,
-        "_decode_video",
-        lambda *_args: ([image_module.new("RGB", (8, 6))] * 2, 10.0),
+        "_decode_synchronized_camera",
+        lambda *_args, **_kwargs: ([image_module.new("RGB", (8, 6))] * 2, 10.0),
     )
     uploaded: dict[str, bytes] = {}
 
@@ -282,7 +434,9 @@ def test_training_manifest_records_real_loss_trajectory(tmp_path: Path) -> None:
     (output / "checkpoint-420").mkdir()
     (output / "checkpoint-420" / "model.bin").write_bytes(b"real")
     (output / "training.log").write_text(
-        "{'loss': 1.2, 'epoch': 0.02}\n{'loss': 0.8, 'epoch': 1.0}\n",
+        "{'loss': 1.2, 'step': 10, 'epoch': 0.02}\n"
+        "{'loss': 0.8, 'step': 20, 'epoch': 1.0}\n"
+        "{'train_loss': 0.91, 'epoch': 1.0}\n",
         encoding="utf-8",
     )
     (output / "npa_groot_distributed_evidence.json").write_text(
@@ -303,7 +457,7 @@ def test_training_manifest_records_real_loss_trajectory(tmp_path: Path) -> None:
     script = render_training_manifest_script(
         output_dir=str(output),
         manifest_path=str(manifest),
-        manifest_fields={"global_batch_size": 8},
+        manifest_fields={"global_batch_size": 8, "logging_steps": 10},
     )
     exec(compile(script, "training-manifest", "exec"), {})
     payload = json.loads(manifest.read_text())
@@ -311,8 +465,35 @@ def test_training_manifest_records_real_loss_trajectory(tmp_path: Path) -> None:
     assert payload["training_examples"] == 3360
     assert payload["loss_history"] == [
         {"optimizer_step": 10, "loss": 1.2},
-        {"optimizer_step": 420, "loss": 0.8},
+        {"optimizer_step": 20, "loss": 0.8},
     ]
+    assert payload["aggregate_train_loss"] == pytest.approx(0.91)
+    assert payload["final_step_loss"] == pytest.approx(0.8)
+    assert payload["aggregate_train_loss"] != payload["final_step_loss"]
+    assert payload["loss_step_inference"] is None
+
+
+def test_text_loss_step_inference_is_explicit_and_never_forces_final_checkpoint() -> None:
+    evidence = parse_training_loss_evidence(
+        "{'loss': 1.2}\n{'loss': 0.8}\n{'train_loss': 0.91}\n",
+        training_step=420,
+        logging_steps=10,
+    )
+
+    assert evidence["loss_history"] == [
+        {"optimizer_step": 10, "loss": 1.2},
+        {"optimizer_step": 20, "loss": 0.8},
+    ]
+    assert evidence["aggregate_train_loss"] == pytest.approx(0.91)
+    assert evidence["loss_step_source"] == "explicit_inference"
+    assert evidence["loss_step_inference"]["logging_steps"] == 10
+
+
+def test_text_loss_without_steps_or_trainer_config_fails_closed() -> None:
+    with pytest.raises(ValueError, match="no validated trainer logging_steps"):
+        parse_training_loss_evidence(
+            "{'loss': 1.2}\n", training_step=420, logging_steps=None
+        )
 
 
 def test_learning_ui_is_replay_first_groups_frames_and_never_upscales() -> None:
