@@ -14,14 +14,57 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote
 
 # These names are supplied by the generated backend into which this module is
 # embedded. They intentionally remain injectable/mocked at that boundary.
-# ruff: noqa: F821
+if TYPE_CHECKING:
+    from npa.cli.agent_access import AccessProbeError, AgentAccessReport, BucketProbe
+
+# NPA_EMBED_STANDALONE_START
+# Standalone imports make this adapter directly unit-testable. The embedded
+# source runs under backend.py's module name, so this block does not overwrite
+# the intentionally injected backend globals.
+if __name__ == "npa.cli.agent_access_runtime":
+    from fastapi import HTTPException
+    from fastapi.responses import JSONResponse
+
+    from npa.cli.agent_access import (
+        AccessProbeError,
+        AgentAccessReport,
+        BucketProbe,
+        accessible_artifact_buckets,
+        discover_agent_access,
+        scoped_artifact_buckets,
+    )
+    from npa.cli.agent_s3_guard import (
+        configured_agent_s3_buckets,
+        s3_uri_in_configured_buckets,
+    )
+    from npa.workflows.artifacts import (
+        find_run_artifact_page,
+        parse_s3_uri,
+        validate_run_id,
+    )
+
+    NPA_PROJECT_ALIAS = ""
+    _agent_command_env: Any = None
+    _agent_s3_client_optional: Any = None
+    _run_list_cache_clear: Any = None
+    _safe_artifact_key: Any = None
+# NPA_EMBED_STANDALONE_END
 
 
-_AGENT_ACCESS_CACHE = {"report": None, "expires_at": 0.0}
+# Tenant inventory runs on a FastAPI request worker: 15 seconds allows a normal
+# CLI auth/list round-trip while guaranteeing one stalled project probe cannot
+# pin that worker indefinitely.
+_AGENT_NEBIUS_TIMEOUT_SECONDS = 15.0
+_AGENT_ACCESS_CACHE_TTL_SECONDS = 30.0
+_MAX_ARTIFACT_MEMBERSHIP_BUCKETS = 32
+_AGENT_ACCESS_CACHE = {"report": None, "expires_at": 0.0, "refreshing": False}
 _AGENT_ACCESS_LOCK = threading.Lock()
+_AGENT_ACCESS_CONDITION = threading.Condition(_AGENT_ACCESS_LOCK)
 
 
 def _access_probe_error(operation: str, detail: str = ""):
@@ -52,13 +95,19 @@ def _agent_nebius_json(args: list[str], *, operation: str) -> dict:
     if Path("/mnt/cloud-metadata/token").is_file():
         command.extend(["--profile", "cursor-sa"])
     command.extend([*args, "--all", "--format", "json"])
-    proc = subprocess.run(
-        command,
-        env=_agent_command_env(),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            command,
+            env=_agent_command_env(),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=_AGENT_NEBIUS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired may retain captured stdout/stderr or the command. Do not
+        # reflect any of it into the public access report.
+        raise AccessProbeError("unavailable", operation) from None
     if proc.returncode != 0:
         raise _access_probe_error(operation, proc.stderr)
     try:
@@ -132,32 +181,49 @@ def _agent_probe_bucket(s3, bucket: str) -> "BucketProbe":
 
 def _agent_access_report(*, refresh: bool = False) -> "AgentAccessReport":
     now_mono = time.monotonic()
-    with _AGENT_ACCESS_LOCK:
+    with _AGENT_ACCESS_CONDITION:
         cached = _AGENT_ACCESS_CACHE.get("report")
         expires_at = float(_AGENT_ACCESS_CACHE.get("expires_at") or 0.0)
         if not refresh and isinstance(cached, AgentAccessReport) and expires_at > now_mono:
             return cached
-    s3, settings = _agent_s3_client_optional()
-    primary = str(settings.get("bucket") or "").strip()
-    configured = [primary] if primary else []
-    for item in str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).split(","):
-        name = item.strip()
-        if name and name not in configured:
-            configured.append(name)
-    report = discover_agent_access(
-        tenant_id=str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
-        deployment_project_id=str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip(),
-        deployment_project_name=str(
-            os.environ.get("NPA_AGENT_PROJECT_ALIAS") or NPA_PROJECT_ALIAS
-        ).strip(),
-        fallback_buckets=configured,
-        list_projects=_agent_list_tenant_projects,
-        list_buckets=_agent_list_project_buckets,
-        probe_bucket=lambda bucket: _agent_probe_bucket(s3, bucket),
-    )
-    with _AGENT_ACCESS_LOCK:
+        if bool(_AGENT_ACCESS_CACHE.get("refreshing")):
+            while bool(_AGENT_ACCESS_CACHE.get("refreshing")):
+                _AGENT_ACCESS_CONDITION.wait()
+            cached = _AGENT_ACCESS_CACHE.get("report")
+            if isinstance(cached, AgentAccessReport):
+                return cached
+        _AGENT_ACCESS_CACHE["refreshing"] = True
+    try:
+        s3, settings = _agent_s3_client_optional()
+        primary = str(settings.get("bucket") or "").strip()
+        configured = [primary] if primary else []
+        for item in str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).split(","):
+            name = item.strip()
+            if name and name not in configured:
+                configured.append(name)
+        report = discover_agent_access(
+            tenant_id=str(os.environ.get("NEBIUS_TENANT_ID") or "").strip(),
+            deployment_project_id=str(os.environ.get("NEBIUS_PROJECT_ID") or "").strip(),
+            deployment_project_name=str(
+                os.environ.get("NPA_AGENT_PROJECT_ALIAS") or NPA_PROJECT_ALIAS
+            ).strip(),
+            fallback_buckets=configured,
+            list_projects=_agent_list_tenant_projects,
+            list_buckets=_agent_list_project_buckets,
+            probe_bucket=lambda bucket: _agent_probe_bucket(s3, bucket),
+        )
+    except BaseException:
+        with _AGENT_ACCESS_CONDITION:
+            _AGENT_ACCESS_CACHE["refreshing"] = False
+            _AGENT_ACCESS_CONDITION.notify_all()
+        raise
+    with _AGENT_ACCESS_CONDITION:
         _AGENT_ACCESS_CACHE["report"] = report
-        _AGENT_ACCESS_CACHE["expires_at"] = time.monotonic() + 30.0
+        _AGENT_ACCESS_CACHE["expires_at"] = (
+            time.monotonic() + _AGENT_ACCESS_CACHE_TTL_SECONDS
+        )
+        _AGENT_ACCESS_CACHE["refreshing"] = False
+        _AGENT_ACCESS_CONDITION.notify_all()
     return report
 
 
@@ -254,6 +320,28 @@ def _assert_s3_uri_in_agent_bucket(uri: str, settings) -> None:
         )
 
 
+def _validated_resolved_prefix(value: str) -> str:
+    """Validate an opaque S3 parent prefix without path normalization."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    variants = [raw]
+    for _attempt in range(2):
+        decoded = unquote(variants[-1])
+        if decoded == variants[-1]:
+            break
+        variants.append(decoded)
+    for candidate in variants:
+        if (
+            candidate.startswith("/")
+            or candidate.endswith("/")
+            or "\\" in candidate
+            or any(part in {"", ".", ".."} for part in candidate.split("/"))
+        ):
+            raise HTTPException(status_code=400, detail="invalid resolved artifact prefix")
+    return raw
+
+
 def _resolve_accessible_run_artifact(
     *,
     s3,
@@ -262,25 +350,15 @@ def _resolve_accessible_run_artifact(
     key: str,
     bucket: str = "",
 ):
-    # Authorize one discovered artifact by exact run membership. This is the
-    # read-only bridge for cross-project artifacts; it deliberately does not
-    # make every URI in a discovered bucket caller-addressable.
+    # Authorize one discovered artifact by exact server-resolved run membership.
+    # This is the read-only bridge for cross-project artifacts; a caller-chosen
+    # substring/path shape is never an authorization fact.
     normalized_run = validate_run_id(run_id)
     normalized_key = _safe_artifact_key(key)
-    accessible = _agent_s3_buckets(s3, settings)
+    accessible = list(_agent_s3_buckets(s3, settings))[
+        :_MAX_ARTIFACT_MEMBERSHIP_BUCKETS
+    ]
     requested_bucket = str(bucket or "").strip()
-    # Membership is structural and exact: the key must sit below this run's
-    # directory, then a metadata read must prove that exact object exists in an
-    # effectively accessible bucket. This avoids enumerating a 10k-object run
-    # merely to authorize one already-discovered key.
-    if not (
-        normalized_key.startswith(normalized_run + "/")
-        or f"/{normalized_run}/" in normalized_key
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="artifact is not a discovered object for this run",
-        )
     if requested_bucket:
         if requested_bucket not in accessible:
             raise HTTPException(
@@ -293,6 +371,20 @@ def _resolve_accessible_run_artifact(
     run_bucket = ""
     for candidate in candidates:
         try:
+            resolved_prefix, first_page = find_run_artifact_page(
+                candidate,
+                base_prefix=str((settings or {}).get("prefix") or ""),
+                run_id=normalized_run,
+                page_size=1,
+                s3=s3,
+            )
+            if not first_page.artifacts:
+                continue
+            discovered_scope = "/".join(
+                part for part in (resolved_prefix, normalized_run) if part
+            ) + "/"
+            if not normalized_key.startswith(discovered_scope):
+                continue
             s3.head_object(Bucket=candidate, Key=normalized_key)
         except Exception:
             continue

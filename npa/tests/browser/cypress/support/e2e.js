@@ -1027,6 +1027,31 @@ function installAgentApiMocks() {
       req.reply(json(ARTIFACT_ONLY_RUN_DETAILS));
       return;
     }
+    if (runId === JSON_ONLY_RUN_ID) {
+      req.reply(json({
+        run: {
+          run_id: JSON_ONLY_RUN_ID,
+          source_type: "artifact_storage",
+          source_label: "S3 artifacts",
+          status: "status_unavailable",
+          status_label: "Status unavailable",
+          result: "artifacts_available",
+          stages: [{
+            id: "evaluation",
+            stage_key: "evaluation",
+            label: "evaluation",
+            status: "observed_output",
+            status_label: "Observed output",
+            artifact_count: JSON_ONLY_ARTIFACTS.length,
+            evidence_type: "artifact_observation",
+            evidence_source: "artifact_listing",
+            authority: "observed",
+          }],
+          logs: [],
+        },
+      }));
+      return;
+    }
     if (runId === "cosmos-reason-run") {
       req.reply(json(GENERIC_WORKFLOW_RUN_DETAILS));
       return;

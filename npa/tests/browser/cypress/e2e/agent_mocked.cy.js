@@ -558,6 +558,125 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   });
 
+  it("preserves known and unknown viewability in lightweight run summaries", () => {
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        runs: [
+          {
+            run_id: "known-viewable-run",
+            source_type: "artifact_storage",
+            has_viewable: true,
+            summary_complete: false,
+            last_modified: "2026-08-02T00:00:00Z",
+          },
+          {
+            run_id: "unknown-viewability-run",
+            source_type: "artifact_storage",
+            has_viewable: null,
+            summary_complete: false,
+            last_modified: "2026-08-01T00:00:00Z",
+          },
+        ],
+        total_runs: 2,
+        truncated: false,
+      },
+    }).as("viewabilityRuns");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@viewabilityRuns");
+    cy.get('#runIdSelect option[value="known-viewable-run"]')
+      .should("contain.text", "viewable")
+      .and("not.contain.text", "viewability unknown");
+    cy.get('#runIdSelect option[value="unknown-viewability-run"]')
+      .should("contain.text", "viewability unknown");
+  });
+
+  it("follows the native S3 artifact cursor and merges pages", () => {
+    const runId = "paged-ui-run";
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        runs: [{
+          run_id: runId,
+          source_type: "artifact_storage",
+          bucket: "paged-bucket",
+          project_id: "project-paged",
+          has_viewable: true,
+          summary_complete: false,
+          last_modified: "2026-08-03T00:00:00Z",
+        }],
+        total_runs: 1,
+        truncated: false,
+      },
+    }).as("pagedRuns");
+    cy.intercept("GET", `/api/artifacts/run/${runId}*`, (req) => {
+      const cursor = String((req.query && req.query.cursor) || "");
+      if (!cursor) {
+        req.reply({
+          statusCode: 200,
+          body: {
+            ok: true,
+            run_id: runId,
+            bucket: "paged-bucket",
+            project_id: "project-paged",
+            resolved_prefix: "category",
+            artifacts: [{
+              run_id: runId,
+              key: `category/${runId}/a.json`,
+              s3_uri: `s3://paged-bucket/category/${runId}/a.json`,
+              render: "json",
+              size: 10,
+            }],
+            preferred: null,
+            truncated: true,
+            next_cursor: "cursor-page-2",
+          },
+        });
+        return;
+      }
+      expect(cursor).to.eq("cursor-page-2");
+      expect(req.query.resolved_prefix).to.eq("category");
+      expect(req.query.resource_bucket).to.eq("paged-bucket");
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          run_id: runId,
+          bucket: "paged-bucket",
+          project_id: "project-paged",
+          resolved_prefix: "category",
+          artifacts: [{
+            run_id: runId,
+            key: `category/${runId}/b.json`,
+            s3_uri: `s3://paged-bucket/category/${runId}/b.json`,
+            render: "json",
+            size: 11,
+          }],
+          preferred: null,
+          truncated: false,
+          next_cursor: "",
+        },
+      });
+    }).as("pagedArtifacts");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@pagedRuns");
+    cy.get("#runIdSelect").select(runId);
+    cy.wait("@pagedArtifacts");
+    cy.get("#artifactList").should("contain.text", `category/${runId}/a.json`);
+    cy.get('#artifactList button[data-action="load-more-artifacts"]').click();
+    cy.wait("@pagedArtifacts");
+    cy.get("#artifactList")
+      .should("contain.text", `category/${runId}/a.json`)
+      .and("contain.text", `category/${runId}/b.json`);
+    cy.get('#artifactList button[data-action="load-more-artifacts"]').should("not.exist");
+  });
+
   it("covers artifact discovery, dynamic artifact load button, and camera cards", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");

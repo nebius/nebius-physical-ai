@@ -9,13 +9,94 @@ from __future__ import annotations
 
 # This source is embedded into backend.py, where these adapter dependencies are
 # defined by the surrounding generated module.
-# ruff: noqa: F821
-
 import json
 import re
 from pathlib import Path
 
 from botocore.exceptions import BotoCoreError, ClientError
+
+# NPA_EMBED_STANDALONE_START
+# These adapter globals are intentionally supplied by the rendered backend. Use
+# explicit standalone sentinels for direct helper tests instead of suppressing
+# F821 for the entire embedded module.
+if __name__ == "npa.cli.agent_stage_runtime":
+    (
+        ArtifactDiscoveryError,
+        HTTPException,
+        RECORDINGS_DIR,
+        _agent_access_report,
+        _agent_artifact_list_scope,
+        _agent_s3_buckets,
+        _agent_s3_client,
+        _artifact_discovery_prefix,
+        _artifact_filename,
+        _merge_sim2real_run_details,
+        _now_iso,
+        _slug,
+        _validated_resolved_prefix,
+        _workflow_draft_from_state,
+        artifact_bucket_projects,
+        build_artifact_backed_stages,
+        coerce_authoritative_stage_evidence,
+        download_s3_uri,
+        find_run_artifacts,
+        find_run_artifacts_across_buckets,
+        list_artifacts,
+        local_demo_run_details,
+        merge_stage_evidence,
+        parse_stage_evidence_documents,
+        resolve_run_source,
+        run_owns_workflow_stage_overlay,
+        select_preferred_artifact,
+        summarize_stage_evidence,
+        validate_run_id,
+    ) = (None,) * 29
+# NPA_EMBED_STANDALONE_END
+
+
+_MAX_STAGE_EVIDENCE_DOCUMENTS = 8
+_MAX_STAGE_EVIDENCE_BYTES = 65_536
+
+
+def _read_bounded_json_object(
+    s3, bucket: str, key: str, *, max_bytes: int = _MAX_STAGE_EVIDENCE_BYTES
+):
+    """Read one JSON object with a hard byte bound and deterministic cleanup."""
+    body = None
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        body = response["Body"]
+        raw = body.read(max_bytes + 1)
+        encoded = raw.encode("utf-8") if isinstance(raw, str) else bytes(raw)
+        if len(encoded) > max_bytes:
+            return None
+        payload = json.loads(encoded)
+        return payload if isinstance(payload, dict) else None
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            try:
+                close()
+            except (OSError, RuntimeError, ValueError):
+                # Cleanup must not turn an otherwise safely bounded read into a
+                # request failure. StreamingBody.close() is best-effort here.
+                pass
+
+
+def _stage_evidence_candidate_rank(key: str) -> int | None:
+    lower = str(key or "").lower()
+    leaf = Path(lower).name
+    if lower.endswith("/npa-workflow/status.json") or (
+        "/logs/" in lower and lower.endswith("/status.json")
+    ):
+        return 0
+    if lower.endswith("/npa-workflow/manifest.json"):
+        return 1
+    if leaf == "manifest.json":
+        return 2
+    if leaf.endswith("report.json"):
+        return 3
+    return None
 
 
 def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[str]]]:
@@ -44,24 +125,25 @@ def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[st
 
 
 def _stage_evidence_documents(s3, bucket: str, artifacts: list) -> list:
-    # Read only typed manifest/status/report candidates from one resolved run.
-    documents = []
+    # Select the most authoritative typed candidates before any S3 GET. Reads are
+    # bounded by both object count and bytes; parser order remains low-to-high
+    # authority so status documents deterministically override snapshots.
+    candidates = []
     for artifact in artifacts:
         key = str(getattr(artifact, "key", "") or "")
-        lower = key.lower()
-        leaf = Path(key).name.lower()
-        candidate = (
-            lower.endswith("/npa-workflow/manifest.json")
-            or lower.endswith("/npa-workflow/status.json")
-            or ("/logs/" in lower and lower.endswith("/status.json"))
-            or leaf == "manifest.json"
-            or leaf.endswith("report.json")
-        )
-        if not candidate:
+        rank = _stage_evidence_candidate_rank(key)
+        if rank is None:
             continue
+        size = int(getattr(artifact, "size", 0) or 0)
+        if size > _MAX_STAGE_EVIDENCE_BYTES:
+            continue
+        candidates.append((rank, key))
+    candidates.sort(key=lambda item: (item[0], item[1]))
+
+    loaded = []
+    for rank, key in candidates[:_MAX_STAGE_EVIDENCE_DOCUMENTS]:
         try:
-            body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-            payload = json.loads(body)
+            payload = _read_bounded_json_object(s3, bucket, key)
         except (
             ClientError,
             BotoCoreError,
@@ -73,36 +155,97 @@ def _stage_evidence_documents(s3, bucket: str, artifacts: list) -> list:
         ):
             continue
         if isinstance(payload, dict):
-            documents.append({"key": key, "payload": payload})
-    return documents
+            loaded.append((rank, key, {"key": key, "payload": payload}))
+    loaded.sort(key=lambda item: (-item[0], item[1]))
+    return [document for _rank, _key, document in loaded]
 
 
-_SENSITIVE_WORKFLOW_ARG = re.compile(
-    r"(?i)(?:authorization|credential|password|passwd|private[_-]?key|secret|token|api[_-]?key|access[_-]?key)"
+_SENSITIVE_PUBLIC_MARKER = (
+    r"(?:authorization|credentials?|password|passwd|private[_-]?key|"
+    r"secret(?:[_-]?access)?(?:[_-]?key)?(?:[_-]?(?:id|value))?|"
+    r"tokens?(?:[_-]?(?:id|value))?|api[_-]?key(?:[_-]?id)?|"
+    r"access[_-]?key(?:[_-]?id)?)"
+)
+_SENSITIVE_PUBLIC_NAME = re.compile(
+    rf"(?i)(?<![A-Za-z0-9]){_SENSITIVE_PUBLIC_MARKER}(?![A-Za-z0-9])"
+)
+_SENSITIVE_PUBLIC_VALUE = re.compile(
+    rf"(?i)(?:authorization\s*:|bearer\s+|{_SENSITIVE_PUBLIC_MARKER}\s*(?:=|:|\s))"
+)
+_SENSITIVE_PUBLIC_NAME_TOKEN = (
+    rf"(?:--?)?(?:[A-Za-z0-9]+[_.-])*{_SENSITIVE_PUBLIC_MARKER}"
+)
+_SENSITIVE_INLINE_ASSIGNMENT = re.compile(
+    rf"(?i)(?P<name>(?<![A-Za-z0-9]){_SENSITIVE_PUBLIC_NAME_TOKEN})"
+    r"(?P<separator>\s*(?:=|:)\s*|\s+)"
+    r"(?P<secret>(?:bearer\s+)?[^\s]+)"
+)
+_BEARER_SECRET = re.compile(r"(?i)\bbearer\s+[^\s]+")
+_BARE_SENSITIVE_ARG = re.compile(
+    rf"(?i)^{_SENSITIVE_PUBLIC_NAME_TOKEN}$"
+)
+_EMPTY_SENSITIVE_SEPARATOR = re.compile(
+    rf"(?i)^(?P<name>{_SENSITIVE_PUBLIC_NAME_TOKEN})(?P<separator>\s*(?:=|:)\s*)$"
 )
 
 
+def _redact_inline_workflow_secret(value: str) -> str:
+    def replace_assignment(match: re.Match) -> str:
+        secret = str(match.group("secret") or "")
+        replacement = "Bearer <redacted>" if secret.lower().startswith("bearer ") else "<redacted>"
+        return str(match.group("name")) + str(match.group("separator")) + replacement
+
+    redacted = _SENSITIVE_INLINE_ASSIGNMENT.sub(replace_assignment, value)
+    return _BEARER_SECRET.sub("Bearer <redacted>", redacted)
+
+
 def _public_workflow_command(argv) -> str:
-    # Render manifest argv without reflecting embedded or following secrets.
+    # Render manifest argv without reflecting embedded or following secrets. A
+    # pending value is consumed only when the next argv item is not another flag.
     values = argv if isinstance(argv, list) else [argv]
     public = []
-    redact_next = False
+    pending = ""
     for raw in values:
         value = str(raw or "")
-        if redact_next:
-            public.append("<redacted>")
-            redact_next = False
+        if pending and value.startswith("-"):
+            pending = ""
+        elif pending == "authorization" and value.lower() == "bearer":
+            public.append("Bearer")
+            pending = "secret"
             continue
-        key, separator, _assigned = value.partition("=")
-        if _SENSITIVE_WORKFLOW_ARG.search(key.lstrip("-")):
-            if separator and key.strip():
-                public.append(key + "=<redacted>")
-            else:
-                public.append(value)
-                redact_next = True
-            continue
-        if value.lower().startswith("bearer "):
+        elif pending:
             public.append("<redacted>")
+            pending = ""
+            continue
+        redacted = _redact_inline_workflow_secret(value)
+        if redacted != value:
+            public.append(redacted)
+            continue
+        empty_separator = _EMPTY_SENSITIVE_SEPARATOR.fullmatch(value)
+        if empty_separator:
+            public.append(value)
+            marker = str(empty_separator.group("name")).lower().lstrip("-")
+            separator = str(empty_separator.group("separator"))
+            # A standalone name followed by ':' is commonly split from its
+            # value by argv construction. An empty '=' assignment is already a
+            # complete (empty) value and must not consume an unrelated positional.
+            pending = (
+                "authorization"
+                if marker == "authorization" and ":" in separator
+                else "secret"
+                if ":" in separator
+                else ""
+            )
+            continue
+        if _BARE_SENSITIVE_ARG.fullmatch(value):
+            public.append(value)
+            pending = (
+                "authorization" if value.lower().lstrip("-") == "authorization" else "secret"
+            )
+            continue
+        if value.lower() == "bearer":
+            public.append("Bearer")
+            pending = "secret"
             continue
         public.append(value)
     return " ".join(public)[:2000]
@@ -155,6 +298,7 @@ def _artifact_backed_run_details(
 ) -> dict | None:
     if not run_id:
         return None
+    exact_prefix = _validated_resolved_prefix(resolved_prefix)
     try:
         s3, settings = _agent_s3_client()
         artifacts = []
@@ -171,10 +315,6 @@ def _artifact_backed_run_details(
                     status_code=403,
                     detail="artifact bucket is outside effective agent access",
                 )
-            exact_prefix = str(resolved_prefix or "").strip().strip("/")
-            if any(part in {"", ".", ".."} for part in exact_prefix.split("/")):
-                if exact_prefix:
-                    raise HTTPException(status_code=400, detail="invalid resolved artifact prefix")
             if exact_prefix:
                 artifacts = list_artifacts(
                     run_bucket,

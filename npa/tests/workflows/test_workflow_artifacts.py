@@ -581,8 +581,50 @@ def test_lightweight_prefix_index_discovers_runs_without_object_summaries() -> N
         "run-a",
         "default",
     }
-    assert all(item.summary_complete is False for item in page.runs)
-    assert all(item.artifact_count == 0 for item in page.runs)
+    assert all(item.summary_complete is True for item in page.runs)
+    assert all(item.artifact_count > 0 for item in page.runs)
+    assert all(item.last_modified for item in page.runs)
+    assert any(item.has_viewable is True for item in page.runs)
+
+
+def test_lightweight_timestamp_less_runs_use_s3_recency_and_viewability() -> None:
+    layout = [
+        ("category/plain-old/result.bin", "2026-07-01T00:00:00+00:00"),
+        ("category/plain-new/preview.mp4", "2026-08-01T00:00:00+00:00"),
+    ]
+
+    page = list_all_run_prefixes(
+        "bucket",
+        limit=50,
+        s3=_PrefixAwareS3(layout),
+    )
+
+    assert [item.run_id for item in page.runs] == ["plain-new", "plain-old"]
+    assert page.runs[0].last_modified == "2026-08-01T00:00:00+00:00"
+    assert page.runs[0].started_at == ""
+    assert page.runs[0].has_viewable is True
+    assert page.runs[0].summary_complete is True
+    assert page.runs[1].has_viewable is False
+
+
+def test_lightweight_truncated_summary_marks_viewability_unknown() -> None:
+    layout = [
+        (f"category/large-run/raw/{index:04d}.bin", "2026-08-01T00:00:00+00:00")
+        for index in range(1001)
+    ]
+    layout.append(("category/large-run/preview.mp4", "2026-08-02T00:00:00+00:00"))
+
+    page = list_all_run_prefixes(
+        "bucket",
+        limit=50,
+        s3=_PrefixAwareS3(layout),
+    )
+
+    summary = page.runs[0]
+    assert summary.run_id == "large-run"
+    assert summary.summary_complete is False
+    assert summary.has_viewable is None
+    assert summary.artifact_count == 0
 
 
 def test_find_run_artifacts_locates_root_level_run() -> None:
@@ -621,6 +663,24 @@ def test_discovery_categories_excludes_infra_roots() -> None:
     )
     assert "npa-agent" not in cats
     assert "scenario-gen-smoke" in cats
+
+
+def test_discovery_categories_preserves_nested_exclusion_scope() -> None:
+    from npa.workflows.artifacts import discovery_categories
+
+    layout = [
+        ("npa-agent/session-state/current/state.json", "2026-07-23T00:00:00+00:00"),
+        ("npa-agent/customer-runs/run-a/report.json", "2026-07-24T00:00:00+00:00"),
+        ("other/run-b/report.json", "2026-07-25T00:00:00+00:00"),
+    ]
+    cats = discovery_categories(
+        "bucket",
+        exclude={"npa-agent/session-state"},
+        s3=_PrefixAwareS3(layout),
+    )
+
+    assert "npa-agent" in cats
+    assert "other" in cats
 
 
 def test_list_all_runs_excludes_infra_roots() -> None:
@@ -777,7 +837,7 @@ def test_exact_search_finds_flat_root_run_in_mixed_layout() -> None:
         s3=s3,
     )
     assert [item.run_id for item in lightweight.runs] == [run_id]
-    assert lightweight.runs[0].summary_complete is False
+    assert lightweight.runs[0].summary_complete is True
 
     resolved_prefix, artifact_page = find_run_artifact_page(
         "bucket",
@@ -825,6 +885,41 @@ def test_artifact_pages_preserve_unknown_formats_and_cursor() -> None:
     assert unknown.inline is False
 
 
+def test_run_artifact_parent_discovery_is_bounded(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    categories = [f"category-{index:03d}" for index in range(100)]
+    attempted: list[str] = []
+    category_budget: list[int] = []
+
+    def bounded_categories(*_args, max_categories=None, **_kwargs):
+        category_budget.append(max_categories)
+        return categories[:max_categories]
+
+    monkeypatch.setattr(A, "discovery_categories", bounded_categories)
+
+    def empty_page(_bucket, _run_id, *, prefix, page_size, **_kwargs):
+        attempted.append(prefix)
+        return A.ArtifactListPage([], False, "", page_size)
+
+    monkeypatch.setattr(A, "list_artifacts_page", empty_page)
+
+    resolved, page = A.find_run_artifact_page(
+        "bucket",
+        base_prefix="configured-root",
+        run_id="missing-run",
+        page_size=1,
+        s3=object(),
+    )
+
+    assert resolved == ""
+    assert page.artifacts == []
+    assert category_budget == [A.MAX_RUN_PARENT_CANDIDATES - 2]
+    assert len(attempted) == A.MAX_RUN_PARENT_CANDIDATES
+    assert "configured-root" in attempted
+    assert "" in attempted
+
+
 def test_explicit_prefix_discovery_searches_all_accessible_project_buckets() -> None:
     class MultiBucketS3:
         def get_paginator(self, name: str):
@@ -851,74 +946,7 @@ def test_explicit_prefix_discovery_searches_all_accessible_project_buckets() -> 
     }
 
 
-def test_list_runs_cached_serves_fresh_then_refreshes_when_stale(monkeypatch) -> None:
-    """Fresh hits avoid re-walking S3; a stale entry is refreshed (here inline)."""
-    import npa.workflows.artifacts as A
-
-    A._run_list_cache_clear()
-    calls = {"n": 0}
-
-    def fake_all(bucket, **kwargs):  # noqa: ANN001
-        calls["n"] += 1
-        run = A.RunSummary(
-            run_id=f"run-{calls['n']}", last_modified="2026-07-24T00:00:00+00:00",
-            artifact_count=1, has_viewable=True,
-        )
-        return A.RunListPage(runs=[run], truncated=False, total_runs=1, limit=kwargs.get("limit", 50))
-
-    monkeypatch.setattr(A, "list_all_runs", fake_all)
-
-    # Cold miss -> computes once.
-    p1 = A.list_runs_cached("bucket", all_categories=True, base_prefix="checkpoints", ttl=1000, s3=object())
-    assert calls["n"] == 1 and p1.runs[0].run_id == "run-1"
-    # Fresh hit -> no recompute, same page.
-    p2 = A.list_runs_cached("bucket", all_categories=True, base_prefix="checkpoints", ttl=1000, s3=object())
-    assert calls["n"] == 1 and p2.runs[0].run_id == "run-1"
-    # Stale (ttl=0) -> inline refresh recomputes and returns fresh.
-    p3 = A.list_runs_cached(
-        "bucket", all_categories=True, base_prefix="checkpoints", ttl=0, s3=object(), refresh_sync=True
-    )
-    assert calls["n"] == 2 and p3.runs[0].run_id == "run-2"
-    A._run_list_cache_clear()
-
-
-def test_list_runs_cached_prefix_path_matches_list_runs() -> None:
-    """The prefix (single-category) cache path returns the same runs as list_runs."""
-    import npa.workflows.artifacts as A
-
-    A._run_list_cache_clear()
-    s3 = _PrefixAwareS3(_MULTI_ROOT_LAYOUT)
-    direct = list_runs("bucket", prefix="checkpoints/sim2real-b", limit=50, s3=s3)
-    cached = A.list_runs_cached("bucket", prefix="checkpoints/sim2real-b", limit=50, s3=s3, ttl=1000)
-    assert [r.run_id for r in cached.runs] == [r.run_id for r in direct.runs]
-    A._run_list_cache_clear()
-
-
 # --- Multi-bucket discovery ---------------------------------------------------
-
-
-def test_list_accessible_buckets_primary_first_deduped() -> None:
-    import npa.workflows.artifacts as A
-
-    class _S3:
-        def list_buckets(self):
-            return {"Buckets": [{"Name": "b2"}, {"Name": "primary"}, {"Name": "b3"}]}
-
-    got = A.list_accessible_buckets(_S3(), primary="primary", extra=["b2"])
-    assert got[0] == "primary"
-    assert got.count("primary") == 1 and got.count("b2") == 1
-    assert set(got) == {"primary", "b2", "b3"}
-
-
-def test_list_accessible_buckets_survives_no_listbuckets_permission() -> None:
-    import npa.workflows.artifacts as A
-
-    class _S3:
-        def list_buckets(self):
-            raise A.BotoCoreError()
-
-    got = A.list_accessible_buckets(_S3(), primary="primary", extra=["x"])
-    assert got == ["primary", "x"]  # falls back to primary/extras only
 
 
 def test_find_run_artifacts_across_buckets_returns_first_match(monkeypatch) -> None:

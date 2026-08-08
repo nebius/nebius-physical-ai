@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+import secrets
+import subprocess
+import threading
+import time
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
@@ -225,12 +232,20 @@ def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) ->
 
         def head_object(self, *, Bucket, Key):  # noqa: N803
             self.calls.append((Bucket, Key))
-            if Bucket != "accessible-bucket" or Key != "category/run-a/report.json":
+            if Bucket != "accessible-bucket":
                 raise RuntimeError("not found")
 
     s3 = FakeS3()
     monkeypatch.setattr(runtime, "validate_run_id", lambda value: value, raising=False)
     monkeypatch.setattr(runtime, "_safe_artifact_key", lambda value: value, raising=False)
+    discovered = SimpleNamespace(artifacts=[SimpleNamespace(key="category/run-a/first.json")])
+
+    def find_page(_bucket, *, run_id, **_kwargs):
+        if run_id == "run-a":
+            return "category", discovered
+        return "", SimpleNamespace(artifacts=[])
+
+    monkeypatch.setattr(runtime, "find_run_artifact_page", find_page)
     monkeypatch.setattr(
         runtime,
         "_agent_s3_buckets",
@@ -255,6 +270,25 @@ def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) ->
             key="category/run-a/report.json",
             bucket="accessible-bucket",
         )
+    with pytest.raises(HTTPException, match="not a discovered object"):
+        runtime._resolve_accessible_run_artifact(
+            s3=s3,
+            settings={},
+            run_id="run-a",
+            key="category/run-ab/report.json",
+            bucket="accessible-bucket",
+        )
+    # A valid-looking substring/path pair is not membership. Even though HEAD
+    # would succeed in this tenant-accessible bucket, the server did not discover
+    # a run named "config", so this exact malicious review shape is rejected.
+    with pytest.raises(HTTPException, match="not a discovered object"):
+        runtime._resolve_accessible_run_artifact(
+            s3=s3,
+            settings={},
+            run_id="config",
+            key="prod/config/database.json",
+            bucket="accessible-bucket",
+        )
     with pytest.raises(HTTPException, match="outside effective agent access"):
         runtime._resolve_accessible_run_artifact(
             s3=s3,
@@ -263,3 +297,145 @@ def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) ->
             key="category/run-a/report.json",
             bucket="other-bucket",
         )
+
+
+def test_cross_project_membership_discovery_has_a_bucket_cap(monkeypatch) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    attempted: list[str] = []
+    buckets = [f"accessible-{index:03d}" for index in range(100)]
+
+    monkeypatch.setattr(runtime, "validate_run_id", lambda value: value, raising=False)
+    monkeypatch.setattr(runtime, "_safe_artifact_key", lambda value: value, raising=False)
+    monkeypatch.setattr(runtime, "_agent_s3_buckets", lambda _s3, _settings: buckets)
+
+    def no_run(bucket, **_kwargs):
+        attempted.append(bucket)
+        return "", SimpleNamespace(artifacts=[])
+
+    monkeypatch.setattr(runtime, "find_run_artifact_page", no_run)
+
+    with pytest.raises(HTTPException, match="not a discovered object"):
+        runtime._resolve_accessible_run_artifact(
+            s3=object(),
+            settings={},
+            run_id="missing-run",
+            key="category/missing-run/report.json",
+        )
+
+    assert attempted == buckets[: runtime._MAX_ARTIFACT_MEMBERSHIP_BUCKETS]
+
+
+def test_access_discovery_probes_projects_and_buckets_with_bounded_concurrency() -> None:
+    active = 0
+    maximum = 0
+    lock = threading.Lock()
+
+    def tracked_pause() -> None:
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+        time.sleep(0.01)
+        with lock:
+            active -= 1
+
+    projects = [_project(f"project-{index}", f"Project {index}") for index in range(12)]
+
+    def list_buckets(project_id: str):
+        tracked_pause()
+        return [_bucket(f"resource-{project_id}", f"bucket-{project_id}")]
+
+    def probe(_bucket_name: str):
+        tracked_pause()
+        return BucketProbe("available", "available")
+
+    report = discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="project-0",
+        list_projects=lambda _tenant: projects,
+        list_buckets=list_buckets,
+        probe_bucket=probe,
+        now=lambda: NOW,
+    )
+
+    assert 1 < maximum <= 8
+    assert [item.project_id for item in report.projects] == [
+        "project-0",
+        "project-1",
+        "project-10",
+        "project-11",
+        *[f"project-{index}" for index in range(2, 10)],
+    ]
+
+
+def test_configured_project_metadata_is_unverified_when_tenant_lookup_fails() -> None:
+    report = _discover(
+        list_projects=lambda _tenant: (_ for _ in ()).throw(
+            AccessProbeError("unavailable", "list tenant projects")
+        ),
+        list_buckets=lambda _project: [_bucket("resource-a", "bucket-a")],
+    )
+
+    project = report.to_dict()["projects"][0]
+    assert project["capabilities"]["project_metadata"]["status"] == "unverified"
+    assert report.status == "partial"
+
+
+def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    canary = secrets.token_urlsafe(32)
+    seen: dict[str, object] = {}
+
+    def timeout_run(command, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"], output=canary)
+
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
+    monkeypatch.setattr(runtime, "_agent_command_env", lambda: {})
+    monkeypatch.setattr(runtime.subprocess, "run", timeout_run)
+
+    with pytest.raises(AccessProbeError) as exc_info:
+        runtime._agent_nebius_json(
+            ["iam", "project", "list", "--parent-id", "tenant-test"],
+            operation="list tenant projects",
+        )
+    assert exc_info.value.status == "unavailable"
+    assert canary not in str(exc_info.value)
+    assert seen["timeout"] == runtime._AGENT_NEBIUS_TIMEOUT_SECONDS
+
+
+def test_access_cache_refresh_is_singleflight_after_expiry(monkeypatch) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    report = _discover()
+    calls = 0
+    entered = threading.Event()
+    release = threading.Event()
+
+    def discover(**_kwargs):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        assert release.wait(timeout=2)
+        return report
+
+    monkeypatch.setattr(runtime, "_agent_s3_client_optional", lambda: (object(), {"bucket": ""}))
+    monkeypatch.setattr(runtime, "discover_agent_access", discover)
+    monkeypatch.setattr(runtime, "NPA_PROJECT_ALIAS", "test")
+    with runtime._AGENT_ACCESS_CONDITION:
+        runtime._AGENT_ACCESS_CACHE.update(
+            report=report,
+            expires_at=0.0,
+            refreshing=False,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(runtime._agent_access_report) for _ in range(8)]
+        assert entered.wait(timeout=2)
+        release.set()
+        results = [future.result(timeout=2) for future in futures]
+
+    assert calls == 1
+    assert all(result is report for result in results)

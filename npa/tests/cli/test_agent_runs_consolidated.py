@@ -86,3 +86,20 @@ def test_client_merge_dates_runs_by_start_not_recency_or_activity() -> None:
     # Known/available runs carry started_at + activity_at through to the merge.
     assert "started_at: String((item && (item.started_at || item.submitted_at))" in ui
     assert "activity_at: String((item && (item.activity_at || item.rrd_updated_at))" in ui
+
+
+def test_client_consumes_incomplete_viewability_without_fabricating_false() -> None:
+    ui = _embedded_ui_html()
+    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split(
+        "function fillRunSelectOptionsRich"
+    )[0]
+    picker_fn = ui.split("function fillRunSelectOptionsRich")[1].split(
+        "function runEntryFromSelect"
+    )[0]
+
+    assert "has_viewable: null" in merge_fn
+    assert "summary_complete: null" in merge_fn
+    assert "run.has_viewable === true" in merge_fn
+    assert "run.summary_complete === false" in merge_fn
+    assert 'bits.push("viewable")' in picker_fn
+    assert 'bits.push("viewability unknown")' in picker_fn

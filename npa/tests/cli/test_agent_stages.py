@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import secrets
+from types import SimpleNamespace
+
 from npa.cli.agent_stages import (
     artifact_stage_key,
     artifact_stage_label,
@@ -451,3 +455,156 @@ def test_unrecognized_manifest_remains_an_observed_artifact_group() -> None:
     assert len(stages) == 1
     assert stages[0]["stage_key"] == "configs"
     assert stages[0]["status"] == "observed_output"
+
+
+def test_public_workflow_command_redacts_separator_and_inline_canaries() -> None:
+    from npa.cli.agent_stage_runtime import _public_workflow_command
+
+    canaries = [secrets.token_urlsafe(32) for _index in range(11)]
+    command = _public_workflow_command(
+        [
+            "tool",
+            f"Authorization: Bearer {canaries[0]}",
+            f"--secret-key:{canaries[1]}",
+            "--password",
+            canaries[2],
+            f"--password={canaries[3]}",
+            f"subcommand --password {canaries[4]} --output kept.json",
+            "Bearer",
+            canaries[5],
+            "Authorization:",
+            "Bearer",
+            canaries[6],
+            "--secret-key:",
+            canaries[7],
+            f"AWS_SECRET_ACCESS_KEY={canaries[8]}",
+            f"--access-key-id:{canaries[9]}",
+            "AWS_SESSION_TOKEN",
+            canaries[10],
+            "--password=",
+            "--unrelated",
+            "kept",
+        ]
+    )
+
+    assert all(canary not in command for canary in canaries)
+    assert "Authorization: Bearer <redacted>" in command
+    assert "--secret-key:<redacted>" in command
+    assert "--password <redacted>" in command
+    assert "--password=<redacted>" in command
+    assert "AWS_SECRET_ACCESS_KEY=<redacted>" in command
+    assert "--access-key-id:<redacted>" in command
+    assert "--output kept.json" in command
+    assert "--unrelated kept" in command
+
+
+class _EvidenceBody:
+    def __init__(self, payload: bytes):
+        self.payload = payload
+        self.read_sizes: list[int] = []
+        self.closed = False
+
+    def read(self, size: int):
+        self.read_sizes.append(size)
+        return self.payload[:size]
+
+    def close(self):
+        self.closed = True
+
+
+class _EvidenceS3:
+    def __init__(self, payloads: dict[str, bytes]):
+        self.payloads = payloads
+        self.calls: list[str] = []
+        self.bodies: list[_EvidenceBody] = []
+
+    def get_object(self, *, Bucket, Key):  # noqa: N803
+        del Bucket
+        self.calls.append(Key)
+        body = _EvidenceBody(self.payloads[Key])
+        self.bodies.append(body)
+        return {"Body": body}
+
+
+def test_stage_evidence_reads_are_count_bounded_and_deterministic() -> None:
+    from npa.cli.agent_stage_runtime import (
+        _MAX_STAGE_EVIDENCE_DOCUMENTS,
+        _stage_evidence_documents,
+    )
+
+    artifacts = [
+        SimpleNamespace(key=f"run/logs/stage-{index:02d}/status.json", size=32)
+        for index in range(12)
+    ]
+    payloads = {
+        artifact.key: json.dumps({"stage": artifact.key, "status": "ok"}).encode()
+        for artifact in artifacts
+    }
+    s3 = _EvidenceS3(payloads)
+
+    documents = _stage_evidence_documents(s3, "bucket", list(reversed(artifacts)))
+
+    expected = sorted(payloads)[:_MAX_STAGE_EVIDENCE_DOCUMENTS]
+    assert s3.calls == expected
+    assert [item["key"] for item in documents] == expected
+    assert all(body.closed for body in s3.bodies)
+
+
+def test_stage_evidence_reads_enforce_byte_cap_and_close_every_body() -> None:
+    from npa.cli.agent_stage_runtime import (
+        _MAX_STAGE_EVIDENCE_BYTES,
+        _stage_evidence_documents,
+    )
+
+    oversized_metadata = SimpleNamespace(
+        key="run/reports/metadata-report.json",
+        size=_MAX_STAGE_EVIDENCE_BYTES + 1,
+    )
+    oversized_stream = SimpleNamespace(key="run/reports/stream-report.json", size=0)
+    malformed = SimpleNamespace(key="run/reports/malformed-report.json", size=8)
+    valid = SimpleNamespace(key="run/npa-workflow/manifest.json", size=32)
+    s3 = _EvidenceS3(
+        {
+            oversized_stream.key: b"{" + b"x" * _MAX_STAGE_EVIDENCE_BYTES,
+            malformed.key: b"not-json",
+            valid.key: b'{"schema_version":"npa.workflow.run.v1"}',
+        }
+    )
+
+    documents = _stage_evidence_documents(
+        s3,
+        "bucket",
+        [oversized_metadata, oversized_stream, malformed, valid],
+    )
+
+    assert oversized_metadata.key not in s3.calls
+    assert [item["key"] for item in documents] == [valid.key]
+    assert all(body.read_sizes == [_MAX_STAGE_EVIDENCE_BYTES + 1] for body in s3.bodies)
+    assert all(body.closed for body in s3.bodies)
+
+
+def test_stage_evidence_document_order_preserves_status_precedence() -> None:
+    from npa.cli.agent_stage_runtime import _stage_evidence_documents
+
+    artifacts = [
+        SimpleNamespace(key="run/logs/train/status.json", size=32),
+        SimpleNamespace(key="run/npa-workflow/manifest.json", size=32),
+        SimpleNamespace(key="run/reports/final-report.json", size=32),
+    ]
+    s3 = _EvidenceS3(
+        {
+            artifacts[0].key: b'{"stage":"train","status":"failed"}',
+            artifacts[1].key: b'{"steps":[{"state":"train","status":"running"}]}',
+            artifacts[2].key: b'{"stages":{"train":{"status":"succeeded"}}}',
+        }
+    )
+
+    documents = _stage_evidence_documents(s3, "bucket", artifacts)
+    assert [item["key"] for item in documents] == [
+        "run/reports/final-report.json",
+        "run/npa-workflow/manifest.json",
+        "run/logs/train/status.json",
+    ]
+    parsed = parse_stage_evidence_documents(documents)
+    assert parsed["stages"][0]["status"] == "failed"
+    assert parsed["stages"][0]["evidence_source"] == "run/logs/train/status.json"

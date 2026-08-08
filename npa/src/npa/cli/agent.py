@@ -263,6 +263,19 @@ _AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
 
+def _without_embedded_standalone_block(source: str) -> str:
+    """Remove direct-test sentinels so rendered-name checks remain meaningful."""
+    start = "# NPA_EMBED_STANDALONE_START"
+    end = "# NPA_EMBED_STANDALONE_END"
+    before, marker, remainder = source.partition(start)
+    if not marker:
+        return source
+    _standalone, closing, after = remainder.partition(end)
+    if not closing:
+        raise ValueError("embedded module has an unterminated standalone block")
+    return before.rstrip() + "\n" + after.lstrip("\n")
+
+
 def _embedded_agent_stages_source() -> str:
     """Return agent_stages.py source embedded into the remote agent backend."""
     import re
@@ -282,7 +295,7 @@ def _embedded_agent_stage_runtime_source() -> str:
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return _without_embedded_standalone_block(raw)
 
 
 def rendered_agent_ui_html() -> str:
@@ -361,7 +374,7 @@ def _embedded_agent_access_file(filename: str) -> str:
     raw = path.read_text(encoding="utf-8")
     raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
     raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return _without_embedded_standalone_block(raw)
 
 
 def _embedded_agent_access_source() -> str:
@@ -2404,9 +2417,10 @@ def _default_sim2real_run_details(run_id: str, *, submitted_at: str = "", select
             )
         )
     if stages:
+        submit_stage_id, submit_stage_label = SIM2REAL_STAGE_TEMPLATE[0]
         stages[0] = stage_evidence_record(
-            stage_id="submit",
-            label="Submit request",
+            stage_id=submit_stage_id,
+            label=submit_stage_label,
             status="succeeded",
             status_label="Succeeded",
             raw_status="accepted",
@@ -2752,18 +2766,39 @@ def _publish_rrd_recording(source: Path) -> Path:
         return RECORDING_PATH
     RECORDING_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = RECORDING_PATH.with_name(f"{{RECORDING_PATH.name}}.{{secrets.token_hex(6)}}.tmp")
-    shutil.copy2(source, tmp)
-    tmp.replace(RECORDING_PATH)
+    try:
+        shutil.copy2(source, tmp)
+        tmp.replace(RECORDING_PATH)
+    finally:
+        # replace() removes the temporary source on success. On any copy/replace
+        # failure, remove only the randomized temporary path, never the published
+        # destination.
+        if tmp != RECORDING_PATH:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
     return RECORDING_PATH
 
 
 def _safe_artifact_key(key: str) -> str:
-    value = str(key or "").strip().lstrip("/")
+    value = str(key or "").strip()
     if not value:
         raise HTTPException(status_code=400, detail="artifact key is required")
-    parts = value.split("/")
-    if any(part in {{"", ".", ".."}} for part in parts):
-        raise HTTPException(status_code=400, detail="artifact key traversal is not allowed")
+    variants = [value]
+    for _attempt in range(2):
+        decoded = unquote(variants[-1])
+        if decoded == variants[-1]:
+            break
+        variants.append(decoded)
+    for candidate in variants:
+        if (
+            candidate.startswith("/")
+            or candidate.endswith("/")
+            or "\\\\" in candidate
+            or any(part in {{"", ".", ".."}} for part in candidate.split("/"))
+        ):
+            raise HTTPException(status_code=400, detail="artifact key traversal is not allowed")
     return value
 
 
@@ -2811,16 +2846,17 @@ def _artifact_discovery_prefix(settings: dict[str, str], user_prefix: str = "") 
     return _join_agent_s3_prefix(base, "sim2real-b")
 
 def _discovery_exclude_roots() -> set:
-    # Bucket-root prefixes that hold the agent's own state/chat-memory, not runs.
-    # Derived from the configured prefixes so generic discovery never lists them.
+    # Exact prefix subtrees that hold agent state/chat memory, not runs. Preserve
+    # nested prefixes so excluding one agent subtree does not hide unrelated data
+    # under the same first path segment.
     roots = set()
     for prefix in (
         str(_state_s3_settings().get("prefix") or ""),
         _chat_memory_prefix(),
     ):
-        top = str(prefix or "").strip().strip("/").split("/", 1)[0]
-        if top:
-            roots.add(top)
+        normalized = str(prefix or "").strip().strip("/")
+        if normalized:
+            roots.add(normalized)
     return roots
 
 
@@ -7017,10 +7053,10 @@ def artifacts_runs(
                 limit=limit,
                 contains=query,
                 bucket_projects=bucket_projects,
-                lightweight=True,
+                lightweight=not bool(query),
                 s3=s3,
             )
-            return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "resource_scope": selected_scope, "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, "summary_mode": "prefixes", "access": access_diagnostics, **page.to_dict()}}
+            return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "resource_scope": selected_scope, "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, "summary_mode": "prefixes" if not query else "objects", "access": access_diagnostics, **page.to_dict()}}
         # No user prefix: discover runs generically across ALL bucket roots.
         # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
         # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
@@ -7038,10 +7074,10 @@ def artifacts_runs(
             exclude=_discovery_exclude_roots(),
             contains=query,
             bucket_projects=bucket_projects,
-            lightweight=True,
+            lightweight=not bool(query),
             s3=s3,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "resource_scope": selected_scope, "prefix": base, "base_prefix": base, "query": query, "summary_mode": "prefixes", "access": access_diagnostics, **page.to_dict()}}
+        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "resource_scope": selected_scope, "prefix": base, "base_prefix": base, "query": query, "summary_mode": "prefixes" if not query else "objects", "access": access_diagnostics, **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -7066,7 +7102,7 @@ def artifacts_for_run(
         bucket_projects = artifact_bucket_projects(access_report)
         effective_prefix = _artifact_discovery_prefix(settings, prefix)
         page = ArtifactListPage([], False, "", 1000)
-        artifact_prefix = ""
+        artifact_prefix = _validated_resolved_prefix(resolved_prefix)
         run_bucket = settings["bucket"]
         if cursor or resolved_prefix:
             if not resource_bucket:
@@ -7079,7 +7115,6 @@ def artifacts_for_run(
                     status_code=400,
                     detail="artifact bucket is outside effective agent access",
                 )
-            artifact_prefix = str(resolved_prefix).strip().strip("/")
             run_bucket = str(resource_bucket).strip()
             page = list_artifacts_page(
                 run_bucket,
@@ -7129,6 +7164,11 @@ def artifacts_for_run(
             "resolved_prefix": artifact_prefix,
             "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
+            "pagination": {{
+                "contract": "one_native_s3_page",
+                "max_objects": 1000,
+                "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket"],
+            }},
             "preferred": preferred.to_dict() if preferred else None,
             "access": _agent_access_diagnostics(access_report),
             **page.to_dict(),
@@ -7139,12 +7179,8 @@ def artifacts_for_run(
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
 
 
-_SENSITIVE_ARTIFACT_INFO_KEY = re.compile(
-    r"(?i)(?:authorization|credential|password|passwd|private[_-]?key|secret|token|api[_-]?key|access[_-]?key)"
-)
-_SENSITIVE_ARTIFACT_INFO_VALUE = re.compile(
-    r"(?i)(?:authorization\\s*:|bearer\\s+|password\\s*=|secret\\s*=|token\\s*=|api[_-]?key\\s*=|access[_-]?key\\s*=)"
-)
+_SENSITIVE_ARTIFACT_INFO_KEY = _SENSITIVE_PUBLIC_NAME
+_SENSITIVE_ARTIFACT_INFO_VALUE = _SENSITIVE_PUBLIC_VALUE
 
 
 def _public_artifact_info(value, depth: int = 0):
@@ -7182,6 +7218,7 @@ def artifacts_stage(
     # the run's real S3 objects, no LLM call).
     try:
         normalized_run = validate_run_id(run_id)
+        exact_prefix = _validated_resolved_prefix(resolved_prefix)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
@@ -7200,10 +7237,6 @@ def artifacts_stage(
                     status_code=403,
                     detail="artifact bucket is outside effective agent access",
                 )
-            exact_prefix = str(resolved_prefix or "").strip().strip("/")
-            if any(part in {{"", ".", ".."}} for part in exact_prefix.split("/")):
-                if exact_prefix:
-                    raise HTTPException(status_code=400, detail="invalid resolved artifact prefix")
             if exact_prefix:
                 artifacts = list_artifacts(
                     run_bucket, normalized_run, prefix=exact_prefix, s3=s3
@@ -7255,8 +7288,9 @@ def artifacts_stage(
                 continue
             rel = k.split("/" + normalized_run + "/", 1)[-1]
             try:
-                body = s3.get_object(Bucket=run_bucket, Key=k)["Body"].read()
-                info[rel] = _public_artifact_info(json.loads(body))
+                payload = _read_bounded_json_object(s3, run_bucket, k)
+                if isinstance(payload, dict):
+                    info[rel] = _public_artifact_info(payload)
             except Exception:
                 continue
         return {{

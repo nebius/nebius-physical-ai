@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -9,6 +10,7 @@ from typing import Any, Callable
 
 ACCESS_SCHEMA = "npa.agent.access/v1"
 ACCESS_STATES = frozenset({"available", "partial", "denied", "unavailable", "unverified"})
+ACCESS_DISCOVERY_MAX_WORKERS = 8
 
 
 class AccessProbeError(RuntimeError):
@@ -227,6 +229,7 @@ def discover_agent_access(
         project_id, name = _project_identity(item)
         if project_id:
             identities[project_id] = name or project_id
+    listed_project_ids = frozenset(identities)
     if deployment_id:
         identities.setdefault(deployment_id, deployment_name or deployment_id)
 
@@ -240,12 +243,12 @@ def discover_agent_access(
         if value and value not in configured_fallbacks:
             configured_fallbacks.append(value)
 
-    projects: list[ProjectAccess] = []
-    for project_id in ordered_project_ids:
+    def discover_project_inventory(project_id: str) -> dict[str, Any]:
         is_deployment = bool(deployment_id and project_id == deployment_id)
         bucket_listing_status = "unavailable"
         bucket_listing_reason = "Object storage resource listing was not attempted."
         bucket_items: list[tuple[str, str, str]] = []
+        error: dict[str, str] | None = None
         try:
             raw_buckets = list(list_buckets(project_id) or [])
             bucket_listing_status = "available"
@@ -258,7 +261,6 @@ def discover_agent_access(
             bucket_listing_status, bucket_listing_reason, error = _classified_failure(
                 exc, f"list object storage resources for project {project_id}"
             )
-            errors.append(error)
 
         if is_deployment:
             known = {name for _resource_id, name, _source in bucket_items}
@@ -266,72 +268,142 @@ def discover_agent_access(
                 if name not in known:
                     bucket_items.append(("", name, "agent_configuration"))
                     known.add(name)
+        return {
+            "project_id": project_id,
+            "is_deployment": is_deployment,
+            "bucket_listing_status": bucket_listing_status,
+            "bucket_listing_reason": bucket_listing_reason,
+            "bucket_items": sorted(bucket_items, key=lambda item: item[1]),
+            "error": error,
+        }
 
-        resources: list[StorageResourceAccess] = []
-        for resource_id, bucket_name, source in sorted(bucket_items, key=lambda item: item[1]):
-            try:
-                probe = _normalize_probe(probe_bucket(bucket_name))
-                list_reason = probe.reason or (
-                    "The running agent can list objects in this bucket."
-                    if probe.list_status == "available"
-                    else "The running agent cannot list objects in this bucket."
-                )
-                read_reason = probe.reason or (
-                    "The running agent can read an object from this bucket."
-                    if probe.read_status == "available"
-                    else "Object read access could not be verified."
-                )
-            except Exception as exc:  # noqa: BLE001 - classify one resource without hiding siblings
-                probe_status, probe_reason, error = _classified_failure(
-                    exc, f"probe object storage bucket {bucket_name}"
-                )
-                errors.append(error)
-                probe = BucketProbe(list_status=probe_status, read_status=probe_status, reason=probe_reason)
-                list_reason = probe_reason
-                read_reason = probe_reason
-            resources.append(
-                StorageResourceAccess(
-                    resource_id=resource_id,
-                    name=bucket_name,
-                    project_id=project_id,
-                    source=source,
-                    capabilities={
-                        "artifact_discovery": CapabilityAccess(
-                            probe.list_status, list_reason, "read_only"
-                        ),
-                        "artifact_read": CapabilityAccess(
-                            probe.read_status, read_reason, "read_only"
-                        ),
-                        "artifact_write": CapabilityAccess(
-                            "unverified" if is_deployment else "unavailable",
-                            (
-                                "Writes remain scoped to the deployment project's configured workflow paths."
-                                if is_deployment
-                                else "Cross-project artifact writes are not enabled by tenant-wide discovery."
-                            ),
-                            "deployment_project",
-                        ),
-                        "artifact_delete": CapabilityAccess(
-                            "unavailable",
-                            "The agent access surface does not enable artifact deletion.",
-                            "none",
-                        ),
-                    },
-                )
+    inventory_workers = min(len(ordered_project_ids), ACCESS_DISCOVERY_MAX_WORKERS)
+    if inventory_workers <= 1:
+        inventories = (
+            [discover_project_inventory(ordered_project_ids[0])]
+            if ordered_project_ids
+            else []
+        )
+    else:
+        with ThreadPoolExecutor(max_workers=inventory_workers) as pool:
+            inventories = list(pool.map(discover_project_inventory, ordered_project_ids))
+    for inventory in inventories:
+        if inventory["error"] is not None:
+            errors.append(inventory["error"])
+
+    probe_jobs = [
+        (inventory["project_id"], resource_id, bucket_name, source)
+        for inventory in inventories
+        for resource_id, bucket_name, source in inventory["bucket_items"]
+    ]
+
+    def probe_storage_resource(
+        job: tuple[str, str, str, str],
+    ) -> tuple[str, StorageResourceAccess, dict[str, str] | None]:
+        project_id, resource_id, bucket_name, source = job
+        is_deployment = bool(deployment_id and project_id == deployment_id)
+        error: dict[str, str] | None = None
+        try:
+            probe = _normalize_probe(probe_bucket(bucket_name))
+            list_reason = probe.reason or (
+                "The running agent can list objects in this bucket."
+                if probe.list_status == "available"
+                else "The running agent cannot list objects in this bucket."
             )
+            read_reason = probe.reason or (
+                "The running agent can read an object from this bucket."
+                if probe.read_status == "available"
+                else "Object read access could not be verified."
+            )
+        except Exception as exc:  # noqa: BLE001 - classify one resource without hiding siblings
+            probe_status, probe_reason, error = _classified_failure(
+                exc, f"probe object storage bucket {bucket_name}"
+            )
+            probe = BucketProbe(
+                list_status=probe_status,
+                read_status=probe_status,
+                reason=probe_reason,
+            )
+            list_reason = probe_reason
+            read_reason = probe_reason
+        return (
+            project_id,
+            StorageResourceAccess(
+                resource_id=resource_id,
+                name=bucket_name,
+                project_id=project_id,
+                source=source,
+                capabilities={
+                    "artifact_discovery": CapabilityAccess(
+                        probe.list_status, list_reason, "read_only"
+                    ),
+                    "artifact_read": CapabilityAccess(
+                        probe.read_status, read_reason, "read_only"
+                    ),
+                    "artifact_write": CapabilityAccess(
+                        "unverified" if is_deployment else "unavailable",
+                        (
+                            "Writes remain scoped to the deployment project's configured workflow paths."
+                            if is_deployment
+                            else "Cross-project artifact writes are not enabled by tenant-wide discovery."
+                        ),
+                        "deployment_project",
+                    ),
+                    "artifact_delete": CapabilityAccess(
+                        "unavailable",
+                        "The agent access surface does not enable artifact deletion.",
+                        "none",
+                    ),
+                },
+            ),
+            error,
+        )
 
+    probe_workers = min(len(probe_jobs), ACCESS_DISCOVERY_MAX_WORKERS)
+    if probe_workers <= 1:
+        probe_results = [probe_storage_resource(probe_jobs[0])] if probe_jobs else []
+    else:
+        with ThreadPoolExecutor(max_workers=probe_workers) as pool:
+            probe_results = list(pool.map(probe_storage_resource, probe_jobs))
+    resources_by_project: dict[str, list[StorageResourceAccess]] = {
+        project_id: [] for project_id in ordered_project_ids
+    }
+    for project_id, resource, error in probe_results:
+        resources_by_project[project_id].append(resource)
+        if error is not None:
+            errors.append(error)
+
+    projects: list[ProjectAccess] = []
+    for inventory in inventories:
+        project_id = str(inventory["project_id"])
+        is_deployment = bool(inventory["is_deployment"])
+        bucket_listing_status = str(inventory["bucket_listing_status"])
+        bucket_listing_reason = str(inventory["bucket_listing_reason"])
+        resources = resources_by_project[project_id]
         discovery_status = _artifact_status(resources, "artifact_discovery")
         read_status = _artifact_status(resources, "artifact_read")
         if not resources and bucket_listing_status in {"denied", "unavailable"}:
             discovery_status = bucket_listing_status
             read_status = bucket_listing_status
+        metadata_status = (
+            "available"
+            if project_id in listed_project_ids
+            else "unverified"
+            if is_deployment
+            else "unavailable"
+        )
+        metadata_reason = (
+            "Project identity was returned by tenant project discovery."
+            if metadata_status == "available"
+            else "Project identity comes from deployment configuration and was not verified by tenant discovery."
+        )
         project_status = _aggregate_status(
             [bucket_listing_status, discovery_status, read_status]
         )
         capabilities = {
             "project_metadata": CapabilityAccess(
-                "available" if project_id in identities else "unavailable",
-                "Project identity is visible to the running agent.",
+                metadata_status,
+                metadata_reason,
                 "project",
             ),
             "storage_resource_discovery": CapabilityAccess(

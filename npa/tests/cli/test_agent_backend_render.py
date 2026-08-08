@@ -9,7 +9,11 @@ hard failure here instead of a ``SyntaxError`` at agent-VM import time.
 from __future__ import annotations
 
 import ast
+import builtins
+import json
 import re
+import secrets
+import symtable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -74,6 +78,43 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     tree = ast.parse(body)
     assert tree is not None
     compile(body, "backend.py", "exec")
+
+
+def test_rendered_backend_ast_has_no_undefined_globals(monkeypatch) -> None:
+    """Catch embedded helpers that reference a global the backend never defines."""
+    body = _render_backend_body(monkeypatch)
+    ast.parse(body)
+    root = symtable.symtable(body, "backend.py", "exec")
+    interpreter_globals = {
+        "__builtins__",
+        "__cached__",
+        "__file__",
+        "__loader__",
+        "__name__",
+        "__package__",
+        "__spec__",
+    }
+    bound = set(dir(builtins)) | interpreter_globals
+    bound.update(
+        symbol.get_name()
+        for symbol in root.get_symbols()
+        if symbol.is_assigned()
+        or symbol.is_imported()
+        or symbol.is_namespace()
+        or symbol.is_parameter()
+    )
+
+    unresolved: set[str] = set()
+
+    def scan(table) -> None:
+        for symbol in table.get_symbols():
+            if symbol.is_referenced() and symbol.is_global() and symbol.get_name() not in bound:
+                unresolved.add(symbol.get_name())
+        for child in table.get_children():
+            scan(child)
+
+    scan(root)
+    assert unresolved == set(), f"rendered backend has undefined globals: {sorted(unresolved)}"
 
 
 def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
@@ -324,7 +365,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
 
-    command_secret = "workflow-command-secret-must-not-escape"
+    command_secrets = [secrets.token_urlsafe(32) for _index in range(5)]
     public_steps = module._workflow_run_steps(
         [
             {
@@ -337,16 +378,19 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
                             "returncode": 0,
                             "argv": [
                                 "tool",
-                                "--api-key",
-                                command_secret,
-                                f"AWS_SECRET_ACCESS_KEY={command_secret}",
+                                f"Authorization: Bearer {command_secrets[0]}",
+                                f"--secret-key:{command_secrets[1]}",
+                                "--password",
+                                command_secrets[2],
+                                f"--password={command_secrets[3]}",
+                                f"wrapped --token {command_secrets[4]} --keep useful",
                                 "--output",
                                 "s3://safe-bucket/result.json",
                             ],
                             "outputs": [
                                 {
                                     "uri": "https://objects.example/result?token="
-                                    + command_secret
+                                    + command_secrets[0]
                                 }
                             ],
                         }
@@ -355,8 +399,10 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
             }
         ]
     )
-    assert command_secret not in str(public_steps)
+    assert all(secret not in str(public_steps) for secret in command_secrets)
     assert "<redacted>" in public_steps[0]["command"]
+    assert "--keep useful" in public_steps[0]["command"]
+    assert "--output s3://safe-bucket/result.json" in public_steps[0]["command"]
     assert public_steps[0]["output_uri"] == "https://objects.example/result"
 
     report = module.discover_agent_access(
@@ -425,6 +471,53 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         )
         for index, stage in enumerate(("capture", "train", "evaluate"), start=1)
     ]
+    first_artifact_page = module.ArtifactListPage(
+        artifacts=artifacts[:1],
+        truncated=True,
+        next_cursor="opaque-page-two",
+        page_size=1000,
+    )
+    monkeypatch.setattr(
+        module,
+        "find_run_artifact_page",
+        lambda *_args, **_kwargs: ("foreign", first_artifact_page),
+    )
+    first_page = module.artifacts_for_run(
+        "foreign-run-1",
+        resource_bucket="bucket-test",
+    )
+    assert first_page["pagination"] == {
+        "contract": "one_native_s3_page",
+        "max_objects": 1000,
+        "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket"],
+    }
+    assert first_page["count"] == 1
+    assert first_page["truncated"] is True
+    assert first_page["next_cursor"] == "opaque-page-two"
+    assert first_page["resolved_prefix"] == "foreign"
+
+    cursor_call: dict[str, str] = {}
+
+    def _next_artifact_page(_bucket, _run_id, *, prefix, cursor, **_kwargs):
+        cursor_call.update(prefix=prefix, cursor=cursor)
+        return module.ArtifactListPage(
+            artifacts=artifacts[1:],
+            truncated=False,
+            next_cursor="",
+            page_size=1000,
+        )
+
+    monkeypatch.setattr(module, "list_artifacts_page", _next_artifact_page)
+    second_page = module.artifacts_for_run(
+        "foreign-run-1",
+        cursor=first_page["next_cursor"],
+        resolved_prefix=first_page["resolved_prefix"],
+        resource_bucket=first_page["bucket"],
+    )
+    assert cursor_call == {"prefix": "foreign", "cursor": "opaque-page-two"}
+    assert second_page["count"] == 2
+    assert second_page["truncated"] is False
+
     monkeypatch.setattr(
         module,
         "_agent_s3_client",
@@ -467,12 +560,18 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     )
 
     class _Body:
-        def read(self):
-            return (
+        closed = False
+
+        def read(self, size):
+            payload = (
                 b'{"api_key":"credential-value-must-not-escape",'
                 b'"nested":{"password":"credential-value-must-not-escape"},'
                 b'"safe":"visible"}'
             )
+            return payload[:size]
+
+        def close(self):
+            self.closed = True
 
     class _S3:
         def get_object(self, **_kwargs):
@@ -505,6 +604,115 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
             project_id="project-test",
         )
     assert detail_exc.value.status_code == 403
+
+    # The run-details/status surface uses the same redacted projection for both
+    # workflow_steps and its human-readable logs.
+    manifest_payload = json.dumps(
+        {
+            "workflow": "redaction-regression",
+            "steps": [
+                {
+                    "state": "publish",
+                    "status": "ok",
+                    "returncode": 0,
+                    "argv": [
+                        "tool",
+                        f"Authorization: Bearer {command_secrets[0]}",
+                        f"--secret-key:{command_secrets[1]}",
+                        "--password",
+                        command_secrets[2],
+                        f"--password={command_secrets[3]}",
+                    ],
+                }
+            ],
+        }
+    ).encode()
+    manifest_artifact = module.Artifact(
+        run_id="foreign-run-1",
+        key="foreign/foreign-run-1/npa-workflow/manifest.json",
+        s3_uri="s3://bucket-test/foreign/foreign-run-1/npa-workflow/manifest.json",
+        size=len(manifest_payload),
+        last_modified="2026-08-07T00:00:00Z",
+        render="json",
+        inline=True,
+    )
+
+    class _ManifestS3:
+        def get_object(self, **_kwargs):
+            class _ManifestBody:
+                def read(self, size):
+                    return manifest_payload[:size]
+
+                def close(self):
+                    return None
+
+            return {"Body": _ManifestBody()}
+
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (_ManifestS3(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(
+        module, "find_run_artifacts", lambda *_args, **_kwargs: [manifest_artifact]
+    )
+    redacted_details = module._artifact_backed_run_details(
+        {},
+        "foreign-run-1",
+        resource_bucket="bucket-test",
+        project_id="project-test",
+    )
+    assert redacted_details is not None
+    assert all(secret not in str(redacted_details) for secret in command_secrets)
+    assert "<redacted>" in str(redacted_details["workflow_steps"])
+    assert "<redacted>" in str(redacted_details["logs"])
+
+    invalid_prefixes = (".", "..", "safe/../escape", "safe/%2e%2e/escape")
+    for invalid_prefix in invalid_prefixes:
+        with pytest.raises(module.HTTPException) as page_exc:
+            module.artifacts_for_run(
+                "foreign-run-1",
+                resolved_prefix=invalid_prefix,
+                resource_bucket="bucket-test",
+            )
+        assert page_exc.value.status_code == 400
+        with pytest.raises(module.HTTPException) as stage_exc:
+            module.artifacts_stage(
+                "foreign-run-1",
+                resolved_prefix=invalid_prefix,
+                resource_bucket="bucket-test",
+                project_id="project-test",
+            )
+        assert stage_exc.value.status_code == 400
+        with pytest.raises(module.HTTPException) as details_exc:
+            module._artifact_backed_run_details(
+                {},
+                "foreign-run-1",
+                resolved_prefix=invalid_prefix,
+                resource_bucket="bucket-test",
+                project_id="project-test",
+            )
+        assert details_exc.value.status_code == 400
+
+    source_recording = tmp_path / "source.rrd"
+    source_recording.write_bytes(b"new-recording")
+    published_recording = tmp_path / "published" / "sim2real.rrd"
+    published_recording.parent.mkdir()
+    published_recording.write_bytes(b"existing-recording")
+    monkeypatch.setattr(module, "RECORDING_PATH", published_recording)
+    original_replace = Path.replace
+
+    def fail_temp_replace(path, target):
+        if path.name.endswith(".tmp"):
+            raise OSError("synthetic replace failure")
+        return original_replace(path, target)
+
+    with monkeypatch.context() as replace_patch:
+        replace_patch.setattr(Path, "replace", fail_temp_replace)
+        with pytest.raises(OSError, match="synthetic replace failure"):
+            module._publish_rrd_recording(source_recording)
+    assert published_recording.read_bytes() == b"existing-recording"
+    assert list(published_recording.parent.glob("*.tmp")) == []
 
     secret = "do-not-return-this-credential"
 

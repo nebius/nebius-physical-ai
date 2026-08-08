@@ -6077,7 +6077,8 @@
             started_at: "",
             last_modified: "",
             activity_at: "",
-            has_viewable: false,
+            has_viewable: null,
+            summary_complete: null,
             artifact_count: 0,
             project_id: "",
             bucket: "",
@@ -6095,7 +6096,10 @@
           // Tracked separately so it never inflates the run's displayed date.
           const activityTs = String((run && (run.activity_at || run.rrd_updated_at || run.updated_at || run.submitted_at)) || "");
           if (activityTs && activityTs > String(prev.activity_at || "")) prev.activity_at = activityTs;
-          if (run && run.has_viewable) prev.has_viewable = true;
+          if (run && run.has_viewable === true) prev.has_viewable = true;
+          else if (run && run.has_viewable === false && prev.has_viewable !== true) prev.has_viewable = false;
+          if (run && run.summary_complete === true) prev.summary_complete = true;
+          else if (run && run.summary_complete === false && prev.summary_complete !== true) prev.summary_complete = false;
           if (run && run.artifact_count) prev.artifact_count = Number(run.artifact_count) || prev.artifact_count;
           if (run && run.project_id) prev.project_id = String(run.project_id || "");
           if (run && run.bucket) prev.bucket = String(run.bucket || "");
@@ -6137,7 +6141,8 @@
           bits.push(String((run && run.source_label) || "workflow history"));
           if (run && run.project_id) bits.push("project " + String(run.project_id));
           if (run && run.bucket) bits.push("bucket " + String(run.bucket));
-          if (run && run.has_viewable) bits.push("viewable");
+          if (run && run.source_type === "artifact_storage" && run.has_viewable === true) bits.push("viewable");
+          else if (run && run.source_type === "artifact_storage" && (run.has_viewable == null || run.summary_complete === false)) bits.push("viewability unknown");
           if (run && run.artifact_count) bits.push(String(run.artifact_count) + " artifacts");
           const shownTs = effectiveRunTs(run);
           if (shownTs) bits.push(shownTs.slice(0, 19));
