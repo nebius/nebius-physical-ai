@@ -459,6 +459,8 @@ def test_training_manifest_records_real_loss_trajectory(tmp_path: Path) -> None:
         manifest_path=str(manifest),
         manifest_fields={"global_batch_size": 8, "logging_steps": 10},
     )
+    assert "from npa." not in script
+    assert "def parse_training_loss_evidence(" in script
     exec(compile(script, "training-manifest", "exec"), {})
     payload = json.loads(manifest.read_text())
     assert payload["training_step"] == 420

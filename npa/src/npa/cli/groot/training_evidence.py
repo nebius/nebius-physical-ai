@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import math
 from typing import Any, Mapping
@@ -162,14 +163,23 @@ def render_training_manifest_script(
 ) -> str:
     """Return a post-train program that extracts finite loss and checkpoint facts."""
 
+    # The post-train script runs inside the vendor GR00T interpreter.  Embedding
+    # this dependency-free parser is intentional: importing it through
+    # ``npa.cli`` executes that package's Typer bootstrap and can make a fully
+    # completed multi-hour training job fail solely because the vendor image's
+    # pre-existing Typer/Click pair is incompatible.  The generated evidence
+    # program needs no CLI framework at all.
+    parser_source = inspect.getsource(parse_training_loss_evidence)
     manifest_literal = "{\n" + "".join(
         f'    "{key}": {value!r},\n' for key, value in manifest_fields.items()
     ) + "}"
-    return f'''import json
+    return f'''import ast
+import json
 import math
 from pathlib import Path
+from typing import Any, Mapping
 
-from npa.cli.groot.training_evidence import parse_training_loss_evidence
+{parser_source}
 
 output_dir = Path({output_dir!r})
 evidence_path = output_dir / "npa_groot_distributed_evidence.json"
