@@ -12,7 +12,10 @@ function destructiveLiveEnabled() {
 }
 
 function liveRunId() {
-  return Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") || Cypress.env("NPA_AGENT_RUN_ID") || "";
+  // The generic live suite needs a Sim2Real run with reports/sim2real.rrd.
+  // NPA_AGENT_RUN_ID is reserved for capability-specific journeys such as
+  // LeIsaac, whose run intentionally has a different artifact contract.
+  return Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") || "";
 }
 
 function liveAgentRequest(path, options = {}) {
@@ -517,7 +520,10 @@ describe("NPA agent UI against live infra", () => {
         });
         cy.get("#artifactTypeFilter").select("video");
         cy.get("#artifactList", { timeout: 30000 }).should("contain.text", ".mp4");
-        cy.contains("#artifactList button", "Play").first().click();
+        cy.get("#artifactList button[data-action='load-artifact']")
+          .filter((_index, button) => String(button.dataset.key || "") === key)
+          .should("have.length", 1)
+          .click();
         cy.get("#renderModeVideo", { timeout: 30000 }).should("have.class", "is-active");
         cy.get("#viewerPaneMedia").should("have.class", "is-active-viewer");
         cy.get("#artifactPreviewHost video", { timeout: 60000 })

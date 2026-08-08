@@ -67,6 +67,8 @@ def test_boot_page_warms_before_mount() -> None:
     ui_html = _embedded_ui_html(source)
     boot = ui_html.split("async function bootPage")[1].split("function startPeriodicRefresh")[0]
     assert "await Promise.all([refreshPromise, artifactsPromise, warmPromise])" in boot
+    assert "refreshLeIsaacCapability(activeRunId).catch(() => null)" in boot
+    assert "leisaacPromise" not in boot
     assert "await ensureFrankaRerunLoaded()" in boot
     # Must not race mount with warm anymore.
     assert "Promise.all([refreshPromise, artifactsPromise, warmPromise, mountPromise])" not in boot

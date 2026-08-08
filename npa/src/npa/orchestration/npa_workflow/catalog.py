@@ -538,6 +538,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.curator_min_clip_len_s}}",
             "--motion-filter",
             "{{config.curator_motion_filter}}",
+            "--require-curator",
             "--output",
             "json",
         ],
@@ -668,7 +669,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.sim2real.finalize": ToolEntry(
         name="workbench.sim2real.finalize",
         description="Finalize run artifacts (workflow stub).",
-        argv_template=["echo", "finalize run {{run.id}} -> {{config.finalize_report_uri}}"],
+        argv_template=[
+            "echo",
+            "finalize run {{run.id}} -> {{config.finalize_report_uri}}",
+        ],
         stub=True,
     ),
     "workbench.byof.repo": ToolEntry(
@@ -1144,7 +1148,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
                 "set -euo pipefail; "
                 "for udf in has_person has_rider person_bbox_area_pct dhash is_duplicate; do "
                 "npa workbench lancedb backfill "
-                "--udf \"$udf\" "
+                '--udf "$udf" '
                 "--table {{config.lance_table}} "
                 "--lance-uri {{config.lance_uri}} "
                 "--batch-size 512 "
@@ -1402,8 +1406,32 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.fiftyone.launch_app": ToolEntry(
         name="workbench.fiftyone.launch_app",
         description="Launch FiftyOne App for pipeline review (workflow stub).",
-        argv_template=["echo", "fiftyone review run {{run.id}} lance {{config.lance_uri}}"],
+        argv_template=[
+            "echo",
+            "fiftyone review run {{run.id}} lance {{config.lance_uri}}",
+        ],
         stub=True,
+    ),
+    "workbench.fiftyone.curate_augmented": ToolEntry(
+        name="workbench.fiftyone.curate_augmented",
+        description=(
+            "Curate augmented variants with the real FiftyOne Brain implementation "
+            "inside the npa-fiftyone image."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "fiftyone",
+            "curate-augmented",
+            "--augment-uri",
+            "{{config.augment_uri}}",
+            "--report-uri",
+            "{{config.curation_report_uri}}",
+            "--curator-report-uri",
+            "{{config.curator_report_uri}}",
+            "--output",
+            "json",
+        ],
     ),
     "workbench.token_factory.caption": ToolEntry(
         name="workbench.token_factory.caption",

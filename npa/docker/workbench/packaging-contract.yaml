@@ -221,6 +221,20 @@ images:
     isaac_runtime_fetch: true
     tier: interactive
     redistribution: public
+  leisaac:
+    dockerfile: leisaac/Dockerfile
+    isaac_runtime_fetch: true
+    tier: service
+    ports: [8080, 49100, 47998]
+    notes: >-
+      Bakes Apache-2.0 LeIsaac source at immutable commit 1651c321 and OSS
+      dependencies only, including FFmpeg/PyArrow/boto3 for the LeRobot v3
+      recorder. Its agent-relay deployment pulls the digest-pinned
+      coturn 4.6.3-r3 BSD-3-Clause sidecar. Isaac Sim/Lab, the NVIDIA WebRTC
+      browser client, and task assets are cryptographically verified runtime
+      fetches after explicit operator EULA acceptance; see
+      leisaac/REDISTRIBUTION.md.
+    redistribution: public
   fiftyone:
     dockerfile: fiftyone/Dockerfile
     tier: interactive

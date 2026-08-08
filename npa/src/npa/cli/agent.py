@@ -9,10 +9,8 @@ import secrets
 import shlex
 import shutil
 import subprocess
-import ipaddress
 import tarfile
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -35,8 +33,20 @@ from npa.clients.network import (
     NetworkIngressError,
     ensure_ingress,
     remove_ingress_for_instance,
+    remove_npa_ingress_for_instance_ports,
+    resolve_instance_network_context,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.cli.agent_contracts import AGENT_LEISAAC_CONTRACT  # noqa: F401 - public API
+from npa.cli.agent_public import (
+    AgentConfig,
+    build_agent_urls,
+    is_routable_public_ip as _is_routable_public_ip,
+    record_customer_url as _record_customer_url,
+    record_public_https as _record_public_https,
+    record_tls_verify as _record_tls_verify,
+    resolve_record_public_ip,
+)
 from npa.agent_backend.shipping import render_shipped_backend_install
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
@@ -73,7 +83,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026073001"
+AGENT_UI_VERSION = "2026080401"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -350,112 +360,8 @@ def _embedded_agent_provenance_source() -> str:
     return raw
 
 
-@dataclass(frozen=True)
-class AgentConfig:
-    project_alias: str
-    name: str
-    project_id: str
-    tenant_id: str
-    region: str
-    public_ip: str
-    instance_id: str
-    agent_url: str
-    rerun_url: str
-    sim_viz_url: str
-    sim_assets_url: str
-    cameras_api_url: str
-    auth_user: str
-    auth_secret_path: str
-    llm_provider: str
-    llm_model: str
-    service_account_id: str = ""
-    llm_models: tuple[str, ...] = ()
-    public_url: str = ""
-    public_https: bool = True
-    direct_url: str = ""
-    ssh_key_path: str = ""
-    credentials: dict[str, str] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "project_id": self.project_id,
-            "tenant_id": self.tenant_id,
-            "region": self.region,
-            "public_ip": self.public_ip,
-            "instance_id": self.instance_id,
-            "service_account_id": self.service_account_id,
-            "agent_url": self.agent_url,
-            "rerun_url": self.rerun_url,
-            "sim_viz_url": self.sim_viz_url,
-            "sim_assets_url": self.sim_assets_url,
-            "cameras_api_url": self.cameras_api_url,
-            "auth_user": self.auth_user,
-            "auth_secret_path": self.auth_secret_path,
-            "llm": {
-                "provider": self.llm_provider,
-                "model": self.llm_model,
-                "models": list(self.llm_models or (self.llm_model,)),
-            },
-        }
-        if self.public_url:
-            payload["public_url"] = self.public_url
-        if self.public_https:
-            payload["public_https"] = True
-        if self.direct_url:
-            payload["direct_url"] = self.direct_url
-        if self.ssh_key_path:
-            payload["ssh_key_path"] = self.ssh_key_path
-        if self.service_account_id:
-            payload["service_account_id"] = self.service_account_id
-        if self.credentials:
-            payload["credentials"] = dict(self.credentials)
-        return payload
-
-
-def build_agent_urls(
-    public_ip: str,
-    *,
-    agent_port: int = DEFAULT_AGENT_PORT,
-    public_https: bool = True,
-) -> dict[str, str]:
-    """Return customer-facing and operator-direct URLs for an agent VM."""
-    direct = f"http://{public_ip}:{agent_port}/"
-    if public_https:
-        base = f"https://{public_ip}/"
-    else:
-        base = direct
-    root = base.rstrip("/")
-    return {
-        "public_url": base,
-        "agent_url": base,
-        "rerun_url": f"{root}/rerun/",
-        "sim_viz_url": f"{root}/rerun/",
-        "sim_assets_url": f"{root}/assets/",
-        "cameras_api_url": f"{root}/assets/api/sim-assets/cameras",
-        "direct_url": direct,
-    }
-
-
-def _record_public_https(record: dict[str, Any]) -> bool:
-    if "public_https" in record:
-        return bool(record.get("public_https"))
-    public_url = str(record.get("public_url", "")).strip()
-    if public_url.startswith("https://"):
-        return True
-    agent_url = str(record.get("agent_url", "")).strip()
-    return agent_url.startswith("https://")
-
-
-def _record_tls_verify(record: dict[str, Any]) -> bool:
-    """Self-signed HTTPS on the VM public IP is expected; skip CA verification."""
-    return not _record_public_https(record)
-
-
-def _record_customer_url(record: dict[str, Any]) -> str:
-    public_url = str(record.get("public_url", "")).strip()
-    if public_url:
-        return public_url
-    return str(record.get("agent_url", "")).strip()
+def _resolve_record_public_ip(record: dict[str, Any]) -> str:
+    return resolve_record_public_ip(record, resolver=resolve_instance_network_context)
 
 
 def _fail(message: str) -> None:
@@ -1584,21 +1490,6 @@ def _stage_agent_npa_source(ssh: SSHClient) -> None:
         ssh.run(f"rm -f {shlex.quote(remote_archive)}")
 
 
-def _is_routable_public_ip(value: str) -> bool:
-    candidate = (value or "").strip()
-    if not candidate:
-        return False
-    if candidate == "localhost":
-        return False
-    try:
-        ip = ipaddress.ip_address(candidate)
-    except ValueError:
-        return False
-    if ip.is_loopback or ip.is_private or ip.is_unspecified or ip.is_link_local:
-        return False
-    return True
-
-
 def _agent_strip_url_credentials_js() -> str:
     """JS to strip user:pass@ from the URL bar while keeping HTTP Basic auth session."""
     return """    <script>
@@ -1880,7 +1771,7 @@ server {{
     )
     setup_script = f"""set -euo pipefail
 sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx apache2-utils python3-venv python3-pip curl unzip ca-certificates coturn
 if ! command -v nebius >/dev/null 2>&1; then
   curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
 fi
@@ -1988,6 +1879,17 @@ from agent_backend.foxglove import (
     resolve_foxglove_config,
 )
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
+from agent_backend.leisaac import load_manifest_artifact
+from agent_backend.leisaac_routes import LeIsaacDeps, register_leisaac_routes
+
+
+def _leisaac_websocket_connect(*args, **kwargs):
+    # Imported only when a browser opens the gated LeIsaac tab. This keeps the
+    # ordinary agent backend importable for offline/unit use; the deployed agent
+    # venv installs websockets as part of the bootstrap below.
+    from websockets.asyncio.client import connect
+
+    return connect(*args, **kwargs)
 
 RERUN_RECORDING_HTTP_PATH = "/rerun/recordings/sim2real.rrd"
 MCAP_RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.mcap")
@@ -2309,6 +2211,14 @@ def _load_state() -> dict:
 
 def _save_state(state: dict) -> None:
     with _STATE_LOCK:
+        # LeIsaac bundle/run selection is written through _mutate_state.  Older
+        # handlers elsewhere in this backend still perform load -> work -> save;
+        # preserve the latest atomic namespace when one of those handlers
+        # finishes with a stale snapshot after a simulator restart.
+        latest = _load_state_unlocked()
+        preserved = preserve_latest_namespaces(state, latest, ("leisaac",))
+        state.clear()
+        state.update(preserved)
         _save_state_unlocked(state)
 
 
@@ -7141,6 +7051,32 @@ def sim_viz_load_run(payload: dict | None = None):
                 "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id),
                 "preferred": preferred.to_dict(),
             }}
+        if artifacts:
+            # A selected run is still real and usable when its capability is a
+            # service/session artifact rather than an RRD recording. Persist an
+            # artifact-backed active context so conditional tabs (LeIsaac in
+            # particular) survive periodic refresh, while keeping Rerun
+            # truthfully unavailable instead of downloading JSON as a viewer.
+            state = _load_state()
+            selected = {{
+                "run_id": run_id,
+                "stage": "artifacts_available",
+                "rrd_uri": "",
+                "rrd_updated_at": _now_iso(),
+                "artifact_uri": str(preferred.s3_uri if preferred else ""),
+                "artifact_key": str(preferred.key if preferred else ""),
+                "artifact_render": str(preferred.render if preferred else ""),
+                "camera": camera,
+                "mode": "static",
+            }}
+            state["sim_viz"] = selected
+            _record_sim_viz_run(state, selected)
+            _save_state(state)
+            return {{
+                "ok": True,
+                "sim_viz": _sim_viz_load_response(state, selected, run_id=run_id),
+                "preferred": preferred.to_dict() if preferred else None,
+            }}
     except Exception:
         # Fall back to the historical in-memory run selector below; callers still
         # get a useful 404 if the run has never been seen.
@@ -7591,6 +7527,31 @@ register_foxglove_routes(
         keep_published=FOXGLOVE_KEEP_PUBLISHED,
     ),
     HTTPException,
+)
+
+
+def _leisaac_manifest_for_run(run_id: str) -> dict | None:
+    return load_manifest_artifact(
+        run_id, validate_run_id=validate_run_id,
+        s3_client=_agent_s3_client, s3_buckets=_agent_s3_buckets,
+        find_artifacts=find_run_artifacts_across_buckets,
+    )
+
+
+register_leisaac_routes(
+    app,
+    LeIsaacDeps(
+        load_state=_load_state,
+        save_state=_save_state,
+        resolve_manifest=_leisaac_manifest_for_run,
+        http_get=httpx.get,
+        http_post=httpx.post,
+        response=Response,
+        websocket_connect=_leisaac_websocket_connect,
+        mutate_state=_mutate_state,
+        s3_client=_agent_s3_client,
+        s3_buckets=_agent_s3_buckets,
+    ),
 )
 
 
@@ -8493,7 +8454,7 @@ cat <<'HTML' | sudo tee /opt/npa-agent/ui.html >/dev/null
 HTML
 sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
-sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml boto3 "rerun-sdk>=0.32"
+sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml boto3 websockets "rerun-sdk>=0.32"
 sudo /opt/npa-agent/venv/bin/pip install -e "{AGENT_SOURCE_ROOT}/npa[server,foxglove]"
 sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
 sudo systemctl restart npa-rerun || true
@@ -8508,7 +8469,7 @@ EnvironmentFile=-/opt/npa-agent/nebius.env
 EnvironmentFile=-/opt/npa-agent/s3.env
 EnvironmentFile=-/opt/npa-agent/public.env
 EnvironmentFile=-/opt/npa-agent/foxglove.env
-ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 0.0.0.0 --port {backend_port}
+ExecStart=/opt/npa-agent/venv/bin/uvicorn backend:app --host 127.0.0.1 --port {backend_port} --log-level warning --no-access-log --ws websockets --ws-max-size 4194304 --ws-max-queue 4 --ws-ping-interval 10 --ws-ping-timeout 10 --ws-per-message-deflate false
 WorkingDirectory=/opt/npa-agent
 Restart=always
 [Install]
@@ -8553,6 +8514,11 @@ WantedBy=multi-user.target
 UNIT
 sudo htpasswd -bc /etc/nginx/.npa-agent-htpasswd {shlex.quote(auth_user)} {shlex.quote(auth_password)}
 {https_ssl_setup}
+cat <<'NGINXLOG' | sudo tee /etc/nginx/conf.d/npa-agent-safe-log.conf >/dev/null
+# Deliberately use $uri, never $request or $request_uri: those include the
+# browser-controlled query string used by WebRTC signaling and artifact APIs.
+log_format npa_agent_safe '$remote_addr [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent';
+NGINXLOG
 cat <<'NGINX' | sudo tee /etc/nginx/sites-available/npa-agent >/dev/null
 server {{
   listen {agent_port};
@@ -8968,6 +8934,11 @@ def deploy_cmd(
         ingress_ports.append(DEFAULT_HTTPS_PORT)
     try:
         ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
+        remove_npa_ingress_for_instance_ports(
+            instance_id,
+            ports=(backend_port,),
+            on_status=lambda message: typer.echo(f"  {message}"),
+        )
     except NetworkIngressError as exc:
         try:
             _destroy_agent_terraform(project, name, record=rollback_record)
@@ -9145,9 +9116,10 @@ def bootstrap_cmd(
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
-    public_ip = str(record.get("public_ip", "")).strip()
-    if not _is_routable_public_ip(public_ip):
-        _fail("agent VM does not have a routable public IP")
+    try:
+        public_ip = _resolve_record_public_ip(record)
+    except NetworkIngressError as exc:
+        _fail(str(exc))
     public_https = not no_public_https
     ssh_key_path = _resolve_agent_ssh_key(record, cli_ssh_key=ssh_key or None)
     if not Path(ssh_key_path).expanduser().exists():
@@ -9281,15 +9253,17 @@ def bootstrap_cmd(
             ingress_ports.append(DEFAULT_HTTPS_PORT)
         try:
             ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
-        except NetworkIngressError as exc:
-            typer.echo(
-                f"Warning: npa network ensure-ingress failed ({exc}). "
-                "Customer HTTPS on port 443 may be unreachable until ingress is opened.",
-                err=True,
+            remove_npa_ingress_for_instance_ports(
+                instance_id,
+                ports=(backend_port,),
+                on_status=lambda message: typer.echo(f"  {message}"),
             )
+        except NetworkIngressError as exc:
+            _fail(f"npa network ensure-ingress failed: {exc}")
     urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
     updated = dict(record)
     updated.update(urls)
+    updated["public_ip"] = public_ip
     updated["public_https"] = public_https
     llm_payload = dict(updated.get("llm", {}) if isinstance(updated.get("llm"), dict) else {})
     llm_payload["provider"] = DEFAULT_LLM_PROVIDER
@@ -9410,6 +9384,8 @@ def verify_live_cmd(
     customer_url = _record_customer_url(record)
     tls_verify = _record_tls_verify(record)
     if customer_url:
+        if _record_public_https(record) and customer_url != f"https://{public_ip}/":
+            _fail("public customer URL is not the canonical HTTPS public-IP endpoint")
         try:
             welcome_resp = httpx.get(
                 f"{customer_url.rstrip('/')}/welcome",
@@ -9425,6 +9401,28 @@ def verify_live_cmd(
             )
             if healthz_resp.status_code != 200:
                 _fail(f"public healthz unhealthy (status={healthz_resp.status_code})")
+            unauthenticated_ui = httpx.get(
+                customer_url,
+                timeout=5.0,
+                verify=tls_verify,
+                follow_redirects=False,
+            )
+            if unauthenticated_ui.status_code != 401:
+                _fail(
+                    "public UI did not enforce basic authentication "
+                    f"(status={unauthenticated_ui.status_code})"
+                )
+            api_health = httpx.get(
+                f"{customer_url.rstrip('/')}/api/health",
+                auth=(auth_user, auth_password),
+                timeout=5.0,
+                verify=tls_verify,
+            )
+            if api_health.status_code != 200:
+                _fail(
+                    "authenticated public API unhealthy "
+                    f"(status={api_health.status_code})"
+                )
         except httpx.HTTPError as exc:
             _fail(f"public customer URL unreachable: {exc}")
 
@@ -9815,6 +9813,14 @@ def verify_live_cmd(
         "ensureFoxgloveViewer",
         "mountFoxgloveViewer",
         "/api/foxglove/config",
+        # Capability-gated LeIsaac tab and authenticated WebRTC bridge.
+        "ensureLeIsaacTab",
+        "removeLeIsaacTab",
+        "refreshLeIsaacCapability",
+        "connectLeIsaac",
+        "/api/leisaac/status",
+        "/api/leisaac/select",
+        "/api/leisaac/bundles/reset",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")

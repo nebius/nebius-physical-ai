@@ -280,8 +280,8 @@ states:
       output tree (clips/, metas/v0/, processed_videos/) under curated_clips_uri
       plus a summary at curator_report_uri, which the FiftyOne review stage merges.
       Runs in the npa-cosmos-curate image, which bakes the pinned upstream checkout
-      and an ffmpeg carrying libopenh264. Without that image the stage records
-      `engine: unavailable` with the reason instead of pretending to curate.
+      and an ffmpeg carrying libopenh264. The stage fails closed if the real
+      upstream curator cannot run or publish its output.
     needs: [annotate-augmented]
     toolRef: workbench.cosmos_curate.curate
     resources: cpu
@@ -301,19 +301,15 @@ states:
       record which variants are kept vs dropped, plus clip/frame counts and per-clip
       coverage. The Cosmos Curator summary from the previous stage is merged in, so
       one report carries both the curator's clip catalog and the review decisions.
-      When FiftyOne is available (the curate stage runs in the npa-fiftyone image)
-      the report's curation_engine is "fiftyone-brain"; otherwise it degrades to
-      the report-only counts path so the pipeline never regresses.
+      The stage runs in the npa-fiftyone image and must report
+      curation_engine="fiftyone-brain"; missing or failed FiftyOne execution is a
+      hard failure rather than a report-only success.
     needs: [cosmos-curate]
+    toolRef: workbench.fiftyone.curate_augmented
     resources: cpu
     inputs:
       - uri: "{{config.lance_uri}}"
         schema: npa.cosmos2.transfer.v1
-    run:
-      shell: >
-        python3 -c "from npa.workflows.data_factory_stages import curate;
-        curate('{{config.augment_uri}}', '{{config.curation_report_uri}}',
-        curator_report_uri='{{config.curator_report_uri}}')"
     outputs:
       - uri: "{{config.curation_report_uri}}"
         schema: npa.fiftyone.curation.v1

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove mechanically that a BUILT image carries no NVIDIA Omniverse Kit payload.
+"""Prove a BUILT image carries no restricted NVIDIA or LeIsaac runtime payload.
 
 This is the check the whole redistribution reclassification rests on. Reading a
 Dockerfile is not enough: the claim is about bytes in layers, so this inspects the built
@@ -47,7 +47,10 @@ from pathlib import Path
 PAYLOAD_SIGNATURES: tuple[tuple[str, str], ...] = (
     (r"(?i)site-packages/isaacsim/", "the isaacsim wheel's installed package tree"),
     (r"(?i)site-packages/isaaclab/", "the isaaclab wheel's installed package tree"),
-    (r"(?i)(^|/)isaac-sim/(kit|exts|extscache|extsPhysics|apps)/", "an Isaac Sim install tree"),
+    (
+        r"(?i)(^|/)isaac-sim/(kit|exts|extscache|extsPhysics|apps)/",
+        "an Isaac Sim install tree",
+    ),
     (r"(?i)(^|/)kit/kernel/", "Omniverse Kit's kernel"),
     (r"(?i)libcarb", "carb, Omniverse Kit's core runtime library"),
     (r"(?i)libomni[a-z0-9_.]*\.so", "an Omniverse Kit shared library"),
@@ -56,6 +59,22 @@ PAYLOAD_SIGNATURES: tuple[tuple[str, str], ...] = (
     (r"(?i)\.kit$", "a Kit app configuration file"),
     (r"(?i)omniverse", "an Omniverse-branded path"),
     (r"(?i)isaac.?sim.?assets", "Isaac Sim's bundled assets"),
+    (
+        r"(?i)(^|/)leisaac-cache/client/[^/]+/",
+        "a staged versioned NVIDIA WebRTC browser client",
+    ),
+    (
+        r"(?i)(^|/)omniverse-webrtc-streaming-library-[^/]+\.(tgz|tar\.gz)$",
+        "a staged NVIDIA WebRTC browser-client archive",
+    ),
+    (
+        r"(?i)(^|/)leisaac-cache/assets/runtime/.*\.(usd|usda|usdc)$",
+        "a staged LeIsaac runtime task asset",
+    ),
+    (
+        r"(?i)(^|/)leisaac/assets/(robots|scenes)/.*\.(usd|usda|usdc)$",
+        "a LeIsaac source-tree task asset",
+    ),
 )
 
 # Gated model weights are a separate licence axis from Omniverse Kit, and the workbench
@@ -65,7 +84,14 @@ PAYLOAD_SIGNATURES: tuple[tuple[str, str], ...] = (
 # This scanner only sees a tar listing (names, not contents), so it reports weight-shaped
 # paths for a human to eyeball rather than failing on them - the authoritative
 # content-based check runs inside the image build, where the bytes are available.
-WEIGHT_SUFFIXES: tuple[str, ...] = (".pt", ".pth", ".safetensors", ".ckpt", ".onnx", ".gguf")
+WEIGHT_SUFFIXES: tuple[str, ...] = (
+    ".pt",
+    ".pth",
+    ".safetensors",
+    ".ckpt",
+    ".onnx",
+    ".gguf",
+)
 
 # Paths we DO ship that a loose name filter would flag. Deliberately short and exact: an
 # unlisted path that matches a signature fails the scan.
@@ -84,7 +110,13 @@ ALLOWED_PREFIXES: tuple[str, ...] = (
 )
 # Directory entries that are legitimately present but empty (mount points, workdirs).
 ALLOWED_DIRS: frozenset[str] = frozenset(
-    {"isaac-sim", "opt/isaac-cache", "opt/isaac-cache/v", "workspace/isaaclab", "opt/isaac-lab"}
+    {
+        "isaac-sim",
+        "opt/isaac-cache",
+        "opt/isaac-cache/v",
+        "workspace/isaaclab",
+        "opt/isaac-lab",
+    }
 )
 
 # Layer commands that would mean Isaac was installed during the build. Kept in step with
@@ -94,7 +126,10 @@ ALLOWED_DIRS: frozenset[str] = frozenset(
 HISTORY_BAKE_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"(?i)pip[^\n]*install[^\n]*\bisaacsim\b", "a build layer pip-installed isaacsim"),
     (r"(?i)pip[^\n]*install[^\n]*\bisaaclab\b", "a build layer pip-installed isaaclab"),
-    (r"(?i)nvcr\.io/nvidia/(isaac-lab|isaac-sim|omniverse)", "a layer references an NVIDIA vendor image"),
+    (
+        r"(?i)nvcr\.io/nvidia/(isaac-lab|isaac-sim|omniverse)",
+        "a layer references an NVIDIA vendor image",
+    ),
     (
         r"(?i)\b(isaac-bootstrap|isaac_bootstrap\.sh)\s+(ensure|warm|verify)\b",
         "a build layer ran the runtime bootstrap, materialising Isaac into the image",
@@ -144,9 +179,7 @@ def _history_instructions(command: str) -> str:
     Same prose-versus-instruction distinction the packaging guard makes on Dockerfiles.
     """
     return "\n".join(
-        line
-        for line in command.splitlines()
-        if not line.lstrip().startswith("#")
+        line for line in command.splitlines() if not line.lstrip().startswith("#")
     )
 
 
@@ -179,7 +212,7 @@ class ScanReport:
 
     def to_dict(self) -> dict:
         return {
-            "format": "npa_omniverse_payload_scan_v1",
+            "format": "npa_restricted_payload_scan_v2",
             "image": self.image,
             "source": self.source,
             "digest": self.digest,
@@ -188,7 +221,7 @@ class ScanReport:
             # install, not that the image ships no Isaac bytes.
             "history_only": self.history_only,
             "entries_scanned": self.entries_scanned,
-            "verdict": "clean" if self.clean else "omniverse-payload-detected",
+            "verdict": "clean" if self.clean else "restricted-payload-detected",
             "payload_hits": self.payload_hits,
             "history_hits": self.history_hits,
             "allowlisted_paths_present": sorted(self.allowlisted_hits),
@@ -297,7 +330,10 @@ def scan(
         if is_allowed(path):
             report.allowlisted_hits.append(_normalize(path))
             continue
-        if path.endswith(WEIGHT_SUFFIXES) and len(report.weight_shaped_paths) < max_report:
+        if (
+            path.endswith(WEIGHT_SUFFIXES)
+            and len(report.weight_shaped_paths) < max_report
+        ):
             report.weight_shaped_paths.append(_normalize(path))
         why = classify_path(path)
         if why and len(report.payload_hits) < max_report:
@@ -315,7 +351,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("image", nargs="?", help="Image reference to scan with crane.")
     parser.add_argument(
-        "--tarball", type=Path, help="Scan a `docker save` tarball instead of a registry."
+        "--tarball",
+        type=Path,
+        help="Scan a `docker save` tarball instead of a registry.",
     )
     parser.add_argument("--json", type=Path, help="Write the JSON report here.")
     parser.add_argument(
@@ -341,15 +379,21 @@ def main(argv: list[str] | None = None) -> int:
     if report.history_only:
         print("mode             history-only (layer commands; filesystem NOT scanned)")
     print(f"entries scanned  {payload['entries_scanned']}")
-    print(f"allowlisted      {len(payload['allowlisted_paths_present'])} path(s) we do ship:")
+    print(
+        f"allowlisted      {len(payload['allowlisted_paths_present'])} path(s) we do ship:"
+    )
     for path in payload["allowlisted_paths_present"][:20]:
         print(f"                   {path}")
     if report.payload_hits:
-        print(f"\nOMNIVERSE PAYLOAD DETECTED ({len(report.payload_hits)} path(s)):")
+        print(
+            f"\nRESTRICTED RUNTIME PAYLOAD DETECTED ({len(report.payload_hits)} path(s)):"
+        )
         for hit in report.payload_hits:
             print(f"  {hit['path']}\n      -> {hit['why']}")
     if report.history_hits:
-        print(f"\nBUILD-TIME ISAAC INSTALL DETECTED ({len(report.history_hits)} layer(s)):")
+        print(
+            f"\nBUILD-TIME ISAAC INSTALL DETECTED ({len(report.history_hits)} layer(s)):"
+        )
         for hit in report.history_hits:
             print(f"  {hit['why']}\n      {hit['command']}")
     if report.weight_shaped_paths:

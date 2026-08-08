@@ -3650,6 +3650,11 @@ def curate_augmented_cmd(
         "--report-uri",
         help="S3 URI where the FiftyOne curation report JSON is written.",
     ),
+    curator_report_uri: str = typer.Option(
+        "",
+        "--curator-report-uri",
+        help="Completed Cosmos Curator report (defaults beside --report-uri).",
+    ),
     dedup_threshold: float = typer.Option(
         0.10,
         "--dedup-threshold",
@@ -3662,9 +3667,8 @@ def curate_augmented_cmd(
     Intended to run in-container (inside the npa-fiftyone image, where FiftyOne is
     installed): it builds a real fiftyone.Dataset from the augmented scenario
     variants, computes per-sample uniqueness, detects near-duplicates, and writes a
-    curation report recording which variants were kept vs dropped. If FiftyOne is
-    unavailable it degrades to the report-only counts path (surfaced in the report's
-    ``curation_engine`` field).
+    curation report recording which variants were kept vs dropped. It fails closed
+    when FiftyOne or the preceding real Cosmos Curator result is unavailable.
     """
     aug = augment_uri.strip()
     rpt = report_uri.strip()
@@ -3672,11 +3676,22 @@ def curate_augmented_cmd(
         _fail("--augment-uri must be an s3:// URI.")
     if not rpt.startswith("s3://"):
         _fail("--report-uri must be an s3:// URI.")
+    curator_rpt = (
+        curator_report_uri.strip()
+        or rpt.rsplit("/", 1)[0] + "/cosmos_curator.json"
+    )
+    if not curator_rpt.startswith("s3://"):
+        _fail("--curator-report-uri must be an s3:// URI.")
 
     from npa.workflows.data_factory_stages import curate as _curate
 
     try:
-        report = _curate(aug, rpt, dedup_threshold=dedup_threshold)
+        report = _curate(
+            aug,
+            rpt,
+            dedup_threshold=dedup_threshold,
+            curator_report_uri=curator_rpt,
+        )
     except Exception as exc:  # noqa: BLE001 - surface a clean CLI error
         _fail(f"curation failed: {exc}")
         return

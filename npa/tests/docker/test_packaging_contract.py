@@ -120,8 +120,9 @@ def _exposes(dockerfile_text: str) -> list[int]:
     ports: list[int] = []
     for match in re.finditer(r"(?im)^\s*EXPOSE\s+(.+?)\s*$", dockerfile_text):
         for token in match.group(1).split():
-            if token.isdigit():
-                ports.append(int(token))
+            number = token.split("/", 1)[0]
+            if number.isdigit():
+                ports.append(int(number))
     return ports
 
 

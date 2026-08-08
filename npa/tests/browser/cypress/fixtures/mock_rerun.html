@@ -95,6 +95,16 @@
         };
 
         window.__NPA_MOCK_RERUN__.setMode(mode);
+        // Real Rerun WebGL canvases repaint continuously. Keep the content-mode
+        // fixture on that contract so captureStream tests exercise a live
+        // composited track instead of depending on Chromium's nondeterministic
+        // initial frame for a static 2D canvas. Gray/splash modes stay static
+        // and therefore continue to validate the blank-frame rejection path.
+        function paintLoop() {
+          if (window.__NPA_MOCK_RERUN__.mode === "content") paintContent();
+          window.requestAnimationFrame(paintLoop);
+        }
+        window.requestAnimationFrame(paintLoop);
       })();
     </script>
   </body>

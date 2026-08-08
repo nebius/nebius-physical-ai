@@ -1210,6 +1210,9 @@ def _data_factory_spec() -> dict[str, Any]:
                 "vlm_backend": "api",
                 "max_images": "8",
                 "max_tokens": "512",
+                "curator_clip_len_s": "3",
+                "curator_min_clip_len_s": "1",
+                "curator_motion_filter": "score-only",
             }
         ),
         "config_uri": OrderedDict(
@@ -1228,6 +1231,8 @@ def _data_factory_spec() -> dict[str, Any]:
                 "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json",
                 "augmented_frames_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "labeled_augmented_uri": "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/",
+                "curated_clips_uri": "s3://{{config.bucket}}/{{config.prefix}}/curated_clips/",
+                "curator_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/cosmos_curator.json",
                 "lance_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "curation_report_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json",
                 "run_root_uri": "s3://{{config.bucket}}/{{config.prefix}}/",
@@ -1359,10 +1364,10 @@ def _data_factory_spec() -> dict[str, Any]:
                 "attribute-verify": OrderedDict(
                     {
                         "description": (
-                            "VLM-based attribute verification of the augmented clips "
-                            "(Token Factory, --backend api)."
+                            "Real Cosmos Evaluator VLM-based attribute verification of the "
+                            "augmented clips. Evaluation failure fails the workflow closed."
                         ),
-                        "toolRef": "workbench.vlm_eval.run",
+                        "toolRef": "workbench.cosmos_evaluator.evaluate",
                         "resources": "cpu",
                         "inputs": [
                             OrderedDict(
@@ -1375,8 +1380,8 @@ def _data_factory_spec() -> dict[str, Any]:
                         "outputs": [
                             OrderedDict(
                                 {
-                                    "uri": "{{config.scores_uri}}vlm_eval_stub.json",
-                                    "schema": "npa.workbench.vlm_eval.report.v1",
+                                    "uri": "{{config.scores_uri}}cosmos_evaluator.json",
+                                    "schema": "npa.cosmos_evaluator.report.v1",
                                 }
                             )
                         ],
@@ -1438,18 +1443,46 @@ def _data_factory_spec() -> dict[str, Any]:
                                 }
                             )
                         ],
+                        "next": "cosmos-curate",
+                    }
+                ),
+                "cosmos-curate": OrderedDict(
+                    {
+                        "description": (
+                            "Stage 4a - Real Cosmos Curator clip filtering. Produce a required "
+                            "curator report and curated clip set; failures fail the workflow closed."
+                        ),
+                        "needs": ["annotate-augmented"],
+                        "toolRef": "workbench.cosmos_curate.curate",
+                        "resources": "cpu",
+                        "inputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.augment_uri}}",
+                                    "schema": "npa.cosmos2.transfer.v1",
+                                }
+                            )
+                        ],
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.curator_report_uri}}",
+                                    "schema": "npa.cosmos_curate.report.v1",
+                                }
+                            )
+                        ],
                         "next": "curate",
                     }
                 ),
                 "curate": OrderedDict(
                     {
                         "description": (
-                            "Stage 4 - Curation (Voxel51 / FiftyOne). Run real FiftyOne Brain "
-                            "curation over the augmented + graded variants (uniqueness + "
-                            "near-duplicate detection + keep/drop) when run in the npa-fiftyone "
-                            "image, else degrade to the report-only counts path."
+                            "Stage 4b - Real Voxel51 / FiftyOne Brain curation over the Cosmos "
+                            "Curator output (uniqueness + near-duplicate detection + keep/drop). "
+                            "Missing dependencies or invalid curator output fail hard."
                         ),
-                        "needs": ["annotate-augmented"],
+                        "needs": ["cosmos-curate"],
+                        "toolRef": "workbench.fiftyone.curate_augmented",
                         "resources": "cpu",
                         "inputs": [
                             OrderedDict(
@@ -1459,15 +1492,6 @@ def _data_factory_spec() -> dict[str, Any]:
                                 }
                             )
                         ],
-                        "run": OrderedDict(
-                            {
-                                "shell": (
-                                    "python3 -c \"from npa.workflows.data_factory_stages import "
-                                    "curate; curate('{{config.augment_uri}}', "
-                                    "'{{config.curation_report_uri}}')\""
-                                )
-                            }
-                        ),
                         "outputs": [
                             OrderedDict(
                                 {
@@ -1849,6 +1873,10 @@ _AUTHOR_STOPWORDS = frozenset(
         "workflow", "pipeline", "that", "uses", "use", "using", "with", "and",
         "for", "to", "of", "create", "generate", "build", "make", "draft",
         "compose", "please", "give", "show", "new", "simple", "minimal", "example",
+        # Domain-only words select the canonical Sim2Real template. Treating
+        # ``sim2real`` as a concrete catalog-tool keyword otherwise ranks every
+        # ``workbench.sim2real.*`` tool equally and can compose arbitrary stages.
+        "sim2real",
     }
 )
 

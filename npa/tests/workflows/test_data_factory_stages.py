@@ -10,6 +10,32 @@ import pytest
 from npa.workflows import data_factory_stages as dfs
 
 
+def _stub_real_fiftyone(
+    report: dict, augment_uri: str, keys: list[str], dedup_threshold: float | str
+) -> dict:
+    del augment_uri, keys, dedup_threshold
+    return {
+        **report,
+        "curation_engine": "fiftyone-brain",
+        "curated_kept": report["augmented_clips"],
+        "curated_dropped": 0,
+    }
+
+
+def _completed_curator_report(path: Path) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "engine": "cosmos-curator-stages",
+                "curated_uri": "s3://b/p/curated/",
+                "clip_count": 1,
+            }
+        )
+    )
+    return path
+
+
 def test_generate_configs_writes_real_manifest(tmp_path: Path) -> None:
     out = tmp_path / "configs" / "manifest.json"
     result = dfs.generate_configs(str(out), n_augmentations=3, seed="run-x")
@@ -27,7 +53,12 @@ def test_generate_configs_writes_real_manifest(tmp_path: Path) -> None:
 
 
 def test_prompt_from_combo_is_appearance_only() -> None:
-    combo = {"cloth_color": "red", "surface": "wooden table", "lighting": "dim evening light", "background": "plain wall"}
+    combo = {
+        "cloth_color": "red",
+        "surface": "wooden table",
+        "lighting": "dim evening light",
+        "background": "plain wall",
+    }
     prompt = dfs.prompt_from_combo(combo)
     assert "red cloth" in prompt
     assert "wooden table" in prompt
@@ -48,7 +79,9 @@ def test_grade_gate_promotes_above_threshold(tmp_path: Path, monkeypatch) -> Non
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: captured.update(uri=uri, decision=decision),
     )
-    decision = dfs.grade_gate(str(scores), str(tmp_path / "decision.json"), threshold=0.5)
+    decision = dfs.grade_gate(
+        str(scores), str(tmp_path / "decision.json"), threshold=0.5
+    )
     assert decision == "promote_checkpoint"
     assert captured["decision"] == "promote_checkpoint"
 
@@ -60,7 +93,10 @@ def test_grade_gate_loops_below_threshold(tmp_path: Path, monkeypatch) -> None:
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,
     )
-    assert dfs.grade_gate(str(scores), str(tmp_path / "decision.json"), threshold=0.5) == "loop_back"
+    assert (
+        dfs.grade_gate(str(scores), str(tmp_path / "decision.json"), threshold=0.5)
+        == "loop_back"
+    )
 
 
 def test_grade_gate_accepts_string_threshold(tmp_path: Path, monkeypatch) -> None:
@@ -73,9 +109,15 @@ def test_grade_gate_accepts_string_threshold(tmp_path: Path, monkeypatch) -> Non
         lambda uri, decision: None,
     )
     # "0.5" (str) -> 0.6 >= 0.5 -> promote.
-    assert dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold="0.5") == "promote_checkpoint"
+    assert (
+        dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold="0.5")
+        == "promote_checkpoint"
+    )
     # non-numeric -> fallback 0.5 -> 0.6 >= 0.5 -> promote.
-    assert dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold="bogus") == "promote_checkpoint"
+    assert (
+        dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold="bogus")
+        == "promote_checkpoint"
+    )
 
 
 @pytest.mark.parametrize(
@@ -88,7 +130,9 @@ def test_grade_gate_accepts_string_threshold(tmp_path: Path, monkeypatch) -> Non
     ],
     ids=["non-numeric", "null", "nested", "not-an-object"],
 )
-def test_grade_gate_loops_back_on_a_malformed_report(tmp_path: Path, monkeypatch, report) -> None:
+def test_grade_gate_loops_back_on_a_malformed_report(
+    tmp_path: Path, monkeypatch, report
+) -> None:
     """A gate exists to make a decision, so a malformed score must not abort the loop.
 
     The report downloads cleanly here — only its ``score`` is unusable — so the
@@ -101,10 +145,15 @@ def test_grade_gate_loops_back_on_a_malformed_report(tmp_path: Path, monkeypatch
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,
     )
-    assert dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold=0.5) == "loop_back"
+    assert (
+        dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold=0.5)
+        == "loop_back"
+    )
 
 
-def test_grade_gate_will_not_promote_a_degraded_report(tmp_path: Path, monkeypatch) -> None:
+def test_grade_gate_will_not_promote_a_degraded_report(
+    tmp_path: Path, monkeypatch
+) -> None:
     """A high score the evaluator itself flagged as degraded must not promote.
 
     The evaluator marks a run degraded when it lost object storage part-way, so the
@@ -117,7 +166,10 @@ def test_grade_gate_will_not_promote_a_degraded_report(tmp_path: Path, monkeypat
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,
     )
-    assert dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold=0.5) == "loop_back"
+    assert (
+        dfs.grade_gate(str(scores), str(tmp_path / "d.json"), threshold=0.5)
+        == "loop_back"
+    )
 
 
 def test_grade_gate_falls_through_a_malformed_report_to_the_older_contract(
@@ -136,7 +188,9 @@ def test_grade_gate_falls_through_a_malformed_report_to_the_older_contract(
     )
 
 
-def test_download_json_missing_exact_file_does_not_substitute(tmp_path: Path, monkeypatch) -> None:
+def test_download_json_missing_exact_file_does_not_substitute(
+    tmp_path: Path, monkeypatch
+) -> None:
     """When the requested .json is missing and download falls back to the prefix
     dir, _download_json must raise, not silently return a different JSON."""
     import pytest
@@ -154,12 +208,16 @@ def test_download_json_missing_exact_file_does_not_substitute(tmp_path: Path, mo
         dfs._download_json("s3://bucket/grade/vlm_eval_stub.json")
 
 
-def test_grade_gate_missing_eval_loops_not_reads_decision(tmp_path: Path, monkeypatch) -> None:
+def test_grade_gate_missing_eval_loops_not_reads_decision(
+    tmp_path: Path, monkeypatch
+) -> None:
     """A missing eval result must loop_back, never mis-read decision.json as score."""
     prefix_dir = tmp_path / "grade"
     prefix_dir.mkdir()
     # A promote decision.json is present but the eval result is absent.
-    (prefix_dir / "decision.json").write_text(json.dumps({"decision": "promote_checkpoint"}))
+    (prefix_dir / "decision.json").write_text(
+        json.dumps({"decision": "promote_checkpoint"})
+    )
 
     class _FakeStorage:
         def download_path(self, uri, dest):  # noqa: ARG002
@@ -170,24 +228,36 @@ def test_grade_gate_missing_eval_loops_not_reads_decision(tmp_path: Path, monkey
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,
     )
-    assert dfs.grade_gate("s3://bucket/grade/", "s3://bucket/grade/decision.json", 0.5) == "loop_back"
+    assert (
+        dfs.grade_gate("s3://bucket/grade/", "s3://bucket/grade/decision.json", 0.5)
+        == "loop_back"
+    )
 
 
-def test_grade_gate_reads_the_cosmos_evaluator_report(tmp_path: Path, monkeypatch) -> None:
+def test_grade_gate_reads_the_cosmos_evaluator_report(
+    tmp_path: Path, monkeypatch
+) -> None:
     """The gate must threshold on the Cosmos Evaluator score the evaluate stage writes."""
     from npa.workbench.cosmos_evaluator import RESULT_FILENAME
 
     prefix_dir = tmp_path / "grade"
     prefix_dir.mkdir()
-    (prefix_dir / RESULT_FILENAME).write_text(json.dumps({"score": 0.9, "passed": True}))
+    (prefix_dir / RESULT_FILENAME).write_text(
+        json.dumps({"score": 0.9, "passed": True})
+    )
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,
     )
-    assert dfs.grade_gate(str(prefix_dir), str(tmp_path / "decision.json"), 0.5) == "promote_checkpoint"
+    assert (
+        dfs.grade_gate(str(prefix_dir), str(tmp_path / "decision.json"), 0.5)
+        == "promote_checkpoint"
+    )
 
 
-def test_grade_gate_falls_back_to_the_older_vlm_eval_report(tmp_path: Path, monkeypatch) -> None:
+def test_grade_gate_falls_back_to_the_older_vlm_eval_report(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Runs started before the evaluate stage existed must still grade."""
     from npa.workbench.vlm_eval import RESULT_FILENAME
 
@@ -198,7 +268,10 @@ def test_grade_gate_falls_back_to_the_older_vlm_eval_report(tmp_path: Path, monk
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,
     )
-    assert dfs.grade_gate(str(prefix_dir), str(tmp_path / "decision.json"), 0.5) == "loop_back"
+    assert (
+        dfs.grade_gate(str(prefix_dir), str(tmp_path / "decision.json"), 0.5)
+        == "loop_back"
+    )
 
 
 def test_curate_merges_the_cosmos_curator_report(tmp_path: Path, monkeypatch) -> None:
@@ -229,6 +302,7 @@ def test_curate_merges_the_cosmos_curator_report(tmp_path: Path, monkeypatch) ->
         ],
     )
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
     report = dfs.curate(
         "s3://b/p/cosmos_augmented/",
         str(tmp_path / "report.json"),
@@ -242,23 +316,32 @@ def test_curate_merges_the_cosmos_curator_report(tmp_path: Path, monkeypatch) ->
     assert report["multiply"]["mode"] == "multi-variant"
 
 
-def test_curate_records_a_missing_curator_report_without_failing(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(dfs, "_list_keys", lambda uri: ["p/cosmos_augmented/aug-0/augmented_video.mp4"])
+def test_curate_fails_closed_when_curator_report_is_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        dfs, "_list_keys", lambda uri: ["p/cosmos_augmented/aug-0/augmented_video.mp4"]
+    )
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
-    report = dfs.curate(
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
+    with pytest.raises(RuntimeError, match="could not be loaded"):
+        dfs.curate(
         "s3://b/p/cosmos_augmented/",
         str(tmp_path / "report.json"),
         curator_report_uri=str(tmp_path / "absent.json"),
     )
-    assert report["cosmos_curator"]["status"] == "unavailable"
-    assert report["status"] == "curated"
 
 
-def test_curate_omits_the_curator_block_when_no_report_is_passed(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(dfs, "_list_keys", lambda uri: ["p/cosmos_augmented/aug-0/augmented_video.mp4"])
+def test_curate_fails_closed_when_no_curator_report_is_passed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        dfs, "_list_keys", lambda uri: ["p/cosmos_augmented/aug-0/augmented_video.mp4"]
+    )
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
-    report = dfs.curate("s3://b/p/cosmos_augmented/", str(tmp_path / "report.json"))
-    assert "cosmos_curator" not in report
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
+    with pytest.raises(RuntimeError, match="report URI is required"):
+        dfs.curate("s3://b/p/cosmos_augmented/", str(tmp_path / "report.json"))
 
 
 def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
@@ -272,9 +355,19 @@ def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
         "p/cosmos_augmented/aug-run/metadata.json",
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
     written = {}
-    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: written.update(payload=payload, uri=uri) or uri)
-    report = dfs.curate("s3://b/p/cosmos_augmented/", "s3://b/p/curation/report.json")
+    monkeypatch.setattr(
+        dfs,
+        "_upload_json",
+        lambda payload, uri: written.update(payload=payload, uri=uri) or uri,
+    )
+    curator_report = _completed_curator_report(tmp_path / "curator.json")
+    report = dfs.curate(
+        "s3://b/p/cosmos_augmented/",
+        "s3://b/p/curation/report.json",
+        curator_report_uri=str(curator_report),
+    )
     assert report["video_count"] == 1
     assert report["frame_count"] == 2
     assert set(report["clip_ids"]) == {"aug-run"}
@@ -282,9 +375,32 @@ def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
     assert report["status"] == "curated"
     # Single-variant limitation surfaced in the machine-readable report.
     assert report["multiply"]["mode"] == "single-variant"
-    # FiftyOne is not installed in the unit-test env, so curate degrades to the
-    # report-only path (real Brain curation only runs inside the npa-fiftyone image).
-    assert report["curation_engine"] == "report-only"
+    assert report["curation_engine"] == "fiftyone-brain"
+
+
+def test_curate_fails_closed_when_fiftyone_is_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from npa.workflows import data_factory_curate as dfc
+
+    monkeypatch.setattr(
+        dfs,
+        "_list_keys",
+        lambda uri: ["p/cosmos_augmented/aug-0/augmented_video.mp4"],
+    )
+    monkeypatch.setattr(
+        dfc,
+        "run_curation",
+        lambda **kwargs: (_ for _ in ()).throw(dfc.FiftyoneUnavailable("absent")),
+    )
+    with pytest.raises(dfc.FiftyoneUnavailable, match="absent"):
+        dfs.curate(
+            "s3://b/p/cosmos_augmented/",
+            "s3://b/p/curation/report.json",
+            curator_report_uri=str(
+                _completed_curator_report(tmp_path / "curator.json")
+            ),
+        )
 
 
 def test_generate_configs_feeds_first_augmentation_to_transfer(tmp_path: Path) -> None:
@@ -302,6 +418,31 @@ def test_generate_configs_feeds_first_augmentation_to_transfer(tmp_path: Path) -
     assert combo["prompt"]
 
 
+def test_generate_configs_uses_leisaac_task_lineage_for_conditioning(
+    tmp_path: Path,
+) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    (input_dir / "leisaac-lineage.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.leisaac.paidf-input.v1",
+                "source": {
+                    "task": "LeIsaac-SO101-LiftCube-v0",
+                    "dataset_uri": "s3://bucket/dataset/versions/v1",
+                    "episode_index": 0,
+                },
+            }
+        )
+    )
+    manifest = dfs.generate_configs(str(tmp_path / "configs") + "/", 1, seed="lift")
+    combo = manifest["augmentations"][0]
+    assert set(combo) == {"lighting", "background", "surface", "prompt"}
+    assert "red-cube lift motion" in combo["prompt"]
+    assert "preserve every frame's geometry" in combo["prompt"]
+    assert manifest["source_leisaac"]["episode_index"] == 0
+
+
 def test_generate_configs_non_numeric_count_falls_back(tmp_path: Path) -> None:
     manifest = dfs.generate_configs(str(tmp_path / "c") + "/", "not-a-number", seed="s")
     assert manifest["n_augmentations"] == 2
@@ -316,7 +457,9 @@ def _png(path: Path) -> Path:
     return path
 
 
-def test_publish_transfer_layout_interoperates_with_curate_and_viz(tmp_path: Path, monkeypatch) -> None:
+def test_publish_transfer_layout_interoperates_with_curate_and_viz(
+    tmp_path: Path, monkeypatch
+) -> None:
     """The real producer's S3 layout must flow through curate + build_run_rrd."""
     import pytest
 
@@ -359,7 +502,14 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(tmp_path: Pat
     # (a) curate must parse the produced layout correctly.
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: recorded)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
-    report = dfs.curate("s3://bkt/run1/cosmos_augmented/", "s3://bkt/run1/curation/report.json")
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
+    report = dfs.curate(
+        "s3://bkt/run1/cosmos_augmented/",
+        "s3://bkt/run1/curation/report.json",
+        curator_report_uri=str(
+            _completed_curator_report(tmp_path / "curator-interoperability.json")
+        ),
+    )
     assert report["clip_ids"] == ["aug-run1"], report["clip_ids"]
     assert report["video_count"] == 1
     assert report["frame_count"] == 3
@@ -372,7 +522,9 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(tmp_path: Pat
     assert out_rrd.is_file()
 
 
-def test_curate_reports_multi_variant_for_multiple_clips(tmp_path: Path, monkeypatch) -> None:
+def test_curate_reports_multi_variant_for_multiple_clips(
+    tmp_path: Path, monkeypatch
+) -> None:
     """N augmented clip dirs (multiply) must be counted and reported multi-variant."""
     keys = [
         "p/cosmos_augmented/manifest.json",
@@ -387,7 +539,14 @@ def test_curate_reports_multi_variant_for_multiple_clips(tmp_path: Path, monkeyp
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
-    report = dfs.curate("s3://b/p/cosmos_augmented/", "s3://b/p/curation/report.json")
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
+    report = dfs.curate(
+        "s3://b/p/cosmos_augmented/",
+        "s3://b/p/curation/report.json",
+        curator_report_uri=str(
+            _completed_curator_report(tmp_path / "curator-multi.json")
+        ),
+    )
     assert report["augmented_clips"] == 3
     assert set(report["clip_ids"]) == {"aug-run-0", "aug-run-1", "aug-run-2"}
     assert report["video_count"] == 3
@@ -395,7 +554,9 @@ def test_curate_reports_multi_variant_for_multiple_clips(tmp_path: Path, monkeyp
     assert report["multiply"]["variant_count"] == 3
 
 
-def test_finalize_reports_multi_variant_from_clip_dirs(tmp_path: Path, monkeypatch) -> None:
+def test_finalize_reports_multi_variant_from_clip_dirs(
+    tmp_path: Path, monkeypatch
+) -> None:
     keys = [
         "physical-ai-data-factory/run1/input/video_0.mp4",
         "physical-ai-data-factory/run1/cosmos_augmented/manifest.json",
@@ -405,7 +566,9 @@ def test_finalize_reports_multi_variant_from_clip_dirs(tmp_path: Path, monkeypat
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
-    report = dfs.finalize("s3://b/physical-ai-data-factory/run1/", "s3://b/.../final.json")
+    report = dfs.finalize(
+        "s3://b/physical-ai-data-factory/run1/", "s3://b/.../final.json"
+    )
     assert report["multiply_mode"] == "multi-variant"
     assert report["variant_count"] == 2
 
@@ -435,7 +598,10 @@ def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> Non
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
-    report = dfs.finalize("s3://b/physical-ai-data-factory/run1/", "s3://b/physical-ai-data-factory/run1/reports/final.json")
+    report = dfs.finalize(
+        "s3://b/physical-ai-data-factory/run1/",
+        "s3://b/physical-ai-data-factory/run1/reports/final.json",
+    )
     assert report["artifact_count"] == 3
     assert report["has_rrd"] is True
     assert report["stages"]["input"] == 1

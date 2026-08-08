@@ -84,7 +84,9 @@ def test_augment_runs_real_cosmos_transfer() -> None:
         "augment must run the real Cosmos Transfer 2.5 execute path"
     )
     argv = TOOL_CATALOG["workbench.cosmos2.transfer_execute"].argv_template
-    assert "--execute" in argv, "transfer_execute must pass --execute to run the real model"
+    assert "--execute" in argv, (
+        "transfer_execute must pass --execute to run the real model"
+    )
     assert "--condition-on-input" in argv
     assert "--input-uri" in argv and "--output-uri" in argv
     assert spec["config"]["trigger_uri"] == spec["config"]["input_uri"]
@@ -94,9 +96,7 @@ def test_augment_runs_real_cosmos_transfer() -> None:
 
 
 def test_input_conditioned_cosmos_toolref_fails_closed_without_input() -> None:
-    argv = TOOL_CATALOG[
-        "workbench.cosmos2.transfer_conditioned_execute"
-    ].argv_template
+    argv = TOOL_CATALOG["workbench.cosmos2.transfer_conditioned_execute"].argv_template
 
     assert "--execute" in argv
     assert "--condition-on-input" in argv
@@ -130,11 +130,16 @@ def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
     argv = TOOL_CATALOG["workbench.cosmos_curate.curate"].argv_template
     assert argv[:4] == ["npa", "workbench", "cosmos-curate", "curate-augmented"]
     assert "--curated-uri" in argv and "--report-uri" in argv
+    assert "--require-curator" in argv
 
     assert states["cosmos-curate"]["next"] == "curate"
     assert states["curate"]["needs"] == ["cosmos-curate"]
-    # The review stage must actually read the curator's summary, not ignore it.
-    assert "curator_report_uri" in str(states["curate"]["run"]["shell"])
+    assert states["curate"].get("toolRef") == "workbench.fiftyone.curate_augmented"
+    review_argv = TOOL_CATALOG["workbench.fiftyone.curate_augmented"].argv_template
+    assert review_argv[:4] == ["npa", "workbench", "fiftyone", "curate-augmented"]
+    # The real review stage must read the curator's summary and cannot be a stub.
+    assert "--curator-report-uri" in review_argv
+    assert not TOOL_CATALOG["workbench.fiftyone.curate_augmented"].stub
 
 
 def test_quality_gate_reads_the_evaluator_report() -> None:
@@ -160,7 +165,9 @@ def test_blueprint_toolrefs_exist_in_catalog() -> None:
     for name, state in _states().items():
         tool_ref = state.get("toolRef")
         if tool_ref:
-            assert tool_ref in TOOL_CATALOG, f"stage '{name}' toolRef '{tool_ref}' not in catalog"
+            assert tool_ref in TOOL_CATALOG, (
+                f"stage '{name}' toolRef '{tool_ref}' not in catalog"
+            )
 
 
 def _cli_options_for(path_parts: list[str]) -> set[str]:
@@ -192,7 +199,10 @@ def test_blueprint_run_shell_cli_flags_match_real_cli() -> None:
         run = state.get("run") or {}
         shell = str(run.get("shell", ""))
         # Whitespace-collapse the folded YAML scalar, then find npa workbench calls.
-        for match in re.finditer(r"npa\s+workbench\s+(\S+)\s+(\S+)((?:\s+--?\S+|\s+\"[^\"]*\"|\s+\S+)*)", shell):
+        for match in re.finditer(
+            r"npa\s+workbench\s+(\S+)\s+(\S+)((?:\s+--?\S+|\s+\"[^\"]*\"|\s+\S+)*)",
+            shell,
+        ):
             group, cmd, rest = match.group(1), match.group(2), match.group(3)
             flags = re.findall(r"(--[A-Za-z0-9][A-Za-z0-9-]*)", rest)
             if not flags:
@@ -204,7 +214,9 @@ def test_blueprint_run_shell_cli_flags_match_real_cli() -> None:
                     f"which is not a real CLI option ({sorted(cli_opts)}). Fix the run.shell."
                 )
             checked += 1
-    assert checked >= 1, "expected at least one npa-workbench run.shell call to validate"
+    assert checked >= 1, (
+        "expected at least one npa-workbench run.shell call to validate"
+    )
 
 
 # ---------------------------------------------------------------------------------
@@ -228,7 +240,9 @@ def test_nurec_blueprint_toolrefs_exist_in_catalog() -> None:
     for name, state in _nurec_states().items():
         tool_ref = state.get("toolRef")
         if tool_ref:
-            assert tool_ref in TOOL_CATALOG, f"stage '{name}' toolRef '{tool_ref}' not in catalog"
+            assert tool_ref in TOOL_CATALOG, (
+                f"stage '{name}' toolRef '{tool_ref}' not in catalog"
+            )
 
 
 def test_nurec_blueprint_run_shell_stages_are_real() -> None:
@@ -278,7 +292,9 @@ def test_nurec_visualize_stage_builds_the_real_rerun_recording() -> None:
 
 def test_nurec_skypilot_task_has_no_echo_or_manifest_stub_stage() -> None:
     """The submitted SkyPilot task must invoke the real tool for every stage."""
-    doc = next(d for d in yaml.safe_load_all(NUREC_SKYPILOT.read_text(encoding="utf-8")) if d)
+    doc = next(
+        d for d in yaml.safe_load_all(NUREC_SKYPILOT.read_text(encoding="utf-8")) if d
+    )
     run = doc["run"]
 
     for verb in ("check", "fetch", "reconstruct", "render", "visualize", "finalize"):

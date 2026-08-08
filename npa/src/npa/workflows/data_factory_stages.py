@@ -28,14 +28,39 @@ from urllib.parse import urlparse
 # coherent with the pixels AND can drive the Cosmos Transfer prompt — appearance
 # only (lighting/background/materials), never the geometry or the folding motion.
 APPEARANCE_VARIABLES = {
-    "lighting": ["bright daylight", "warm lamp light", "dim evening light", "cool overhead light"],
-    "background": ["plain wall", "cluttered shelves", "sunlit window", "hanging curtain"],
+    "lighting": [
+        "bright daylight",
+        "warm lamp light",
+        "dim evening light",
+        "cool overhead light",
+    ],
+    "background": [
+        "plain wall",
+        "cluttered shelves",
+        "sunlit window",
+        "hanging curtain",
+    ],
     "cloth_color": ["blue", "red", "white", "green"],
     "surface": ["beige sofa", "wooden table", "gray countertop"],
 }
 
+LEISAAC_APPEARANCE_VARIABLES = {
+    "lighting": APPEARANCE_VARIABLES["lighting"],
+    "background": APPEARANCE_VARIABLES["background"],
+    "surface": APPEARANCE_VARIABLES["surface"],
+}
 
-def prompt_from_combo(combo: dict[str, Any]) -> str:
+LEISAAC_SCENES = {
+    "LeIsaac-SO101-PickOrange-v0": (
+        "An SO101 robot arm demonstrating the same orange pick-and-place motion"
+    ),
+    "LeIsaac-SO101-LiftCube-v0": (
+        "An SO101 robot arm demonstrating the same red-cube lift motion"
+    ),
+}
+
+
+def prompt_from_combo(combo: dict[str, Any], *, scene: str = "") -> str:
     """Turn a sampled appearance combo into a natural-language Cosmos prompt.
 
     Keeps the scene/action fixed (robot folding cloth) and varies only appearance,
@@ -45,11 +70,29 @@ def prompt_from_combo(combo: dict[str, Any]) -> str:
     surface = str(combo.get("surface") or "").strip()
     lighting = str(combo.get("lighting") or "").strip()
     background = str(combo.get("background") or "").strip()
+    subject = scene or f"A robot arm folding a {cloth or 'blue'} cloth"
     return (
-        f"A robot arm folding a {cloth or 'blue'} cloth on a {surface or 'beige sofa'}, "
-        f"{lighting or 'bright daylight'}, {background or 'plain wall'} in the background. "
-        "Photorealistic, same motion and layout, appearance changed only."
+        f"{subject} on a {surface or 'beige sofa'}, {lighting or 'bright daylight'}, "
+        f"{background or 'plain wall'} in the background. Photorealistic, preserve "
+        "every frame's geometry, timing, robot motion, object trajectory, and camera; "
+        "appearance changed only."
     )
+
+
+def _leisaac_lineage_for_configs(configs_uri: str) -> dict[str, Any] | None:
+    base = configs_uri.rstrip("/")
+    if not base.endswith("/configs"):
+        return None
+    lineage_uri = base.removesuffix("configs") + "input/leisaac-lineage.json"
+    try:
+        payload = _download_json(lineage_uri)
+    except Exception:  # noqa: BLE001 - ordinary PAIDF runs have no LeIsaac lineage
+        return None
+    if payload.get("schema") != "npa.leisaac.paidf-input.v1" or not isinstance(
+        payload.get("source"), dict
+    ):
+        return None
+    return payload
 
 
 def _storage():
@@ -92,10 +135,14 @@ def _upload_json(payload: dict[str, Any], uri: str) -> str:
     if uri.startswith("s3://"):
         with tempfile.TemporaryDirectory(prefix="npa-df-stage-") as tmp:
             p = Path(tmp) / "out.json"
-            p.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            p.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             return _storage().upload_file(str(p), uri)
     Path(uri).parent.mkdir(parents=True, exist_ok=True)
-    Path(uri).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    Path(uri).write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return uri
 
 
@@ -136,7 +183,9 @@ def _download_json(uri: str) -> dict[str, Any]:
         return json.loads(Path(p).read_text())
 
 
-def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str = "") -> dict[str, Any]:
+def generate_configs(
+    configs_uri: str, n_augmentations: int | str = 2, seed: str = ""
+) -> dict[str, Any]:
     """Sample appearance-only augmentation combos and write a real config manifest.
 
     ``n_augmentations`` accepts a str (the blueprint interpolates a quoted config
@@ -146,22 +195,32 @@ def generate_configs(configs_uri: str, n_augmentations: int | str = 2, seed: str
         n = int(n_augmentations)
     except (TypeError, ValueError):
         n = 2
+    lineage = _leisaac_lineage_for_configs(configs_uri)
+    source = lineage.get("source", {}) if lineage else {}
+    scene = LEISAAC_SCENES.get(str(source.get("task") or ""), "")
+    variables = LEISAAC_APPEARANCE_VARIABLES if scene else APPEARANCE_VARIABLES
     rng = random.Random(seed or None)
     combos = []
     for _ in range(max(1, n)):
-        combo = {k: rng.choice(v) for k, v in APPEARANCE_VARIABLES.items()}
+        combo = {k: rng.choice(v) for k, v in variables.items()}
         # The prompt is what actually conditions the Cosmos Transfer augmentation,
         # so the sampled appearance drives the pixels (not just a Rerun label).
-        combo["prompt"] = prompt_from_combo(combo)
+        combo["prompt"] = prompt_from_combo(combo, scene=scene)
         combos.append(combo)
     manifest = {
         "schema": "npa.data_factory.configs.v1",
         "scene": "indoor robot arm folding cloth (tabletop manipulation)",
         "n_augmentations": len(combos),
-        "variables": APPEARANCE_VARIABLES,
+        "variables": variables,
         "augmentations": combos,
     }
-    uri = configs_uri.rstrip("/") + "/manifest.json" if not configs_uri.endswith(".json") else configs_uri
+    if lineage:
+        manifest["source_leisaac"] = source
+    uri = (
+        configs_uri.rstrip("/") + "/manifest.json"
+        if not configs_uri.endswith(".json")
+        else configs_uri
+    )
     manifest["written_uri"] = _upload_json(manifest, uri)
     print(json.dumps(manifest))
     return manifest
@@ -185,7 +244,9 @@ def grade_gate(scores_uri: str, decision_uri: str, threshold: float | str = 0.5)
     the whole refinement loop down with it.
     """
     from npa.orchestration.npa_workflow.decisions import write_decision
-    from npa.workbench.cosmos_evaluator import RESULT_FILENAME as COSMOS_EVALUATOR_RESULT
+    from npa.workbench.cosmos_evaluator import (
+        RESULT_FILENAME as COSMOS_EVALUATOR_RESULT,
+    )
     from npa.workbench.vlm_eval import RESULT_FILENAME as VLM_EVAL_RESULT
 
     try:
@@ -223,7 +284,14 @@ def grade_gate(scores_uri: str, decision_uri: str, threshold: float | str = 0.5)
         source = candidate
         break
     if not source:
-        print(json.dumps({"stage": "grade_gate", "warn": f"could not read a score ({'; '.join(problems)})"[:300]}))
+        print(
+            json.dumps(
+                {
+                    "stage": "grade_gate",
+                    "warn": f"could not read a score ({'; '.join(problems)})"[:300],
+                }
+            )
+        )
     graded = status == "completed"
     decision = "promote_checkpoint" if graded and score >= threshold else "loop_back"
     write_decision(decision_uri, decision)
@@ -250,12 +318,11 @@ def curate(
 ) -> dict[str, Any]:
     """Curate the augmented set and write a real curation report.
 
-    When FiftyOne is importable (i.e. this stage runs inside the ``npa-fiftyone``
-    workbench image) this runs *real* FiftyOne Brain curation over the augmented
-    scenario variants -- ``compute_uniqueness`` + near-duplicate similarity +
-    a 2D visualization -- and records which variants were kept vs dropped. When
-    FiftyOne is absent (unit tests, the dev-VM worktree python) it degrades to the
-    report-only counts path so the pipeline never regresses.
+    This stage runs *real* FiftyOne Brain curation over the augmented scenario
+    variants -- ``compute_uniqueness`` + near-duplicate similarity + a 2D
+    visualization -- and records which variants were kept vs dropped. A missing
+    or failed FiftyOne runtime is a hard error so the pipeline cannot report a
+    successful curation that never happened.
 
     ``curator_report_uri`` points at the preceding Cosmos Curator stage's summary.
     When present it is folded into this report under ``cosmos_curator``, so one
@@ -269,9 +336,13 @@ def curate(
     # manifest.json are excluded. Deriving relative to the passed augment_uri
     # (rather than a hardcoded "/cosmos_augmented/") keeps this correct for any
     # prefix, including a bucket root. Matches publish_transfer_to_s3's layout.
-    _, aug_prefix = _split(augment_uri if augment_uri.endswith("/") else augment_uri + "/")
-    rels = [k[len(aug_prefix):] for k in keys if k.startswith(aug_prefix)]
-    clips = sorted({r.split("/", 1)[0] for r in rels if "/" in r and r.split("/", 1)[0]})
+    _, aug_prefix = _split(
+        augment_uri if augment_uri.endswith("/") else augment_uri + "/"
+    )
+    rels = [k[len(aug_prefix) :] for k in keys if k.startswith(aug_prefix)]
+    clips = sorted(
+        {r.split("/", 1)[0] for r in rels if "/" in r and r.split("/", 1)[0]}
+    )
     multi = len(clips) > 1
     report = {
         "schema": "npa.fiftyone.curation.v1",
@@ -302,25 +373,31 @@ def curate(
     return report
 
 
-def _merge_curator_report(report: dict[str, Any], curator_report_uri: str) -> dict[str, Any]:
+def _merge_curator_report(
+    report: dict[str, Any], curator_report_uri: str
+) -> dict[str, Any]:
     """Fold the Cosmos Curator stage's summary into the curation report.
 
     Only the run-level fields are copied; the per-clip catalog stays in the
     curator's own report so this document does not grow with the clip count.
     """
     if not curator_report_uri:
-        return report
+        raise RuntimeError("Cosmos Curator report URI is required")
     try:
         curator = _download_json(curator_report_uri)
-    except Exception as exc:  # noqa: BLE001 - the review report stands on its own
-        report["cosmos_curator"] = {"status": "unavailable", "warn": f"{exc}"[:200]}
-        return report
+    except Exception as exc:
+        raise RuntimeError("Cosmos Curator report could not be loaded") from exc
     if not isinstance(curator, dict):
-        report["cosmos_curator"] = {"status": "unavailable", "warn": "curator report is not an object"}
-        return report
+        raise RuntimeError("Cosmos Curator report is not an object")
+    status = str(curator.get("status") or "")
+    engine = str(curator.get("engine") or "")
+    if status != "completed" or not engine or engine == "unavailable":
+        raise RuntimeError(
+            "Cosmos Curator did not complete with the real upstream engine"
+        )
     report["cosmos_curator"] = {
-        "status": str(curator.get("status") or ""),
-        "engine": str(curator.get("engine") or ""),
+        "status": status,
+        "engine": engine,
         "curated_uri": str(curator.get("curated_uri") or ""),
         "clip_count": int(curator.get("clip_count") or 0),
         "filtered_count": int(curator.get("filtered_count") or 0),
@@ -338,12 +415,7 @@ def _enrich_with_fiftyone_curation(
     keys: list[str],
     dedup_threshold: float | str,
 ) -> dict[str, Any]:
-    """Run real FiftyOne Brain curation over the augmented set when available.
-
-    Falls back to the report-only counts path (tagging ``curation_engine``) when
-    FiftyOne is not importable or curation fails, so the stage always produces a
-    valid report.
-    """
+    """Run real FiftyOne Brain curation and fail if it is unavailable."""
     from npa.workflows import data_factory_curate as dfc
 
     try:
@@ -351,25 +423,22 @@ def _enrich_with_fiftyone_curation(
     except (TypeError, ValueError):
         thresh = dfc.DEFAULT_DEDUP_THRESHOLD
 
-    bucket, aug_prefix = _split(augment_uri if augment_uri.endswith("/") else augment_uri + "/")
-    try:
-        with tempfile.TemporaryDirectory(prefix="npa-df-curate-") as tmp:
-            return dfc.run_curation(
-                keys=keys,
-                augment_prefix=aug_prefix,
-                base_report=report,
-                download_key=lambda key, dest: _download_key(bucket, key, dest),
-                read_json=lambda key: _read_json_key(bucket, key),
-                workdir=tmp,
-                dedup_threshold=thresh,
-            )
-    except dfc.FiftyoneUnavailable:
-        report["curation_engine"] = dfc.CURATION_ENGINE_REPORT_ONLY
-        return report
-    except Exception as exc:  # noqa: BLE001 - never fail the stage on curation errors
-        report["curation_engine"] = dfc.CURATION_ENGINE_REPORT_ONLY
-        report["curation_warn"] = f"fiftyone curation failed: {exc}"[:300]
-        return report
+    bucket, aug_prefix = _split(
+        augment_uri if augment_uri.endswith("/") else augment_uri + "/"
+    )
+    with tempfile.TemporaryDirectory(prefix="npa-df-curate-") as tmp:
+        result = dfc.run_curation(
+            keys=keys,
+            augment_prefix=aug_prefix,
+            base_report=report,
+            download_key=lambda key, dest: _download_key(bucket, key, dest),
+            read_json=lambda key: _read_json_key(bucket, key),
+            workdir=tmp,
+            dedup_threshold=thresh,
+        )
+    if result.get("curation_engine") != dfc.CURATION_ENGINE_FIFTYONE:
+        raise RuntimeError("FiftyOne Brain curation did not complete")
+    return result
 
 
 def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
@@ -399,6 +468,15 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
             if seg:
                 aug_clips.add(seg)
     n_variants = len(aug_clips)
+    bucket, _prefix = _split(run_root_uri)
+    lineage_key = next(
+        (key for key in keys if key.endswith("/input/leisaac-lineage.json")), ""
+    )
+    transfer_key = next(
+        (key for key in keys if key.endswith("/cosmos_augmented/manifest.json")), ""
+    )
+    source_lineage = _read_json_key(bucket, lineage_key) if lineage_key else None
+    transfer_manifest = _read_json_key(bucket, transfer_key) if transfer_key else None
     report = {
         "schema": "npa.sim2real.e2e_report.v1",
         "status": "completed",
@@ -410,6 +488,11 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
         "multiply_mode": "multi-variant" if n_variants > 1 else "single-variant",
         "variant_count": n_variants,
     }
+    if source_lineage:
+        report["source_leisaac"] = source_lineage
+    if transfer_manifest:
+        report["augmentation_engine"] = str(transfer_manifest.get("mode") or "")
+        report["input_conditioned"] = transfer_manifest.get("input_conditioned") is True
     report["written_uri"] = _upload_json(report, report_uri)
     print(json.dumps(report))
     return report

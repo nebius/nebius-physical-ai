@@ -1,0 +1,702 @@
+diff --git a/scripts/environments/teleoperation/teleop_se3_agent.py b/scripts/environments/teleoperation/teleop_se3_agent.py
+index a467482..d3bcad5 100644
+--- a/scripts/environments/teleoperation/teleop_se3_agent.py
++++ b/scripts/environments/teleoperation/teleop_se3_agent.py
+@@ -91,0 +92,6 @@ simulation_app = app_launcher.app
++import asyncio
++from concurrent.futures import ThreadPoolExecutor
++import ctypes
++import hashlib
++import json
++from io import BytesIO
+@@ -92,0 +98 @@ import os
++from pathlib import Path
+@@ -94,0 +101,2 @@ import time
++from leisaac_dataset import EpisodeRecorder, extract_step
++from PIL import Image
+@@ -97,0 +105,7 @@ from isaaclab.envs import DirectRLEnv, ManagerBasedRLEnv
++from omni.kit.viewport.utility import (
++    capture_viewport_to_buffer,
++    get_active_viewport,
++    next_viewport_frame_async,
++)
++from isaacsim.core.utils.viewports import set_camera_view
++from pxr import UsdGeom
+@@ -122 +136,2 @@ class RateLimiter:
+-            env.sim.render()
++            if env is not None:
++                env.sim.render()
+@@ -159 +175,31 @@ def main():  # noqa: C901
+     env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs)
++    if os.environ.get("NPA_LEISAAC_BROWSER_TELEOP") == "1":
++        # Browser teleoperation renders the viewport and does not consume policy images.
++        # CUDA PhysX + Fabric is the supported fast path; the renderer consumes
++        # the same Fabric transforms used by the fixed-step task.
++        env_cfg.sim.use_fabric = True
++        env_cfg.observations.policy.wrist = None
++        env_cfg.observations.policy.front = None
++        env_cfg.scene.wrist = None
++        env_cfg.scene.front = None
++        env_cfg.events.domain_randomize_4 = None
++        # LiftCube's second reset randomizer targets the removed policy camera.
++        if args_cli.task == "LeIsaac-SO101-LiftCube-v0":
++            env_cfg.events.domain_randomize_1 = None
++        # This uses the viewport, not RTX camera observations. Isaac Lab's
++        # default texture wait can remain true forever on this path.
++        env_cfg.wait_for_textures = False
++    custom_root = Path(os.environ["NPA_LEISAAC_CUSTOM_ROOT"]).resolve()
++    custom_robot_usd = os.environ.get("NPA_LEISAAC_CUSTOM_ROBOT_USD", "")
++    custom_scene_usd = os.environ.get("NPA_LEISAAC_CUSTOM_SCENE_USD", "")
++    for selected_asset in (custom_robot_usd, custom_scene_usd):
++        if not selected_asset:
++            continue
++        selected_path = Path(selected_asset).resolve()
++        if custom_root not in selected_path.parents or not selected_path.is_file():
++            raise RuntimeError("custom USD is outside the verified bundle cache")
++    if custom_robot_usd:
++        env_cfg.scene.robot.spawn.usd_path = custom_robot_usd
++    if custom_scene_usd:
++        # Custom scenes retain the task's expected object prim names and layout.
++        env_cfg.scene.scene.spawn.usd_path = custom_scene_usd
+@@ -226 +273,3 @@ def main():  # noqa: C901
+     env: ManagerBasedRLEnv | DirectRLEnv = gym.make(task_name, cfg=env_cfg).unwrapped
++    if os.environ.get("NPA_LEISAAC_BROWSER_TELEOP") == "1":
++        env.cfg.sim.render_interval = 1_000_000_000
+@@ -313 +362,458 @@ def main():  # noqa: C901
+     env.reset()
++    recorder = EpisodeRecorder(
++        root=Path(os.environ["NPA_LEISAAC_RECORDER_ROOT"]),
++        output_uri=os.environ["NPA_LEISAAC_OUTPUT_PATH"],
++        task=args_cli.task,
++        environment_id=os.environ["NPA_LEISAAC_ENVIRONMENT_ID"],
++        environment_index=int(os.environ["NPA_LEISAAC_ENVIRONMENT_INDEX"]),
++        seed=int(env_cfg.seed),
++        run_id=os.environ["NPA_LEISAAC_RUN_ID"],
++        source_commit=os.environ["NPA_LEISAAC_SOURCE_COMMIT"],
++        source_version=os.environ["NPA_LEISAAC_SOURCE_VERSION"],
++        isaac_sim_version=os.environ["NPA_LEISAAC_ISAAC_SIM_VERSION"],
++        isaac_lab_version=os.environ["NPA_LEISAAC_ISAAC_LAB_VERSION"],
++        image=os.environ["NPA_LEISAAC_IMAGE"],
++        registry_fingerprint=os.environ["NPA_LEISAAC_REGISTRY_FINGERPRINT"],
++        camera_ids=("workspace", "overview"),
++        provenance={
++            "robot": os.environ.get("NPA_LEISAAC_ROBOT", "stock-so101"),
++            "scene": os.environ.get("NPA_LEISAAC_SCENE", args_cli.task),
++            "device": os.environ.get("NPA_LEISAAC_DEVICE", args_cli.teleop_device),
++            "task": args_cli.task,
++            "bundle": os.environ.get("NPA_LEISAAC_BUNDLE", "stock"),
++        },
++    )
++    sim_step = 0
++    ready_path = os.environ.get("NPA_LEISAAC_READY_PATH", "")
++    if ready_path:
++        with open(ready_path, "w", encoding="utf-8") as ready_file:
++            ready_file.write("ready\n")
++
++    frame_path = os.environ.get("NPA_LEISAAC_FRAME_PATH", "")
++    frame_meta_path = os.environ.get("NPA_LEISAAC_FRAME_META_PATH", "")
++    secondary_frame_path = os.environ.get("NPA_LEISAAC_SECONDARY_FRAME_PATH", "")
++    secondary_frame_meta_path = os.environ.get(
++        "NPA_LEISAAC_SECONDARY_FRAME_META_PATH", ""
++    )
++    view_command_path = os.environ.get("NPA_LEISAAC_VIEW_COMMAND_PATH", "")
++    capture_state = {
++        "pending": set(),
++        "queue": [],
++        "priority_queue": [],
++        "active": False,
++        "active_group": "",
++        "active_priority": False,
++        "encode_future": None,
++        "encode_context": None,
++        "deferred_causal": None,
++        "task": None,
++        "next_at": 0.0,
++        "sequences": {"workspace": 0, "overview": 0},
++        "group": 0,
++        "causal_action_sequence": 0,
++        "causal_applied_monotonic_ns": 0,
++        "last_causal_at": 0.0,
++    }
++    # Background frames must not monopolize the Isaac render/event loop. Causal
++    # action pairs bypass this cadence and remain immediate at full quality.
++    idle_background_capture_fps = 2.5
++    active_background_capture_fps = 2.5
++    capture_encoder = ThreadPoolExecutor(max_workers=1, thread_name_prefix="leisaac-jpeg")
++    def background_capture_interval():
++        active = time.monotonic() - capture_state["last_causal_at"] < 2.5
++        return 1.0 / (active_background_capture_fps if active else idle_background_capture_fps)
++    viewport = get_active_viewport() if frame_path else None
++    if viewport is not None:
++        viewport.resolution = (1280, 720)
++    workspace_camera_path = viewport.camera_path if viewport is not None else ""
++    # A second Kit viewport races the renderer's shared GPU command list on RTX
++    # PRO 6000.  Alternate two camera paths on one fully-awaited viewport instead.
++    overview_viewport = viewport
++    overview_camera_path = "/OmniverseKit_NPA_Overview"
++    overview_eye = [1.8, 1.8, 1.5]
++    overview_target = [0.0, 0.0, 0.45]
++    if overview_viewport is not None:
++        UsdGeom.Camera.Define(overview_viewport.stage, overview_camera_path)
++        overview_viewport.camera_path = overview_camera_path
++        set_camera_view(
++            overview_eye,
++            overview_target,
++            camera_prim_path=overview_camera_path,
++            viewport_api=overview_viewport,
++        )
++        overview_viewport.resolution = (1280, 720)
++    last_view_sequence = 0
++
++    def on_viewport_captured(
++        capture_result,
++        camera_id,
++        capture_group,
++        causal_action_sequence,
++        causal_applied_monotonic_ns,
++    ):
++        def captured(buffer, buffer_size, width, height, _byte_format):
++            """Copy the GPU-owned buffer before its callback lifetime ends."""
++            try:
++                capture_monotonic_ns = time.monotonic_ns()
++                capture_wall_ns = time.time_ns()
++                pointer_type = ctypes.POINTER(ctypes.c_byte * buffer_size)
++                ctypes.pythonapi.PyCapsule_GetPointer.restype = pointer_type
++                ctypes.pythonapi.PyCapsule_GetPointer.argtypes = [
++                    ctypes.py_object,
++                    ctypes.c_char_p,
++                ]
++                content = ctypes.pythonapi.PyCapsule_GetPointer(buffer, None)
++                image = Image.frombytes(
++                    "RGBA", (width, height), content.contents
++                ).convert("RGB")
++                if image.width > 1280 or image.height > 720:
++                    image.thumbnail((1280, 720), Image.Resampling.LANCZOS)
++                capture_result.update(
++                    image=image,
++                    capture_monotonic_ns=capture_monotonic_ns,
++                    capture_wall_ns=capture_wall_ns,
++                    capture_group=capture_group,
++                    causal_action_sequence=causal_action_sequence,
++                    causal_applied_monotonic_ns=causal_applied_monotonic_ns,
++                )
++            except Exception as exc:
++                print(
++                    f"[WARN] Could not capture {camera_id} browser frame: "
++                    f"{type(exc).__name__}: {exc}"
++                )
++        return captured
++
++    def encode_and_publish_capture(
++        capture_result, camera_id, destination, metadata_destination
++    ):
++        """Encode and publish outside the latency-critical simulator loop."""
++        image = capture_result["image"]
++        encoded = BytesIO()
++        # Optimized Huffman tables preserve quality-82 quantization while
++        # materially reducing bytes on the shared control/video link.
++        image.save(encoded, format="JPEG", quality=82, optimize=True)
++        frame_bytes = encoded.getvalue()
++        temporary = destination + ".tmp"
++        Path(temporary).write_bytes(frame_bytes)
++        encoded_monotonic_ns = time.monotonic_ns()
++        encoded_wall_ns = time.time_ns()
++        os.replace(temporary, destination)
++        capture_state["sequences"][camera_id] += 1
++        if metadata_destination:
++            metadata = {
++                "schema": "npa.leisaac.frame.v1",
++                "producer_pid": os.getpid(),
++                "camera": camera_id,
++                "capture_group": capture_result["capture_group"],
++                "sequence": capture_state["sequences"][camera_id],
++                "causal_action_sequence": capture_result["causal_action_sequence"],
++                "causal_applied_monotonic_ns": capture_result[
++                    "causal_applied_monotonic_ns"
++                ],
++                "capture_monotonic_ns": capture_result["capture_monotonic_ns"],
++                "capture_wall_ns": capture_result["capture_wall_ns"],
++                "encoded_monotonic_ns": encoded_monotonic_ns,
++                "encoded_wall_ns": encoded_wall_ns,
++                "bytes": len(frame_bytes),
++                "sha256": hashlib.sha256(frame_bytes).hexdigest(),
++            }
++            metadata_temporary = metadata_destination + ".tmp"
++            Path(metadata_temporary).write_text(
++                json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\n",
++                encoding="utf-8",
++            )
++            os.replace(metadata_temporary, metadata_destination)
++        return frame_bytes
++
++    def complete_capture(camera_id):
++        completed_group = capture_state["active_group"]
++        completed_priority = capture_state["active_priority"]
++        capture_state["active"] = False
++        capture_state["active_group"] = ""
++        capture_state["active_priority"] = False
++        capture_state["pending"].discard(camera_id)
++        capture_state["task"] = None
++        group_pending = any(
++            item[4] == completed_group
++            for item in capture_state["priority_queue"]
++        )
++        if completed_priority and not group_pending:
++            deferred = capture_state["deferred_causal"]
++            capture_state["deferred_causal"] = None
++            if deferred:
++                request_causal_capture(deferred)
++
++    def poll_encoded_capture():
++        future = capture_state["encode_future"]
++        if future is None or not future.done():
++            return
++        camera_id, capture_group = capture_state["encode_context"]
++        try:
++            frame_bytes = future.result()
++            recorder.frame(
++                frame_bytes, camera_id=camera_id, capture_group=capture_group
++            )
++        except Exception as exc:
++            print(
++                f"[WARN] Could not publish {camera_id} browser frame: "
++                f"{type(exc).__name__}: {exc}"
++            )
++        finally:
++            capture_state["encode_future"] = None
++            capture_state["encode_context"] = None
++            complete_capture(camera_id)
++
++    async def finish_capture(
++        camera_id,
++        capture_helper,
++        destination,
++        metadata_destination,
++        capture_group,
++        causal_action_sequence,
++        causal_applied_monotonic_ns,
++        settle_first,
++        capture_result,
++    ):
++        """Await a safe copy and leave the shared viewport settled on workspace."""
++        encode_submitted = False
++        try:
++            if settle_first:
++                # Camera-path changes need one viewport frame before the copied
++                # pixels reflect that camera. This branch is normally overview;
++                # the latency-critical workspace path stays pre-settled.
++                await next_viewport_frame_async(viewport, n_frames=1)
++                capture_helper = capture_viewport_to_buffer(
++                    viewport,
++                    on_viewport_captured(
++                        capture_result,
++                        camera_id,
++                        capture_group,
++                        causal_action_sequence,
++                        causal_applied_monotonic_ns,
++                    ),
++                )
++            # Await GPU retirement before another capture may switch the shared
++            # viewport. Extra completion frames add latency after the copy is safe.
++            await capture_helper.wait_for_result(completion_frames=0)
++            if camera_id == "overview":
++                viewport.camera_path = workspace_camera_path
++                await next_viewport_frame_async(viewport, n_frames=1)
++            capture_state["encode_future"] = capture_encoder.submit(
++                encode_and_publish_capture,
++                capture_result,
++                camera_id,
++                destination,
++                metadata_destination,
++            )
++            capture_state["encode_context"] = (camera_id, capture_group)
++            encode_submitted = True
++        except Exception as exc:
++            print(
++                f"[WARN] Could not complete {camera_id} browser frame: "
++                f"{type(exc).__name__}: {exc}"
++            )
++        finally:
++            if not encode_submitted:
++                complete_capture(camera_id)
++
++    def capture_next():
++        """Submit only after Kit reports the prior GPU capture fully complete."""
++        if capture_state["active"]:
++            return
++        source_queue = (
++            capture_state["priority_queue"]
++            if capture_state["priority_queue"]
++            else capture_state["queue"]
++        )
++        selected_priority = source_queue is capture_state["priority_queue"]
++        if not source_queue:
++            return
++        (
++            camera_id,
++            selected_camera_path,
++            destination,
++            metadata_destination,
++            capture_group,
++            causal_action_sequence,
++            causal_applied_monotonic_ns,
++        ) = (
++            source_queue.pop(0)
++        )
++        capture_state["active"] = True
++        capture_state["active_group"] = capture_group
++        capture_state["active_priority"] = selected_priority
++        same_camera = str(viewport.camera_path) == str(selected_camera_path)
++        capture_result = {}
++        try:
++            if same_camera:
++                capture_helper = capture_viewport_to_buffer(
++                    viewport,
++                    on_viewport_captured(
++                        capture_result,
++                        camera_id,
++                        capture_group,
++                        causal_action_sequence,
++                        causal_applied_monotonic_ns,
++                    ),
++                )
++            else:
++                viewport.camera_path = selected_camera_path
++                capture_helper = None
++        except Exception:
++            capture_state["active"] = False
++            capture_state["active_group"] = ""
++            capture_state["active_priority"] = False
++            capture_state["pending"].discard(camera_id)
++            raise
++        capture_state["task"] = asyncio.ensure_future(
++            finish_capture(
++                camera_id,
++                capture_helper,
++                destination,
++                metadata_destination,
++                capture_group,
++                causal_action_sequence,
++                causal_applied_monotonic_ns,
++                not same_camera,
++                capture_result,
++            )
++        )
++
++    def request_causal_capture(applied):
++        """Latest applied action wins; releases can never wait behind stale frames."""
++        if not applied:
++            return
++        sequence = int(applied.get("seq") or 0)
++        applied_ns = int(applied.get("simulator_applied_mono_ns") or 0)
++        if sequence <= 0 or applied_ns <= 0:
++            return
++        capture_state["causal_action_sequence"] = sequence
++        capture_state["causal_applied_monotonic_ns"] = applied_ns
++        causal_at = time.monotonic()
++        capture_state["last_causal_at"] = causal_at
++        # Keep the background pair cadence phase-locked behind the safety
++        # release. This preserves 2.5 FPS while leaving the next likely control
++        # boundary free for its latency-critical causal capture.
++        if str(applied.get("event") or "") == "release":
++            capture_state["next_at"] = causal_at + background_capture_interval()
++            return
++        # A causal pair supersedes background work that has not started. The
++        # active capture is never cancelled while Kit/GPU owns its buffer.
++        capture_state["queue"].clear()
++        capture_state["pending"].clear()
++        if capture_state["active_priority"] or capture_state["priority_queue"]:
++            capture_state["deferred_causal"] = applied
++            return
++        capture_state["group"] += 1
++        capture_group = f"causal-{capture_state['group']}"
++        cameras = (
++            ("workspace", workspace_camera_path, frame_path, frame_meta_path),
++            (
++                "overview",
++                overview_camera_path,
++                secondary_frame_path,
++                secondary_frame_meta_path,
++            ),
++        )
++        capture_state["priority_queue"][:] = [
++            (*camera, capture_group, sequence, applied_ns) for camera in cameras
++        ]
++    def schedule_browser_capture():
++        poll_encoded_capture()
++        if capture_state["active"]:
++            return
++        if capture_state["priority_queue"] or capture_state["queue"]:
++            capture_next()
++            return
++        if (
++            viewport is None
++            or overview_viewport is None
++            or capture_state["pending"]
++            or time.monotonic() < capture_state["next_at"]
++        ):
++            return
++        capture_state["group"] += 1
++        capture_group = f"capture-{capture_state['group']}"
++        capture_state["next_at"] = time.monotonic() + background_capture_interval()
++        cameras = (
++            ("workspace", workspace_camera_path, frame_path, frame_meta_path),
++            (
++                "overview",
++                overview_camera_path,
++                secondary_frame_path,
++                secondary_frame_meta_path,
++            ),
++        )
++        capture_state["pending"].update(camera[0] for camera in cameras)
++        capture_state["queue"].extend(
++            (
++                *camera,
++                capture_group,
++                capture_state["causal_action_sequence"],
++                capture_state["causal_applied_monotonic_ns"],
++            )
++            for camera in cameras
++        )
++        capture_next()
++
++    def browser_capture_needs_render():
++        """Keep physics/control cadence independent from background RTX work."""
++        if capture_state["encode_future"] is not None:
++            return False
++        return bool(
++            capture_state["active"]
++            or capture_state["priority_queue"]
++            or capture_state["queue"]
++            or time.monotonic() >= capture_state["next_at"]
++        )
++
++    def apply_view_command():
++        nonlocal last_view_sequence
++        if not view_command_path or overview_viewport is None:
++            return
++        try:
++            command = json.loads(Path(view_command_path).read_text(encoding="utf-8"))
++            sequence = int(command["sequence"])
++            if sequence <= last_view_sequence:
++                return
++            yaw = float(command["yaw_delta"])
++            pitch = float(command["pitch_delta"])
++            distance = float(command["distance_delta"])
++        except (OSError, ValueError, KeyError, TypeError):
++            return
++        offset = [overview_eye[index] - overview_target[index] for index in range(3)]
++        radius = max(
++            0.5,
++            min(5.0, (sum(value * value for value in offset) ** 0.5) + distance),
++        )
++        azimuth = __import__("math").atan2(offset[1], offset[0]) + yaw
++        elevation = max(
++            -1.2,
++            min(1.2, __import__("math").asin(offset[2] / max(radius, 0.001)) + pitch),
++        )
++        overview_eye[:] = [
++            overview_target[0]
++            + radius
++            * __import__("math").cos(elevation)
++            * __import__("math").cos(azimuth),
++            overview_target[1]
++            + radius
++            * __import__("math").cos(elevation)
++            * __import__("math").sin(azimuth),
++            overview_target[2] + radius * __import__("math").sin(elevation),
++        ]
++        set_camera_view(
++            overview_eye,
++            overview_target,
++            camera_prim_path=overview_camera_path,
++            viewport_api=overview_viewport,
++        )
++        last_view_sequence = sequence
++
++    if frame_path:
++        if viewport is None:
++            raise RuntimeError("browser teleoperation requires an active RTX viewport")
++        viewport.camera_path = workspace_camera_path
++        env.render()
++        schedule_browser_capture()
++        env.render()
+@@ -375 +807,2 @@ def main():  # noqa: C901
+-                    env.render()
++                    if os.environ.get("NPA_LEISAAC_BROWSER_TELEOP") != "1":
++                        env.render()
+@@ -382 +815,20 @@ def main():  # noqa: C901
+-                    env.step(actions)
++                    step_result = env.step(actions)
++                    sim_step += 1
++                    if os.environ.get("NPA_LEISAAC_BROWSER_TELEOP") == "1":
++                        applied = teleop_interface.mark_remote_step_applied(sim_step)
++                        request_causal_capture(applied)
++                    recorder.observe(
++                        extract_step(
++                            step_result,
++                            actions,
++                            sim_step=sim_step,
++                        )
++                    )
++                schedule_browser_capture()
++                apply_view_command()
++                if (
++                    os.environ.get("NPA_LEISAAC_BROWSER_TELEOP") == "1"
++                    and browser_capture_needs_render()
++                ):
++                    env.render()
++                recorder.process_commands(reset=env.reset)
+@@ -384 +836 @@ def main():  # noqa: C901
+-                    rate_limiter.sleep(env)
++                    rate_limiter.sleep(None if os.environ.get("NPA_LEISAAC_BROWSER_TELEOP") == "1" else env)
+@@ -395 +921,4 @@ def main():  # noqa: C901
++        capture_encoder.shutdown(wait=True, cancel_futures=True)
++        poll_encoded_capture()
++        recorder.shutdown(wait=True)
+         signal.signal(signal.SIGINT, original_sigint_handler)
+diff --git a/source/leisaac/leisaac/devices/keyboard/so101_keyboard.py b/source/leisaac/leisaac/devices/keyboard/so101_keyboard.py
+index 1ecc934..cb304f1 100644
+--- a/source/leisaac/leisaac/devices/keyboard/so101_keyboard.py
++++ b/source/leisaac/leisaac/devices/keyboard/so101_keyboard.py
+@@ -0,0 +1,5 @@
++import json
++import os
++from pathlib import Path
++import time
++
+@@ -36,0 +42,13 @@ class SO101Keyboard(Device):
++        queue_name = os.environ.get("NPA_LEISAAC_INPUT_QUEUE", "")
++        counter_name = os.environ.get("NPA_LEISAAC_APPLIED_COUNTER", "")
++        ack_name = os.environ.get("NPA_LEISAAC_APPLIED_ACK_PATH", "")
++        self._remote_queue = Path(queue_name) if queue_name else None
++        self._remote_offset = 0
++        self._remote_pulses = {}
++        self._remote_direct_action = np.zeros(8)
++        self._remote_pending_applied = []
++        self._applied_counter = Path(counter_name) if counter_name else None
++        self._applied_ack = Path(ack_name) if ack_name else None
++        self._remote_sim_step = 0
++        if os.environ.get("NPA_LEISAAC_BROWSER_TELEOP") == "1":
++            self._started = True
+@@ -60,3 +77,0 @@ class SO101Keyboard(Device):
+-    def get_device_state(self):
+-        return self._convert_delta_from_frame(self._delta_action)
+-
+@@ -64,0 +80,104 @@ class SO101Keyboard(Device):
++        self._remote_pulses.clear()
++        self._remote_direct_action[:] = 0.0
++        self._remote_pending_applied.clear()
++
++    def _record_applied_input(self, acknowledgement):
++        if self._applied_counter is not None:
++            try:
++                current = self._applied_counter.read_text(encoding="utf-8").strip()
++                count = int(current or "0") + 1
++                temporary = self._applied_counter.with_suffix(".tmp")
++                temporary.write_text(f"{count}\n", encoding="utf-8")
++                temporary.replace(self._applied_counter)
++            except (OSError, ValueError):
++                pass
++        if self._applied_ack is not None:
++            try:
++                with self._applied_ack.open("a", encoding="utf-8") as target:
++                    target.write(json.dumps(acknowledgement, sort_keys=True, separators=(",", ":")) + "\n")
++                    target.flush()
++            except OSError:
++                pass
++
++    def mark_remote_step_applied(self, simulator_step):
++        """Acknowledge inputs only after the simulator step consumed them."""
++        if not self._remote_pending_applied:
++            return None
++        applied_monotonic_ns = time.monotonic_ns()
++        applied_wall_ns = time.time_ns()
++        acknowledged = []
++        for payload in self._remote_pending_applied:
++            acknowledgement = dict(payload)
++            acknowledgement.update(
++                simulator_applied_mono_ns=str(applied_monotonic_ns),
++                simulator_applied_wall_ns=str(applied_wall_ns),
++                simulator_step=int(simulator_step),
++            )
++            self._record_applied_input(acknowledgement)
++            acknowledged.append(acknowledgement)
++        self._remote_pending_applied.clear()
++        return acknowledged[-1]
++
++    def _read_remote_inputs(self):
++        if self._remote_queue is None:
++            return
++        try:
++            with self._remote_queue.open("r", encoding="utf-8") as queue:
++                queue.seek(self._remote_offset)
++                records = queue.readlines()
++                self._remote_offset = queue.tell()
++        except OSError:
++            return
++        for record in records:
++            try:
++                payload = json.loads(record)
++            except ValueError:
++                continue
++            if payload.get("type") == "action":
++                try:
++                    direct = np.asarray(payload.get("action"), dtype=np.float64)
++                except (TypeError, ValueError):
++                    continue
++                if (
++                    payload.get("device")
++                    not in {"browser-gamepad", "custom-so101"}
++                    or direct.shape != (8,)
++                    or not np.isfinite(direct).all()
++                    or float(np.abs(direct).max()) > 1.0
++                ):
++                    continue
++                self._remote_direct_action[:] = direct
++                self._started = True
++                self._remote_pending_applied.append(payload)
++                continue
++            key = str(payload.get("key") or "").upper()
++            event = str(payload.get("event") or "")
++            if key in self._INPUT_KEY_MAPPING:
++                self._started = True
++                if event == "press":
++                    self._remote_pulses[key] = 8
++                elif event == "release":
++                    self._remote_pulses.pop(key, None)
++                else:
++                    continue
++                self._remote_pending_applied.append(payload)
++            elif event == "press" and key in {"R", "N"}:
++                self._started = False
++                self._reset_state = True
++                if key in self._additional_callbacks:
++                    self._additional_callbacks[key]()
++                self._remote_pending_applied.append(payload)
++
++    def get_device_state(self):
++        self._remote_sim_step += 1
++        self._read_remote_inputs()
++        remote_action = np.zeros(8)
++        for key, remaining in list(self._remote_pulses.items()):
++            if remaining <= 0:
++                self._remote_pulses.pop(key, None)
++                continue
++            remote_action += self._ACTION_DELTA_MAPPING[self._INPUT_KEY_MAPPING[key]]
++            self._remote_pulses[key] = remaining - 1
++        remote_action += self._remote_direct_action
++        self._remote_direct_action[:] = 0.0
++        return self._convert_delta_from_frame(self._delta_action + remote_action)
+@@ -71,0 +191,11 @@ class SO101Keyboard(Device):
++                counter_name = os.environ.get("NPA_LEISAAC_INPUT_COUNTER", "")
++                if counter_name:
++                    try:
++                        counter = Path(counter_name)
++                        count = int(counter.read_text(encoding="utf-8").strip() or "0") + 1
++                        temporary = counter.with_suffix(".tmp")
++                        temporary.write_text(f"{count}\n", encoding="utf-8")
++                        temporary.replace(counter)
++                    except (OSError, ValueError):
++                        # Telemetry must never interfere with upstream controls.
++                        pass

@@ -25,6 +25,9 @@ dependencies = [
     "numpy>=1.24",
     "pyarrow>=14.0",
     "pillow>=10.0",
+    # Real H.264 encode/decode fallback for hosts (including CI) without a
+    # system ffmpeg package. Runtime images may still provide /usr/bin/ffmpeg.
+    "imageio-ffmpeg>=0.6.0",
     # MCAP writer for the lichtblick viewer's frames->MCAP export (pure-Python).
     "mcap>=1.1",
     "pydantic>=2.0",
@@ -121,6 +124,7 @@ lerobot = "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 lerobot-policy = "0.1.1"
 genesis = "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 isaac-lab = "2.3.2.post1"
+leisaac = "0.4.0-20260805T222348Z"
 cosmos = "cu128-torch27-sm100-1.0.9-20260803T002017Z"
 cosmos2-transfer = "2.5.1-skypilot-ready-20260801T053000Z"
 # cosmos-framework 1.2.2 (pinned commit) + torch cu130; weights stay out of the image.

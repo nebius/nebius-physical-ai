@@ -238,6 +238,32 @@ containers:
       timeout_seconds: 1800
       status: gpu-gated
 
+  leisaac:
+    image: npa-leisaac
+    dockerfile: npa/docker/workbench/leisaac/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Real LeIsaac SO101 PickOrange manipulation with upstream keyboard
+        teleoperation and browser WebRTC streaming for the agent UI.
+    safety:
+      runs_as: ubuntu
+      base_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab:2.3.2.post1
+      network: source-restricted status/signaling TCP and WebRTC UDP media
+      external_fetch: ["pypi.nvidia.com (operator EULA)", github-leisaac-assets, nvidia-webrtc-client]
+      notes: >-
+        Bakes Apache-2.0 LeIsaac source and OSS dependencies only. Isaac Sim,
+        Isaac Lab, task assets, and NVIDIA's browser client are fetched at
+        runtime after explicit operator EULA acceptance and hash verified.
+        Rendering is hard-routed to RTX PRO 6000, never H100/H200.
+    golden_eval:
+      kind: container-smoke
+      command: /isaac-sim/python.sh /opt/npa/leisaac/smoke_functional.py
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: 7200
+      status: gpu-gated
+
   cosmos:
     image: npa-cosmos
     dockerfile: npa/docker/workbench/cosmos/Dockerfile

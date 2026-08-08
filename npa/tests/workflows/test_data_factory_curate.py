@@ -57,7 +57,12 @@ def test_select_curated_deterministic_tiebreak() -> None:
 
 
 def test_uniqueness_summary_empty_and_populated() -> None:
-    assert dfc.uniqueness_summary({}) == {"count": 0, "min": 0.0, "max": 0.0, "mean": 0.0}
+    assert dfc.uniqueness_summary({}) == {
+        "count": 0,
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0,
+    }
     summ = dfc.uniqueness_summary({"a": 0.2, "b": 0.8})
     assert summ["count"] == 2
     assert summ["min"] == 0.2
@@ -143,8 +148,8 @@ def test_augmented_representatives_picks_first_frame_and_meta() -> None:
 def test_run_curation_raises_when_fiftyone_absent() -> None:
     import pytest
 
-    # In the unit-test env FiftyOne is not installed, so run_curation must raise
-    # FiftyoneUnavailable (callers then fall back to the report-only path).
+    # In the unit-test env FiftyOne is not installed, so run_curation must raise.
+    # The workflow propagates this error and fails closed.
     with pytest.raises(dfc.FiftyoneUnavailable):
         dfc.run_curation(
             keys=["p/aug/c1/frame-0.png"],

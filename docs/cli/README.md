@@ -29,6 +29,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench insights](insights.md)
 - [npa workbench isaac-lab](isaac-lab.md)
 - [npa workbench lancedb](lancedb.md)
+- [npa workbench leisaac](leisaac.md)
 - [npa workbench lerobot](lerobot.md)
 - [npa workbench lichtblick](lichtblick.md)
 - [npa workbench mjlab](mjlab.md)

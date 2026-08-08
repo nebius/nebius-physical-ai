@@ -727,11 +727,15 @@ describe("NPA agent UI with mocked APIs", () => {
 
   it("shows a scroll-to-bottom arrow when scrolled up and jumps to the latest message", () => {
     // Fill the chat via real sends so the log overflows and can be scrolled.
-    for (let i = 0; i < 6; i += 1) {
+    for (let i = 0; i < 10; i += 1) {
       cy.get("#chatInput").type(`Draft a 2-step Sim2Real workflow YAML please (${i})`, { delay: 0 });
       cy.get("#chatSend").click();
       cy.wait("@chat");
     }
+    cy.get("#chatLog").should(($log) => {
+      const el = $log[0];
+      expect(el.scrollHeight, "test transcript overflows the chat viewport").to.be.greaterThan(el.clientHeight);
+    });
     // Each new message auto-scrolls to the bottom, so the arrow is hidden.
     cy.get("#chatScrollBottom").should("have.attr", "hidden");
 
@@ -888,6 +892,7 @@ describe("NPA agent UI with mocked APIs", () => {
       const limitMatch = capturedUrl.match(/[?&]limit=(\d+)/);
       expect(limitMatch, "default discovery sends a limit").to.not.eq(null);
       expect(Number(limitMatch[1]), "default discovery limit exceeds the old 100 cap").to.be.greaterThan(100);
+      expect(capturedUrl, "default discovery does not stringify its click event as a query").not.to.include("q=");
     });
     cy.get("#runIdSelect option").then(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);

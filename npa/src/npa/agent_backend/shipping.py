@@ -19,6 +19,13 @@ SHIPPED_BACKEND_MODULES = (
     "trace",
     "foxglove",
     "foxglove_routes",
+    "leisaac_registry",
+    "leisaac",
+    "leisaac_episodes",
+    "leisaac_bundles",
+    "leisaac_transport",
+    "leisaac_datachannel",
+    "leisaac_routes",
 )
 
 _HEREDOC_MARKER = "PY"

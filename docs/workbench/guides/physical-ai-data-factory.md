@@ -96,8 +96,11 @@ Each NVIDIA tool has its own workbench image, both CPU-only and both mode-based
 | `npa-cosmos-evaluator` | `evaluate` | `NEBIUS_TOKEN_FACTORY_KEY` (attribute verification only) |
 | `npa-cosmos-curate` | `cosmos-curate` | conda-forge ffmpeg with `libopenh264`, baked in |
 
-Without the curator image the stage records `engine: unavailable` plus the reason
-and the FiftyOne review still runs. Check what an environment resolves to with:
+Both curation stages fail closed: the Cosmos Curator command uses
+`--require-curator`, and the following `workbench.fiftyone.curate_augmented`
+toolRef must execute real FiftyOne Brain curation in the `npa-fiftyone` image.
+Missing engines, unpublished output, or an invalid preceding report stop the
+pipeline. Check what an environment resolves to with:
 
 ```bash
 npa workbench cosmos-evaluator engine --output text

@@ -52,6 +52,7 @@ CHECKED_TOOLREFS = [
     ("workbench.cosmos3.reason", "npa.cli.workbench.cosmos3", "reason"),
     ("workbench.cosmos_curate.curate", "npa.cli.workbench.cosmos_curate", "curate-augmented"),
     ("workbench.cosmos_evaluator.evaluate", "npa.cli.workbench.cosmos_evaluator", "evaluate"),
+    ("workbench.fiftyone.curate_augmented", "npa.cli.fiftyone", "curate-augmented"),
     ("workbench.token_factory.caption", "npa.cli.workbench.token_factory", "caption"),
     ("workbench.token_factory.generate", "npa.cli.workbench.token_factory", "generate"),
     ("workbench.token_factory.reason", "npa.cli.workbench.token_factory", "reason"),
