@@ -137,9 +137,21 @@ jobs:
         env:
           NEBIUS_SA_CREDENTIALS_JSON: ${{ secrets.NEBIUS_SA_CREDENTIALS_JSON }}
           NEBIUS_CR_TOKEN: ${{ secrets.NEBIUS_CR_TOKEN }}
+          # A maintainer may install this temporary secret for a one-off source-registry
+          # override whose project is not visible to the normal mirror service account.
+          # It is deliberately separate so a release never overwrites the standing CI
+          # credential, and must be removed immediately after the dispatch.
+          NEBIUS_OVERRIDE_CR_TOKEN: ${{ secrets.NEBIUS_OVERRIDE_CR_TOKEN }}
+          SOURCE_REGISTRY: ${{ inputs.source_registry }}
           # A dry run without secrets still reports the plan and says what it could not check.
           REQUIRE_CREDENTIAL: ${{ inputs.dry_run == false }}
-        run: ./npa/scripts/ci_source_registry_login.sh
+        run: |
+          if [ -n "$SOURCE_REGISTRY" ] && [ -n "$NEBIUS_OVERRIDE_CR_TOKEN" ]; then
+            export NEBIUS_SA_CREDENTIALS_JSON=""
+            export NEBIUS_CR_TOKEN="$NEBIUS_OVERRIDE_CR_TOKEN"
+          fi
+          unset NEBIUS_OVERRIDE_CR_TOKEN
+          ./npa/scripts/ci_source_registry_login.sh
 
       # `crane auth login` writes a config file and exits 0 for any string -- it never
       # contacts the registry -- so the step above proves nothing about NEBIUS_CR_TOKEN.
