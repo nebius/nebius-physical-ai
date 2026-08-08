@@ -72,6 +72,11 @@ GROOT_TRAINING_RECORDING_SUFFIXES = (
     "/reports/groot-training.mcap",
 )
 GROOT_TRAINING_CAMERA_LABEL = "camera"
+GROOT_LEARNING_RECORDING_SUFFIXES = (
+    "/reports/groot-learning.rrd",
+    "/reports/groot-learning.mcap",
+)
+GROOT_LEARNING_CAMERA_LABEL = "front"
 
 #: Preview entity and viewer note for a NuRec run. A reconstruction has no
 #: held-out-simulation camera, so the generic Sim2Real note would be actively
@@ -113,6 +118,11 @@ def is_groot_training_recording(key: str) -> bool:
     """True for the factual GR00T training-telemetry RRD or MCAP."""
     normalized = str(key or "")
     return normalized.endswith(GROOT_TRAINING_RECORDING_SUFFIXES)
+
+
+def is_groot_learning_recording(key: str) -> bool:
+    """True for the offline held-out GR00T learning RRD or MCAP."""
+    return str(key or "").endswith(GROOT_LEARNING_RECORDING_SUFFIXES)
 
 
 def recording_has_run_entities(data: bytes | None) -> bool:

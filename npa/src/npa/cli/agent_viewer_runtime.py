@@ -8,6 +8,7 @@ monolithic backend template while preserving one auditable critical section.
 from __future__ import annotations
 
 import hashlib
+import shutil
 from pathlib import Path
 
 # NPA_EMBED_STANDALONE_START
@@ -17,6 +18,9 @@ from pathlib import Path
 if __name__ == "npa.cli.agent_viewer_runtime":
     (
         DEFAULT_SIM_VIZ,
+        GROOT_LEARNING_CAMERA_LABEL,
+        GROOT_LEARNING_MCAP_NOTE,
+        GROOT_LEARNING_RERUN_NOTE,
         GROOT_TRAINING_CAMERA_LABEL,
         LICHTBLICK_RECORDING_HTTP_PATH,
         MCAP_RECORDING_PATH,
@@ -24,6 +28,7 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         NEURAL_RECONSTRUCTION_PREVIEW_ENTITY,
         NEURAL_RECONSTRUCTION_VIEWER_NOTE,
         RECORDING_PATH,
+        RRD_PATH,
         _ARTIFACT_LOAD_LOCK,
         _copy_artifact_preview,
         _is_data_factory_recording,
@@ -42,9 +47,10 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         _sim_viz_load_response,
         _sim2real_pipeline_camera_label,
         _wait_rerun_web_viewer_healthy,
+        is_groot_learning_recording,
         is_groot_training_recording,
         is_neural_reconstruction_recording,
-    ) = (None,) * 28
+    ) = (None,) * 33
 # NPA_EMBED_STANDALONE_END
 
 
@@ -246,6 +252,8 @@ def _apply_loaded_artifact(
         and not is_neural_reconstruction_recording(key)
     ):
         camera = _sim2real_pipeline_camera_label(camera)
+    elif render == "rerun" and is_groot_learning_recording(key):
+        camera = GROOT_LEARNING_CAMERA_LABEL
     elif render == "rerun" and is_groot_training_recording(key):
         # A training-telemetry recording must not inherit a previous policy
         # rollout's held-out camera label or preview entity.
@@ -254,11 +262,14 @@ def _apply_loaded_artifact(
         # A NuRec run following Sim2Real must not inherit "heldout-sim".
         camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL
     if requested_camera:
-        camera = (
-            _sim2real_pipeline_camera_label(requested_camera)
-            if _is_sim2real_pipeline_recording(key)
-            else requested_camera
-        )
+        if _is_sim2real_pipeline_recording(key):
+            camera = _sim2real_pipeline_camera_label(requested_camera)
+        elif is_groot_learning_recording(key):
+            camera = GROOT_LEARNING_CAMERA_LABEL
+        elif is_groot_training_recording(key):
+            camera = GROOT_TRAINING_CAMERA_LABEL
+        else:
+            camera = requested_camera
     resource_bucket, project_id, resolved_prefix = source_identity
     sim_viz.update(
         {
@@ -280,6 +291,11 @@ def _apply_loaded_artifact(
     )
     if render == "rerun":
         capability_path = _publish_rrd_recording(local_path)
+        # The systemd Rerun service opens RRD_PATH while nginx serves
+        # RECORDING_PATH. Keep both atomically on the selected real artifact.
+        rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")
+        shutil.copy2(local_path, rrd_tmp)
+        rrd_tmp.replace(RRD_PATH)
         sim_viz["served_recording_sha256"] = hashlib.sha256(RECORDING_PATH.read_bytes()).hexdigest()
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
@@ -290,7 +306,10 @@ def _apply_loaded_artifact(
             str(sim_viz.get("camera") or "workspace"), recording_path=capability_path
         )
         sim_viz["rerun_ready"] = bool(capability_path) and rerun_ready
-        if is_groot_training_recording(key):
+        if is_groot_learning_recording(key):
+            sim_viz["preview_entity"] = "camera/front"
+            sim_viz["visualization_note"] = GROOT_LEARNING_RERUN_NOTE
+        elif is_groot_training_recording(key):
             sim_viz["preview_entity"] = GROOT_TRAINING_CAMERA_LABEL
             sim_viz["visualization_note"] = (
                 "GR00T training telemetry loaded. Entities contain representative "
@@ -338,7 +357,9 @@ def _apply_loaded_artifact(
             sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
             sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
             sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
-            if is_groot_training_recording(key):
+            if is_groot_learning_recording(key):
+                sim_viz["visualization_note"] = GROOT_LEARNING_MCAP_NOTE
+            elif is_groot_training_recording(key):
                 sim_viz["visualization_note"] = (
                     "GR00T training telemetry MCAP loaded in the embedded Lichtblick "
                     "viewer. It contains real dataset frames, safe training logs, and "

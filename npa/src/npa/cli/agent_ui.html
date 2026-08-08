@@ -398,6 +398,37 @@
         padding: 7px 9px;
         font-weight: 700;
       }
+      .learning-summary {
+        border-color: #84cc16;
+        background: linear-gradient(145deg, #f7fee7, #eff6ff);
+      }
+      .learning-summary .learning-badge {
+        display: inline-flex;
+        margin-bottom: 8px;
+        border-radius: 999px;
+        padding: 5px 9px;
+        background: #365314;
+        color: #f7fee7;
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .learning-summary .learning-replay-actions {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+        margin: 10px 0 4px;
+        padding: 9px;
+        border: 1px solid rgba(61, 86, 104, 0.22);
+        border-radius: 9px;
+        background: #fff;
+      }
+      .learning-summary .learning-comparison {
+        margin-top: 8px;
+        padding: 8px;
+        border-left: 4px solid #65a30d;
+        background: rgba(255, 255, 255, 0.78);
+        font-size: 13px;
+      }
       .artifact-list:empty {
         display: flex;
         align-items: center;
@@ -445,16 +476,23 @@
         max-width: 260px;
         border: 1px solid var(--border, #e2e8f0);
         border-radius: 10px;
-        overflow: hidden;
+        overflow: auto;
         background: #f8fafc;
         cursor: pointer;
-        aspect-ratio: 4 / 3;
         display: flex;
         align-items: center;
         justify-content: center;
+        padding: 6px;
       }
       .artifact-thumb:hover { box-shadow: var(--shadow); }
-      .artifact-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .artifact-thumb img {
+        width: auto;
+        height: auto;
+        max-width: 100%;
+        max-height: 160px;
+        object-fit: contain;
+        display: block;
+      }
       .artifact-thumb .hint { font-size: 12px; color: var(--muted); }
       .plan-host {
         margin-top: 10px;
@@ -4449,6 +4487,19 @@
           let heavyAttempts = 0;
           while (Date.now() < deadline) {
             try {
+              // A newly activated live recording can briefly paint the prior
+              // recording while the WASM viewer remounts. Mocked Cypress
+              // canvases have no asynchronous recording swap, so do not make
+              // those deterministic probes spend their entire timeout here.
+              const activationSettleMs = window.Cypress ? 0 : 8000;
+              if (
+                activationSettleMs &&
+                rerunRecordingActivatedAt &&
+                Date.now() - rerunRecordingActivatedAt < activationSettleMs
+              ) {
+                await new Promise((r) => window.setTimeout(r, 120));
+                continue;
+              }
               if (rerunViewerShowsBundleSplash(iframe)) {
                 await new Promise((r) => window.setTimeout(r, 120));
                 continue;
@@ -4671,15 +4722,29 @@
           );
         }
         const blob = (meta.artifact_key + " " + meta.note + " " + meta.run_id + " " + meta.camera).toLowerCase();
+        const isLearningEval = /groot17-learning|groot-learning/.test(blob) && /heldout|held-out|eval/.test(blob);
         if (/gr00t|groot|isaac|omniverse|heldout|policy|rollout|genesis|cosmos|g1|trajectory|skeleton|locomotion|sonic/.test(blob)) {
           promptLines.push("");
           promptLines.push("Domain hints from metadata (not pixel labels):");
-          if (/gr00t|groot/.test(blob)) promptLines.push("- Metadata suggests foundation-policy / GR00T-style sim views — do not call structured sim frames blank.");
-          if (/isaac|omniverse/.test(blob)) promptLines.push("- Metadata suggests Isaac Lab / Omniverse sim content.");
-          if (/heldout|eval/.test(blob)) promptLines.push("- Metadata suggests held-out eval imagery (may be noisy/tiled and still valid).");
+          if (isLearningEval) {
+            promptLines.push("- This is explicitly an offline held-out policy evaluation, not a simulator/robot rollout or closed-loop execution. Describe only the dataset camera and metric/action panels actually visible; do not infer synthetic imagery or task behavior from the GR00T name.");
+          } else {
+            if (/gr00t|groot/.test(blob)) promptLines.push("- Metadata suggests foundation-policy / GR00T-style sim views — do not call structured sim frames blank.");
+            if (/isaac|omniverse/.test(blob)) promptLines.push("- Metadata suggests Isaac Lab / Omniverse sim content.");
+            if (/heldout|eval/.test(blob)) promptLines.push("- Metadata suggests held-out eval imagery (may be noisy/tiled and still valid).");
+          }
           if (/g1|trajectory|skeleton|locomotion|sonic|mjlab/.test(blob)) {
             promptLines.push("- Metadata suggests locomotion / humanoid trajectory views — expect dark 3D grids with colored skeleton/wireframe overlays; that is valid content, not a blank frame.");
           }
+        }
+        if (isLearningEval) {
+          promptLines.push(
+            "",
+            "Factual constraints (must not be contradicted):",
+            "- The camera pixels come from the persisted held-out LeRobot observation videos. Their simple appearance or 96x96 resolution is not evidence that they are synthetic.",
+            "- The grounded Original input block records episode-disjoint held-out camera videos. Never say the original input is absent when that block says original_present/evidence exists.",
+            "- This is offline model inference aligned to expert actions. Never describe motion, control behavior, task success, a simulator rollout, or closed-loop execution that the frame does not prove."
+          );
         }
         promptLines.push(
           "",
@@ -4773,6 +4838,7 @@
       }
       let lastRrdUpdatedAt = "";
       let rerunIframeLoaded = false;
+      let rerunRecordingActivatedAt = 0;
       let rerunBootInProgress = false;
       let mountedRerunRunKey = "";
       let lichtblickIframeLoaded = false;
@@ -4888,6 +4954,12 @@
         // Prefer MediaStream bridge / async capture — sync WebGL drawImage is often cleared.
         try {
           if (!iframe || iframe.hidden) return false;
+          const activationSettleMs = window.Cypress ? 0 : 8000;
+          if (
+            activationSettleMs &&
+            rerunRecordingActivatedAt &&
+            Date.now() - rerunRecordingActivatedAt < activationSettleMs
+          ) return false;
           if (rerunViewerShowsBundleSplash(iframe)) return false;
           const bridged = await grabFromRerunCaptureBridge(500, { forceRestart: true });
           if (bridged) {
@@ -4935,7 +5007,7 @@
           const doc = iframe && (iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document));
           if (!doc) return false;
           const text = String((doc.body && doc.body.innerText) || doc.documentElement && doc.documentElement.innerText || "");
-          return /Loading application bundle/i.test(text);
+          return /Loading (?:application bundle|data source)/i.test(text);
         } catch (_err) {
           return false;
         }
@@ -5113,6 +5185,10 @@
         host.innerHTML = "";
       }
       let activeRenderMode = "rerun";
+      // A local image/video/data preview is an explicit operator selection. The
+      // periodic status poll describes the server's last mounted recording and
+      // must not displace that selection until another run/artifact is loaded.
+      let operatorMediaPreviewActive = false;
       function updateSimvizCta(simViz) {
         // The CTA banner is shared across viewer tabs, so its copy must track the
         // active render mode. Previously it always used Rerun wording, so the
@@ -5258,7 +5334,22 @@
         // Prefer the backend-computed URL (same-origin nginx proxy or sidecar port);
         // fall back to the co-served viewer root so the embed still mounts.
         const url = String((simViz && simViz.lichtblick_iframe_url) || "").trim();
-        return pinLichtblickDsToSameOrigin(url) || "/lichtblick/";
+        const pinned = pinLichtblickDsToSameOrigin(url) || "/lichtblick/";
+        try {
+          const viewer = new URL(pinned, window.location.origin);
+          viewer.searchParams.set("npa.layout", lichtblickLayoutKind(simViz));
+          return /^https?:\/\//i.test(pinned)
+            ? viewer.toString()
+            : viewer.pathname + viewer.search + viewer.hash;
+        } catch (_e) {
+          return pinned;
+        }
+      }
+      function lichtblickLayoutKind(simViz) {
+        const artifactKey = String((simViz && simViz.artifact_key) || "").toLowerCase();
+        return artifactKey.endsWith("/groot-learning.mcap") || artifactKey === "groot-learning.mcap"
+          ? "learning"
+          : "sim2real";
       }
       function applyLichtblickSimViz(simViz) {
         currentLichtblickSimViz = simViz || {};
@@ -5285,20 +5376,20 @@
       // If localStorage is unavailable we fall back to always resetting, keeping the
       // "3D panel must not be empty" guarantee.
       const LICHTBLICK_LAYOUT_SEED_KEY = "npa.lichtblick.layout-seed";
-      function lichtblickLayoutSeedTag() {
+      function lichtblickLayoutSeedTag(simViz) {
         const meta = document.querySelector("meta[name='npa-ui-version']");
-        return String((meta && meta.getAttribute("content")) || "0");
+        return String((meta && meta.getAttribute("content")) || "0") + ":" + lichtblickLayoutKind(simViz);
       }
-      function lichtblickNeedsLayoutSeed() {
+      function lichtblickNeedsLayoutSeed(simViz) {
         try {
-          return window.localStorage.getItem(LICHTBLICK_LAYOUT_SEED_KEY) !== lichtblickLayoutSeedTag();
+          return window.localStorage.getItem(LICHTBLICK_LAYOUT_SEED_KEY) !== lichtblickLayoutSeedTag(simViz);
         } catch (_e) {
           return true;
         }
       }
-      function markLichtblickLayoutSeeded() {
+      function markLichtblickLayoutSeeded(simViz) {
         try {
-          window.localStorage.setItem(LICHTBLICK_LAYOUT_SEED_KEY, lichtblickLayoutSeedTag());
+          window.localStorage.setItem(LICHTBLICK_LAYOUT_SEED_KEY, lichtblickLayoutSeedTag(simViz));
         } catch (_e) { /* ignore */ }
       }
       function resetLichtblickLayoutStorage() {
@@ -5324,12 +5415,12 @@
         const ready = Boolean(simViz && (simViz.lichtblick_ready || simViz.mcap_uri));
         const src = lichtblickIframeUrlFor(simViz);
         if (iframe.getAttribute("src") !== src) {
-          if (lichtblickNeedsLayoutSeed()) {
+          if (lichtblickNeedsLayoutSeed(simViz)) {
             // Neutralize the frame so Lichtblick releases its IndexedDB handle, wipe the
             // pre-injection layout so the injected default wins, then mount the source.
             try { iframe.setAttribute("src", "about:blank"); } catch (_e) { /* ignore */ }
             lichtblickResetInFlight = resetLichtblickLayoutStorage().then(() => {
-              markLichtblickLayoutSeeded();
+              markLichtblickLayoutSeeded(simViz);
               iframe.setAttribute("src", src);
             });
           } else {
@@ -5868,6 +5959,7 @@
             try { handle.remove_receiver(location.origin + RERUN_RECORDING_PATH); } catch (_rmErr2) { /* ignore */ }
           }
           handle.add_receiver(recordingUrl, false);
+          rerunRecordingActivatedAt = Date.now();
           hideRerunPlaceholder();
           // Brief settle for display readiness (async pixel probe; not full Describe JPEG wait).
           const softDeadline = Date.now() + 4500;
@@ -5945,6 +6037,7 @@
         stopRerunCaptureBridge();
         iframe.hidden = false;
         iframe.src = src;
+        rerunRecordingActivatedAt = Date.now();
         iframe.dataset.rerunRunKey = mountKey;
         hideRerunPlaceholder();
         await waitForIframeLoad(iframe, 12000);
@@ -6460,6 +6553,8 @@
       let activeRunResourceScope = null;
       let activeArtifactBrowseScope = null;
       let activeArtifactRunRef = "";
+      let activeArtifactInventoryRunId = "";
+      let activeArtifactInventory = [];
       // Load the whole run list into the picker by default so every run shows
       // without the operator having to guess a search fragment. The server still
       // supports (q=) search for buckets larger than this, and the "Find run" /
@@ -6920,18 +7015,67 @@
         if (download) params.set("download", "true");
         return "/api/artifacts/content?" + params.toString();
       }
-      function renderArtifactRunSummary(summary) {
+      function groupArtifactSequences(artifacts) {
+        const grouped = [];
+        const positions = new Map();
+        for (const item of (Array.isArray(artifacts) ? artifacts : [])) {
+          const key = String((item && item.key) || "");
+          const basename = key.split("/").pop() || "";
+          const isFrame = String((item && item.render) || "") === "image" && /^\d{5,}\.(png|jpe?g|webp)$/i.test(basename);
+          if (!isFrame) {
+            grouped.push(item);
+            continue;
+          }
+          const directory = key.slice(0, Math.max(0, key.lastIndexOf("/")));
+          const token = String((item && item.role) || "output") + "|" + directory;
+          if (!positions.has(token)) {
+            positions.set(token, grouped.length);
+            grouped.push(Object.assign({}, item, {
+              sequence_count: 1,
+              sequence_directory: directory,
+            }));
+          } else {
+            const representative = grouped[positions.get(token)];
+            representative.sequence_count = Number(representative.sequence_count || 1) + 1;
+          }
+        }
+        return grouped;
+      }
+      function renderArtifactRunSummary(summary, artifacts) {
         const host = document.getElementById("artifactRunSummary");
         if (!host) return;
         host.replaceChildren();
         if (!summary || typeof summary !== "object") return;
+        const learning = summary.learning && typeof summary.learning === "object" && summary.learning.evaluation_kind
+          ? summary.learning
+          : null;
+        host.classList.toggle("learning-summary", Boolean(learning));
         const title = document.createElement("div");
         title.className = "summary-title";
-        title.textContent = "Run summary — " + String(summary.run_id || "unknown");
+        title.textContent = (learning ? "Policy learning summary — " : "Run summary — ") + String(summary.run_id || "unknown");
         host.appendChild(title);
+        if (learning) {
+          const badge = document.createElement("div");
+          badge.className = "learning-badge";
+          badge.textContent = String(learning.badge || "Offline held-out policy evaluation");
+          host.appendChild(badge);
+        }
         const grid = document.createElement("div");
         grid.className = "summary-grid";
-        const fields = [
+        const fields = learning ? [
+          ["Dataset / embodiment", learning.embodiment || "unknown"],
+          ["Train / held-out", String(learning.train_episodes || 0) + " / " + String(learning.heldout_episodes || 0) + " episodes"],
+          ["Held-out samples", learning.heldout_samples || 0],
+          ["Training coverage", Number(learning.epoch_equivalent || 0).toFixed(3) + "× · " + String(learning.optimizer_steps || 0) + " steps · " + String(learning.training_examples || 0) + " examples"],
+          ["Training GPUs", learning.gpu_count || 0],
+          ["Checkpoint", learning.checkpoint_uri || "unknown"],
+          ["Baseline " + String(learning.metric_name || "action_mse"), Number(learning.baseline_value || 0).toPrecision(6)],
+          ["Post-training " + String(learning.metric_name || "action_mse"), Number(learning.posttrain_value || 0).toPrecision(6)],
+          ["Improvement", Number(learning.absolute_improvement || 0).toPrecision(6) + " absolute · " + Number(learning.relative_improvement_percent || 0).toFixed(2) + "% relative"],
+          ["Source camera", String((learning.camera_names || []).join(", ") || "unknown") + " · " + String(learning.source_resolution || "unknown") + " native"],
+          ["Split integrity", learning.leakage_free ? "episode-disjoint · " + String(learning.split_hash || "") : "not verified"],
+          ["Evaluation truth", learning.closed_loop ? "Closed-loop rollout" : "Real model forwards · offline held-out (not rollout)"],
+        ] : [
           ["Completion", summary.completion_status || "unknown"],
           ["Tool / workflow", summary.tool || summary.workflow || "unknown"],
           ["Accelerators", String(summary.accelerator_count || 0) + (summary.accelerator_type ? " × " + String(summary.accelerator_type) : "")],
@@ -6951,6 +7095,59 @@
           grid.appendChild(node);
         }
         host.appendChild(grid);
+        if (learning) {
+          const comparison = document.createElement("div");
+          comparison.className = "learning-comparison";
+          const regressionCount = Array.isArray(learning.per_dimension)
+            ? learning.per_dimension.filter((item) => item && item.improved === false).length
+            : 0;
+          comparison.textContent = "Before → after action error: " +
+            Number(learning.baseline_value || 0).toPrecision(6) + " → " +
+            Number(learning.posttrain_value || 0).toPrecision(6) +
+            " · primary metric improved" +
+            (regressionCount ? " · " + String(regressionCount) + " per-dimension regression(s) disclosed" : " · no per-dimension regressions");
+          host.appendChild(comparison);
+          const actions = document.createElement("div");
+          actions.className = "learning-replay-actions";
+          const list = Array.isArray(artifacts) ? artifacts : [];
+          const candidates = [
+            ["Open in Rerun", list.find((item) => String(item.render || "") === "rerun"), "load"],
+            ["Open MCAP", list.find((item) => String(item.render || "") === "mcap"), "load"],
+            ["Play comparison video", list.find((item) => String(item.render || "") === "video" && String(item.key || "").includes("offline-heldout-comparison")), "preview"],
+          ];
+          for (const [label, item, mode] of candidates) {
+            if (!item) continue;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "btn btn-primary";
+            button.textContent = label;
+            button.addEventListener("click", () => {
+              const payload = {
+                run_id: String(summary.run_id || ""),
+                key: String(item.key || ""),
+                bucket: artifactBucket(item),
+                s3_uri: String(item.s3_uri || ""),
+                render: String(item.render || ""),
+              };
+              const promise = mode === "load" ? loadArtifact(payload) : previewArtifact(payload);
+              Promise.resolve(promise).catch((err) => showToast("Replay failed: " + String((err && err.message) || err), "error"));
+            });
+            actions.appendChild(button);
+          }
+          const rawToggle = document.createElement("button");
+          rawToggle.type = "button";
+          rawToggle.id = "rawArtifactsToggle";
+          rawToggle.className = "btn";
+          rawToggle.textContent = "Show raw artifacts";
+          rawToggle.addEventListener("click", () => {
+            const raw = document.getElementById("artifactList");
+            if (!raw) return;
+            raw.hidden = !raw.hidden;
+            rawToggle.textContent = raw.hidden ? "Show raw artifacts" : "Hide raw artifacts";
+          });
+          actions.appendChild(rawToggle);
+          host.appendChild(actions);
+        }
         if (!summary.has_recording) {
           const banner = document.createElement("div");
           banner.className = "no-recording";
@@ -7027,7 +7224,10 @@
           }
           data.artifacts = [...merged.values()];
         }
-        renderArtifactRunSummary(data && data.summary);
+        const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
+        activeArtifactInventoryRunId = runId;
+        activeArtifactInventory = artifacts;
+        renderArtifactRunSummary(data && data.summary, artifacts);
         if (data && data.no_recording) {
           const noRecordingState = {
             run_id: runId,
@@ -7042,7 +7242,6 @@
         }
         const list = document.getElementById("artifactList");
         if (!list) return false;
-        const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         activeRunResourceScope = {
           run_id: runId,
           bucket: String(data.bucket || (entry && entry.bucket) || ""),
@@ -7076,7 +7275,8 @@
         populateArtifactStageFilter(artifacts, runId);
         renderArtifactProvenance(runId, artifacts).catch(() => false);
         const preferred = data && data.preferred ? data.preferred : null;
-        const displayArtifacts = sortAndFilterArtifacts(artifacts, preferred, runId);
+        const filteredArtifacts = sortAndFilterArtifacts(artifacts, preferred, runId);
+        const displayArtifacts = groupArtifactSequences(filteredArtifacts);
         if (!displayArtifacts.length) {
           list.innerHTML =
             "<p>No artifacts for <code>" + escapeHtml(runId) + "</code> at the selected Role/Stage/Type.</p>" +
@@ -7105,7 +7305,7 @@
           : "";
         list.innerHTML =
           '<div style="font-size:12px;color:#475569;margin:0 0 8px;">Showing ' +
-          String(displayArtifacts.length) + " of " + String(artifacts.length) +
+          String(displayArtifacts.length) + " grouped rows from " + String(filteredArtifacts.length) + " selected / " + String(artifacts.length) +
           " artifacts · " + escapeHtml(roleCountText) + " · " + escapeHtml(countText) + "</div>" +
           displayArtifacts.map((item) => {
           const key = String(item.key || "");
@@ -7116,6 +7316,10 @@
           const bucket = artifactBucket(item);
           const s3uri = String(item.s3_uri || "");
           const basename = key.split("/").pop() || key;
+          const sequenceCount = Number(item.sequence_count || 0);
+          const displayName = sequenceCount > 1
+            ? String(item.sequence_directory || key) + " — " + String(sequenceCount) + " native frames"
+            : basename;
           const isPreferred = preferredKey && preferredKey === key;
           const dataRole = String(item.data_role || "pipeline_metadata");
           const roleLabel = String(item.data_role_label || "Pipeline metadata / report");
@@ -7131,7 +7335,7 @@
             : "";
           return (
             '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '" data-role="' + escapeHtml(artifactRole) + '">' +
-            '<div class="artifact-card-head"><strong>' + escapeHtml(basename) + '</strong>' +
+            '<div class="artifact-card-head"><strong>' + escapeHtml(displayName) + '</strong>' +
             (isPreferred ? '<span class="badge badge-ok">recommended</span>' : "") +
             '<span class="pill" data-role="' + escapeHtml(dataRole) + '"><strong>' + escapeHtml(roleLabel) + "</strong></span>" +
             '<span class="pill">' + escapeHtml(artifactRole) + '</span>' +
@@ -7139,6 +7343,9 @@
             '<span class="pill">' + escapeHtml(render) + '</span></div>' +
             '<div class="artifact-card-meta">' + escapeHtml(formatArtifactBytes(item.size || 0)) + ' (' + escapeHtml(String(item.size || 0)) + ' bytes)' +
             ' · ' + escapeHtml(contentType) + ' · updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
+            (render === "image" && learningSummary
+              ? '<div class="artifact-card-meta">Source resolution: ' + escapeHtml(String(data.summary.learning.source_resolution || "unknown")) + ' native; preview is not enlarged.</div>'
+              : "") +
             '<div class="artifact-card-path"><code>' + escapeHtml(key) + '</code></div>' +
             // Inline image preview so browsing a stage (e.g. Source frames) shows
             // the actual data, not just filenames. Lazy-loaded via the auth proxy.
@@ -7260,6 +7467,71 @@
       }
       function renderArtifactDerivedRunDetails(runId, artifacts) {
         const list = Array.isArray(artifacts) ? artifacts : [];
+        const keys = list.map((item) => String(item.key || ""));
+        const hasAny = (patterns) => countMatching(patterns) > 0;
+        function countMatching(patterns) {
+          return keys.filter((key) => patterns.some((pattern) => pattern && key.includes(pattern))).length;
+        }
+        const isLearningRun = hasAny([
+          "reports/learning-report.json",
+          "reports/groot-learning.rrd",
+          "eval/baseline/evaluation.json",
+          "eval/posttrain/evaluation.json",
+        ]);
+        if (isLearningRun) {
+          const definitions = [
+            ["split", "Prepare leakage-free split", ["reports/split/manifest.json", "/data/train/", "/data/heldout/"], "Episode-disjoint manifests, train-only statistics, and content hashes."],
+            ["baseline", "Baseline held-out inference", ["eval/baseline/evaluation.json", "checkpoints/baseline/"], "Real starting-checkpoint Gr00tPolicy forwards on held-out episodes."],
+            ["train", "Multi-GPU policy training", ["checkpoints/posttrain/npa_groot_finetune_manifest.json"], "Complete train-cohort pass with optimizer, rank, collective, and loss evidence."],
+            ["post-eval", "Post-training held-out inference", ["eval/posttrain/evaluation.json"], "Identical held-out model-forward evaluation on the trained checkpoint."],
+            ["compare", "Compare learning", ["reports/learning-report.json", "offline-heldout-comparison.mp4"], "Before/after action error, per-dimension visibility, and factual improvement gate."],
+            ["replay", "Synchronized learning replay", ["reports/groot-learning.mcap", "reports/groot-learning.rrd"], "Camera, predicted/expert actions, errors, metrics, loss, and provenance."],
+            ["publish", "Validate and publish", ["reports/publish-manifest.json"], "Independent parse, hashes, artifact index, and submitted workflow provenance."],
+          ];
+          const stages = definitions.map(([id, label, patterns, description]) => {
+            const count = countMatching(patterns);
+            return {
+              id,
+              stage_key: id,
+              label,
+              status: count > 0 ? "succeeded" : "pending",
+              summary: description + " " + String(count) + " matching artifact" + (count === 1 ? "" : "s") + ".",
+            };
+          });
+          const complete = stages.every((stage) => stage.status === "succeeded");
+          renderRunDetails({
+            run: {
+              run_id: runId,
+              status: complete ? "completed" : "artifact-backed",
+              result: hasAny(["reports/groot-learning.rrd"]) ? "learning_replay_ready" : "learning_artifacts_listed",
+              updated_at: new Date().toISOString(),
+              stages,
+              logs: [{
+                timestamp: new Date().toISOString(),
+                level: complete ? "info" : "warn",
+                message: "Derived truthful GR00T learning phases from " + String(list.length) + " S3 artifacts.",
+              }],
+            },
+          });
+          return;
+        }
+        function artifactStageKey(key) {
+          const runMarker = "/" + runId + "/";
+          let scoped = String(key || "");
+          const idx = scoped.indexOf(runMarker);
+          if (idx >= 0) {
+            scoped = scoped.slice(idx + runMarker.length);
+          } else if (runId && scoped.startsWith(runId + "/")) {
+            // Empty-prefix keys carry the run id as the leading segment.
+            scoped = scoped.slice(String(runId).length + 1);
+          }
+          const parts = scoped.split("/").filter(Boolean);
+          const first = parts[0] || "artifacts";
+          if (first === "reports") return "reports";
+          if (first === "eval" && parts[1]) return "eval/" + parts[1];
+          if (["actions", "vlm_eval", "training_signal", "envs"].includes(first) && parts[1]) return first + "/" + parts[1];
+          return first;
+        }
         function artifactStageLabel(stageKey) {
           const labels = {
             "stage_01_trigger": "Trigger",
@@ -7366,6 +7638,36 @@
         if (scope.source_selected || scope.bucket) params.set("source_selected", "1");
         return params;
       }
+      function learningStageTimelineFromArtifacts(artifacts) {
+        const list = Array.isArray(artifacts) ? artifacts : [];
+        const keys = list.map((item) => String((item && item.key) || ""));
+        const isLearningRun = keys.some((key) =>
+          key.includes("reports/learning-report.json") ||
+          key.includes("reports/groot-learning.rrd") ||
+          key.includes("eval/baseline/evaluation.json") ||
+          key.includes("eval/posttrain/evaluation.json")
+        );
+        if (!isLearningRun) return [];
+        const definitions = [
+          ["split", "Prepare leakage-free split", ["reports/split/manifest.json", "/data/train/", "/data/heldout/"], "Episode-disjoint manifests, train-only statistics, and content hashes."],
+          ["baseline", "Baseline held-out inference", ["eval/baseline/evaluation.json", "checkpoints/baseline/"], "Real starting-checkpoint Gr00tPolicy forwards on held-out episodes."],
+          ["train", "Multi-GPU policy training", ["checkpoints/posttrain/npa_groot_finetune_manifest.json"], "Complete train-cohort pass with optimizer, rank, collective, and loss evidence."],
+          ["post-eval", "Post-training held-out inference", ["eval/posttrain/evaluation.json"], "Identical held-out model-forward evaluation on the trained checkpoint."],
+          ["compare", "Compare learning", ["reports/learning-report.json", "offline-heldout-comparison.mp4"], "Before/after action error, per-dimension visibility, and factual improvement gate."],
+          ["replay", "Synchronized learning replay", ["reports/groot-learning.mcap", "reports/groot-learning.rrd"], "Camera, predicted/expert actions, errors, metrics, loss, and provenance."],
+          ["publish", "Validate and publish", ["reports/publish-manifest.json"], "Independent parse, hashes, artifact index, and submitted workflow provenance."],
+        ];
+        return definitions.map(([id, label, patterns, description]) => {
+          const count = keys.filter((key) => patterns.some((pattern) => key.includes(pattern))).length;
+          return {
+            id,
+            stage_key: id,
+            label,
+            status: count > 0 ? "succeeded" : "pending",
+            summary: description + " " + String(count) + " matching artifact" + (count === 1 ? "" : "s") + ".",
+          };
+        });
+      }
       async function renderArtifactProvenance(runId, artifacts) {
         // Honest, per-stage provenance for the loaded run: which pipeline stages
         // produced artifacts, how many, the producing component/model, and — for
@@ -7375,6 +7677,35 @@
         const host = document.getElementById("artifactProvenance");
         if (!host) return false;
         const list = Array.isArray(artifacts) ? artifacts : [];
+        const learningKeys = list.map((item) => String((item && item.key) || ""));
+        const isLearningRun = learningKeys.some((key) =>
+          key.includes("reports/learning-report.json") ||
+          key.includes("reports/groot-learning.rrd") ||
+          key.includes("eval/baseline/evaluation.json") ||
+          key.includes("eval/posttrain/evaluation.json")
+        );
+        if (isLearningRun) {
+          const definitions = [
+            ["Prepare leakage-free split", ["reports/split/manifest.json", "/data/train/", "/data/heldout/"], "Deterministic episode split · train-only statistics"],
+            ["Baseline held-out inference", ["eval/baseline/evaluation.json", "checkpoints/baseline/"], "GR00T N1.7 starting checkpoint · real Gr00tPolicy forwards"],
+            ["Multi-GPU policy training", ["checkpoints/posttrain/npa_groot_finetune_manifest.json"], "GR00T N1.7 fine-tune · distributed optimizer and rank evidence"],
+            ["Post-training held-out inference", ["eval/posttrain/evaluation.json"], "Trained checkpoint · identical held-out model-forward protocol"],
+            ["Compare learning", ["reports/learning-report.json", "offline-heldout-comparison.mp4"], "Action MSE/MAE · per-dimension regressions · improvement gate"],
+            ["Synchronized learning replay", ["reports/groot-learning.mcap", "reports/groot-learning.rrd"], "Rerun + MCAP · camera, predicted/expert actions, error, metrics"],
+            ["Validate and publish", ["reports/publish-manifest.json", "/workflow.yaml"], "Independent schemas, hashes, index, and workflow provenance"],
+          ];
+          const rows = definitions.map(([label, patterns, component]) => {
+            const count = learningKeys.filter((key) => patterns.some((pattern) => key.includes(pattern))).length;
+            return '<div class="prov-row">' +
+              '<span class="prov-stage">' + escapeHtml(label) + '</span>' +
+              '<span class="prov-count">' + String(count) + ' artifact' + (count === 1 ? '' : 's') + '</span>' +
+              '<span class="prov-comp">' + escapeHtml(component) + '</span>' +
+              '</div>';
+          }).join("");
+          host.innerHTML =
+            '<div class="prov-head">Learning phases and real components</div>' + rows;
+          return true;
+        }
         const stagesPresent = new Set(
           list.map((it) => deriveArtifactStage((it && it.key) || "", runId, runStageWrapper(list, runId)))
         );
@@ -7500,6 +7831,7 @@
         if (!host) return false;
         activeRunId = runId;
         activeArtifactRender = render;
+        operatorMediaPreviewActive = true;
         await activateMainTab("rerun", { skipEnsure: true });
         if (render === "video") setRenderMode("video");
         else if (render === "image") setRenderMode("image");
@@ -7625,6 +7957,7 @@
         const loadGeneration = ++artifactLoadGeneration;
         // Invalidate any status refresh that started for the previous artifact.
         refreshGeneration += 1;
+        operatorMediaPreviewActive = false;
         const requestContext = arguments.length > 1 ? arguments[1] : null;
         const context = requestContext && typeof requestContext === "object" ? requestContext : {};
         const isCurrent = () => requestId === artifactLoadRequestId &&
@@ -7705,6 +8038,9 @@
         if (simCamera) simCamera.textContent = String(simViz.camera || "workspace");
         lastSimVizStatus = simViz;
         updateSimvizCta(simViz);
+        if (loadedRunId && loadedRunId === activeArtifactInventoryRunId) {
+          renderArtifactDerivedRunDetails(loadedRunId, activeArtifactInventory);
+        }
         return true;
       }
       let voxelDatasetRun = "";
@@ -7967,15 +8303,22 @@
           document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");
           document.getElementById("simCamera").textContent = String(simViz.camera || "workspace");
-          updateRenderedDataSummary(simViz);
-          activeArtifactRender = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
+          if (!operatorMediaPreviewActive) updateRenderedDataSummary(simViz);
+          if (!operatorMediaPreviewActive) {
+            activeArtifactRender = String((simViz && simViz.artifact_render) || activeArtifactRender || "");
+          }
           const ready = Boolean(simViz.rerun_ready || simViz.rrd_uri);
           lastSimVizStatus = simViz || lastSimVizStatus;
           updateSimvizCta(simViz);
           if (activeArtifactRender && activeArtifactRender !== "rerun") {
             // Keep the Rerun iframe mounted under the media pane; authenticated blob
             // preview handles basic-auth so <video>/<img> can play without 401s.
-            await showArtifactPreview(simViz, activeArtifactRender);
+            const host = document.getElementById("artifactPreviewHost");
+            if (operatorMediaPreviewActive && host && !host.hidden && host.childElementCount) {
+              setRenderMode(activeArtifactRender);
+            } else {
+              await showArtifactPreview(simViz, activeArtifactRender);
+            }
           } else {
             if (activeArtifactRender === "rerun") setRenderMode("rerun");
             hideArtifactPreview();
@@ -8461,7 +8804,11 @@
           '<span class="pill">status <strong>' + escapeHtml(status) + '</strong></span>' +
           '<span class="pill">result <strong>' + escapeHtml(result) + '</strong></span>' +
           '<span class="pill">updated <strong>' + escapeHtml(updatedAt || "-") + '</strong></span>';
-        const stages = Array.isArray(run.stages) ? run.stages : [];
+        let stages = Array.isArray(run.stages) ? run.stages : [];
+        if (runId && runId === activeArtifactInventoryRunId) {
+          const learningStages = learningStageTimelineFromArtifacts(activeArtifactInventory);
+          if (learningStages.length) stages = learningStages;
+        }
         stagesHost.classList.add("stage-timeline");
         if (!stages.length) {
           stagesHost.innerHTML =
@@ -8630,6 +8977,7 @@
         if (!runId) {
           throw new Error("Enter or select a run_id first");
         }
+        operatorMediaPreviewActive = false;
         const data = await loadSelectedRun(
           preferredRunEntry(runRef || runId) || { run_id: runId, run_ref: runRef }
         );

@@ -1745,7 +1745,7 @@ if [ "$actual_groot_version" != {shlex.quote(GROOT_RUNTIME_VERSION)} ]; then
   echo "ERROR: expected GR00T runtime {GROOT_RUNTIME_VERSION}, got $actual_groot_version" >&2
   exit 1
 fi
-actual_groot_ref=$(git rev-parse HEAD)
+actual_groot_ref=$(git -c safe.directory={shlex.quote(GROOT_REPO)} rev-parse HEAD)
 if [ "$actual_groot_ref" != {shlex.quote(GROOT_REPO_REF)} ]; then
   echo "ERROR: expected Isaac-GR00T ref {GROOT_REPO_REF}, got $actual_groot_ref" >&2
   exit 1

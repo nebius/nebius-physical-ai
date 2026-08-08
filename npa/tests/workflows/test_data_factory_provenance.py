@@ -123,6 +123,60 @@ def test_provenance_only_reports_present_stages() -> None:
     assert stages == {"Augment"}
 
 
+def test_provenance_uses_truthful_learning_phases_for_groot_offline_eval() -> None:
+    run = "groot17-learning-test"
+    root = f"groot-1-7-finetune/{run}"
+    keys = [
+        f"{root}/data/train/videos/chunk-000/observation.image/episode_000000.mp4",
+        f"{root}/data/heldout/videos/chunk-000/observation.image/episode_000000.mp4",
+        f"{root}/reports/split/manifest.json",
+        f"{root}/checkpoints/baseline/model.safetensors",
+        f"{root}/eval/baseline/evaluation.json",
+        f"{root}/checkpoints/posttrain/model.safetensors",
+        f"{root}/eval/posttrain/evaluation.json",
+        f"{root}/reports/learning-report.json",
+        f"{root}/reports/offline-heldout-comparison.mp4",
+        f"{root}/reports/groot-learning.rrd",
+        f"{root}/reports/groot-learning.mcap",
+        f"{root}/reports/publish-manifest.json",
+        f"{root}/workflow.yaml",
+    ]
+
+    def read_learning(key: str):
+        if key.endswith("reports/learning-report.json"):
+            return {
+                "evaluation_kind": "offline_heldout_policy_evaluation",
+                "closed_loop": False,
+                "dataset": {
+                    "camera_names": ["front"],
+                    "source_resolution": "96x96",
+                    "heldout_episodes": 1,
+                    "fps": 10,
+                },
+                "training": {"distinct_gpu_count": 7, "coverage_criterion": "one complete pass"},
+                "evaluation": {"metric_name": "action_mse", "real_model_forward": True},
+            }
+        return {}
+
+    prov = build_run_provenance(keys, run_id=run, read_json=read_learning)
+    stages = [component["stage"] for component in prov["components"]]
+    assert stages == [
+        "Prepare leakage-free split",
+        "Baseline held-out inference",
+        "Multi-GPU policy training",
+        "Post-training held-out inference",
+        "Compare learning",
+        "Synchronized learning replay",
+        "Validate and publish",
+    ]
+    assert "Visualize + finalize" not in prov["summary"]
+    assert "not a rollout" in prov["summary"]
+    assert "real Gr00tPolicy forwards" in prov["components"][1]["detail"]
+    assert prov["origin"]["original_present"] is True
+    assert "96x96 native" in prov["origin"]["summary"]
+    assert "not a simulator/robot rollout" in prov["origin"]["summary"]
+
+
 def test_provenance_carries_origin() -> None:
     prov = build_run_provenance(KEYS, run_id=RUN, read_json=_read_gpu)
     assert "origin" in prov

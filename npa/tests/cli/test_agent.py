@@ -950,7 +950,8 @@ def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
     assert "function pinLichtblickDsToSameOrigin" in source
     assert "window.location.origin" in source
     # The iframe URL always flows through the rewrite.
-    assert 'return pinLichtblickDsToSameOrigin(url) || "/lichtblick/";' in source
+    assert "const pinned = pinLichtblickDsToSameOrigin(url) || \"/lichtblick/\";" in source
+    assert 'viewer.searchParams.set("npa.layout", lichtblickLayoutKind(simViz));' in source
 
 
 def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() -> None:
@@ -967,7 +968,7 @@ def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() ->
     mount = source.split("function mountLichtblickIframe", 1)[1].split(
         "async function ensureLichtblickForActiveRun", 1
     )[0]
-    assert "if (lichtblickNeedsLayoutSeed()) {" in mount
+    assert "if (lichtblickNeedsLayoutSeed(simViz)) {" in mount
     reset_calls = mount.count("resetLichtblickLayoutStorage()")
     assert reset_calls == 1, f"expected one guarded wipe, found {reset_calls}"
 
@@ -992,6 +993,14 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     assert three_d["followTf"] == "sim2real"
     image = next(v for k, v in panels.items() if k.startswith("Image!"))
     assert image["imageMode"]["imageTopic"] == "/camera"
+    learning_layout = json.loads(agent_site_module._lichtblick_learning_layout_json())
+    learning_image = next(
+        v for k, v in learning_layout["configById"].items() if k.startswith("Image!")
+    )
+    assert learning_layout["layout"].startswith("Image!")
+    assert learning_image["imageMode"]["imageTopic"] == "/camera/front"
+    script = agent_site_module._lichtblick_default_layout_script()
+    assert 'get("npa.layout")==="learning"' in script
 
 
 def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
@@ -1664,6 +1673,23 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
         "_is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)"
         in source
     )
+
+
+def test_groot_learning_recording_activates_real_rrd_and_truthful_note() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    branch = source.split('if render == "rerun":', 1)[1].split('elif render == "mcap":', 1)[0]
+    assert "is_groot_learning_recording(key)" in branch
+    assert 'sim_viz["preview_entity"] = "camera/front"' in branch
+    assert 'sim_viz["visualization_note"] = GROOT_LEARNING_RERUN_NOTE' in branch
+    assert (
+        "Offline held-out GR00T policy evaluation loaded (not a rollout)"
+        in agent_module._embedded_agent_visual_feedback_source()
+    )
+    assert 'rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")' in branch
+    assert "shutil.copy2(local_path, rrd_tmp)" in branch
+    assert branch.index("rrd_tmp.replace(RRD_PATH)") < branch.index("_restart_rerun_serve(force=True)")
 
 
 def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:

@@ -2,16 +2,22 @@
 
 Use the checked-in `groot-1-7-finetune.yaml` workflow to fine-tune NVIDIA GR00T
 N1.7 on a GR00T-format LeRobot dataset. The workflow runs NVIDIA's real
-`gr00t/experiment/launch_finetune.py` from the `npa-groot:0.1.0` image; it is
-not a manifest-only training substitute. Its serial stage graph is:
+`gr00t/experiment/launch_finetune.py` and `Gr00tPolicy.get_action` surfaces from
+the `npa-groot:0.1.0` image; it is not a manifest-only training or scoring
+substitute. Its serial stage graph is:
 
 ```text
-finetune -> validate -> emit_mcap -> emit_rrd -> publish
+prepare_split -> baseline_eval -> finetune -> posttrain_eval ->
+compare_learning -> emit_mcap -> emit_rrd -> publish
 ```
 
-The RRD is derived from the inspected MCAP to preserve semantic parity. These
-recordings visualize factual training telemetry and representative frames from
-the real dataset used by the run; they are not policy-rollout evaluation.
+The split is deterministic at episode granularity, stores content hashes, uses
+training-only normalization statistics, and proves zero episode overlap. Both
+evaluations retain aligned predicted and expert actions for every held-out
+sample. The primary action-MSE gate must improve after one complete pass over
+the configured training cohort. RRD, MCAP, and comparison video are synchronized
+from those held-out outputs and explicitly labelled offline evaluation, not a
+closed-loop policy rollout.
 
 ## Reproducible contract
 
@@ -28,8 +34,11 @@ checkpoints after successful training. It records those pins, the run ID,
 embodiment, GPU count, batch size, training steps, input dataset, and output
 URI. It also records per-rank/world-size evidence, distinct visible GPU UUIDs,
 an NCCL all-reduce result, a finite training loss, optimizer-step evidence,
-and actual checkpoint object/byte counts. The `validate` stage fails before
-visualization if any required evidence or uploaded checkpoint is incomplete.
+and actual checkpoint object/byte counts plus a real loss trajectory. The
+`compare_learning` stage fails unless model-forward proof, exact sample/action
+alignment, identical held-out provenance, training coverage, and a factual
+primary-metric improvement are all present. Per-dimension regressions remain
+visible even when the primary gate passes.
 
 For single-node hosts where NCCL peer-to-peer and shared-memory transports are
 not viable, the workflow exposes `nccl_transport=socket`. This sets
@@ -58,9 +67,11 @@ npa workbench workflow submit "$SPEC" \
   --plan-only
 ```
 
-The plan must show both `accelerators: H100:8` and `--num-gpus 8` on `finetune`,
-followed by four CPU stages. Inside the trainer stage, the GR00T command converts counts above one to
-`torchrun --nproc_per_node=8` and still passes upstream `--num-gpus 8`.
+The plan must show the episode split and two real GPU evaluation phases around
+`finetune`, plus the compare/replay/publish phases. It must show both
+`accelerators: H100:8` and `--num-gpus 8` on `finetune`. Inside that stage, the
+GR00T command converts counts above one to `torchrun --nproc_per_node=8` and
+still passes upstream `--num-gpus 8`.
 
 ## Submit training
 
@@ -74,7 +85,7 @@ Single GPU:
 npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
   --var bucket=<bucket> \
-  --var data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
+  --var source_data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
   --var gpu_count=1 \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
   --secret-env HF_TOKEN \
@@ -88,7 +99,7 @@ Multi-GPU uses the same command with any positive count (the checked-in example 
 npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
   --var bucket=<bucket> \
-  --var data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
+  --var source_data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
   --var gpu_count=8 \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
   --secret-env HF_TOKEN \
@@ -100,10 +111,11 @@ On RTX PRO 6000 Blackwell hosts where a minimal two-rank NCCL probe fails over
 both P2P and SHM, add `--var nccl_transport=socket`. Validate that fallback with
 a small collective before downloading the full model.
 
-`gpu_count` must be a positive integer. It controls the H100 allocation, the
-SkyPilot task resources, and the trainer world size. `global_batch_size`
-defaults to the GPU count; if overridden, it must be a positive multiple of
-`gpu_count`, as required by the GR00T N1.7 trainer.
+`gpu_count` must be a positive integer. It controls the trainer allocation and
+world size. `global_batch_size` must be a positive multiple of `gpu_count`, as
+required by GR00T. Recalculate `max_steps=ceil(train_samples/global_batch_size)`
+when the cohort or batch changes so the stated coverage remains a complete
+training-cohort pass rather than an arbitrary demo duration.
 
 ## Find the run and outputs
 
@@ -121,21 +133,25 @@ npa workbench workflow list \
 With the default prefix, checkpoints and provenance are under:
 
 ```text
-s3://<bucket>/groot-1-7-finetune/<run-id>/checkpoints/
-s3://<bucket>/groot-1-7-finetune/<run-id>/checkpoints/npa_groot_finetune_manifest.json
-s3://<bucket>/groot-1-7-finetune/<run-id>/reports/visualization-source/manifest.json
-s3://<bucket>/groot-1-7-finetune/<run-id>/reports/groot-training.mcap
-s3://<bucket>/groot-1-7-finetune/<run-id>/reports/groot-training.rrd
-s3://<bucket>/groot-1-7-finetune/<run-id>/reports/visualization-manifest.json
+s3://<bucket>/groot-1-7-finetune/<run-id>/reports/split/manifest.json
+s3://<bucket>/groot-1-7-finetune/<run-id>/eval/baseline/evaluation.json
+s3://<bucket>/groot-1-7-finetune/<run-id>/checkpoints/posttrain/
+s3://<bucket>/groot-1-7-finetune/<run-id>/eval/posttrain/evaluation.json
+s3://<bucket>/groot-1-7-finetune/<run-id>/reports/learning-report.json
+s3://<bucket>/groot-1-7-finetune/<run-id>/reports/offline-heldout-comparison.mp4
+s3://<bucket>/groot-1-7-finetune/<run-id>/reports/groot-learning.mcap
+s3://<bucket>/groot-1-7-finetune/<run-id>/reports/groot-learning.rrd
+s3://<bucket>/groot-1-7-finetune/<run-id>/reports/publish-manifest.json
 s3://<bucket>/groot-1-7-finetune/<run-id>/workflow.yaml
 ```
 
-MCAP uses `foxglove.CompressedImage` on `/camera`, `foxglove.Log` on
-`/log`, and factual numeric values under `/metrics/*`. RRD contains native
-encoded-image, text-log, scalar-series, and provenance entities on the
-`mcap_time` timeline. Dataset frames have no asserted robot capture clock:
-both recordings and the final manifest label them `dataset/synthetic-fps`,
-record the source video object and FPS, and set `is_robot_capture_time=false`.
+MCAP uses `foxglove.CompressedImage` on `/camera/<name>`, `foxglove.Log` on
+`/log`, plus `/policy/predicted_action`, `/expert/action`,
+`/metrics/action_error`, `/metrics/heldout_before`,
+`/metrics/heldout_after`, and `/metrics/train_loss`. RRD opens with a camera,
+predicted-versus-expert action plots, error panels, before/after metrics,
+training loss, and provenance on the `dataset_time` timeline. Dataset index/FPS
+is not robot wall-clock time; every output sets `is_robot_capture_time=false`.
 
 The terminal `publish` stage downloads and independently parses both recording
 formats. It succeeds only after their run IDs, schemas/topics, Rerun identity,

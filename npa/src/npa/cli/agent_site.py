@@ -142,6 +142,41 @@ def _lichtblick_default_layout_json() -> str:
     return json.dumps(layout, separators=(",", ":"))
 
 
+def _lichtblick_learning_layout_json() -> str:
+    """Return the replay-first layout for offline policy-learning MCAPs.
+
+    Learning recordings do not contain a reconstructed point cloud.  Reusing the
+    Sim2Real 3D layout therefore opens a mostly empty viewer and binds its Image
+    panel to the wrong topic (``/camera`` instead of ``/camera/front``).  Give the
+    factual held-out camera the full canvas; predicted/expert/error series remain
+    available in the Topics sidebar and in the companion Rerun blueprint.
+    """
+
+    layout = {
+        "configById": {
+            "Image!npalearningcamera": {
+                "imageMode": {"imageTopic": "/camera/front"}
+            }
+        },
+        "globalVariables": {},
+        "userNodes": {},
+        "playbackConfig": {"speed": 1.0},
+        "layout": "Image!npalearningcamera",
+    }
+    return json.dumps(layout, separators=(",", ":"))
+
+
+def _lichtblick_default_layout_script() -> str:
+    """Select a truthful default layout from the same-origin viewer query."""
+
+    learning = _lichtblick_learning_layout_json()
+    sim2real = _lichtblick_default_layout_json()
+    return (
+        '(new URLSearchParams(window.location.search).get("npa.layout")==="learning"?'
+        f"{learning}:{sim2real})"
+    )
+
+
 def nginx_agent_site_body(
     *,
     backend_port: int,
@@ -151,7 +186,7 @@ def nginx_agent_site_body(
 ) -> str:
     """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
     foxglove_locations = foxglove_nginx_locations()
-    lichtblick_default_layout = _lichtblick_default_layout_json()
+    lichtblick_default_layout = _lichtblick_default_layout_script()
     lichtblick_layout_placeholder = LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER
     return f"""  auth_basic "NPA Agent";
   auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;

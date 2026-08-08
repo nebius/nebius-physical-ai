@@ -699,7 +699,7 @@ def build_text_preview(
     else:
         text, redacted = redact_artifact_text(text)
     total = max(0, int(total_bytes or 0))
-    return {
+    summary = {
         "text": text,
         "truncated": total > len(bounded) or len(raw) > len(bounded),
         "bytes_read": len(bounded),
@@ -710,6 +710,7 @@ def build_text_preview(
         "redacted": redacted,
         "render": normalized_render,
     }
+    return summary
 
 
 def parse_http_byte_range(value: str, total_bytes: int) -> tuple[int, int] | None:
@@ -781,6 +782,50 @@ def build_run_summary(
     capacity = _doc("evidence/capacity.json")
     collective = _doc("evidence/collective.json")
     checkpoint = _doc("checkpoints/npa_groot_finetune_manifest.json")
+    learning_doc = _doc("reports/learning-report.json")
+    learning: dict[str, Any] = {}
+    if learning_doc.get("schema") == "npa.groot.learning.v1":
+        learning_dataset = learning_doc.get("dataset") or {}
+        learning_training = learning_doc.get("training") or {}
+        learning_eval = learning_doc.get("evaluation") or {}
+        learning_viz = learning_doc.get("visualizations") or {}
+        learning = {
+            "badge": str(learning_doc.get("badge") or "Offline held-out policy evaluation"),
+            "evaluation_kind": str(learning_doc.get("evaluation_kind") or ""),
+            "closed_loop": learning_doc.get("closed_loop") is True,
+            "embodiment": str(learning_dataset.get("embodiment") or ""),
+            "camera_names": [str(value) for value in learning_dataset.get("camera_names") or []],
+            "source_resolution": str(learning_dataset.get("source_resolution") or "unknown"),
+            "train_episodes": int(learning_dataset.get("train_episodes") or 0),
+            "heldout_episodes": int(learning_dataset.get("heldout_episodes") or 0),
+            "heldout_samples": int(learning_dataset.get("heldout_samples") or 0),
+            "split_hash": str(learning_dataset.get("split_hash") or ""),
+            "leakage_free": learning_dataset.get("leakage_free") is True,
+            "gpu_count": int(learning_training.get("gpu_count") or 0),
+            "optimizer_steps": int(learning_training.get("optimizer_steps") or 0),
+            "training_examples": int(learning_training.get("training_examples") or 0),
+            "epoch_equivalent": float(learning_training.get("epoch_equivalent") or 0.0),
+            "checkpoint_uri": str(learning_training.get("checkpoint_uri") or ""),
+            "metric_name": str(learning_eval.get("metric_name") or "action_mse"),
+            "baseline_value": float(learning_eval.get("baseline_value") or 0.0),
+            "posttrain_value": float(learning_eval.get("posttrain_value") or 0.0),
+            "absolute_improvement": float(learning_eval.get("absolute_improvement") or 0.0),
+            "relative_improvement_percent": float(
+                learning_eval.get("relative_improvement_percent") or 0.0
+            ),
+            "improved": learning_eval.get("improved") is True,
+            "per_dimension": learning_eval.get("per_dimension") or [],
+            "mcap_uri": str(learning_viz.get("mcap_uri") or ""),
+            "rrd_uri": str(learning_viz.get("rrd_uri") or ""),
+            "comparison_video_uri": str(
+                learning_viz.get("comparison_video_uri")
+                or (learning_viz.get("comparison_video") or {}).get("uri")
+                or ""
+            ),
+            "native_resolution_preserved": learning_viz.get("native_resolution_preserved")
+            is True,
+            "semantic_phases": [str(value) for value in learning_doc.get("semantic_phases") or []],
+        }
     workflow = str(
         root_manifest.get("workflow_name")
         or workflow_manifest.get("workflow")
@@ -794,14 +839,16 @@ def build_run_summary(
             tool_ref = str(step["tool_ref"])
             break
     status = str(
-        training.get("status")
+        learning_doc.get("status")
+        or training.get("status")
         or training.get("terminal_status")
         or checkpoint.get("status")
         or root_manifest.get("status")
         or "unknown"
     )
     accelerator_count = int(
-        training.get("gpu_count")
+        (learning.get("gpu_count") if learning else 0)
+        or training.get("gpu_count")
         or training.get("distinct_gpu_count")
         or checkpoint.get("num_gpus")
         or capacity.get("total_allocatable")
@@ -814,8 +861,18 @@ def build_run_summary(
         or ""
     )
     world_size = int(training.get("world_size") or collective.get("world_size") or 0)
-    training_steps = int(training.get("optimizer_steps") or checkpoint.get("max_steps") or 0)
-    loss_value = training.get("train_loss")
+    training_steps = int(
+        (learning.get("optimizer_steps") if learning else 0)
+        or training.get("optimizer_steps")
+        or checkpoint.get("training_step")
+        or checkpoint.get("max_steps")
+        or 0
+    )
+    loss_value = (
+        (learning_doc.get("training") or {}).get("final_loss")
+        if learning
+        else training.get("train_loss")
+    )
     try:
         loss = float(loss_value) if loss_value is not None else None
     except (TypeError, ValueError):
@@ -823,7 +880,7 @@ def build_run_summary(
     finite_loss = bool(training.get("loss_finite")) and loss is not None and math.isfinite(loss)
     counts = artifact_inventory_counts(artifacts)
     has_recording = any(item.render in {"rerun", "mcap"} for item in artifacts)
-    return {
+    summary = {
         "run_id": str(run_id),
         "completion_status": status,
         "workflow": workflow,
@@ -846,6 +903,9 @@ def build_run_summary(
             else "No RRD/MCAP recording; use the artifacts below"
         ),
     }
+    if learning:
+        summary["learning"] = learning
+    return summary
 
 
 def list_runs(
