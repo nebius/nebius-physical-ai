@@ -60,6 +60,13 @@ manifest records `guardrails` so a run's posture stays auditable.
 
 ## Build
 
+The supported/default image release is `npa-cosmos3:1.2.2-cu130-r2`. It is an
+additive successor to `1.2.2-cu130`: the old immutable tag is retained for
+rollback and provenance and must never be overwritten or deleted. Pre-merge
+validation builds use a branch-specific candidate tag in a private registry;
+the official `1.2.2-cu130-r2` tag is built and published only from the reviewed
+trusted commit.
+
 ```bash
 # Defaults to the pinned framework commit and the supported-tools tag.
 bash npa/docker/workbench/cosmos3/build.sh --registry <your-registry>

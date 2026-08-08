@@ -115,7 +115,8 @@ Root cause: huggingface/xet-core#895 breaks the Xet transfer client on exactly
 Current workaround: set `HF_HUB_DISABLE_XET=1` and retry, or upgrade the pair.
 `npa workbench cosmos3 generate` warns on stderr when it detects that exact
 pin pair in the runtime venv; it does not set the variable itself, because
-disabling Xet costs unaffected environments the faster download path. See
+disabling Xet costs unaffected environments the faster download path. The
+warning stays silent when `HF_HUB_DISABLE_XET` is already active. See
 `docs/workbench/cosmos3-access-preflight.md`.
 
 Category for follow-up: dependencies.
