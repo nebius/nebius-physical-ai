@@ -15,6 +15,10 @@ function liveRunId() {
   return Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") || Cypress.env("NPA_AGENT_RUN_ID") || "";
 }
 
+function liveArtifactRunId() {
+  return Cypress.env("NPA_AGENT_CYPRESS_ARTIFACT_RUN_ID") || "";
+}
+
 function liveAgentRequest(path, options = {}) {
   const baseUrl = Cypress.env("agentBaseUrl") || Cypress.env("NPA_AGENT_BASE_URL") || Cypress.config("baseUrl");
   const username = Cypress.env("agentUser") || Cypress.env("NPA_AGENT_USER");
@@ -179,6 +183,42 @@ describe("NPA agent UI against live infra", () => {
     });
 
     cy.get("#openRerun").should("be.visible");
+  });
+
+  it("loads a configured artifact-only run and clears stale panels on search/switch", function () {
+    const runId = liveArtifactRunId();
+    if (!runId) {
+      this.skip();
+    }
+
+    cy.get("#tabRerun").click();
+    cy.get("#runIdInput").clear().type(`${runId}{enter}`, { delay: 0 });
+    cy.get("#artifactList", { timeout: 120000 }).should("contain.text", runId);
+    cy.get("#renderModeData", { timeout: 120000 }).should("have.class", "is-active");
+    cy.get("#artifactPreviewHost pre", { timeout: 120000 }).should(($pre) => {
+      expect(String($pre.text() || "").trim().length, "JSON/text preview is useful").to.be.greaterThan(2);
+    });
+    cy.get("#tabMain").click();
+    cy.get("#runSummary").should("contain.text", runId);
+    cy.get("#stageList .stage-item").should("have.length.greaterThan", 0);
+    cy.get("#stageList .stage-evidence").should("have.length.greaterThan", 0);
+    cy.get("#stageList .stage-status").each(($status) => {
+      expect(String($status.text()).trim()).to.match(/^(Observed output|Status unavailable)$/);
+    });
+    cy.get("#stageList").should("not.contain.text", "Not run");
+    cy.get("#stageList").should("not.contain.text", "Succeeded");
+    cy.get("#stageList").should("not.contain.text", "Failed");
+    cy.get("#stageList .stage-progress").should("contain.text", "execution status unavailable");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactPrefix").clear().type("no-such-run-for-stale-state-check", { delay: 0 });
+    cy.get("#artifactList").should("contain.text", "Select a run");
+    cy.get("#runSummary").should("not.contain.text", runId);
+    cy.get("#artifactPrefix").clear();
+    cy.get("#runIdInput").clear().type("franka-demo{enter}", { delay: 0 });
+    cy.get("#simRunId", { timeout: 120000 }).should("contain.text", "franka-demo");
+    cy.get("#tabMain").click();
+    cy.get("#stageList").should("contain.text", "Local Franka demo");
   });
 
   it("embeds the Lichtblick MCAP viewer and co-serves the recording", () => {
@@ -380,13 +420,17 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
     cy.get("#stageList", { timeout: 30000 }).within(() => {
-      cy.contains("Trigger").should("be.visible");
-      cy.contains("Held-out eval").should("be.visible");
-      cy.contains("Reports / visualization").should("be.visible");
-      cy.contains("Succeeded").should("be.visible");
+      cy.get(".stage-item").should("have.length.greaterThan", 0);
+      cy.get(".stage-evidence").should("have.length.greaterThan", 0);
+      cy.get(".stage-status").each(($status) => {
+        expect(String($status.text()).trim()).to.match(
+          /^(Succeeded|Failed|Running|Skipped|Not run|Pending|Submitted|Observed output|Status unavailable)$/
+        );
+      });
     });
-    cy.get("#runSummary").should("contain.text", runId).and("contain.text", "completed");
-    cy.get("#runLog").should("contain.text", "Derived stage timeline");
+    cy.get("#runSummary").should("contain.text", runId);
+    cy.get("#stageList .stage-progress").invoke("text").should("not.match", /\d+\/\d+ stages succeeded/i);
+    cy.get("#runLog").should("contain.text", "does not establish execution success");
     cy.get("#tabRerun").click();
     cy.get("#renderedDataSummary", { timeout: 30000 }).should("contain.text", "rerun").and("contain.text", "sim2real.rrd");
     cy.get("#renderedDataSummary").should("contain.text", "held-out simulation camera");

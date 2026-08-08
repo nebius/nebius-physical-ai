@@ -9,7 +9,11 @@ hard failure here instead of a ``SyntaxError`` at agent-VM import time.
 from __future__ import annotations
 
 import ast
+import builtins
+import json
 import re
+import secrets
+import symtable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -74,6 +78,46 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     tree = ast.parse(body)
     assert tree is not None
     compile(body, "backend.py", "exec")
+
+
+def test_rendered_backend_ast_has_no_undefined_globals(monkeypatch) -> None:
+    """Catch embedded helpers that reference a global the backend never defines."""
+    body = _render_backend_body(monkeypatch)
+    ast.parse(body)
+    root = symtable.symtable(body, "backend.py", "exec")
+    interpreter_globals = {
+        "__builtins__",
+        "__cached__",
+        # Python 3.14's PEP 649 annotation scopes expose this compiler-owned
+        # binding through symtable even though it is not a backend dependency.
+        "__conditional_annotations__",
+        "__file__",
+        "__loader__",
+        "__name__",
+        "__package__",
+        "__spec__",
+    }
+    bound = set(dir(builtins)) | interpreter_globals
+    bound.update(
+        symbol.get_name()
+        for symbol in root.get_symbols()
+        if symbol.is_assigned()
+        or symbol.is_imported()
+        or symbol.is_namespace()
+        or symbol.is_parameter()
+    )
+
+    unresolved: set[str] = set()
+
+    def scan(table) -> None:
+        for symbol in table.get_symbols():
+            if symbol.is_referenced() and symbol.is_global() and symbol.get_name() not in bound:
+                unresolved.add(symbol.get_name())
+        for child in table.get_children():
+            scan(child)
+
+    scan(root)
+    assert unresolved == set(), f"rendered backend has undefined globals: {sorted(unresolved)}"
 
 
 def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
@@ -315,6 +359,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
 
     paths = {getattr(route, "path", "") for route in module.app.routes}
     for expected in (
+        "/access",
         "/foxglove/config",
         "/foxglove/status",
         "/foxglove/load-artifact",
@@ -322,6 +367,468 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "/foxglove/live",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
+
+    command_secrets = [secrets.token_urlsafe(32) for _index in range(5)]
+    public_steps = module._workflow_run_steps(
+        [
+            {
+                "key": "runs/example/npa-workflow/manifest.json",
+                "payload": {
+                    "steps": [
+                        {
+                            "state": "publish",
+                            "status": "ok",
+                            "returncode": 0,
+                            "argv": [
+                                "tool",
+                                f"Authorization: Bearer {command_secrets[0]}",
+                                f"--secret-key:{command_secrets[1]}",
+                                "--password",
+                                command_secrets[2],
+                                f"--password={command_secrets[3]}",
+                                f"wrapped --token {command_secrets[4]} --keep useful",
+                                "--output",
+                                "s3://safe-bucket/result.json",
+                            ],
+                            "outputs": [
+                                {
+                                    "uri": "https://objects.example/result?token="
+                                    + command_secrets[0]
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        ]
+    )
+    assert all(secret not in str(public_steps) for secret in command_secrets)
+    assert "<redacted>" in public_steps[0]["command"]
+    assert "--keep useful" in public_steps[0]["command"]
+    assert "--output s3://safe-bucket/result.json" in public_steps[0]["command"]
+    assert public_steps[0]["output_uri"] == "https://objects.example/result"
+
+    report = module.discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="project-test",
+        fallback_buckets=[],
+        list_projects=lambda _tenant: [
+            {"metadata": {"id": "project-test", "name": "Project Test"}}
+        ],
+        list_buckets=lambda _project: [
+            {"metadata": {"id": "bucket-resource-test", "name": "bucket-test"}}
+        ],
+        probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+        now=lambda: "2026-08-06T23:30:00+00:00",
+    )
+    monkeypatch.setattr(module, "_agent_access_report", lambda *, refresh=False: report)
+    access_payload = module.agent_access(refresh=True)
+    assert access_payload["apiVersion"] == "npa.agent.access/v1"
+    assert access_payload["identity"]["tenant_id"] == "tenant-test"
+    assert access_payload["projects"][0]["id"] == "project-test"
+
+    called: dict[str, object] = {}
+
+    class _RunPage:
+        runs = []
+        total_runs = 0
+        discovery_complete = True
+        source_errors = ()
+
+    def _list_runs(buckets, **kwargs):
+        called["buckets"] = list(buckets)
+        called["project_map"] = dict(kwargs.get("bucket_projects") or {})
+        return _RunPage()
+
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(module, "list_runs_cached_multi", _list_runs)
+    scoped = module.artifacts_runs(
+        limit=20,
+        resource_bucket="bucket-test",
+        project_id="project-test",
+    )
+    assert called["buckets"] == ["bucket-test"]
+    assert called["project_map"] == {"bucket-test": "project-test"}
+    assert scoped["resource_scope"] == {
+        "project_id": "project-test",
+        "bucket": "bucket-test",
+    }
+
+    indexed_runs = [
+        module.RunSummary(
+            f"indexed-run-{index}",
+            f"2031-01-0{index + 1}T00:00:00Z",
+            1,
+            False,
+            bucket="bucket-test",
+            project_id="project-test",
+            resolved_prefix=f"category-{index}",
+        )
+        for index in range(3)
+    ]
+
+    class _PagedRunPage:
+        runs = indexed_runs
+        total_runs = 3
+        discovery_complete = True
+        source_errors = ()
+
+    monkeypatch.setattr(module, "list_runs_cached_multi", lambda *_args, **_kwargs: _PagedRunPage())
+    first_runs = module.artifacts_runs(limit=2)
+    second_runs = module.artifacts_runs(limit=2, cursor=first_runs["next_cursor"])
+    assert first_runs["count"] == 2
+    assert first_runs["pagination_complete"] is False
+    assert second_runs["count"] == 1
+    assert second_runs["pagination_complete"] is True
+    assert {item["run_id"] for item in [*first_runs["runs"], *second_runs["runs"]]} == {
+        "indexed-run-0",
+        "indexed-run-1",
+        "indexed-run-2",
+    }
+    assert second_runs["runs"][0]["resolved_prefix"]
+
+    with pytest.raises(module.HTTPException) as exc_info:
+        module.artifacts_runs(resource_bucket="caller-bucket", project_id="project-test")
+    assert exc_info.value.status_code == 403
+
+    # The exact same access boundary feeds the stage-evidence endpoint. An
+    # artifact-only run exposes observed groups, never a Sim2Real template or
+    # fabricated execution success/not-run status.
+    artifacts = [
+        module.Artifact(
+            run_id="foreign-run-1",
+            key=f"foreign/foreign-run-1/{stage}/output-{index}.bin",
+            s3_uri=f"s3://bucket-test/foreign/foreign-run-1/{stage}/output-{index}.bin",
+            size=10,
+            last_modified="2026-08-07T00:00:00Z",
+            render="download",
+            inline=False,
+        )
+        for index, stage in enumerate(("capture", "train", "evaluate"), start=1)
+    ]
+    first_artifact_page = module.ArtifactListPage(
+        artifacts=artifacts[:1],
+        truncated=True,
+        next_cursor="opaque-page-two",
+        page_size=1000,
+    )
+    source = module.RunSummary(
+        "foreign-run-1",
+        "2026-08-07T00:00:00Z",
+        3,
+        False,
+        bucket="bucket-test",
+        project_id="project-test",
+        resolved_prefix="foreign",
+    )
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([source], (), True),
+    )
+    monkeypatch.setattr(
+        module,
+        "list_artifacts_page",
+        lambda *_args, **_kwargs: first_artifact_page,
+    )
+    first_page = module.artifacts_for_run(
+        "foreign-run-1",
+        resource_bucket="bucket-test",
+    )
+    assert first_page["pagination"] == {
+        "contract": "one_native_s3_page",
+        "max_objects": 1000,
+        "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket", "source_selected"],
+    }
+    assert first_page["count"] == 1
+    assert first_page["truncated"] is True
+    assert first_page["next_cursor"] == "opaque-page-two"
+    assert first_page["resolved_prefix"] == "foreign"
+
+    cursor_call: dict[str, str] = {}
+
+    def _next_artifact_page(_bucket, _run_id, *, prefix, cursor, **_kwargs):
+        cursor_call.update(prefix=prefix, cursor=cursor)
+        return module.ArtifactListPage(
+            artifacts=artifacts[1:],
+            truncated=False,
+            next_cursor="",
+            page_size=1000,
+        )
+
+    monkeypatch.setattr(module, "list_artifacts_page", _next_artifact_page)
+    second_page = module.artifacts_for_run(
+        "foreign-run-1",
+        cursor=first_page["next_cursor"],
+        resolved_prefix=first_page["resolved_prefix"],
+        resource_bucket=first_page["bucket"],
+    )
+    assert cursor_call == {"prefix": "foreign", "cursor": "opaque-page-two"}
+    assert second_page["count"] == 2
+    assert second_page["truncated"] is False
+
+    duplicate = module.RunSummary(
+        "foreign-run-1",
+        "2026-08-07T00:00:00Z",
+        1,
+        False,
+        bucket="bucket-test",
+        project_id="project-test",
+        resolved_prefix="other",
+    )
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([source, duplicate], (), True),
+    )
+    ambiguous = module.artifacts_for_run("foreign-run-1")
+    assert ambiguous.status_code == 409
+    assert b'"code":"ambiguous_run_id"' in ambiguous.body
+    assert b'"resolved_prefix":"foreign"' in ambiguous.body
+    assert b'"resolved_prefix":"other"' in ambiguous.body
+
+    flat = module.RunSummary(
+        "foreign-run-1", "2026-08-07T00:00:00Z", 1, False,
+        bucket="bucket-test", project_id="project-test", resolved_prefix="",
+    )
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([flat, duplicate], (), True),
+    )
+    flat_page = module.artifacts_for_run(
+        "foreign-run-1", resource_bucket="bucket-test", project_id="project-test",
+        source_selected=True,
+    )
+    assert flat_page["resolved_prefix"] == ""
+
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([], (), True),
+    )
+    maintenance = module.artifacts_for_run("codex-maintenance-20310102T030405Z")
+    assert maintenance.status_code == 404
+    assert b'"code":"run_not_discovered"' in maintenance.body
+    assert b"Codex maintenance job IDs" in maintenance.body
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([], ({"code": "artifact_discovery_unavailable"},), False),
+    )
+    incomplete = module.artifacts_for_run("unseen-run-20310102T030405Z")
+    assert incomplete.status_code == 503
+    assert b'"code":"artifact_search_incomplete"' in incomplete.body
+
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(module, "find_run_artifacts", lambda *_args, **_kwargs: artifacts)
+    details = module._sim2real_run_details(
+        {
+            "latest_submit": {},
+            "sim_viz": {},
+            "sim_viz_runs": {},
+            "sim2real_runs": {},
+            "workflow_draft": {},
+        },
+        run_id="foreign-run-1",
+        resource_bucket="bucket-test",
+        project_id="project-test",
+    )
+    assert details["project_id"] == "project-test"
+    assert details["bucket"] == "bucket-test"
+    assert details["stage_summary"]["text"] == (
+        "3 observed groups · execution status unavailable"
+    )
+    assert {stage["status"] for stage in details["stages"]} == {"observed_output"}
+    assert details["stage_summary"]["succeeded_count"] == 0
+    assert details["stage_summary"]["not_run_count"] == 0
+    assert all(stage["evidence_source"] == "artifact_listing" for stage in details["stages"])
+
+    # Stage inspection keeps the selected resource boundary and recursively
+    # redacts credential-bearing JSON fields before they reach the browser.
+    marker = "credential-value-must-not-escape"
+    config_artifact = module.Artifact(
+        run_id="foreign-run-1",
+        key="foreign/foreign-run-1/configs/manifest.json",
+        s3_uri="s3://bucket-test/foreign/foreign-run-1/configs/manifest.json",
+        size=128,
+        last_modified="2026-08-07T00:00:00Z",
+        render="json",
+        inline=True,
+    )
+
+    class _Body:
+        closed = False
+
+        def read(self, size):
+            payload = (
+                b'{"api_key":"credential-value-must-not-escape",'
+                b'"nested":{"password":"credential-value-must-not-escape"},'
+                b'"safe":"visible"}'
+            )
+            return payload[:size]
+
+        def close(self):
+            self.closed = True
+
+    class _S3:
+        def get_object(self, **_kwargs):
+            return {"Body": _Body()}
+
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (_S3(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(
+        module, "find_run_artifacts", lambda *_args, **_kwargs: [config_artifact]
+    )
+    inspected = module.artifacts_stage(
+        "foreign-run-1",
+        stage_key="configs",
+        resource_bucket="bucket-test",
+        project_id="project-test",
+    )
+    assert inspected["bucket"] == "bucket-test"
+    assert inspected["project_id"] == "project-test"
+    assert inspected["count"] == 1
+    assert marker not in str(inspected)
+    assert "visible" in str(inspected)
+    with pytest.raises(module.HTTPException) as detail_exc:
+        module.artifacts_stage(
+            "foreign-run-1",
+            stage_key="configs",
+            resource_bucket="caller-bucket",
+            project_id="project-test",
+        )
+    assert detail_exc.value.status_code == 403
+
+    # The run-details/status surface uses the same redacted projection for both
+    # workflow_steps and its human-readable logs.
+    manifest_payload = json.dumps(
+        {
+            "workflow": "redaction-regression",
+            "steps": [
+                {
+                    "state": "publish",
+                    "status": "ok",
+                    "returncode": 0,
+                    "argv": [
+                        "tool",
+                        f"Authorization: Bearer {command_secrets[0]}",
+                        f"--secret-key:{command_secrets[1]}",
+                        "--password",
+                        command_secrets[2],
+                        f"--password={command_secrets[3]}",
+                    ],
+                }
+            ],
+        }
+    ).encode()
+    manifest_artifact = module.Artifact(
+        run_id="foreign-run-1",
+        key="foreign/foreign-run-1/npa-workflow/manifest.json",
+        s3_uri="s3://bucket-test/foreign/foreign-run-1/npa-workflow/manifest.json",
+        size=len(manifest_payload),
+        last_modified="2026-08-07T00:00:00Z",
+        render="json",
+        inline=True,
+    )
+
+    class _ManifestS3:
+        def get_object(self, **_kwargs):
+            class _ManifestBody:
+                def read(self, size):
+                    return manifest_payload[:size]
+
+                def close(self):
+                    return None
+
+            return {"Body": _ManifestBody()}
+
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (_ManifestS3(), {"bucket": "bucket-test", "prefix": ""}),
+    )
+    monkeypatch.setattr(
+        module, "find_run_artifacts", lambda *_args, **_kwargs: [manifest_artifact]
+    )
+    redacted_details = module._artifact_backed_run_details(
+        {},
+        "foreign-run-1",
+        resource_bucket="bucket-test",
+        project_id="project-test",
+    )
+    assert redacted_details is not None
+    assert all(secret not in str(redacted_details) for secret in command_secrets)
+    assert "<redacted>" in str(redacted_details["workflow_steps"])
+    assert "<redacted>" in str(redacted_details["logs"])
+
+    invalid_prefixes = (".", "..", "safe/../escape", "safe/%2e%2e/escape")
+    for invalid_prefix in invalid_prefixes:
+        with pytest.raises(module.HTTPException) as page_exc:
+            module.artifacts_for_run(
+                "foreign-run-1",
+                resolved_prefix=invalid_prefix,
+                resource_bucket="bucket-test",
+            )
+        assert page_exc.value.status_code == 400
+        with pytest.raises(module.HTTPException) as stage_exc:
+            module.artifacts_stage(
+                "foreign-run-1",
+                resolved_prefix=invalid_prefix,
+                resource_bucket="bucket-test",
+                project_id="project-test",
+            )
+        assert stage_exc.value.status_code == 400
+        with pytest.raises(module.HTTPException) as details_exc:
+            module._artifact_backed_run_details(
+                {},
+                "foreign-run-1",
+                resolved_prefix=invalid_prefix,
+                resource_bucket="bucket-test",
+                project_id="project-test",
+            )
+        assert details_exc.value.status_code == 400
+
+    source_recording = tmp_path / "source.rrd"
+    source_recording.write_bytes(b"new-recording")
+    published_recording = tmp_path / "published" / "sim2real.rrd"
+    published_recording.parent.mkdir()
+    published_recording.write_bytes(b"existing-recording")
+    monkeypatch.setattr(module, "RECORDING_PATH", published_recording)
+    original_replace = Path.replace
+
+    def fail_temp_replace(path, target):
+        if path.name.endswith(".tmp"):
+            raise OSError("synthetic replace failure")
+        return original_replace(path, target)
+
+    with monkeypatch.context() as replace_patch:
+        replace_patch.setattr(Path, "replace", fail_temp_replace)
+        with pytest.raises(OSError, match="synthetic replace failure"):
+            module._publish_rrd_recording(source_recording)
+    assert published_recording.read_bytes() == b"existing-recording"
+    assert list(published_recording.parent.glob("*.tmp")) == []
+
+    secret = "do-not-return-this-credential"
+
+    def _fail_access(*, refresh=False):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(module, "_agent_access_report", _fail_access)
+    failed = module.agent_access()
+    assert failed.status_code == 503
+    assert secret.encode() not in failed.body
 
 
 def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):

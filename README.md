@@ -141,6 +141,30 @@ the UI/backend/nginx layer without touching infra. Operator docs:
 [skills/tools/npa-agent/SKILL.md](skills/tools/npa-agent/SKILL.md) ·
 teardown/reproduce loop: [skills/workflows/agent-fresh-operate/SKILL.md](skills/workflows/agent-fresh-operate/SKILL.md).
 
+The agent is tenant-aware for read-only discovery. Its **Agent access** panel
+and `GET /api/access` show the running identity's effective access project by
+project. Artifact search spans only buckets for which the agent can both
+associate the bucket with a visible project and verify S3 object-list access.
+Partial access is expected and is reported without hiding accessible projects.
+Workflow submission and artifact writes/deletes remain deployment-project
+scoped. Arbitrary caller-supplied S3 URIs remain configuration scoped; an exact
+artifact selected from a discovered cross-project run can be read without
+broadening those mutation boundaries.
+
+This read-only tenant behavior is enforced by the agent application, not by a
+structurally read-only IAM credential. Deployments may still attach a service
+account with tenant-level editors-group grants; operators must treat that
+credential as privileged even though cross-project mutation endpoints are not
+exposed. Mutation endpoints continue to target only the configured home project.
+
+`GET /api/artifacts/run/{run_id}` returns at most one native S3 page (up to
+1,000 objects), never the entire run. A truncated response includes
+`next_cursor`; consumers must repeat the request with that cursor plus the
+returned `resolved_prefix` and `bucket` as `resource_bucket` until
+`truncated=false`. The bundled UI follows this contract. Older consumers that
+assumed a complete array must migrate to cursor following; page-local counts and
+`preferred` selection describe only the returned page.
+
 ---
 
 ## Before you burn GPU-hours — preflight
