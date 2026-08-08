@@ -2919,7 +2919,9 @@
             node.addEventListener("change", async () => {
               const selectedRun = selectedRunIdFromUi();
               if (!selectedRun) return;
-              await loadArtifactsForSelectedRun();
+              const selectedEntry = runEntryFromSelect(document.getElementById("runIdSelect")) ||
+                runEntryFromSelect(document.getElementById("stagesRunSelect"));
+              await loadArtifactsForSelectedRun(selectedRun, null, selectedEntry);
             });
           }
         }
@@ -6379,9 +6381,11 @@
           params.set("cursor", String(priorPage.next_cursor));
           params.set("resolved_prefix", String(priorPage.resolved_prefix || ""));
           params.set("resource_bucket", String(priorPage.bucket || ""));
+          params.set("source_selected", "1");
           if (priorPage.project_id) params.set("project_id", String(priorPage.project_id));
         } else if (entry && entry.bucket) {
           params.set("resource_bucket", String(entry.bucket));
+          params.set("source_selected", "1");
           if (entry.project_id) params.set("project_id", String(entry.project_id));
           if (entry.resolved_prefix) params.set("resolved_prefix", String(entry.resolved_prefix));
         }
@@ -6429,12 +6433,14 @@
           bucket: String(data.bucket || (entry && entry.bucket) || ""),
           project_id: String(data.project_id || (entry && entry.project_id) || ""),
           resolved_prefix: String(data.resolved_prefix || ""),
+          source_selected: true,
         };
         const detailOptions = {
           entry,
           resourceBucket: activeRunResourceScope.bucket,
           projectId: activeRunResourceScope.project_id,
           resolvedPrefix: activeRunResourceScope.resolved_prefix,
+          sourceSelected: true,
           preserveOnError: true,
         };
         if (!artifacts.length) {
@@ -7374,6 +7380,7 @@
           if (scope.bucket) params.set("resource_bucket", String(scope.bucket));
           if (scope.project_id) params.set("project_id", String(scope.project_id));
           if (scope.resolved_prefix) params.set("resolved_prefix", String(scope.resolved_prefix));
+          if (scope.source_selected || scope.bucket) params.set("source_selected", "1");
           data = await loadJson(
             "/api/artifacts/stage/" + encodeURIComponent(rid) +
             "?" + params.toString()
@@ -7610,9 +7617,11 @@
         const resourceBucket = String(opts.resourceBucket || entry.bucket || "").trim();
         const projectId = String(opts.projectId || entry.project_id || "").trim();
         const resolvedPrefix = String(opts.resolvedPrefix || "").trim();
+        const sourceSelected = Boolean(opts.sourceSelected || entry.bucket);
         if (resourceBucket) params.set("resource_bucket", resourceBucket);
         if (projectId) params.set("project_id", projectId);
         if (resolvedPrefix) params.set("resolved_prefix", resolvedPrefix);
+        if (sourceSelected) params.set("source_selected", "1");
         const query = params.toString();
         const path = target
           ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target) + (query ? "?" + query : "")

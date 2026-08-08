@@ -640,6 +640,7 @@ describe("NPA agent UI with mocked APIs", () => {
       }
       expect(cursor).to.eq("cursor-page-2");
       expect(req.query.resolved_prefix).to.eq("category");
+      expect(req.query.source_selected).to.eq("1");
       expect(req.query.resource_bucket).to.eq("paged-bucket");
       req.reply({
         statusCode: 200,

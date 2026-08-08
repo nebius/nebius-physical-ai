@@ -542,7 +542,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     assert first_page["pagination"] == {
         "contract": "one_native_s3_page",
         "max_objects": 1000,
-        "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket"],
+        "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket", "source_selected"],
     }
     assert first_page["count"] == 1
     assert first_page["truncated"] is True
@@ -590,6 +590,21 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     assert b'"code":"ambiguous_run_id"' in ambiguous.body
     assert b'"resolved_prefix":"foreign"' in ambiguous.body
     assert b'"resolved_prefix":"other"' in ambiguous.body
+
+    flat = module.RunSummary(
+        "foreign-run-1", "2026-08-07T00:00:00Z", 1, False,
+        bucket="bucket-test", project_id="project-test", resolved_prefix="",
+    )
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([flat, duplicate], (), True),
+    )
+    flat_page = module.artifacts_for_run(
+        "foreign-run-1", resource_bucket="bucket-test", project_id="project-test",
+        source_selected=True,
+    )
+    assert flat_page["resolved_prefix"] == ""
 
     monkeypatch.setattr(
         module,

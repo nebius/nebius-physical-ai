@@ -294,6 +294,7 @@ def _artifact_backed_run_details(
     resource_bucket: str = "",
     project_id: str = "",
     resolved_prefix: str = "",
+    source_selected: bool = False,
 ) -> dict | None:
     if not run_id:
         return None
@@ -314,14 +315,14 @@ def _artifact_backed_run_details(
                     status_code=403,
                     detail="artifact bucket is outside effective agent access",
                 )
-            if exact_prefix:
+            if exact_prefix or source_selected:
                 artifacts = list_artifacts(
                     run_bucket,
                     validate_run_id(run_id),
                     prefix=exact_prefix,
                     s3=s3,
                 )
-            if not artifacts:
+            if not artifacts and not source_selected:
                 artifacts = find_run_artifacts(
                     run_bucket,
                     base_prefix=settings.get("prefix", ""),
@@ -481,6 +482,7 @@ def _sim2real_run_details(
     resource_bucket: str = "",
     project_id: str = "",
     resolved_prefix: str = "",
+    source_selected: bool = False,
 ) -> dict:
     latest = state.get("latest_submit", {})
     if not isinstance(latest, dict):
@@ -520,6 +522,7 @@ def _sim2real_run_details(
         resource_bucket=resource_bucket,
         project_id=project_id,
         resolved_prefix=resolved_prefix,
+        source_selected=source_selected,
     )
     if artifact_details:
         authoritative_existing = [

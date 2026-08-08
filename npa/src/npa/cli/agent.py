@@ -7097,8 +7097,6 @@ def artifacts_runs(
         raise
     except Exception as exc:
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
-
-
 @app.get("/artifacts/run/{{run_id:path}}")
 def artifacts_for_run(
     run_id: str,
@@ -7106,7 +7104,7 @@ def artifacts_for_run(
     cursor: str = "",
     resolved_prefix: str = "",
     resource_bucket: str = "",
-    project_id: str = "",
+    project_id: str = "", source_selected: bool = False,
 ):
     try:
         normalized_run = validate_run_id(run_id)
@@ -7134,6 +7132,8 @@ def artifacts_for_run(
             matches = [item for item in matches if item.project_id == project_id]
         if requested_prefix:
             matches = [item for item in matches if item.resolved_prefix == requested_prefix]
+        elif source_selected:
+            matches = [item for item in matches if not item.resolved_prefix]
         if not matches:
             complete = bool(
                 discovery_complete
@@ -7195,7 +7195,7 @@ def artifacts_for_run(
             "pagination": {{
                 "contract": "one_native_s3_page",
                 "max_objects": 1000,
-                "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket"],
+                "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket", "source_selected"],
             }},
             "preferred": preferred.to_dict() if preferred else None,
             "access": _agent_access_diagnostics(access_report),
@@ -7205,8 +7205,6 @@ def artifacts_for_run(
         raise
     except Exception as exc:
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
-
-
 _SENSITIVE_ARTIFACT_INFO_KEY = _SENSITIVE_PUBLIC_NAME
 _SENSITIVE_ARTIFACT_INFO_VALUE = _SENSITIVE_PUBLIC_VALUE
 
@@ -7239,7 +7237,7 @@ def artifacts_stage(
     prefix: str = "",
     resource_bucket: str = "",
     project_id: str = "",
-    resolved_prefix: str = "",
+    resolved_prefix: str = "", source_selected: bool = False,
 ):
     # Describe one pipeline stage and return its artifacts + inlined info/config
     # JSON so an operator can click a stage and manually inspect it (grounded in
@@ -7265,11 +7263,11 @@ def artifacts_stage(
                     status_code=403,
                     detail="artifact bucket is outside effective agent access",
                 )
-            if exact_prefix:
+            if exact_prefix or source_selected:
                 artifacts = list_artifacts(
                     run_bucket, normalized_run, prefix=exact_prefix, s3=s3
                 )
-            if not artifacts:
+            if not artifacts and not source_selected:
                 artifacts = find_run_artifacts(
                     run_bucket,
                     base_prefix=settings.get("prefix", ""),
@@ -7782,7 +7780,6 @@ def set_sim_assets_selection(payload: dict):
         return {{"ok": True, "selection": persisted, "sim_viz": viz}}
     _save_state(state)
     return {{"ok": True, "selection": selection}}
-
 @app.get("/sim-assets/selection")
 def get_sim_assets_selection():
     state = _load_state()
@@ -7790,14 +7787,13 @@ def get_sim_assets_selection():
     if not isinstance(selection, dict):
         selection = dict(DEFAULT_SELECTION)
     return selection
-
 @app.get("/workflows/sim2real/status")
 def sim2real_status(
     run_id: str = "",
     prefix: str = "",
     resource_bucket: str = "",
     project_id: str = "",
-    resolved_prefix: str = "",
+    resolved_prefix: str = "", source_selected: bool = False,
 ):
     state = _load_state()
     latest = state.get("latest_submit", {{}})
@@ -7809,6 +7805,7 @@ def sim2real_status(
         resource_bucket=resource_bucket,
         project_id=project_id,
         resolved_prefix=resolved_prefix,
+        source_selected=source_selected,
     )
     return {{
         "ok": True,
@@ -7825,7 +7822,7 @@ def sim2real_run_detail(
     prefix: str = "",
     resource_bucket: str = "",
     project_id: str = "",
-    resolved_prefix: str = "",
+    resolved_prefix: str = "", source_selected: bool = False,
 ):
     state = _load_state()
     details = _sim2real_run_details(
@@ -7835,6 +7832,7 @@ def sim2real_run_detail(
         resource_bucket=resource_bucket,
         project_id=project_id,
         resolved_prefix=resolved_prefix,
+        source_selected=source_selected,
     )
     if not str(details.get("run_id") or "").strip():
         raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")

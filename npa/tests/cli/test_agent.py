@@ -1166,6 +1166,7 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     assert "prefix: artifactPrefixValue()" not in ui
     assert 'params.set("resource_bucket", resourceBucket)' in ui
     assert 'params.set("resolved_prefix", resolvedPrefix)' in ui
+    assert 'params.set("source_selected", "1")' in ui
     assert '"stages succeeded"' not in ui
 
 

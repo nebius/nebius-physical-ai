@@ -44,7 +44,7 @@ if __name__ == "npa.cli.agent_access_runtime":
         s3_uri_in_configured_buckets,
     )
     from npa.workflows.artifacts import (
-        find_run_artifact_page,
+        find_run_sources_across_buckets,
         parse_s3_uri,
         validate_run_id,
     )
@@ -460,34 +460,34 @@ def _resolve_accessible_run_artifact(
         candidates = [requested_bucket]
     else:
         candidates = accessible
-    run_bucket = ""
     for candidate in candidates:
         try:
-            resolved_prefix, first_page = find_run_artifact_page(
-                candidate,
-                base_prefix=str((settings or {}).get("prefix") or ""),
-                run_id=normalized_run,
-                page_size=1,
-                s3=s3,
+            sources, _source_errors, _discovery_complete = (
+                find_run_sources_across_buckets(
+                    [candidate],
+                    base_prefix=str((settings or {}).get("prefix") or ""),
+                    run_id=normalized_run,
+                    s3=s3,
+                )
             )
-            if not first_page.artifacts:
-                continue
+        except Exception:
+            continue
+        for source in sources:
+            resolved_prefix = str(source.resolved_prefix or "").strip().strip("/")
             discovered_scope = "/".join(
                 part for part in (resolved_prefix, normalized_run) if part
             ) + "/"
             if not normalized_key.startswith(discovered_scope):
                 continue
-            s3.head_object(Bucket=candidate, Key=normalized_key)
-        except Exception:
-            continue
-        run_bucket = candidate
-        break
-    if not run_bucket:
-        raise HTTPException(
-            status_code=404,
-            detail="artifact is not a discovered object for this run",
-        )
-    return run_bucket, normalized_key, normalized_run
+            try:
+                s3.head_object(Bucket=candidate, Key=normalized_key)
+            except Exception:
+                continue
+            return candidate, normalized_key, normalized_run
+    raise HTTPException(
+        status_code=404,
+        detail="artifact is not a discovered object for this run",
+    )
 
 
 def _authorize_agent_artifact_uri(*, s3, settings, uri: str, run_id: str = ""):

@@ -278,14 +278,16 @@ def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) ->
     s3 = FakeS3()
     monkeypatch.setattr(runtime, "validate_run_id", lambda value: value, raising=False)
     monkeypatch.setattr(runtime, "_safe_artifact_key", lambda value: value, raising=False)
-    discovered = SimpleNamespace(artifacts=[SimpleNamespace(key="category/run-a/first.json")])
-
-    def find_page(_bucket, *, run_id, **_kwargs):
+    def find_sources(buckets, *, run_id, **_kwargs):
+        assert buckets == ["accessible-bucket"]
         if run_id == "run-a":
-            return "category", discovered
-        return "", SimpleNamespace(artifacts=[])
+            return [
+                SimpleNamespace(resolved_prefix="category"),
+                SimpleNamespace(resolved_prefix="nested"),
+            ], (), True
+        return [], (), True
 
-    monkeypatch.setattr(runtime, "find_run_artifact_page", find_page)
+    monkeypatch.setattr(runtime, "find_run_sources_across_buckets", find_sources)
     monkeypatch.setattr(
         runtime,
         "_agent_s3_buckets",
@@ -301,6 +303,13 @@ def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) ->
         key="category/run-a/report.json",
         bucket="accessible-bucket",
     ) == ("accessible-bucket", "category/run-a/report.json", "run-a")
+    assert runtime._resolve_accessible_run_artifact(
+        s3=s3,
+        settings={},
+        run_id="run-a",
+        key="nested/run-a/report.json",
+        bucket="accessible-bucket",
+    ) == ("accessible-bucket", "nested/run-a/report.json", "run-a")
 
     with pytest.raises(HTTPException, match="not a discovered object"):
         runtime._resolve_accessible_run_artifact(
@@ -350,10 +359,10 @@ def test_cross_project_membership_discovery_has_a_bucket_cap(monkeypatch) -> Non
     monkeypatch.setattr(runtime, "_agent_s3_buckets", lambda _s3, _settings: buckets)
 
     def no_run(bucket, **_kwargs):
-        attempted.append(bucket)
-        return "", SimpleNamespace(artifacts=[])
+        attempted.extend(bucket)
+        return [], (), True
 
-    monkeypatch.setattr(runtime, "find_run_artifact_page", no_run)
+    monkeypatch.setattr(runtime, "find_run_sources_across_buckets", no_run)
 
     with pytest.raises(HTTPException, match="not a discovered object"):
         runtime._resolve_accessible_run_artifact(
