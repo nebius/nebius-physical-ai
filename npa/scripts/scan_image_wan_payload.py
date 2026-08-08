@@ -77,8 +77,9 @@ FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "cuda_install_at_build",
         re.compile(
-            r"\bRUN\b.*(?:download\.pytorch\.org/whl/cu|pip\s+install[^\n]*(?:nvidia-|torch==[^\n]*\+cu))",
-            re.I | re.S,
+            r"\bRUN\b[^\n]*(?:download\.pytorch\.org/whl/cu|"
+            r"pip\s+install(?:(?!&&|\|\||;)[^\n])*(?:nvidia-|torch==[^\s;&|]*\+cu))",
+            re.I,
         ),
     ),
     (

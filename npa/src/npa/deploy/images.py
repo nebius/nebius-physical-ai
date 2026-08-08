@@ -149,7 +149,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
     # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
-    "wan2-2": "2.2-ti2v5b-rtfetch-cu128-20260808T015337Z",
+    "wan2-2": "2.2-ti2v5b-rtfetch-cu128-20260808T015337Z-r2",
     "nebius-cli": "0.12.192",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",

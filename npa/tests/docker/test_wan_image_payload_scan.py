@@ -80,6 +80,7 @@ def test_forbidden_path_mutations_fail(tmp_path: Path, name: str, kind: str) -> 
     "created_by",
     [
         "RUN pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.7.1",
+        "RUN pip install nvidia-cublas-cu12==12.8.3.14",
         "RUN wan-runtime ensure",
         "FROM nvidia/cuda:12.8.1-runtime",
         "ENV NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS=YES",
@@ -88,6 +89,16 @@ def test_forbidden_path_mutations_fail(tmp_path: Path, name: str, kind: str) -> 
 def test_forbidden_history_mutations_fail(tmp_path: Path, created_by: str) -> None:
     rootfs = _tar(tmp_path / "history.tar", {"opt/byof/LICENSE.txt": b"Apache-2.0"})
     assert scanner.scan(rootfs, {"history": [{"created_by": created_by}]})
+
+
+def test_negative_inventory_assertion_is_not_a_cuda_install(tmp_path: Path) -> None:
+    rootfs = _tar(tmp_path / "history.tar", {"opt/byof/LICENSE.txt": b"Apache-2.0"})
+    created_by = (
+        "RUN python -m pip install --index-url "
+        "https://download.pytorch.org/whl/cpu torch==2.7.1+cpu "
+        "&& ! grep -Eiq '^nvidia-|cu(da|dnn|blas)|nccl' inventory.txt"
+    )
+    assert scanner.scan(rootfs, {"history": [{"created_by": created_by}]}) == []
 
 
 def test_secret_content_mutation_fails(tmp_path: Path) -> None:
