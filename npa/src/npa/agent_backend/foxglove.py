@@ -29,7 +29,7 @@ import re
 import secrets
 from collections.abc import Mapping
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 # Kept in sync with npa.workbench.foxglove by npa/tests/cli/test_agent_foxglove.py
 # (this module cannot import it: it is inlined into the agent backend).
@@ -42,6 +42,7 @@ FOXGLOVE_SDK_FILES: tuple[str, ...] = (
 FOXGLOVE_SDK_MANIFEST = "npa-sdk-manifest.json"
 FOXGLOVE_DEFAULT_EMBED_SRC = "https://embed.foxglove.dev/"
 FOXGLOVE_DEFAULT_LAYOUT_KEY = "npa-agent-foxglove"
+FOXGLOVE_WEB_APP_URL = "https://app.foxglove.dev/~/view"
 FOXGLOVE_ARTIFACT_EXTENSIONS: tuple[str, ...] = (".mcap", ".bag", ".db3", ".ulg", ".ulog")
 MCAP_MAGIC = b"\x89MCAP0\r\n"
 
@@ -331,6 +332,67 @@ def remote_file_data_source(
     return source
 
 
+def foxglove_deep_links(recording_url: str, *, origin: str = "") -> dict:
+    """Build official Foxglove web/desktop links for a remotely served recording.
+
+    Foxglove fetches the file from its own origin, so relative URLs and insecure
+    HTTP endpoints are unusable from the hosted application. Credentials must
+    never be embedded in the URL; the agent's recording path is intentionally
+    unauthenticated and protected by a random filename instead.
+    """
+    absolute = _absolute(recording_url, origin)
+    try:
+        parsed = urlparse(absolute)
+    except ValueError:
+        parsed = urlparse("")
+    reason = ""
+    if not absolute:
+        reason = "No active MCAP recording is available to export."
+    elif parsed.scheme != "https" or not parsed.hostname:
+        reason = (
+            "Foxglove remote-file links require an absolute HTTPS recording URL "
+            "that the browser or desktop app can reach."
+        )
+    elif parsed.username or parsed.password:
+        reason = "Recording URLs with embedded credentials are not supported."
+    if reason:
+        return {
+            "available": False,
+            "reason": reason,
+            # Do not reflect invalid input into API/UI payloads. In particular,
+            # a rejected URL may contain userinfo that must never reach browser
+            # state, logs, snapshots, or copied links.
+            "recording_url": "",
+            "download_url": "",
+            "web_url": "",
+            "desktop_url": "",
+        }
+
+    query = [("ds", "remote-file"), ("ds.url", absolute)]
+    web_url = f"{FOXGLOVE_WEB_APP_URL}?{urlencode(query)}"
+    desktop_url = f"{FOXGLOVE_WEB_APP_URL}?{urlencode([*query, ('openIn', 'desktop')])}"
+    return {
+        "available": True,
+        "reason": "",
+        "recording_url": absolute,
+        "download_url": absolute,
+        "web_url": web_url,
+        "desktop_url": desktop_url,
+        "data_source": "remote-file",
+        "requires_cloud_upload": False,
+        "public_access_note": (
+            "This random recording URL is served without authentication so the "
+            "cross-origin Foxglove app can issue CORS byte-range requests. Anyone "
+            "with the URL can read it until the agent prunes the publication."
+        ),
+        "reachability_note": (
+            "The browser or desktop app must be able to reach this HTTPS URL; "
+            "private networks may require VPN access and self-signed certificates "
+            "must be trusted first."
+        ),
+    }
+
+
 def data_source_for_state(
     sim_viz: dict | None,
     *,
@@ -468,6 +530,9 @@ def resolve_foxglove_config(
             "MIT-licensed @foxglove/embed SDK and the recording."
         ),
     }
+    payload["export"] = foxglove_deep_links(
+        str(state.get("foxglove_url") or ""), origin=origin
+    )
     return payload
 
 
@@ -559,6 +624,7 @@ def foxglove_status_payload(config: dict, sim_viz: dict | None = None) -> dict:
         "updated_at": str(state.get("mcap_updated_at") or ""),
         "data_source_type": str((source or {}).get("type") or ""),
         "data_source": source,
+        "export": dict(config.get("export") or {}),
     }
 
 
@@ -607,6 +673,7 @@ def describe_foxglove_context(config: dict | None, sim_viz: dict | None = None) 
 
 
 __all__ = [
+    "foxglove_deep_links",
     "self_hosted_viewer_url",
     "select_viewer_backend",
     "LICHTBLICK_RECORDING_PATH",
@@ -618,6 +685,7 @@ __all__ = [
     "FOXGLOVE_DATA_URL_PREFIX",
     "FOXGLOVE_DEFAULT_EMBED_SRC",
     "FOXGLOVE_DEFAULT_LAYOUT_KEY",
+    "FOXGLOVE_WEB_APP_URL",
     "FOXGLOVE_HOST_MODULE_URL",
     "FOXGLOVE_LIVE_PROTOCOLS",
     "FOXGLOVE_SDK_FILES",

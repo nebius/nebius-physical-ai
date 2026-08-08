@@ -213,6 +213,7 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 |---|---|---|---|
 | Hugging Face token | `tokens.HF_TOKEN` | `HF_TOKEN` | Downloading gated Hugging Face models, datasets, or weights |
 | Nebius Token Factory key | `tokens.NEBIUS_TOKEN_FACTORY_KEY` | `NEBIUS_TOKEN_FACTORY_KEY` | Zero-GPU hosted inference (Token Factory / OpenAI-compatible) paths |
+| Foxglove API token | `tokens.FOXGLOVE_API_TOKEN` | `FOXGLOVE_API_TOKEN` | Optional server-side Foxglove API calls; not needed to download/open an MCAP remote-file link |
 | Nebius AI Cloud key | `tokens.NEBIUS_AI_CLOUD_KEY` | `NEBIUS_AI_CLOUD_KEY` | Calling Nebius AI Cloud APIs |
 | NGC API key | `ngc.api_key` | `NGC_API_KEY` | Using NGC-backed GR00T model references |
 | NGC organization | `ngc.org` | `NGC_ORG` | Your NGC key is organization-scoped |

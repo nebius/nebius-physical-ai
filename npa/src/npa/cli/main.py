@@ -100,6 +100,10 @@ tokens:
   # Get one at https://tokenfactory.nebius.com/ -> API keys. The key is a long
   # opaque token (it starts with "v1."); it is NOT your Nebius IAM/CLI token.
   NEBIUS_TOKEN_FACTORY_KEY: <paste-your-token-factory-api-key>  # e.g. v1.XXXXXXXX...
+  # Optional: Foxglove API token for server-side API operations. Open-in-Foxglove
+  # uses the public remote-file URL and does not require this token or a cloud upload.
+  # Never put this token in a URL, browser config, or command-line argument.
+  FOXGLOVE_API_TOKEN: <paste-your-foxglove-api-token>
 ngc:
   # NVIDIA NGC API key (for GR00T / Cosmos NVIDIA container + model pulls).
   # Get one at https://org.ngc.nvidia.com/setup/api-key -> "Generate API Key"
@@ -571,6 +575,9 @@ def _run_interactive_configure(*, provision: bool = True) -> None:
             "HF_TOKEN": hf_token,
             "NEBIUS_AI_CLOUD_KEY": ai_cloud_api_key,
             "NEBIUS_TOKEN_FACTORY_KEY": token_factory_api_key,
+            # Kept when already present (or supplied via the environment). It is
+            # intentionally not accepted as a CLI argument and not echoed.
+            "FOXGLOVE_API_TOKEN": existing_credentials.foxglove_api_token,
         },
         "ngc": {"api_key": ngc_api_key},
         "storage": {

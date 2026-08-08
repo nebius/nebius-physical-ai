@@ -104,6 +104,54 @@ def test_load_credentials_reads_nebius_token_factory_key(tmp_path: Path) -> None
     assert shared_credential_env(resolved)["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-file"
 
 
+def test_load_credentials_keeps_foxglove_token_server_side(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"FOXGLOVE_API_TOKEN": "fox-unit-secret"}})
+    )
+
+    resolved = load_credentials(path=credentials_path, environ={})
+
+    assert resolved.foxglove_api_token == "fox-unit-secret"
+    assert "FOXGLOVE_API_TOKEN" not in resolved.tokens
+    assert "FOXGLOVE_API_TOKEN" not in shared_credential_env(resolved)
+    assert "fox-unit-secret" not in repr(resolved)
+
+
+def test_foxglove_token_env_overrides_file_without_export(tmp_path: Path) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"FOXGLOVE_API_TOKEN": "fox-file-secret"}})
+    )
+
+    resolved = load_credentials(
+        path=credentials_path,
+        environ={"FOXGLOVE_API_TOKEN": "fox-env-secret"},
+    )
+
+    assert resolved.foxglove_api_token == "fox-env-secret"
+    assert resolved.tokens == {}
+
+
+def test_foxglove_token_is_not_exported_to_process_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"FOXGLOVE_API_TOKEN": "fox-file-secret"}})
+    )
+    monkeypatch.delenv("FOXGLOVE_API_TOKEN", raising=False)
+
+    resolved = load_credentials(
+        path=credentials_path,
+        environ=None,
+        export_to_environment=True,
+    )
+
+    assert resolved.foxglove_api_token == "fox-file-secret"
+    assert "FOXGLOVE_API_TOKEN" not in __import__("os").environ
+
+
 def test_load_credentials_ignores_legacy_token_factory_alias(tmp_path: Path) -> None:
     credentials_path = tmp_path / "credentials.yaml"
     credentials_path.write_text(

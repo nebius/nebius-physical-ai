@@ -23,6 +23,7 @@ try:  # agent VM: /opt/npa-agent is on sys.path and the package is flat there
         convert_run_request,
         converted_recording_update,
         foxglove_status_payload,
+        foxglove_deep_links,
         is_foxglove_artifact,
         live_source_update,
         prune_published,
@@ -32,6 +33,7 @@ except ImportError:  # repo / local tests
         convert_run_request,
         converted_recording_update,
         foxglove_status_payload,
+        foxglove_deep_links,
         is_foxglove_artifact,
         live_source_update,
         prune_published,
@@ -148,6 +150,42 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             "summary": summary,
             "sim_viz": sim_viz,
             "foxglove": foxglove_status_payload(deps.foxglove_config(state), sim_viz),
+        }
+
+    @app.post("/foxglove/export")
+    def foxglove_export_route(payload: dict | None = None) -> dict:
+        """Export the active MCAP through the existing public recording path.
+
+        If the active run has not been converted yet, delegate to the registered
+        conversion route so conversion, publication, pruning, and state updates
+        continue to have one implementation.
+        """
+        body = payload if isinstance(payload, dict) else {}
+        state = deps.load_state()
+        sim_viz = _sim_viz(state)
+        requested_run = str(body.get("run_id") or sim_viz.get("run_id") or "").strip()
+        active_url = str(sim_viz.get("foxglove_url") or "").strip()
+        active_run = str(sim_viz.get("run_id") or "").strip()
+        force = bool(body.get("force_convert"))
+        if force or not active_url or (requested_run and requested_run != active_run):
+            converted = foxglove_convert_run_route(body)
+            sim_viz = dict(converted.get("sim_viz") or {})
+            state = dict(state)
+            state["sim_viz"] = sim_viz
+            summary = converted.get("summary")
+        else:
+            summary = None
+        config = deps.foxglove_config(state)
+        export = foxglove_deep_links(str(config.get("recording_url") or ""))
+        if not export["available"]:
+            raise http_error(status_code=409, detail=export["reason"])
+        return {
+            "ok": True,
+            "converted": summary is not None,
+            "summary": summary,
+            "run_id": str(sim_viz.get("run_id") or ""),
+            "artifact_key": str(sim_viz.get("artifact_key") or ""),
+            "export": export,
         }
 
     @app.post("/foxglove/live")
