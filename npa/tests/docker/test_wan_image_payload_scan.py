@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import bz2
+import gzip
 import hashlib
 import io
 import importlib.util
 import json
+import lzma
 import sys
 import tarfile
 import zipfile
@@ -45,6 +48,28 @@ def _zip_bytes(members: dict[str, bytes]) -> bytes:
         for name, content in members.items():
             archive.writestr(name, content)
     return payload.getvalue()
+
+
+def _v7_tar_bytes(name: str, payload: bytes) -> bytes:
+    """Build a checksum-valid legacy tar header with no ustar magic."""
+
+    def octal(value: int, width: int) -> bytes:
+        return f"{value:0{width - 1}o}\0".encode("ascii")
+
+    encoded_name = name.encode("utf-8")
+    assert len(encoded_name) <= 100
+    header = bytearray(512)
+    header[: len(encoded_name)] = encoded_name
+    header[100:108] = octal(0o644, 8)
+    header[108:116] = octal(0, 8)
+    header[116:124] = octal(0, 8)
+    header[124:136] = octal(len(payload), 12)
+    header[136:148] = octal(0, 12)
+    header[148:156] = b"        "
+    header[156:157] = b"0"
+    header[148:156] = f"{sum(header):06o}\0 ".encode("ascii")
+    padding = b"\0" * ((512 - len(payload) % 512) % 512)
+    return bytes(header) + payload + padding + b"\0" * 1024
 
 
 def test_clean_oss_rootfs_and_runtime_fetch_plumbing_pass(tmp_path: Path) -> None:
@@ -154,6 +179,37 @@ def test_secret_content_mutation_fails(tmp_path: Path) -> None:
     assert {item.kind for item in findings} == {"credential_content"}
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"config": {"Labels": {"build.token": "hf_token=actual_secret_value"}}},
+        {"config": {"Env": ["AWS_SECRET_ACCESS_KEY=actual_secret_value"]}},
+        {"history": [{"created_by": "RUN use AKIAABCDEFGHIJKLMNOP"}]},
+    ],
+)
+def test_secret_like_oci_config_metadata_fails(
+    tmp_path: Path, config: dict[str, object]
+) -> None:
+    rootfs = _tar(tmp_path / "metadata-secret.tar", {"opt/byof/LICENSE": b"clean"})
+    findings = scanner.scan(rootfs, config)
+    assert "credential_metadata" in {item.kind for item in findings}
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_kind"),
+    [
+        (".aws/credentials", "credential_file"),
+        ("./.aws/credentials", "credential_file"),
+        (".cache/huggingface/model.bin", "package_cache"),
+    ],
+)
+def test_root_dot_paths_remain_forbidden(
+    tmp_path: Path, path: str, expected_kind: str
+) -> None:
+    findings = scanner.scan(_tar(tmp_path / "dot-path.tar", {path: b"payload"}), {})
+    assert expected_kind in {item.kind for item in findings}
+
+
 def test_large_secret_content_and_chunk_boundary_mutations_fail(tmp_path: Path) -> None:
     prefix = b"x" * (2 * 1024 * 1024 - 8)
     rootfs = _tar(
@@ -224,11 +280,142 @@ def test_nested_archive_mutations_fail_closed(
     assert any("!/" in item.path for item in findings)
 
 
+def test_legacy_v7_tar_mutation_is_not_opaque(tmp_path: Path) -> None:
+    nested_payload = _v7_tar_bytes("models/model.safetensors", b"weights")
+    findings = scanner.scan(
+        _tar(
+            tmp_path / "legacy-tar-rootfs.tar",
+            {"opt/application/legacy.payload": nested_payload},
+        ),
+        {},
+    )
+    assert "checkpoint_or_weight" in {item.kind for item in findings}
+    assert any(
+        "legacy.payload!/models/model.safetensors" in item.path for item in findings
+    )
+
+
+def test_nested_siblings_share_cumulative_decompression_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(scanner, "MAX_NESTED_UNCOMPRESSED_BYTES", 100)
+    nested_payload = _zip_bytes(
+        {
+            "first.gz": gzip.compress(b"a" * 40),
+            "second.gz": gzip.compress(b"b" * 40),
+        }
+    )
+    findings = scanner.scan(
+        _tar(
+            tmp_path / "cumulative-budget.tar",
+            {"opt/application/data.zip": nested_payload},
+        ),
+        {},
+    )
+    assert "nested_archive_unreadable" in {item.kind for item in findings}
+    assert any("cumulative uncompressed byte limit" in item.detail for item in findings)
+
+
+def test_nested_siblings_share_cumulative_member_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(scanner, "MAX_NESTED_ARCHIVE_MEMBERS", 1)
+    nested_payload = _zip_bytes({"first.txt": b"a", "second.txt": b"b"})
+    findings = scanner.scan(
+        _tar(
+            tmp_path / "member-budget.tar", {"opt/application/data.zip": nested_payload}
+        ),
+        {},
+    )
+    assert "nested_archive_unreadable" in {item.kind for item in findings}
+    assert any("cumulative member limit" in item.detail for item in findings)
+
+
 def test_malformed_nested_archive_fails_closed(tmp_path: Path) -> None:
     findings = scanner.scan(
         _tar(
             tmp_path / "malformed-nested-rootfs.tar",
             {"opt/application/broken.zip": b"PK\x03\x04not-a-real-archive"},
+        ),
+        {},
+    )
+    assert "nested_archive_unreadable" in {item.kind for item in findings}
+
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("opt/application/service.json.gz", gzip.compress(b'{"service": "clean"}')),
+        ("opt/application/graph.gpickle.bz2", bz2.compress(b"clean graph data")),
+        ("opt/application/index.json.xz", lzma.compress(b'{"index": "clean"}')),
+    ],
+)
+def test_compressed_non_tar_data_is_inspected_without_tar_false_positive(
+    tmp_path: Path, name: str, payload: bytes
+) -> None:
+    findings = scanner.scan(_tar(tmp_path / "compressed-data.tar", {name: payload}), {})
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("opt/application/service.json.gz", gzip.compress(b"AKIAABCDEFGHIJKLMNOP")),
+        (
+            "opt/application/graph.gpickle.bz2",
+            bz2.compress(b"hf_token=actual_secret_value"),
+        ),
+        (
+            "opt/application/index.json.xz",
+            lzma.compress(b"-----BEGIN OPENSSH PRIVATE KEY-----"),
+        ),
+    ],
+)
+def test_compressed_non_tar_secret_mutations_fail_closed(
+    tmp_path: Path, name: str, payload: bytes
+) -> None:
+    findings = scanner.scan(
+        _tar(tmp_path / "compressed-secret.tar", {name: payload}), {}
+    )
+    assert "credential_content" in {item.kind for item in findings}
+    assert any("!/<decompressed>" in item.path for item in findings)
+
+
+def test_compressed_audited_example_literal_requires_exact_decompressed_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outer_path = "opt/application/service.json.gz"
+    virtual_path = outer_path + "!/<decompressed>"
+    audited_payload = b'{"access_key": "AKIAIOSFODNN7EXAMPLE"}'
+    monkeypatch.setattr(
+        scanner,
+        "AUDITED_SECRET_LITERAL_FILE_SHA256",
+        {virtual_path: hashlib.sha256(audited_payload).hexdigest()},
+    )
+    clean = scanner.scan(
+        _tar(
+            tmp_path / "compressed-audited.tar",
+            {outer_path: gzip.compress(audited_payload)},
+        ),
+        {},
+    )
+    assert clean == []
+
+    mutated = scanner.scan(
+        _tar(
+            tmp_path / "compressed-audited-mutated.tar",
+            {outer_path: gzip.compress(audited_payload + b" mutated")},
+        ),
+        {},
+    )
+    assert "audited_literal_byte_drift" in {item.kind for item in mutated}
+
+
+def test_malformed_gzip_stream_fails_closed(tmp_path: Path) -> None:
+    findings = scanner.scan(
+        _tar(
+            tmp_path / "malformed-gzip-rootfs.tar",
+            {"opt/application/broken.json.gz": b"\x1f\x8bnot-a-real-gzip"},
         ),
         {},
     )

@@ -197,6 +197,10 @@ def nginx_agent_site_body(
     client_max_body_size 32m;
   }}
   location /rerun/recordings/ {{
+    # Rerun WASM cannot attach HTTP Basic credentials to its recording fetch.
+    # Keep the static copy same-origin and non-CORS so unrelated browser origins
+    # cannot read it; the authenticated API blob remains the parent-page gate.
+    auth_basic off;
     alias /opt/npa-agent/recordings/;
     default_type application/octet-stream;
     add_header Cache-Control "no-cache" always;

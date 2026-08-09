@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import bz2
+import gzip
 import hashlib
 import json
+import lzma
 import re
 import shutil
 import subprocess
@@ -127,6 +130,33 @@ FORBIDDEN_ELF_DEPENDENCY = re.compile(
 
 MAX_NESTED_ARCHIVE_DEPTH = 8
 MAX_NESTED_UNCOMPRESSED_BYTES = 8 * 1024**3
+MAX_NESTED_ARCHIVE_MEMBERS = 100_000
+
+
+@dataclass
+class _NestedArchiveBudget:
+    """Cumulative resource budget shared by one image archive's nested tree."""
+
+    byte_limit: int
+    member_limit: int
+    bytes_consumed: int = 0
+    members_consumed: int = 0
+
+    def consume_bytes(self, size: int) -> None:
+        if size < 0:
+            raise ValueError("nested archive reports a negative member size")
+        self.bytes_consumed += size
+        if self.bytes_consumed > self.byte_limit:
+            raise ValueError(
+                "nested archive tree exceeds cumulative uncompressed byte limit"
+            )
+
+    def consume_member(self, size: int) -> None:
+        self.members_consumed += 1
+        if self.members_consumed > self.member_limit:
+            raise ValueError("nested archive tree exceeds cumulative member limit")
+        self.consume_bytes(size)
+
 
 # Exact OSS files whose examples, parser literals, or command-line help include
 # secret-shaped text.  This is deliberately a path+byte allowlist rather than a
@@ -138,7 +168,7 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
         "bd7d3f79eb42bbd4dbe9e00e8e9143568d131702dfecaad2a780eaad6c68c91c"
     ),
     "opt/wan-base/lib/python3.10/site-packages/PIL/__pycache__/ImageFont.cpython-310.pyc": (
-        "cbec9b4674e9567bc429c6bdef7ab815c734f1e7ce03688b656e8d3808323019"
+        "9fafda176439826d7d5615756deb2c64fdf460e69e06b44e3d08addef526c84c"
     ),
     "opt/wan-base/lib/python3.10/site-packages/accelerate/commands/config/sagemaker.py": (
         "4912eea7d5eb57f67edb703777c8196e4a9ba270dcb1c3030e66e99b2b42cdb6"
@@ -161,11 +191,17 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
     "opt/wan-base/lib/python3.10/site-packages/botocore/data/sts/2011-06-15/examples-1.json": (
         "c83fc27073767fdb7d3e5190e4dcce25a09871c7b118fa289db056d93e0e31c9"
     ),
+    "opt/wan-base/lib/python3.10/site-packages/botocore/data/rds/2014-10-31/service-2.json.gz!/<decompressed>": (
+        "c5c1c925c3e977c10a0d77464e243eafc77a7a04364912a45965912421bad817"
+    ),
+    "opt/wan-base/lib/python3.10/site-packages/botocore/data/sts/2011-06-15/service-2.json.gz!/<decompressed>": (
+        "5bec182c6a1f8a96993c78b95ba10087b2eaf5c617484ba755f38b03e2104901"
+    ),
     "opt/wan-base/lib/python3.10/site-packages/botocore-1.39.17.dist-info/METADATA": (
         "d1ce694b50d009bb3dab11331a281323d70c46ff4724e692dab3c2481ed62074"
     ),
     "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-310.pyc": (
-        "97f1bfaca131ec9c1096c63199e80837fba3805b91d650a2489c8c1bc1c30b50"
+        "c8ceff5f03506ed2d70f0346b96d440312c5e2b839d0d90d31902a95d276027d"
     ),
     "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/ssh.py": (
         "162b177bf9d429d3c67ea10d5612a99a86b399a23ca87f067be5466dcd1dca4c"
@@ -300,12 +336,87 @@ def _nested_archive_kind(stream: IO[bytes]) -> str | None:
     stream.seek(0)
     if head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
         return "zip"
-    if (
-        head.startswith((b"\x1f\x8b", b"BZh", b"\xfd7zXZ\x00"))
-        or head[257:262] == b"ustar"
-    ):
-        return "tar"
+    if head.startswith(b"\x1f\x8b"):
+        return "gzip"
+    if head.startswith(b"BZh"):
+        return "bzip2"
+    if head.startswith(b"\xfd7zXZ\x00"):
+        return "xz"
+    # POSIX ustar is only one valid tar dialect. V7/legacy tars have no magic,
+    # so ask the standard-library reader to validate the header/checksum rather
+    # than leaving those archives opaque to the payload scanner.
+    if len(head) == 512:
+        try:
+            with tarfile.open(fileobj=stream, mode="r:") as archive:
+                next(iter(archive), None)
+            return "tar"
+        except (EOFError, OSError, tarfile.TarError, ValueError):
+            pass
+        finally:
+            stream.seek(0)
     return None
+
+
+def _decompress_nested_stream(
+    *,
+    kind: str,
+    stream: IO[bytes],
+    parent_path: str,
+    source: str,
+    findings: list[Finding],
+    depth: int,
+    budget: _NestedArchiveBudget,
+) -> None:
+    """Inspect a gzip/bzip2/xz member without assuming it contains a tar.
+
+    Python's ``tarfile`` can transparently decompress a tar archive, but it
+    rejects ordinary compressed data such as botocore's ``service-2.json.gz``
+    or NetworkX's ``*.gpickle.bz2``.  Those are still byte containers and must
+    be inspected.  Decompress once to a disk-backed temporary file, then route
+    an actual tar back through the archive walker and all other streams through
+    the ordinary content scanner.
+    """
+
+    stream.seek(0)
+    openers = {
+        "gzip": gzip.GzipFile,
+        "bzip2": bz2.BZ2File,
+        "xz": lzma.LZMAFile,
+    }
+    opener = openers[kind]
+    compressed = (
+        gzip.GzipFile(fileobj=stream, mode="rb")
+        if kind == "gzip"
+        else opener(stream, mode="rb")
+    )
+    with compressed, tempfile.TemporaryFile() as expanded:
+        while True:
+            chunk = compressed.read(1024 * 1024)
+            if not chunk:
+                break
+            budget.consume_bytes(len(chunk))
+            expanded.write(chunk)
+        expanded.seek(0)
+        expanded_kind = _nested_archive_kind(expanded)
+        expanded.seek(0)
+        if expanded_kind in {"tar", "zip", "gzip", "bzip2", "xz"}:
+            _scan_nested_archive(
+                stream=expanded,
+                parent_path=parent_path,
+                source=source,
+                findings=findings,
+                depth=depth + 1,
+                budget=budget,
+            )
+        else:
+            _scan_file_stream(
+                path=f"{parent_path}!/<decompressed>",
+                stream=expanded,
+                source=source,
+                findings=findings,
+                depth=depth + 1,
+                budget=budget,
+            )
 
 
 def _scan_file_stream(
@@ -315,6 +426,7 @@ def _scan_file_stream(
     source: str,
     findings: list[Finding],
     depth: int,
+    budget: _NestedArchiveBudget,
 ) -> None:
     _add_forbidden_path_findings(path, source, findings)
     audited_secret_sha256 = AUDITED_SECRET_LITERAL_FILE_SHA256.get(path)
@@ -367,6 +479,7 @@ def _scan_file_stream(
             source=source,
             findings=findings,
             depth=depth,
+            budget=budget,
         )
 
 
@@ -377,6 +490,7 @@ def _scan_nested_archive(
     source: str,
     findings: list[Finding],
     depth: int,
+    budget: _NestedArchiveBudget,
 ) -> None:
     kind = _nested_archive_kind(stream)
     if kind is None:
@@ -390,49 +504,52 @@ def _scan_nested_archive(
             )
         )
         return
-    total_size = 0
     try:
-        if kind == "zip":
+        if kind in {"gzip", "bzip2", "xz"}:
+            _decompress_nested_stream(
+                kind=kind,
+                stream=stream,
+                parent_path=parent_path,
+                source=source,
+                findings=findings,
+                depth=depth,
+                budget=budget,
+            )
+        elif kind == "zip":
             with zipfile.ZipFile(stream) as archive:
-                for member in archive.infolist():
-                    nested_path = f"{parent_path}!/{member.filename.lstrip('/')}"
-                    if member.is_dir():
+                for zip_member in archive.infolist():
+                    nested_path = f"{parent_path}!/{zip_member.filename.lstrip('/')}"
+                    if zip_member.is_dir():
                         _add_forbidden_path_findings(nested_path, source, findings)
                         continue
-                    total_size += member.file_size
-                    if total_size > MAX_NESTED_UNCOMPRESSED_BYTES:
-                        raise ValueError(
-                            "nested archive exceeds uncompressed byte limit"
-                        )
-                    with archive.open(member) as nested:
+                    budget.consume_member(zip_member.file_size)
+                    with archive.open(zip_member) as nested_zip_stream:
                         _scan_file_stream(
                             path=nested_path,
-                            stream=nested,
+                            stream=nested_zip_stream,
                             source=source,
                             findings=findings,
                             depth=depth + 1,
+                            budget=budget,
                         )
         else:
             with tarfile.open(fileobj=stream, mode="r:*") as archive:
-                for member in archive:
-                    nested_path = f"{parent_path}!/{member.name.lstrip('/')}"
-                    if not member.isfile():
+                for tar_member in archive:
+                    nested_path = f"{parent_path}!/{tar_member.name.lstrip('/')}"
+                    if not tar_member.isfile():
                         _add_forbidden_path_findings(nested_path, source, findings)
                         continue
-                    total_size += member.size
-                    if total_size > MAX_NESTED_UNCOMPRESSED_BYTES:
-                        raise ValueError(
-                            "nested archive exceeds uncompressed byte limit"
-                        )
-                    nested = archive.extractfile(member)
-                    if nested is not None:
-                        with nested:
+                    budget.consume_member(tar_member.size)
+                    nested_tar_stream = archive.extractfile(tar_member)
+                    if nested_tar_stream is not None:
+                        with nested_tar_stream:
                             _scan_file_stream(
                                 path=nested_path,
-                                stream=nested,
+                                stream=nested_tar_stream,
                                 source=source,
                                 findings=findings,
                                 depth=depth + 1,
+                                budget=budget,
                             )
     except (
         EOFError,
@@ -451,18 +568,19 @@ def _scan_nested_archive(
         )
 
 
-def _history_text(config: dict[str, Any]) -> str:
-    return (
-        "\n".join(
-            str(entry.get("created_by") or "")
-            for entry in config.get("history") or []
-            if isinstance(entry, dict)
-        )
-        + "\n"
-        + "\n".join(
-            str(item) for item in ((config.get("config") or {}).get("Env") or [])
-        )
-    )
+def _config_text(config: dict[str, Any]) -> str:
+    """Serialize every shipped OCI config/history field for policy scanning."""
+
+    return json.dumps(config, sort_keys=True, default=str)
+
+
+def _normalize_archive_path(path: str) -> str:
+    """Remove archive-root syntax without stripping a real leading dotfile."""
+
+    normalized = path
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized.lstrip("/")
 
 
 def scan(rootfs_tar: Path, config: dict[str, Any]) -> list[Finding]:
@@ -474,9 +592,13 @@ def scan(rootfs_tar: Path, config: dict[str, Any]) -> list[Finding]:
 def _scan_tars(tars: list[Path], config: dict[str, Any]) -> list[Finding]:
     findings: list[Finding] = []
     for tar_path in tars:
+        budget = _NestedArchiveBudget(
+            byte_limit=MAX_NESTED_UNCOMPRESSED_BYTES,
+            member_limit=MAX_NESTED_ARCHIVE_MEMBERS,
+        )
         with tarfile.open(tar_path, "r:*") as archive:
             for member in archive:
-                path = member.name.lstrip("./")
+                path = _normalize_archive_path(member.name)
                 if not path:
                     continue
                 if member.isfile():
@@ -489,11 +611,12 @@ def _scan_tars(tars: list[Path], config: dict[str, Any]) -> list[Finding]:
                                 source=tar_path.name,
                                 findings=findings,
                                 depth=0,
+                                budget=budget,
                             )
                 else:
                     _add_forbidden_path_findings(path, tar_path.name, findings)
 
-    history = _history_text(config)
+    history = _config_text(config)
     for kind, pattern in FORBIDDEN_HISTORY:
         if pattern.search(history):
             findings.append(
@@ -501,6 +624,15 @@ def _scan_tars(tars: list[Path], config: dict[str, Any]) -> list[Finding]:
                     kind, "<image-history>", "forbidden build history or environment"
                 )
             )
+    metadata = history.encode("utf-8")
+    if any(pattern.search(metadata) for pattern in SECRET_CONTENT):
+        findings.append(
+            Finding(
+                "credential_metadata",
+                "<oci-config>",
+                "secret-like bytes in image configuration or history",
+            )
+        )
     return findings
 
 

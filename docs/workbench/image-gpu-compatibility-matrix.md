@@ -159,8 +159,8 @@ Managed-Kubernetes nodes were placed successfully for both B200 in us-central1 a
 | 56 | 2026-08-03 | final rebased `npa-loop-eval` `…-20260803T034152Z` | NVIDIA B200 (`sm_100`) | validators and scored two-environment Franka pick-place CUDA rollout | `DATACENTER_CHILD_VALIDATION_PASSED` |
 | 57 | 2026-08-03 | same final `npa-loop-eval` | NVIDIA B300 SXM6 AC (`sm_103`) | same scored two-environment CUDA rollout | `DATACENTER_CHILD_VALIDATION_PASSED` |
 | 58 | 2026-08-03 | same final `npa-loop-eval` | NVIDIA H100 80GB HBM3 (`sm_90`) | same scored two-environment CUDA rollout | `DATACENTER_CHILD_VALIDATION_PASSED` |
-| 59 | 2026-08-08 | digest-pinned `npa-wan2-2` accepted runtime-fetch candidate | RTX PRO 6000 Blackwell Server Edition (`sm_120`) | official Wan TI2V-5B generation with native PyTorch SDPA, full MP4 decode/variation validation, and verified Rerun postprocessing | PASS; `byof-wan22-e2e-20260808T221824Z`, 17 H.264 frames at 1280×704 and 24 fps |
-| 60 | 2026-08-08 | same digest-pinned `npa-wan2-2` candidate | 4× NVIDIA B200 (`sm_100`) | official four-rank Wan path through the instrumented wrapper: NCCL, T5/DiT FULL_SHARD FSDP, Ulysses distributed attention/all-to-all, process-group teardown, MP4 validation, and verified Rerun postprocessing | PASS; `byof-wan22-multigpu-e2e-20260808T222011Z`, world size 4 with ranks 0–3 on four unique devices |
+| 59 | 2026-08-09 | digest-pinned `npa-wan2-2` accepted runtime-fetch candidate | RTX PRO 6000 Blackwell Server Edition (`sm_120`) | official Wan TI2V-5B generation with native PyTorch SDPA, full MP4 decode/variation validation, and verified Rerun postprocessing | PASS; `byof-wan22-e2e-20260809T002636Z`, 17 H.264 frames at 1280×704 and 24 fps |
+| 60 | 2026-08-09 | same digest-pinned `npa-wan2-2` candidate | 4× NVIDIA B200 (`sm_100`) | official four-rank Wan path through the instrumented wrapper: NCCL, T5/DiT FULL_SHARD FSDP, Ulysses distributed attention/all-to-all, process-group teardown, MP4 validation, and verified Rerun postprocessing | PASS; `byof-wan22-multigpu-e2e-20260809T003617Z`, world size 4 with ranks 0–3 on four unique devices |
 
 ## Measured failures and negative controls
 

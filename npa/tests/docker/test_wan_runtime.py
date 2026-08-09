@@ -4,8 +4,11 @@ import os
 import hashlib
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -94,6 +97,94 @@ def test_offline_runtime_reuses_only_the_exact_current_stamp(tmp_path: Path) -> 
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def _real_runtime_verification_env(
+    tmp_path: Path, *, overrides: dict[str, str] | None = None
+) -> dict[str, str]:
+    requirements_payload = "example==1 --hash=sha256:" + "0" * 64 + "\n"
+    requirements_sha = hashlib.sha256(requirements_payload.encode()).hexdigest()
+    stamp = hashlib.sha256(
+        f"{requirements_sha}|3.10-linux_x86_64".encode()
+    ).hexdigest()[:16]
+    env, _requirements = _offline_runtime_env(tmp_path, current_stamp=stamp)
+    tree = (tmp_path / "cache" / "current").resolve()
+    fake_python = tree / "venv" / "bin" / "python"
+    fake_python.unlink()
+    fake_python.symlink_to(sys.executable)
+
+    module_root = tmp_path / "runtime-modules"
+    torch_module = module_root / "torch"
+    torch_module.mkdir(parents=True)
+    versions = {
+        "torch": "2.7.1+cu128",
+        "torchvision": "0.22.1+cu128",
+        "torchaudio": "2.7.1+cu128",
+        "triton": "3.3.1",
+        "nvidia-cublas-cu12": "12.8.3.14",
+        "nvidia-cuda-cupti-cu12": "12.8.57",
+        "nvidia-cuda-nvrtc-cu12": "12.8.61",
+        "nvidia-cuda-runtime-cu12": "12.8.57",
+        "nvidia-cudnn-cu12": "9.7.1.26",
+        "nvidia-cufft-cu12": "11.3.3.41",
+        "nvidia-cufile-cu12": "1.13.0.11",
+        "nvidia-curand-cu12": "10.3.9.55",
+        "nvidia-cusolver-cu12": "11.7.2.55",
+        "nvidia-cusparse-cu12": "12.5.7.53",
+        "nvidia-cusparselt-cu12": "0.6.3",
+        "nvidia-nccl-cu12": "2.27.7",
+        "nvidia-nvjitlink-cu12": "12.8.61",
+        "nvidia-nvtx-cu12": "12.8.55",
+    }
+    versions.update(overrides or {})
+    torch_module.joinpath("__init__.py").write_text(
+        f'__version__ = "{versions["torch"]}"\nclass version:\n    cuda = "12.8"\n',
+        encoding="utf-8",
+    )
+    for name, version in versions.items():
+        if name == "torch":
+            continue
+        metadata_dir = module_root / f"{name.replace('-', '_')}-{version}.dist-info"
+        metadata_dir.mkdir()
+        metadata_dir.joinpath("METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n",
+            encoding="utf-8",
+        )
+    env["PYTHONPATH"] = str(module_root)
+    return env
+
+
+def test_runtime_verification_accepts_only_intended_local_version_suffixes(
+    tmp_path: Path,
+) -> None:
+    completed = subprocess.run(
+        ["bash", str(RUNTIME_SCRIPT), "ensure"],
+        env=_real_runtime_verification_env(tmp_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"torch": "2.7.10"},
+        {"nvidia-nccl-cu12": "2.27.70"},
+    ],
+)
+def test_runtime_verification_rejects_prefix_extension_versions(
+    tmp_path: Path, overrides: dict[str, str]
+) -> None:
+    completed = subprocess.run(
+        ["bash", str(RUNTIME_SCRIPT), "ensure"],
+        env=_real_runtime_verification_env(tmp_path, overrides=overrides),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode != 0
 
 
 def test_interrupted_install_removes_partial_runtime_tree(tmp_path: Path) -> None:

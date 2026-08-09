@@ -22,6 +22,9 @@ distribution are deliberately absent from all image layers. `wan-runtime`
 refuses before download unless the operator sets
 `NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS=YES`; accepted installation is atomic and
 lands only in `/workspace/.cache/npa/wan2-2/runtime`.
+Offline reuse succeeds only for a complete cache whose requirements/Python-ABI
+stamp matches exactly; empty or deliberately stale caches fail closed with exit
+69, while missing operator acceptance fails before download with exit 78.
 
 The hard gate generates 17 frames at the official TI2V-5B 1280×704 spatial
 size and 24 fps with eight sampling steps. The shorter duration and sampling
@@ -154,9 +157,9 @@ local plus remote verification results. Only a verified manifest names the
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260808T221824Z`, fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
+| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260809T002636Z`, fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
 | `wan2.2_decoded_mp4_validation` | accepted | same run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
-| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | `byof-wan22-multigpu-e2e-20260808T222011Z`, official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | `byof-wan22-multigpu-e2e-20260809T003617Z`, official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
 | `wan2.2_distributed_rank_topology_validation` | accepted | same run proved unique ranks/devices, NCCL 2.27.7 runtime transport and sum 10/10, T5/DiT FULL_SHARD, Ulysses calls, and process-group teardown |
 | `wan2.2_verified_rerun_recording` | accepted | RRD built from that fresh distributed MP4 and JSON evidence, then uploaded, remotely re-verified, and loaded byte-identically into the live agent |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | optional real input path exists but lacks separately accepted live evidence |
@@ -175,12 +178,12 @@ revisions, observed image IDs, run IDs, and MP4/RRD proof hashes is recorded in
 
 The materialized accepted distributed recording is:
 
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260808T222011Z/wan2_2_ti2v_5b_multigpu.rrd`
-  (2,948,326 bytes; SHA-256
-  `dae41d23b65a2030452bc0939f7c32b14f30b9b884592c3ed2a19c68ff81a97c`).
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260808T222011Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260809T003617Z/wan2_2_ti2v_5b_multigpu.rrd`
+  (2,948,210 bytes; SHA-256
+  `b83f687cf2aa603995f319e8d595b9bd360f21463ac0bea4c4c069f70f4d3eb1`).
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260809T003617Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
   (10,463 bytes; SHA-256
-  `9f65b80d3e8ab5f92bb4e5fb17913f100ed44a2aa684447b342b9fe71bf278f7`).
+  `1847e76df9712040c54f6be9c073762091eea5cd88c3e38e741896117fd5f7bd`).
 
 S3 HEAD/GET, local and downloaded `rerun rrd verify`, `rerun rrd stats`, entity
 inspection, embedded-video identity, and the live agent Rerun blob all agreed
@@ -194,7 +197,9 @@ and audited OSS dependencies; Debian copyright records and wheel metadata carry
 their GPL/LGPL/BSD/MIT/Apache notices. CUDA Python distributions, model/tokenizer,
 credentials, data, and caches are runtime-only. Public eligibility requires four
 separate checks: scan the pushed digest and every individual layer/history entry
-with `npa/scripts/scan_image_wan_payload.py`; inspect the BuildKit SPDX
+with `npa/scripts/scan_image_wan_payload.py`; recursively decompress ordinary
+gzip, bzip2, and xz payloads as well as nested archives and fail closed on
+unreadable or oversized content; inspect the BuildKit SPDX
 attestation; bind the SLSA provenance to the exact platform manifest; and review
 the license inventory. The scanner proves prohibited-byte absence only—it does
 not generate or review the SBOM or make a legal determination. The publication

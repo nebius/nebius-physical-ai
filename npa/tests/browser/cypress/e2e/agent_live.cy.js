@@ -337,6 +337,27 @@ describe("NPA agent UI against live infra", () => {
               const src = String($frame.attr("src") || "");
               expect(decodeURIComponent(src)).to.include("/rerun/recordings/sim2real.rrd");
             });
+            // Rerun's WASM fetch cannot attach the agent's Basic credentials.
+            // Prove both that its same-origin transport is anonymously readable
+            // and that the real viewer painted non-blank recording pixels.
+            const publicRecordingUrl = `${String(Cypress.config("baseUrl") || "").replace(/\/$/, "")}/rerun/recordings/sim2real.rrd`;
+            cy.request({ url: publicRecordingUrl, failOnStatusCode: false }).then((rrdResp) => {
+              expect(rrdResp.status).to.eq(200);
+              expect(Number(rrdResp.headers["content-length"] || 0)).to.be.greaterThan(0);
+            });
+            const waitForRenderedRecording = (attempt) => {
+              cy.window().then((win) => {
+                const iframe = win.document.getElementById("rerunFrame");
+                return win.__NPA_AGENT_TEST__.probeRerunCanvasContent(iframe);
+              }).then((rendered) => {
+                if (!rendered && attempt < 60) {
+                  cy.wait(1000).then(() => waitForRenderedRecording(attempt + 1));
+                  return;
+                }
+                expect(rendered, "Rerun painted the loaded recording").to.eq(true);
+              });
+            };
+            waitForRenderedRecording(0);
             cy.get("#statusBar").should("not.contain.text", "Non-RRD artifact loaded");
           });
         };

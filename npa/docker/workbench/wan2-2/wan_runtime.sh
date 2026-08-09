@@ -71,7 +71,12 @@ verify_tree() {
 import importlib.metadata
 import torch
 
-assert torch.__version__.startswith("2.7.1")
+def public_version(value):
+    # CUDA wheel local versions such as 2.7.1+cu128 are intended. Prefix
+    # extensions (2.7.10, 2.27.70) and post/dev releases are not.
+    return value.split("+", 1)[0]
+
+assert public_version(torch.__version__) == "2.7.1", torch.__version__
 assert torch.version.cuda == "12.8", torch.version.cuda
 for name, expected in {
     "torchvision": "0.22.1",
@@ -92,7 +97,8 @@ for name, expected in {
     "nvidia-nvjitlink-cu12": "12.8.61",
     "nvidia-nvtx-cu12": "12.8.55",
 }.items():
-    assert importlib.metadata.version(name).startswith(expected)
+    observed = importlib.metadata.version(name)
+    assert public_version(observed) == expected, (name, observed, expected)
 print(f"torch={torch.__version__} cuda={torch.version.cuda}")
 PY
 }

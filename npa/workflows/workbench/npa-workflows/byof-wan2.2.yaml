@@ -504,10 +504,10 @@ initial: generate
 states:
   generate:
     description: >
-      Build and push the pinned official Wan 2.2 source, fetch pinned TI2V-5B
-      weights at run time, execute real upstream generation on RTX PRO 6000
-      Blackwell, validate
-      the decoded MP4, and upload all evidence through the BYOF S3 runner.
+      Resolve the immutable accepted Wan 2.2 image, fetch pinned TI2V-5B weights
+      at run time, execute real upstream generation on RTX PRO 6000 Blackwell,
+      validate the decoded MP4, and upload all evidence through the BYOF S3
+      runner.
     toolRef: workbench.byof.repo
     resources: gpu
     outputs:

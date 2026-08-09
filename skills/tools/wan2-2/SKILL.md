@@ -25,11 +25,11 @@ Also load `byof-onboard`, `oss-solution-registry-onboard`,
 - Official model: `Wan-AI/Wan2.2-TI2V-5B`, pinned to
   `921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
 - TI2V-5B is a stock generative-video model supporting text and image inputs.
-- Run `byof-wan22-e2e-20260808T221824Z` accepted the real single-GPU
+- Run `byof-wan22-e2e-20260809T002636Z` accepted the real single-GPU
   text-to-video path on RTX PRO 6000 Blackwell (`sm_120`) from immutable image
-  digest `sha256:eae3ce6c9fd526a29fcbe96d39cc76c1e120465eabcc6b0ea8edc9e401d48fd2`,
+  digest `sha256:41d85d9667e9bbb2019eab5c26498d2f875a68133e06b21ab4468dd190c1e7a9`,
   including exact MP4/RRD byte identity.
-- Run `byof-wan22-multigpu-e2e-20260808T222011Z` accepted one shared official
+- Run `byof-wan22-multigpu-e2e-20260809T003617Z` accepted one shared official
   generation from that same observed image digest on four B200s (`sm_100`) with
   world size 4, NCCL, T5 and DiT FULL_SHARD FSDP, Ulysses size 4, and exact
   MP4/RRD byte identity.

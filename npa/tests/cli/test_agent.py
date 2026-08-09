@@ -487,7 +487,7 @@ def test_bootstrap_enables_public_https_nginx() -> None:
     assert "--no-public-https" in source
 
 
-def test_bootstrap_nginx_requires_auth_for_rerun_recording() -> None:
+def test_bootstrap_nginx_serves_rerun_recording_to_same_origin_wasm() -> None:
     source = _agent_source()
     assert "location /rerun/recordings/" in source
     assert "alias /opt/npa-agent/recordings/" in source
@@ -499,7 +499,7 @@ def test_bootstrap_nginx_requires_auth_for_rerun_recording() -> None:
         for line in recordings_location.splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
-    assert "auth_basic off;" not in directives
+    assert "auth_basic off;" in directives
     assert not [line for line in directives if "Access-Control" in line]
     assert 'add_header Cross-Origin-Resource-Policy "same-origin" always;' in directives
     rerun_viewer_location = source.split("location /rerun/ {{", 1)[1].split(
