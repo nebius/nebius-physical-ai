@@ -512,6 +512,11 @@ def onboard_robot_command(
     k8s_namespace: str = typer.Option(
         "default", "--k8s-namespace", help="Smoke job namespace."
     ),
+    k8s_isaac_cache_pvc: str = typer.Option(
+        os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC", "npa-sim2real-isaac-cache"),
+        "--k8s-isaac-cache-pvc",
+        help="Pre-warmed Isaac dependency PVC mounted offline/read-only.",
+    ),
     json_output: bool = typer.Option(
         False, "--json", help="Emit the derived plan as JSON."
     ),
@@ -631,6 +636,7 @@ def onboard_robot_command(
         endpoint=endpoint,
         namespace=k8s_namespace,
         service_account=service_account,
+        isaac_cache_pvc=k8s_isaac_cache_pvc,
         iterations=smoke_iterations,
         num_envs=smoke_num_envs,
         kubectl_apply=_kubernetes_apply,

@@ -135,6 +135,7 @@ def submit_smoke_job(
     endpoint: str,
     namespace: str = "default",
     service_account: str = "agent-sa",
+    isaac_cache_pvc: str = "",
     gpu_product: str = trainer.DEFAULT_GPU_PRODUCT,
     iterations: int = DEFAULT_SMOKE_ITERATIONS,
     num_envs: int = DEFAULT_SMOKE_NUM_ENVS,
@@ -182,6 +183,7 @@ def submit_smoke_job(
         product=gpu_product,
         gpu_resource="nvidia.com/gpu",
         gpu_count=1,
+        isaac_cache_pvc=isaac_cache_pvc,
     )
     rc = 0
     if kubectl_apply is not None:

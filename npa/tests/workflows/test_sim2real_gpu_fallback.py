@@ -268,6 +268,7 @@ def test_job_configuration_requires_digest_and_native_failure_policy(
 def test_isaac_gpu_job_requires_and_mounts_offline_readonly_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("NPA_SIM2REAL_ISAAC_CACHE_PVC", raising=False)
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", IMAGE)
     with pytest.raises(Sim2RealLoopError, match="CACHE_PVC"):
         configure_gpu_job(

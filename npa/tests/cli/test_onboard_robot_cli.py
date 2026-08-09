@@ -149,9 +149,7 @@ def test_onboard_smoke_requires_image(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _smoke_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(
-        "ISAAC_IMAGE", f"cr.example/npa-isaac-lab@sha256:{'a' * 64}"
-    )
+    monkeypatch.setenv("ISAAC_IMAGE", f"cr.example/npa-isaac-lab@sha256:{'a' * 64}")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "test-bucket")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://s3.example")
 
@@ -194,6 +192,13 @@ def test_onboard_smoke_submits_job(monkeypatch: pytest.MonkeyPatch) -> None:
     # reach the job, plus the customer robot name, so the smoke job trains THIS arm.
     container = manifest["spec"]["template"]["spec"]["containers"][0]
     assert "@sha256:" in container["image"]
+    assert container["volumeMounts"] == [
+        {
+            "name": "isaac-runtime-cache",
+            "mountPath": "/opt/isaac-cache",
+            "readOnly": True,
+        }
+    ]
     script = decode_compressed_bash_args(container["args"])
     assert "NPA_BYO_ROBOT_SPEC_JSON" in script
     assert "NPA_BYO_TASK_CONFIG_JSON" in script

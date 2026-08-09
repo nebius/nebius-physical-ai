@@ -41,7 +41,7 @@ def require_image_digest(image: str) -> str:
 
 
 def _configure_isaac_runtime_cache(
-    manifest: dict[str, Any], *, immutable_image: str
+    manifest: dict[str, Any], *, immutable_image: str, cache_pvc: str = ""
 ) -> dict[str, str]:
     """Mount the operator-fetched Isaac closure read-only on Isaac GPU Jobs.
 
@@ -67,7 +67,9 @@ def _configure_isaac_runtime_cache(
     if immutable_image != expected_immutable:
         return {}
 
-    pvc = os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC", "").strip()
+    pvc = (
+        cache_pvc.strip() or os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC", "").strip()
+    )
     if not pvc:
         raise Sim2RealLoopError(
             "Isaac GPU Jobs require NPA_SIM2REAL_ISAAC_CACHE_PVC so pinned "
@@ -150,6 +152,7 @@ def configure_gpu_job(
     gpu_count: int,
     queue_name: str = "",
     priority_class: str = "",
+    isaac_cache_pvc: str = "",
 ) -> dict[str, Any]:
     """Apply queue admission and a fail-closed Pod failure policy."""
 
@@ -165,7 +168,11 @@ def configure_gpu_job(
     containers[0]["image"] = immutable
     containers[0]["imagePullPolicy"] = "IfNotPresent"
     pod_spec["containers"] = containers
-    _configure_isaac_runtime_cache(configured, immutable_image=immutable)
+    _configure_isaac_runtime_cache(
+        configured,
+        immutable_image=immutable,
+        cache_pvc=isaac_cache_pvc,
+    )
     pod_spec["restartPolicy"] = "Never"
     pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
     priority = priority_class or os.environ.get(
