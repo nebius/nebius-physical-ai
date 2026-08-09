@@ -3828,6 +3828,13 @@
       let lastRerunRecordingUrl = "";
       let rerunViewerAppReady = false;
       let RERUN_RECORDING_PATH = "";
+      function syncRerunRecordingCapability(simViz) {
+        const recordingCapability = String((simViz && simViz.artifact_preview_url) || "");
+        RERUN_RECORDING_PATH = /^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/.test(recordingCapability)
+          ? recordingCapability
+          : "";
+        return RERUN_RECORDING_PATH;
+      }
       const RERUN_BUNDLE_ASSETS = ["/rerun/re_viewer.js", "/rerun/re_viewer_bg.wasm"];
       let rerunBundleWarmPromise = null;
       const RERUN_BLOB_SUCCESS = "SUCCESS";
@@ -6033,6 +6040,10 @@
         });
         if (loadGeneration !== artifactLoadGeneration) return false;
         const simViz = data.sim_viz || {};
+        // The selected object has its own short-lived capability. Install it
+        // before any soft-swap/remount so Rerun's WASM loader never falls back
+        // to the Basic-Auth blob URL for a newly selected recording.
+        syncRerunRecordingCapability(simViz);
         const render = String(data.render || simViz.artifact_render || "");
         activeArtifactRender = render;
         activeArtifactRunRef = String(data.run_ref || body.run_ref || "").trim();
@@ -6262,10 +6273,7 @@
             }
           }
           activeRunId = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
-          const recordingCapability = String((simViz && simViz.artifact_preview_url) || "");
-          RERUN_RECORDING_PATH = /^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/.test(recordingCapability)
-            ? recordingCapability
-            : "";
+          syncRerunRecordingCapability(simViz);
           updateRunSelector(simViz);
           // An RRD discovered directly in object storage can have valid sim-viz
           // state without a separate workflow/run-detail record. Keep that
@@ -6712,6 +6720,7 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ run_id: runId, run_ref: runRef }),
         });
+        syncRerunRecordingCapability(data && data.sim_viz);
         activeRunId = runId;
         appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
         await loadRunDetails(runId);
