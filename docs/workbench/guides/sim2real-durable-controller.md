@@ -107,6 +107,11 @@ GPU Jobs use `restartPolicy: Never` because Kubernetes requires it with
 - never add `activeDeadlineSeconds` unless the operator explicitly requests a
   deadline.
 
+The CPU controller uses the same policy. In particular, a generic exit 1 is an
+application failure and fails immediately; it is not relabeled as an
+infrastructure retry merely because the CLI did not choose a specialized exit
+code.
+
 Missing/malformed data, image or model failures, checkpoint load errors, and
 component contract failures are application failures and are never retried on a
 different GPU product. Isaac candidates remain RTX PRO 6000 or L40S only.
@@ -130,12 +135,16 @@ or lack of current quota is not fallback evidence.
 ## Credential rotation
 
 The long-lived controller does not depend on a registry credential captured at
-process start. Before each sibling create, it reconciles the project registry
-pull Secret through the Kubernetes API. A rotated Secret is used by later Pods
-without restarting the controller. Storage credentials are mounted as a
-projected Secret and read for new clients; an authentication failure triggers a
-single credential reload and exact-operation retry. Tokens and secret bytes are
-never written to provenance.
+process start. Its project-scoped Docker config Secret is mounted read-only at
+`DOCKER_CONFIG`; both direct Docker `auths` entries and configured credential
+helpers can therefore be materialized without requiring a `nebius` executable
+or an injected short-lived token in the immutable controller image. Before each
+sibling create, it reconciles that pull Secret through the Kubernetes API. A
+rotated Secret is used by later Pods without restarting the controller.
+Malformed direct credentials are not copied and fall through to a fresh-token
+exchange. Storage credentials are mounted as a projected Secret and read for
+new clients; an authentication failure triggers a single credential reload and
+exact-operation retry. Tokens and secret bytes are never written to provenance.
 
 ## Visualization and evaluation lineage
 

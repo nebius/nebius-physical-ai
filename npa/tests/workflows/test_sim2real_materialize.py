@@ -54,7 +54,16 @@ def test_manifest_is_a_runnable_job() -> None:
     assert "npa.workflows.sim2real run" in container["command"][2]
     assert pod["restartPolicy"] == "Never"
     assert manifest["spec"]["backoffLimit"] == 3
-    assert manifest["spec"]["podFailurePolicy"]["rules"]
+    assert manifest["spec"]["podFailurePolicy"]["rules"] == [
+        {
+            "action": "Ignore",
+            "onPodConditions": [{"type": "DisruptionTarget", "status": "True"}],
+        },
+        {
+            "action": "FailJob",
+            "onExitCodes": {"operator": "NotIn", "values": [0]},
+        },
+    ]
 
 
 def test_runbook_driver_is_cpu_only_and_preserves_sibling_gpu_config() -> None:
@@ -69,6 +78,24 @@ def test_runbook_driver_is_cpu_only_and_preserves_sibling_gpu_config() -> None:
     assert env["NPA_SIM2REAL_K8S_GPU_PRODUCT"].startswith("NVIDIA-RTX-PRO")
     assert pod["serviceAccountName"]
     assert {entry["name"] for entry in pod["imagePullSecrets"]}
+    assert pod["volumes"] == [
+        {
+            "name": "registry-config",
+            "secret": {
+                "secretName": "npa-nebius-registry",
+                "items": [{"key": ".dockerconfigjson", "path": "config.json"}],
+                "defaultMode": 0o400,
+            },
+        }
+    ]
+    assert pod["containers"][0]["volumeMounts"] == [
+        {
+            "name": "registry-config",
+            "mountPath": "/var/run/npa/registry",
+            "readOnly": True,
+        }
+    ]
+    assert env["DOCKER_CONFIG"] == "/var/run/npa/registry"
     assert "activeDeadlineSeconds" not in job.manifest["spec"]
     labels = job.manifest["metadata"]["labels"]
     assert labels["sim2real.local/run-id"] == "sim2real-unit-run"
@@ -85,6 +112,16 @@ def test_explicit_positive_timeout_adds_job_deadline() -> None:
         '--k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-0}"'
         in container["command"][2]
     )
+
+
+def test_registry_config_secret_must_also_be_a_pull_secret() -> None:
+    with pytest.raises(Sim2RealMaterializeError, match="must also be listed"):
+        _materialize(
+            env_overrides={
+                "NPA_SIM2REAL_K8S_REGISTRY_CONFIG_SECRET": "runtime-registry",
+                "NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS": "another-secret",
+            }
+        )
 
 
 def test_envs_carry_no_unexpanded_variables_and_overrides_win() -> None:

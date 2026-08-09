@@ -224,6 +224,18 @@ def materialize_k8s_job(
     if memory:
         limits["memory"] = f"{memory}Gi"
 
+    registry_config_secret = envs.get(
+        "NPA_SIM2REAL_K8S_REGISTRY_CONFIG_SECRET", ""
+    ).strip()
+    registry_config_dir = "/var/run/npa/registry"
+    if registry_config_secret:
+        configured_docker_dir = envs.get("DOCKER_CONFIG", "").strip()
+        if configured_docker_dir and configured_docker_dir != registry_config_dir:
+            raise Sim2RealMaterializeError(
+                "DOCKER_CONFIG conflicts with the mounted Sim2Real registry config"
+            )
+        envs["DOCKER_CONFIG"] = registry_config_dir
+
     container: dict[str, Any] = {
         "name": "sim2real",
         "image": resolved_image,
@@ -242,12 +254,35 @@ def materialize_k8s_job(
         )
 
     pod_spec: dict[str, Any] = {"restartPolicy": "Never", "containers": [container]}
+    if registry_config_secret:
+        container["volumeMounts"] = [
+            {
+                "name": "registry-config",
+                "mountPath": registry_config_dir,
+                "readOnly": True,
+            }
+        ]
+        pod_spec["volumes"] = [
+            {
+                "name": "registry-config",
+                "secret": {
+                    "secretName": registry_config_secret,
+                    "items": [{"key": ".dockerconfigjson", "path": "config.json"}],
+                    "defaultMode": 0o400,
+                },
+            }
+        ]
     service_account = envs.get("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "").strip()
     if service_account:
         pod_spec["serviceAccountName"] = service_account
     pull_secrets = _split_csv(envs.get("NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS", ""))
     if pull_secrets:
         pod_spec["imagePullSecrets"] = [{"name": name} for name in pull_secrets]
+    if registry_config_secret and registry_config_secret not in pull_secrets:
+        raise Sim2RealMaterializeError(
+            "NPA_SIM2REAL_K8S_REGISTRY_CONFIG_SECRET must also be listed in "
+            "NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS"
+        )
     gpu_product = envs.get("NPA_SIM2REAL_K8S_GPU_PRODUCT", "").strip()
     if gpu_count and gpu_product:
         pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": gpu_product}
@@ -272,11 +307,7 @@ def materialize_k8s_job(
                 },
                 {
                     "action": "FailJob",
-                    "onExitCodes": {"operator": "In", "values": [2, 42]},
-                },
-                {
-                    "action": "Count",
-                    "onExitCodes": {"operator": "NotIn", "values": [0, 2, 42]},
+                    "onExitCodes": {"operator": "NotIn", "values": [0]},
                 },
             ]
         },

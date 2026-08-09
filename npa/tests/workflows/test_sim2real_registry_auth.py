@@ -223,6 +223,77 @@ def test_ensure_materializes_configured_docker_credential_helper(
     assert entry["password"] == "helper-token"
 
 
+def test_ensure_materializes_direct_docker_auth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A launcher-local `docker login` credential must not be overwritten."""
+
+    docker_config = tmp_path / "docker"
+    docker_config.mkdir()
+    direct_auth = base64.b64encode(b"runtime-sa:project-registry-token").decode()
+    (docker_config / "config.json").write_text(
+        json.dumps({"auths": {"cr.us-central1.nebius.cloud": {"auth": direct_auth}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DOCKER_CONFIG", str(docker_config))
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
+        lambda **kwargs: pytest.fail("direct Docker auth must be preferred"),
+    )
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def apply_secret(self, payload):
+            captured["payload"] = payload
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        lambda **kwargs: FakeClient(),
+    )
+    ensure_nebius_registry_pull_secret(
+        registry_server="cr.us-central1.nebius.cloud",
+        k8s_context="npa-s2r-b8edcb22",
+    )
+    payload = captured["payload"]
+    docker_payload = json.loads(base64.b64decode(payload["data"][".dockerconfigjson"]))
+    entry = docker_payload["auths"]["cr.us-central1.nebius.cloud"]
+    assert entry["username"] == "runtime-sa"
+    assert entry["password"] == "project-registry-token"
+
+
+def test_malformed_direct_docker_auth_falls_back_to_fresh_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    docker_config = tmp_path / "docker"
+    docker_config.mkdir()
+    (docker_config / "config.json").write_text(
+        json.dumps({"auths": {"cr.us-central1.nebius.cloud": {"auth": "not-base64!"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DOCKER_CONFIG", str(docker_config))
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
+        lambda **kwargs: "fresh-token",
+    )
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def apply_secret(self, payload):
+            captured["payload"] = payload
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        lambda **kwargs: FakeClient(),
+    )
+    ensure_nebius_registry_pull_secret(registry_server="cr.us-central1.nebius.cloud")
+    payload = captured["payload"]
+    docker_payload = json.loads(base64.b64decode(payload["data"][".dockerconfigjson"]))
+    assert (
+        docker_payload["auths"]["cr.us-central1.nebius.cloud"]["password"]
+        == "fresh-token"
+    )
+
+
 def test_refresh_registry_pull_secret_helper_forwards_k8s_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -255,6 +255,10 @@ envs:
   NPA_SIM2REAL_K8S_NAMESPACE: "default"
   NPA_SIM2REAL_K8S_SERVICE_ACCOUNT: "agent-sa"
   NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS: "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
+  # Mount the same project-scoped Docker config into the CPU controller so a
+  # long run can refresh the pull Secret without requiring a `nebius` binary or
+  # an injected short-lived token in the runtime image.
+  NPA_SIM2REAL_K8S_REGISTRY_CONFIG_SECRET: "npa-nebius-registry"
   NPA_SIM2REAL_K8S_ENV_SECRET_NAMES: "hf-ngc-tokens,npa-storage-credentials"
   NPA_SIM2REAL_K8S_GPU_RESOURCE: "nvidia.com/gpu"
   NPA_SIM2REAL_K8S_GPU_PRODUCT: "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"

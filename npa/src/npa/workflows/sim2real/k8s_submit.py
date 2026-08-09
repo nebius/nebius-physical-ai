@@ -225,6 +225,19 @@ def _validate_real_runtime_env(values: dict[str, str]) -> None:
         raise ValueError(
             "NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS=1 is mandatory for the canonical real tier"
         )
+    registry_config_secret = values.get(
+        "NPA_SIM2REAL_K8S_REGISTRY_CONFIG_SECRET", ""
+    ).strip()
+    pull_secrets = {
+        item.strip()
+        for item in values.get("NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS", "").split(",")
+        if item.strip()
+    }
+    if not registry_config_secret or registry_config_secret not in pull_secrets:
+        raise ValueError(
+            "the canonical real tier requires a mounted registry config Secret "
+            "that is also listed in NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS"
+        )
     for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"):
         if values.get(name, "").strip().upper() != "YES":
             raise ValueError(

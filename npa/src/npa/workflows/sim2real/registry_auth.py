@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import os
 import subprocess
@@ -71,15 +72,16 @@ def _docker_helper_credential(
     *,
     env: dict[str, str] | None = None,
 ) -> tuple[str, str] | None:
-    """Resolve the credential Docker actually uses for ``registry_server``.
+    """Resolve the configured credential Docker uses for ``registry_server``.
 
     Operator VMs commonly configure ``docker-credential-nebius-agent-sa`` in
     ``~/.docker/config.json``. Copying that file into a Kubernetes pull secret
     only copies an empty ``auths`` placeholder; kubelet cannot execute Docker's
     credential helper and the subsequent private-image pull fails with 403.
-    Materialize the helper result into the pull secret instead. In-cluster
-    orchestrators generally have neither the config nor helper, so they fall
-    through to the existing CLI/injected-token path.
+    Materialize the helper result into the pull secret instead. Explicit
+    ``docker login`` auth entries are already materialized credentials and are
+    returned directly. In-cluster orchestrators with neither form fall through
+    to the existing CLI/injected-token path.
     """
 
     process_env = dict(os.environ if env is None else env)
@@ -97,7 +99,25 @@ def _docker_helper_credential(
         (config.get("credHelpers") or {}).get(registry_server) or ""
     ).strip()
     if not helper_suffix:
-        return None
+        # Docker configs written by an explicit `docker login` commonly carry
+        # the usable credential directly under `auths`.  Kubelet cannot read
+        # the operator's config file, so materialize this form into the Secret
+        # exactly as we do for a credential helper.  Never fall through to a
+        # newly minted token merely because the config uses the standard direct
+        # representation: doing so can overwrite a proven project-scoped pull
+        # credential with an identity that the target registry rejects.
+        entry = (config.get("auths") or {}).get(registry_server) or {}
+        encoded = str(entry.get("auth") or "").strip()
+        if not encoded:
+            return None
+        try:
+            decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            return None
+        username, separator, secret = decoded.partition(":")
+        if not separator or not username or not secret:
+            return None
+        return username, secret
     try:
         result = subprocess.run(
             [f"docker-credential-{helper_suffix}", "get"],

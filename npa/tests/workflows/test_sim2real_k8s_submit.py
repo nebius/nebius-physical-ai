@@ -215,6 +215,25 @@ def test_unqualified_real_component_override_is_rejected(
         )
 
 
+def test_real_submit_requires_mounted_registry_config_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.sim2real import k8s_submit
+
+    _patch_operator(monkeypatch, tmp_path)
+    with pytest.raises(ValueError, match="mounted registry config Secret"):
+        k8s_submit.submit_sim2real_staged_job(
+            run_id="unit-missing-registry-config",
+            env_overrides={
+                "NPA_SIM2REAL_K8S_REGISTRY_CONFIG_SECRET": "",
+                "OMNI_KIT_ACCEPT_EULA": "YES",
+                "ISAACSIM_ACCEPT_EULA": "YES",
+            },
+            plan_only=True,
+        )
+
+
 @pytest.mark.parametrize(
     "environment_variable",
     ["VLM_REASON2_IMAGE", "VLM_REASON3_IMAGE", "NPA_RERUN_VIEWER_IMAGE"],
