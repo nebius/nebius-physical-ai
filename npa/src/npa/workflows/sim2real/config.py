@@ -56,15 +56,13 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
     run_id = str(
         overrides.get("run_id") or os.environ.get("NPA_SIM2REAL_RUN_ID") or new_run_id()
     )
-    if "s3_bucket" in overrides:
-        bucket = str(overrides.get("s3_bucket") or "")
-    else:
-        bucket = str(
-            os.environ.get("NPA_SIM2REAL_BUCKET")
-            or os.environ.get("NPA_S3_BUCKET")
-            or os.environ.get("S3_BUCKET")
-            or ""
-        )
+    bucket = str(
+        overrides.get("s3_bucket")
+        or os.environ.get("NPA_SIM2REAL_BUCKET")
+        or os.environ.get("NPA_S3_BUCKET")
+        or os.environ.get("S3_BUCKET")
+        or ""
+    )
     registry = registry_from_env()
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])

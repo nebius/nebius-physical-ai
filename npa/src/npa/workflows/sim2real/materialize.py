@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+import hashlib
+import json
 
 import yaml
 
@@ -27,6 +29,8 @@ class Sim2RealMaterializeError(RuntimeError):
 
 _PLACEHOLDER_IMAGE_MARKERS = ("example.invalid", "<your-registry-id>")
 _DNS1123_SANITIZE = re.compile(r"[^a-z0-9-]+")
+CONTROLLER_API_VERSION = "npa.sim2real/v1alpha1"
+CONTROLLER_KIND = "Sim2RealController"
 
 
 @dataclass(frozen=True)
@@ -56,12 +60,64 @@ def default_runbook_path() -> Path:
     )
 
 
+def load_controller_spec(path: Path) -> dict[str, Any]:
+    """Load and strictly validate the executable durable-controller contract."""
+
+    documents = [
+        doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc
+    ]
+    controllers = [
+        doc
+        for doc in documents
+        if isinstance(doc, dict)
+        and doc.get("apiVersion") == CONTROLLER_API_VERSION
+        and doc.get("kind") == CONTROLLER_KIND
+    ]
+    if len(controllers) != 1:
+        raise Sim2RealMaterializeError(
+            f"{path} must contain exactly one {CONTROLLER_API_VERSION} {CONTROLLER_KIND}"
+        )
+    controller = controllers[0]
+    spec = controller.get("spec") or {}
+    required = {
+        "stageCount": 14,
+        "execution": "durable-kubernetes-controller",
+        "stateStore": "content-addressed-s3-journal",
+        "kubernetesClient": "official-python-client",
+        "scheduler": "kueue",
+    }
+    mismatches = {
+        key: {"expected": expected, "actual": spec.get(key)}
+        for key, expected in required.items()
+        if spec.get(key) != expected
+    }
+    if mismatches:
+        raise Sim2RealMaterializeError(
+            f"invalid durable Sim2Real controller contract: {mismatches}"
+        )
+    return controller
+
+
+def controller_spec_digest(path: Path) -> str:
+    spec = load_controller_spec(path)
+    encoded = json.dumps(
+        spec, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def load_runbook_task(path: Path) -> dict[str, Any]:
-    """Load the SkyPilot task document (name/resources/envs/setup/run) from the runbook."""
-    documents = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc]
+    """Load the task paired with the validated durable controller spec."""
+
+    load_controller_spec(path)
+    documents = [
+        doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc
+    ]
     tasks = [doc for doc in documents if isinstance(doc, dict) and "run" in doc]
     if not tasks:
-        raise Sim2RealMaterializeError(f"no SkyPilot task document with a run block in {path}")
+        raise Sim2RealMaterializeError(
+            f"no SkyPilot task document with a run block in {path}"
+        )
     if len(tasks) > 1:
         raise Sim2RealMaterializeError(
             f"{path} contains {len(tasks)} task documents; the materializer supports exactly one"
@@ -86,7 +142,9 @@ def _gpu_count(accelerators: Any) -> int:
         try:
             return int(text.rsplit(":", 1)[1])
         except ValueError as exc:
-            raise Sim2RealMaterializeError(f"unparseable accelerators value: {text!r}") from exc
+            raise Sim2RealMaterializeError(
+                f"unparseable accelerators value: {text!r}"
+            ) from exc
     return 1
 
 
@@ -139,7 +197,9 @@ def materialize_k8s_job(
     if not resolved_image:
         image_id = str(resources.get("image_id") or "")
         resolved_image = image_id.removeprefix("docker:").strip()
-    if not resolved_image or any(marker in resolved_image for marker in _PLACEHOLDER_IMAGE_MARKERS):
+    if not resolved_image or any(
+        marker in resolved_image for marker in _PLACEHOLDER_IMAGE_MARKERS
+    ):
         raise Sim2RealMaterializeError(
             "the runbook ships a placeholder image; pass a registry-qualified trainer "
             f"image (got {resolved_image!r}). Example: --image cr.<region>.nebius.cloud/"
@@ -169,6 +229,7 @@ def materialize_k8s_job(
         "image": resolved_image,
         "command": ["/bin/bash", "-c", command_script],
         "env": [{"name": key, "value": value} for key, value in sorted(envs.items())],
+        "imagePullPolicy": "IfNotPresent" if "@sha256:" in resolved_image else "Always",
     }
     if limits:
         container["resources"] = {"limits": limits}
@@ -192,7 +253,9 @@ def materialize_k8s_job(
         pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": gpu_product}
 
     resolved_namespace = (
-        namespace.strip() or envs.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip() or "default"
+        namespace.strip()
+        or envs.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
+        or "default"
     )
     job_name = materialized_job_name(run_id, str(task.get("name") or ""))
     labels = {
@@ -200,7 +263,23 @@ def materialize_k8s_job(
         "sim2real.local/run-id": materialized_job_name(run_id),
     }
     job_spec: dict[str, Any] = {
-        "backoffLimit": 0,
+        "backoffLimit": int(envs.get("NPA_SIM2REAL_CONTROLLER_RETRIES", "3") or 3),
+        "podFailurePolicy": {
+            "rules": [
+                {
+                    "action": "Ignore",
+                    "onPodConditions": [{"type": "DisruptionTarget", "status": "True"}],
+                },
+                {
+                    "action": "FailJob",
+                    "onExitCodes": {"operator": "In", "values": [2, 42]},
+                },
+                {
+                    "action": "Count",
+                    "onExitCodes": {"operator": "NotIn", "values": [0, 2, 42]},
+                },
+            ]
+        },
         "template": {"metadata": {"labels": labels}, "spec": pod_spec},
     }
     timeout = _numeric_prefix(envs.get("NPA_SIM2REAL_K8S_JOB_TIMEOUT_S"))

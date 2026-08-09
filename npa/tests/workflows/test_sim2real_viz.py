@@ -56,18 +56,24 @@ class _FakeRerun:
         self.application_id = application_id
         return _FakeRecording()
 
-    def save(self, path: Any, default_blueprint: Any = None, recording: Any = None) -> None:
+    def save(
+        self, path: Any, default_blueprint: Any = None, recording: Any = None
+    ) -> None:
         self.saved_path = Path(path)
         Path(path).write_bytes(b"FAKE_RRD_CONTENT")
 
     def send_blueprint(self, blueprint: Any, recording: Any = None) -> None:
         return None
 
-    def set_time_seconds(self, timeline: str, seconds: float, recording: Any = None) -> None:
+    def set_time_seconds(
+        self, timeline: str, seconds: float, recording: Any = None
+    ) -> None:
         self.current_time = float(seconds)
         self.times.append(float(seconds))
 
-    def log(self, entity_path: str, archetype: dict[str, Any], recording: Any = None) -> None:
+    def log(
+        self, entity_path: str, archetype: dict[str, Any], recording: Any = None
+    ) -> None:
         kind = archetype.get("kind", "?")
         self.logged.append((entity_path, kind))
         self.logged_times.append((entity_path, kind, self.current_time))
@@ -149,7 +155,9 @@ def _build_run_tree(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     return inner_evidence, heldout_report
 
 
-def test_emit_logs_frames_critiques_signal_and_heldout(monkeypatch, tmp_path: Path) -> None:
+def test_emit_logs_frames_critiques_signal_and_heldout(
+    monkeypatch, tmp_path: Path
+) -> None:
     inner_evidence, heldout_report = _build_run_tree(tmp_path)
     fake = _FakeRerun()
     monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
@@ -159,7 +167,9 @@ def test_emit_logs_frames_critiques_signal_and_heldout(monkeypatch, tmp_path: Pa
             "tier": "SEAM" if stage == 12 else "WORKS",
             "evidence": f"stage {stage} evidence",
             "artifacts": {
-                "job_name": f"s2r-stage-{stage:02d}" if stage in {3, 4, 7, 8, 9, 10} else "",
+                "job_name": f"s2r-stage-{stage:02d}"
+                if stage in {3, 4, 7, 8, 9, 10}
+                else "",
                 "gpu_request": {"product": "NVIDIA-RTX-PRO-6000"}
                 if stage in {3, 4, 7, 8, 9, 10, 14}
                 else {},
@@ -383,6 +393,66 @@ def test_emit_mcap_roundtrip_camera_signal_critique(tmp_path: Path) -> None:
     assert first_camera["format"] == "png"
 
 
+def _set_first_rollout_capture_fps(tmp_path: Path, fps: float) -> None:
+    manifest_path = (
+        tmp_path
+        / "actions"
+        / "train"
+        / "outer-01"
+        / "iter-01"
+        / "rollout-0000"
+        / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["capture"] = {"fps": fps, "width": 640, "height": 480}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_configured_capture_fps_controls_rrd_rollout_timestamps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    _set_first_rollout_capture_fps(tmp_path, 10.0)
+    fake = _FakeRerun()
+    monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
+    emit_sim2real_rerun(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_rrd=tmp_path / "reports" / "capture-fps.rrd",
+    )
+    times = [
+        timestamp
+        for entity, kind, timestamp in fake.logged_times
+        if entity == "rollouts/iter_01/rollout-0000/camera" and kind == "image"
+    ]
+    assert times == pytest.approx([0.0, 0.1, 0.2])
+
+
+def test_configured_capture_fps_controls_mcap_rollout_timestamps(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("mcap")
+    from mcap.reader import make_reader
+
+    inner_evidence, heldout_report = _build_run_tree(tmp_path)
+    _set_first_rollout_capture_fps(tmp_path, 10.0)
+    out = tmp_path / "reports" / "capture-fps.mcap"
+    viz_module.emit_sim2real_mcap(
+        local_dir=tmp_path,
+        inner_evidence=inner_evidence,
+        heldout_report=heldout_report,
+        output_mcap=out,
+    )
+    with out.open("rb") as handle:
+        messages = [
+            message.log_time
+            for _schema, channel, message in make_reader(handle).iter_messages()
+            if channel.topic == "/rollouts/iter_01/rollout-0000/camera"
+        ]
+    assert messages == [0, 100_000_000, 200_000_000]
+
+
 def _write_pointcloud_npz(
     tmp_path: Path,
     env_id: str = "env-0001",
@@ -391,7 +461,14 @@ def _write_pointcloud_npz(
 ) -> None:
     import numpy as np
 
-    root = tmp_path / "eval" / "heldout" / "renders" / viz_module.POINTCLOUD_SUBDIR / env_id
+    root = (
+        tmp_path
+        / "eval"
+        / "heldout"
+        / "renders"
+        / viz_module.POINTCLOUD_SUBDIR
+        / env_id
+    )
     if view:
         root /= view
     root.mkdir(parents=True, exist_ok=True)
@@ -402,7 +479,9 @@ def _write_pointcloud_npz(
         np.savez_compressed(root / f"cloud-{i:04d}.npz", xyz=xyz, rgb=rgb)
 
 
-def test_emit_mcap_primary_camera_prefers_heldout_over_rollout_mirror(tmp_path: Path) -> None:
+def test_emit_mcap_primary_camera_prefers_heldout_over_rollout_mirror(
+    tmp_path: Path,
+) -> None:
     """When held-out episodes exist they own the primary camera topic outright.
 
     The rollout fallback exists only for runs without held-out cameras; if both
@@ -490,7 +569,9 @@ def test_heldout_pointcloud_frames_reads_npz(tmp_path: Path) -> None:
     assert xyz.dtype.name == "float32" and rgb.dtype.name == "uint8"
 
 
-def test_heldout_pointcloud_frames_fuses_synchronized_camera_views(tmp_path: Path) -> None:
+def test_heldout_pointcloud_frames_fuses_synchronized_camera_views(
+    tmp_path: Path,
+) -> None:
     _write_pointcloud_npz(tmp_path, frames=2, view="primary")
     _write_pointcloud_npz(tmp_path, frames=2, view="side")
     _write_pointcloud_npz(tmp_path, frames=2, view="overhead")
@@ -566,7 +647,9 @@ def test_emit_mcap_raises_when_no_content(tmp_path: Path) -> None:
         )
 
 
-def test_emit_rejects_synthetic_descriptor_only_recording(monkeypatch, tmp_path: Path) -> None:
+def test_emit_rejects_synthetic_descriptor_only_recording(
+    monkeypatch, tmp_path: Path
+) -> None:
     _write_summary_artifacts(tmp_path)
     fake = _FakeRerun()
     monkeypatch.setattr(viz_module, "_import_rerun", lambda: (fake, MagicMock()))
@@ -675,7 +758,15 @@ def _write_summary_artifacts(tmp_path: Path) -> None:
     )
     (tmp_path / "envs" / "manifest").mkdir(parents=True, exist_ok=True)
     (tmp_path / "envs" / "manifest" / "split-manifest.json").write_text(
-        json.dumps({"raw_count": 10, "train_count": 8, "heldout_count": 2, "disjoint": True, "seed": 42}),
+        json.dumps(
+            {
+                "raw_count": 10,
+                "train_count": 8,
+                "heldout_count": 2,
+                "disjoint": True,
+                "seed": 42,
+            }
+        ),
         encoding="utf-8",
     )
     (tmp_path / "tokens").mkdir(parents=True, exist_ok=True)
@@ -826,7 +917,9 @@ def _write_filtered_rgb_png(path: Path, pixels: Any, filter_types: list[int]) ->
         for byte_index, value in enumerate(row):
             left = row[byte_index - channels] if byte_index >= channels else 0
             up = previous[byte_index]
-            upper_left = previous[byte_index - channels] if byte_index >= channels else 0
+            upper_left = (
+                previous[byte_index - channels] if byte_index >= channels else 0
+            )
             if filter_type == 0:
                 predictor = 0
             elif filter_type == 1:
@@ -879,7 +972,9 @@ def _noisy_rgb(width: int = 24, height: int = 18):
 
 @pytest.mark.parametrize("filter_type", [0, 1, 2, 3, 4])
 @pytest.mark.parametrize("image", ["gradient", "noise"])
-def test_decode_png_matches_pillow_for_every_row_filter(filter_type: int, image: str) -> None:
+def test_decode_png_matches_pillow_for_every_row_filter(
+    filter_type: int, image: str
+) -> None:
     """Each filter branch must reconstruct exactly what Pillow does."""
 
     import io
@@ -895,12 +990,16 @@ def test_decode_png_matches_pillow_for_every_row_filter(filter_type: int, image:
     # decoder look correct against a wrong reference.
     with Image.open(io.BytesIO(data)) as image:
         via_pillow = np.asarray(image.convert("RGB"), dtype="uint8")
-    assert np.array_equal(via_pillow, expected), f"filter {filter_type}: encoder is wrong"
+    assert np.array_equal(via_pillow, expected), (
+        f"filter {filter_type}: encoder is wrong"
+    )
 
     decoded = viz_module._decode_png_bytes(data)
     assert decoded is not None
     assert decoded.dtype == np.uint8
-    assert np.array_equal(decoded, expected), f"filter {filter_type}: fallback decode differs"
+    assert np.array_equal(decoded, expected), (
+        f"filter {filter_type}: fallback decode differs"
+    )
 
 
 def test_decode_png_matches_pillow_on_filter0(tmp_path: Path) -> None:
@@ -914,7 +1013,9 @@ def test_decode_png_matches_pillow_on_filter0(tmp_path: Path) -> None:
     assert int(decoded.mean()) == int(np.array([12, 200, 77]).mean())
 
 
-def test_read_png_reconstructs_filtered_truecolor_rows(monkeypatch, tmp_path: Path) -> None:
+def test_read_png_reconstructs_filtered_truecolor_rows(
+    monkeypatch, tmp_path: Path
+) -> None:
     import numpy as np
 
     monkeypatch.setattr(viz_module, "_read_png_with_pillow", lambda _path: None)
@@ -939,7 +1040,9 @@ def test_read_png_reconstructs_filtered_truecolor_rows(monkeypatch, tmp_path: Pa
 
 def test_is_reference_stub_rollout_detects_reference_fixture(tmp_path: Path) -> None:
     actions_dir = tmp_path / "actions"
-    rollouts = generate_action_rollouts(actions_dir, count=1, steps_per_rollout=2, seed=3, quality=0.5)
+    rollouts = generate_action_rollouts(
+        actions_dir, count=1, steps_per_rollout=2, seed=3, quality=0.5
+    )
     frames = viz_module._rollout_frames(rollouts[0])
     assert is_reference_stub_rollout(rollouts[0], frames) is True
 
@@ -957,7 +1060,9 @@ def test_is_reference_stub_rollout_detects_reference_fixture(tmp_path: Path) -> 
     assert is_reference_stub_rollout(rollout_dir, frames) is False
 
 
-def test_rollout_camera_frames_preserve_synchronized_named_views(tmp_path: Path) -> None:
+def test_rollout_camera_frames_preserve_synchronized_named_views(
+    tmp_path: Path,
+) -> None:
     rollout_dir = tmp_path / "rollout-0000"
     views = {
         "primary": ["camera-000.png", "camera-001.png"],
@@ -989,7 +1094,9 @@ def test_rollout_camera_frames_preserve_synchronized_named_views(tmp_path: Path)
     assert len(viz_module._rollout_frames(rollout_dir)) == 2
 
 
-def test_emit_prefers_heldout_isaac_cameras_over_stub_rollouts(monkeypatch, tmp_path: Path) -> None:
+def test_emit_prefers_heldout_isaac_cameras_over_stub_rollouts(
+    monkeypatch, tmp_path: Path
+) -> None:
     inner_evidence, heldout_report = _build_run_tree(tmp_path)
     _write_summary_artifacts(tmp_path)
     renders_dir = tmp_path / "eval" / "heldout" / "renders" / "heldout-0000"
@@ -1073,7 +1180,11 @@ def test_emit_logs_synchronized_multiview_cameras_and_rotatable_scene(
         "sim_backend": "isaac",
         "camera_views": list(views),
         "episodes": [
-            {"env_id": "heldout-0000", "frames": views["primary"], "camera_views": views}
+            {
+                "env_id": "heldout-0000",
+                "frames": views["primary"],
+                "camera_views": views,
+            }
         ],
     }
     heldout_report["capture"] = {
@@ -1172,8 +1283,14 @@ def test_emit_logs_augmentation_previews_from_manifest_without_frame_index(
 
     entities = [entity for entity, _kind in fake.logged]
     assert result.synthetic_frame_count > 0
-    assert any(entity.startswith("synthetic/augmentation/frame-") for entity in entities)
-    index = json.loads((tmp_path / "reports" / "sim2real-visual-index.json").read_text(encoding="utf-8"))
+    assert any(
+        entity.startswith("synthetic/augmentation/frame-") for entity in entities
+    )
+    index = json.loads(
+        (tmp_path / "reports" / "sim2real-visual-index.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert index["augmentation"]["frame_count"] == 2
     assert index["synthetic"]["augmentation_sample_count"] == 2
     assert index["synthetic"]["augmentation_descriptor_preview_count"] == 2
@@ -1268,12 +1385,16 @@ class _RecordingRRB:
     def __init__(self) -> None:
         self.views: list[dict[str, Any]] = []
 
-    def Spatial2DView(self, *, origin: str = "", contents: Any = None, name: str = "", **_: Any) -> dict[str, Any]:
+    def Spatial2DView(
+        self, *, origin: str = "", contents: Any = None, name: str = "", **_: Any
+    ) -> dict[str, Any]:
         view = {"kind": "Spatial2DView", "origin": origin, "name": name}
         self.views.append(view)
         return view
 
-    def Spatial3DView(self, *, origin: str = "", contents: Any = None, name: str = "", **_: Any) -> dict[str, Any]:
+    def Spatial3DView(
+        self, *, origin: str = "", contents: Any = None, name: str = "", **_: Any
+    ) -> dict[str, Any]:
         view = {"kind": "Spatial3DView", "origin": origin, "name": name}
         self.views.append(view)
         return view
@@ -1310,9 +1431,12 @@ def test_build_blueprint_one_2d_view_per_heldout_env() -> None:
         "origin": "camera",
         "name": "Isaac held-out simulation camera",
     }
-    assert not any(v["kind"] == "Spatial3DView" and v["origin"] == "world" for v in rrb.views)
+    assert not any(
+        v["kind"] == "Spatial3DView" and v["origin"] == "world" for v in rrb.views
+    )
     heldout_origins = [
-        v["origin"] for v in rrb.views
+        v["origin"]
+        for v in rrb.views
         if v["kind"] == "Spatial2DView" and v["origin"].startswith("heldout/camera/")
     ]
     assert heldout_origins == [
@@ -1346,9 +1470,7 @@ def test_build_blueprint_without_env_ids_keeps_single_camera_view() -> None:
     rrb = _RecordingRRB()
     viz_module._build_blueprint(rrb, has_heldout_cameras=False)
     # No per-env heldout views; falls back to the rollouts camera view.
-    assert not any(
-        v["origin"].startswith("heldout/camera/") for v in rrb.views
-    )
+    assert not any(v["origin"].startswith("heldout/camera/") for v in rrb.views)
 
 
 def test_build_blueprint_with_synthetic_view() -> None:
@@ -1388,7 +1510,14 @@ def test_log_heldout_cameras_time_aligns_views() -> None:
     fake = _FakeRerun()
     frame = np.zeros((2, 2, 3), dtype=np.uint8)
     episodes = [
-        ("env-a", {"primary": [frame, frame], "side": [frame, frame], "overhead": [frame, frame]})
+        (
+            "env-a",
+            {
+                "primary": [frame, frame],
+                "side": [frame, frame],
+                "overhead": [frame, frame],
+            },
+        )
     ]
     counts: dict[str, int] = {}
     logged, end_seconds = viz_module._log_heldout_cameras(

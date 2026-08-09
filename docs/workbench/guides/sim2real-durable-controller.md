@@ -7,7 +7,7 @@ engine.
 ## Canonical surface
 
 `npa/workflows/sim2real.yaml` is a typed
-`npa.sim2real.controller/v1` controller specification. The existing workflow
+`npa.sim2real/v1alpha1` controller specification. The existing workflow
 submit detector validates that type and materializes one CPU controller Job.
 The controller invokes the same preamble, outer/inner loop, and finalization
 entrypoints used by tests. It dispatches the real GPU sibling Jobs; it is not a
@@ -38,8 +38,9 @@ The local state directory is a cache. S3 is the durable journal:
 ```text
 <run-root>/state/controller/latest.json
 <run-root>/state/controller/heartbeat.json
-<run-root>/state/checkpoints/sha256-<checkpoint-digest>.json
-<run-root>/state/artifacts/sha256-<artifact-digest>.json
+<run-root>/state/controller/checkpoints/sha256-<checkpoint-digest>.json
+<run-root>/state/controller/records/{component,stage}/sha256-<record-digest>.json
+<run-root>/state/controller/units/<unit>/<input-digest>.json
 ```
 
 Each checkpoint is canonical JSON and content-addressed. It records the phase,
@@ -52,17 +53,16 @@ S3 URIs, and continues at the first incomplete unit.
 
 The reusable unit is intentionally smaller than an outer iteration:
 
-1. preamble stages 1 through 6;
-2. Stage 7 rollout for one inner iteration;
-3. each Stage 8 model lane and rollout;
-4. Stage 9 signal batch and PPO update;
-5. each validation checkpoint evaluation;
-6. final gold Stage 10 and Stage 11 decision;
-7. each of Stages 12, 13, and 14.
+1. the completed preamble (stages 1 through 6) as a workflow checkpoint;
+2. Stage 7 rollout plus Stage 8 model results for one inner iteration;
+3. Stage 9 signal conversion and PPO update as separate units;
+4. each validation-checkpoint evaluation;
+5. final gold Stage 10 and Stage 11 decision as separate units;
+6. Stage 14 artifacts and the complete final report.
 
-A completed unit is reusable only when every declared output exists, its byte
-count and SHA-256 match, its ComponentRecord is immutable, and its input digest
-matches the current unit. Stage 8 output can therefore survive a controller
+A completed unit is reusable only when its canonical payload SHA-256, immutable
+controller identity, and input digest match the current unit. External artifact
+URIs and their hashes remain in ComponentRecords. Stage 8 output can therefore survive a controller
 restart and feed Stage 9 without repeating the model Job. Finalization resumes
 after its last committed stage and never pairs metrics with a render directory
 from another split or checkpoint.

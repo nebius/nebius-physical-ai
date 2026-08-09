@@ -16,17 +16,17 @@ Runs in the orchestrator pod (no Isaac), so it submits an Isaac sibling k8s Job
 that downloads the checkpoint, plays the policy, writes per-env scores to S3;
 this process reads them back and writes the output JSON.
 
-``NPA_BYO_ISAAC_DRYRUN=1`` skips kubectl/S3 and emits a deterministic per-env
+``NPA_BYO_ISAAC_DRYRUN=1`` skips the Kubernetes API/S3 and emits a deterministic per-env
 report for unit tests / wiring checks.
 """
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -812,33 +812,19 @@ def build_isaac_eval_job_manifest(
 
     capture = dict(capture or capture_settings({}))
 
-    # Opt-in BYO-robot eval: ship the isaac_byo_robot_task module + stage the
-    # customer robot USD, and pass the spec via NPA_BYO_ROBOT_SPEC_JSON. The
-    # injected block in ISAAC_EVAL_SCRIPT registers the variant and rebinds TASK.
+    # Opt-in BYO-robot eval uses the module baked into the exact Isaac image and
+    # passes the spec via NPA_BYO_ROBOT_SPEC_JSON.
     # Empty when robot_spec is None -> byte-for-byte the stock eval.
     robot_block = ""
     if robot_spec:
-        from npa.workflows.sim2real import isaac_byo_robot_task as _robotmod
-
         spec_json = _json.dumps(robot_spec, sort_keys=True)
         usd_dest = str(robot_spec.get("usd_path") or "").strip()
         robot_stage = ""
         if robot_usd_uri and usd_dest:
             robot_stage = (
-                "ROBOT_USD_URI="
-                + _shlex.quote(robot_usd_uri)
-                + " ROBOT_USD_DEST="
-                + _shlex.quote(usd_dest)
-                + " \"$PY\" - <<'ROBOTDLEOF'\n"
-                "import os, boto3\n"
-                "from urllib.parse import urlparse\n"
-                "u = urlparse(os.environ['ROBOT_USD_URI'])\n"
-                "dest = os.environ['ROBOT_USD_DEST']\n"
-                "os.makedirs(os.path.dirname(dest), exist_ok=True)\n"
-                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-                "s3.download_file(u.netloc, u.path.lstrip('/'), dest)\n"
-                "print('STAGED_ROBOT_USD', dest)\n"
-                "ROBOTDLEOF\n"
+                '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
+                f"--uri {_shlex.quote(robot_usd_uri)} "
+                f"--destination {_shlex.quote(usd_dest)}\n"
             )
         # Matched task config (placement / gripper targets) so the held-out eval
         # rolls the policy on the SAME scaled task distribution it trained on
@@ -852,26 +838,19 @@ def build_isaac_eval_job_manifest(
                 + "\n"
             )
         robot_block = (
-            "cat > /tmp/evalwork/isaac_byo_robot_task.py <<'ROBOTEOF'\n"
-            + _robotmod.module_source()
-            + "\nROBOTEOF\n"
-            + robot_stage
-            + "export NPA_ROBOT_MODULE_DIR=/tmp/evalwork\n"
+            robot_stage
+            + "export NPA_ROBOT_MODULE_DIR=/opt/npa/isaac-runtime\n"
             + "export NPA_BYO_ROBOT_SPEC_JSON="
             + _shlex.quote(spec_json)
             + "\n"
             + task_cfg_export
         )
     if scenarios_jsonl:
-        from npa.workflows.sim2real import isaac_scenario_task as _scenarios
-
+        encoded_scenarios = base64.b64encode(scenarios_jsonl.encode()).decode()
         robot_block += (
-            "cat > /tmp/evalwork/isaac_scenario_task.py <<'SCENARIOPYEOF'\n"
-            + _scenarios.module_source()
-            + "\nSCENARIOPYEOF\n"
-            "cat > /tmp/evalwork/scenarios.jsonl <<'SCENARIOJSONEOF'\n"
-            + scenarios_jsonl.rstrip()
-            + "\nSCENARIOJSONEOF\n"
+            '"$PY" -m npa.workflows.sim2real.isaac_job_io write-base64 '
+            f"--payload {_shlex.quote(encoded_scenarios)} "
+            "--destination /tmp/evalwork/scenarios.jsonl\n"
             "export NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/evalwork/scenarios.jsonl\n"
             "export NPA_SIM2REAL_TASK_CONTRACT_DIGEST="
             + _shlex.quote(_env("NPA_SIM2REAL_TASK_CONTRACT_DIGEST"))
@@ -882,36 +861,16 @@ def build_isaac_eval_job_manifest(
     render_upload = ""
     if renders_s3_prefix:
         render_upload = (
-            "RENDERS_URI=" + _shlex.quote(renders_s3_prefix) + " \"$PY\" - <<'RLEOF'\n"
-            "import os, boto3, glob\n"
-            "from urllib.parse import urlparse\n"
-            "u = urlparse(os.environ['RENDERS_URI'])\n"
-            "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-            "base = u.path.lstrip('/').rstrip('/')\n"
-            "n = 0\n"
-            "for p in glob.glob('/tmp/evalwork/renders/**/*.png', recursive=True):\n"
-            "    rel = os.path.relpath(p, '/tmp/evalwork/renders')\n"
-            "    s3.upload_file(p, u.netloc, base + '/' + rel); n += 1\n"
-            "print('UPLOADED_RENDERS', n, os.environ['RENDERS_URI'])\n"
-            "RLEOF\n"
+            '"$PY" -m npa.workflows.sim2real.isaac_job_io upload-tree '
+            "--root /tmp/evalwork/renders "
+            f"--uri {_shlex.quote(renders_s3_prefix)}\n"
         )
     script = (
         "set -euo pipefail\n"
         "exec > >(tee -a /tmp/byo-eval.log) 2>&1\n"
-        "if [ -x /isaac-sim/python.sh ]; then\n"
-        "  PY=/isaac-sim/python.sh\n"
-        "elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n"
-        "  cat > /tmp/isaac-python <<'ISPYEOF'\n"
-        "#!/usr/bin/env bash\n"
-        'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
-        "ISPYEOF\n"
-        "  chmod +x /tmp/isaac-python\n"
-        "  PY=/tmp/isaac-python\n"
-        "else\n"
-        '  PY="$(command -v python3 || command -v python || true)"\n'
-        "fi\n"
-        '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
-        '"$PY" -m pip install --quiet boto3 pillow 2>/dev/null || true\n'
+        "PY=/isaac-sim/python.sh\n"
+        '[ -x "$PY" ] || { echo "MISSING_PINNED_ISAAC_RUNTIME"; exit 127; }\n'
+        '"$PY" -m npa.workflows.sim2real.runtime_attestation\n'
         "mkdir -p /tmp/evalwork/renders; cd /tmp/evalwork\n"
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
         f'EVAL_OBJECT_USD="{object_usd}" EVAL_ENV_IDS={_shlex.quote(env_ids_json)} '
@@ -927,25 +886,16 @@ def build_isaac_eval_job_manifest(
         "EVAL_RENDERS_DIR=/tmp/evalwork/renders "
         "EVAL_CKPT_LOCAL=/tmp/evalwork/policy.pt "
         "EVAL_OUT_JSON=/tmp/evalwork/per_env_distances.json\n"
-        f'CKPT_URI="{checkpoint_uri}" OUT_URI="{per_env_s3_uri}" "$PY" - <<\'DLEOF\'\n'
-        "import os, boto3\n"
-        "from urllib.parse import urlparse\n"
-        "u = urlparse(os.environ['CKPT_URI'])\n"
-        "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-        "s3.download_file(u.netloc, u.path.lstrip('/'), '/tmp/evalwork/policy.pt')\n"
-        "print('DOWNLOADED_CKPT', os.environ['CKPT_URI'])\n"
-        "DLEOF\n" + robot_block + "cat > /tmp/evalwork/eval_rollout.py <<'PYEOF'\n"
-        f"{ISAAC_EVAL_SCRIPT}\n"
-        "PYEOF\n"
-        '"$PY" /tmp/evalwork/eval_rollout.py\n'
-        'OUT_URI="' + per_env_s3_uri + '" "$PY" - <<\'ULEOF\'\n'
-        "import os, boto3\n"
-        "from urllib.parse import urlparse\n"
-        "u = urlparse(os.environ['OUT_URI'])\n"
-        "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-        "s3.upload_file('/tmp/evalwork/per_env_distances.json', u.netloc, u.path.lstrip('/'))\n"
-        "print('UPLOADED_DISTANCES', os.environ['OUT_URI'])\n"
-        "ULEOF\n" + render_upload + 'echo "BYO_EVAL_DONE"\n'
+        '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
+        f"--uri {_shlex.quote(checkpoint_uri)} "
+        "--destination /tmp/evalwork/policy.pt\n"
+        + robot_block
+        + '"$PY" /opt/npa/isaac-runtime/isaac_eval.py\n'
+        '"$PY" -m npa.workflows.sim2real.isaac_job_io upload '
+        "--source /tmp/evalwork/per_env_distances.json "
+        f"--uri {_shlex.quote(per_env_s3_uri)}\n"
+        + render_upload
+        + 'echo "BYO_EVAL_DONE"\n'
     )
     command, args = compressed_bash_launch(script)
     return {
@@ -957,8 +907,7 @@ def build_isaac_eval_job_manifest(
             "labels": {"app": "sim2real-byo-isaac-eval", "run-id": run_id},
         },
         "spec": {
-            "backoffLimit": 0,
-            "ttlSecondsAfterFinished": 86400,
+            "backoffLimit": 1,
             "template": {
                 "metadata": {
                     "labels": {"app": "sim2real-byo-isaac-eval", "run-id": run_id}
@@ -1000,7 +949,19 @@ def build_isaac_eval_job_manifest(
                                 {"secretRef": {"name": "hf-ngc-tokens"}},
                                 {"secretRef": {"name": "npa-storage-credentials"}},
                             ],
-                            "env": [{"name": "AWS_ENDPOINT_URL", "value": s3_endpoint}]
+                            "env": [
+                                {"name": "AWS_ENDPOINT_URL", "value": s3_endpoint},
+                                {
+                                    "name": "NPA_SIM2REAL_SOURCE_SHA",
+                                    "value": os.environ.get(
+                                        "NPA_SIM2REAL_SOURCE_SHA", ""
+                                    ),
+                                },
+                                {
+                                    "name": "NPA_SIM2REAL_RUNTIME_IMAGE",
+                                    "value": image.removeprefix("docker:"),
+                                },
+                            ]
                             + _isaac_eula_env_entries(),
                             "command": command,
                             "args": args,
@@ -1011,16 +972,6 @@ def build_isaac_eval_job_manifest(
             },
         },
     }
-
-
-# --------------------------------------------------------------------------- #
-# kubectl orchestration (live path)
-# --------------------------------------------------------------------------- #
-def _kubectl(args: list[str], *, stdin: str | None = None, timeout: int = 300):
-    cmd = [os.environ.get("NPA_KUBECTL_BIN") or "kubectl", *args]
-    return subprocess.run(
-        cmd, input=stdin, capture_output=True, text=True, timeout=timeout, check=False
-    )
 
 
 def _env(name: str, default: str = "") -> str:
@@ -1078,11 +1029,11 @@ def run_isaac_eval_job(
     seed = int(_env("NPA_SIM2REAL_SEED", "0") or 0)
     if len(gen) != num_envs:
         raise RuntimeError(
-            f"gold evaluation requires {num_envs} complete scenario records; got {len(gen)}"
+            f"evaluation requires {num_envs} complete scenario records; got {len(gen)}"
         )
     digests = [str(row.get("scenario_config_digest") or "") for row in gen]
     if not all(digests) or len(set(digests)) != len(digests):
-        raise RuntimeError("gold evaluation scenarios lack unique config digests")
+        raise RuntimeError("evaluation scenarios lack unique config digests")
     scenarios_jsonl = "\n".join(json.dumps(row, sort_keys=True) for row in gen) + "\n"
     # Eval must spawn the SAME manipuland the policy trained on (default: the
     # proven rigid-ready USD, not the stock primitive cube).
@@ -1177,12 +1128,10 @@ def run_isaac_eval_job(
         pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
         return candidate
 
-    def kubectl(args: list[str], **kwargs: Any):
-        timeout = int(kwargs.pop("timeout_s", 300))
-        return _kubectl(args, timeout=timeout, **kwargs)
+    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
 
     provenance = run_gpu_job_with_fallback(
-        kubectl=kubectl,
+        client=KubernetesJobClient.from_environment(namespace=namespace),
         manifest_factory=manifest_factory,
         base_job_name=job_name,
         namespace=namespace,
@@ -1235,7 +1184,7 @@ def run_isaac_eval_job(
     }
     if actually_applied != set(digests):
         raise RuntimeError(
-            "Isaac runtime applied-scenario digests do not exactly match reported gold rows"
+            "Isaac runtime applied-scenario digests do not exactly match reported evaluation rows"
         )
     _APPLIED_SCENARIO_AUDIT = {
         **applied,
@@ -1305,6 +1254,7 @@ def run_isaac_eval_job(
         "camera_metadata": out.get("camera_metadata") or [],
         "capture": out.get("capture") or capture,
         "policy_checkpoint": checkpoint_provenance,
+        "renders_s3_uri": renders_prefix,
         "episodes": episodes,
     }
     return per_env_from_distances(

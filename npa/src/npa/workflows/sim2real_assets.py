@@ -11,7 +11,7 @@ from typing import Any, TYPE_CHECKING
 from npa.workflows.sim2real.camera_views import CAMERA_VIEW_SPECS
 
 if TYPE_CHECKING:
-    from npa.workflows.sim2real_loop import Sim2RealLoopConfig
+    from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
 STOCK_SCENE_SCHEMA = "npa.sim2real.stock_scene_spec.v1"
 STOCK_ROBOT_SCHEMA = "npa.sim2real.stock_robot_spec.v1"
@@ -129,7 +129,7 @@ def resolve_stage_cameras(
 ) -> dict[str, Any]:
     """Resolve task-contract cameras from CAMERAS_URI or a scene-spec camera block."""
 
-    from npa.workflows.sim2real_loop import _storage_client
+    from npa.workflows.sim2real.engine import _storage_client
 
     cameras_uri = (
         (config.cameras_uri or "").strip()
@@ -187,7 +187,7 @@ def run_assets_stage(config: Sim2RealLoopConfig, local_dir: Path) -> AssetsStage
     """Materialize stock or BYO scene + robot specs for downstream envgen and eval."""
 
     from npa.genesis import robot_assets, scene_assets
-    from npa.workflows.sim2real_loop import (
+    from npa.workflows.sim2real.engine import (
         SIM_BACKEND_ISAAC,
         _consume_stage_assets,
         _storage_client,
@@ -345,7 +345,7 @@ def build_envgen_scene_spec(
         build_scene_spec,
         frame_uris_from_augmented_index,
     )
-    from npa.workflows.sim2real_loop import SIM_BACKEND_ISAAC
+    from npa.workflows.sim2real.constants import SIM_BACKEND_ISAAC
 
     base = build_scene_spec(
         byo_mesh_uri=config.assets_uri,

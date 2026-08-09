@@ -5,11 +5,9 @@ from __future__ import annotations
 import json
 import hashlib
 import stat
-import tarfile
 from contextlib import contextmanager
 from dataclasses import fields
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -33,6 +31,17 @@ def _patch_operator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
     monkeypatch.setattr(k8s_submit, "load_operator_config", _operator)
     monkeypatch.setattr(k8s_submit, "resolve_kubeconfig", lambda _context: kubeconfig)
+    real_defaults = k8s_submit._default_image_env
+
+    def immutable_defaults(registry: str, *, orchestrator_image: str = ""):
+        values, _ = real_defaults(registry)
+        digest = "a" * 64
+        for key in k8s_submit._required_real_image_envs(values):
+            values[key] = f"{registry}/{key.lower().replace('_', '-')}@sha256:{digest}"
+        orchestrator = orchestrator_image or f"{registry}/orchestrator@sha256:{digest}"
+        return values, orchestrator
+
+    monkeypatch.setattr(k8s_submit, "_default_image_env", immutable_defaults)
 
 
 def _capture_ephemeral_manifest(
@@ -105,16 +114,6 @@ def test_plan_only_materializes_qualified_real_images_without_external_writes(
 
     _patch_operator(monkeypatch, tmp_path)
     captured = _capture_ephemeral_manifest(monkeypatch)
-    monkeypatch.setattr(
-        k8s_submit,
-        "_stage_orchestrator_source",
-        lambda **_kwargs: pytest.fail("plan-only must not upload source"),
-    )
-    monkeypatch.setattr(
-        k8s_submit,
-        "_apply_manifest",
-        lambda *_args, **_kwargs: pytest.fail("plan-only must not submit a Job"),
-    )
 
     result = k8s_submit.submit_sim2real_staged_job(
         run_id="unit-plan",
@@ -132,7 +131,9 @@ def test_plan_only_materializes_qualified_real_images_without_external_writes(
     env = {item["name"]: item["value"] for item in container["env"]}
     assert manifest["metadata"]["name"] == "sim2real-unit-plan"
     assert container["image"].startswith("registry.unit.test/team/")
-    assert env["NPA_SIM2REAL_SOURCE_TARBALL_URI"].startswith("s3://unit-bucket/")
+    assert env["NPA_SIM2REAL_SOURCE_SHA"]
+    assert env["NPA_SIM2REAL_RUNTIME_IMAGE"].endswith("a" * 64)
+    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" not in env
     for key in k8s_submit._required_real_image_envs(env):
         assert k8s_submit._registry_qualified(env[key]), (key, env[key])
     assert "manifest_path" not in {field.name for field in fields(result)}
@@ -143,70 +144,33 @@ def test_plan_only_materializes_qualified_real_images_without_external_writes(
     assert not Path(captured["path"]).exists()
 
 
-def test_submit_stages_source_refreshes_all_images_and_applies_job(
+def test_submit_refreshes_all_images_and_creates_typed_job(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     from npa.workflows.sim2real import k8s_submit, registry_auth
 
     _patch_operator(monkeypatch, tmp_path)
-    staged: list[dict[str, object]] = []
     refreshed: list[tuple[str, ...]] = []
     applied: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        k8s_submit,
-        "_stage_orchestrator_source",
-        lambda **kwargs: staged.append(kwargs) or "s3://unit-bucket/source/current.tgz",
-    )
     monkeypatch.setattr(
         registry_auth,
         "ensure_registry_pull_secret_for_images",
         lambda *images, **_kwargs: refreshed.append(tuple(images)),
     )
 
-    def fake_kubectl(args, **kwargs):
-        if args[:2] == ["get", "nodes"]:
-            stdout = json.dumps(
-                {
-                    "items": [
-                        {
-                            "metadata": {
-                                "labels": {
-                                    "nvidia.com/gpu.product": (
-                                        "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
-                                    )
-                                }
-                            }
-                        }
-                    ]
-                }
-            )
-        elif args[:2] == ["create", "-f"]:
-            applied.append(json.loads(kwargs["stdin"]))
-            stdout = "job.batch/sim2real-unit-submit created"
-        elif args[:2] == ["get", "pods"]:
-            stdout = json.dumps(
-                {
-                    "items": [
-                        {
-                            "metadata": {"name": "sim2real-unit-submit-pod"},
-                            "spec": {"nodeName": "rtx-node"},
-                            "status": {
-                                "containerStatuses": [
-                                    {
-                                        "imageID": "registry.unit.test/team/orchestrator@sha256:abc"
-                                    }
-                                ]
-                            },
-                        }
-                    ]
-                }
-            )
-        else:
-            stdout = ""
-        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+    from npa.workflows.sim2real import k8s_client
 
-    monkeypatch.setattr(k8s_submit, "_direct_kubectl", fake_kubectl)
+    class FakeClient:
+        @classmethod
+        def from_environment(cls, **_kwargs):
+            return cls()
+
+        def create_or_adopt(self, manifest, **_identity):
+            applied.append(manifest)
+            return "job-uid", False
+
+    monkeypatch.setattr(k8s_client, "KubernetesJobClient", FakeClient)
 
     result = k8s_submit.submit_sim2real_staged_job(
         run_id="unit-submit",
@@ -221,7 +185,6 @@ def test_submit_stages_source_refreshes_all_images_and_applies_job(
     )
 
     assert result.status == "submitted"
-    assert len(staged) == 1
     assert len(refreshed) == 1
     expected_images, _ = k8s_submit._default_image_env("registry.unit.test/team")
     required_names = k8s_submit._required_real_image_envs(expected_images)
@@ -288,8 +251,8 @@ def test_image_aliases_resolve_before_guarding_and_materialization(
 
     _patch_operator(monkeypatch, tmp_path)
     captured = _capture_ephemeral_manifest(monkeypatch)
-    vlm = "registry.valid.test/team/custom-reason:1"
-    viewer = "registry.valid.test/team/custom-viewer:2"
+    vlm = f"registry.valid.test/team/custom-reason@sha256:{'b' * 64}"
+    viewer = f"registry.valid.test/team/custom-viewer@sha256:{'c' * 64}"
 
     k8s_submit.submit_sim2real_staged_job(
         run_id="unit-image-aliases",
@@ -389,65 +352,13 @@ def test_secure_manifest_cleanup_preserves_body_error() -> None:
     assert not manifest_path.parent.exists()
 
 
-def test_source_staging_retries_configured_hmac_after_stale_ambient_auth(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from npa.clients import credentials as credential_module
-    from npa.clients import storage as storage_module
+def test_runtime_is_immutable_and_has_no_source_staging_surface() -> None:
     from npa.workflows.sim2real import k8s_submit
 
-    root = tmp_path / "repo"
-    (root / "npa" / "src").mkdir(parents=True)
-    (root / "npa" / "workflows").mkdir(parents=True)
-    (root / "npa" / "src" / "module.py").write_text("VALUE = 1\n")
-    (root / "npa" / "pyproject.toml").write_text("[project]\nname='npa'\n")
-    for workflow_name in ("sim2real.yaml", "physical-ai-data-factory.yaml"):
-        (root / "npa" / "workflows" / workflow_name).write_text(
-            f"name: {workflow_name}\n"
-        )
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ambient-key")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret")
-    monkeypatch.setattr(
-        credential_module,
-        "load_credentials",
-        lambda **kwargs: SimpleNamespace(
-            s3_access_key_id=(
-                "configured-key" if kwargs.get("environ") == {} else "ambient-key"
-            ),
-            s3_secret_access_key=(
-                "configured-secret" if kwargs.get("environ") == {} else "ambient-secret"
-            ),
-        ),
-    )
-    attempts: list[str] = []
-
-    class FakeStorageClient:
-        def __init__(self, **kwargs):
-            self.access_key = kwargs["aws_access_key_id"]
-
-        def upload_file(self, local_file, destination):
-            assert Path(local_file).stat().st_size > 0
-            with tarfile.open(local_file) as archive:
-                names = set(archive.getnames())
-            assert {
-                "npa/workflows/sim2real.yaml",
-                "npa/workflows/physical-ai-data-factory.yaml",
-            } <= names
-            attempts.append(self.access_key)
-            if self.access_key == "ambient-key":
-                raise RuntimeError("AccessDenied")
-            return destination
-
-    monkeypatch.setattr(storage_module, "StorageClient", FakeStorageClient)
-    destination = k8s_submit._stage_orchestrator_source(
-        root=root,
-        run_id="sim2real-auth-retry",
-        bucket="bucket",
-        prefix="sim2real-b",
-        endpoint="https://s3.example",
-    )
-    assert attempts == ["ambient-key", "configured-key"]
-    assert destination.endswith("orchestrator-sim2real-auth-retry.tgz")
+    assert not hasattr(k8s_submit, "_stage_orchestrator_source")
+    source = Path(k8s_submit.__file__).read_text(encoding="utf-8")
+    assert "SOURCE_TARBALL" not in source
+    assert "tarfile" not in source
 
 
 def test_workflow_var_aliases_route_to_runbook_env(

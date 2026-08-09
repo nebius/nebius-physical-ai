@@ -16,23 +16,23 @@ submits an Isaac-Lab sibling k8s Job (``npa-isaac-lab`` image) that runs
 ``checkpoint_path`` is that real checkpoint, so promote can mark it deployable.
 
 The trainer runs **inside the orchestrator pod** (lerobot-vlm-rl image, no
-Isaac), so it can't run Isaac in-process — it uses ``kubectl`` to submit the
-Isaac sibling Job and waits for it, mirroring the proven recon job.
+Isaac), so it cannot run Isaac in-process. It submits the sibling Job through
+the typed Kubernetes API client and reconciles structured Job and Pod state.
 
-``NPA_BYO_ISAAC_DRYRUN=1`` skips kubectl/S3 entirely and emits a deterministic
+``NPA_BYO_ISAAC_DRYRUN=1`` skips the Kubernetes API/S3 entirely and emits a deterministic
 result derived from the signal batch — used by unit tests and for wiring checks
 without a GPU.
 """
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
 import os
 import re
 import shlex
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -673,25 +673,17 @@ def build_isaac_job_manifest(
     seed_arg = f" --seed {int(seed)}" if seed else ""
 
     if robot_spec:
-        # BYO-robot path (takes precedence over physics): ship the
-        # isaac_byo_robot_task module + its post-boot wrapper into the container and
-        # run the wrapper (it registers a Lift variant that swaps in the customer
+        # BYO-robot path (takes precedence over physics): run the task module and
+        # post-boot wrapper baked into the exact image (it registers a Lift variant
+        # that swaps in the customer
         # robot articulation AFTER AppLauncher boots, then trains via the rsl_rl
         # runner, saving model_*.pt into $OUT). A stock_franka payload yields empty
         # overrides, so the variant degenerates to the stock task — the seam runs
         # end-to-end without changing the policy.
-        from npa.workflows.sim2real import isaac_byo_robot_task as _robotmod
-
-        module_src = _robotmod.module_source()
         scenario_module_block = ""
         scenario_data_block = ""
         if scenarios_jsonl or scenarios_uri:
-            from npa.workflows.sim2real import isaac_scenario_task as _scenarios
-
             scenario_module_block = (
-                "cat > /tmp/npa_robot/isaac_scenario_task.py <<'SCENARIOPYEOF'\n"
-                + _scenarios.module_source()
-                + "\nSCENARIOPYEOF\n"
                 "export NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/npa_robot/scenarios.jsonl\n"
                 "export NPA_SIM2REAL_TASK_CONTRACT_DIGEST="
                 + shlex.quote(_env("NPA_SIM2REAL_TASK_CONTRACT_DIGEST"))
@@ -700,38 +692,18 @@ def build_isaac_job_manifest(
             )
         if scenarios_uri:
             scenario_data_block = (
-                "if ! SCENARIOS_URI="
-                + shlex.quote(scenarios_uri)
-                + " SCENARIOS_SHA256="
-                + shlex.quote(scenarios_sha256)
-                + " SCENARIOS_DST=/tmp/npa_robot/scenarios.jsonl "
-                "\"$PY\" - <<'SCENARIODLEOF'\n"
-                "import hashlib, os, boto3\n"
-                "from urllib.parse import urlparse\n"
-                "uri = os.environ['SCENARIOS_URI']\n"
-                "parsed = urlparse(uri)\n"
-                "dst = os.environ['SCENARIOS_DST']\n"
-                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-                "s3.download_file(parsed.netloc, parsed.path.lstrip('/'), dst)\n"
-                "with open(dst, 'rb') as handle:\n"
-                "    digest = hashlib.sha256(handle.read()).hexdigest()\n"
-                "expected = os.environ['SCENARIOS_SHA256']\n"
-                "if digest != expected:\n"
-                "    raise SystemExit(f'SCENARIO_DISTRIBUTION_SHA_MISMATCH expected={expected} actual={digest}')\n"
-                "print(f'SCENARIO_DISTRIBUTION_DOWNLOADED uri={uri} sha256={digest} bytes={os.path.getsize(dst)}')\n"
-                "SCENARIODLEOF\n"
-                "then\n"
-                "  echo SCENARIO_DISTRIBUTION_FETCH_FAILED\n"
-                "  exit 1\n"
-                "fi\n"
+                '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
+                f"--uri {shlex.quote(scenarios_uri)} "
+                "--destination /tmp/npa_robot/scenarios.jsonl "
+                f"--sha256 {shlex.quote(scenarios_sha256)}\n"
             )
         elif scenarios_jsonl:
+            encoded_scenarios = base64.b64encode(scenarios_jsonl.encode()).decode()
             scenario_data_block = (
-                "cat > /tmp/npa_robot/scenarios.jsonl <<'SCENARIOJSONEOF'\n"
-                + scenarios_jsonl.rstrip()
-                + "\nSCENARIOJSONEOF\n"
+                '"$PY" -m npa.workflows.sim2real.isaac_job_io write-base64 '
+                f"--payload {shlex.quote(encoded_scenarios)} "
+                "--destination /tmp/npa_robot/scenarios.jsonl\n"
             )
-        wrapper_src = _robotmod.TRAIN_WRAPPER_SCRIPT
         spec_json = json.dumps(robot_spec, sort_keys=True)
         # B2-derived robot-aware task config (action scale / placement / reward
         # thresholds / gripper) shipped alongside the robot spec so the variant is
@@ -756,20 +728,9 @@ def build_isaac_job_manifest(
             # payload references, before the wrapper registers the variant.
             stage_block = (
                 f'echo "STAGING_ROBOT_USD: {robot_usd_uri} -> {usd_dest}"\n'
-                "ROBOT_USD_URI="
-                + shlex.quote(robot_usd_uri)
-                + " ROBOT_USD_DEST="
-                + shlex.quote(usd_dest)
-                + " \"$PY\" - <<'ROBOTDLEOF'\n"
-                "import os, boto3\n"
-                "from urllib.parse import urlparse\n"
-                "u = urlparse(os.environ['ROBOT_USD_URI'])\n"
-                "dest = os.environ['ROBOT_USD_DEST']\n"
-                "os.makedirs(os.path.dirname(dest), exist_ok=True)\n"
-                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-                "s3.download_file(u.netloc, u.path.lstrip('/'), dest)\n"
-                "print('STAGED_ROBOT_USD', dest)\n"
-                "ROBOTDLEOF\n"
+                '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
+                f"--uri {shlex.quote(robot_usd_uri)} "
+                f"--destination {shlex.quote(usd_dest)}\n"
             )
         resume_block = ""
         resume_local = ""
@@ -777,32 +738,19 @@ def build_isaac_job_manifest(
             resume_local = "/tmp/npa_robot/resume_model.pt"
             resume_block = (
                 f'echo "ROBOT_RESUME_FROM: {resume_uri}"\n'
-                f'RESUME_URI="{resume_uri}" '
-                f'RESUME_DST="{resume_local}" "$PY" - <<\'ROBOTRESEOF\'\n'
-                "import os, boto3\n"
-                "from urllib.parse import urlparse\n"
-                "u = urlparse(os.environ['RESUME_URI'])\n"
-                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-                "s3.download_file(u.netloc, u.path.lstrip('/'), os.environ['RESUME_DST'])\n"
-                "print('ROBOT_RESUME_DOWNLOADED', os.environ['RESUME_DST'])\n"
-                "ROBOTRESEOF\n"
+                '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
+                f"--uri {shlex.quote(resume_uri)} "
+                f"--destination {shlex.quote(resume_local)}\n"
             )
         train_block = (
             "mkdir -p /tmp/npa_robot\n"
-            "cat > /tmp/npa_robot/isaac_byo_robot_task.py <<'ROBOTEOF'\n"
-            + module_src
-            + "\nROBOTEOF\n"
-            "cat > /tmp/npa_robot/runner.py <<'ROBOTRUNEOF'\n"
-            + wrapper_src
-            + "\nROBOTRUNEOF\n"
             + scenario_module_block
-            + '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
             + scenario_data_block
             + resume_block
             + stage_block
             + f'echo "ROBOT_INJECTION: {robot_spec.get("robot_source")} '
             f'{robot_spec.get("name")} seed={int(seed)}"\n'
-            f'export NPA_ROBOT_MODULE_DIR=/tmp/npa_robot ROBOT_OUT_DIR="$OUT" '
+            f'export NPA_ROBOT_MODULE_DIR=/opt/npa/isaac-runtime ROBOT_OUT_DIR="$OUT" '
             f"ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} "
             f"ROBOT_STEPS_PER_ENV={steps_per_env} ROBOT_SEED={int(seed)}\n"
             + "export ROBOT_RESUME_CKPT_LOCAL="
@@ -837,31 +785,22 @@ def build_isaac_job_manifest(
             # behind the training-loop logs (and entirely when an incompatible robot
             # fails at env build). The markers are re-dumped from this file post-run,
             # and the file IS the per-iteration reward curve uploaded for plotting.
-            + '"$PY" /tmp/npa_robot/runner.py 2>&1 | tee /tmp/train_full.log | tail -120\n'
+            + '"$PY" /opt/npa/isaac-runtime/isaac_robot_train.py 2>&1 | tee /tmp/train_full.log | tail -120\n'
         )
     elif physics:
-        # Generated-physics path: ship the isaac_physics_task module + its
-        # post-boot train wrapper into the container and run the wrapper (it
+        # Generated-physics path runs the task module + post-boot wrapper baked
+        # into the exact image (it
         # registers the friction/mass variant AFTER AppLauncher boots, then
         # trains via the rsl_rl runner, saving model_*.pt into $OUT).
-        from npa.workflows.sim2real import isaac_physics_task as _physmod
-
-        module_src = _physmod.module_source()
-        wrapper_src = _physmod.TRAIN_WRAPPER_SCRIPT
         fr = float(physics.get("friction", 1.0))
         ms = float(physics.get("mass_scale", 1.0))
         train_block = (
-            "mkdir -p /tmp/npa_phys\n"
-            "cat > /tmp/npa_phys/isaac_physics_task.py <<'PHYSEOF'\n"
-            + module_src
-            + "\nPHYSEOF\n"
-            "cat > /tmp/npa_phys/runner.py <<'RUNEOF'\n" + wrapper_src + "\nRUNEOF\n"
-            f'echo "PHYSICS_INJECTION: friction={fr} mass_scale={ms} seed={int(seed)}"\n'
-            f'export NPA_PHYS_MODULE_DIR=/tmp/npa_phys PHYS_OUT_DIR="$OUT" '
+            f'echo "PHYSICS_IMAGE_MODULE: friction={fr} mass_scale={ms} seed={int(seed)}"\n'
+            f'export NPA_PHYS_MODULE_DIR=/opt/npa/isaac-runtime PHYS_OUT_DIR="$OUT" '
             f"PHYS_NUM_ENVS={num_envs} PHYS_ITERS={iterations} "
             f"PHYS_STEPS_PER_ENV={steps_per_env} PHYS_SEED={int(seed)} "
             f"NPA_GEN_FRICTION={fr} NPA_GEN_MASS_SCALE={ms}\n"
-            '"$PY" /tmp/npa_phys/runner.py 2>&1 | tail -120\n'
+            '"$PY" /opt/npa/isaac-runtime/isaac_physics_train.py 2>&1 | tail -120\n'
         )
     else:
         # Stage the prior-iteration checkpoint where train.py's get_checkpoint_path()
@@ -874,16 +813,9 @@ def build_isaac_job_manifest(
             resume_block = (
                 f'echo "RESUME_FROM: {resume_uri}"\n'
                 f'mkdir -p "$OUT/{resume_dir}"\n'
-                '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
-                f'RESUME_URI="{resume_uri}" '
-                f'RESUME_DST="$OUT/{resume_dir}/{RESUME_CKPT_NAME}" "$PY" - <<\'RESEOF\'\n'
-                "import os, boto3\n"
-                "from urllib.parse import urlparse\n"
-                "u = urlparse(os.environ['RESUME_URI'])\n"
-                "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-                "s3.download_file(u.netloc, u.path.lstrip('/'), os.environ['RESUME_DST'])\n"
-                "print('RESUME_DOWNLOADED', os.environ['RESUME_DST'])\n"
-                "RESEOF\n"
+                '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
+                f"--uri {shlex.quote(resume_uri)} "
+                f'--destination "$OUT/{resume_dir}/{RESUME_CKPT_NAME}"\n'
             )
         train_line = (
             f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
@@ -902,19 +834,9 @@ def build_isaac_job_manifest(
     script = (
         "set -uo pipefail\n"
         "exec > >(tee -a /tmp/byo-train.log) 2>&1\n"
-        "if [ -x /isaac-sim/python.sh ]; then\n"
-        "  PY=/isaac-sim/python.sh\n"
-        "elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n"
-        "  cat > /tmp/isaac-python <<'ISPYEOF'\n"
-        "#!/usr/bin/env bash\n"
-        'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
-        "ISPYEOF\n"
-        "  chmod +x /tmp/isaac-python\n"
-        "  PY=/tmp/isaac-python\n"
-        "else\n"
-        '  PY="$(command -v python3 || command -v python || true)"\n'
-        "fi\n"
-        '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
+        "PY=/isaac-sim/python.sh\n"
+        '[ -x "$PY" ] || { echo "MISSING_PINNED_ISAAC_RUNTIME"; exit 127; }\n'
+        '"$PY" -m npa.workflows.sim2real.runtime_attestation\n'
         f'OUT=/workspace/isaaclab/npa-runs/{run_id}; mkdir -p "$OUT"; cd "$OUT"\n'
         "set +e\n"
         f"{train_block}"
@@ -928,32 +850,9 @@ def build_isaac_job_manifest(
         "CKPT=$(find \"$OUT\" -name 'model_*.pt' 2>/dev/null | sort -V | tail -1)\n"
         'echo "LATEST_CKPT=$CKPT"\n'
         '[ -z "$CKPT" ] && { echo "NO_CHECKPOINT"; exit ${rc:-3}; }\n'
-        '"$PY" -m pip install --quiet boto3 2>/dev/null || true\n'
-        'CKPT_PATH="$CKPT" OUT_DIR="$OUT" OUT_URI="'
-        + s3_output_uri
-        + '" "$PY" - <<\'PYEOF\'\n'
-        "import os, glob, boto3\n"
-        "from urllib.parse import urlparse\n"
-        "u = urlparse(os.environ['OUT_URI'])\n"
-        "base = u.path.lstrip('/')\n"
-        "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-        "s3.upload_file(os.environ['CKPT_PATH'], u.netloc, base + 'model_latest.pt')\n"
-        "print('UPLOADED_CKPT s3://%s/%s' % (u.netloc, base + 'model_latest.pt'))\n"
-        "# Periodic checkpoints (agent.save_interval) -> accuracy-vs-iteration eval sweep.\n"
-        "for p in sorted(glob.glob(os.environ['OUT_DIR'] + '/**/model_*.pt', recursive=True)):\n"
-        "    key = base + 'checkpoints/' + os.path.basename(p)\n"
-        "    s3.upload_file(p, u.netloc, key)\n"
-        "    print('UPLOADED_PERIODIC s3://%s/%s' % (u.netloc, key))\n"
-        "# Full training log (per-iteration reward curve) for post-hoc plotting.\n"
-        "import os.path as _op\n"
-        "if _op.isfile('/tmp/train_full.log'):\n"
-        "    s3.upload_file('/tmp/train_full.log', u.netloc, base + 'train_full.log')\n"
-        "    print('UPLOADED_TRAIN_LOG s3://%s/%s' % (u.netloc, base + 'train_full.log'))\n"
-        "if _op.isfile(_op.join(os.environ['OUT_DIR'], 'applied-scenarios.json')):\n"
-        "    p = _op.join(os.environ['OUT_DIR'], 'applied-scenarios.json')\n"
-        "    s3.upload_file(p, u.netloc, base + 'applied-scenarios.json')\n"
-        "    print('UPLOADED_SCENARIO_AUDIT s3://%s/%s' % (u.netloc, base + 'applied-scenarios.json'))\n"
-        "PYEOF\n"
+        '"$PY" -m npa.workflows.sim2real.isaac_job_io upload-training '
+        '--checkpoint "$CKPT" --output-dir "$OUT" '
+        f"--uri {shlex.quote(s3_output_uri)}\n"
         'echo "BYO_TRAIN_DONE rc=$rc"\n'
         "exit $rc\n"
     )
@@ -967,8 +866,7 @@ def build_isaac_job_manifest(
             "labels": {"app": "sim2real-byo-isaac-trainer", "run-id": run_id},
         },
         "spec": {
-            "backoffLimit": 0,
-            "ttlSecondsAfterFinished": 86400,
+            "backoffLimit": 1,
             "template": {
                 "metadata": {
                     "labels": {
@@ -1013,6 +911,16 @@ def build_isaac_job_manifest(
                             ],
                             "env": [
                                 {"name": "AWS_ENDPOINT_URL", "value": s3_endpoint},
+                                {
+                                    "name": "NPA_SIM2REAL_SOURCE_SHA",
+                                    "value": os.environ.get(
+                                        "NPA_SIM2REAL_SOURCE_SHA", ""
+                                    ),
+                                },
+                                {
+                                    "name": "NPA_SIM2REAL_RUNTIME_IMAGE",
+                                    "value": image.removeprefix("docker:"),
+                                },
                                 *_isaac_eula_env_entries(),
                             ],
                             "command": command,
@@ -1104,18 +1012,6 @@ def build_update_result(
         ),
         "duration_ms": round(float(duration_ms), 3),
     }
-
-
-# --------------------------------------------------------------------------- #
-# kubectl orchestration (live path)
-# --------------------------------------------------------------------------- #
-def _kubectl(
-    args: list[str], *, stdin: str | None = None, timeout: int = 300
-) -> subprocess.CompletedProcess[str]:
-    cmd = [os.environ.get("NPA_KUBECTL_BIN") or "kubectl", *args]
-    return subprocess.run(
-        cmd, input=stdin, capture_output=True, text=True, timeout=timeout, check=False
-    )
 
 
 def _env(name: str, default: str = "") -> str:
@@ -1469,13 +1365,11 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
         return candidate
 
-    def kubectl(args: list[str], **kwargs: Any):
-        timeout = int(kwargs.pop("timeout_s", 300))
-        return _kubectl(args, timeout=timeout, **kwargs)
+    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
 
     start = time.time()
     provenance = run_gpu_job_with_fallback(
-        kubectl=kubectl,
+        client=KubernetesJobClient.from_environment(namespace=namespace),
         manifest_factory=manifest_factory,
         base_job_name=job_name,
         namespace=namespace,

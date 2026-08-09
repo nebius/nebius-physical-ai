@@ -6,8 +6,6 @@ import hashlib
 import os
 import re
 import subprocess
-import sys
-import tarfile
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -16,13 +14,16 @@ from typing import Iterator
 
 from npa.deploy.images import container_image_for_tool
 from npa.workflows.sim2real.constants import DEFAULT_LEROBOT_DATASET_ID, DEFAULT_PREFIX
-from npa.workflows.sim2real.materialize import default_runbook_path, materialize_k8s_job
+from npa.workflows.sim2real.materialize import (
+    controller_spec_digest,
+    default_runbook_path,
+    materialize_k8s_job,
+)
 from npa.workflows.sim2real.monitor import (
     load_operator_config,
     normalize_staged_run_id,
     resolve_kubeconfig,
 )
-from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,16 @@ def _registry_qualified(image: str) -> bool:
     return bool(
         ("." in host or ":" in host or host == "localhost")
         and (":" in leaf or "@" in leaf)
+    )
+
+
+def _immutable_image(image: str) -> bool:
+    ref = image.removeprefix("docker:").strip()
+    digest = ref.rsplit("@sha256:", 1)[-1] if "@sha256:" in ref else ""
+    return (
+        _registry_qualified(ref)
+        and len(digest) == 64
+        and all(char in "0123456789abcdef" for char in digest.lower())
     )
 
 
@@ -248,165 +259,6 @@ def _default_image_env(
     return images, orchestrator_image.strip() or trainer
 
 
-def _source_tarball_filter(tarinfo: tarfile.TarInfo) -> tarfile.TarInfo | None:
-    if "__pycache__" in tarinfo.name or tarinfo.name.endswith(".pyc"):
-        return None
-    return tarinfo
-
-
-def _stage_orchestrator_source(
-    *,
-    root: Path,
-    run_id: str,
-    bucket: str,
-    prefix: str,
-    endpoint: str,
-) -> str:
-    """Upload current checkout code so the pre-push Job runs this exact branch."""
-
-    from npa.clients.credentials import load_credentials
-    from npa.clients.storage import StorageClient
-
-    credentials = load_credentials()
-    configured_credentials = load_credentials(environ={})
-    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or credentials.s3_access_key_id
-    secret_key = (
-        os.environ.get("AWS_SECRET_ACCESS_KEY") or credentials.s3_secret_access_key
-    )
-    if not access_key or not secret_key:
-        raise ValueError(
-            "S3 HMAC credentials are required to stage the Sim2Real source"
-        )
-
-    with tempfile.TemporaryDirectory(prefix="npa-sim2real-submit-") as temporary:
-        tarball = Path(temporary) / "npa-source.tgz"
-        with tarfile.open(tarball, "w:gz") as archive:
-            archive.add(
-                root / "npa" / "src",
-                arcname="npa/src",
-                filter=_source_tarball_filter,
-            )
-            archive.add(
-                root / "npa" / "pyproject.toml",
-                arcname="npa/pyproject.toml",
-                filter=_source_tarball_filter,
-            )
-            for workflow_name in (
-                "sim2real.yaml",
-                "physical-ai-data-factory.yaml",
-            ):
-                archive.add(
-                    root / "npa" / "workflows" / workflow_name,
-                    arcname=f"npa/workflows/{workflow_name}",
-                    filter=_source_tarball_filter,
-                )
-        destination = (
-            f"s3://{bucket}/{prefix.strip('/')}/{run_id}/source/"
-            f"orchestrator-{run_id}.tgz"
-        )
-        credential_pairs = [(access_key, secret_key)]
-        configured_pair = (
-            configured_credentials.s3_access_key_id,
-            configured_credentials.s3_secret_access_key,
-        )
-        if all(configured_pair) and configured_pair not in credential_pairs:
-            credential_pairs.append(configured_pair)
-        for attempt, (candidate_access, candidate_secret) in enumerate(
-            credential_pairs, start=1
-        ):
-            client = StorageClient(
-                endpoint_url=endpoint,
-                aws_access_key_id=candidate_access,
-                aws_secret_access_key=candidate_secret,
-            )
-            try:
-                return client.upload_file(str(tarball), destination)
-            except Exception as exc:
-                auth_failure = any(
-                    marker in str(exc).lower()
-                    for marker in (
-                        "accessdenied",
-                        "access denied",
-                        "invalidaccesskeyid",
-                        "signaturedoesnotmatch",
-                        "403 forbidden",
-                    )
-                )
-                if not auth_failure or attempt == len(credential_pairs):
-                    raise
-                print(
-                    "Sim2Real source staging: ambient S3 credentials were denied; "
-                    "retrying the configured ~/.npa credentials.",
-                    file=sys.stderr,
-                )
-        raise RuntimeError("unreachable Sim2Real source staging credential loop")
-
-
-def _apply_manifest(
-    manifest_path: Path,
-    *,
-    kubeconfig: Path,
-    context: str,
-    namespace: str,
-) -> None:
-    from npa.clients.nebius_auth import strip_ambient_token_env
-
-    command = [
-        "kubectl",
-        "--kubeconfig",
-        str(kubeconfig),
-        "--context",
-        context,
-        "-n",
-        namespace,
-        "apply",
-        "-f",
-        str(manifest_path),
-    ]
-    proc = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        env=strip_ambient_token_env(os.environ),
-        check=False,
-    )
-    if proc.returncode != 0:
-        output = (proc.stdout or "") + (proc.stderr or "")
-        raise RuntimeError(f"sim2real K8s submit failed:\n{output}")
-
-
-def _direct_kubectl(
-    args: list[str],
-    *,
-    kubeconfig: Path,
-    context: str,
-    namespace: str,
-    stdin: str | None = None,
-    timeout_s: int = 300,
-) -> subprocess.CompletedProcess[str]:
-    from npa.clients.nebius_auth import strip_ambient_token_env
-
-    command = [
-        "kubectl",
-        "--kubeconfig",
-        str(kubeconfig),
-        "--context",
-        context,
-        "-n",
-        namespace,
-        *args,
-    ]
-    return subprocess.run(
-        command,
-        input=stdin,
-        capture_output=True,
-        text=True,
-        env=strip_ambient_token_env(os.environ),
-        timeout=timeout_s,
-        check=False,
-    )
-
-
 def submit_sim2real_staged_job(
     *,
     run_id: str = "",
@@ -485,32 +337,39 @@ def submit_sim2real_staged_job(
 
     required_image_envs = _required_real_image_envs(effective_env)
     for key in required_image_envs:
-        if not _registry_qualified(image_env.get(key, "")):
+        if not _immutable_image(image_env.get(key, "")):
             raise ValueError(
-                f"{key} must be a registry-qualified image for the real Kubernetes tier; "
+                f"{key} must be a registry-qualified image@sha256 for the real Kubernetes tier; "
                 f"got {image_env.get(key, '')!r}"
             )
-    if not _registry_qualified(resolved_orchestrator):
+    if not _immutable_image(resolved_orchestrator):
         raise ValueError(
-            "the Sim2Real orchestrator image must be registry-qualified; "
+            "the Sim2Real orchestrator image must be registry-qualified and digest-pinned; "
             f"got {resolved_orchestrator!r}"
         )
 
+    source_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise ValueError("could not resolve the exact 40-character repository SHA")
+    supplied_sha = image_env.get("NPA_SIM2REAL_SOURCE_SHA", "").strip()
+    if supplied_sha and supplied_sha != source_sha:
+        raise ValueError(
+            "NPA_SIM2REAL_SOURCE_SHA differs from the checked-out exact head"
+        )
+    image_env["NPA_SIM2REAL_SOURCE_SHA"] = source_sha
+    image_env["NPA_SIM2REAL_RUNTIME_IMAGE"] = resolved_orchestrator.removeprefix(
+        "docker:"
+    )
+    image_env["NPA_SIM2REAL_CONTROLLER_SPEC_DIGEST"] = controller_spec_digest(
+        default_runbook_path()
+    )
     kubeconfig = resolve_kubeconfig(context)
-    if plan_only:
-        image_env.setdefault(
-            "NPA_SIM2REAL_SOURCE_TARBALL_URI",
-            f"s3://{bucket}/{s3_prefix.strip('/')}/{resolved_run_id}/source/"
-            f"orchestrator-{resolved_run_id}.tgz",
-        )
-    else:
-        image_env["NPA_SIM2REAL_SOURCE_TARBALL_URI"] = _stage_orchestrator_source(
-            root=root,
-            run_id=resolved_run_id,
-            bucket=bucket,
-            prefix=s3_prefix,
-            endpoint=endpoint,
-        )
 
     namespace = image_env.get("NPA_SIM2REAL_K8S_NAMESPACE", "default") or "default"
     materialized = materialize_k8s_job(
@@ -532,67 +391,21 @@ def submit_sim2real_staged_job(
             kubeconfig=str(kubeconfig),
             k8s_context=context,
         )
-        import yaml
+        from npa.workflows.sim2real.k8s_client import KubernetesJobClient
 
-        def manifest_factory(
-            product: str, candidate_job_name: str
-        ) -> dict[str, object]:
-            candidate_env = dict(image_env)
-            candidate_env["NPA_SIM2REAL_K8S_GPU_PRODUCT"] = product
-            candidate = materialize_k8s_job(
-                default_runbook_path(),
-                run_id=resolved_run_id,
-                image=resolved_orchestrator,
-                env_overrides=candidate_env,
-                namespace=namespace,
-            )
-            payload = yaml.safe_load(candidate.to_yaml())
-            payload["metadata"]["name"] = candidate_job_name
-            return payload
-
-        def kubectl(
-            args: list[str], *, stdin: str | None = None, timeout_s: int = 300
-        ) -> subprocess.CompletedProcess[str]:
-            return _direct_kubectl(
-                args,
-                kubeconfig=kubeconfig,
-                context=context,
-                namespace=namespace,
-                stdin=stdin,
-                timeout_s=timeout_s,
-            )
-
-        placement = run_gpu_job_with_fallback(
-            kubectl=kubectl,
-            manifest_factory=manifest_factory,
-            base_job_name=materialized.job_name,
+        client = KubernetesJobClient.from_environment(
             namespace=namespace,
-            image=resolved_orchestrator,
-            preferred_product=image_env.get(
-                "NPA_SIM2REAL_K8S_GPU_PRODUCT",
-                "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-            ),
-            explicit_candidates=image_env.get("NPA_SIM2REAL_K8S_GPU_CANDIDATES", ""),
-            workload="isaac",
-            gpu_resource=image_env.get(
-                "NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"
-            ),
-            gpu_count=1,
-            timeout_s=60,
-            wait_for_completion=False,
+            kubeconfig=str(kubeconfig),
+            context=context,
         )
-        image_env["NPA_SIM2REAL_K8S_GPU_PRODUCT"] = str(placement["selected_product"])
-        materialized = materialize_k8s_job(
-            default_runbook_path(),
+        client.create_or_adopt(
+            materialized.manifest,
             run_id=resolved_run_id,
-            image=resolved_orchestrator,
-            env_overrides=image_env,
-            namespace=namespace,
+            source_sha=source_sha,
+            runtime_image=resolved_orchestrator,
         )
-        selected_payload = yaml.safe_load(materialized.to_yaml())
-        selected_job_name = str(placement["job_name"])
-        selected_payload["metadata"]["name"] = selected_job_name
-        manifest_yaml = yaml.safe_dump(selected_payload, sort_keys=False)
+        selected_job_name = materialized.job_name
+        manifest_yaml = materialized.to_yaml()
     else:
         selected_job_name = materialized.job_name
         manifest_yaml = materialized.to_yaml()

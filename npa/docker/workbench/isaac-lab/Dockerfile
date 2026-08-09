@@ -36,18 +36,21 @@ ARG ISAAC_SIM_VERSION=5.1.0.0
 # isaaclab wheel ships the library but no scripts/.
 ARG ISAAC_LAB_SRC_COMMIT=37ddf626871758333d6ed89cf64ad702aef127d0
 ARG NPA_RUNTIME_USER=ubuntu
+ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="isaac-lab" \
       npa.version="${ISAAC_LAB_VERSION}" \
       npa.isaac_sim_version="${ISAAC_SIM_VERSION}" \
       npa.isaac_provisioning="runtime-fetch" \
-      npa.architecture="no-baked-omniverse-kit"
+      npa.architecture="no-baked-omniverse-kit" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 # NOTE the absence of ACCEPT_EULA / ISAACSIM_ACCEPT_EULA / OMNI_KIT_ACCEPT_EULA /
 # PRIVACY_CONSENT. Every one of those used to be baked here. They are now the operator's
 # to set, which is the entire legal mechanism, and
 # npa/tests/docker/test_packaging_contract.py fails the build if any of them reappears.
 ENV DEBIAN_FRONTEND=noninteractive \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     ISAAC_LAB_VERSION=${ISAAC_LAB_VERSION} \
     ISAAC_SIM_VERSION=${ISAAC_SIM_VERSION} \
     NPA_ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT} \
@@ -69,6 +72,8 @@ USER root
 COPY docker/workbench/common /opt/npa/docker/workbench/common
 COPY docker/workbench/isaac-lab/smoke_env.py /opt/npa/docker/workbench/isaac-lab/smoke_env.py
 COPY docker/workbench/isaac-lab/smoke_functional.py /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
+COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
+COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 
 # python3.11 + PyTorch cu128 (sm_120 for Blackwell) + the complete OSS dependency closure
 # + the bootstrap, the /isaac-sim/python.sh shim and the SkyPilot k8s prerequisites. The
@@ -76,9 +81,22 @@ COPY docker/workbench/isaac-lab/smoke_functional.py /opt/npa/docker/workbench/is
 # isaacsim/isaaclab distribution is importable - the build proves the absence of the thing
 # it used to prove the presence of.
 RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
+    && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
+
+# Exact controller source is part of the image digest. Isaac's pinned runtime
+# provides the scientific closure; these packages are never installed by Jobs.
+RUN /opt/npa/sim/venv/bin/python -m pip install --no-deps /opt/npa \
+    && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir \
+      'kubernetes==33.1.0' 'mcap==1.4.0' \
+    && /opt/npa/sim/venv/bin/python -c \
+      'import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation'
+
+RUN /opt/npa/sim/venv/bin/python -m \
+      npa.workflows.sim2real.install_isaac_runtime /opt/npa/isaac-runtime \
+    && /opt/npa/sim/venv/bin/python -m compileall -q /opt/npa/isaac-runtime
 
 RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
       /workspace/isaaclab \

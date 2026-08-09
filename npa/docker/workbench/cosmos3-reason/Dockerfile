@@ -2,11 +2,14 @@ ARG BASE_IMAGE=npa-base:cuda13-b300-sm80-sm90-sm100-sm103-sm120-v2-latest
 FROM ${BASE_IMAGE}
 
 ARG COSMOS3_REASON_VERSION=cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="cosmos3-reason" \
-      npa.version="${COSMOS3_REASON_VERSION}"
+      npa.version="${COSMOS3_REASON_VERSION}" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV PYTHONUNBUFFERED=1 \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_COSMOS3_REASON_MODEL=nvidia/Cosmos-Predict2.5-2B \
     NPA_COSMOS3_TRANSFER_MODEL=nvidia/Cosmos-Transfer2.5-2B \
     NPA_COSMOS_GUARDRAIL_MODEL=nvidia/Cosmos-Guardrail1 \
@@ -31,6 +34,7 @@ USER root
 # Do not recursively chown the inherited /opt/npa/venv: overlayfs would copy
 # the complete CUDA/PyTorch environment into this child layer.
 RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
+    && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip install tomli \
     && python -m pip install \
       "accelerate>=0.33,<2" \

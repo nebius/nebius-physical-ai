@@ -22,7 +22,7 @@ from npa.workflows.sim2real_envgen import (
 )
 
 if TYPE_CHECKING:
-    from npa.workflows.sim2real_loop import Sim2RealLoopConfig
+    from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
 DEFAULT_ENV_COUNT = 10_000
 DEFAULT_TRAIN_FRACTION = 0.8
@@ -298,7 +298,7 @@ def run_envgen_split_stage(
         curation_manifest_uri = split["uploaded_curation"]
         _mirror_env_manifests(config, local_dir, envgen, split)
     else:
-        from npa.workflows.sim2real_loop import (
+        from npa.workflows.sim2real.engine import (
             _write_env_manifest,
             _write_train_heldout_split,
         )
@@ -435,7 +435,7 @@ def run_policy_rollouts(
 ) -> list[Path]:
     """Stage 7: swappable LeRobot policy container or local reference rollouts."""
 
-    from npa.workflows.sim2real_loop import generate_action_rollouts
+    from npa.workflows.sim2real.engine import generate_action_rollouts
 
     train_uri = (config.train_envs_uri or "").strip()
     if (
@@ -497,7 +497,7 @@ def _reference_augment_local(
     )
     output_uri = str(frames_dir)
     if config.s3_bucket and config.s3_endpoint.strip():
-        from npa.workflows.sim2real_loop import _storage_client
+        from npa.workflows.sim2real.engine import _storage_client
 
         client = _storage_client(config)
         root = f"{artifact_output_uri(config)}/augment/frames/"

@@ -36,7 +36,7 @@ from npa.workflows.sim2real_health import (
     has_failure,
     run_preflight,
 )
-from npa.workflows.sim2real_loop import build_config_from_env
+from npa.workflows.sim2real.config import build_config_from_env
 from npa.workbench.model_access import (
     all_capabilities,
     check_workbench_access,
@@ -253,32 +253,70 @@ def access_command(
 
 @app.command("sim2real", hidden=True)
 def sim2real_command(
-    run_id: str = typer.Option("sim2real-doctor", "--run-id", help="Run id for the probed config."),
-    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket for artifact upload."),
-    s3_prefix: Optional[str] = typer.Option(None, "--s3-prefix", help="S3 prefix parent for this run."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="Non-default S3-compatible endpoint."),
-    trigger_dataset_uri: str = typer.Option("", "--trigger-dataset-uri", help="Trigger dataset path."),
-    trigger_dataset_id: str = typer.Option("", "--trigger-dataset-id", help="Source dataset id."),
-    assets_uri: str = typer.Option("", "--assets-uri", help="BYO simulation asset source path."),
-    scene_spec_uri: str = typer.Option("", "--scene-spec-uri", help="BYO SceneSpec path."),
-    augment_image: str = typer.Option("", "--augment-image", help="BYO augmentation image."),
+    run_id: str = typer.Option(
+        "sim2real-doctor", "--run-id", help="Run id for the probed config."
+    ),
+    s3_bucket: str = typer.Option(
+        "", "--s3-bucket", help="S3 bucket for artifact upload."
+    ),
+    s3_prefix: Optional[str] = typer.Option(
+        None, "--s3-prefix", help="S3 prefix parent for this run."
+    ),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="Non-default S3-compatible endpoint."
+    ),
+    trigger_dataset_uri: str = typer.Option(
+        "", "--trigger-dataset-uri", help="Trigger dataset path."
+    ),
+    trigger_dataset_id: str = typer.Option(
+        "", "--trigger-dataset-id", help="Source dataset id."
+    ),
+    assets_uri: str = typer.Option(
+        "", "--assets-uri", help="BYO simulation asset source path."
+    ),
+    scene_spec_uri: str = typer.Option(
+        "", "--scene-spec-uri", help="BYO SceneSpec path."
+    ),
+    augment_image: str = typer.Option(
+        "", "--augment-image", help="BYO augmentation image."
+    ),
     policy_image: str = typer.Option("", "--policy-image", help="BYO policy image."),
-    trainer_image: str = typer.Option("", "--trainer-image", help="BYO VLM-RL trainer image."),
+    trainer_image: str = typer.Option(
+        "", "--trainer-image", help="BYO VLM-RL trainer image."
+    ),
     vlm_image: str = typer.Option("", "--vlm-image", help="BYO VLM image."),
     eval_image: str = typer.Option("", "--eval-image", help="BYO held-out eval image."),
     vlm_model: str = typer.Option("", "--vlm-model", help="VLM model id/name."),
-    threshold: Optional[float] = typer.Option(None, "--threshold", help="Held-out success threshold."),
-    inner_iterations: Optional[int] = typer.Option(None, "--inner-iterations", help="Inner-loop cap."),
-    outer_iterations: Optional[int] = typer.Option(None, "--outer-iterations", help="Outer-loop cap."),
+    threshold: Optional[float] = typer.Option(
+        None, "--threshold", help="Held-out success threshold."
+    ),
+    inner_iterations: Optional[int] = typer.Option(
+        None, "--inner-iterations", help="Inner-loop cap."
+    ),
+    outer_iterations: Optional[int] = typer.Option(
+        None, "--outer-iterations", help="Outer-loop cap."
+    ),
     loop_of_loops_iterations: Optional[int] = typer.Option(
         None, "--loop-of-loops-iterations", help="Loop-of-loops cap."
     ),
-    rollout_count: Optional[int] = typer.Option(None, "--rollout-count", help="Train rollout count."),
-    steps_per_rollout: Optional[int] = typer.Option(None, "--steps-per-rollout", help="Steps per rollout."),
-    heldout_env_count: Optional[int] = typer.Option(None, "--heldout-env-count", help="Held-out env count."),
-    k8s_namespace: str = typer.Option("", "--k8s-namespace", help="Namespace for sibling Jobs."),
-    k8s_context: str = typer.Option("", "--k8s-context", help="Kube context to pin the check to."),
-    k8s_kubeconfig: str = typer.Option("", "--k8s-kubeconfig", help="Explicit kubeconfig path."),
+    rollout_count: Optional[int] = typer.Option(
+        None, "--rollout-count", help="Train rollout count."
+    ),
+    steps_per_rollout: Optional[int] = typer.Option(
+        None, "--steps-per-rollout", help="Steps per rollout."
+    ),
+    heldout_env_count: Optional[int] = typer.Option(
+        None, "--heldout-env-count", help="Held-out env count."
+    ),
+    k8s_namespace: str = typer.Option(
+        "", "--k8s-namespace", help="Namespace for sibling Jobs."
+    ),
+    k8s_context: str = typer.Option(
+        "", "--k8s-context", help="Kube context to pin the check to."
+    ),
+    k8s_kubeconfig: str = typer.Option(
+        "", "--k8s-kubeconfig", help="Explicit kubeconfig path."
+    ),
     checks: str = typer.Option(
         ",".join(ALL_CHECKS),
         "--checks",
@@ -366,7 +404,9 @@ def sim2real_command(
         typer.echo(json_module.dumps(payload, indent=2, sort_keys=True))
     else:
         for result in results:
-            typer.echo(f"[{_STATUS_ICON.get(result.status, result.status)}] {result.name}: {result.summary}")
+            typer.echo(
+                f"[{_STATUS_ICON.get(result.status, result.status)}] {result.name}: {result.summary}"
+            )
             for detail in result.details:
                 typer.echo(f"        - {detail}")
             if result.remedy and result.status in {FAIL, WARN, SKIP}:

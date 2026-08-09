@@ -293,8 +293,7 @@ def _resolve_activation(torch: Any, activation: str) -> Any:
     attr = _ACTIVATIONS.get(activation.lower())
     if attr is None:
         raise PolicyExportError(
-            f"unsupported activation {activation!r}; supported: "
-            f"{sorted(_ACTIVATIONS)}"
+            f"unsupported activation {activation!r}; supported: {sorted(_ACTIVATIONS)}"
         )
     return getattr(torch.nn, attr)
 
@@ -319,7 +318,9 @@ def load_state_dict_from_checkpoint(checkpoint: Mapping[str, Any]) -> Mapping[st
     )
 
 
-def _build_actor_module(torch: Any, state_dict: Mapping[str, Any], activation: str) -> Any:
+def _build_actor_module(
+    torch: Any, state_dict: Mapping[str, Any], activation: str
+) -> Any:
     """Rebuild the actor MLP (nn.Sequential) from ``actor.<n>.{weight,bias}``."""
 
     nn = torch.nn
@@ -485,9 +486,7 @@ def export_policy_onnx(
     contract_path = out_path / CONTRACT_FILENAME
 
     dynamic_axes = (
-        {input_name: {0: "batch"}, output_name: {0: "batch"}}
-        if dynamic_batch
-        else None
+        {input_name: {0: "batch"}, output_name: {0: "batch"}} if dynamic_batch else None
     )
     # Prefer the legacy TorchScript exporter: it embeds the (small) MLP weights
     # directly into a single self-contained ``policy.onnx`` (the newer dynamo
@@ -516,9 +515,7 @@ def export_policy_onnx(
             "that embeds weights."
         )
 
-    provenance = _checkpoint_provenance(
-        ckpt_path, checkpoint, source=checkpoint_source
-    )
+    provenance = _checkpoint_provenance(ckpt_path, checkpoint, source=checkpoint_source)
     contract = build_policy_contract(
         obs_dim=obs_dim,
         act_dim=act_dim,

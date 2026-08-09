@@ -47,14 +47,14 @@ def test_manifest_is_a_runnable_job() -> None:
     container = pod["containers"][0]
     assert container["image"] == IMAGE
     assert container["command"][0] == "/bin/bash"
-    # setup + run travel together so the pod bootstraps npa before the loop.
-    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" in container["command"][2]
-    assert "pip install --quiet --target /tmp/npa-bootstrap-uv" in container["command"][2]
-    assert 'pip install --user "uv' not in container["command"][2]
-    assert "pip install -e './npa[viz]'" in container["command"][2]
+    # The image contains exact source and dependencies before it reaches a GPU.
+    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" not in container["command"][2]
+    assert "pip install" not in container["command"][2]
+    assert "runtime_attestation" in container["command"][2]
     assert "npa.workflows.sim2real run" in container["command"][2]
     assert pod["restartPolicy"] == "Never"
-    assert manifest["spec"]["backoffLimit"] == 0
+    assert manifest["spec"]["backoffLimit"] == 3
+    assert manifest["spec"]["podFailurePolicy"]["rules"]
 
 
 def test_runbook_driver_is_cpu_only_and_preserves_sibling_gpu_config() -> None:
@@ -81,14 +81,18 @@ def test_explicit_positive_timeout_adds_job_deadline() -> None:
     container = job.manifest["spec"]["template"]["spec"]["containers"][0]
     env = {item["name"]: item["value"] for item in container["env"]}
     assert env["NPA_SIM2REAL_K8S_JOB_TIMEOUT_S"] == "3600"
-    assert '--k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-0}"' in container[
-        "command"
-    ][2]
+    assert (
+        '--k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-0}"'
+        in container["command"][2]
+    )
 
 
 def test_envs_carry_no_unexpanded_variables_and_overrides_win() -> None:
     job = _materialize(env_overrides={"NPA_SIM2REAL_BUCKET": "my-real-bucket"})
-    env = {item["name"]: item["value"] for item in job.manifest["spec"]["template"]["spec"]["containers"][0]["env"]}
+    env = {
+        item["name"]: item["value"]
+        for item in job.manifest["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
     assert all("${" not in value for value in env.values())
     assert env["NPA_SIM2REAL_BUCKET"] == "my-real-bucket"
     assert env["NPA_SIM2REAL_RUN_ID"] == "unit-run"
@@ -102,7 +106,7 @@ def test_envs_carry_no_unexpanded_variables_and_overrides_win() -> None:
 def test_skip_setup_omits_bootstrap() -> None:
     job = _materialize(include_setup=False)
     script = job.manifest["spec"]["template"]["spec"]["containers"][0]["command"][2]
-    assert "pip install -e './npa[viz]'" not in script
+    assert "pip install" not in script
     assert "npa.workflows.sim2real run" in script
 
 

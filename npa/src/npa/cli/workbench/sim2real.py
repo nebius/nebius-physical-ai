@@ -11,7 +11,7 @@ from typing import Optional
 import typer
 
 from npa.clients.credentials import load_credentials
-from npa.workflows.sim2real_loop import (
+from npa.workflows.sim2real.constants import (
     DEFAULT_HELDOUT_ENVS,
     DEFAULT_INNER_ITERATIONS,
     DEFAULT_LEROBOT_DATASET_ID,
@@ -21,11 +21,13 @@ from npa.workflows.sim2real_loop import (
     DEFAULT_S3_ENDPOINT,
     DEFAULT_STEPS_PER_ROLLOUT,
     DEFAULT_THRESHOLD,
-    build_config_from_env,
+)
+from npa.workflows.sim2real.config import build_config_from_env
+from npa.workflows.sim2real.engine import (
     convert_vlm_eval_to_rl_signal,
-    run_full_loop,
     run_inner_loop,
 )
+from npa.workflows.sim2real.runner import run_full_loop
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     default_regen_local_dir,
@@ -131,7 +133,9 @@ def run_command(
     vlm_image: str = typer.Option("", "--vlm-image", help="BYO VLM image."),
     eval_image: str = typer.Option("", "--eval-image", help="BYO held-out eval image."),
     isaac_image: str = typer.Option(
-        "", "--isaac-image", help="Isaac Lab held-out rollout image (Isaac Sim headless)."
+        "",
+        "--isaac-image",
+        help="Isaac Lab held-out rollout image (Isaac Sim headless).",
     ),
     sim_backend: str = typer.Option(
         "isaac",
@@ -303,19 +307,30 @@ def materialize_command(
         None,
         help="SkyPilot runbook to render (default: the committed sim2real runbook).",
     ),
-    run_id: str = typer.Option("", "--run-id", help="Run id; also sets NPA_SIM2REAL_RUN_ID."),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Run id; also sets NPA_SIM2REAL_RUN_ID."
+    ),
     image: str = typer.Option(
-        "", "--image", help="Registry-qualified trainer image (required while the runbook ships a placeholder)."
+        "",
+        "--image",
+        help="Registry-qualified trainer image (required while the runbook ships a placeholder).",
     ),
     env: list[str] = typer.Option(
         [], "--env", help="KEY=VALUE override for a runbook env (repeatable)."
     ),
-    namespace: str = typer.Option("", "--namespace", help="Kubernetes namespace override."),
+    namespace: str = typer.Option(
+        "", "--namespace", help="Kubernetes namespace override."
+    ),
     skip_setup: bool = typer.Option(
-        False, "--skip-setup", help="Omit the runbook setup block (image already carries npa)."
+        False,
+        "--skip-setup",
+        help="Omit the runbook setup block (image already carries npa).",
     ),
     output: Optional[Path] = typer.Option(
-        None, "--output", "-o", help="Write the Job manifest YAML here instead of stdout."
+        None,
+        "--output",
+        "-o",
+        help="Write the Job manifest YAML here instead of stdout.",
     ),
 ) -> None:
     """Render the sim2real runbook to a Kubernetes Job (no SkyPilot, no operator pack).
@@ -366,7 +381,9 @@ def materialize_command(
 @app.command("status")
 def status_command(
     run_id: str = typer.Option(..., "--run-id", help="Sim2Real staged run id."),
-    s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket for run artifacts."),
+    s3_bucket: str = typer.Option(
+        "", "--s3-bucket", help="S3 bucket for run artifacts."
+    ),
     s3_prefix: str = typer.Option(
         DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 parent prefix (default: sim2real-b)."
     ),
@@ -374,12 +391,18 @@ def status_command(
         DEFAULT_S3_ENDPOINT, "--s3-endpoint", help="S3-compatible endpoint."
     ),
     k8s_context: str = typer.Option("", "--k8s-context", help="Kubernetes context."),
-    k8s_namespace: str = typer.Option("default", "--k8s-namespace", help="Job namespace."),
+    k8s_namespace: str = typer.Option(
+        "default", "--k8s-namespace", help="Job namespace."
+    ),
     watch: bool = typer.Option(
-        False, "--watch/--no-watch", help="Refresh until the run reaches a terminal state."
+        False,
+        "--watch/--no-watch",
+        help="Refresh until the run reaches a terminal state.",
     ),
     interval: float = typer.Option(10.0, "--interval", help="Watch refresh interval."),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON."
+    ),
 ) -> None:
     """Check kubectl-submitted Sim2Real runs via S3 workflow_state.json and K8s jobs."""
 
@@ -453,7 +476,9 @@ def _onboard_env(name: str, default: str = "") -> str:
 @app.command("onboard-robot")
 def onboard_robot_command(
     spec: Path = typer.Option(
-        ..., "--spec", help="Onboarding robot+task spec YAML (see robot-onboarding.template.yaml)."
+        ...,
+        "--spec",
+        help="Onboarding robot+task spec YAML (see robot-onboarding.template.yaml).",
     ),
     smoke: bool = typer.Option(
         False,
@@ -462,7 +487,9 @@ def onboard_robot_command(
         "retargets, and trains (requires cluster creds + ISAAC_IMAGE in env).",
     ),
     run_id: str = typer.Option(
-        "", "--run-id", help="Run id for the smoke job (default: derived from robot name)."
+        "",
+        "--run-id",
+        help="Run id for the smoke job (default: derived from robot name).",
     ),
     smoke_iterations: int = typer.Option(
         onboarding_svc.DEFAULT_SMOKE_ITERATIONS,
@@ -474,8 +501,12 @@ def onboard_robot_command(
         "--smoke-num-envs",
         help="Smoke-job parallel envs.",
     ),
-    k8s_namespace: str = typer.Option("default", "--k8s-namespace", help="Smoke job namespace."),
-    json_output: bool = typer.Option(False, "--json", help="Emit the derived plan as JSON."),
+    k8s_namespace: str = typer.Option(
+        "default", "--k8s-namespace", help="Smoke job namespace."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit the derived plan as JSON."
+    ),
 ) -> None:
     """Validate an onboarding spec, print the auto-derived robot-aware task config,
     and (with --smoke) submit a short Isaac trainer job to confirm the robot trains.
@@ -568,15 +599,23 @@ def onboard_robot_command(
 
     def _kubectl_apply(manifest: dict) -> int:
         trainer._kubectl(
-            ["delete", "job", f"s2r-onboard-smoke-{rid}"[:63], "-n", k8s_namespace,
-             "--ignore-not-found"],
+            [
+                "delete",
+                "job",
+                f"s2r-onboard-smoke-{rid}"[:63],
+                "-n",
+                k8s_namespace,
+                "--ignore-not-found",
+            ],
             timeout=60,
         )
         res = trainer._kubectl(
             ["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120
         )
         if res.returncode != 0:
-            typer.secho(f"kubectl apply failed: {res.stderr}", fg=typer.colors.RED, err=True)
+            typer.secho(
+                f"kubectl apply failed: {res.stderr}", fg=typer.colors.RED, err=True
+            )
         return res.returncode
 
     result = onboarding_svc.submit_smoke_job(
@@ -608,7 +647,9 @@ def onboard_robot_command(
 
 
 def _slug(text: str) -> str:
-    cleaned = "".join(c if (c.isalnum() or c in "-_") else "-" for c in text.strip().lower())
+    cleaned = "".join(
+        c if (c.isalnum() or c in "-_") else "-" for c in text.strip().lower()
+    )
     return cleaned.strip("-") or "robot"
 
 
@@ -669,18 +710,32 @@ def _rerun_serve_credentials() -> tuple[str, str]:
 @rerun_app.command("serve")
 def rerun_serve_command(
     run_id: str = typer.Option(..., "--run-id", help="Completed Sim2Real run id."),
-    project: str = typer.Option("", "--project", "-p", help="Project alias for storage resolution."),
-    cluster_name: str = typer.Option(
-        "", "--cluster-name", help="NPA cluster profile for cached kubeconfig (default: from ~/.npa/config.yaml)."
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias for storage resolution."
     ),
-    kubeconfig: str = typer.Option("", "--kubeconfig", help="Kubeconfig path override."),
-    namespace: str = typer.Option(DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."),
+    cluster_name: str = typer.Option(
+        "",
+        "--cluster-name",
+        help="NPA cluster profile for cached kubeconfig (default: from ~/.npa/config.yaml).",
+    ),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Kubeconfig path override."
+    ),
+    namespace: str = typer.Option(
+        DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."
+    ),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="Rerun web viewer port."),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket override."),
-    s3_prefix: str = typer.Option(DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint override."),
+    s3_prefix: str = typer.Option(
+        DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."
+    ),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint override."
+    ),
     rrd_uri: str = typer.Option(
-        "", "--rrd-uri", help="Explicit s3:// URI for reports/sim2real.rrd (no local download)."
+        "",
+        "--rrd-uri",
+        help="Explicit s3:// URI for reports/sim2real.rrd (no local download).",
     ),
     report_uri: str = typer.Option(
         "",
@@ -716,7 +771,9 @@ def rerun_serve_command(
         "--wait",
         help="When used with --destroy, wait for Kubernetes to confirm resource deletion.",
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print the Kubernetes manifest only."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the Kubernetes manifest only."
+    ),
     local_record: bool = typer.Option(
         False,
         "--local-record",
@@ -728,13 +785,18 @@ def rerun_serve_command(
         help="Override local .rrd destination when using --local-record.",
     ),
     auth_user: str = typer.Option(
-        "", "--auth-user", help="Enable HTTP basic-auth on the hosted viewer with this username."
+        "",
+        "--auth-user",
+        help="Enable HTTP basic-auth on the hosted viewer with this username.",
     ),
     auth_password: str = typer.Option(
-        "", "--auth-password",
+        "",
+        "--auth-password",
         help="Password for --auth-user (generated if --auth-user is set without one).",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Deploy a hosted Rerun viewer; pod init container pulls reports/sim2real.rrd from S3."""
     try:
@@ -743,6 +805,7 @@ def rerun_serve_command(
         # Basic-auth: gate the cloud LoadBalancer URL behind credentials.
         if auth_user.strip() and not auth_password:
             import secrets
+
             auth_password = secrets.token_urlsafe(12)
         config = build_rerun_serve_config(
             auth_user=auth_user,
@@ -766,9 +829,17 @@ def rerun_serve_command(
         if dry_run:
             manifest = build_rerun_serve_manifest(config)
             if output == OutputFormat.json:
-                typer.echo(json.dumps(redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True))
+                typer.echo(
+                    json.dumps(
+                        redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True
+                    )
+                )
             else:
-                typer.echo(json.dumps(redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True))
+                typer.echo(
+                    json.dumps(
+                        redact_rerun_serve_manifest(manifest), indent=2, sort_keys=True
+                    )
+                )
             return
         resolved_kubeconfig = require_kubeconfig(
             cluster_name=cluster_context,
@@ -829,10 +900,16 @@ def rerun_serve_command(
 @rerun_app.command("regen")
 def rerun_regen_command(
     run_id: str = typer.Option(..., "--run-id", help="Completed Sim2Real run id."),
-    project: str = typer.Option("", "--project", "-p", help="Project alias for storage resolution."),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias for storage resolution."
+    ),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket override."),
-    s3_prefix: str = typer.Option(DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint override."),
+    s3_prefix: str = typer.Option(
+        DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."
+    ),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint override."
+    ),
     local_dir: Optional[Path] = typer.Option(
         None,
         "--local-dir",
@@ -853,7 +930,9 @@ def rerun_regen_command(
         "--no-sync",
         help="Skip S3 download; use artifacts already under --local-dir.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Regenerate reports/sim2real.rrd + sim2real.mcap from S3 artifacts (held-out PNG sync included)."""
     try:
@@ -894,22 +973,32 @@ def rerun_regen_command(
 @rerun_app.command("heldout-only")
 def rerun_heldout_only_command(
     run_id: str = typer.Option(..., "--run-id", help="Existing Sim2Real run id."),
-    project: str = typer.Option("", "--project", "-p", help="Project alias for storage resolution."),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias for storage resolution."
+    ),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket override."),
-    s3_prefix: str = typer.Option(DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint override."),
+    s3_prefix: str = typer.Option(
+        DEFAULT_S3_PREFIX, "--s3-prefix", help="S3 prefix parent for runs."
+    ),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint override."
+    ),
     local_dir: Optional[Path] = typer.Option(
         None,
         "--local-dir",
         help="Local working directory (default: /tmp/sim2real-regen/<run-id>).",
     ),
-    outer_iteration: int = typer.Option(1, "--outer-iteration", help="Outer loop index for stage 10."),
+    outer_iteration: int = typer.Option(
+        1, "--outer-iteration", help="Outer loop index for stage 10."
+    ),
     no_publish: bool = typer.Option(
         False,
         "--no-publish",
         help="Skip uploading held-out report/renders to the run prefix on S3.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Re-run Isaac held-out eval (stage 10) on cluster for an existing run (~5–15 min)."""
     try:
@@ -933,7 +1022,9 @@ def rerun_heldout_only_command(
     payload = {
         "run_id": run_id,
         "success_rate": report.get("success_rate"),
-        "render_manifest_episodes": len((report.get("render_manifest") or {}).get("episodes") or []),
+        "render_manifest_episodes": len(
+            (report.get("render_manifest") or {}).get("episodes") or []
+        ),
         "sim_backend": report.get("sim_backend"),
         "rollout_backend": report.get("rollout_backend"),
     }

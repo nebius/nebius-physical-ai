@@ -44,7 +44,7 @@ def docker_config_json(
 ) -> dict[str, Any]:
     """Return a dockerconfigjson whose ``auths`` covers every given registry host.
 
-    A pull secret holds exactly one dockerconfigjson and ``kubectl apply`` replaces
+    A pull secret holds exactly one dockerconfigjson and an API patch replaces
     it wholesale, so every host a run pulls from has to be in the same document. One
     IAM token authenticates all of them, since the token is identity-scoped rather
     than host-scoped.
@@ -179,39 +179,19 @@ def ensure_nebius_registry_pull_secret(
             ).decode("ascii")
         },
     }
-    cmd = ["kubectl"]
-    if k8s_context:
-        cmd.extend(["--context", k8s_context])
-    cmd.extend(["-n", namespace, "apply", "-f", "-"])
-    # Strip any ambient/stale NEBIUS_IAM_TOKEN so kubectl's nebius exec-credential
-    # plugin re-authenticates via the configured profile instead of failing with
-    # "Invalid token" (otherwise the pull-secret apply silently no-ops).
-    env = strip_ambient_token_env(os.environ)
-    if kubeconfig:
-        env["KUBECONFIG"] = kubeconfig
+    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+
     try:
-        proc = subprocess.run(
-            cmd,
-            input=json.dumps(payload),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            check=False,
+        client = KubernetesJobClient.from_environment(
+            namespace=namespace,
+            kubeconfig=kubeconfig,
+            context=k8s_context,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
-        # In-pod orchestrators frequently have no kubectl on PATH, which raises
-        # FileNotFoundError. Callers treat this refresh as best-effort and catch
-        # RuntimeError, so keep every expected failure inside that contract
-        # instead of letting an OSError escape and kill the run.
+        client.apply_secret(payload)
+    except Exception as exc:
         raise RuntimeError(
             f"failed to apply registry pull secret {secret_name}: {exc}"
         ) from exc
-    if proc.returncode != 0:
-        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
-        raise RuntimeError(
-            f"failed to apply registry pull secret {secret_name}: {detail}"
-        )
 
 
 def ensure_registry_pull_secret_for_images(

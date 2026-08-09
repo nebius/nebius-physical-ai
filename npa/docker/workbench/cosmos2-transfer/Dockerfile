@@ -114,14 +114,17 @@ FROM ${CUDA_RUNTIME_IMAGE} AS runtime
 
 ARG COSMOS_TRANSFER_REVISION=67d56b7d550a3911024a32dc23ae0bae5258e633
 ARG UBUNTU_SNAPSHOT
+ARG NPA_SOURCE_SHA
 
 LABEL org.opencontainers.image.title="NPA Cosmos Transfer 2.5" \
       org.opencontainers.image.description="Cosmos Transfer 2.5 source runtime; model weights are operator-fetched at run time" \
       org.opencontainers.image.source="https://github.com/nvidia-cosmos/cosmos-transfer2.5" \
       org.opencontainers.image.revision="${COSMOS_TRANSFER_REVISION}" \
-      org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-Deep-Learning-Container"
+      org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-Deep-Learning-Container" \
+      npa.source_revision="${NPA_SOURCE_SHA}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     HF_HOME=/opt/cosmos/model-cache/huggingface \
     HUGGINGFACE_HUB_CACHE=/opt/cosmos/model-cache/huggingface/hub \
     NLTK_DATA=/opt/cosmos/model-cache \
@@ -169,6 +172,8 @@ RUN set -eux; \
     ldconfig
 
 COPY --from=build --chown=1000:1000 /opt/cosmos /opt/cosmos
+COPY --chown=1000:1000 pyproject.toml /opt/npa/pyproject.toml
+COPY --chown=1000:1000 src/npa /opt/npa/src/npa
 COPY --from=build /usr/local/bin/assert-no-forbidden-cosmos2-payload \
     /usr/local/bin/assert-no-forbidden-cosmos2-payload
 COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh \
@@ -183,6 +188,7 @@ COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
 # Deliberately shadow the global python3: SkyPilot and orchestrator-supplied
 # commands invoke python3; /usr/bin/python3 remains available to system tooling.
 RUN set -eux; \
+    test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40; \
     id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu; \
     chmod 0440 /etc/sudoers.d/ubuntu; \
@@ -210,6 +216,12 @@ RUN set -eux; \
       'test "$(command -v uvx)" = /usr/local/bin/uvx && uvx --version'; \
     su ubuntu -s /bin/bash -c \
       'test -w /opt/cosmos/model-cache/huggingface && test -x /opt/cosmos/cosmos-transfer2.5/.venv/bin/python'
+
+RUN /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -m pip install --no-deps /opt/npa \
+    && /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
+      'import npa.workflows.sim2real.runtime_attestation'
+
+ENV PYTHONPATH=/opt/npa/src
 
 VOLUME ["/opt/cosmos/model-cache"]
 WORKDIR /opt/cosmos/cosmos-transfer2.5

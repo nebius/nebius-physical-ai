@@ -23,7 +23,7 @@ from npa.guardrails.skypilot import (
     unresolved_image_placeholders,
 )
 from npa.guardrails.three_tier import callback_parameters, option_flags
-from npa.workflows.sim2real_loop import Sim2RealLoopConfig
+from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
 PASS = "PASS"
 WARN = "WARN"
@@ -77,8 +77,12 @@ SIM2REAL_SEAMS: tuple[Seam, ...] = (
     Seam("eval_image", "eval_image", "--eval-image", "EVAL_IMAGE"),
     Seam("vlm_model", "vlm_model", "--vlm-model", "VLM_MODEL"),
     Seam("threshold", "threshold", "--threshold", "SUCCESS_THRESHOLD"),
-    Seam("inner_iterations", "inner_iterations", "--inner-iterations", "INNER_ITERATIONS"),
-    Seam("outer_iterations", "outer_iterations", "--outer-iterations", "OUTER_ITERATIONS"),
+    Seam(
+        "inner_iterations", "inner_iterations", "--inner-iterations", "INNER_ITERATIONS"
+    ),
+    Seam(
+        "outer_iterations", "outer_iterations", "--outer-iterations", "OUTER_ITERATIONS"
+    ),
     Seam(
         "loop_of_loops_iterations",
         "loop_of_loops_iterations",
@@ -86,8 +90,18 @@ SIM2REAL_SEAMS: tuple[Seam, ...] = (
         "LOOP_OF_LOOPS_ITERATIONS",
     ),
     Seam("rollout_count", "rollout_count", "--rollout-count", "ROLLOUT_COUNT"),
-    Seam("steps_per_rollout", "steps_per_rollout", "--steps-per-rollout", "STEPS_PER_ROLLOUT"),
-    Seam("heldout_env_count", "heldout_env_count", "--heldout-env-count", "HELDOUT_ENV_COUNT"),
+    Seam(
+        "steps_per_rollout",
+        "steps_per_rollout",
+        "--steps-per-rollout",
+        "STEPS_PER_ROLLOUT",
+    ),
+    Seam(
+        "heldout_env_count",
+        "heldout_env_count",
+        "--heldout-env-count",
+        "HELDOUT_ENV_COUNT",
+    ),
 )
 
 # Container images a real run must be able to pull.
@@ -169,7 +183,9 @@ def coherence_failures(repo_root: Path) -> list[str]:
         if seam.cli_flag not in cli_flags:
             failures.append(f"{seam.name}: CLI flag missing: {seam.cli_flag}")
         if seam.config_field not in config_field_names:
-            failures.append(f"{seam.name}: SDK/config field missing: {seam.config_field}")
+            failures.append(
+                f"{seam.name}: SDK/config field missing: {seam.config_field}"
+            )
         if seam.yaml_env not in yaml_envs:
             failures.append(f"{seam.name}: YAML env missing: {seam.yaml_env}")
         elif seam.yaml_env not in yaml_refs:
@@ -397,7 +413,9 @@ def check_tokens(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckRe
     have_ngc = bool(getattr(creds, "ngc_api_key", ""))
     missing: list[str] = []
     if not have_hf:
-        missing.append("HF_TOKEN (gated VLM / model repos used by the eval and VLM images)")
+        missing.append(
+            "HF_TOKEN (gated VLM / model repos used by the eval and VLM images)"
+        )
     if not have_ngc:
         missing.append("NGC_API_KEY (NGC-hosted base images and weights)")
     if missing:
@@ -578,7 +596,10 @@ def format_check_report(results: list[CheckResult], *, output_json: bool) -> str
 
     if output_json:
         return json.dumps(
-            {"checks": [result.as_dict() for result in results], "ok": not has_failure(results)},
+            {
+                "checks": [result.as_dict() for result in results],
+                "ok": not has_failure(results),
+            },
             indent=2,
             sort_keys=True,
         )

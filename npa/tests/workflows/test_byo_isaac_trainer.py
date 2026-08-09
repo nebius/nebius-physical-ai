@@ -128,7 +128,10 @@ def test_build_isaac_job_manifest_shape():
     assert "--num_envs 1024" in args
     assert "agent.num_steps_per_env=24" in args
     assert byo.TRAIN_SCRIPT in args
-    assert "model_latest.pt" in args  # uploads the trained checkpoint
+    assert "npa.workflows.sim2real.runtime_attestation" in args
+    assert "npa.workflows.sim2real.isaac_job_io upload-training" in args
+    assert "pip install" not in args
+    assert "<<" not in args
 
 
 def test_dryrun_main_writes_contract_json(tmp_path, monkeypatch):
@@ -254,8 +257,14 @@ def test_scenario_wrapper_consumes_reward_and_native_ppo_contract() -> None:
     assert "ROBOT_INIT_NOISE_STD=1.2" in args
     assert "ROBOT_VALIDATION_INTERVAL=100" in args
     assert "ROBOT_OBJECT_USD=https://assets.example/cube.usd" in args
-    assert "ROBOT_REWARD_OVERRIDES_APPLIED" in args
-    assert "ROBOT_PPO_SETTINGS_APPLIED" in args
+    assert "/opt/npa/isaac-runtime/isaac_robot_train.py" in args
+    # Those markers are produced by the wrapper baked into the immutable image,
+    # not by source text injected into the live Job manifest.
+    from npa.workflows.sim2real.isaac_byo_robot_task import TRAIN_WRAPPER_SCRIPT
+
+    assert "ROBOT_REWARD_OVERRIDES_APPLIED" in TRAIN_WRAPPER_SCRIPT
+    assert "ROBOT_PPO_SETTINGS_APPLIED" in TRAIN_WRAPPER_SCRIPT
+    assert "ROBOT_REWARD_OVERRIDES_APPLIED" not in args
 
 
 def test_manifest_downloads_sha_pinned_scenario_distribution_without_embedding() -> (
@@ -285,9 +294,10 @@ def test_manifest_downloads_sha_pinned_scenario_distribution_without_embedding()
     assert marker not in script
     assert "s3://b/run/envs/train/envs.jsonl" in script
     assert digest in script
-    assert "SCENARIO_DISTRIBUTION_DOWNLOADED" in script
-    assert "SCENARIO_DISTRIBUTION_SHA_MISMATCH" in script
-    assert "SCENARIO_DISTRIBUTION_FETCH_FAILED" in script
+    assert "npa.workflows.sim2real.isaac_job_io download" in script
+    assert f"--sha256 {digest}" in script
+    assert "boto3" not in script
+    assert "download_file" not in script
     assert (
         subprocess.run(
             ["bash", "-n"], input=script, text=True, capture_output=True, check=False
@@ -461,15 +471,14 @@ def test_manifest_physics_path_ships_wrapper_and_skips_stock_train():
         physics={"friction": 0.7, "mass_scale": 0.95},
     )
     args = _manifest_script(m)
-    # ships the module + wrapper, sets the generated physics, runs the wrapper
-    assert "isaac_physics_task.py" in args and "runner.py" in args
+    # Runs the wrapper baked into the exact runtime image and sets generated physics.
+    assert "/opt/npa/isaac-runtime/isaac_physics_train.py" in args
     assert "NPA_GEN_FRICTION=0.7" in args and "NPA_GEN_MASS_SCALE=0.95" in args
     assert "PHYS_SEED=736958930" in args
-    assert "/tmp/npa_phys/runner.py" in args
+    assert "/tmp/npa_phys/runner.py" not in args
     # physics path does NOT invoke stock train.py
     assert byo.TRAIN_SCRIPT not in args
-    # still uploads model_latest.pt via the shared tail
-    assert "model_latest.pt" in args
+    assert "npa.workflows.sim2real.isaac_job_io upload-training" in args
 
 
 def test_manifest_default_path_unchanged_without_physics():
@@ -513,9 +522,12 @@ def test_byo_wrapper_saves_resumed_absolute_iteration() -> None:
             scenarios_sha256="a" * 64,
         )
     )
-    assert "current_learning_iteration" in script
-    assert "final_iteration" in script
-    assert "ROBOT_FINAL_CHECKPOINT" in script
+    assert "/opt/npa/isaac-runtime/isaac_robot_train.py" in script
+    from npa.workflows.sim2real.isaac_byo_robot_task import TRAIN_WRAPPER_SCRIPT
+
+    assert "current_learning_iteration" in TRAIN_WRAPPER_SCRIPT
+    assert "final_iteration" in TRAIN_WRAPPER_SCRIPT
+    assert "ROBOT_FINAL_CHECKPOINT" in TRAIN_WRAPPER_SCRIPT
 
 
 def test_read_generated_train_env_s3_fallback(tmp_path, monkeypatch):
@@ -579,7 +591,8 @@ def test_manifest_resume_downloads_prior_checkpoint_and_passes_flags():
     # downloads the prior checkpoint into the rsl_rl log dir train.py searches
     assert f"RESUME_FROM: {uri}" in args
     assert f"logs/rsl_rl/{byo.DEFAULT_EXPERIMENT_NAME}/{byo.RESUME_RUN_DIR}" in args
-    assert "s3.download_file" in args
+    assert "npa.workflows.sim2real.isaac_job_io download" in args
+    assert "s3.download_file" not in args
     # tells train.py to resume that exact staged run
     assert "agent.resume=true" in args
     assert f"agent.load_run={byo.RESUME_RUN_DIR}" in args
@@ -654,13 +667,20 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
         captured["scenarios_sha256"] = kwargs.get("scenarios_sha256", "")
         return {"manifest": True}
 
-    class _Proc:
-        returncode = 0
-        stderr = ""
-        stdout = ""
-
     monkeypatch.setattr(byo, "build_isaac_job_manifest", fake_build)
-    monkeypatch.setattr(byo, "_kubectl", lambda *a, **k: _Proc())
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.gpu_fallback.run_gpu_job_with_fallback",
+        lambda **kwargs: {
+            "job_name": kwargs["base_job_name"],
+            "job_uid": "uid",
+            "selected_product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            "image_digests": ["reg/runtime@sha256:" + "a" * 64],
+        },
+    )
     monkeypatch.setattr(
         byo,
         "read_signal_stats",

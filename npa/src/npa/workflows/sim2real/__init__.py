@@ -6,7 +6,11 @@ Stage implementations (K8s siblings, sim backends, VLM glue): ``engine``.
 
 from __future__ import annotations
 
-from npa.workflows.sim2real.config import artifact_uris, build_config_from_env, byo_seams
+from npa.workflows.sim2real.config import (
+    artifact_uris,
+    build_config_from_env,
+    byo_seams,
+)
 from npa.workflows.sim2real.constants import (
     SCHEMA_E2E_REPORT,
     SCHEMA_HELDOUT_REPORT,

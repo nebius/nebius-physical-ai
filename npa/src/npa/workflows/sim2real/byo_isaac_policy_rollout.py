@@ -27,16 +27,16 @@ Runs in the orchestrator pod (no Isaac), so it submits an Isaac sibling Job that
 rolls the policy, captures per-env frames + actions, and uploads them to S3;
 this process downloads them into the local rollout dirs.
 
-``NPA_BYO_ISAAC_DRYRUN=1`` skips kubectl/S3 and emits deterministic rollout dirs
+``NPA_BYO_ISAAC_DRYRUN=1`` skips the Kubernetes API/S3 and emits deterministic rollout dirs
 (procedural frames) for unit tests / wiring checks without a GPU.
 """
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -312,10 +312,10 @@ try:
     import isaaclab_tasks  # noqa: F401
     _scenarios = None
     if os.environ.get("NPA_SIM2REAL_SCENARIOS_JSONL"):
-        sys.path.insert(0, "/tmp/rollwork")
+        sys.path.insert(0, os.environ.get("NPA_ROBOT_MODULE_DIR", "/opt/npa/isaac-runtime"))
         import isaac_scenario_task as _scenarios
     if os.environ.get("NPA_BYO_ROBOT_SPEC_JSON"):
-        sys.path.insert(0, "/tmp/rollwork")
+        sys.path.insert(0, os.environ.get("NPA_ROBOT_MODULE_DIR", "/opt/npa/isaac-runtime"))
         import isaac_byo_robot_task as _robotmod
         _scenario_task = _robotmod.register()
         if not _scenario_task:
@@ -649,14 +649,9 @@ def build_isaac_rollout_job_manifest(
     download = ""
     if checkpoint_uri:
         download = (
-            f"CKPT_URI={_shlex.quote(checkpoint_uri)} \"$PY\" - <<'DLEOF'\n"
-            "import os, boto3\n"
-            "from urllib.parse import urlparse\n"
-            "u = urlparse(os.environ['CKPT_URI'])\n"
-            "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-            "s3.download_file(u.netloc, u.path.lstrip('/'), '/tmp/rollwork/policy.pt')\n"
-            "print('DOWNLOADED_CKPT', os.environ['CKPT_URI'])\n"
-            "DLEOF\n"
+            '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
+            f"--uri {_shlex.quote(checkpoint_uri)} "
+            "--destination /tmp/rollwork/policy.pt\n"
         )
         ckpt_local = "/tmp/rollwork/policy.pt"
     else:
@@ -664,15 +659,11 @@ def build_isaac_rollout_job_manifest(
 
     scenario_block = ""
     if scenarios_jsonl:
-        from npa.workflows.sim2real import isaac_scenario_task as _scenarios
-
+        encoded_scenarios = base64.b64encode(scenarios_jsonl.encode()).decode()
         scenario_block = (
-            "cat > /tmp/rollwork/isaac_scenario_task.py <<'SCENARIOPYEOF'\n"
-            + _scenarios.module_source()
-            + "\nSCENARIOPYEOF\n"
-            "cat > /tmp/rollwork/scenarios.jsonl <<'SCENARIOJSONEOF'\n"
-            + scenarios_jsonl.rstrip()
-            + "\nSCENARIOJSONEOF\n"
+            '"$PY" -m npa.workflows.sim2real.isaac_job_io write-base64 '
+            f"--payload {_shlex.quote(encoded_scenarios)} "
+            "--destination /tmp/rollwork/scenarios.jsonl\n"
             "export NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/rollwork/scenarios.jsonl\n"
             "export NPA_SIM2REAL_TASK_CONTRACT_DIGEST="
             + _shlex.quote(_env("NPA_SIM2REAL_TASK_CONTRACT_DIGEST"))
@@ -682,12 +673,7 @@ def build_isaac_rollout_job_manifest(
 
     robot_block = ""
     if robot_spec:
-        from npa.workflows.sim2real import isaac_byo_robot_task as _robotmod
-
         robot_block = (
-            "cat > /tmp/rollwork/isaac_byo_robot_task.py <<'ROBOTPYEOF'\n"
-            + _robotmod.module_source()
-            + "\nROBOTPYEOF\n"
             "export NPA_BYO_ROBOT_SPEC_JSON="
             + _shlex.quote(json.dumps(robot_spec, sort_keys=True))
             + "\n"
@@ -701,40 +687,20 @@ def build_isaac_rollout_job_manifest(
         expected_usd = str(robot_spec.get("usd_path") or "").strip()
         if robot_usd_uri and expected_usd:
             robot_block += (
-                "ROBOT_USD_URI="
-                + _shlex.quote(robot_usd_uri)
-                + " ROBOT_USD_DEST="
-                + _shlex.quote(expected_usd)
-                + " \"$PY\" - <<'ROBOTDLEOF'\n"
-                "import os, boto3\n"
-                "from urllib.parse import urlparse\n"
-                "u = urlparse(os.environ['ROBOT_USD_URI'])\n"
-                "dest = os.environ['ROBOT_USD_DEST']\n"
-                "os.makedirs(os.path.dirname(dest), exist_ok=True)\n"
-                "boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None).download_file(u.netloc, u.path.lstrip('/'), dest)\n"
-                "print('STAGED_ROBOT_USD', dest)\n"
-                "ROBOTDLEOF\n"
+                '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
+                f"--uri {_shlex.quote(robot_usd_uri)} "
+                f"--destination {_shlex.quote(expected_usd)}\n"
                 "export NPA_EXPECTED_ROBOT_USD=" + _shlex.quote(expected_usd) + "\n"
             )
 
     script = (
         "set -euo pipefail\n"
         "exec > >(tee -a /tmp/byo-rollout.log) 2>&1\n"
-        "if [ -x /isaac-sim/python.sh ]; then\n"
-        "  PY=/isaac-sim/python.sh\n"
-        "elif [ -x /workspace/isaaclab/isaaclab.sh ]; then\n"
-        "  cat > /tmp/isaac-python <<'ISPYEOF'\n"
-        "#!/usr/bin/env bash\n"
-        'exec /workspace/isaaclab/isaaclab.sh -p "$@"\n'
-        "ISPYEOF\n"
-        "  chmod +x /tmp/isaac-python\n"
-        "  PY=/tmp/isaac-python\n"
-        "else\n"
-        '  PY="$(command -v python3 || command -v python || true)"\n'
-        "fi\n"
-        '[ -n "$PY" ] || { echo "NO_PYTHON_LAUNCHER"; exit 127; }\n'
-        '"$PY" -m pip install --quiet boto3 pillow 2>/dev/null || true\n'
+        "PY=/isaac-sim/python.sh\n"
+        '[ -x "$PY" ] || { echo "MISSING_PINNED_ISAAC_RUNTIME"; exit 127; }\n'
+        '"$PY" -m npa.workflows.sim2real.runtime_attestation\n'
         "mkdir -p /tmp/rollwork/frames; cd /tmp/rollwork\n"
+        "export NPA_ROBOT_MODULE_DIR=/opt/npa/isaac-runtime\n"
         f'export ROLLOUT_TASK="{task}" ROLLOUT_COUNT="{rollout_count}" '
         f'ROLLOUT_STEPS="{steps_per_rollout}" ROLLOUT_OBJECT_USD="{object_usd}" '
         f'ROLLOUT_HORIZON_STEPS="{horizon_steps}" '
@@ -751,10 +717,7 @@ def build_isaac_rollout_job_manifest(
         + download
         + scenario_block
         + robot_block
-        + "cat > /tmp/rollwork/rollout.py <<'PYEOF'\n"
-        f"{ISAAC_ROLLOUT_SCRIPT}\n"
-        "PYEOF\n"
-        '"$PY" /tmp/rollwork/rollout.py\n'
+        + '"$PY" /opt/npa/isaac-runtime/isaac_rollout.py\n'
         'echo "BYO_ROLLOUT_EXIT"\n'
     )
     command, args = compressed_bash_launch(script)
@@ -767,8 +730,7 @@ def build_isaac_rollout_job_manifest(
             "labels": {"app": "sim2real-byo-isaac-rollout", "run-id": run_id},
         },
         "spec": {
-            "backoffLimit": 0,
-            "ttlSecondsAfterFinished": 86400,
+            "backoffLimit": 1,
             "template": {
                 "metadata": {
                     "labels": {"app": "sim2real-byo-isaac-rollout", "run-id": run_id}
@@ -806,7 +768,19 @@ def build_isaac_rollout_job_manifest(
                                 {"secretRef": {"name": "hf-ngc-tokens"}},
                                 {"secretRef": {"name": "npa-storage-credentials"}},
                             ],
-                            "env": [{"name": "AWS_ENDPOINT_URL", "value": s3_endpoint}]
+                            "env": [
+                                {"name": "AWS_ENDPOINT_URL", "value": s3_endpoint},
+                                {
+                                    "name": "NPA_SIM2REAL_SOURCE_SHA",
+                                    "value": os.environ.get(
+                                        "NPA_SIM2REAL_SOURCE_SHA", ""
+                                    ),
+                                },
+                                {
+                                    "name": "NPA_SIM2REAL_RUNTIME_IMAGE",
+                                    "value": image.removeprefix("docker:"),
+                                },
+                            ]
                             + _isaac_eula_env_entries(),
                             "command": command,
                             "args": args,
@@ -817,16 +791,6 @@ def build_isaac_rollout_job_manifest(
             },
         },
     }
-
-
-# --------------------------------------------------------------------------- #
-# kubectl orchestration (live path)
-# --------------------------------------------------------------------------- #
-def _kubectl(args: list[str], *, stdin: str | None = None, timeout: int = 300):
-    cmd = [os.environ.get("NPA_KUBECTL_BIN") or "kubectl", *args]
-    return subprocess.run(
-        cmd, input=stdin, capture_output=True, text=True, timeout=timeout, check=False
-    )
 
 
 def _env(name: str, default: str = "") -> str:
@@ -1086,12 +1050,10 @@ def run_isaac_rollout_job(
         pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
         return candidate
 
-    def kubectl(args: list[str], **kwargs: Any):
-        timeout = int(kwargs.pop("timeout_s", 300))
-        return _kubectl(args, timeout=timeout, **kwargs)
+    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
 
     provenance = run_gpu_job_with_fallback(
-        kubectl=kubectl,
+        client=KubernetesJobClient.from_environment(namespace=namespace),
         manifest_factory=manifest_factory,
         base_job_name=job_name,
         namespace=namespace,

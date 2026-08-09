@@ -54,7 +54,11 @@ def robot_payload_from_spec(
 
     uri = ri.robot_uri.strip()
     if uri.startswith("s3://"):
-        usd_path = robotmod.ROBOT_USD_CONTAINER_PATH if hasattr(robotmod, "ROBOT_USD_CONTAINER_PATH") else "/tmp/npa_robot/robot.usd"
+        usd_path = (
+            robotmod.ROBOT_USD_CONTAINER_PATH
+            if hasattr(robotmod, "ROBOT_USD_CONTAINER_PATH")
+            else "/tmp/npa_robot/robot.usd"
+        )
         robot_usd_uri = uri
     else:
         usd_path = uri  # https CDN or container-local path: loads in place
@@ -147,7 +151,9 @@ def submit_smoke_job(
     if not image:
         raise ValueError("smoke job requires an Isaac image (ISAAC_IMAGE)")
     if not bucket:
-        raise ValueError("smoke job requires an S3 bucket (NPA_SIM2REAL_BUCKET/S3_BUCKET)")
+        raise ValueError(
+            "smoke job requires an S3 bucket (NPA_SIM2REAL_BUCKET/S3_BUCKET)"
+        )
 
     job_name = f"s2r-onboard-smoke-{run_id}"[:63]
     out_uri = f"s3://{bucket}/sim2real-b/{run_id}/onboard-smoke/{job_name}/"
@@ -171,4 +177,9 @@ def submit_smoke_job(
     rc = 0
     if kubectl_apply is not None:
         rc = int(kubectl_apply(manifest))
-    return {"job_name": job_name, "out_uri": out_uri, "apply_rc": rc, "manifest": manifest}
+    return {
+        "job_name": job_name,
+        "out_uri": out_uri,
+        "apply_rc": rc,
+        "manifest": manifest,
+    }

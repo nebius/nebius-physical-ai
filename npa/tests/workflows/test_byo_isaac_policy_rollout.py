@@ -152,15 +152,18 @@ def test_build_isaac_rollout_job_manifest_shape():
     script = decode_compressed_bash_args(c["args"])
     assert max(map(len, c["args"])) < 128 * 1024
     # downloads the checkpoint, applies the custom object, runs the rollout script.
-    assert "DOWNLOADED_CKPT" in script
+    assert "npa.workflows.sim2real.isaac_job_io download" in script
     assert "ROLLOUT_OBJECT_USD" in script
     assert "ROLLOUT_CAMERA_VIEWS_JSON=" in script
     assert 'ROLLOUT_CAPTURE_WIDTH="640"' in script
     assert 'ROLLOUT_CAPTURE_HEIGHT="480"' in script
     assert '"name":"side"' in script
     assert '"name":"overhead"' in script
-    assert "rollout.py" in script
-    assert m["spec"]["backoffLimit"] == 0
+    assert "/opt/npa/isaac-runtime/isaac_rollout.py" in script
+    assert "npa.workflows.sim2real.runtime_attestation" in script
+    assert "pip install" not in script
+    assert "<<" not in script
+    assert m["spec"]["backoffLimit"] == 1
 
 
 def test_untrained_job_manifest_skips_download():
@@ -179,7 +182,7 @@ def test_untrained_job_manifest_skips_download():
         gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
     )
     script = _manifest_script(m)
-    assert "DOWNLOADED_CKPT" not in script  # no checkpoint -> untrained policy
+    assert "npa.workflows.sim2real.isaac_job_io download" not in script
     assert 'ROLLOUT_CKPT_LOCAL=""' in script
 
 
@@ -213,26 +216,24 @@ def test_rollout_manifest_embeds_scenario_and_byo_robot_contract():
         task_config={"task_id": "Isaac-Lift-Cube-Franka-v0"},
     )
     script = _manifest_script(manifest)
-    assert "isaac_scenario_task.py" in script
-    assert "scenario-456" in script
-    assert "import isaac_scenario_task as _scenarios" in script
-    assert script.index("import isaac_scenario_task as _scenarios") < script.index(
-        "applied = _scenarios.runtime_audit"
-    )
-    assert "isaac_byo_robot_task.py" in script
+    assert "npa.workflows.sim2real.isaac_job_io write-base64" in script
+    assert "/opt/npa/isaac-runtime/isaac_rollout.py" in script
+    # Scenario and robot application lives in source baked into the immutable
+    # runtime image; it must never be copied into the live Job manifest.
+    assert "import isaac_scenario_task as _scenarios" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert pr.ISAAC_ROLLOUT_SCRIPT.index(
+        "import isaac_scenario_task as _scenarios"
+    ) < pr.ISAAC_ROLLOUT_SCRIPT.index("applied = _scenarios.runtime_audit")
+    assert "isaac_scenario_task.py" not in script
     assert "NPA_BYO_ROBOT_SPEC_JSON" in script
     assert "NPA_BYO_TASK_CONFIG_JSON" in script
     assert "NPA_EXPECTED_ROBOT_USD" in script
-    assert "STAGED_ROBOT_USD" in script
+    assert "s3://bucket/assets/customer.usd" in script
+    assert "--destination /tmp/npa-byo-robot/customer.usd" in script
 
 
 def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monkeypatch):
     captured: dict[str, str] = {}
-
-    class _Proc:
-        returncode = 0
-        stderr = ""
-        stdout = ""
 
     class _FakeS3:
         def download_file(self, _bucket: str, _key: str, local: str) -> None:
@@ -248,7 +249,19 @@ def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monke
         return {"kind": "Job"}
 
     monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3())
-    monkeypatch.setattr(pr, "_kubectl", lambda *a, **k: _Proc())
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.gpu_fallback.run_gpu_job_with_fallback",
+        lambda **kwargs: {
+            "job_name": kwargs["base_job_name"],
+            "job_uid": "uid",
+            "selected_product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            "image_digests": ["reg/runtime@sha256:" + "a" * 64],
+        },
+    )
     monkeypatch.setattr(pr, "build_isaac_rollout_job_manifest", fake_build)
     monkeypatch.setattr(
         pr, "latest_checkpoint_uri", lambda *a, **k: "s3://b/run/model_latest.pt"

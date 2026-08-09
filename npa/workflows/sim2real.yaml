@@ -1,8 +1,8 @@
-# Canonical Sim2Real VLM-to-RL 14-stage workflow.
+# Canonical Sim2Real VLM-to-RL 14-stage durable controller workflow.
 #
 # This is the only YAML that drives the staged engine. `npa workbench workflow
 # submit` detects this exact file, materializes its task as a direct Kubernetes
-# Job, stages the current checkout for the pre-push run, and lets the engine fan
+# Job whose immutable image contains the exact source, and lets the engine fan
 # out its real `s2r-*` sibling Jobs. The similarly named npa.workflow files are
 # explicitly non-production DSL demos; they never route to this engine.
 #
@@ -38,7 +38,7 @@
 #   3. One-off overrides — `npa workbench workflow submit … --var KEY=VALUE`, or
 #      source an env overlay (e.g. quickstart.env) into the shell before submit
 #   4. Direct K8s submit — `npa workbench workflow submit` resolves config,
-#      stages current source, materializes this task, and applies the Job.
+#      validates the controller spec, materializes this task, and creates/adopts the Job.
 #
 # Seed a valid task-aligned trigger prefix before first submit, set
 # storage.sim2real_stock_trigger_uri to it, and ensure the cluster's
@@ -80,14 +80,33 @@
 # bypass this route with a raw `sky jobs launch`.
 #
 # Timeout contract: NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=0 is intentionally uncapped
-# for full production loops. It omits Kubernetes activeDeadlineSeconds and keeps
-# polling. Concrete compatible-GPU capacity failures are recorded and the
-# ordered products are rechecked without a retry limit, preventing exact-size
-# parallel batches from failing on a transient final-slot scheduling race.
-# Failed Job counters, Job deletion, kubectl errors, image/runtime failures, and
-# non-zero component exits still terminate the run. To impose a deadline, pass a
+# for full production loops. It omits Kubernetes activeDeadlineSeconds. Kueue
+# owns normal GPU contention and exposes quota reservation/admission; Jobs are
+# not deleted and recreated to race for capacity. Typed Job/Pod conditions,
+# container exits, API status/reason, and deletion state drive reconciliation.
+# Image/runtime/data/application failures still terminate the run. To impose a
 # positive number of seconds, for example
 # `--var NPA_SIM2REAL_K8S_JOB_TIMEOUT_S=14400`.
+apiVersion: npa.sim2real/v1alpha1
+kind: Sim2RealController
+metadata:
+  name: canonical-sim2real-14-stage
+spec:
+  stageCount: 14
+  execution: durable-kubernetes-controller
+  engine: npa.workflows.sim2real.runner.Sim2RealWorkflow
+  stateStore: content-addressed-s3-journal
+  kubernetesClient: official-python-client
+  scheduler: kueue
+  resumeBoundaries:
+    - preamble
+    - stage-08-vlm
+    - stage-09-signal
+    - inner-iteration
+    - outer-iteration
+    - finalization
+  immutableRuntimeRequired: true
+  externalSeamStage: 12
 name: sim2real-staged-loop
 resources:
   cloud: kubernetes
@@ -240,15 +259,11 @@ envs:
   NPA_SIM2REAL_K8S_GPU_RESOURCE: "nvidia.com/gpu"
   NPA_SIM2REAL_K8S_GPU_PRODUCT: "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
   # Optional ordered aliases/labels. Actual candidates are normalized against
-  # nvidia.com/gpu.product labels in the target cluster. Isaac stages always
-  # filter this list to RT-core L40S / RTX PRO 6000 products. Retries require
-  # concrete GPU Unschedulable/capacity evidence; runtime/image/credential
-  # failures remain failures on the selected product.
-  # Taints, cordons, and NotReady nodes alone do NOT switch products. That
-  # placement state fails closed unless the scheduler also reports insufficient
-  # nvidia.com/gpu or a concrete product-selector/affinity mismatch. Inspect
-  # `kubectl describe node`, Job/Pod events, readiness, and tolerations; remediate
-  # the cluster state, then resubmit. Do not broaden this into a generic retry.
+  # typed nvidia.com/gpu.product Node labels. Isaac stages always filter this
+  # list to RT-core L40S / RTX PRO 6000 products. A product is skipped only when
+  # structured ready/allocatable inventory proves it unavailable. Kueue retains
+  # ordinary contention in one observable Workload; application failures never
+  # switch products.
   # If an image tag advertises CUDA architecture markers, RTX PRO 6000 requires
   # sm120/compute120. L40S accepts proven same-major sm80/sm89 (or compute80/89),
   # never incompatible sm90 SASS. Isaac still excludes H100/H200/B200/B300.
@@ -259,70 +274,26 @@ envs:
   ISAACSIM_ACCEPT_EULA: ""
   # Optional stricter per-model floor; incompatible products are filtered before submit.
   NPA_SIM2REAL_MIN_GPU_VRAM_GB: ""
-  # 0 means no workflow/sibling Job deadline. Failed counters, deleted Jobs,
-  # kubectl errors, and component failures still terminate. Set a positive
+  # 0 means no workflow/sibling Job deadline. Typed failure/deletion/API states
+  # and component failures still terminate. Set a positive
   # number of seconds only when intentionally opting into a deadline.
   NPA_SIM2REAL_K8S_JOB_TIMEOUT_S: "0"
   NPA_BYO_ISAAC_JOB_TIMEOUT_S: "0"
+  NPA_SIM2REAL_K8S_HANG_TIMEOUT_S: "0"
+  NPA_SIM2REAL_K8S_INFRA_RETRIES: "3"
+  NPA_SIM2REAL_CONTROLLER_RETRIES: "3"
+  NPA_SIM2REAL_KUEUE_LOCAL_QUEUE: "sim2real-gpu"
+  NPA_SIM2REAL_KUEUE_PRIORITY_CLASS: "sim2real-production"
   NPA_SIM2REAL_HELDOUT_EVAL_LIMIT: "0"
-  NPA_SOURCE_REPO: ""
-  NPA_SOURCE_REF: ""
-  # Direct-K8s submit uploads the current checkout here so the real run proves
-  # the unpushed implementation under test instead of whatever an image baked.
-  NPA_SIM2REAL_SOURCE_TARBALL_URI: ""
+  NPA_SIM2REAL_SOURCE_SHA: ""
+  NPA_SIM2REAL_RUNTIME_IMAGE: ""
+  NPA_SIM2REAL_CONTROLLER_SPEC_DIGEST: ""
 setup: |
   set -euo pipefail
-  if [ -n "${NPA_SIM2REAL_SOURCE_TARBALL_URI:-}" ]; then
-    python3 -c "import boto3" 2>/dev/null || python3 -m pip install --quiet boto3 botocore
-    rm -rf /tmp/npa-orchestrator-source ./npa
-    mkdir -p /tmp/npa-orchestrator-source
-    python3 - "${NPA_SIM2REAL_SOURCE_TARBALL_URI}" <<'PY'
-  import os
-  import sys
-  import tarfile
-  import urllib.parse
-
-  import boto3
-
-  uri = urllib.parse.urlparse(sys.argv[1])
-  endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
-  archive = "/tmp/npa-orchestrator-source.tgz"
-  boto3.client("s3", endpoint_url=endpoint).download_file(uri.netloc, uri.path.lstrip("/"), archive)
-  with tarfile.open(archive) as source:
-      source.extractall("/tmp/npa-orchestrator-source")
-  PY
-    ln -s /tmp/npa-orchestrator-source/npa ./npa
-  fi
-  if [ ! -f ./npa/pyproject.toml ]; then
-    if [ -z "${NPA_SOURCE_REPO:-}" ]; then
-      echo "ERROR: NPA_SOURCE_REPO is required when the source tree is not mounted." >&2
-      exit 2
-    fi
-    rm -rf ./npa-source ./npa
-    git clone --depth 1 --branch "${NPA_SOURCE_REF:-main}" "${NPA_SOURCE_REPO}" ./npa-source
-    ln -s ./npa-source/npa ./npa
-  fi
-  export PYTHONPATH="$(pwd)/npa/src:${PYTHONPATH:-}"
-  # The orchestration image may already run inside a read-only virtualenv.
-  # Put the bootstrap executable in scratch space so neither user-site nor
-  # base-environment permissions affect a fresh canonical run.
-  rm -rf /tmp/npa-bootstrap-uv
-  python3 -m pip install --quiet --target /tmp/npa-bootstrap-uv "uv>=0.9,<1"
-  export PATH="/tmp/npa-bootstrap-uv/bin:${PATH}"
-  uv python install 3.11
-  uv venv --python 3.11 --seed ./npa/.venv
-  ./npa/.venv/bin/python -m pip install --upgrade pip setuptools wheel
-  # Stage 14 is required evidence, not an optional WARN in the canonical run:
-  # install the pinned Rerun SDK through the repository's viz extra.
-  ./npa/.venv/bin/python -m pip install -e './npa[viz]'
-  if ! command -v kubectl >/dev/null 2>&1; then
-    curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/v1.33.7/bin/linux/amd64/kubectl"
-    chmod +x /tmp/kubectl
-  fi
+  python -m npa.workflows.sim2real.runtime_attestation
+  python -c 'import kubernetes, mcap, npa.workflows.sim2real.runner'
 run: |
   set -euo pipefail
-  export PATH="/tmp:$(pwd)/npa/.venv/bin:${PATH}"
-  export PYTHONPATH="$(pwd)/npa/src:${PYTHONPATH:-}"
 
   bucket="${NPA_SIM2REAL_BUCKET:-${S3_BUCKET:-}}"
   if [ -z "${bucket}" ] || [ "${bucket}" = "example-bucket" ]; then
@@ -391,8 +362,6 @@ run: |
     --k8s-job-timeout-s "${NPA_SIM2REAL_K8S_JOB_TIMEOUT_S:-0}"
     --envgen-shard-count "${NPA_ENVGEN_SHARD_COUNT:-16}"
     --k8s-max-parallel-gpus "${NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS:-16}"
-    --source-repo "${NPA_SOURCE_REPO:-}"
-    --source-ref "${NPA_SOURCE_REF:-}"
     --heldout-eval-limit "${NPA_SIM2REAL_HELDOUT_EVAL_LIMIT:-0}"
   )
 
@@ -402,7 +371,7 @@ run: |
     *) echo "ERROR: NPA_SIM2REAL_EARLY_EXIT must be boolean" >&2; exit 2 ;;
   esac
 
-  ./npa/.venv/bin/python -m npa.workflows.sim2real run \
+  python -m npa.workflows.sim2real run \
     "${common_args[@]}" \
     --initial-quality "${INITIAL_QUALITY:-0.0}" \
     --upload-artifacts

@@ -1,4 +1,8 @@
-"""Kubernetes manifests and bootstrap scripts for Sim2Real sibling Jobs."""
+"""Kubernetes manifests for immutable Sim2Real sibling Jobs.
+
+The application is part of each digest-pinned image. These manifests never
+download source, clone a repository, or install packages after scheduling.
+"""
 
 from __future__ import annotations
 
@@ -80,11 +84,13 @@ def _component_job_manifest(
 ) -> dict[str, Any]:
     selected_gpu_product = gpu_product or config.k8s_gpu_product
     env_values = _kubernetes_component_env(env, config)
+    # Each sibling attests its own immutable image, not the controller image.
+    env_values["NPA_SIM2REAL_RUNTIME_IMAGE"] = image.removeprefix("docker:")
     pull_secrets = [
         {"name": name} for name in _split_csv(config.k8s_image_pull_secrets)
     ]
     env_from = [
-        {"secretRef": {"name": name, "optional": True}}
+        {"secretRef": {"name": name}}
         for name in _split_csv(config.k8s_env_secret_names)
     ]
     template_spec: dict[str, Any] = {
@@ -96,7 +102,9 @@ def _component_job_manifest(
                 "image": image,
                 "imagePullPolicy": _image_pull_policy(image),
                 "command": ["bash", "-lc"],
-                "args": [_component_job_script(component, sim_backend=config.sim_backend)],
+                "args": [
+                    _component_job_script(component, sim_backend=config.sim_backend)
+                ],
                 "env": [
                     {"name": key, "value": value}
                     for key, value in sorted(env_values.items())
@@ -123,7 +131,9 @@ def _component_job_manifest(
         "sim2real.local/run-id": _label_value(config.run_id),
     }
     job_spec: dict[str, Any] = {
-        "backoffLimit": 0,
+        # Replaced by ``configure_gpu_job`` with the selected native retry
+        # policy before this manifest reaches the Kubernetes API.
+        "backoffLimit": 1,
         "template": {"metadata": {"labels": labels}, "spec": template_spec},
     }
     if timeout_s > 0:
@@ -135,9 +145,7 @@ def _component_job_manifest(
             "name": job_name,
             "namespace": namespace,
             "labels": labels,
-            "annotations": {
-                "sim2real.local/gpu-request": f"{selected_gpu_product}:1"
-            },
+            "annotations": {"sim2real.local/gpu-request": f"{selected_gpu_product}:1"},
         },
         "spec": job_spec,
     }
@@ -234,31 +242,8 @@ def _component_job_script(
 export PYTHONUNBUFFERED=1
 PYBIN=/isaac-sim/python.sh
 if [ ! -x "$PYBIN" ]; then PYBIN=python; fi
-DEPS=/tmp/npa-pydeps
-mkdir -p "$DEPS"
-"$PYBIN" -c "import boto3" 2>/dev/null || "$PYBIN" -m pip install --quiet --target "$DEPS" boto3 botocore
-"$PYBIN" -m pip install --quiet --target "$DEPS" pyyaml httpx typer rich jinja2 joblib numpy pillow 2>/dev/null || true
-export PYTHONPATH="$DEPS:${{PYTHONPATH:-}}"
-if [ -z "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
-  echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"missing NPA_SIM2REAL_SOURCE_TARBALL_URI"}}' >&2
-  exit 2
-fi
-rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
-"$PYBIN" - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
-import os, sys, tarfile, urllib.parse, boto3
-u = urllib.parse.urlparse(sys.argv[1])
-ep = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
-boto3.client("s3", endpoint_url=ep).download_file(u.netloc, u.path.lstrip("/"), "/tmp/npa-src.tgz")
-with tarfile.open("/tmp/npa-src.tgz") as tar:
-    tar.extractall("/tmp/npa-source")
-PYB
-export PYTHONPATH="/tmp/npa-source/npa/src:${{DEPS}}:${{PYTHONPATH:-}}"
-if ! "$PYBIN" -c "import npa.workflows.sim2real.heldout_entry" 2>/tmp/npa-bootstrap.err; then
-  echo '{{"component":"heldout_eval","event":"bootstrap_error","reason":"npa import failed"}}' >&2
-  cat /tmp/npa-bootstrap.err >&2 || true
-  exit 3
-fi
-{heldout_entry_cmd}
+"$PYBIN" -m npa.workflows.sim2real.runtime_attestation
+exec {heldout_entry_cmd}
 """
     exec_cmd = (
         subcommand
@@ -267,23 +252,9 @@ fi
     )
     return f"""set -euo pipefail
 export NPA_SKIP_EAGER_IMPORTS=1
-{vlm_preamble}if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
-  rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
-  python - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
-import os, sys, tarfile, urllib.parse, boto3
-u = urllib.parse.urlparse(sys.argv[1])
-ep = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL") or None
-boto3.client("s3", endpoint_url=ep).download_file(u.netloc, u.path.lstrip("/"), "/tmp/npa-src.tgz")
-with tarfile.open("/tmp/npa-src.tgz") as tar:
-    tar.extractall("/tmp/npa-source")
-PYB
-  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
-elif [ -n "${{NPA_SOURCE_REPO:-}}" ] && [ -n "${{NPA_SOURCE_REF:-}}" ]; then
-  rm -rf /tmp/npa-source
-  git clone --quiet --depth 1 --branch "${{NPA_SOURCE_REF}}" "${{NPA_SOURCE_REPO}}" /tmp/npa-source
-  export PYTHONPATH="/tmp/npa-source/npa/src:${{PYTHONPATH:-}}"
-fi
-{exec_cmd}
+export PYTHONUNBUFFERED=1
+{vlm_preamble}python -m npa.workflows.sim2real.runtime_attestation
+exec {exec_cmd}
 """
 
 
@@ -306,8 +277,10 @@ def _kubernetes_component_env(
             }
         ):
             safe[key] = value
-    endpoint = config.s3_endpoint or env.get("AWS_ENDPOINT_URL", "") or os.environ.get(
-        "AWS_ENDPOINT_URL", ""
+    endpoint = (
+        config.s3_endpoint
+        or env.get("AWS_ENDPOINT_URL", "")
+        or os.environ.get("AWS_ENDPOINT_URL", "")
     )
     safe["AWS_ENDPOINT_URL"] = endpoint
     safe["S3_ENDPOINT_URL"] = endpoint
@@ -316,6 +289,9 @@ def _kubernetes_component_env(
         value = str(env.get(key) or os.environ.get(key) or "").strip()
         if value:
             safe[key] = value
-    safe["NPA_SOURCE_REPO"] = config.source_repo or env.get("NPA_SOURCE_REPO", "")
-    safe["NPA_SOURCE_REF"] = config.source_ref or env.get("NPA_SOURCE_REF", "")
+    safe["NPA_SIM2REAL_SOURCE_SHA"] = str(
+        env.get("NPA_SIM2REAL_SOURCE_SHA")
+        or os.environ.get("NPA_SIM2REAL_SOURCE_SHA")
+        or ""
+    ).strip()
     return safe

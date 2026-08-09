@@ -31,9 +31,7 @@ def _upload_final_report(
     return {"status": "uploaded", "uri": uri, "artifact": "sim2real-report.json"}
 
 
-def upload_run_artifacts(
-    config: Sim2RealLoopConfig, local_dir: Path
-) -> dict[str, Any]:
+def upload_run_artifacts(config: Sim2RealLoopConfig, local_dir: Path) -> dict[str, Any]:
     """Upload the run artifact tree to S3-compatible storage."""
 
     if not config.s3_bucket:

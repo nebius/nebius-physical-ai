@@ -245,7 +245,7 @@ def sync_heldout_renders(
     heldout_report: dict[str, Any] | None = None,
     client: StorageClient | None = None,
 ) -> bool:
-    """Sync held-out PNG tree into local_dir/eval/heldout/renders; return True if any PNGs."""
+    """Sync the report's exact render tree; never guess for sealed gold."""
 
     storage = client or _storage_client_for_config(config)
     prefix = run_prefix_uri(config)
@@ -253,10 +253,16 @@ def sync_heldout_renders(
     renders_dir.mkdir(parents=True, exist_ok=True)
 
     if (heldout_report or {}).get("evaluation_split") == "gold_heldout":
-        outer = int(
-            (heldout_report or {}).get("outer_iteration") or config.outer_iterations
-        )
-        canonical = f"{prefix}eval/gold-heldout/outer-{outer:02d}/renders/"
+        lineage = dict((heldout_report or {}).get("render_lineage") or {})
+        canonical = str(lineage.get("renders_s3_uri") or "").strip()
+        if not canonical:
+            raise Sim2RealRerunRegenError(
+                "sealed gold report has no exact render_lineage.renders_s3_uri"
+            )
+        if lineage.get("evaluation_split") != "gold_heldout":
+            raise Sim2RealRerunRegenError(
+                "sealed gold render lineage has the wrong evaluation split"
+            )
     else:
         canonical = f"{prefix}eval/heldout/renders/"
     try:
@@ -265,6 +271,12 @@ def sync_heldout_renders(
         pass
     if _has_camera_pngs(renders_dir):
         return True
+
+    # Gold metrics may only be paired with the exact render prefix recorded by
+    # that evaluation. Lexicographic component/BYO discovery is retained solely
+    # for legacy validation reports where no sealed split is involved.
+    if (heldout_report or {}).get("evaluation_split") == "gold_heldout":
+        return False
 
     component_root = f"{prefix}component-io/heldout-eval/"
     bucket, _ = _parse_s3(component_root)

@@ -120,8 +120,13 @@ def summarize_signal_batch(payload: Any) -> dict[str, Any]:
 class MlpPolicy:
     """obs(8) -> tanh hidden(16) -> action(A). A real (if tiny) parametric policy."""
 
-    def __init__(self, action_dim: int, *, seed: int = WEIGHT_SEED,
-                 weights: dict[str, np.ndarray] | None = None) -> None:
+    def __init__(
+        self,
+        action_dim: int,
+        *,
+        seed: int = WEIGHT_SEED,
+        weights: dict[str, np.ndarray] | None = None,
+    ) -> None:
         self.action_dim = int(action_dim)
         if weights is not None:
             self.W1 = weights["W1"]
@@ -190,7 +195,7 @@ def update_policy(
         g_W2 = np.outer(h, d_a)
         g_b2 = d_a
         # backprop into hidden (tanh')
-        d_h = (policy.W2 @ d_a) * (1.0 - h ** 2)
+        d_h = (policy.W2 @ d_a) * (1.0 - h**2)
         g_W1 = np.outer(obs, d_h)
         g_b1 = d_h
         policy.W2 -= eff_lr * g_W2
@@ -239,7 +244,9 @@ def _download_s3(uri: str, dst: Path) -> bool:
         s3.download_file(u.netloc, u.path.lstrip("/"), str(dst))
         return True
     except Exception as exc:  # best-effort; fresh init on failure
-        print(f"mock_trainer: resume download failed ({exc}); starting fresh", flush=True)
+        print(
+            f"mock_trainer: resume download failed ({exc}); starting fresh", flush=True
+        )
         return False
 
 
@@ -323,13 +330,17 @@ def run_training(signal_json: str, *, run_id: str) -> dict[str, Any]:
                 policy = load_checkpoint(local)
                 print(f"mock_trainer: resumed policy from {resume_uri}", flush=True)
             except Exception as exc:
-                print(f"mock_trainer: resume load failed ({exc}); fresh init", flush=True)
+                print(
+                    f"mock_trainer: resume load failed ({exc}); fresh init", flush=True
+                )
     if policy is None:
         policy = MlpPolicy(summary["action_dim"])
 
     learning_rate = float(_env("NPA_SIM2REAL_LEARNING_RATE", "0.5") or 0.5)
     update = update_policy(
-        policy, summary["weighted_target"], summary["signal_strength"],
+        policy,
+        summary["weighted_target"],
+        summary["signal_strength"],
         learning_rate=learning_rate,
     )
 
@@ -339,7 +350,9 @@ def run_training(signal_json: str, *, run_id: str) -> dict[str, Any]:
     bucket = _env("NPA_SIM2REAL_S3_BUCKET") or _env("NPA_SIM2REAL_BUCKET")
     tag = _env("NPA_SIM2REAL_TRAINER_TAG") or "mock"
     if bucket:
-        uri = f"s3://{bucket}/sim2real-b/{run_id}/byo-trainer/mock/{tag}/mock_policy.npz"
+        uri = (
+            f"s3://{bucket}/sim2real-b/{run_id}/byo-trainer/mock/{tag}/mock_policy.npz"
+        )
         if _upload_s3(ckpt_local, uri):
             checkpoint_path = uri
             print(f"mock_trainer: uploaded checkpoint -> {uri}", flush=True)
@@ -347,7 +360,9 @@ def run_training(signal_json: str, *, run_id: str) -> dict[str, Any]:
     result = build_result(
         summary=summary,
         update=update,
-        initial_reward_head=float(_env("NPA_SIM2REAL_INITIAL_REWARD_HEAD", "0.0") or 0.0),
+        initial_reward_head=float(
+            _env("NPA_SIM2REAL_INITIAL_REWARD_HEAD", "0.0") or 0.0
+        ),
         checkpoint_path=checkpoint_path,
         duration_ms=(time.time() - start) * 1000.0,
     )
@@ -363,7 +378,10 @@ def run_training(signal_json: str, *, run_id: str) -> dict[str, Any]:
 def main() -> int:
     output_json = _env("NPA_SIM2REAL_OUTPUT_JSON")
     if not output_json:
-        print("mock_lerobot_vlm_trainer: NPA_SIM2REAL_OUTPUT_JSON not set", file=sys.stderr)
+        print(
+            "mock_lerobot_vlm_trainer: NPA_SIM2REAL_OUTPUT_JSON not set",
+            file=sys.stderr,
+        )
         return 2
     signal_json = _env("NPA_SIM2REAL_SIGNAL_JSON")
     run_id = _env("NPA_SIM2REAL_RUN_ID") or _env("RUN_ID") or "mock-run"

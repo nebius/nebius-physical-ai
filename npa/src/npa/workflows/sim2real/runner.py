@@ -32,7 +32,10 @@ class Sim2RealWorkflow:
         return self._local_dir
 
     def run_preamble(self) -> WorkflowState:
-        from npa.workflows.sim2real.engine import emit_active_progress_rerun, run_preamble
+        from npa.workflows.sim2real.engine import (
+            emit_active_progress_rerun,
+            run_preamble,
+        )
 
         payload = run_preamble(self.config)
         payload["progress_rerun"] = emit_active_progress_rerun(
@@ -161,13 +164,17 @@ class Sim2RealWorkflow:
         """
 
         state_path = WorkflowState.path_for(self._local_dir)
+        from npa.workflows.sim2real.engine import _config_from_workflow_state
+        from npa.workflows.sim2real.resume_state import DurableStateStore
+
+        DurableStateStore(self.config, self._local_dir).hydrate_workflow_state()
         if not state_path.exists():
             state = self.run_preamble()
-            from npa.workflows.sim2real.engine import _config_from_workflow_state
-
-            self.config = _config_from_workflow_state(self.config, state.to_payload())
         else:
             state = WorkflowState.load(self._local_dir)
+        # A restarted controller begins with CLI defaults. Rehydrate every
+        # run-derived URI and image setting before determining the next unit.
+        self.config = _config_from_workflow_state(self.config, state.to_payload())
 
         if initial_quality is not None:
             state.current_quality = float(initial_quality)
@@ -207,7 +214,9 @@ class Sim2RealWorkflow:
         return path
 
 
-def run_full_loop(config: Sim2RealLoopConfig, *, upload: bool | None = None) -> dict[str, Any]:
+def run_full_loop(
+    config: Sim2RealLoopConfig, *, upload: bool | None = None
+) -> dict[str, Any]:
     """Backward-compatible entrypoint used by SDK and tests."""
 
     return Sim2RealWorkflow(config).run(upload=upload)

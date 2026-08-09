@@ -39,6 +39,17 @@ CRITIQUE_COLOR = (255, 136, 0, 255)
 FRANKA_HOME_JOINTS = (0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785)
 
 
+def _capture_frame_seconds(payload: dict[str, Any] | None) -> float:
+    """Resolve the recorded frame period from the producing component contract."""
+
+    capture = (payload or {}).get("capture") or {}
+    try:
+        fps = float(capture.get("fps") or 0.0)
+    except (TypeError, ValueError):
+        fps = 0.0
+    return 1.0 / fps if fps > 0.0 else ROLLOUT_FRAME_SECONDS
+
+
 class Sim2RealVizError(Exception):
     """Raised when the Sim2Real Rerun emitter cannot produce a recording."""
 
@@ -271,6 +282,7 @@ def emit_sim2real_rerun(
         heldout_episodes,
         counts,
         start_seconds=0.0 if has_heldout_cameras else seconds,
+        frame_seconds=_capture_frame_seconds(heldout_report),
     )
     seconds = max(seconds, heldout_seconds)
     pointcloud_frame_count = _log_heldout_pointclouds(
@@ -278,6 +290,7 @@ def emit_sim2real_rerun(
         recording,
         heldout_pointclouds,
         counts,
+        frame_seconds=_capture_frame_seconds(heldout_report),
     )
     heldout_env_count = _log_heldout(
         rr,
@@ -351,6 +364,7 @@ def _log_rollout(
     critique_panel_rows: list[str],
 ) -> float:
     seconds = start_seconds
+    frame_seconds = _capture_frame_seconds(manifest)
     per_step_eval = {
         int(item.get("step", index)): item
         for index, item in enumerate(evaluation.get("per_step") or [])
@@ -478,7 +492,7 @@ def _log_rollout(
                 recording=recording,
             )
             _bump(counts, "signal/advantage")
-        seconds += ROLLOUT_FRAME_SECONDS
+        seconds += frame_seconds
     critique_body = summary or last_critique
     if critique_body:
         score_value = f"{float(score):.3f}" if score is not None else "n/a"
@@ -2147,6 +2161,7 @@ def _log_heldout_cameras(
     counts: dict[str, int],
     *,
     start_seconds: float,
+    frame_seconds: float = ROLLOUT_FRAME_SECONDS,
 ) -> tuple[int, float]:
     logged = 0
     end_seconds = start_seconds
@@ -2173,7 +2188,7 @@ def _log_heldout_cameras(
                     if episode_index == 0:
                         rr.log("camera", image, recording=recording)
                         _bump(counts, "camera")
-            seconds += ROLLOUT_FRAME_SECONDS
+            seconds += frame_seconds
         end_seconds = max(end_seconds, seconds)
     return logged, end_seconds
 
@@ -2183,6 +2198,8 @@ def _log_heldout_pointclouds(
     recording: Any,
     frames: list[tuple[np.ndarray, np.ndarray]],
     counts: dict[str, int],
+    *,
+    frame_seconds: float = ROLLOUT_FRAME_SECONDS,
 ) -> int:
     """Log GPU-reconstructed held-out point clouds under ``world/heldout/points``.
 
@@ -2202,7 +2219,7 @@ def _log_heldout_pointclouds(
             recording=recording,
         )
         _bump(counts, "world/heldout/points")
-        seconds += ROLLOUT_FRAME_SECONDS
+        seconds += frame_seconds
         logged += 1
     return logged
 
@@ -2227,10 +2244,22 @@ def _heldout_render_episodes(
     local_dir: Path,
     heldout_report: dict[str, Any] | None,
 ) -> list[tuple[str, dict[str, list[np.ndarray]]]]:
-    renders_value = str((heldout_report or {}).get("local_renders_dir") or "")
+    report = heldout_report or {}
+    renders_value = str(report.get("local_renders_dir") or "")
+    recorded = Path(renders_value) if renders_value else Path()
+    try:
+        usable_recorded = bool(
+            renders_value
+            and recorded.resolve().is_relative_to(Path(local_dir).resolve())
+        )
+    except OSError:
+        usable_recorded = False
+    relative = str((report.get("render_lineage") or {}).get("local_relative_dir") or "")
     renders_root = (
-        Path(renders_value)
-        if renders_value
+        recorded
+        if usable_recorded
+        else local_dir / relative
+        if relative
         else local_dir / "eval" / "heldout" / "renders"
     )
     manifest = (heldout_report or {}).get("render_manifest") or {}
@@ -3067,6 +3096,9 @@ def emit_sim2real_mcap(
     output_mcap.parent.mkdir(parents=True, exist_ok=True)
 
     frame_period_ns = int(ROLLOUT_FRAME_SECONDS * 1_000_000_000)
+    heldout_frame_period_ns = int(
+        _capture_frame_seconds(heldout_report) * 1_000_000_000
+    )
     heldout_period_ns = int(HELDOUT_STEP_SECONDS * 1_000_000_000)
 
     heldout_episodes = _heldout_render_episodes(local_dir, heldout_report)
@@ -3142,12 +3174,12 @@ def emit_sim2real_mcap(
             )
 
         _emit_mcap_heldout_cameras(
-            emitter, heldout_episodes, frame_period_ns=frame_period_ns
+            emitter, heldout_episodes, frame_period_ns=heldout_frame_period_ns
         )
         _emit_mcap_pointclouds(
             emitter,
             _heldout_pointcloud_frames(local_dir, heldout_report),
-            frame_period_ns=frame_period_ns,
+            frame_period_ns=heldout_frame_period_ns,
         )
         _emit_mcap_heldout_scores(
             emitter, heldout_report, heldout_period_ns=heldout_period_ns
@@ -3253,6 +3285,7 @@ def _emit_mcap_rollout(
     encode: Any,
     mirror_primary_camera: bool = False,
 ) -> int:
+    frame_period_ns = int(_capture_frame_seconds(manifest) * 1_000_000_000)
     per_step_eval = {
         int(item.get("step", index)): item
         for index, item in enumerate(evaluation.get("per_step") or [])

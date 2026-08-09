@@ -12,8 +12,6 @@ import json
 import os
 import re
 import time
-import uuid
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
 
@@ -21,48 +19,6 @@ from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
 
 Kubectl = Callable[..., Any]
-
-
-_SERVER_MANAGED_METADATA_FIELDS = frozenset(
-    {
-        "creationTimestamp",
-        "deletionGracePeriodSeconds",
-        "deletionTimestamp",
-        "generation",
-        "managedFields",
-        "resourceVersion",
-        "selfLink",
-        "uid",
-    }
-)
-_SERVER_MANAGED_JOB_LABELS = frozenset(
-    {
-        "batch.kubernetes.io/controller-uid",
-        "batch.kubernetes.io/job-name",
-        "controller-uid",
-        "job-name",
-    }
-)
-_LAST_APPLIED_ANNOTATION = "kubectl.kubernetes.io/last-applied-configuration"
-_CLIENT_JOB_ATTEMPT_LABEL = "npa.nebius.ai/job-attempt-id"
-_TRANSIENT_KUBERNETES_API_MARKERS = (
-    "etcdserver: leader changed",
-    "etcdserver: request timed out",
-    "context deadline exceeded",
-    "too many requests",
-    "service unavailable",
-    "server is currently unable to handle the request",
-    "connection refused",
-    "connection reset by peer",
-    "tls handshake timeout",
-    "i/o timeout",
-    "unexpected eof",
-)
-
-
-def _is_transient_kubernetes_api_error(detail: str) -> bool:
-    lowered = detail.lower()
-    return any(marker in lowered for marker in _TRANSIENT_KUBERNETES_API_MARKERS)
 
 
 class GpuCapacityExhausted(RuntimeError):
@@ -428,54 +384,6 @@ def ordered_compatible_products(
     return CandidatePlan(tuple(ordered), inventory, tuple(skipped))
 
 
-def capacity_scheduling_reason(
-    *,
-    pod_payload: str | dict[str, Any] = "",
-    event_payload: str | dict[str, Any] = "",
-    gpu_resource: str = "nvidia.com/gpu",
-    product: str = "",
-) -> str:
-    """Return concrete GPU capacity/selector evidence, never runtime evidence."""
-
-    def decode(value: str | dict[str, Any]) -> dict[str, Any]:
-        if isinstance(value, dict):
-            return value
-        try:
-            parsed = json.loads(value or "{}")
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-
-    messages: list[str] = []
-    pods = decode(pod_payload)
-    for pod in pods.get("items", []) or []:
-        for condition in (pod.get("status") or {}).get("conditions", []) or []:
-            if str(condition.get("reason") or "").lower() == "unschedulable":
-                messages.append(str(condition.get("message") or ""))
-    events = decode(event_payload)
-    for event in events.get("items", []) or []:
-        reason = str(event.get("reason") or "")
-        message = str(event.get("message") or "")
-        if reason.lower() in {"failedscheduling", "unschedulable"}:
-            messages.append(message)
-
-    resource = re.escape(gpu_resource)
-    for message in messages:
-        lowered = message.lower()
-        if re.search(rf"insufficient\s+{resource}", message, re.I):
-            return f"Unschedulable: {message.strip()}"
-        selector_evidence = (
-            "didn't match pod's node affinity/selector" in lowered
-            or "did not match pod's node affinity/selector" in lowered
-            or "node selector" in lowered
-            or "node affinity" in lowered
-            or "no nodes match" in lowered
-        )
-        if selector_evidence and product:
-            return f"Unschedulable for GPU product {product}: {message.strip()}"
-    return ""
-
-
 def _attempt_job_name(base: str, index: int) -> str:
     if index == 0:
         return base
@@ -483,308 +391,35 @@ def _attempt_job_name(base: str, index: int) -> str:
     return f"{base[: 63 - len(suffix)].rstrip('-')}{suffix}"
 
 
-def _pod_proof(payload: str) -> dict[str, Any]:
-    try:
-        items = json.loads(payload).get("items") or []
-    except (json.JSONDecodeError, AttributeError):
-        items = []
-    if not items:
-        return {}
-    pod = items[0]
-    statuses = (pod.get("status") or {}).get("containerStatuses") or []
-    return {
-        "pod_name": (pod.get("metadata") or {}).get("name", ""),
-        "node_name": (pod.get("spec") or {}).get("nodeName", ""),
-        "image_digests": [
-            str(status.get("imageID") or "")
-            for status in statuses
-            if status.get("imageID")
-        ],
-    }
+def _verify_runtime_digest(
+    snapshot: Any, expected_image: str, *, container_name: str
+) -> list[str]:
+    """Require every completed application container to report the chosen digest."""
 
-
-def _delete_job_and_wait(
-    kubectl: Kubectl,
-    *,
-    job_name: str,
-    namespace: str,
-    provenance: dict[str, Any],
-) -> None:
-    """Delete a same-name Job completely before another create can race it."""
-
-    try:
-        retry_delay_s = max(
-            0.0,
-            float(os.environ.get("NPA_SIM2REAL_K8S_API_RETRY_SECONDS", "2")),
-        )
-    except ValueError:
-        retry_delay_s = 2.0
-    while True:
-        result = kubectl(
-            [
-                "delete",
-                "job",
-                job_name,
-                "-n",
-                namespace,
-                "--ignore-not-found=true",
-                "--wait=true",
-                "--timeout=120s",
-            ],
-            timeout_s=180,
-        )
-        if result.returncode == 0:
-            return
-        raw_detail = str(result.stderr or result.stdout or "")
-        detail = " ".join(raw_detail.split())[:800]
-        if _is_transient_kubernetes_api_error(raw_detail):
-            retry_count = (
-                int(provenance.get("transient_kubernetes_api_retry_count") or 0) + 1
-            )
-            provenance["transient_kubernetes_api_retry_count"] = retry_count
-            provenance["last_transient_kubernetes_api_retry"] = {
-                "operation": "delete_job_and_wait",
-                "job_name": job_name,
-                "detail": detail,
-            }
-            print(
-                "transient Kubernetes API error while deleting "
-                f"{job_name}; retrying without changing GPU product "
-                f"(attempt={retry_count}): {detail}",
-                flush=True,
-            )
-            time.sleep(retry_delay_s)
-            continue
+    expected_digest = expected_image.rsplit("@", 1)[-1]
+    image_ids = snapshot.image_digests
+    statuses = [
+        status
+        for pod in snapshot.pods
+        for status in pod.containers
+        if status.name == container_name
+    ]
+    if not statuses or any(
+        expected_digest not in status.image_id for status in statuses
+    ):
         raise GpuJobFailure(
-            f"Kubernetes Job {job_name} did not finish deleting before create: "
-            f"{detail or 'kubectl delete returned no API detail'}",
-            provenance=provenance,
+            "completed Kubernetes Job did not attest the requested image digest",
+            provenance={
+                "expected_image": expected_image,
+                "observed_image_ids": image_ids,
+                "job_snapshot": snapshot.to_dict(),
+            },
         )
-
-
-def _job_matches_create_attempt(payload: str, manifest: dict[str, Any]) -> bool:
-    """Return whether an observed Job belongs to this exact client create.
-
-    A timed-out POST is ambiguous: etcd may have committed the Job even though
-    kubectl did not receive the response.  The create-safe manifest carries a
-    client-owned manual selector, so it is sufficient (and safer than issuing a
-    blind replacement) to adopt an observed object only when its name and every
-    selector label match the submitted Job and pod template.
-    """
-
-    try:
-        observed = json.loads(payload or "{}")
-    except json.JSONDecodeError:
-        return False
-    expected_metadata = manifest.get("metadata") or {}
-    expected_spec = manifest.get("spec") or {}
-    expected_selector = (expected_spec.get("selector") or {}).get("matchLabels") or {}
-    observed_metadata = observed.get("metadata") or {}
-    observed_spec = observed.get("spec") or {}
-    observed_selector = (observed_spec.get("selector") or {}).get("matchLabels") or {}
-    observed_template_labels = (
-        (observed_spec.get("template") or {}).get("metadata") or {}
-    ).get("labels") or {}
-    if observed_metadata.get("name") != expected_metadata.get("name"):
-        return False
-    if not expected_selector:
-        return False
-    return all(
-        observed_selector.get(key) == value
-        and observed_template_labels.get(key) == value
-        for key, value in expected_selector.items()
-    )
-
-
-def _create_job_with_transient_retry(
-    kubectl: Kubectl,
-    *,
-    manifest: dict[str, Any],
-    job_name: str,
-    namespace: str,
-    provenance: dict[str, Any],
-) -> None:
-    """Create one Job, recovering ambiguous transient API responses in place.
-
-    The retry never changes GPU product or Job identity.  After a transient
-    create response it first checks whether the exact client-selector Job was
-    committed.  Only a confirmed NotFound causes the same manifest to be posted
-    again; AlreadyExists is accepted solely for that exact create attempt.
-    """
-
-    try:
-        retry_delay_s = max(
-            0.0,
-            float(os.environ.get("NPA_SIM2REAL_K8S_API_RETRY_SECONDS", "2")),
-        )
-    except ValueError:
-        retry_delay_s = 2.0
-    serialized = json.dumps(manifest)
-    while True:
-        create = kubectl(
-            ["create", "-f", "-"],
-            stdin=serialized,
-            timeout_s=120,
-        )
-        if create.returncode == 0:
-            return
-        raw_detail = str(create.stderr or create.stdout or "")
-        detail = " ".join(raw_detail.split())[:800]
-        lowered = raw_detail.lower()
-        retryable = _is_transient_kubernetes_api_error(raw_detail)
-        already_exists = "alreadyexists" in lowered or "already exists" in lowered
-        if not retryable and not already_exists:
-            raise GpuJobFailure(
-                f"Kubernetes create failed for {job_name}: "
-                f"{detail or 'no API detail'}; refusing GPU product fallback",
-                provenance=provenance,
-            )
-
-        observed = kubectl(
-            ["get", "job", job_name, "-n", namespace, "-o", "json"],
-            timeout_s=120,
-        )
-        if observed.returncode == 0:
-            if _job_matches_create_attempt(observed.stdout or "", manifest):
-                provenance["transient_kubernetes_api_recovered_create"] = {
-                    "job_name": job_name,
-                    "detail": detail,
-                    "resolution": "exact_client_selector_job_observed",
-                }
-                print(
-                    "transient Kubernetes API response while creating "
-                    f"{job_name}; exact client-selector Job exists, continuing "
-                    f"without changing GPU product: {detail}",
-                    flush=True,
-                )
-                return
-            raise GpuJobFailure(
-                f"Kubernetes create for {job_name} returned {detail or 'an ambiguous error'} "
-                "and a different existing Job owns that name; refusing to adopt or "
-                "change GPU product",
-                provenance=provenance,
-            )
-
-        observed_detail = str(observed.stderr or observed.stdout or "")
-        observed_lower = observed_detail.lower()
-        not_found = "notfound" in observed_lower or "not found" in observed_lower
-        if not not_found and not _is_transient_kubernetes_api_error(observed_detail):
-            compact_observed = " ".join(observed_detail.split())[:800]
-            raise GpuJobFailure(
-                f"Kubernetes create for {job_name} returned {detail or 'an ambiguous error'}; "
-                "the ownership check then failed with "
-                f"{compact_observed or 'no API detail'}; refusing GPU product fallback",
-                provenance=provenance,
-            )
-
-        retry_count = (
-            int(provenance.get("transient_kubernetes_api_retry_count") or 0) + 1
-        )
-        provenance["transient_kubernetes_api_retry_count"] = retry_count
-        provenance["last_transient_kubernetes_api_retry"] = {
-            "operation": "create_job",
-            "job_name": job_name,
-            "detail": detail,
-        }
-        print(
-            "transient Kubernetes API error while creating "
-            f"{job_name}; exact Job not observed yet, retrying the same manifest "
-            f"without changing GPU product (attempt={retry_count}): {detail}",
-            flush=True,
-        )
-        time.sleep(retry_delay_s)
-
-
-def _fresh_job_manifest(manifest: dict[str, Any], *, job_name: str) -> dict[str, Any]:
-    """Return a create-safe Job manifest without identity from an older object.
-
-    A manifest obtained from or mutated by a prior API object can contain an old
-    Job's generated selector and controller labels.  A Kubernetes create storage
-    retry can likewise retain the first create attempt's generated identity while
-    allocating another UID.  Strip server-owned identity/defaulting fields and
-    assign a client-owned selector, preserving all workload, provenance, security,
-    and operator-provided labels on a defensive copy.
-    """
-
-    fresh = deepcopy(manifest)
-    metadata = fresh.setdefault("metadata", {})
-    if not isinstance(metadata, dict):
-        raise TypeError("GPU Job manifest metadata must be an object")
-    metadata["name"] = job_name
-    for field in _SERVER_MANAGED_METADATA_FIELDS:
-        metadata.pop(field, None)
-    metadata_labels = metadata.get("labels")
-    if isinstance(metadata_labels, dict):
-        for label in _SERVER_MANAGED_JOB_LABELS:
-            metadata_labels.pop(label, None)
-    annotations = metadata.get("annotations")
-    if isinstance(annotations, dict):
-        annotations.pop(_LAST_APPLIED_ANNOTATION, None)
-
-    spec = fresh.setdefault("spec", {})
-    if not isinstance(spec, dict):
-        raise TypeError("GPU Job manifest spec must be an object")
-    if not bool(spec.get("manualSelector")):
-        # Use a client-owned selector that is unique to this create call.  The
-        # Job API normally generates controller-UID labels while handling the
-        # POST.  If its storage path internally retries that create with the
-        # already-defaulted object, the second attempt receives a new UID but
-        # can retain the first attempt's generated labels and fail validation.
-        # A manual selector is stable across that internal retry, while a fresh
-        # UUID per submission also prevents a later Job from adopting pods from
-        # an older, independently deleted attempt.
-        spec.pop("selector", None)
-        spec["manualSelector"] = True
-    template = spec.setdefault("template", {})
-    if not isinstance(template, dict):
-        raise TypeError("GPU Job manifest pod template must be an object")
-    template_metadata = template.setdefault("metadata", {})
-    if not isinstance(template_metadata, dict):
-        raise TypeError("GPU Job pod-template metadata must be an object")
-    for field in _SERVER_MANAGED_METADATA_FIELDS:
-        template_metadata.pop(field, None)
-    template_labels = template_metadata.get("labels")
-    if isinstance(template_labels, dict):
-        for label in _SERVER_MANAGED_JOB_LABELS:
-            template_labels.pop(label, None)
-    else:
-        template_labels = {}
-        template_metadata["labels"] = template_labels
-    if not spec.get("selector"):
-        attempt_id = uuid.uuid4().hex
-        spec["selector"] = {"matchLabels": {_CLIENT_JOB_ATTEMPT_LABEL: attempt_id}}
-        template_labels[_CLIENT_JOB_ATTEMPT_LABEL] = attempt_id
-        if not isinstance(metadata_labels, dict):
-            metadata_labels = {}
-            metadata["labels"] = metadata_labels
-        metadata_labels[_CLIENT_JOB_ATTEMPT_LABEL] = attempt_id
-    else:
-        # An explicit operator-owned manual selector remains authoritative.
-        # Reapply its match labels after removing only Kubernetes-generated
-        # identity so the selector continues to match the pod template.
-        selector = spec.get("selector")
-        match_labels = (
-            selector.get("matchLabels") if isinstance(selector, dict) else None
-        )
-        if isinstance(match_labels, dict):
-            template_labels.update(match_labels)
-    # The Job controller omits its conventional job-name labels when an
-    # operator supplies a manual selector.  Our scheduler/capacity probes use
-    # this stable label to find the pod, so restore it client-side after stale
-    # identity has been stripped.  Unlike controller-uid, the value is known
-    # before create and remains valid across an internal POST retry.
-    template_labels["job-name"] = job_name
-    template_labels["batch.kubernetes.io/job-name"] = job_name
-    template_annotations = template_metadata.get("annotations")
-    if isinstance(template_annotations, dict):
-        template_annotations.pop(_LAST_APPLIED_ANNOTATION, None)
-    fresh.pop("status", None)
-    return fresh
+    return image_ids
 
 
 def run_gpu_job_with_fallback(
     *,
-    kubectl: Kubectl,
     manifest_factory: Callable[[str, str], dict[str, Any]],
     base_job_name: str,
     namespace: str,
@@ -798,13 +433,28 @@ def run_gpu_job_with_fallback(
     wait_for_completion: bool = True,
     minimum_vram_gb: int | None = None,
     model: str = "",
+    client: Any | None = None,
+    heartbeat: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
-    """Apply/wait a Job, retrying only concrete GPU scheduling failures."""
+    """Create/adopt a queued GPU Job and reconcile only structured API state.
 
-    nodes = kubectl(["get", "nodes", "-o", "json"], timeout_s=120)
-    discovered = (
-        products_from_node_payload(nodes.stdout) if nodes.returncode == 0 else ()
+    Kueue owns ordinary contention, so a pending or quota-waiting Workload never
+    causes delete/recreate churn or product fallback. A product is skipped only
+    when the typed Node inventory proves that it has no ready allocatable
+    capacity. Application/data/image failures remain terminal on the selected
+    product.
+    """
+
+    from npa.workflows.sim2real.job_scheduling import configure_gpu_job
+    from npa.workflows.sim2real.k8s_client import (
+        KubernetesJobClient,
+        KubernetesJobFailed,
     )
+
+    job_client = client or KubernetesJobClient.from_environment(namespace=namespace)
+    inventory = tuple(job_client.list_gpu_products(resource=gpu_resource))
+    discovered = tuple(item.product for item in inventory)
+    inventory_by_product = {item.product: item for item in inventory}
     required_vram_gb = (
         minimum_vram_for_workload(
             workload,
@@ -824,8 +474,18 @@ def run_gpu_job_with_fallback(
     )
     attempts: list[dict[str, Any]] = [dict(item) for item in plan.skipped]
     provenance: dict[str, Any] = {
+        "scheduler": "kueue",
+        "classification_source": "official_python_kubernetes_client",
         "candidate_order": list(plan.products),
         "discovered_products": list(plan.discovered_products),
+        "inventory": [
+            {
+                "product": item.product,
+                "ready_nodes": item.ready_nodes,
+                "allocatable": item.allocatable,
+            }
+            for item in inventory
+        ],
         "attempts": attempts,
         "selected_product": "",
         "selected_node": "",
@@ -842,276 +502,123 @@ def run_gpu_job_with_fallback(
             provenance=provenance,
         )
 
-    probe_s = max(
-        0, int(os.environ.get("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "30"))
-    )
-    poll_s = max(
-        1, int(os.environ.get("NPA_SIM2REAL_GPU_SCHEDULING_POLL_SECONDS", "2"))
-    )
-    capacity_recheck_s = max(
-        0,
-        int(os.environ.get("NPA_SIM2REAL_GPU_CAPACITY_RECHECK_SECONDS", "5")),
-    )
+    source_sha = os.environ.get("NPA_SIM2REAL_SOURCE_SHA", "").strip()
+    if not source_sha:
+        if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
+            raise GpuJobFailure(
+                "real GPU Jobs require an exact source SHA",
+                provenance=provenance,
+            )
+        source_sha = "unit-test-source"
+    hang_timeout_s = int(os.environ.get("NPA_SIM2REAL_K8S_HANG_TIMEOUT_S", "0") or 0)
+    for index, product in enumerate(plan.products):
+        item = inventory_by_product.get(product)
+        if item is None or item.ready_nodes == 0 or item.allocatable < gpu_count:
+            attempts.append(
+                {
+                    "product": product,
+                    "status": "unavailable",
+                    "scheduling_reason": "structured_node_inventory_has_no_ready_capacity",
+                    "ready_nodes": int(item.ready_nodes if item else 0),
+                    "allocatable": int(item.allocatable if item else 0),
+                }
+            )
+            continue
 
-    def _candidate_attempts() -> Iterable[tuple[int, str]]:
-        attempt_index = 0
-        while True:
-            for product in plan.products:
-                # Never recreate a just-deleted Job under the same API-object
-                # name. Some API-server retry/defaulting paths can retain the
-                # first object's generated controller UID in the pod template,
-                # then reject it against the replacement Job's new UID.
-                yield attempt_index, product
-                attempt_index += 1
-            if timeout_s > 0:
-                return
-            # An explicit zero timeout is the operator's unbounded contract.
-            # A parallel batch can consume the final compatible slot between
-            # Job creation and scheduler observation, so preserve the concrete
-            # capacity evidence and recheck instead of falsely exhausting a
-            # cluster that still has compatible products.
-            time.sleep(capacity_recheck_s)
-
-    for index, product in _candidate_attempts():
-        attempt_started = time.monotonic()
+        started = time.monotonic()
         job_name = _attempt_job_name(base_job_name, index)
-        manifest = _fresh_job_manifest(
-            manifest_factory(product, job_name), job_name=job_name
+        manifest = configure_gpu_job(
+            manifest_factory(product, job_name),
+            image=image,
+            product=product,
+            gpu_resource=gpu_resource,
+            gpu_count=gpu_count,
         )
-        _delete_job_and_wait(
-            kubectl,
-            job_name=job_name,
-            namespace=namespace,
-            provenance=provenance,
+        container_name = str(
+            manifest["spec"]["template"]["spec"]["containers"][0].get("name") or ""
         )
-        # ``kubectl apply`` copies the complete Job manifest into
-        # kubectl.kubernetes.io/last-applied-configuration (client side) or
-        # requires the ``patch`` RBAC verb (server side). Isaac jobs embed
-        # executable task/scenario source in ``args`` and can legitimately
-        # exceed Kubernetes' 256 KiB aggregate annotation limit. We delete and
-        # wait for the same-name Job above, so a plain create is both sufficient
-        # and compatible with the deliberately create-only agent service account.
         attempt: dict[str, Any] = {
             "product": product,
             "job_name": job_name,
             "image": image,
-            "status": "applied",
+            "status": "reconciling",
             "scheduling_reason": "",
         }
         attempts.append(attempt)
-        try:
-            _create_job_with_transient_retry(
-                kubectl,
-                manifest=manifest,
-                job_name=job_name,
-                namespace=namespace,
-                provenance=provenance,
-            )
-        except GpuJobFailure as exc:
-            attempt.update(
-                status="create_failed",
-                scheduling_reason=str(exc),
-                duration_s=round(time.monotonic() - attempt_started, 3),
-            )
-            raise
+        uid, adopted = job_client.create_or_adopt(
+            manifest,
+            run_id=os.environ.get("NPA_SIM2REAL_RUN_ID", base_job_name),
+            source_sha=source_sha,
+            runtime_image=image,
+        )
+        attempt["job_uid"] = uid
+        attempt["adopted"] = adopted
 
-        deadline = time.monotonic() + probe_s
-        capacity_reason = ""
-        pod_result = None
-        while True:
-            pod_result = kubectl(
-                [
-                    "get",
-                    "pods",
-                    "-n",
-                    namespace,
-                    "-l",
-                    f"job-name={job_name}",
-                    "-o",
-                    "json",
-                ],
-                timeout_s=120,
-            )
-            proof = _pod_proof(pod_result.stdout if pod_result.returncode == 0 else "")
-            if proof.get("node_name"):
-                break
-            events = kubectl(
-                [
-                    "get",
-                    "events",
-                    "-n",
-                    namespace,
-                    "--field-selector",
-                    f"involvedObject.name={job_name}",
-                    "-o",
-                    "json",
-                ],
-                timeout_s=120,
-            )
-            capacity_reason = capacity_scheduling_reason(
-                pod_payload=pod_result.stdout if pod_result.returncode == 0 else "",
-                event_payload=events.stdout if events.returncode == 0 else "",
-                gpu_resource=gpu_resource,
-                product=product,
-            )
-            if capacity_reason or time.monotonic() >= deadline:
-                break
-            time.sleep(poll_s)
-
-        if capacity_reason:
-            attempt.update(
-                status="unschedulable",
-                scheduling_reason=capacity_reason,
-                duration_s=round(time.monotonic() - attempt_started, 3),
-            )
-            _delete_job_and_wait(
-                kubectl,
-                job_name=job_name,
-                namespace=namespace,
-                provenance=provenance,
-            )
-            continue
-
-        if not wait_for_completion:
-            proof = _pod_proof(
-                pod_result.stdout if pod_result and pod_result.returncode == 0 else ""
-            )
-            attempt.update(
-                status="scheduled" if proof.get("node_name") else "submitted",
-                scheduling_reason="scheduled"
-                if proof.get("node_name")
-                else "no capacity failure observed",
-                node_name=str(proof.get("node_name") or ""),
-                image_digests=list(proof.get("image_digests") or []),
-                duration_s=round(time.monotonic() - attempt_started, 3),
-            )
-            provenance.update(
-                selected_product=product,
-                selected_node=str(proof.get("node_name") or ""),
-                image_digests=list(proof.get("image_digests") or []),
-                job_name=job_name,
-                duration_s=round(time.monotonic() - attempt_started, 3),
-            )
-            return provenance
-
-        wait_chunk_s = max(1, timeout_s) if timeout_s > 0 else 30
-        while True:
-            wait = kubectl(
-                [
-                    "wait",
-                    f"job/{job_name}",
-                    "-n",
-                    namespace,
-                    "--for=condition=complete",
-                    f"--timeout={wait_chunk_s}s",
-                ],
-                timeout_s=wait_chunk_s + 60,
-            )
-            if wait.returncode == 0 or timeout_s > 0:
-                break
-            counters = kubectl(
-                [
-                    "get",
-                    "job",
-                    job_name,
-                    "-n",
-                    namespace,
-                    "-o",
-                    "json",
-                ],
-                timeout_s=120,
-            )
+        if wait_for_completion:
             try:
-                status = json.loads(counters.stdout or "{}").get("status") or {}
-                failed = int(status.get("failed") or 0)
-            except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
-                failed = 0
-            if failed:
-                break
-            wait_text = str(wait.stderr or wait.stdout or "").lower()
-            if (
-                "timed out waiting" not in wait_text
-                and "deadline exceeded" not in wait_text
-            ):
-                break
-        pod_result = kubectl(
-            [
-                "get",
-                "pods",
-                "-n",
-                namespace,
-                "-l",
-                f"job-name={job_name}",
-                "-o",
-                "json",
-            ],
-            timeout_s=120,
-        )
-        proof = _pod_proof(pod_result.stdout if pod_result.returncode == 0 else "")
-        if wait.returncode == 0:
-            attempt.update(
-                status="complete",
-                scheduling_reason="scheduled",
-                node_name=str(proof.get("node_name") or ""),
-                image_digests=list(proof.get("image_digests") or []),
-                duration_s=round(time.monotonic() - attempt_started, 3),
-            )
-            provenance.update(
-                selected_product=product,
-                selected_node=str(proof.get("node_name") or ""),
-                image_digests=list(proof.get("image_digests") or []),
-                job_name=job_name,
-                duration_s=round(time.monotonic() - attempt_started, 3),
-            )
-            return provenance
+                snapshot = job_client.watch_until_terminal(
+                    job_name,
+                    namespace=namespace,
+                    timeout_s=timeout_s,
+                    hang_timeout_s=hang_timeout_s,
+                    heartbeat=heartbeat,
+                )
+            except KubernetesJobFailed as exc:
+                snapshot = exc.snapshot
+                attempt.update(
+                    status="failed",
+                    condition_type=snapshot.condition_type,
+                    condition_reason=snapshot.condition_reason,
+                    pod_states=[pod.__dict__ for pod in snapshot.pods],
+                    duration_s=round(time.monotonic() - started, 3),
+                )
+                raise GpuJobFailure(
+                    f"Kubernetes Job {job_name} failed on {product}; "
+                    "structured application/runtime failure is not GPU fallback evidence",
+                    provenance=provenance,
+                ) from exc
+        else:
+            snapshot = job_client.snapshot(job_name, namespace=namespace)
 
-        events = kubectl(
-            [
-                "get",
-                "events",
-                "-n",
-                namespace,
-                "--field-selector",
-                f"involvedObject.name={job_name}",
-                "-o",
-                "json",
-            ],
-            timeout_s=120,
-        )
-        capacity_reason = capacity_scheduling_reason(
-            pod_payload=pod_result.stdout if pod_result.returncode == 0 else "",
-            event_payload=events.stdout if events.returncode == 0 else "",
-            gpu_resource=gpu_resource,
-            product=product,
-        )
-        if capacity_reason:
-            attempt.update(
-                status="unschedulable",
-                scheduling_reason=capacity_reason,
-                duration_s=round(time.monotonic() - attempt_started, 3),
+        if (
+            os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1"
+            and not snapshot.kueue.workload_name
+        ):
+            raise GpuJobFailure(
+                f"Kubernetes Job {job_name} has no observable Kueue Workload",
+                provenance={**provenance, "job_snapshot": snapshot.to_dict()},
             )
-            _delete_job_and_wait(
-                kubectl,
-                job_name=job_name,
-                namespace=namespace,
-                provenance=provenance,
-            )
-            continue
+
+        # A non-blocking submission is allowed to expose queued/admission state
+        # before a Pod exists. Runtime attestation is mandatory at completion.
+        image_digests = (
+            _verify_runtime_digest(snapshot, image, container_name=container_name)
+            if snapshot.state == "complete"
+            else snapshot.image_digests
+        )
+        selected_nodes = snapshot.selected_nodes
         attempt.update(
-            status="failed",
-            scheduling_reason=str(wait.stderr or wait.stdout or "Job did not complete"),
-            duration_s=round(time.monotonic() - attempt_started, 3),
+            status="complete" if snapshot.state == "complete" else snapshot.state,
+            scheduling_reason=snapshot.structured_scheduling_reason,
+            node_name=selected_nodes[0] if selected_nodes else "",
+            image_digests=image_digests,
+            kueue=snapshot.kueue.__dict__,
+            duration_s=round(time.monotonic() - started, 3),
         )
-        raise GpuJobFailure(
-            f"Kubernetes Job {job_name} failed without GPU capacity evidence; "
-            "refusing to change workload product",
-            provenance=provenance,
+        provenance.update(
+            selected_product=product,
+            selected_node=selected_nodes[0] if selected_nodes else "",
+            image_digests=image_digests,
+            job_name=job_name,
+            job_uid=uid,
+            adopted=adopted,
+            kueue=snapshot.kueue.__dict__,
+            job_snapshot=snapshot.to_dict(),
+            duration_s=round(time.monotonic() - started, 3),
         )
+        return provenance
 
-    exact = "; ".join(
-        f"{item.get('product')}: {item.get('scheduling_reason')}" for item in attempts
-    )
     raise GpuCapacityExhausted(
-        f"all compatible GPU products exhausted for {workload}: {exact}",
+        f"all compatible GPU products lack ready structured capacity for {workload}",
         provenance=provenance,
     )

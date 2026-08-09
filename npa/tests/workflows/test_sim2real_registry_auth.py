@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.k8s_client import JobSnapshot
 from npa.workflows.sim2real.registry_auth import (
     docker_config_json,
     ensure_nebius_registry_pull_secret,
@@ -70,15 +71,10 @@ def test_sibling_refresh_is_best_effort_on_mint_failure(
     )
 
 
-def test_apply_secret_reports_missing_kubectl_as_runtime_error(
+def test_apply_secret_reports_structured_client_failure_as_runtime_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An in-pod orchestrator often has no kubectl; that must stay in contract.
-
-    Callers treat this refresh as best-effort and catch ``RuntimeError``, so a
-    bare ``FileNotFoundError`` from ``subprocess.run`` would escape them and abort
-    the run instead of degrading to an ImagePullBackOff on the sibling.
-    """
+    """Core-API setup failures stay inside the registry-refresh contract."""
 
     monkeypatch.setattr(
         "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
@@ -89,11 +85,9 @@ def test_apply_secret_reports_missing_kubectl_as_runtime_error(
         lambda *args, **kwargs: None,
     )
 
-    def _no_kubectl(cmd, **kwargs):
-        raise FileNotFoundError(2, "No such file or directory", "kubectl")
-
     monkeypatch.setattr(
-        "npa.workflows.sim2real.registry_auth.subprocess.run", _no_kubectl
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("API unavailable")),
     )
     with pytest.raises(RuntimeError, match="registry pull secret"):
         ensure_nebius_registry_pull_secret(registry_server="cr.eu-north1.nebius.cloud")
@@ -145,24 +139,31 @@ def test_ensure_nebius_registry_pull_secret_applies_secret(
         "npa.workflows.sim2real.registry_auth._docker_helper_credential",
         lambda *args, **kwargs: None,
     )
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
-    def fake_run(cmd, **kwargs):
-        captured["input"] = kwargs.get("input", "")
-        captured["env"] = kwargs.get("env")
-        return MagicMock(returncode=0, stdout="", stderr="")
+    class FakeClient:
+        def apply_secret(self, payload):
+            captured["payload"] = payload
 
-    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-ambient-token")
-    monkeypatch.setattr("npa.workflows.sim2real.registry_auth.subprocess.run", fake_run)
+    def fake_client(**kwargs):
+        captured["client_kwargs"] = kwargs
+        return FakeClient()
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        fake_client,
+    )
     ensure_nebius_registry_pull_secret(
         registry_server="cr.eu-north1.nebius.cloud",
         k8s_context="demo-context",
     )
-    payload = json.loads(captured["input"])
+    payload = captured["payload"]
     assert payload["metadata"]["name"] == "npa-nebius-registry"
-    # kubectl must not inherit the stale ambient token (else it 'Invalid token's).
-    kubectl_env = captured["env"] or {}
-    assert "NEBIUS_IAM_TOKEN" not in kubectl_env
+    assert captured["client_kwargs"] == {
+        "namespace": "default",
+        "kubeconfig": "",
+        "context": "demo-context",
+    }
 
 
 def test_ensure_materializes_configured_docker_credential_helper(
@@ -200,21 +201,26 @@ def test_ensure_materializes_configured_docker_credential_helper(
                 ),
                 stderr="",
             )
-        captured["cmd"] = cmd
-        captured["input"] = kwargs["input"]
-        return MagicMock(returncode=0, stdout="", stderr="")
+        pytest.fail("only the configured Docker credential helper may use subprocess")
+
+    class FakeClient:
+        def apply_secret(self, payload):
+            captured["payload"] = payload
 
     monkeypatch.setattr("npa.workflows.sim2real.registry_auth.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        lambda **kwargs: FakeClient(),
+    )
     ensure_nebius_registry_pull_secret(
         registry_server="cr.eu-north1.nebius.cloud",
         k8s_context="npa-rtxpro-mk8s",
     )
-    payload = json.loads(str(captured["input"]))
+    payload = captured["payload"]
     docker_payload = json.loads(base64.b64decode(payload["data"][".dockerconfigjson"]))
     entry = docker_payload["auths"]["cr.eu-north1.nebius.cloud"]
     assert entry["username"] == "iam"
     assert entry["password"] == "helper-token"
-    assert captured["cmd"][:3] == ["kubectl", "--context", "npa-rtxpro-mk8s"]
 
 
 def test_refresh_registry_pull_secret_helper_forwards_k8s_context(
@@ -267,32 +273,42 @@ def test_sibling_kubernetes_job_refreshes_registry_pull_secret(
     monkeypatch.setattr(
         engine, "_refresh_registry_pull_secret_for_sibling_job", fake_refresh
     )
-    monkeypatch.setattr(engine, "_ensure_sibling_source_env", lambda config, env: env)
+    snapshot = JobSnapshot(
+        name="job",
+        namespace="sim2real",
+        uid="uid",
+        resource_version="1",
+        state="complete",
+        active=0,
+        succeeded=1,
+        failed=0,
+        deleting=False,
+        condition_type="Complete",
+        condition_reason="CompletionsReached",
+        condition_message="",
+        pods=(),
+    )
+
+    class FakeClient:
+        def snapshot(self, *args, **kwargs):
+            return snapshot
+
+        def pod_logs(self, *args, **kwargs):
+            return "structured-client-complete"
+
     monkeypatch.setattr(
-        engine,
-        "_component_job_manifest",
-        lambda *args, **kwargs: {"kind": "Job", "metadata": {"name": "job"}},
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        lambda **kwargs: FakeClient(),
     )
     monkeypatch.setattr(
         engine,
-        "_kubectl",
-        lambda *args, **kwargs: MagicMock(returncode=0, stdout="", stderr=""),
-    )
-    monkeypatch.setattr(
-        engine, "_log_sibling_job_applied", lambda *args, **kwargs: "uid"
-    )
-    monkeypatch.setattr(
-        engine, "_wait_kubernetes_job", lambda *args, **kwargs: "complete"
-    )
-    monkeypatch.setattr(
-        engine,
-        "_component_pod_info",
-        lambda *args, **kwargs: {"image_digests": []},
-    )
-    monkeypatch.setattr(
-        engine,
-        "_cleanup_component_job",
-        lambda *args, **kwargs: MagicMock(stdout="", stderr=""),
+        "run_gpu_job_with_fallback",
+        lambda **kwargs: {
+            "job_name": "job",
+            "job_uid": "uid",
+            "selected_product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            "image_digests": [],
+        },
     )
     monkeypatch.setattr(
         engine, "_download_component_output", lambda *args, **kwargs: None
@@ -339,32 +355,42 @@ def test_indexed_sibling_kubernetes_job_refreshes_registry_pull_secret(
     monkeypatch.setattr(
         engine, "_refresh_registry_pull_secret_for_sibling_job", fake_refresh
     )
-    monkeypatch.setattr(engine, "_ensure_sibling_source_env", lambda config, env: env)
+    snapshot = JobSnapshot(
+        name="job",
+        namespace="default",
+        uid="uid",
+        resource_version="1",
+        state="complete",
+        active=0,
+        succeeded=2,
+        failed=0,
+        deleting=False,
+        condition_type="Complete",
+        condition_reason="CompletionsReached",
+        condition_message="",
+        pods=(),
+    )
+
+    class FakeClient:
+        def snapshot(self, *args, **kwargs):
+            return snapshot
+
+        def pod_logs(self, *args, **kwargs):
+            return "structured-client-complete"
+
     monkeypatch.setattr(
-        engine,
-        "_indexed_component_job_manifest",
-        lambda *args, **kwargs: {"kind": "Job", "metadata": {"name": "job"}},
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        lambda **kwargs: FakeClient(),
     )
     monkeypatch.setattr(
         engine,
-        "_kubectl",
-        lambda *args, **kwargs: MagicMock(returncode=0, stdout="", stderr=""),
-    )
-    monkeypatch.setattr(
-        engine, "_log_sibling_job_applied", lambda *args, **kwargs: "uid"
-    )
-    monkeypatch.setattr(
-        engine, "_wait_kubernetes_job", lambda *args, **kwargs: "complete"
-    )
-    monkeypatch.setattr(
-        engine,
-        "_component_pod_info",
-        lambda *args, **kwargs: {"image_digests": []},
-    )
-    monkeypatch.setattr(
-        engine,
-        "_cleanup_component_job",
-        lambda *args, **kwargs: MagicMock(stdout="", stderr=""),
+        "run_gpu_job_with_fallback",
+        lambda **kwargs: {
+            "job_name": "job",
+            "job_uid": "uid",
+            "selected_product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            "image_digests": [],
+        },
     )
 
     config = Sim2RealLoopConfig(

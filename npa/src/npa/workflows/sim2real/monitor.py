@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -661,23 +660,14 @@ def _stage_03_cosmos2_result_present(
     return _s3_object_exists(client, bucket, key)
 
 
-def _kubectl_json(args: list[str], *, kubeconfig: Path) -> dict[str, Any]:
-    cmd = [
-        "kubectl",
-        *args,
-        "-o",
-        "json",
-    ]
-    env = dict(os.environ)
-    env["KUBECONFIG"] = str(kubeconfig)
-    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
-    if proc.returncode != 0:
-        return {}
-    try:
-        payload = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+def _structured_k8s_client(*, context: str, kubeconfig: Path, namespace: str) -> Any:
+    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+
+    return KubernetesJobClient.from_environment(
+        namespace=namespace,
+        kubeconfig=str(kubeconfig),
+        context=context,
+    )
 
 
 def _k8s_orchestrator_status(
@@ -688,11 +678,11 @@ def _k8s_orchestrator_status(
     namespace: str = "default",
 ) -> dict[str, Any]:
     job_name = orchestrator_job_name(run_id)
-    job = _kubectl_json(
-        ["--context", context, "-n", namespace, "get", "job", job_name],
-        kubeconfig=kubeconfig,
+    client = _structured_k8s_client(
+        context=context, kubeconfig=kubeconfig, namespace=namespace
     )
-    if not job:
+    snapshot = client.snapshot_if_exists(job_name, namespace=namespace)
+    if snapshot is None:
         return {
             "job_name": job_name,
             "found": False,
@@ -704,55 +694,32 @@ def _k8s_orchestrator_status(
             "pod_reason": "",
         }
 
-    status = job.get("status") or {}
-    pod = _kubectl_json(
-        [
-            "--context",
-            context,
-            "-n",
-            namespace,
-            "get",
-            "pods",
-            "-l",
-            f"job-name={job_name}",
-        ],
-        kubeconfig=kubeconfig,
-    )
-    pod_items = list((pod.get("items") or []))
     pod_phase = ""
     pod_reason = ""
-    if pod_items:
-        pod_status = pod_items[0].get("status") or {}
-        pod_phase = str(pod_status.get("phase") or "")
-        for state_key in ("waiting", "terminated"):
-            for container in pod_status.get("containerStatuses") or []:
-                state = (container.get("state") or {}).get(state_key) or {}
-                if state.get("reason"):
-                    pod_reason = str(state["reason"])
-                    break
+    if snapshot.pods:
+        pod_phase = snapshot.pods[0].phase
+        for container in snapshot.pods[0].containers:
+            pod_reason = container.waiting_reason or container.terminated_reason
             if pod_reason:
                 break
-
-    active = int(status.get("active") or 0)
-    succeeded = int(status.get("succeeded") or 0)
-    failed = int(status.get("failed") or 0)
-    if succeeded >= 1:
-        phase = "SUCCEEDED"
-    elif failed >= 1:
-        phase = "FAILED"
-    elif active >= 1:
-        phase = "RUNNING"
-    else:
-        phase = "UNKNOWN"
+    phase = {
+        "complete": "SUCCEEDED",
+        "failed": "FAILED",
+        "running": "RUNNING",
+        "pending": "UNKNOWN",
+        "deleting": "FAILED",
+    }.get(snapshot.state, "UNKNOWN")
     return {
         "job_name": job_name,
         "found": True,
         "phase": phase,
-        "active": active,
-        "succeeded": succeeded,
-        "failed": failed,
+        "active": snapshot.active,
+        "succeeded": snapshot.succeeded,
+        "failed": snapshot.failed,
         "pod_phase": pod_phase,
         "pod_reason": pod_reason,
+        "condition_reason": snapshot.condition_reason,
+        "kueue": snapshot.kueue.__dict__,
     }
 
 
@@ -763,23 +730,22 @@ def _k8s_sibling_summary(
     kubeconfig: Path,
     namespace: str = "default",
 ) -> list[dict[str, Any]]:
-    jobs = _kubectl_json(
-        ["--context", context, "-n", namespace, "get", "jobs"],
-        kubeconfig=kubeconfig,
+    client = _structured_k8s_client(
+        context=context, kubeconfig=kubeconfig, namespace=namespace
     )
     rows: list[dict[str, Any]] = []
     needle = run_id.lower()
-    for item in jobs.get("items") or []:
-        name = str((item.get("metadata") or {}).get("name") or "")
+    for item in client.list_jobs(namespace=namespace):
+        name = str(getattr(item.metadata, "name", "") or "")
         if not name.startswith("s2r-") or needle not in name.lower():
             continue
-        status = item.get("status") or {}
+        status = item.status
         rows.append(
             {
                 "name": name,
-                "active": int(status.get("active") or 0),
-                "succeeded": int(status.get("succeeded") or 0),
-                "failed": int(status.get("failed") or 0),
+                "active": int(getattr(status, "active", 0) or 0),
+                "succeeded": int(getattr(status, "succeeded", 0) or 0),
+                "failed": int(getattr(status, "failed", 0) or 0),
             }
         )
     return sorted(rows, key=lambda row: row["name"])

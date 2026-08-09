@@ -124,7 +124,9 @@ class DerivedTaskConfig:
             "skill": self.skill,
             "action_scale": self.action_scale,
             "workspace_reach_m": self.workspace_reach_m,
-            "object_init_range": {k: list(v) for k, v in self.object_init_range.items()},
+            "object_init_range": {
+                k: list(v) for k, v in self.object_init_range.items()
+            },
             "goal_range": {k: list(v) for k, v in self.goal_range.items()},
             "goal_pos": list(self.goal_pos),
             "minimal_height_m": self.minimal_height_m,
@@ -225,10 +227,15 @@ def derive_placement(
     and the goal is within the workspace.
     """
 
-    scale = _clamp(float(reach_m) / FRANKA_REACH_M, PLACEMENT_SCALE_MIN, PLACEMENT_SCALE_MAX)
+    scale = _clamp(
+        float(reach_m) / FRANKA_REACH_M, PLACEMENT_SCALE_MIN, PLACEMENT_SCALE_MAX
+    )
 
     def _scaled(rng: dict[str, tuple[float, float]]) -> dict[str, tuple[float, float]]:
-        return {axis: (round(lo * scale, 4), round(hi * scale, 4)) for axis, (lo, hi) in rng.items()}
+        return {
+            axis: (round(lo * scale, 4), round(hi * scale, 4))
+            for axis, (lo, hi) in rng.items()
+        }
 
     src = "measured" if scale != 1.0 else "heuristic"
     return _scaled(STOCK_OBJECT_INIT_RANGE), _scaled(STOCK_GOAL_RANGE), src
@@ -305,12 +312,18 @@ def derive_task_config(
     )
     cfg.success_distance_m = float(task.success_distance_m or STOCK_SUCCESS_DISTANCE_M)
     src["success_distance_m"] = (
-        "explicit" if task.success_distance_m != ob.DEFAULT_SUCCESS_DISTANCE_M else "heuristic"
+        "explicit"
+        if task.success_distance_m != ob.DEFAULT_SUCCESS_DISTANCE_M
+        else "heuristic"
     )
 
     g_open, g_close, g_src = derive_gripper_targets(
-        explicit_open=robot.gripper_open if "gripper_open" not in robot.auto_fields else None,
-        explicit_close=robot.gripper_close if "gripper_close" not in robot.auto_fields else None,
+        explicit_open=robot.gripper_open
+        if "gripper_open" not in robot.auto_fields
+        else None,
+        explicit_close=robot.gripper_close
+        if "gripper_close" not in robot.auto_fields
+        else None,
         finger_joint_ranges=finger_joint_ranges,
     )
     cfg.gripper_open = g_open

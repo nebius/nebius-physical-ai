@@ -30,20 +30,18 @@ Phase boundaries:
 """
 
 from __future__ import annotations
+
 import logging
 
 import hashlib
 import json
 import os
 import random
-import shlex
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -108,8 +106,8 @@ from npa.workflows.sim2real.policy_actions_stage import (
 )
 from npa.workflows.sim2real.reference_helpers import (
     _heldout_env_score,
-    _signal_diversity_report,
-    _signal_mean_reward,
+    _signal_diversity_report as _signal_diversity_report,
+    _signal_mean_reward as _signal_mean_reward,
     _write_env_manifest as _write_env_manifest,
     _write_ppm,
     _write_train_heldout_split as _write_train_heldout_split,
@@ -136,9 +134,6 @@ _ISAAC_SIMULATION_APP: Any = None
 HELDOUT_VIZ_CAMERA_NAME = "heldout_viz_camera"
 DEFAULT_HELDOUT_RENDER_FRAMES = 8
 SCHEMA_HELDOUT_RENDERS = "npa.sim2real.heldout_renders.v1"
-# Per-run sibling source tarball (Isaac held-out eval cannot git-clone inside Isaac Sim).
-_SIBLING_SOURCE_TARBALL_BY_RUN: dict[str, str] = {}
-
 if TYPE_CHECKING:
     from npa.workbench.lerobot.policy_container import VlmSignalUpdateResult
 
@@ -306,13 +301,16 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
     heldout_envs_uri = envgen_result["heldout_envs_uri"]
     gold_heldout_envs_uri = envgen_result["gold_heldout_envs_uri"]
     task_contract_uri = str(task_contract_path)
-    sibling_source_tarball_uri = ""
-    if config.s3_bucket:
-        sibling_source_tarball_uri = ensure_sibling_source_tarball(config)
-        if config.sim_backend == SIM_BACKEND_ISAAC and not sibling_source_tarball_uri:
+    source_sha = os.environ.get("NPA_SIM2REAL_SOURCE_SHA", "").strip()
+    runtime_image = os.environ.get("NPA_SIM2REAL_RUNTIME_IMAGE", "").strip()
+    if real_required:
+        from npa.workflows.sim2real.job_scheduling import require_image_digest
+
+        if not source_sha:
             raise Sim2RealLoopError(
-                "failed to stage sibling source tarball for Isaac held-out eval"
+                "NPA_SIM2REAL_SOURCE_SHA is required for a real durable controller"
             )
+        require_image_digest(runtime_image)
     state = {
         "schema": "npa.sim2real.workflow_state.v1",
         "run_id": config.run_id,
@@ -337,7 +335,8 @@ def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "final_inner": None,
         "final_eval": None,
         "final_decision": None,
-        "sibling_source_tarball_uri": sibling_source_tarball_uri,
+        "source_sha": source_sha,
+        "runtime_image": runtime_image,
         "current_quality": 0.0,
         "next_outer_iteration": 1,
         "updated_at": _utc_now(),
@@ -372,35 +371,81 @@ def run_single_outer_iteration(
         outer_iteration=outer_iteration,
         resume_checkpoint_uri=resume_checkpoint_uri,
     )
+    from npa.workflows.sim2real.resume_state import DurableStateStore, canonical_digest
+
+    durable = DurableStateStore(config, local_dir)
     quality = float(inner["final_quality"])
     # Checkpoint selection consumes only validation. The gold split is not opened
     # until the final configured Stage 10 evaluation.
-    if outer_iteration < config.outer_iterations and inner.get(
-        "selected_validation_report"
-    ):
-        heldout_report = dict(inner["selected_validation_report"])
-    else:
-        selected_checkpoint_iteration = int(
-            (inner.get("checkpoint_selection") or {}).get("training_iteration")
-            or (inner.get("selected_validation_report") or {}).get(
-                "checkpoint_training_iteration"
-            )
-            or 0
+    selected_checkpoint_iteration = int(
+        (inner.get("checkpoint_selection") or {}).get("training_iteration")
+        or (inner.get("selected_validation_report") or {}).get(
+            "checkpoint_training_iteration"
         )
-        heldout_report = run_heldout_eval(
+        or 0
+    )
+    evaluation_split = (
+        "validation"
+        if outer_iteration < config.outer_iterations
+        and inner.get("selected_validation_report")
+        else "gold_heldout"
+    )
+    stage10_input = {
+        "outer_iteration": outer_iteration,
+        "evaluation_split": evaluation_split,
+        "selected_checkpoint_iteration": selected_checkpoint_iteration,
+        "selected_checkpoint_uri": inner.get("final_checkpoint_uri"),
+        "inner_evidence_digest": canonical_digest(inner),
+        "validation_envs_uri": getattr(config, "validation_envs_uri", ""),
+        "gold_heldout_envs_uri": getattr(config, "gold_heldout_envs_uri", ""),
+        "eval_image": config.eval_image,
+        "isaac_image": config.isaac_image,
+    }
+    cached_stage10 = durable.load_unit(
+        f"outer-o{outer_iteration:02d}-stage10-evaluation", stage10_input
+    )
+    if cached_stage10 is not None:
+        heldout_report = dict(cached_stage10["heldout_report"])
+    else:
+        if evaluation_split == "validation":
+            heldout_report = dict(inner["selected_validation_report"])
+        else:
+            heldout_report = run_heldout_eval(
+                config,
+                local_dir=local_dir,
+                inner_evidence=inner,
+                outer_iteration=outer_iteration,
+                evaluation_split="gold_heldout",
+                checkpoint_iteration=selected_checkpoint_iteration,
+            )
+        durable.commit_unit(
+            f"outer-o{outer_iteration:02d}-stage10-evaluation",
+            stage10_input,
+            {"heldout_report": heldout_report},
+        )
+    stage11_input = {
+        "outer_iteration": outer_iteration,
+        "heldout_report_digest": canonical_digest(heldout_report),
+        "threshold": config.threshold,
+        "early_exit": getattr(config, "early_exit", True),
+    }
+    cached_stage11 = durable.load_unit(
+        f"outer-o{outer_iteration:02d}-stage11-decision", stage11_input
+    )
+    if cached_stage11 is not None:
+        decision = dict(cached_stage11["decision"])
+    else:
+        decision = threshold_decision(
             config,
             local_dir=local_dir,
-            inner_evidence=inner,
+            heldout_report=heldout_report,
             outer_iteration=outer_iteration,
-            evaluation_split="gold_heldout",
-            checkpoint_iteration=selected_checkpoint_iteration,
         )
-    decision = threshold_decision(
-        config,
-        local_dir=local_dir,
-        heldout_report=heldout_report,
-        outer_iteration=outer_iteration,
-    )
+        durable.commit_unit(
+            f"outer-o{outer_iteration:02d}-stage11-decision",
+            stage11_input,
+            {"decision": decision},
+        )
     # This field is retained for reference-rollout compatibility, but is now a
     # measured validation/gold strict-success rate rather than synthetic uplift.
     next_quality = float(heldout_report.get("success_rate") or quality)
@@ -503,6 +548,20 @@ def run_finalize(
     upload: bool | None = None,
 ) -> dict[str, Any]:
     """Run stages 12-13, visualization, and final report/upload."""
+
+    from npa.workflows.sim2real.resume_state import DurableStateStore, canonical_digest
+
+    durable = DurableStateStore(config, local_dir)
+    finalize_input = {
+        "final_decision": final_decision,
+        "final_checkpoint": final_decision.get("checkpoint_uri"),
+        "final_eval_digest": canonical_digest(final_eval),
+        "outer_history_digest": canonical_digest(outer_history),
+        "component_digest": canonical_digest(components),
+    }
+    completed_finalize = durable.load_unit("finalize-complete", finalize_input)
+    if completed_finalize is not None:
+        return dict(completed_finalize["report"])
 
     components = _expand_envgen_component_records(config, components)
     loop_components = _loop_component_records(
@@ -611,17 +670,58 @@ def run_finalize(
             "node_product": config.k8s_gpu_product,
         },
     )
-    stage_started = time.monotonic()
-    viz_component, viz_info = _run_sim2real_viz_stage(
-        config,
-        local_dir=local_dir,
-        inner_evidence=final_inner,
-        heldout_report=final_eval,
-        stage_components=[*components, asdict(viz_stage_record)],
-        outer_history=outer_history,
-        final_decision=final_decision,
-    )
-    viz_component.artifacts["duration_s"] = round(time.monotonic() - stage_started, 3)
+    stage14_input = {
+        **finalize_input,
+        "stage_components_digest": canonical_digest(components),
+        "rerun_enabled": config.rerun_enabled,
+        "mcap_enabled": os.environ.get("NPA_SIM2REAL_MCAP", ""),
+    }
+    cached_viz = durable.load_unit("finalize-stage-14", stage14_input)
+    if cached_viz is not None:
+        for key, filename in (
+            ("rrd_uri", "sim2real.rrd"),
+            ("mcap_uri", "sim2real.mcap"),
+        ):
+            uri = str(cached_viz.get(key) or "")
+            if uri:
+                _storage_client(config).download_file(
+                    uri, str(local_dir / "reports" / filename)
+                )
+        viz_component = ComponentRecord(**dict(cached_viz["component"]))
+        viz_info = dict(cached_viz["viz_info"])
+    else:
+        stage_started = time.monotonic()
+        viz_component, viz_info = _run_sim2real_viz_stage(
+            config,
+            local_dir=local_dir,
+            inner_evidence=final_inner,
+            heldout_report=final_eval,
+            stage_components=[*components, asdict(viz_stage_record)],
+            outer_history=outer_history,
+            final_decision=final_decision,
+        )
+        viz_component.artifacts["duration_s"] = round(
+            time.monotonic() - stage_started, 3
+        )
+        viz_payload: dict[str, Any] = {
+            "component": asdict(viz_component),
+            "viz_info": viz_info,
+            "rrd_uri": "",
+            "mcap_uri": "",
+        }
+        if durable.enabled:
+            for key, filename in (
+                ("rrd_uri", "sim2real.rrd"),
+                ("mcap_uri", "sim2real.mcap"),
+            ):
+                path = local_dir / "reports" / filename
+                if path.is_file() and path.stat().st_size > 0:
+                    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                    viz_payload[key] = _storage_client(config).upload_file(
+                        str(path),
+                        f"{durable.root}/finalization-artifacts/sha256-{digest}-{filename}",
+                    )
+        durable.commit_unit("finalize-stage-14", stage14_input, viz_payload)
     components.append(asdict(viz_component))
 
     components.extend(
@@ -811,6 +911,7 @@ def run_finalize(
             upload_meta["report_refresh"] = report_refresh
             report["upload"] = upload_meta
             _write_json_artifact(report_path, report)
+    durable.commit_unit("finalize-complete", finalize_input, {"report": report})
     return report
 
 
@@ -850,16 +951,27 @@ def _run_sim2real_viz_stage(
     if config.byo_rerun_command.strip():
         return _run_byo_rerun_command(config, local_dir=local_dir, rrd_path=rrd_path)
 
+    if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
+        if (heldout_report or {}).get("evaluation_split") != "gold_heldout":
+            raise Sim2RealLoopError(
+                "Stage 14 real-tier footage must come from the exact gold evaluation"
+            )
     heldout_report = _ensure_heldout_renders_for_viz(
         config,
         local_dir,
         heldout_report,
     )
-    if heldout_report is not None:
-        heldout_path = local_dir / "eval" / "heldout" / "report.json"
-        if heldout_path.is_file():
-            _write_json_artifact(heldout_path, heldout_report)
-
+    if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
+        lineage = dict((heldout_report or {}).get("render_lineage") or {})
+        expected_checkpoint = str((final_decision or {}).get("checkpoint_uri") or "")
+        if (
+            lineage.get("evaluation_split") != "gold_heldout"
+            or not lineage.get("render_manifest_sha256")
+            or lineage.get("checkpoint_uri") != expected_checkpoint
+        ):
+            raise Sim2RealLoopError(
+                "gold render lineage does not match the final selected checkpoint"
+            )
     try:
         from npa.workflows.sim2real_viz import (
             RerunUnavailableError,
@@ -1028,487 +1140,17 @@ def run_inner_loop(
     outer_iteration: int = 1,
     resume_checkpoint_uri: str = "",
 ) -> dict[str, Any]:
-    """Run action generation, VLM eval, signal conversion, and policy update.
+    """Delegate durable Stage 7–9 execution to the review-sized executor."""
 
-    ``resume_checkpoint_uri`` (from the prior outer iteration) lets a BYO trainer
-    CONTINUE the same policy rather than restart from scratch, so the outer loop's
-    "send back for more RL" (stage 11B) actually compounds. The checkpoint advances
-    through both the inner iterations and across outer iterations.
-    """
+    from npa.workflows.sim2real.stage_execution import run_inner_loop as execute
 
-    from npa.workflows.sim2real_stages import run_policy_rollouts
-
-    iteration_records: list[dict[str, Any]] = []
-    reward_trend: list[float] = []
-    loss_trend: list[dict[str, float]] = []
-    policy_deltas: list[float] = []
-    all_signals: list[dict[str, Any]] = []
-    calibration_trend: list[dict[str, Any]] = []
-    checkpoint_candidates: list[dict[str, Any]] = []
-    quality = float(initial_quality)
-    reward_head = 0.0
-    action_bias = 0.0
-    current_checkpoint_uri = str(resume_checkpoint_uri or "").strip()
-    prior_selection_path = (
-        local_dir
-        / "checkpoints"
-        / "validation-selection"
-        / f"outer-{outer_iteration - 1:02d}.json"
+    return execute(
+        config,
+        local_dir=local_dir,
+        initial_quality=initial_quality,
+        outer_iteration=outer_iteration,
+        resume_checkpoint_uri=resume_checkpoint_uri,
     )
-    if outer_iteration > 1 and prior_selection_path.is_file():
-        prior_candidate = json.loads(prior_selection_path.read_text(encoding="utf-8"))
-        if (
-            prior_candidate.get("evaluation_split") == "validation"
-            and prior_candidate.get("checkpoint_uri") == current_checkpoint_uri
-        ):
-            checkpoint_candidates.append(prior_candidate)
-    for iteration in range(1, config.inner_iterations + 1):
-        actions_dir = (
-            local_dir
-            / "actions"
-            / "train"
-            / f"outer-{outer_iteration:02d}"
-            / f"iter-{iteration:02d}"
-        )
-        rollouts = run_policy_rollouts(
-            config,
-            local_dir=local_dir,
-            actions_dir=actions_dir,
-            outer_iteration=outer_iteration,
-            iteration=iteration,
-            checkpoint_uri=current_checkpoint_uri,
-        )
-        eval_dir = (
-            local_dir
-            / "vlm_eval"
-            / "train"
-            / f"outer-{outer_iteration:02d}"
-            / f"iter-{iteration:02d}"
-        )
-        signal_dir = (
-            local_dir
-            / "training_signal"
-            / "train"
-            / f"outer-{outer_iteration:02d}"
-            / f"iter-{iteration:02d}"
-        )
-        evals: list[dict[str, Any]] = []
-        signals: list[dict[str, Any]] = []
-        signal_converter_source = (
-            "byo_command" if config.byo_signal_converter.strip() else "reference"
-        )
-        vlm_k8s_parallel = not config.byo_vlm_command.strip() and bool(
-            config.s3_bucket.strip()
-        )
-        jobs_per_rollout = 2 if vlm_k8s_parallel and config.vlm_dual_reason else 1
-        if vlm_k8s_parallel and len(rollouts) > 1:
-            max_workers = min(
-                len(rollouts),
-                max(1, _effective_k8s_parallelism(config) // jobs_per_rollout),
-            )
-            evaluations: list[dict[str, Any] | None] = [None] * len(rollouts)
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {
-                    pool.submit(
-                        evaluate_rollout_with_vlm,
-                        rollout,
-                        output_dir=eval_dir,
-                        config=config,
-                    ): index
-                    for index, rollout in enumerate(rollouts)
-                }
-                for future in as_completed(futures):
-                    index = futures[future]
-                    evaluations[index] = future.result()
-            ordered_evaluations = [item for item in evaluations if item is not None]
-            if len(ordered_evaluations) != len(rollouts):
-                raise Sim2RealLoopError("parallel VLM eval did not return all rollouts")
-            for evaluation in ordered_evaluations:
-                signal = _convert_eval_to_signal(
-                    evaluation,
-                    config=config,
-                    output_dir=signal_dir,
-                )
-                _write_json_artifact(
-                    signal_dir / f"{signal['rollout_id']}.json", signal
-                )
-                evals.append(evaluation)
-                signals.append(signal)
-                all_signals.append(signal)
-        else:
-            for rollout in rollouts:
-                evaluation = evaluate_rollout_with_vlm(
-                    rollout,
-                    output_dir=eval_dir,
-                    config=config,
-                )
-                signal = _convert_eval_to_signal(
-                    evaluation,
-                    config=config,
-                    output_dir=signal_dir,
-                )
-                _write_json_artifact(
-                    signal_dir / f"{signal['rollout_id']}.json", signal
-                )
-                evals.append(evaluation)
-                signals.append(signal)
-                all_signals.append(signal)
-        signal_batch_path = (
-            local_dir
-            / "inner_loop"
-            / f"outer-{outer_iteration:02d}"
-            / f"signals-iter-{iteration:02d}.json"
-        )
-        calibration = {
-            "rollout_count": len(signals),
-            "step_count": sum(
-                int((signal.get("calibration") or {}).get("step_count") or 0)
-                for signal in signals
-            ),
-            "simulator_grounded_steps": sum(
-                int(
-                    (signal.get("calibration") or {}).get("simulator_grounded_steps")
-                    or 0
-                )
-                for signal in signals
-            ),
-            "nonzero_advantage_count": sum(
-                int(
-                    (signal.get("calibration") or {}).get("nonzero_advantage_count")
-                    or 0
-                )
-                for signal in signals
-            ),
-            "model_disagreement_steps": sum(
-                int(
-                    (signal.get("calibration") or {}).get("model_disagreement_steps")
-                    or 0
-                )
-                for signal in signals
-            ),
-            "vlm_calibrated_steps": sum(
-                int((signal.get("calibration") or {}).get("vlm_calibrated_steps") or 0)
-                for signal in signals
-            ),
-            "vlm_accepted_steps": sum(
-                int((signal.get("calibration") or {}).get("vlm_accepted_steps") or 0)
-                for signal in signals
-            ),
-            "vlm_rejected_or_downweighted_steps": sum(
-                int(
-                    (signal.get("calibration") or {}).get(
-                        "vlm_rejected_or_downweighted_steps"
-                    )
-                    or 0
-                )
-                for signal in signals
-            ),
-            "vlm_missing_or_malformed_steps": sum(
-                int(
-                    (signal.get("calibration") or {}).get(
-                        "vlm_missing_or_malformed_steps"
-                    )
-                    or 0
-                )
-                for signal in signals
-            ),
-            "vlm_low_confidence_steps": sum(
-                int(
-                    (signal.get("calibration") or {}).get("vlm_low_confidence_steps")
-                    or 0
-                )
-                for signal in signals
-            ),
-            "vlm_contradictory_steps": sum(
-                int(
-                    (signal.get("calibration") or {}).get("vlm_contradictory_steps")
-                    or 0
-                )
-                for signal in signals
-            ),
-            "vlm_summary_broadcast_steps": sum(
-                int(
-                    (signal.get("calibration") or {}).get("vlm_summary_broadcast_steps")
-                    or 0
-                )
-                for signal in signals
-            ),
-            "mean_reward_variance": round(
-                sum(
-                    float(
-                        (signal.get("calibration") or {}).get("reward_variance") or 0.0
-                    )
-                    for signal in signals
-                )
-                / max(1, len(signals)),
-                10,
-            ),
-            "simulator_fallback_rollouts": sum(
-                bool(
-                    (signal.get("calibration") or {}).get(
-                        "degenerate_simulator_fallback_used"
-                    )
-                )
-                for signal in signals
-            ),
-            "degenerate_rollouts": sum(
-                bool((signal.get("calibration") or {}).get("degenerate"))
-                for signal in signals
-            ),
-        }
-        if (
-            config.byo_trainer_command.strip()
-            and calibration["simulator_grounded_steps"] > 0
-            and calibration["nonzero_advantage_count"] == 0
-        ):
-            raise Sim2RealLoopError(
-                "simulator-grounded temporal credit is degenerate: every "
-                "advantage is zero; refusing to train on useless feedback"
-            )
-        calibration_trend.append(calibration)
-        _write_json_artifact(
-            signal_batch_path,
-            {
-                "schema": SCHEMA_RL_SIGNAL,
-                "signals": signals,
-                "calibration": calibration,
-            },
-        )
-        parse_vlm_signal_batch, run_vlm_signal_training_step = (
-            _signal_training_imports()
-        )
-        parsed_signals = parse_vlm_signal_batch({"signals": signals})
-        trainer_dir = (
-            local_dir
-            / "inner_loop"
-            / f"outer-{outer_iteration:02d}"
-            / "trainer"
-            / f"iter-{iteration:02d}"
-        )
-        if config.byo_trainer_command.strip():
-            update = _run_trainer_via_command(
-                signal_batch_path,
-                config=config,
-                output_dir=trainer_dir,
-                initial_reward_head=reward_head,
-                initial_action_bias=action_bias,
-                train_envs_dir=local_dir / "envs" / "train",
-                resume_checkpoint_uri=current_checkpoint_uri,
-                outer_iteration=outer_iteration,
-                iteration=iteration,
-            )
-            # Compound: the next iteration (inner or outer) resumes from THIS
-            # iteration's freshly-produced checkpoint.
-            if str(getattr(update, "checkpoint_path", "") or "").strip():
-                current_checkpoint_uri = update.checkpoint_path.strip()
-            trainer_source = "byo_command"
-            trainer_provenance_path = trainer_dir / "byo-trainer-gpu-provenance.json"
-            trainer_component_invocation = (
-                json.loads(trainer_provenance_path.read_text(encoding="utf-8"))
-                if trainer_provenance_path.is_file()
-                else {}
-            )
-            validation_report = None
-            validation_reports: list[dict[str, Any]] = []
-            if config.s3_bucket.strip():
-                periodic = list(update.periodic_checkpoints) or [
-                    {
-                        "training_iteration": int(
-                            (update.ppo or {}).get("iterations") or 0
-                        ),
-                        "checkpoint_uri": current_checkpoint_uri,
-                    }
-                ]
-                for periodic_checkpoint in periodic:
-                    candidate_uri = str(periodic_checkpoint.get("checkpoint_uri") or "")
-                    training_iteration = int(
-                        periodic_checkpoint.get("training_iteration") or 0
-                    )
-                    checkpoint_evidence = {
-                        "schema": "npa.sim2real.checkpoint_evidence.v1",
-                        "iterations": [{"update": update.to_dict()}],
-                        "selected_checkpoint_uri": candidate_uri,
-                        "final_checkpoint_uri": candidate_uri,
-                    }
-                    report = run_heldout_eval(
-                        config,
-                        local_dir=local_dir,
-                        inner_evidence=checkpoint_evidence,
-                        outer_iteration=outer_iteration,
-                        evaluation_split="validation",
-                        inner_iteration=iteration,
-                        checkpoint_iteration=training_iteration,
-                    )
-                    validation_reports.append(report)
-                    checkpoint_candidates.append(
-                        {
-                            "evaluation_split": "validation",
-                            "outer_iteration": outer_iteration,
-                            "inner_iteration": iteration,
-                            "training_iteration": training_iteration,
-                            "checkpoint_uri": candidate_uri,
-                            "checkpoint_sha256": report.get(
-                                "policy_checkpoint_sha256", ""
-                            ),
-                            "validation_report_uri": report["report_uri"],
-                            "validation_report": report,
-                        }
-                    )
-                from npa.workflows.sim2real.checkpoint_selection import (
-                    select_best_checkpoint,
-                )
-
-                interim_selection = select_best_checkpoint(checkpoint_candidates)
-                current_checkpoint_uri = str(interim_selection["checkpoint_uri"])
-                validation_report = dict(
-                    interim_selection.get("validation_report") or {}
-                )
-        else:
-            update = run_vlm_signal_training_step(
-                parsed_signals,
-                output_dir=trainer_dir,
-                learning_rate=config.learning_rate,
-                signal_loss_weight=config.signal_loss_weight,
-                initial_reward_head=reward_head,
-                initial_action_bias=action_bias,
-            )
-            trainer_source = "reference"
-            trainer_component_invocation = {}
-            validation_report = None
-            validation_reports = []
-        # The no-signal control always runs the in-process reference trainer so the
-        # policy-delta attribution baseline stays honest even when a BYO trainer
-        # produces the signal-driven update.
-        control = run_vlm_signal_training_step(
-            parsed_signals,
-            output_dir=local_dir
-            / "inner_loop"
-            / f"outer-{outer_iteration:02d}"
-            / "control"
-            / f"iter-{iteration:02d}",
-            learning_rate=config.learning_rate,
-            signal_loss_weight=config.signal_loss_weight,
-            initial_reward_head=reward_head,
-            initial_action_bias=action_bias,
-            control=True,
-        )
-        reward_head = update.reward_head_after
-        action_bias = (
-            update.policy_output_after[0] if update.policy_output_after else action_bias
-        )
-        mean_reward = round(
-            sum(_signal_mean_reward(signal) for signal in signals)
-            / float(len(signals)),
-            6,
-        )
-        reward_trend.append(mean_reward)
-        loss_trend.append(
-            {
-                "before": round(float(update.loss_before), 8),
-                "after": round(float(update.loss_after), 8),
-            }
-        )
-        delta_vs_control = max(0.0, update.policy_delta_l2 - control.policy_delta_l2)
-        policy_deltas.append(round(delta_vs_control, 8))
-        iteration_records.append(
-            {
-                "iteration": iteration,
-                "actions_dir": str(actions_dir),
-                "vlm_eval_dir": str(eval_dir),
-                "signal_dir": str(signal_dir),
-                "signal_batch": str(signal_batch_path),
-                "mean_reward": mean_reward,
-                "effective_learning_rate": config.learning_rate,
-                "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
-                "trainer_source": trainer_source,
-                "trainer_component_invocation": trainer_component_invocation,
-                "signal_converter_source": signal_converter_source,
-                "update": update.to_dict(),
-                "no_signal_control": control.to_dict(),
-                "policy_delta_vs_control": round(delta_vs_control, 8),
-                "validation_report": validation_report,
-                "periodic_validation_reports": validation_reports,
-                "sample_vlm_eval": evals[0],
-                "sample_signal": signals[0],
-                "signal_calibration": calibration,
-            }
-        )
-
-    signal_diversity = _signal_diversity_report(all_signals)
-    if signal_diversity["degenerate"] and _bool_value(
-        os.environ.get("NPA_SIM2REAL_REQUIRE_SIGNAL_DIVERSITY", "0")
-    ):
-        raise Sim2RealLoopError(
-            "VLM->RL signal is degenerate: "
-            f"{signal_diversity['distinct_scores']} distinct score(s) and "
-            f"{signal_diversity['distinct_mean_rewards']} distinct mean-reward(s) "
-            f"across {signal_diversity['total_rollouts']} rollout(s) "
-            f"(scores={signal_diversity['score_values']}). "
-            "Unset NPA_SIM2REAL_REQUIRE_SIGNAL_DIVERSITY to downgrade this gate to a "
-            "diagnostic."
-        )
-    checkpoint_selection: dict[str, Any] = {}
-    selected_checkpoint_uri = current_checkpoint_uri
-    selected_validation_report: dict[str, Any] | None = None
-    if checkpoint_candidates:
-        from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
-
-        checkpoint_selection = select_best_checkpoint(checkpoint_candidates)
-        selected_checkpoint_uri = str(checkpoint_selection["checkpoint_uri"])
-        selected_validation_report = dict(
-            checkpoint_selection.get("validation_report") or {}
-        )
-        quality = float(selected_validation_report.get("success_rate") or 0.0)
-        selection_path = (
-            local_dir
-            / "checkpoints"
-            / "validation-selection"
-            / f"outer-{outer_iteration:02d}.json"
-        )
-        _write_json_artifact(selection_path, checkpoint_selection)
-        checkpoint_selection["selection_report_uri"] = str(selection_path)
-    evidence = {
-        "schema": "npa.sim2real.inner_loop_evidence.v1",
-        "outer_iteration": outer_iteration,
-        "status": "closed",
-        "trainer_source": (
-            "byo_command" if config.byo_trainer_command.strip() else "reference"
-        ),
-        "signal_converter_source": (
-            "byo_command" if config.byo_signal_converter.strip() else "reference"
-        ),
-        "effective_learning_rate": config.learning_rate,
-        "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
-        "reward_trend": reward_trend,
-        "loss_trend": loss_trend,
-        "signal_diversity": signal_diversity,
-        "signal_calibration": calibration_trend,
-        "policy_delta_vs_no_signal_control": policy_deltas,
-        "attribution": (
-            "The reference update and no-signal control share initial adapter state. "
-            "Only the VLM-derived rewards, advantages, and corrective targets produce the policy-output delta."
-        ),
-        "iterations": iteration_records,
-        "selected_validation_strict_success": round(quality, 6),
-        "efficacy_metric_definition": (
-            "strict stable-placement success rate on the fixed validation split; "
-            "never a synthetic training-progress uplift"
-            if checkpoint_candidates
-            else "reference-only compatibility metric; not real task efficacy"
-        ),
-        "final_quality": round(quality, 6),
-        "latest_checkpoint_uri": current_checkpoint_uri,
-        "selected_checkpoint_uri": selected_checkpoint_uri,
-        "final_checkpoint_uri": selected_checkpoint_uri,
-        "checkpoint_selection": checkpoint_selection,
-        "selected_validation_report": selected_validation_report,
-        "resumed_from_checkpoint_uri": str(resume_checkpoint_uri or "").strip(),
-    }
-    evidence_path = (
-        local_dir / "inner_loop" / f"outer-{outer_iteration:02d}" / "evidence.json"
-    )
-    _write_json_artifact(evidence_path, evidence)
-    return {**evidence, "evidence_uri": str(evidence_path)}
 
 
 def generate_action_rollouts(
@@ -2212,265 +1854,39 @@ def _run_image_component(
     )
 
 
-def _kubectl_job_not_found(result: subprocess.CompletedProcess[str]) -> bool:
-    """Return True when kubectl reports the sibling Job no longer exists."""
+def _pod_info_from_snapshot(snapshot: Any) -> dict[str, Any]:
+    """Serialize typed Pod fields used by ComponentRecord provenance."""
 
-    if result.returncode == 0:
-        return False
-    text = f"{result.stderr or ''}{result.stdout or ''}"
-    lowered = text.lower()
-    return "notfound" in lowered.replace(" ", "") or (
-        "not found" in lowered and "job" in lowered
-    )
-
-
-def _wait_kubernetes_job(
-    config: Sim2RealLoopConfig,
-    *,
-    namespace: str,
-    job_name: str,
-    timeout_s: int,
-    required_successes: int = 1,
-) -> str:
-    """Poll a sibling Job until it succeeds, fails, or times out.
-
-    External or manual Job deletion during a wait is treated as failure so the
-    driver fails fast instead of blocking on ``kubectl wait`` for ``timeout_s``.
-    """
-
-    initial_status = _kubectl(
-        config,
-        [
-            "get",
-            "job",
-            job_name,
-            "-n",
-            namespace,
-            "-o",
-            "jsonpath={.status.succeeded} {.status.failed}",
+    pods = list(snapshot.pods)
+    if not pods:
+        return {}
+    pod = pods[0]
+    return {
+        "name": pod.name,
+        "uid": pod.uid,
+        "owner_uid": pod.owner_uid,
+        "node_name": pod.node_name,
+        "phase": pod.phase,
+        "deletion_timestamp": pod.deletion_timestamp,
+        "scheduled_status": pod.scheduled_status,
+        "scheduled_reason": pod.scheduled_reason,
+        "resources": {"requests": pod.resource_requests},
+        "container_statuses": [
+            {
+                "name": status.name,
+                "image": status.image,
+                "image_id": status.image_id,
+                "restart_count": status.restart_count,
+                "waiting_reason": status.waiting_reason,
+                "terminated_reason": status.terminated_reason,
+                "exit_code": status.exit_code,
+                "signal": status.signal,
+            }
+            for status in pod.containers
         ],
-        timeout_s=30,
-        check=False,
-    )
-    if _kubectl_job_not_found(initial_status):
-        return "failed"
-    if initial_status.returncode == 0:
-        parts = (initial_status.stdout or "").strip().split()
-        succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
-        failed = int(parts[1]) if len(parts) > 1 and str(parts[1]).isdigit() else 0
-        if failed >= 1:
-            return "failed"
-        if succeeded >= required_successes:
-            return "complete"
-
-    wait_result = _kubectl(
-        config,
-        [
-            "wait",
-            "--for=condition=complete",
-            f"job/{job_name}",
-            "-n",
-            namespace,
-            f"--timeout={max(1, int(timeout_s))}s",
-        ],
-        timeout_s=max(30, int(timeout_s) + 5),
-        check=False,
-    )
-    if _kubectl_job_not_found(wait_result):
-        return "failed"
-    if wait_result.returncode == 0:
-        verify = _kubectl(
-            config,
-            [
-                "get",
-                "job",
-                job_name,
-                "-n",
-                namespace,
-                "-o",
-                "jsonpath={.status.succeeded} {.status.failed}",
-            ],
-            timeout_s=30,
-            check=False,
-        )
-        if verify.returncode == 0:
-            parts = (verify.stdout or "").strip().split()
-            succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
-            if succeeded >= required_successes:
-                return "complete"
-    elif wait_result.returncode != 0:
-        failed_result = _kubectl(
-            config,
-            [
-                "wait",
-                "--for=condition=failed",
-                f"job/{job_name}",
-                "-n",
-                namespace,
-                "--timeout=1s",
-            ],
-            timeout_s=10,
-            check=False,
-        )
-        if failed_result.returncode == 0:
-            return "failed"
-
-    poll_s = max(2, int(os.environ.get("NPA_SIM2REAL_JOB_POLL_SECONDS", "5")))
-    deadline = time.monotonic() + timeout_s if timeout_s > 0 else None
-    while deadline is None or time.monotonic() < deadline:
-        result = _kubectl(
-            config,
-            [
-                "get",
-                "job",
-                job_name,
-                "-n",
-                namespace,
-                "-o",
-                "jsonpath={.status.succeeded} {.status.failed}",
-            ],
-            timeout_s=30,
-            check=False,
-        )
-        if _kubectl_job_not_found(result):
-            return "failed"
-        if result.returncode == 0:
-            parts = (result.stdout or "").strip().split()
-            succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
-            failed = int(parts[1]) if len(parts) > 1 and str(parts[1]).isdigit() else 0
-            if succeeded >= required_successes:
-                return "complete"
-            if failed >= 1:
-                return "failed"
-        time.sleep(poll_s)
-    return "timeout"
-
-
-def _log_sibling_job_applied(
-    config: Sim2RealLoopConfig,
-    *,
-    namespace: str,
-    job_name: str,
-    component: str,
-) -> str:
-    """Log sibling Job identity after apply and return the Job UID when known."""
-
-    uid_result = _kubectl(
-        config,
-        [
-            "get",
-            "job",
-            job_name,
-            "-n",
-            namespace,
-            "-o",
-            "jsonpath={.metadata.uid}",
-        ],
-        timeout_s=30,
-        check=False,
-    )
-    job_uid = (uid_result.stdout or "").strip() if uid_result.returncode == 0 else ""
-    print(
-        f"sibling_job_applied: component={component} job={job_name} uid={job_uid or 'unknown'}",
-        flush=True,
-    )
-    return job_uid
-
-
-def _format_pod_exit_diagnostics(pod_info: dict[str, Any]) -> str:
-    """Summarize pod phase and container exit/wait reasons for operator errors."""
-
-    parts: list[str] = []
-    phase = str(pod_info.get("phase") or "").strip()
-    if phase:
-        parts.append(f"pod_phase={phase}")
-    for status in pod_info.get("container_statuses") or []:
-        name = str(status.get("name") or "container")
-        state = status.get("state") or {}
-        for state_key in ("terminated", "waiting"):
-            detail = state.get(state_key) or {}
-            reason = str(detail.get("reason") or "").strip()
-            message = str(detail.get("message") or "").strip()
-            if reason or message:
-                parts.append(f"{name}:{state_key}={reason} {message}".strip())
-    lookup_error = str(pod_info.get("lookup_error") or "").strip()
-    if lookup_error:
-        parts.append(f"lookup_error={lookup_error}")
-    return " ".join(parts)
-
-
-def _npa_package_root() -> Path | None:
-    """Return the checkout ``npa/`` directory when running from source."""
-
-    for candidate in Path(__file__).resolve().parents:
-        if (candidate / "pyproject.toml").exists() and (
-            candidate / "src" / "npa"
-        ).is_dir():
-            return candidate
-    for fallback in (Path("/tmp/npa-src/npa"), Path("/tmp/npa-source/npa")):
-        if (fallback / "pyproject.toml").exists() and (
-            fallback / "src" / "npa"
-        ).is_dir():
-            return fallback
-    return None
-
-
-def ensure_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
-    """Upload (once per run) a minimal npa source tarball for sibling Jobs."""
-
-    cached = _SIBLING_SOURCE_TARBALL_BY_RUN.get(config.run_id, "").strip()
-    if cached:
-        return cached
-    uri = _stage_sibling_source_tarball(config)
-    if uri:
-        _SIBLING_SOURCE_TARBALL_BY_RUN[config.run_id] = uri
-    return uri
-
-
-def _sibling_tarball_filter(tarinfo: tarfile.TarInfo) -> tarfile.TarInfo | None:
-    if "__pycache__" in tarinfo.name or tarinfo.name.endswith(".pyc"):
-        return None
-    return tarinfo
-
-
-def _stage_sibling_source_tarball(config: Sim2RealLoopConfig) -> str:
-    """Upload a minimal npa source tarball so sibling Jobs run current code."""
-
-    npa_root = _npa_package_root()
-    if npa_root is None or not config.s3_bucket:
-        return ""
-    with tempfile.TemporaryDirectory(prefix="npa-sibling-src-") as tmp:
-        tarball = Path(tmp) / "npa-source.tgz"
-        with tarfile.open(tarball, "w:gz") as archive:
-            archive.add(
-                npa_root / "src",
-                arcname="npa/src",
-                filter=_sibling_tarball_filter,
-            )
-            archive.add(
-                npa_root / "pyproject.toml",
-                arcname="npa/pyproject.toml",
-                filter=_sibling_tarball_filter,
-            )
-        destination = (
-            f"{_artifact_root_uri(config).rstrip('/')}/source/"
-            f"npa-{_safe_slug(config.run_id)[:40]}.tgz"
-        )
-        return _storage_client(config).upload_file(str(tarball), destination)
-
-
-def _ensure_sibling_source_env(
-    config: Sim2RealLoopConfig, env: dict[str, str]
-) -> dict[str, str]:
-    """Inject source tarball env for sibling Jobs (Isaac held-out requires it)."""
-
-    merged = dict(env)
-    if merged.get("NPA_SIM2REAL_SOURCE_TARBALL_URI"):
-        return merged
-    tarball_uri = ensure_sibling_source_tarball(config)
-    if tarball_uri:
-        merged["NPA_SIM2REAL_SOURCE_TARBALL_URI"] = tarball_uri
-    return merged
+        "image_digests": snapshot.image_digests,
+        "kueue": snapshot.kueue.__dict__,
+    }
 
 
 def _refresh_registry_pull_secret_for_sibling_job(
@@ -2493,11 +1909,6 @@ def _refresh_registry_pull_secret_for_sibling_job(
         ensure_registry_pull_secret_for_images,
     )
 
-    # Best-effort: sibling Jobs already carry the run's imagePullSecrets (e.g.
-    # ``agent-sa``) via ``config.k8s_image_pull_secrets``, so a refresh failure
-    # (no ``nebius`` CLI / no ``NEBIUS_IAM_TOKEN`` in-pod) must not crash the
-    # orchestrator. Log and continue; a genuinely stale secret surfaces as an
-    # ImagePullBackOff on the sibling rather than a hard orchestrator failure.
     try:
         ensure_registry_pull_secret_for_images(
             image,
@@ -2505,7 +1916,11 @@ def _refresh_registry_pull_secret_for_sibling_job(
             kubeconfig=config.k8s_kubeconfig,
             k8s_context=config.k8s_context,
         )
-    except Exception as exc:  # noqa: BLE001 - best-effort refresh must never abort the run
+    except Exception as exc:
+        if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
+            raise Sim2RealLoopError(
+                f"could not refresh the registry pull secret for {image}"
+            ) from exc
         logging.getLogger(__name__).warning(
             "sibling registry pull-secret refresh skipped for %s: %s", image, exc
         )
@@ -2523,7 +1938,6 @@ def _run_kubernetes_indexed_image_component(
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
     base_job_name = _k8s_job_name(config.run_id, component)
-    env = _ensure_sibling_source_env(config, env)
     _refresh_registry_pull_secret_for_sibling_job(
         image, config=config, namespace=namespace
     )
@@ -2542,14 +1956,18 @@ def _run_kubernetes_indexed_image_component(
             gpu_product=product,
         )
 
-    def kubectl(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        return _kubectl(config, args, check=False, **kwargs)
-
     job_workload = workload_kind(component, sim_backend=config.sim_backend)
     model_hint = env.get("NPA_SIM2REAL_VLM_MODEL", "")
+    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+
+    client = KubernetesJobClient.from_environment(
+        namespace=namespace,
+        kubeconfig=config.k8s_kubeconfig,
+        context=config.k8s_context,
+    )
     try:
         gpu_provenance = run_gpu_job_with_fallback(
-            kubectl=kubectl,
+            client=client,
             manifest_factory=manifest_factory,
             base_job_name=base_job_name,
             namespace=namespace,
@@ -2570,26 +1988,10 @@ def _run_kubernetes_indexed_image_component(
     except (GpuCapacityExhausted, GpuJobFailure) as exc:
         raise Sim2RealLoopError(str(exc)) from exc
     job_name = str(gpu_provenance["job_name"])
-    job_uid = _log_sibling_job_applied(
-        config, namespace=namespace, job_name=job_name, component=component
-    )
-    pod_info = _component_pod_info(config, namespace=namespace, job_name=job_name)
-    logs_result = _kubectl(
-        config,
-        [
-            "logs",
-            f"job/{job_name}",
-            "-n",
-            namespace,
-            "--all-containers=true",
-            "--tail=-1",
-        ],
-        timeout_s=300,
-        check=False,
-    )
-    delete_result = _cleanup_component_job(
-        config, namespace=namespace, job_name=job_name
-    )
+    job_uid = str(gpu_provenance.get("job_uid") or "")
+    snapshot = client.snapshot(job_name, namespace=namespace)
+    pod_info = _pod_info_from_snapshot(snapshot)
+    logs = client.pod_logs(snapshot, tail_lines=10000)
     return {
         "mode": "kubernetes_indexed_job",
         "component": component,
@@ -2609,10 +2011,9 @@ def _run_kubernetes_indexed_image_component(
         },
         "gpu_provenance": gpu_provenance,
         "returncode": 0,
-        "stdout_excerpt": _component_excerpt(logs_result.stdout),
-        "stderr_excerpt": _component_excerpt(logs_result.stderr),
-        "cleanup_stdout_excerpt": _component_excerpt(delete_result.stdout),
-        "cleanup_stderr_excerpt": _component_excerpt(delete_result.stderr),
+        "stdout_excerpt": _component_excerpt(logs),
+        "stderr_excerpt": "",
+        "cleanup": "preserved_for_durable_reconciliation",
     }
 
 
@@ -2628,7 +2029,6 @@ def _run_kubernetes_image_component(
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
     base_job_name = _k8s_job_name(config.run_id, component)
-    env = _ensure_sibling_source_env(config, env)
     _refresh_registry_pull_secret_for_sibling_job(
         image, config=config, namespace=namespace
     )
@@ -2645,14 +2045,18 @@ def _run_kubernetes_image_component(
             gpu_product=product,
         )
 
-    def kubectl(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        return _kubectl(config, args, check=False, **kwargs)
-
     job_workload = workload_kind(component, sim_backend=config.sim_backend)
     model_hint = env.get("NPA_SIM2REAL_VLM_MODEL", "")
+    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+
+    client = KubernetesJobClient.from_environment(
+        namespace=namespace,
+        kubeconfig=config.k8s_kubeconfig,
+        context=config.k8s_context,
+    )
     try:
         gpu_provenance = run_gpu_job_with_fallback(
-            kubectl=kubectl,
+            client=client,
             manifest_factory=manifest_factory,
             base_job_name=base_job_name,
             namespace=namespace,
@@ -2673,30 +2077,14 @@ def _run_kubernetes_image_component(
     except (GpuCapacityExhausted, GpuJobFailure) as exc:
         raise Sim2RealLoopError(str(exc)) from exc
     job_name = str(gpu_provenance["job_name"])
-    job_uid = _log_sibling_job_applied(
-        config, namespace=namespace, job_name=job_name, component=component
-    )
-    pod_info = _component_pod_info(config, namespace=namespace, job_name=job_name)
-    logs_result = _kubectl(
-        config,
-        [
-            "logs",
-            f"job/{job_name}",
-            "-n",
-            namespace,
-            "--all-containers=true",
-            "--tail=-1",
-        ],
-        timeout_s=300,
-        check=False,
-    )
-    delete_result = _cleanup_component_job(
-        config, namespace=namespace, job_name=job_name
-    )
+    job_uid = str(gpu_provenance.get("job_uid") or "")
+    snapshot = client.snapshot(job_name, namespace=namespace)
+    pod_info = _pod_info_from_snapshot(snapshot)
+    logs = client.pod_logs(snapshot, tail_lines=10000)
     try:
         _download_component_output(config, output_uri, output_json)
     except Sim2RealLoopError as exc:
-        log_excerpt = _component_excerpt(logs_result.stdout or logs_result.stderr)
+        log_excerpt = _component_excerpt(logs)
         raise Sim2RealLoopError(f"{exc} sibling_logs={log_excerpt}") from exc
     return {
         "mode": "kubernetes_job",
@@ -2719,123 +2107,10 @@ def _run_kubernetes_image_component(
         "env_secret_names": _split_csv(config.k8s_env_secret_names),
         "output_uri": output_uri,
         "returncode": 0,
-        "stdout_excerpt": _component_excerpt(logs_result.stdout),
-        "stderr_excerpt": _component_excerpt(logs_result.stderr),
-        "cleanup_stdout_excerpt": _component_excerpt(delete_result.stdout),
-        "cleanup_stderr_excerpt": _component_excerpt(delete_result.stderr),
+        "stdout_excerpt": _component_excerpt(logs),
+        "stderr_excerpt": "",
+        "cleanup": "preserved_for_durable_reconciliation",
     }
-
-
-def _kubectl(
-    config: Sim2RealLoopConfig,
-    args: list[str],
-    *,
-    stdin: str | None = None,
-    timeout_s: int = 300,
-    check: bool = True,
-) -> subprocess.CompletedProcess[str]:
-    cmd = [os.environ.get("NPA_KUBECTL_BIN") or "kubectl"]
-    if config.k8s_context:
-        cmd.extend(["--context", config.k8s_context])
-    cmd.extend(args)
-    proc_env = os.environ.copy()
-    if config.k8s_kubeconfig:
-        proc_env["KUBECONFIG"] = config.k8s_kubeconfig
-    result = subprocess.run(
-        cmd,
-        input=stdin,
-        env=proc_env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout_s,
-        check=False,
-    )
-    if check and result.returncode != 0:
-        raise Sim2RealLoopError(
-            f"kubectl {' '.join(shlex.quote(part) for part in args)} failed: "
-            f"{_component_excerpt(result.stderr or result.stdout)}"
-        )
-    return result
-
-
-def _component_pod_info(
-    config: Sim2RealLoopConfig, *, namespace: str, job_name: str
-) -> dict[str, Any]:
-    result = _kubectl(
-        config,
-        [
-            "get",
-            "pods",
-            "-n",
-            namespace,
-            "-l",
-            f"job-name={job_name}",
-            "-o",
-            "json",
-        ],
-        timeout_s=120,
-        check=False,
-    )
-    if result.returncode != 0:
-        return {"lookup_error": _component_excerpt(result.stderr or result.stdout)}
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {"lookup_error": "kubectl returned non-json pod output"}
-    items = payload.get("items") or []
-    if not items:
-        return {}
-    pod = items[0]
-    container = (pod.get("spec", {}).get("containers") or [{}])[0]
-    resources = container.get("resources", {})
-    statuses = pod.get("status", {}).get("containerStatuses") or []
-    container_statuses = [
-        {
-            "name": item.get("name", ""),
-            "ready": item.get("ready", False),
-            "restart_count": item.get("restartCount", 0),
-            "image": item.get("image", ""),
-            "image_id": item.get("imageID", ""),
-            "state": item.get("state", {}),
-        }
-        for item in statuses
-    ]
-    image_digests = [
-        status["image_id"] for status in container_statuses if status["image_id"]
-    ]
-    return {
-        "name": pod.get("metadata", {}).get("name", ""),
-        "node_name": pod.get("spec", {}).get("nodeName", ""),
-        "phase": pod.get("status", {}).get("phase", ""),
-        "resources": resources,
-        "container_statuses": container_statuses,
-        "image_digests": image_digests,
-    }
-
-
-def _cleanup_component_job(
-    config: Sim2RealLoopConfig, *, namespace: str, job_name: str
-) -> subprocess.CompletedProcess[str]:
-    # Sibling Jobs are deleted after each component when
-    # NPA_SIM2REAL_DELETE_COMPONENT_JOBS=1 (default). External/manual deletion
-    # during a wait is treated as failure (NotFound) so the driver fails fast.
-    if not _bool_value(os.environ.get("NPA_SIM2REAL_DELETE_COMPONENT_JOBS", "1")):
-        return subprocess.CompletedProcess([], 0, "", "")
-    return _kubectl(
-        config,
-        [
-            "delete",
-            "job",
-            job_name,
-            "-n",
-            namespace,
-            "--ignore-not-found=true",
-            "--wait=true",
-        ],
-        timeout_s=300,
-        check=False,
-    )
 
 
 def _component_attempt_id(
@@ -3878,25 +3153,65 @@ def _ensure_heldout_renders_for_viz(
         return heldout_report
 
     report = dict(heldout_report)
-    renders_dir = renders_dir or (local_dir / "eval" / "heldout" / "renders")
+    lineage = dict(report.get("render_lineage") or {})
+    if renders_dir is None:
+        relative = str(lineage.get("local_relative_dir") or "").strip()
+        if relative:
+            renders_dir = local_dir / relative
+        elif report.get("evaluation_split") == "gold_heldout":
+            outer = int(report.get("outer_iteration") or config.outer_iterations)
+            renders_dir = (
+                local_dir / "eval" / "gold-heldout" / f"outer-{outer:02d}" / "renders"
+            )
+        else:
+            renders_dir = local_dir / "eval" / "heldout" / "renders"
     renders_dir.mkdir(parents=True, exist_ok=True)
     report["local_renders_dir"] = str(renders_dir)
 
+    output_uri = str((invocation or {}).get("output_uri") or "").strip()
+    if output_uri:
+        lineage = {
+            "schema": "npa.sim2real.render_lineage.v1",
+            "evaluation_split": report.get("evaluation_split"),
+            "outer_iteration": report.get("outer_iteration"),
+            "checkpoint_training_iteration": report.get(
+                "checkpoint_training_iteration"
+            ),
+            "checkpoint_uri": report.get("policy_checkpoint")
+            or (report.get("policy_inference_provenance") or {}).get("checkpoint_uri"),
+            "local_relative_dir": str(renders_dir.relative_to(local_dir)),
+            "renders_s3_uri": _sibling_uri(output_uri, "renders/"),
+            "manifest_s3_uri": _sibling_uri(output_uri, "render-manifest.json"),
+        }
+    elif report.get("render_manifest"):
+        render_manifest = dict(report.get("render_manifest") or {})
+        lineage = {
+            **lineage,
+            "schema": "npa.sim2real.render_lineage.v1",
+            "evaluation_split": report.get("evaluation_split"),
+            "outer_iteration": report.get("outer_iteration"),
+            "checkpoint_training_iteration": report.get(
+                "checkpoint_training_iteration"
+            ),
+            "checkpoint_uri": report.get("policy_checkpoint")
+            or (report.get("policy_inference_provenance") or {}).get("checkpoint_uri"),
+            "local_relative_dir": str(renders_dir.relative_to(local_dir)),
+            "renders_s3_uri": render_manifest.get("renders_s3_uri") or "",
+        }
+    report["render_lineage"] = lineage
+
     if config.s3_bucket.strip():
         from npa.clients.storage import StorageError
-        from npa.workflows.sim2real_rerun_regen import sync_heldout_renders
 
         client = _storage_client(config)
-
-        output_uri = str((invocation or {}).get("output_uri") or "").strip()
-        if output_uri:
+        renders_uri = str(lineage.get("renders_s3_uri") or "").strip()
+        manifest_uri = str(lineage.get("manifest_s3_uri") or "").strip()
+        if renders_uri:
             try:
-                client.download_directory(
-                    _sibling_uri(output_uri, "renders/"), str(renders_dir)
-                )
+                client.download_directory(renders_uri, str(renders_dir))
             except (StorageError, OSError):
                 pass
-            manifest_uri = _sibling_uri(output_uri, "render-manifest.json")
+        if manifest_uri:
             manifest_path = renders_dir.parent / "render-manifest.sibling.json"
             try:
                 client.download_path(manifest_uri, str(manifest_path))
@@ -3913,8 +3228,6 @@ def _ensure_heldout_renders_for_viz(
             and not report.get("render_manifest")
         ):
             report["render_manifest"] = payload["render_manifest"]
-
-        sync_heldout_renders(config, local_dir, heldout_report=report, client=client)
     elif (
         payload and payload.get("render_manifest") and not report.get("render_manifest")
     ):
@@ -3928,6 +3241,13 @@ def _ensure_heldout_renders_for_viz(
         )
         if manifest.get("episodes"):
             report["render_manifest"] = manifest
+    manifest = dict(report.get("render_manifest") or {})
+    if manifest:
+        from npa.workflows.sim2real.resume_state import canonical_digest
+
+        lineage["render_manifest_sha256"] = canonical_digest(manifest)
+        lineage["capture"] = manifest.get("capture") or report.get("capture") or {}
+        report["render_lineage"] = lineage
     return report
 
 

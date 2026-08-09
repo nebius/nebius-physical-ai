@@ -96,13 +96,14 @@ def test_reference_and_explore_policy_variants_emit_distinct_actions(
     assert alt_amp > ref_amp
 
 
-def test_isaac_heldout_script_requires_source_tarball() -> None:
+def test_isaac_heldout_script_uses_preinstalled_exact_runtime() -> None:
     script = _component_job_script("heldout_eval", sim_backend="isaac")
-    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" in script
-    assert "missing NPA_SIM2REAL_SOURCE_TARBALL_URI" in script
+    assert "NPA_SIM2REAL_SOURCE_TARBALL_URI" not in script
+    assert "pip install" not in script
+    assert "git clone" not in script
+    assert "npa.workflows.sim2real.runtime_attestation" in script
     assert "heldout_entry" in script
     assert "sim2real.cli" not in script
-    assert "git clone" not in script
 
 
 def test_envgen_raw_shard_script_invokes_envgen_module_directly() -> None:

@@ -57,17 +57,17 @@ def test_build_isaac_eval_job_manifest_shape():
     assert max(map(len, c["args"])) < 128 * 1024
     assert "Isaac-Lift-Cube-Franka-v0" in args
     assert "s3://b/run1/model_latest.pt" in args  # downloads the checkpoint
-    assert "eval_rollout.py" in args  # runs the policy rollout
+    assert "/opt/npa/isaac-runtime/isaac_eval.py" in args
+    assert "npa.workflows.sim2real.runtime_attestation" in args
+    assert "npa.workflows.sim2real.isaac_job_io download" in args
+    assert "npa.workflows.sim2real.isaac_job_io upload" in args
+    assert "pip install" not in args
+    assert "<<" not in args
     assert "per_env_distances.json" in args  # uploads measured distances
 
 
 def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
     captured: dict[str, str] = {}
-
-    class _Proc:
-        returncode = 0
-        stderr = ""
-        stdout = ""
 
     def fake_build(**kwargs):
         captured["job_name"] = kwargs["job_name"]
@@ -76,7 +76,19 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
         return {"kind": "Job"}
 
     monkeypatch.setattr(ev, "build_isaac_eval_job_manifest", fake_build)
-    monkeypatch.setattr(ev, "_kubectl", lambda *a, **k: _Proc())
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.gpu_fallback.run_gpu_job_with_fallback",
+        lambda **kwargs: {
+            "job_name": kwargs["base_job_name"],
+            "job_uid": "uid",
+            "selected_product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            "image_digests": ["reg/runtime@sha256:" + "a" * 64],
+        },
+    )
     monkeypatch.setattr(
         ev,
         "_download_json",

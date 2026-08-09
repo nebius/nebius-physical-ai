@@ -2,11 +2,14 @@ ARG BASE_IMAGE=npa-genesis:cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-2026080
 FROM ${BASE_IMAGE}
 
 ARG SIM2REAL_EVAL_VERSION=cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="loop-eval" \
-      npa.version="${SIM2REAL_EVAL_VERSION}"
+      npa.version="${SIM2REAL_EVAL_VERSION}" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV PYTHONUNBUFFERED=1 \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SIM2REAL_GENESIS_BATCH_SIZE=16 \
     NPA_SIM2REAL_GENESIS_MAX_STEPS=240 \
     PYTHONPATH=/opt/npa/src:$PYTHONPATH
@@ -20,7 +23,8 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 
 USER root
 
-RUN python -m pip install tomli \
+RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && python -m pip install tomli \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
     && python -c "from npa.genesis.env_pick_place import EnvConfig, FrankaPickPlaceEnv; assert EnvConfig(action_space='cartesian').action_space == 'cartesian'; assert FrankaPickPlaceEnv.__name__ == 'FrankaPickPlaceEnv'" \

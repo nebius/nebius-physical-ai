@@ -31,11 +31,14 @@ def sync_workflow_state_to_s3(
     if not state_path.is_file():
         return None
     destination = f"{_artifact_root_uri(config)}/state/workflow_state.json"
-    try:
-        uri = _storage_client(config).upload_file(str(state_path), destination)
-    except Exception as exc:
-        return {"status": "blocked", "reason": str(exc)}
-    return {"status": "uploaded", "uri": uri}
+    uri = _storage_client(config).upload_file(str(state_path), destination)
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    from npa.workflows.sim2real.resume_state import DurableStateStore
+
+    checkpoint_uri = DurableStateStore(config, local_dir).persist_workflow_checkpoint(
+        payload
+    )
+    return {"status": "uploaded", "uri": uri, "checkpoint_uri": checkpoint_uri}
 
 
 def emit_active_progress_rerun(
@@ -90,9 +93,7 @@ def emit_active_progress_rerun(
                 str(progress_path),
                 f"{_artifact_root_uri(config)}/reports/sim2real-progress.rrd",
             )
-        _write_json_artifact(
-            local_dir / "reports" / "sim2real-progress.json", progress
-        )
+        _write_json_artifact(local_dir / "reports" / "sim2real-progress.json", progress)
         return progress
     except Exception as exc:  # noqa: BLE001 - progress must not mask real stages
         progress = {
@@ -100,9 +101,7 @@ def emit_active_progress_rerun(
             "reason": str(exc),
             "stage_count": len(components),
         }
-        _write_json_artifact(
-            local_dir / "reports" / "sim2real-progress.json", progress
-        )
+        _write_json_artifact(local_dir / "reports" / "sim2real-progress.json", progress)
         return progress
 
 

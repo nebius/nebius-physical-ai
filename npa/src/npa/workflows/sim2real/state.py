@@ -62,7 +62,9 @@ class WorkflowState:
 
     @classmethod
     def from_payload(cls, local_dir: Path, payload: dict[str, Any]) -> WorkflowState:
-        artifact_dir = Path(payload.get("local_artifact_dir") or local_dir)
+        # Controller pods are replaceable. Never retain a predecessor pod's
+        # ephemeral path when hydrating a durable checkpoint.
+        artifact_dir = local_dir
         return cls(
             run_id=str(payload["run_id"]),
             local_artifact_dir=artifact_dir,
