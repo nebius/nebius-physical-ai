@@ -2,7 +2,7 @@
 
 Every Workbench container image against every Nebius GPU platform, and — separately — which of those cells has actually been run on real hardware.
 
-**Last measured:** 2026-08-03
+**Last measured:** 2026-08-08
 
 Two things are deliberately kept apart here, because conflating them is how "Blackwell ready" claims go wrong:
 
@@ -42,6 +42,7 @@ Two compatibility rules govern every cell:
 | `npa-lerobot-policy` | `0.1.1` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-lancedb` | `…-0.30.3-…-20260803T031514Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-detection-training` | `bdd100k-golden-eval-smoke-20260614T210000Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
+| `npa-cosmos3` | `1.2.2-cu130-r2` (index `sha256:c65712832f6a…`) | 2.10.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-cosmos3-reason` | `…-3.0.1-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-genesis` | `…-0.4.6-…-20260803T034152Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
 | `npa-envgen` / `npa-reference-policy` / `npa-lerobot-vlm-rl` / `npa-loop-eval` | `…-20260803T034152Z` | inherited 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
@@ -60,8 +61,8 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-lerobot-policy` | supported | supported | supported | supported | supported |
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **verified** [29] | **verified** [30] | **verified** [28] | **verified** [31] |
-| `npa-wan2-2` | supported | supported | **verified** [59] | **verified** [60] | supported |
-| `npa-cosmos3` | supported | supported | supported | supported | supported |
+| `npa-cosmos3` | supported | supported | **verified** [59] | supported | supported |
+| `npa-wan2-2` | supported | supported | **verified** [60] | **verified** [61] | supported |
 | `npa-cosmos3-reason` | supported | **verified** [38] | **verified** [43] | **verified** [36] | **verified** [37] |
 | `npa-cosmos2-transfer` | supported | supported | supported | **verified** [9] | blocked (cu128 NVRTC cannot JIT `sm_103`) |
 | `npa-cosmos` | blocked (Predict2 allowlist) | **verified** [33] | blocked (Predict2 allowlist) | **verified** [32] | blocked (Predict2 allowlist) |
@@ -159,8 +160,9 @@ Managed-Kubernetes nodes were placed successfully for both B200 in us-central1 a
 | 56 | 2026-08-03 | final rebased `npa-loop-eval` `…-20260803T034152Z` | NVIDIA B200 (`sm_100`) | validators and scored two-environment Franka pick-place CUDA rollout | `DATACENTER_CHILD_VALIDATION_PASSED` |
 | 57 | 2026-08-03 | same final `npa-loop-eval` | NVIDIA B300 SXM6 AC (`sm_103`) | same scored two-environment CUDA rollout | `DATACENTER_CHILD_VALIDATION_PASSED` |
 | 58 | 2026-08-03 | same final `npa-loop-eval` | NVIDIA H100 80GB HBM3 (`sm_90`) | same scored two-environment CUDA rollout | `DATACENTER_CHILD_VALIDATION_PASSED` |
-| 59 | 2026-08-09 | digest-pinned `npa-wan2-2` accepted runtime-fetch candidate | RTX PRO 6000 Blackwell Server Edition (`sm_120`) | official Wan TI2V-5B generation with native PyTorch SDPA, full MP4 decode/variation validation, and verified Rerun postprocessing | PASS; `byof-wan22-e2e-20260809T015145Z`, 17 H.264 frames at 1280×704 and 24 fps |
-| 60 | 2026-08-09 | same digest-pinned `npa-wan2-2` candidate | 4× NVIDIA B200 (`sm_100`) | official four-rank Wan path through the instrumented wrapper: NCCL, T5/DiT FULL_SHARD FSDP, Ulysses distributed attention/all-to-all, process-group teardown, MP4 validation, and verified Rerun postprocessing | PASS; `byof-wan22-multigpu-e2e-20260809T014018Z`, world size 4 with ranks 0–3 on four unique devices |
+| 59 | 2026-08-08 | `npa-cosmos3:1.2.2-cu130-r2` (index `sha256:c65712832f6a…`, amd64 `sha256:19dc6be7d2f9…`) | NVIDIA RTX PRO 6000 Blackwell Server Edition (`sm_120`) | exact release bytes, non-root UID 1000, native `sm_120` SASS, gated Cosmos3-Nano text-to-image generation with Xet enabled (`huggingface_hub 0.36.2`, `hf-xet 1.3.2`, `HF_HUB_DISABLE_XET` unset) | PASS; 960×960 JPEG, 260,808 bytes, SHA-256 `e4f017a75266b937b7479a0a5090bf644ef442da6972cae59988d1d5b5daa861`; guardrail discovery still failed open as tracked in [#270](https://github.com/nebius/nebius-physical-ai/issues/270) |
+| 60 | 2026-08-09 | digest-pinned `npa-wan2-2` accepted runtime-fetch candidate | RTX PRO 6000 Blackwell Server Edition (`sm_120`) | official Wan TI2V-5B generation with native PyTorch SDPA, full MP4 decode/variation validation, and verified Rerun postprocessing | PASS; `byof-wan22-e2e-20260809T015145Z`, 17 H.264 frames at 1280×704 and 24 fps |
+| 61 | 2026-08-09 | same digest-pinned `npa-wan2-2` candidate | 4× NVIDIA B200 (`sm_100`) | official four-rank Wan path through the instrumented wrapper: NCCL, T5/DiT FULL_SHARD FSDP, Ulysses distributed attention/all-to-all, process-group teardown, MP4 validation, and verified Rerun postprocessing | PASS; `byof-wan22-multigpu-e2e-20260809T014018Z`, world size 4 with ranks 0–3 on four unique devices |
 
 ## Measured failures and negative controls
 
