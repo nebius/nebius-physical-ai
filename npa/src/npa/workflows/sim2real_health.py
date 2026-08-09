@@ -485,6 +485,40 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             details=(_short(can_i.stderr or can_i.stdout),),
         )
 
+    service_account = config.k8s_service_account or "agent-sa"
+    service_account_user = (
+        f"system:serviceaccount:{namespace}:{service_account}"
+    )
+    controller_patch = runner(
+        [
+            "auth",
+            "can-i",
+            "patch",
+            "jobs.batch",
+            f"--as={service_account_user}",
+            "-n",
+            namespace,
+        ]
+    )
+    if (
+        controller_patch.returncode != 0
+        or controller_patch.stdout.strip().lower() != "yes"
+    ):
+        return CheckResult(
+            name="cluster",
+            status=FAIL,
+            summary=(
+                f"Service account {service_account!r} cannot patch Jobs in "
+                f"namespace {namespace!r}."
+            ),
+            remedy=(
+                "Grant the Sim2Real controller Role the 'patch' verb on "
+                "batch/jobs. Durable reconciliation records structured heartbeats "
+                "and adopts exact-identity Jobs through the Kubernetes API."
+            ),
+            details=(_short(controller_patch.stderr or controller_patch.stdout),),
+        )
+
     gpu_resource = config.k8s_gpu_resource or "nvidia.com/gpu"
     nodes = runner(["get", "nodes", "-o", "json"])
     if nodes.returncode != 0:

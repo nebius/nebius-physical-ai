@@ -182,7 +182,7 @@ def test_cluster_pass_counts_schedulable_gpus() -> None:
     def runner(args):
         if args[:2] == ["config", "current-context"]:
             return KubeResult(0, "prod-cluster")
-        if args[:3] == ["auth", "can-i", "create"]:
+        if args[:2] == ["auth", "can-i"]:
             return KubeResult(0, "yes")
         if args[:2] == ["get", "nodes"]:
             return KubeResult(0, _kube_nodes(8, nodes=2))
@@ -197,7 +197,7 @@ def test_cluster_fails_on_zero_gpus() -> None:
     def runner(args):
         if args[:2] == ["config", "current-context"]:
             return KubeResult(0, "prod-cluster")
-        if args[:3] == ["auth", "can-i", "create"]:
+        if args[:2] == ["auth", "can-i"]:
             return KubeResult(0, "yes")
         if args[:2] == ["get", "nodes"]:
             return KubeResult(0, _kube_nodes(0, nodes=3))
@@ -229,6 +229,25 @@ def test_cluster_fails_without_pod_permission() -> None:
 
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
     assert result.status == health.FAIL
+
+
+def test_cluster_fails_when_controller_service_account_cannot_patch_jobs() -> None:
+    calls: list[list[str]] = []
+
+    def runner(args):
+        calls.append(args)
+        if args[:2] == ["config", "current-context"]:
+            return KubeResult(0, "prod-cluster")
+        if args[:4] == ["auth", "can-i", "create", "pods"]:
+            return KubeResult(0, "yes")
+        if args[:4] == ["auth", "can-i", "patch", "jobs.batch"]:
+            return KubeResult(0, "no")
+        return KubeResult(1, "", "unexpected")
+
+    result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
+    assert result.status == health.FAIL
+    assert "cannot patch Jobs" in result.summary
+    assert any("--as=system:serviceaccount:default:agent-sa" in call for call in calls)
 
 
 def test_run_preflight_selects_requested_checks() -> None:

@@ -71,7 +71,16 @@ Check the cluster before launch:
 kubectl get nodes -L nvidia.com/gpu.product
 kubectl -n default get secret npa-storage-credentials hf-ngc-tokens
 kubectl -n default get serviceaccount agent-sa -o yaml
+kubectl auth can-i patch jobs.batch \
+  --as=system:serviceaccount:default:agent-sa -n default
 ```
+
+The last command must return `yes`. The controller Role needs
+`create`, `delete`, `get`, `list`, `watch`, and `patch` on `batch/jobs`.
+`patch` is load-bearing: durable reconciliation records structured heartbeats
+and adopts exact-identity sibling Jobs through the Kubernetes API. The
+Sim2Real health check fails before launch when the configured service account
+lacks this permission.
 
 Isaac rendering is restricted to RT-core products: RTX PRO 6000 or L40S label
 variants. It is never routed to H100, H200, B200, or B300. When Kubernetes gives
