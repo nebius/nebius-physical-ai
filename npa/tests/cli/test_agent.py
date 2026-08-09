@@ -761,6 +761,25 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     assert "rerunIframeLoaded = false" not in source.split("async function activateMainTab")[1].split("async function")[0]
 
 
+def test_ui_renders_tenant_resource_states_and_refresh_control() -> None:
+    source = _agent_ui_bundle()
+    for marker in (
+        'id="tenantResourcesPanel"',
+        '<h3>Tenant resources</h3>',
+        'id="tenantResourcesRefresh"',
+        'id="tenantResourceCategories"',
+        "refreshTenantResources",
+        'loadJson("/api/resources" + suffix)',
+        "Accessible / discovered",
+        "Configured references",
+        "Discovery succeeded; no resources were returned",
+        "resource-status-error",
+        "request_error",
+    ):
+        assert marker in source
+    assert 'bindClick("tenantResourcesRefresh"' in source
+
+
 def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
     from npa.cli import agent as agent_module
     from npa.genesis.scene_assets import (
@@ -1359,6 +1378,26 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp({"ok": True})
         if url_s.endswith("/api/infra/k8s"):
             return _Resp({"ok": True, "agent_npa_ready": True})
+        if "/api/resources" in url_s:
+            return _Resp(
+                {
+                    "ok": True,
+                    "categories": [
+                        {
+                            "id": "project",
+                            "status": "configured",
+                            "configured_count": 1,
+                            "discovered_count": 0,
+                        },
+                        {
+                            "id": "network",
+                            "status": "empty",
+                            "configured_count": 0,
+                            "discovered_count": 0,
+                        },
+                    ],
+                }
+            )
         if url_s.endswith("/api/workflows/sim2real/status"):
             return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
         if url_s.endswith("/welcome"):
@@ -1379,6 +1418,9 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<label>Search or paste run ID</label>'
                 '<input id="stagesRunInput" />'
                 '<button id="stagesLoadRun"></button></div></div>'
+                '<div id="tenantResourcesPanel"><h3>Tenant resources</h3>'
+                '<button id="tenantResourcesRefresh"></button>'
+                'Accessible / discovered; Configured references</div>'
                 '<script>function loadSelectedRun(){} function syncRunChooserFields(){} '
                 'function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>'
                 '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
@@ -1400,6 +1442,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 'function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} '
                 'function pickBestIframeCanvas(){} function sampleFrameStats(){} '
                 'function openFullChatTab(){} '
+                'function refreshTenantResources(){ fetch("/api/resources"); } '
                 'do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; '
                 'async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } '
                 '<button id="openFullChatTab"></button>'

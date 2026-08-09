@@ -465,6 +465,15 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        "tenant_resources",
+        re.compile(
+            r"\b(?:tenant|project|cloud|nebius)\s+(?:resource|resources|inventory)\b"
+            r"|\b(?:show|list|discover|view|what|which)\b.{0,80}\b(?:resources?|infrastructure)\b.{0,80}\b(?:tenant|project|access|available|configured|nebius)\b"
+            r"|\bwhat\s+(?:resources?|infrastructure)\s+(?:can|do)\s+i\s+(?:access|see|use)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "tools_catalog",
         re.compile(
             r"\b(tools?|toolref|tool refs?|workbench catalog|what can workbench do)\b",
@@ -496,6 +505,7 @@ _INTENT_RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 INTENT_APIS: dict[str, list[str]] = {
+    "tenant_resources": ["resources"],
     "drive_sim2real": [
         "agent/sim2real/drive",
         "workflows/sim2real/submit",
@@ -1193,6 +1203,13 @@ def format_infra_backends(state: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_tenant_resources(state: dict[str, Any]) -> str:
+    from npa.cli.agent_resources import format_resource_inventory
+
+    inventory = state.get("resources") if isinstance(state.get("resources"), dict) else {}
+    return format_resource_inventory(inventory)
+
+
 def format_mk8s_provision() -> str:
     return "\n".join(
         [
@@ -1406,6 +1423,8 @@ def build_grounded_reply(
         return format_sim_assets(state)
     if intent == "cameras":
         return format_cameras(state, default_cameras=default_cameras)
+    if intent == "tenant_resources":
+        return format_tenant_resources(state)
     if intent == "infra_backends":
         return format_infra_backends(state)
     if intent == "mk8s_provision":

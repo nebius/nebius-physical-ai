@@ -320,8 +320,26 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "/foxglove/load-artifact",
         "/foxglove/convert-run",
         "/foxglove/live",
+        "/resources",
+        "/tenant-resources",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
+
+    monkeypatch.setattr(
+        module,
+        "_tenant_resource_inventory",
+        lambda *, force_refresh=False: {
+            "ok": True,
+            "force_refresh": force_refresh,
+            "categories": [{"id": "project", "status": "configured"}],
+        },
+    )
+    resource_route = next(route for route in module.app.routes if route.path == "/resources")
+    assert resource_route.endpoint(refresh=True) == {
+        "ok": True,
+        "force_refresh": True,
+        "categories": [{"id": "project", "status": "configured"}],
+    }
 
 
 def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):

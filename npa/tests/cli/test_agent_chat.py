@@ -82,6 +82,8 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("what does cosmos support for finetuning") == "cosmos_capabilities"
     assert match_chat_intent("what does lancedb expose") == "lancedb_capabilities"
     assert match_chat_intent("run on live infra in tmux loop with gpu compatibility checks") == "live_infra_loop"
+    assert match_chat_intent("show my tenant resources") == "tenant_resources"
+    assert match_chat_intent("what resources can I access in this project?") == "tenant_resources"
 
 
 def test_public_chat_session_payload_never_exposes_memory_locator() -> None:
@@ -281,6 +283,45 @@ def test_component_capabilities_reply_is_targeted() -> None:
     )
     assert "LanceDB capabilities" in lancedb_reply
     assert "Data ingest" in lancedb_reply
+
+
+def test_tenant_resources_reply_is_zero_token_grounded_inventory() -> None:
+    state = {
+        "resources": {
+            "context": {
+                "project_alias": "demo",
+                "project_id": "project-test",
+                "tenant_id": "tenant-test",
+                "region": "us-central1",
+                "profile": "cursor-sa",
+            },
+            "categories": [
+                {
+                    "id": "compute",
+                    "label": "Compute",
+                    "status": "discovered",
+                    "configured": [],
+                    "discovered": [{"name": "agent-demo"}],
+                    "configured_count": 0,
+                    "discovered_count": 1,
+                },
+                {
+                    "id": "storage",
+                    "label": "Object storage",
+                    "status": "error",
+                    "configured": [{"name": "configured-bucket"}],
+                    "discovered": [],
+                    "configured_count": 1,
+                    "discovered_count": 0,
+                    "error": {"kind": "permission_denied", "message": "Not enumerable."},
+                },
+            ],
+        }
+    }
+    reply = build_grounded_reply("tenant_resources", state, [])
+    assert "**Tenant resources**" in reply
+    assert "**discovered_resources**: `1`" in reply
+    assert "permission_denied" in reply
 
 
 def test_live_infra_loop_reply_mentions_registry_and_gpu_checks() -> None:

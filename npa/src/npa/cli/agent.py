@@ -72,7 +72,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026073001"
+AGENT_UI_VERSION = "2026080901"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -1874,6 +1874,9 @@ if [ -s /mnt/cloud-metadata/token ]; then
   if ! "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
     "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
   fi
+  sudo mkdir -p /root/.nebius
+  sudo "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1 || \
+    sudo "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
 fi
 sudo mkdir -p /opt/npa-agent
 cat <<'ENV' | sudo tee /opt/npa-agent/public.env >/dev/null
@@ -1935,7 +1938,7 @@ FOXGLOVE_DATA_DIR = FOXGLOVE_ROOT / "data"
 FOXGLOVE_KEEP_PUBLISHED = 3
 
 {_AGENT_STATE_EMBED}
-
+from npa.cli.agent_resources import build_resource_inventory, run_resource_discovery_command
 {_AGENT_S3_GUARD_EMBED}
 
 {_AGENT_RRD_PROXY_EMBED}
@@ -4293,6 +4296,8 @@ def _agent_command_env() -> dict:
     env.setdefault("NPA_TERRAFORM_BIN", shutil.which("terraform") or "terraform")
     env.setdefault("NPA_KUBECTL_BIN", shutil.which("kubectl") or "kubectl")
     env.setdefault("NPA_NEBIUS_BIN", shutil.which("nebius") or "nebius")
+    if Path("/mnt/cloud-metadata/token").is_file():
+        env.setdefault("NEBIUS_PROFILE", "cursor-sa")
     if not env.get("TF_VAR_ssh_public_key"):
         for candidate in ("/home/ubuntu/.ssh/id_ed25519.pub", "/root/.ssh/id_ed25519.pub"):
             if Path(candidate).is_file():
@@ -4327,10 +4332,16 @@ def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
     nebius_bin = shutil.which("nebius") or "/usr/local/bin/nebius"
     if not Path(nebius_bin).exists() and shutil.which(nebius_bin) is None:
         return []
+    command_env = _agent_command_env()
+    command: list[str] = [nebius_bin]
+    if Path("/mnt/cloud-metadata/token").is_file():
+        for key in ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE"):
+            command_env.pop(key, None)
+        command.extend(["--profile", "cursor-sa"])
     try:
         proc = subprocess.run(
-            [nebius_bin, "mk8s", "cluster", "list", "--parent-id", parent_id, "--format", "json"],
-            env=_agent_command_env(),
+            [*command, "mk8s", "cluster", "list", "--parent-id", parent_id, "--format", "json"],
+            env=command_env,
             text=True,
             capture_output=True,
             timeout=30,
@@ -4358,6 +4369,18 @@ def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
             "raw_status": {{k: v for k, v in status.items() if k not in {{"token", "secret", "password"}}}},
         }})
     return clusters
+
+
+def _tenant_resource_inventory(*, force_refresh: bool = False) -> dict:
+    return build_resource_inventory(
+        config=_load_agent_config_yaml(), env=dict(os.environ), state=_load_state(),
+        tool_refs=TOOL_REFS, generated_at=_now_iso(),
+        runner=lambda command: run_resource_discovery_command(
+            command, command_env=_agent_command_env()
+        ),
+        metadata_token_available=Path("/mnt/cloud-metadata/token").is_file(),
+        force_refresh=force_refresh,
+    )
 
 
 def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
@@ -5163,6 +5186,9 @@ def _maybe_toolground_chat_reply(
     elif intent in {"infra_backends", "mk8s_provision"}:
         state["infra"] = _agent_k8s_backends()
         _save_state(state)
+    elif intent == "tenant_resources":
+        state["resources"] = _tenant_resource_inventory()
+        apis_used.append("resources")
     elif intent == "list_recordings":
         try:
             runs_payload = sim_viz_runs()
@@ -7846,6 +7872,12 @@ def list_k8s_infra(project: str = ""):
     return _agent_k8s_backends(project)
 
 
+@app.get("/resources")
+@app.get("/tenant-resources")
+def tenant_resources(refresh: bool = False):
+    return _tenant_resource_inventory(force_refresh=bool(refresh))
+
+
 @app.post("/infra/provision")
 @app.post("/infra/k8s/provision")
 @app.post("/infra/mk8s/provision")
@@ -9788,6 +9820,13 @@ def verify_live_cmd(
         "ensureFoxgloveViewer",
         "mountFoxgloveViewer",
         "/api/foxglove/config",
+        'id="tenantResourcesPanel"',
+        "<h3>Tenant resources</h3>",
+        'id="tenantResourcesRefresh"',
+        "refreshTenantResources",
+        "/api/resources",
+        "Accessible / discovered",
+        "Configured references",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")
@@ -9924,6 +9963,30 @@ def verify_live_cmd(
         _fail("infra discovery endpoint did not return ok=true")
     if not infra_payload.get("agent_npa_ready"):
         _fail(f"agent NPA runtime is not ready: {infra_payload.get('agent_npa_error')}")
+    try:
+        resources_resp = httpx.get(
+            f"{agent_base}/api/resources?refresh=true",
+            auth=(auth_user, auth_password),
+            timeout=60.0,
+            verify=tls_verify,
+        )
+        resources_resp.raise_for_status()
+        resources_payload = resources_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"tenant resource inventory endpoint failed: {exc}")
+    if not isinstance(resources_payload, dict) or not resources_payload.get("ok"):
+        _fail("tenant resource inventory endpoint did not return ok=true")
+    categories = resources_payload.get("categories")
+    if not isinstance(categories, list) or not categories:
+        _fail("tenant resource inventory endpoint returned no categories")
+    if not any(
+        isinstance(item, dict)
+        and (int(item.get("discovered_count") or 0) > 0 or int(item.get("configured_count") or 0) > 0)
+        for item in categories
+    ):
+        _fail("tenant resource inventory has no configured or discovered resources")
+    if any(str((item or {}).get("status") or "") not in {"discovered", "configured", "empty", "error"} for item in categories):
+        _fail("tenant resource inventory returned an invalid category state")
     try:
         wf_submit = httpx.post(
             f"{agent_base}/api/workflows/submit",
