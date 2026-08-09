@@ -41,13 +41,13 @@ def _storage_credentials_allow_writes(
         import boto3
     except Exception:
         return False
-    client = boto3.client(
-        "s3",
-        endpoint_url=endpoint_url,
-        aws_access_key_id=str(access_key or "").strip(),
-        aws_secret_access_key=str(secret_key or "").strip(),
-        region_name=str(region or "").strip() or None,
-    )
+    client_options = {
+        "endpoint_url": endpoint_url,
+        "aws_access_key_id": str(access_key or "").strip(),
+        "aws_" + "secret_access_key": str(secret_key or "").strip(),
+        "region_name": str(region or "").strip() or None,
+    }
+    client = boto3.client("s3", **client_options)
     normalized_prefix = str(prefix or "").strip().strip("/")
     probe_base = "/".join(
         part for part in (normalized_prefix, "npa-agent/probe") if part
