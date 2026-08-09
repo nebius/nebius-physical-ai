@@ -436,6 +436,37 @@ def test_resolve_task_image_uses_override() -> None:
     assert image == "cr.example/custom:1"
 
 
+def test_resolve_task_image_uses_longest_tool_family_override() -> None:
+    image = resolve_task_image(
+        "workbench.fiftyone.curate_augmented",
+        {},
+        options=SkypilotRenderOptions(
+            image_overrides={
+                "*": "cr.example/default:1",
+                "workbench.fiftyone": "cr.example/fiftyone:1",
+                "workbench.fiftyone.curate_augmented": "cr.example/curate:1",
+            }
+        ),
+    )
+
+    assert image == "cr.example/curate:1"
+
+
+def test_resolve_task_image_can_clear_tool_family_image() -> None:
+    image = resolve_task_image(
+        "workbench.cosmos_evaluator.evaluate",
+        {},
+        options=SkypilotRenderOptions(
+            image_overrides={
+                "*": "cr.example/default:1",
+                "workbench.cosmos_evaluator": "",
+            }
+        ),
+    )
+
+    assert image == ""
+
+
 def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
     with pytest.raises(Exception, match="assume-decision"):
         prepare_npa_workflow_for_submit(

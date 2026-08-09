@@ -445,6 +445,20 @@ def resolve_task_image(
 
     if tool_ref in options.image_overrides:
         return str(options.image_overrides[tool_ref] or "").strip()
+    # Match the override surface to the renderer's other per-tool maps: an operator
+    # overriding ``workbench.fiftyone`` expects every FiftyOne action to use that
+    # image.  Exact matches above remain the most specific choice, and the longest
+    # matching prefix wins when both a tool family and a sub-family are provided.
+    best_override = ""
+    for prefix in options.image_overrides:
+        if prefix == "*":
+            continue
+        if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(prefix) > len(
+            best_override
+        ):
+            best_override = prefix
+    if best_override:
+        return str(options.image_overrides[best_override] or "").strip()
     if "*" in options.image_overrides:
         return str(options.image_overrides["*"] or "").strip()
 

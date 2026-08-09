@@ -130,6 +130,30 @@ def test_chat_completion_http_error_wrapped() -> None:
     assert "429" in str(exc.value)
 
 
+def test_chat_completion_retries_transient_transport_error(monkeypatch) -> None:
+    attempts = 0
+    sleeps: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ReadTimeout("slow model response", request=request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "recovered caption"}}]},
+        )
+
+    monkeypatch.setattr("npa.clients.token_factory.time.sleep", sleeps.append)
+    text = _client(handler).chat_completion_text(
+        model="m", messages=[{"role": "user", "content": "x"}]
+    )
+
+    assert text == "recovered caption"
+    assert attempts == 2
+    assert sleeps == [1]
+
+
 def test_list_models_returns_ids() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "https://api.tokenfactory.nebius.com/v1/models"

@@ -135,6 +135,14 @@ def test_packaging_contract_file_exists() -> None:
     assert contract["images"]
 
 
+def test_fiftyone_image_has_skypilot_kubernetes_prerequisites() -> None:
+    """The workflow image must survive SkyPilot's non-root pod bootstrap."""
+    text = (WORKBENCH_DOCKER / "fiftyone" / "Dockerfile").read_text(encoding="utf-8")
+    for package in ("netcat-openbsd", "openssh-server", "patch", "rsync", "sudo"):
+        assert re.search(rf"(?m)^\s+{re.escape(package)}\s*\\\\?$", text), package
+    assert "ubuntu ALL=(ALL) NOPASSWD:ALL" in text
+
+
 def test_first_class_pinned_dockerfiles_are_covered_by_contract() -> None:
     """A pin plus an in-tree same-name Dockerfile may not bypass legal review.
 

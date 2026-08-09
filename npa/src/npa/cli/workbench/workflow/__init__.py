@@ -46,6 +46,23 @@ def _fail(msg: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
+def _parse_tool_image_overrides(values: list[str]) -> dict[str, str]:
+    """Parse repeatable ``TOOL_REF=IMAGE`` overrides for workflow rendering."""
+
+    overrides: dict[str, str] = {}
+    for raw in values:
+        tool_ref, separator, image = raw.partition("=")
+        tool_ref = tool_ref.strip()
+        image = image.strip()
+        if not separator or not tool_ref or not image:
+            _fail(
+                "--tool-image must be TOOL_REF=IMAGE, for example "
+                "workbench.fiftyone.curate_augmented=cr.example/npa-fiftyone:1"
+            )
+        overrides[tool_ref] = "" if image.lower() in {"none", "default", "-"} else image
+    return overrides
+
+
 # ``docker:cr.<region>.nebius.cloud/<registry-id>/<image>:<tag>`` in a rendered plan.
 _NEBIUS_IMAGE_RE = re.compile(r"image_id:\s*docker:(cr\.[a-z0-9-]+\.nebius\.cloud)/", re.IGNORECASE)
 
@@ -227,6 +244,14 @@ def submit_cmd(
         "--image",
         help="First-party tool image override used by workflow materializers / npa.workflow renderer.",
     ),
+    tool_image: list[str] = typer.Option(
+        [],
+        "--tool-image",
+        help=(
+            "Per-tool image override as TOOL_REF=IMAGE; repeat for multiple tools. "
+            "For npa.workflow specs only; takes precedence over --image."
+        ),
+    ),
     npa_image: str = typer.Option(
         "",
         "--npa-image",
@@ -238,6 +263,14 @@ def submit_cmd(
         help=(
             "For VM SONIC image pulls, materialize Docker registry auth envs. "
             "Nebius Container Registry defaults to a fresh IAM token."
+        ),
+    ),
+    refresh_registry_secret: bool = typer.Option(
+        True,
+        "--refresh-registry-secret/--no-refresh-registry-secret",
+        help=(
+            "Refresh the Kubernetes Nebius pull secret before submit. Disable only "
+            "when the cluster already has a separately managed pull credential."
         ),
     ),
     registry_username: str = typer.Option(
@@ -425,7 +458,7 @@ def submit_cmd(
             except NpaWorkflowError as exc:
                 _fail(str(exc))
                 return
-        image_overrides: dict[str, str] = {}
+        image_overrides = _parse_tool_image_overrides(tool_image)
         # ``none`` / ``default`` clears workbench image pins so tasks use the
         # SkyPilot default image (needed when registry images fail k8s apt-ssh).
         image_value = image.strip()
@@ -508,7 +541,8 @@ def submit_cmd(
             prepared_npa.temp_dir.cleanup()
             return
 
-        _refresh_kubernetes_pull_secrets(prepared_npa.skypilot_yaml_path)
+        if refresh_registry_secret:
+            _refresh_kubernetes_pull_secrets(prepared_npa.skypilot_yaml_path)
 
         # Skip SkyPilot-path materializers; npa.workflow already planned.
         materializer = ""

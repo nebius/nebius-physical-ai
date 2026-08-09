@@ -111,7 +111,7 @@ flowchart TB
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
-| `fiftyone` | `1.15.0` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
+| `fiftyone` | `1.15.0.post1` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
 | `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
 | `envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
