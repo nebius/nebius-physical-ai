@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
     from npa.workflows.sim2real_health import CheckResult
@@ -463,7 +463,7 @@ def _record_customer_url(record: dict[str, Any]) -> str:
     return str(record.get("agent_url", "")).strip()
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code=1)
 
