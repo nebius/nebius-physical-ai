@@ -115,11 +115,13 @@ different GPU product. Isaac candidates remain RTX PRO 6000 or L40S only.
 
 The cluster uses the pinned Kueue release recorded in deployment evidence. A
 ResourceFlavor selects the exact RTX PRO product label. A ClusterQueue owns the
-real GPU quota, a namespace LocalQueue is the submission surface, and a
-PriorityClass makes controller-selected priority observable. GPU sibling Jobs
-carry the queue label and begin suspended for Kueue admission. The controller
-watches the generated Workload and records admission, assigned flavor, quota,
-and timestamps in provenance.
+real GPU quota plus CPU and memory quota for every resource the Jobs request, a
+namespace LocalQueue is the submission surface, and a PriorityClass makes
+controller-selected priority observable. Omitting CPU or memory from the queue
+leaves an otherwise valid GPU Workload unadmittable and is a preflight failure.
+GPU sibling Jobs carry the queue label and begin suspended for Kueue admission.
+The controller watches the generated Workload and records admission, assigned
+flavor, quota, and timestamps in provenance.
 
 Ordinary contention remains queued. Product fallback is permitted only after a
 structured, terminal scheduling incompatibility for that flavor; queue waiting

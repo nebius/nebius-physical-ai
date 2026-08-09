@@ -17,7 +17,11 @@ from npa.workflows.sim2real.gpu_fallback import (
     products_from_node_payload,
     run_gpu_job_with_fallback,
 )
-from npa.workflows.sim2real.job_scheduling import configure_gpu_job
+from npa.workflows.sim2real.job_scheduling import (
+    KUEUE_VERSION,
+    configure_gpu_job,
+    kueue_queue_manifests,
+)
 from npa.workflows.sim2real.k8s_client import (
     ContainerSnapshot,
     GpuProductInventory,
@@ -258,6 +262,37 @@ def test_job_configuration_requires_digest_and_native_failure_policy(
             product=RTX,
             gpu_resource="nvidia.com/gpu",
             gpu_count=1,
+        )
+
+
+def test_kueue_queue_covers_every_production_job_request() -> None:
+    manifests = kueue_queue_manifests(
+        namespace="default",
+        gpu_product=RTX,
+        gpu_quota=7,
+        cpu_quota=160,
+        memory_quota="1300Gi",
+    )
+    assert KUEUE_VERSION == "0.17.3"
+    cluster_queue = next(item for item in manifests if item["kind"] == "ClusterQueue")
+    group = cluster_queue["spec"]["resourceGroups"][0]
+    assert group["coveredResources"] == ["nvidia.com/gpu", "cpu", "memory"]
+    assert group["flavors"][0]["resources"] == [
+        {"name": "nvidia.com/gpu", "nominalQuota": 7},
+        {"name": "cpu", "nominalQuota": 160},
+        {"name": "memory", "nominalQuota": "1300Gi"},
+    ]
+
+
+@pytest.mark.parametrize(("cpu", "memory"), [(0, "1Gi"), ("1", "0")])
+def test_kueue_queue_rejects_zero_compute_quota(cpu: int | str, memory: str) -> None:
+    with pytest.raises(ValueError, match="quota"):
+        kueue_queue_manifests(
+            namespace="default",
+            gpu_product=RTX,
+            gpu_quota=7,
+            cpu_quota=cpu,
+            memory_quota=memory,
         )
 
 

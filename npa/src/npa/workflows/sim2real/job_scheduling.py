@@ -10,7 +10,7 @@ from npa.workflows.sim2real.k8s_client import QUEUE_LABEL
 from npa.workflows.sim2real.models import Sim2RealLoopError
 
 
-KUEUE_VERSION = "0.19.0"
+KUEUE_VERSION = "0.17.3"
 KUEUE_API_VERSION = "kueue.x-k8s.io/v1beta2"
 DEFAULT_RESOURCE_FLAVOR = "sim2real-rtx-pro-6000"
 DEFAULT_CLUSTER_QUEUE = "sim2real-gpu-cluster"
@@ -120,6 +120,8 @@ def kueue_queue_manifests(
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
     gpu_quota: int,
+    cpu_quota: int | str,
+    memory_quota: str,
     resource_flavor: str = DEFAULT_RESOURCE_FLAVOR,
     cluster_queue: str = DEFAULT_CLUSTER_QUEUE,
     local_queue: str = DEFAULT_LOCAL_QUEUE,
@@ -129,6 +131,10 @@ def kueue_queue_manifests(
 
     if gpu_quota < 1:
         raise ValueError("gpu_quota must be >= 1")
+    if not str(cpu_quota).strip() or str(cpu_quota).strip() == "0":
+        raise ValueError("cpu_quota must be a positive Kubernetes quantity")
+    if not str(memory_quota).strip() or str(memory_quota).strip() == "0":
+        raise ValueError("memory_quota must be a positive Kubernetes quantity")
     return [
         {
             "apiVersion": KUEUE_API_VERSION,
@@ -147,12 +153,19 @@ def kueue_queue_manifests(
                 "queueingStrategy": "BestEffortFIFO",
                 "resourceGroups": [
                     {
-                        "coveredResources": [gpu_resource],
+                        # Kueue requires quota for every requested resource in a
+                        # Workload, not only the accelerator that gates fan-out.
+                        "coveredResources": [gpu_resource, "cpu", "memory"],
                         "flavors": [
                             {
                                 "name": resource_flavor,
                                 "resources": [
-                                    {"name": gpu_resource, "nominalQuota": gpu_quota}
+                                    {"name": gpu_resource, "nominalQuota": gpu_quota},
+                                    {"name": "cpu", "nominalQuota": cpu_quota},
+                                    {
+                                        "name": "memory",
+                                        "nominalQuota": memory_quota,
+                                    },
                                 ],
                             }
                         ],
