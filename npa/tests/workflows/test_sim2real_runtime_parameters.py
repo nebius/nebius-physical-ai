@@ -53,6 +53,7 @@ def test_canonical_yaml_defaults_match_engine_and_real_components() -> None:
     assert envs["NPA_SIM2REAL_EARLY_EXIT"] == "0"
     assert envs["NPA_SIM2REAL_HELDOUT_EVAL_LIMIT"] == "0"
     assert envs["NPA_SIM2REAL_K8S_JOB_TIMEOUT_S"] == "0"
+    assert envs["NPA_SIM2REAL_ISAAC_CACHE_PVC"] == "npa-sim2real-isaac-cache"
     assert int(envs["NPA_COSMOS_REASON_MAX_FRAMES"]) == DEFAULT_REASON_EVENT_FRAMES
     assert (
         int(envs["NPA_COSMOS_REASON_MAX_NEW_TOKENS"]) == DEFAULT_REASON_MAX_NEW_TOKENS
@@ -186,6 +187,7 @@ def test_gpu_candidate_config_round_trip_never_stringifies_sequences(
         ({"BYO_TRAINER_COMMAND": ""}, "BYO_TRAINER_COMMAND"),
         ({"NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS": "0"}, "REQUIRE_REAL_COMPONENTS"),
         ({"OMNI_KIT_ACCEPT_EULA": ""}, "OMNI_KIT_ACCEPT_EULA"),
+        ({"NPA_SIM2REAL_ISAAC_CACHE_PVC": "Bad_PVC"}, "ISAAC_CACHE_PVC"),
     ],
 )
 def test_invalid_or_inert_real_tier_parameters_fail_before_submit(

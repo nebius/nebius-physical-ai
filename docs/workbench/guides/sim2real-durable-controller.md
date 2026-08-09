@@ -14,11 +14,13 @@ entrypoints used by tests. It dispatches the real GPU sibling Jobs; it is not a
 catalog-tool facade and it is not accepted by the generic `npa.workflow` DSL.
 
 The submitted controller and every sibling use an immutable registry reference
-(`@sha256:`). Images contain the final NPA source and pinned runtime
-dependencies. Runtime source archives, `git clone`, generated Python programs,
-and best-effort `pip install` are forbidden. Image labels, Job annotations,
+(`@sha256:`). Images contain the final NPA source and redistributable pinned
+runtime dependencies. Runtime source archives, generated Python programs, and
+best-effort `pip install` are forbidden. Image labels, Job annotations,
 controller state, and ComponentRecords attest the same source SHA and runtime
-digest.
+digest. NVIDIA-proprietary Isaac wheels are the deliberate licensing exception:
+the operator fetches them under its EULA in a CPU-only warm Job before the run,
+never after a workload Pod receives a GPU.
 
 ## Durable identity and state
 
@@ -107,10 +109,12 @@ GPU Jobs use `restartPolicy: Never` because Kubernetes requires it with
 - never add `activeDeadlineSeconds` unless the operator explicitly requests a
   deadline.
 
-The CPU controller uses the same policy. In particular, a generic exit 1 is an
-application failure and fails immediately; it is not relabeled as an
-infrastructure retry merely because the CLI did not choose a specialized exit
-code.
+The CPU controller distinguishes process termination used by Pod deletion,
+eviction, and node shutdown from an application exit. Exit 137 or 143 is counted
+against its bounded native restart allowance, after which the replacement Pod
+resumes from the journal. Other nonzero exits fail immediately. This distinction
+is controller-only: an Isaac/Cosmos process killed for out-of-memory remains a
+component failure unless Kubernetes supplies a structured disruption condition.
 
 Missing/malformed data, image or model failures, checkpoint load errors, and
 component contract failures are application failures and are never retried on a
@@ -137,6 +141,25 @@ Workload or treated as contention.
 Ordinary contention remains queued. Product fallback is permitted only after a
 structured, terminal scheduling incompatibility for that flavor; queue waiting
 or lack of current quota is not fallback evidence.
+
+## Isaac runtime dependency closure
+
+The public Isaac image contains no proprietary NVIDIA Isaac/Omniverse payload.
+Before launch, an operator-accepted CPU Job runs the exact digest-pinned image
+and atomically warms a `ReadWriteMany` PVC. Its cache key is the full SHA-256 of
+the Isaac pins, wheel manifest, OSS dependency lock, Python ABI, and bootstrap
+source. The published manifest records those digests and `.complete` is written
+only after verification.
+
+Preflight requires the named claim to be `Bound`, to have a concrete volume,
+and to advertise `ReadWriteMany`. Every Isaac GPU sibling then mounts it
+read-only at `/opt/isaac-cache` with bootstrap offline mode enabled. Runtime
+attestation verifies the `current` symlink remains under `v/<sha256>`, the
+completion marker and interpreter exist, and the manifest's bootstrap digest
+equals the exact bootstrap in the running image. Provenance records the PVC,
+cache stamp, bootstrap digest, and manifest digest. A missing, cold, mutable, or
+wrong-version cache fails before simulation; the GPU Pod cannot download or
+install a substitute.
 
 ## Credential rotation
 
@@ -178,9 +201,11 @@ Before a full run, the exact image and live target must prove:
 4. controller termination and restart during finalization;
 5. Kueue saturation, pending Workload visibility, and later admission;
 6. immutable image/source provenance;
-7. validation/gold object and render separation;
-8. configured-FPS RRD and MCAP timestamps;
-9. nonzero, lineage-correct Stage 14 artifacts.
+7. CPU cache warm plus cross-node read-only Isaac cache attestation with no GPU
+   network/bootstrap install;
+8. validation/gold object and render separation;
+9. configured-FPS RRD and MCAP timestamps;
+10. nonzero, lineage-correct Stage 14 artifacts.
 
 Mocks remain useful for pure state transitions, but production classification
 tests consume real Kubernetes API objects and the ladder exercises the same

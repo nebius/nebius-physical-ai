@@ -22,16 +22,17 @@
 #
 # USAGE
 #   1. Pick a volume (see the two options below) and set NPA_ISAAC_CACHE_DIR to its mount.
-#   2. Replace <your-registry> and the image tag.
+#   2. Replace <your-registry-id> and the image digest with the exact image built
+#      from the controller SHA. Tags are not accepted as runtime provenance.
 #   3. kubectl apply -f warm-isaac-cache.yaml
-#      kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=30m
+#      kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
 #      kubectl logs job/npa-warm-isaac-cache
 #   4. Run your workload pods against the same volume with
 #      NPA_ISAAC_CACHE_READONLY=1 (and optionally NPA_ISAAC_BOOTSTRAP_OFFLINE=1).
 #
-#   Re-run it after changing ISAAC_SIM_VERSION, ISAAC_LAB_VERSION or the wheel manifest:
-#   the cache is version-stamped, so a pin change needs a new tree (the old one is left
-#   alone, so pods still using it are unaffected).
+#   Re-run it after changing the bootstrap, OSS lock, Isaac pins, or wheel manifest.
+#   The full-SHA cache stamp selects a new tree; the old one stays immutable for Pods
+#   already using it.
 #
 # VOLUME OPTIONS
 #   a) Shared filesystem PVC (recommended): one download serves every pod on every node.
@@ -86,7 +87,7 @@ spec:
             capabilities:
               drop: ["ALL"]
           # Any of the Isaac images works; they share the bootstrap.
-          image: cr.eu-north1.nebius.cloud/<your-registry-id>/npa-isaac-lab:2.3.2.post1
+          image: cr.us-central1.nebius.cloud/<your-registry-id>/npa-isaac-lab@sha256:<64-hex-digest>
           command: ["/opt/npa/bin/isaac-bootstrap", "warm"]
           env:
             # YOUR acceptance of NVIDIA's terms. Nothing downloads without both.

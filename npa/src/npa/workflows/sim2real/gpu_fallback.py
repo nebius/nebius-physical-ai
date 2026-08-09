@@ -534,6 +534,17 @@ def run_gpu_job_with_fallback(
             gpu_resource=gpu_resource,
             gpu_count=gpu_count,
         )
+        manifest_annotations = dict(
+            manifest.get("metadata", {}).get("annotations") or {}
+        )
+        runtime_dependencies = {
+            "mode": manifest_annotations.get(
+                "sim2real.npa.dev/runtime-dependencies", "image-only"
+            ),
+            "isaac_cache_pvc": manifest_annotations.get(
+                "sim2real.npa.dev/isaac-cache-pvc", ""
+            ),
+        }
         container_name = str(
             manifest["spec"]["template"]["spec"]["containers"][0].get("name") or ""
         )
@@ -543,6 +554,7 @@ def run_gpu_job_with_fallback(
             "image": image,
             "status": "reconciling",
             "scheduling_reason": "",
+            "runtime_dependencies": runtime_dependencies,
         }
         attempts.append(attempt)
         uid, adopted = job_client.create_or_adopt(
@@ -614,6 +626,7 @@ def run_gpu_job_with_fallback(
             adopted=adopted,
             kueue=snapshot.kueue.__dict__,
             job_snapshot=snapshot.to_dict(),
+            runtime_dependencies=runtime_dependencies,
             duration_s=round(time.monotonic() - started, 3),
         )
         return provenance

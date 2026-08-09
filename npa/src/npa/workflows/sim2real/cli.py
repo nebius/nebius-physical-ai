@@ -254,6 +254,16 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--k8s-isaac-cache-pvc",
+        default=os.environ.get(
+            "NPA_SIM2REAL_ISAAC_CACHE_PVC", "npa-sim2real-isaac-cache"
+        ),
+        help=(
+            "Pre-warmed content-addressed Isaac dependency PVC, mounted offline "
+            "and read-only by every Isaac GPU Job."
+        ),
+    )
+    parser.add_argument(
         "--k8s-gpu-resource",
         default=os.environ.get("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
     )
@@ -603,6 +613,7 @@ def main(argv: list[str] | None = None) -> int:
         k8s_service_account=args.k8s_service_account,
         k8s_image_pull_secrets=args.k8s_image_pull_secrets,
         k8s_env_secret_names=args.k8s_env_secret_names,
+        k8s_isaac_cache_pvc=args.k8s_isaac_cache_pvc,
         k8s_gpu_resource=args.k8s_gpu_resource,
         k8s_gpu_product=args.k8s_gpu_product,
         k8s_gpu_candidates=tuple(
@@ -618,6 +629,10 @@ def main(argv: list[str] | None = None) -> int:
         source_ref=args.source_ref,
         heldout_eval_limit=args.heldout_eval_limit,
     )
+
+    # Isaac Job builders are also callable as isolated component modules. Keep
+    # the validated CLI/SDK field available to that shared scheduling layer.
+    os.environ["NPA_SIM2REAL_ISAAC_CACHE_PVC"] = config.k8s_isaac_cache_pvc
 
     if args.command == "run":
         workflow = Sim2RealWorkflow(config)

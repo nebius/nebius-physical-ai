@@ -414,8 +414,12 @@ def test_manifest_records_what_was_installed(tmp_path: Path) -> None:
     assert manifest["isaacsim_version"] == "5.1.0.0"
     assert manifest["isaaclab_version"] == "2.3.2.post1"
     assert manifest["index_url"] == "https://pypi.nvidia.com"
+    assert len(manifest["cache_stamp"]) == 64
+    assert Path(result.stdout.strip()).name == manifest["cache_stamp"]
     # The digest of the wheel manifest ties a cache tree to a reviewed pin set.
     assert len(manifest["wheels_file_sha256"]) == 64
+    assert len(manifest["bootstrap_sha256"]) == 64
+    assert len(manifest["oss_dependencies_sha256"]) == 64
 
 
 def test_current_symlink_points_at_the_completed_tree(tmp_path: Path) -> None:
@@ -451,6 +455,38 @@ def test_changing_a_pin_changes_the_cache_stamp(tmp_path: Path, override: dict) 
         )
 
     assert stamp() != stamp(**override), override
+
+
+def test_changing_bootstrap_source_changes_the_cache_stamp(tmp_path: Path) -> None:
+    """A controller cannot reuse a closure warmed by older bootstrap logic."""
+
+    harness = Harness(tmp_path / "harness")
+    copied_common = tmp_path / "common"
+    shutil.copytree(COMMON, copied_common)
+    copied_bootstrap = copied_common / "isaac_bootstrap.sh"
+
+    def stamp() -> str:
+        result = subprocess.run(
+            ["bash", str(copied_bootstrap), "status"],
+            env=harness.env(),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return next(
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("expected_tree=")
+        )
+
+    before = stamp()
+    copied_bootstrap.write_text(
+        copied_bootstrap.read_text(encoding="utf-8") + "\n# cache contract v2\n",
+        encoding="utf-8",
+    )
+    assert before != stamp()
 
 
 # --------------------------------------------------------------------------------------

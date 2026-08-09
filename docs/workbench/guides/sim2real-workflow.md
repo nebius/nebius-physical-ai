@@ -75,6 +75,7 @@ kubectl auth can-i patch jobs.batch \
   --as=system:serviceaccount:default:agent-sa -n default
 kubectl auth can-i list workloads.kueue.x-k8s.io \
   --as=system:serviceaccount:default:agent-sa -n default
+kubectl -n default get pvc npa-sim2real-isaac-cache -o json
 ```
 
 Both authorization commands must return `yes`. The controller Role needs
@@ -85,7 +86,11 @@ Role also needs `list` on `kueue.x-k8s.io/workloads` so the controller can
 attest generated Workload admission, assigned flavor, and terminal state. A
 Kueue API denial retains its structured status/reason and fails closed; it is
 never reported as an absent Workload. The Sim2Real health check fails before
-launch when the configured service account lacks either permission.
+launch when the configured service account lacks either permission. It also
+requires `NPA_SIM2REAL_ISAAC_CACHE_PVC` to name a Bound `ReadWriteMany` claim.
+Warm that claim once on a CPU node with the exact digest-pinned Isaac image and
+the operator's EULA acceptance; Isaac GPU Jobs mount it offline and read-only.
+See [the durable-controller contract](./sim2real-durable-controller.md#isaac-runtime-dependency-closure).
 
 Isaac rendering is restricted to RT-core products: RTX PRO 6000 or L40S label
 variants. It is never routed to H100, H200, B200, or B300. When Kubernetes gives

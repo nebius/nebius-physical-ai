@@ -60,10 +60,30 @@ def test_manifest_is_a_runnable_job() -> None:
             "onPodConditions": [{"type": "DisruptionTarget", "status": "True"}],
         },
         {
+            "action": "Count",
+            "onExitCodes": {"operator": "In", "values": [137, 143]},
+        },
+        {
             "action": "FailJob",
-            "onExitCodes": {"operator": "NotIn", "values": [0]},
+            "onExitCodes": {"operator": "NotIn", "values": [0, 137, 143]},
         },
     ]
+
+
+def test_controller_native_retry_distinguishes_restart_from_application_failure() -> (
+    None
+):
+    rules = _materialize().manifest["spec"]["podFailurePolicy"]["rules"]
+    assert any(
+        rule.get("action") == "Count"
+        and rule.get("onExitCodes", {}).get("values") == [137, 143]
+        for rule in rules
+    )
+    assert any(
+        rule.get("action") == "FailJob"
+        and 1 not in rule.get("onExitCodes", {}).get("values", [])
+        for rule in rules
+    )
 
 
 def test_runbook_driver_is_cpu_only_and_preserves_sibling_gpu_config() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from typing import Any
 
 from npa.workflows.sim2real.k8s_client import QUEUE_LABEL
@@ -16,6 +17,9 @@ DEFAULT_RESOURCE_FLAVOR = "sim2real-rtx-pro-6000"
 DEFAULT_CLUSTER_QUEUE = "sim2real-gpu-cluster"
 DEFAULT_LOCAL_QUEUE = "sim2real-gpu"
 DEFAULT_PRIORITY_CLASS = "sim2real-production"
+ISAAC_CACHE_VOLUME = "isaac-runtime-cache"
+ISAAC_CACHE_MOUNT = "/opt/isaac-cache"
+_DNS_SUBDOMAIN_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$")
 
 
 def require_image_digest(image: str) -> str:
@@ -34,6 +38,107 @@ def require_image_digest(image: str) -> str:
     except ValueError as exc:
         raise Sim2RealLoopError(f"invalid immutable image digest: {image!r}") from exc
     return normalized
+
+
+def _configure_isaac_runtime_cache(
+    manifest: dict[str, Any], *, immutable_image: str
+) -> dict[str, str]:
+    """Mount the operator-fetched Isaac closure read-only on Isaac GPU Jobs.
+
+    NVIDIA's proprietary Isaac wheels cannot be redistributed in the public
+    workbench image. The operator therefore warms one content-addressed PVC on
+    a CPU node after accepting the EULA. GPU Jobs must consume that closure
+    offline and read-only; they never run pip or mutate dependency state after
+    Kueue admission.
+    """
+
+    expected_image = (
+        os.environ.get("NPA_SIM2REAL_ISAAC_IMAGE", "").strip()
+        or os.environ.get("ISAAC_IMAGE", "").strip()
+    )
+    if not expected_image:
+        return {}
+    try:
+        expected_immutable = require_image_digest(expected_image)
+    except Sim2RealLoopError:
+        # The selected Job image is still independently digest-validated. A
+        # malformed non-selected alias must not make unrelated GPU Jobs Isaac.
+        return {}
+    if immutable_image != expected_immutable:
+        return {}
+
+    pvc = os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC", "").strip()
+    if not pvc:
+        raise Sim2RealLoopError(
+            "Isaac GPU Jobs require NPA_SIM2REAL_ISAAC_CACHE_PVC so pinned "
+            "dependencies are warmed before GPU admission"
+        )
+    if len(pvc) > 253 or not _DNS_SUBDOMAIN_RE.fullmatch(pvc):
+        raise Sim2RealLoopError(
+            f"NPA_SIM2REAL_ISAAC_CACHE_PVC is not a DNS-safe PVC name: {pvc!r}"
+        )
+
+    pod_spec = manifest["spec"]["template"]["spec"]
+    containers = list(pod_spec.get("containers") or [])
+    if len(containers) != 1:
+        raise Sim2RealLoopError(
+            "Isaac runtime-cache contract requires exactly one application container"
+        )
+    container = containers[0]
+    volumes = list(pod_spec.get("volumes") or [])
+    if any(item.get("name") == ISAAC_CACHE_VOLUME for item in volumes):
+        raise Sim2RealLoopError("Isaac runtime-cache volume name is already in use")
+    mounts = list(container.get("volumeMounts") or [])
+    if any(
+        item.get("name") == ISAAC_CACHE_VOLUME
+        or item.get("mountPath") == ISAAC_CACHE_MOUNT
+        for item in mounts
+    ):
+        raise Sim2RealLoopError("Isaac runtime-cache mount collides with the Job")
+
+    volumes.append(
+        {
+            "name": ISAAC_CACHE_VOLUME,
+            "persistentVolumeClaim": {"claimName": pvc, "readOnly": True},
+        }
+    )
+    mounts.append(
+        {
+            "name": ISAAC_CACHE_VOLUME,
+            "mountPath": ISAAC_CACHE_MOUNT,
+            "readOnly": True,
+        }
+    )
+    container["volumeMounts"] = mounts
+    env = list(container.get("env") or [])
+    by_name = {str(item.get("name") or ""): item for item in env}
+    required_env = {
+        "NPA_SIM2REAL_ISAAC_CACHE_PVC": pvc,
+        "NPA_ISAAC_CACHE_DIR": ISAAC_CACHE_MOUNT,
+        "NPA_ISAAC_CACHE_READONLY": "1",
+        "NPA_ISAAC_BOOTSTRAP_OFFLINE": "1",
+    }
+    for name, value in required_env.items():
+        existing = by_name.get(name)
+        if existing is not None and existing.get("value") != value:
+            raise Sim2RealLoopError(
+                f"Isaac runtime-cache env {name} conflicts with fail-closed value"
+            )
+        if existing is None:
+            env.append({"name": name, "value": value})
+    container["env"] = env
+    pod_spec["containers"] = containers
+    pod_spec["volumes"] = volumes
+    annotations = manifest.setdefault("metadata", {}).setdefault("annotations", {})
+    annotations["sim2real.npa.dev/isaac-cache-pvc"] = pvc
+    annotations["sim2real.npa.dev/runtime-dependencies"] = (
+        "content-addressed-readonly-pvc"
+    )
+    return {
+        "pvc": pvc,
+        "mount_path": ISAAC_CACHE_MOUNT,
+        "mode": "offline-readonly",
+    }
 
 
 def configure_gpu_job(
@@ -60,6 +165,7 @@ def configure_gpu_job(
     containers[0]["image"] = immutable
     containers[0]["imagePullPolicy"] = "IfNotPresent"
     pod_spec["containers"] = containers
+    _configure_isaac_runtime_cache(configured, immutable_image=immutable)
     pod_spec["restartPolicy"] = "Never"
     pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
     priority = priority_class or os.environ.get(

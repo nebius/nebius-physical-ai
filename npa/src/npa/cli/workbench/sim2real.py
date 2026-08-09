@@ -216,6 +216,11 @@ def run_command(
         "--k8s-env-secret-names",
         help="Comma-separated env secrets for sibling Jobs.",
     ),
+    k8s_isaac_cache_pvc: str = typer.Option(
+        "npa-sim2real-isaac-cache",
+        "--k8s-isaac-cache-pvc",
+        help="Pre-warmed Isaac dependency PVC mounted offline/read-only by GPU Jobs.",
+    ),
     k8s_gpu_resource: str = typer.Option(
         "nvidia.com/gpu", "--k8s-gpu-resource", help="Kubernetes GPU resource key."
     ),
@@ -225,7 +230,9 @@ def run_command(
         help="GPU product node selector for sibling Jobs.",
     ),
     k8s_job_timeout_s: int = typer.Option(
-        7200, "--k8s-job-timeout-s", help="Sibling Job timeout in seconds."
+        0,
+        "--k8s-job-timeout-s",
+        help="Optional sibling Job timeout in seconds (0 means no deadline).",
     ),
     source_repo: str = typer.Option(
         "", "--source-repo", help="Optional source repository cloned by sibling Jobs."
@@ -286,6 +293,7 @@ def run_command(
         k8s_service_account=k8s_service_account,
         k8s_image_pull_secrets=k8s_image_pull_secrets,
         k8s_env_secret_names=k8s_env_secret_names,
+        k8s_isaac_cache_pvc=k8s_isaac_cache_pvc,
         k8s_gpu_resource=k8s_gpu_resource,
         k8s_gpu_product=k8s_gpu_product,
         k8s_job_timeout_s=k8s_job_timeout_s,
@@ -603,9 +611,7 @@ def onboard_robot_command(
             client.create_or_adopt(
                 manifest,
                 run_id=rid,
-                source_sha=_onboard_env(
-                    "NPA_SIM2REAL_SOURCE_SHA", "onboarding-smoke"
-                ),
+                source_sha=_onboard_env("NPA_SIM2REAL_SOURCE_SHA", "onboarding-smoke"),
                 runtime_image=image.removeprefix("docker:"),
             )
         except Exception as exc:

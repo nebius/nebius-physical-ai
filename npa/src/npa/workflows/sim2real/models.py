@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -137,6 +138,7 @@ class Sim2RealLoopConfig:
         "agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry"
     )
     k8s_env_secret_names: str = "hf-ngc-tokens,npa-storage-credentials"
+    k8s_isaac_cache_pvc: str = "npa-sim2real-isaac-cache"
     k8s_gpu_resource: str = "nvidia.com/gpu"
     k8s_gpu_product: str = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
     k8s_gpu_candidates: tuple[str, ...] = ()
@@ -181,6 +183,18 @@ class Sim2RealLoopConfig:
             raise Sim2RealLoopError("k8s_max_parallel_gpus must be positive")
         if self.heldout_eval_limit < 0:
             raise Sim2RealLoopError("heldout_eval_limit must be non-negative")
+        if self.sim_backend == SIM_BACKEND_ISAAC:
+            cache_pvc = self.k8s_isaac_cache_pvc.strip()
+            if (
+                not cache_pvc
+                or len(cache_pvc) > 253
+                or not re.fullmatch(
+                    r"[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?", cache_pvc
+                )
+            ):
+                raise Sim2RealLoopError(
+                    "k8s_isaac_cache_pvc must be a DNS-safe PVC name for Isaac runs"
+                )
         if self.env_count < 0:
             raise Sim2RealLoopError("env_count must be non-negative")
         if not 0.0 < self.train_fraction < 1.0:

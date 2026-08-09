@@ -396,6 +396,11 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
             or os.environ.get("NPA_SIM2REAL_K8S_ENV_SECRET_NAMES")
             or "hf-ngc-tokens,npa-storage-credentials"
         ),
+        k8s_isaac_cache_pvc=str(
+            overrides.get("k8s_isaac_cache_pvc")
+            or os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC")
+            or "npa-sim2real-isaac-cache"
+        ),
         k8s_gpu_resource=str(
             overrides.get("k8s_gpu_resource")
             or os.environ.get("NPA_SIM2REAL_K8S_GPU_RESOURCE")
@@ -533,6 +538,7 @@ def byo_seams(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "k8s_service_account": config.k8s_service_account,
         "k8s_image_pull_secrets": _split_csv(config.k8s_image_pull_secrets),
         "k8s_env_secret_names": _split_csv(config.k8s_env_secret_names),
+        "k8s_isaac_cache_pvc": config.k8s_isaac_cache_pvc,
         "k8s_gpu_request": {
             "resource": config.k8s_gpu_resource,
             "product": config.k8s_gpu_product,

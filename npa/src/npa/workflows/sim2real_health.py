@@ -75,6 +75,13 @@ SIM2REAL_SEAMS: tuple[Seam, ...] = (
     Seam("trainer_image", "trainer_image", "--trainer-image", "TRAINER_IMAGE"),
     Seam("vlm_image", "vlm_image", "--vlm-image", "VLM_IMAGE"),
     Seam("eval_image", "eval_image", "--eval-image", "EVAL_IMAGE"),
+    Seam(
+        "k8s_isaac_cache_pvc",
+        "k8s_isaac_cache_pvc",
+        "--k8s-isaac-cache-pvc",
+        "NPA_SIM2REAL_ISAAC_CACHE_PVC",
+        required=True,
+    ),
     Seam("vlm_model", "vlm_model", "--vlm-model", "VLM_MODEL"),
     Seam("threshold", "threshold", "--threshold", "SUCCESS_THRESHOLD"),
     Seam(
@@ -486,9 +493,7 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
         )
 
     service_account = config.k8s_service_account or "agent-sa"
-    service_account_user = (
-        f"system:serviceaccount:{namespace}:{service_account}"
-    )
+    service_account_user = f"system:serviceaccount:{namespace}:{service_account}"
     controller_patch = runner(
         [
             "auth",
@@ -546,6 +551,53 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             details=(_short(kueue_observe.stderr or kueue_observe.stdout),),
         )
 
+    cache_pvc = config.k8s_isaac_cache_pvc.strip()
+    pvc_result = runner(["get", "pvc", cache_pvc, "-n", namespace, "-o", "json"])
+    if pvc_result.returncode != 0:
+        return CheckResult(
+            name="cluster",
+            status=FAIL,
+            summary=(
+                f"Isaac runtime-cache PVC {cache_pvc!r} is not readable in "
+                f"namespace {namespace!r}."
+            ),
+            remedy=(
+                "Create the shared cache PVC, warm it on a CPU node with the exact "
+                "Isaac image, and rerun preflight. GPU Jobs never fetch dependencies."
+            ),
+            details=(_short(pvc_result.stderr or pvc_result.stdout),),
+        )
+    try:
+        import json
+
+        pvc = json.loads(pvc_result.stdout)
+    except (TypeError, ValueError):
+        pvc = {}
+    spec = pvc.get("spec") or {}
+    status = pvc.get("status") or {}
+    access_modes = {str(item) for item in spec.get("accessModes") or []}
+    if (
+        status.get("phase") != "Bound"
+        or not str(spec.get("volumeName") or "").strip()
+        or "ReadWriteMany" not in access_modes
+    ):
+        return CheckResult(
+            name="cluster",
+            status=FAIL,
+            summary=(
+                f"Isaac runtime-cache PVC {cache_pvc!r} is not a Bound RWX claim."
+            ),
+            remedy=(
+                "Use a Bound ReadWriteMany volume so one CPU warm Job can publish "
+                "the content-addressed closure for read-only GPU consumers."
+            ),
+            details=(
+                f"phase={status.get('phase')!r}",
+                f"volumeName={spec.get('volumeName')!r}",
+                f"accessModes={sorted(access_modes)!r}",
+            ),
+        )
+
     gpu_resource = config.k8s_gpu_resource or "nvidia.com/gpu"
     nodes = runner(["get", "nodes", "-o", "json"])
     if nodes.returncode != 0:
@@ -575,7 +627,7 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
         status=PASS,
         summary=(
             f"Context {context!r}: {gpu_total} schedulable {gpu_resource} across "
-            f"{node_count} node(s)."
+            f"{node_count} node(s); Isaac cache PVC {cache_pvc!r} is Bound RWX."
         ),
     )
 

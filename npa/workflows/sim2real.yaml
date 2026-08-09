@@ -260,6 +260,11 @@ envs:
   # an injected short-lived token in the runtime image.
   NPA_SIM2REAL_K8S_REGISTRY_CONFIG_SECRET: "npa-nebius-registry"
   NPA_SIM2REAL_K8S_ENV_SECRET_NAMES: "hf-ngc-tokens,npa-storage-credentials"
+  # NVIDIA-proprietary Isaac wheels are operator-fetched under the accepted
+  # EULA into this pre-warmed content-addressed PVC on a CPU node. Every Isaac
+  # GPU Job mounts it offline/read-only; a missing or cold claim fails closed
+  # before application execution instead of running pip after Kueue admission.
+  NPA_SIM2REAL_ISAAC_CACHE_PVC: "npa-sim2real-isaac-cache"
   NPA_SIM2REAL_K8S_GPU_RESOURCE: "nvidia.com/gpu"
   NPA_SIM2REAL_K8S_GPU_PRODUCT: "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
   # Optional ordered aliases/labels. Actual candidates are normalized against
@@ -360,6 +365,7 @@ run: |
     --k8s-service-account "${NPA_SIM2REAL_K8S_SERVICE_ACCOUNT:-agent-sa}"
     --k8s-image-pull-secrets "${NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS:-agent-sa,ngc-nvcr-imagepullsecret,npa-nebius-registry}"
     --k8s-env-secret-names "${NPA_SIM2REAL_K8S_ENV_SECRET_NAMES:-hf-ngc-tokens,npa-storage-credentials}"
+    --k8s-isaac-cache-pvc "${NPA_SIM2REAL_ISAAC_CACHE_PVC:-npa-sim2real-isaac-cache}"
     --k8s-gpu-resource "${NPA_SIM2REAL_K8S_GPU_RESOURCE:-nvidia.com/gpu}"
     --k8s-gpu-product "${NPA_SIM2REAL_K8S_GPU_PRODUCT:-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition}"
     --k8s-gpu-candidates "${NPA_SIM2REAL_K8S_GPU_CANDIDATES:-RTX PRO 6000,L40S}"

@@ -311,8 +311,18 @@ def materialize_k8s_job(
                     "onPodConditions": [{"type": "DisruptionTarget", "status": "True"}],
                 },
                 {
+                    # A deleted/evicted controller normally terminates with 137 or
+                    # 143 without receiving DisruptionTarget. Count those bounded
+                    # infrastructure restarts so the durable journal can resume.
+                    "action": "Count",
+                    "onExitCodes": {"operator": "In", "values": [137, 143]},
+                },
+                {
                     "action": "FailJob",
-                    "onExitCodes": {"operator": "NotIn", "values": [0]},
+                    "onExitCodes": {
+                        "operator": "NotIn",
+                        "values": [0, 137, 143],
+                    },
                 },
             ]
         },

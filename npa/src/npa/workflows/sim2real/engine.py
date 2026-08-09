@@ -1526,6 +1526,7 @@ def _component_env(
             "AWS_ENDPOINT_URL": config.s3_endpoint or env.get("AWS_ENDPOINT_URL", ""),
             "NPA_SIM2REAL_K8S_GPU_RESOURCE": config.k8s_gpu_resource,
             "NPA_SIM2REAL_K8S_GPU_PRODUCT": config.k8s_gpu_product,
+            "NPA_SIM2REAL_ISAAC_CACHE_PVC": config.k8s_isaac_cache_pvc,
             "NPA_SIM2REAL_TASK_CONTRACT_DIGEST": str(
                 getattr(config, "task_contract_digest", "") or ""
             ),

@@ -154,6 +154,16 @@ def _validate_real_runtime_env(values: dict[str, str]) -> None:
     ppo_settings(values)
     camera_view_names(values.get("NPA_SIM2REAL_CAMERA_VIEWS", ""))
 
+    isaac_cache_pvc = values.get("NPA_SIM2REAL_ISAAC_CACHE_PVC", "").strip()
+    if (
+        not isaac_cache_pvc
+        or len(isaac_cache_pvc) > 253
+        or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?", isaac_cache_pvc)
+    ):
+        raise ValueError(
+            "NPA_SIM2REAL_ISAAC_CACHE_PVC must be a DNS-safe, pre-warmed PVC name"
+        )
+
     def integer(name: str, *, minimum: int = 1) -> int:
         raw = values.get(name, "")
         try:

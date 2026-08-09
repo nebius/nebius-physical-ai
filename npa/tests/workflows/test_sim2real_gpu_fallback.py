@@ -265,6 +265,76 @@ def test_job_configuration_requires_digest_and_native_failure_policy(
         )
 
 
+def test_isaac_gpu_job_requires_and_mounts_offline_readonly_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", IMAGE)
+    with pytest.raises(Sim2RealLoopError, match="CACHE_PVC"):
+        configure_gpu_job(
+            _manifest(RTX, "isaac-missing-cache"),
+            image=IMAGE,
+            product=RTX,
+            gpu_resource="nvidia.com/gpu",
+            gpu_count=1,
+        )
+
+    monkeypatch.setenv("NPA_SIM2REAL_ISAAC_CACHE_PVC", "npa-isaac-cache")
+    configured = configure_gpu_job(
+        _manifest(RTX, "isaac-with-cache"),
+        image=IMAGE,
+        product=RTX,
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+    )
+    pod = configured["spec"]["template"]["spec"]
+    assert pod["volumes"] == [
+        {
+            "name": "isaac-runtime-cache",
+            "persistentVolumeClaim": {
+                "claimName": "npa-isaac-cache",
+                "readOnly": True,
+            },
+        }
+    ]
+    container = pod["containers"][0]
+    assert container["volumeMounts"] == [
+        {
+            "name": "isaac-runtime-cache",
+            "mountPath": "/opt/isaac-cache",
+            "readOnly": True,
+        }
+    ]
+    env = {item["name"]: item["value"] for item in container["env"]}
+    assert env["NPA_SIM2REAL_ISAAC_CACHE_PVC"] == "npa-isaac-cache"
+    assert env["NPA_ISAAC_CACHE_READONLY"] == "1"
+    assert env["NPA_ISAAC_BOOTSTRAP_OFFLINE"] == "1"
+    assert (
+        configured["metadata"]["annotations"]["sim2real.npa.dev/runtime-dependencies"]
+        == "content-addressed-readonly-pvc"
+    )
+
+
+def test_non_isaac_gpu_job_never_receives_isaac_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "NPA_SIM2REAL_ISAAC_IMAGE", f"registry.example/isaac@sha256:{'b' * 64}"
+    )
+    monkeypatch.setenv("NPA_SIM2REAL_ISAAC_CACHE_PVC", "npa-isaac-cache")
+    configured = configure_gpu_job(
+        _manifest(RTX, "cosmos"),
+        image=IMAGE,
+        product=RTX,
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+    )
+    pod = configured["spec"]["template"]["spec"]
+    assert "volumes" not in pod
+    assert "sim2real.npa.dev/isaac-cache-pvc" not in configured["metadata"].get(
+        "annotations", {}
+    )
+
+
 def test_kueue_queue_covers_every_production_job_request() -> None:
     manifests = kueue_queue_manifests(
         namespace="default",
