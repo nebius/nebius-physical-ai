@@ -95,3 +95,17 @@ def test_isaac_exact_source_image_uses_light_package_imports() -> None:
     assert "import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation" in (
         dockerfile
     )
+
+
+def test_cosmos2_exact_source_image_uses_light_package_imports() -> None:
+    """Transfer's minimal environment must not require unrelated NPA SDK extras."""
+
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "cosmos2-transfer"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
+    assert "import npa.workflows.sim2real.runtime_attestation" in dockerfile

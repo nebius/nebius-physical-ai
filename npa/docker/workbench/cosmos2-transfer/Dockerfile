@@ -186,6 +186,11 @@ COPY --chmod=755 src/npa/workbench/cosmos/fixture.py \
 COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
     /usr/share/doc/npa-cosmos2-transfer/REDISTRIBUTION.md
 
+# This purpose-built component image installs the exact NPA source without the
+# unrelated SDK extras.  Keep package initialization lazy so importing the
+# attestation and Cosmos component modules does not require CLI/viewer extras.
+ENV NPA_SKIP_EAGER_IMPORTS=1
+
 # Deliberately shadow the global python3: SkyPilot and orchestrator-supplied
 # commands invoke python3; /usr/bin/python3 remains available to system tooling.
 RUN set -eux; \
