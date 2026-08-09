@@ -7398,6 +7398,9 @@
             stage: String((item && item.stage) || "").trim(),
             source_type: String((item && item.source_type) || "workflow_history").trim(),
             source_label: String((item && item.source_label) || "Workflow history").trim(),
+            bucket: String((item && item.bucket) || "").trim(),
+            project_id: String((item && item.project_id) || "").trim(),
+            resolved_prefix: String((item && item.resolved_prefix) || "").trim(),
           })).filter((item) => item.run_id);
         } else {
           const ids = Array.isArray(simViz && simViz.available_run_ids)
@@ -7410,7 +7413,10 @@
             source_label: runId === "franka-demo" ? "Local demo" : "Workflow history",
           }));
         }
-        applyMergedRunSelectors(current);
+        if (current && simViz && simViz.bucket) {
+          activeRunEntryKey = runEntryIdentity(current, "artifact_storage", simViz);
+        }
+        applyMergedRunSelectors(activeRunEntryKey || current);
       }
       async function loadSelectedRun(entryOrRunId) {
         const supplied = entryOrRunId && typeof entryOrRunId === "object" ? entryOrRunId : null;

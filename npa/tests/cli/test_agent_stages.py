@@ -12,10 +12,31 @@ from npa.cli.agent_stages import (
     artifact_stage_key,
     artifact_stage_label,
     build_artifact_backed_stages,
+    build_available_sim_viz_runs,
     parse_stage_evidence_documents,
     run_owns_workflow_stage_overlay,
     summarize_stage_evidence,
 )
+
+
+def test_available_run_projection_preserves_selected_artifact_source() -> None:
+    available = build_available_sim_viz_runs(
+        [
+            {
+                "run_id": "duplicate-run",
+                "source_type": "artifact_storage",
+                "source_label": "S3 artifacts",
+                "bucket": "bucket-a",
+                "project_id": "project-a",
+                "resolved_prefix": "preferred-source",
+            }
+        ]
+    )
+
+    assert available[0]["run_id"] == "duplicate-run"
+    assert available[0]["bucket"] == "bucket-a"
+    assert available[0]["project_id"] == "project-a"
+    assert available[0]["resolved_prefix"] == "preferred-source"
 
 
 def test_run_owns_overlay_false_for_unrelated_capture_run() -> None:

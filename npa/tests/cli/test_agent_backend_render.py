@@ -571,6 +571,82 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     assert first_page["next_cursor"] == "opaque-page-two"
     assert first_page["resolved_prefix"] == "foreign"
 
+    # load-run must consume an exact source tuple for duplicate run IDs and
+    # persist that tuple with the selected Rerun snapshot. An unqualified
+    # duplicate is a 409, never a stale history fallback.
+    recording = module.Artifact(
+        run_id="foreign-run-1",
+        key="foreign/foreign-run-1/reports/sim2real.rrd",
+        s3_uri="s3://bucket-test/foreign/foreign-run-1/reports/sim2real.rrd",
+        size=128,
+        last_modified="2026-08-07T00:00:00Z",
+        render="rerun",
+        inline=True,
+    )
+    duplicate_source = module.RunSummary(
+        "foreign-run-1",
+        "2026-08-07T00:00:00Z",
+        1,
+        False,
+        bucket="bucket-test",
+        project_id="project-test",
+        resolved_prefix="other",
+    )
+    with monkeypatch.context() as load_patch:
+        state: dict[str, object] = {}
+        published = tmp_path / "selected-sim2real.rrd"
+        load_patch.setattr(module, "RECORDINGS_DIR", tmp_path / "recordings")
+        load_patch.setattr(module, "RECORDING_PATH", published)
+        load_patch.setattr(module, "_load_state", lambda: state)
+        load_patch.setattr(module, "_save_state", lambda _state: None)
+        load_patch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
+        load_patch.setattr(module, "_restart_rerun_serve", lambda **_kwargs: False)
+        load_patch.setattr(
+            module,
+            "_publish_rrd_recording",
+            lambda path: published.write_bytes(path.read_bytes()),
+        )
+        load_patch.setattr(
+            module,
+            "download_s3_uri",
+            lambda _uri, path, **_kwargs: (
+                path.parent.mkdir(parents=True, exist_ok=True),
+                path.write_bytes(b"selected-recording"),
+                path,
+            )[-1],
+        )
+        load_patch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: [recording])
+        load_patch.setattr(
+            module,
+            "find_run_sources_across_buckets",
+            lambda *_args, **_kwargs: ([source, duplicate_source], (), True),
+        )
+
+        loaded = module.sim_viz_load_run(
+            {
+                "run_id": "foreign-run-1",
+                "resource_bucket": "bucket-test",
+                "project_id": "project-test",
+                "resolved_prefix": "foreign",
+                "source_selected": True,
+            }
+        )
+        assert loaded["sim_viz"]["artifact_render"] == "rerun"
+        assert loaded["sim_viz"]["artifact_key"].endswith("/reports/sim2real.rrd")
+        assert loaded["sim_viz"]["bucket"] == "bucket-test"
+        assert loaded["sim_viz"]["resolved_prefix"] == "foreign"
+
+        load_patch.setattr(
+            module,
+            "find_run_artifacts_across_buckets",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                module.AmbiguousRunSourceError("select an exact source")
+            ),
+        )
+        with pytest.raises(module.HTTPException) as ambiguous_load:
+            module.sim_viz_load_run({"run_id": "foreign-run-1"})
+        assert ambiguous_load.value.status_code == 409
+
     cursor_call: dict[str, str] = {}
 
     def _next_artifact_page(_bucket, _run_id, *, prefix, cursor, **_kwargs):

@@ -36,6 +36,7 @@ if __name__ == "npa.cli.agent_access_runtime":
         AgentAccessReport,
         BucketProbe,
         accessible_artifact_buckets,
+        artifact_bucket_projects,
         discover_agent_access,
         scoped_artifact_buckets,
     )
@@ -45,6 +46,7 @@ if __name__ == "npa.cli.agent_access_runtime":
     )
     from npa.workflows.artifacts import (
         find_run_sources_across_buckets,
+        list_artifacts,
         parse_s3_uri,
         validate_run_id,
     )
@@ -355,6 +357,94 @@ def _agent_artifact_list_scope(report, resource_bucket: str = "", project_id: st
         "project_id": str(project_id or "").strip(),
         "bucket": str(resource_bucket or "").strip(),
     }
+
+
+def _resolve_selected_run_source(
+    *,
+    s3,
+    settings,
+    run_id: str,
+    resource_bucket: str,
+    project_id: str = "",
+    resolved_prefix: str = "",
+    source_selected: bool = False,
+    exclude: "set[str] | None" = None,
+) -> tuple[str, str, str]:
+    """Authorize and resolve one exact server-discovered artifact source."""
+    report = _agent_access_report()
+    buckets, _scope = _agent_artifact_list_scope(
+        report, resource_bucket, project_id
+    )
+    bucket = str(resource_bucket or "").strip()
+    if bucket not in buckets:
+        raise HTTPException(
+            status_code=403,
+            detail="artifact bucket is outside effective agent access",
+        )
+    prefix = _validated_resolved_prefix(resolved_prefix)
+    sources, source_errors, complete = find_run_sources_across_buckets(
+        [bucket],
+        base_prefix=str((settings or {}).get("prefix") or ""),
+        run_id=validate_run_id(run_id),
+        exclude=exclude,
+        bucket_projects=artifact_bucket_projects(report),
+        s3=s3,
+    )
+    if project_id:
+        sources = [item for item in sources if item.project_id == project_id]
+    if prefix:
+        sources = [item for item in sources if item.resolved_prefix == prefix]
+    elif source_selected:
+        sources = [item for item in sources if not item.resolved_prefix]
+    if len(sources) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="run id is ambiguous in the selected bucket; select a resolved prefix",
+        )
+    if not sources:
+        raise HTTPException(
+            status_code=404 if complete and not source_errors else 503,
+            detail="selected artifact source was not discovered",
+        )
+    selected = sources[0]
+    return selected.bucket, selected.project_id, selected.resolved_prefix
+
+
+def _selected_run_request(body: dict) -> tuple[str, str, str, bool]:
+    bucket = str(body.get("resource_bucket") or "").strip()
+    project = str(body.get("project_id") or "").strip()
+    prefix = _validated_resolved_prefix(str(body.get("resolved_prefix") or ""))
+    raw_selected = body.get("source_selected")
+    selected = raw_selected is True or str(raw_selected or "").strip().lower() in {
+        "1", "true", "yes"
+    }
+    return bucket, project, prefix, selected
+
+
+def _load_selected_run_artifacts(**kwargs):
+    bucket, project, prefix = _resolve_selected_run_source(**kwargs)
+    artifacts = list_artifacts(
+        bucket,
+        run_id=validate_run_id(str(kwargs.get("run_id") or "")),
+        prefix=prefix,
+        s3=kwargs.get("s3"),
+    )
+    return bucket, project, prefix, artifacts
+
+
+def _artifact_source_metadata(report, bucket: str, key: str, run_id: str):
+    """Derive persisted source identity from an already-authorized object key."""
+    normalized_run = str(run_id or "").strip()
+    parts = [part for part in str(key or "").strip().strip("/").split("/") if part]
+    try:
+        run_index = parts.index(normalized_run)
+    except ValueError:
+        run_index = 0
+    return (
+        str(bucket or "").strip(),
+        artifact_bucket_projects(report).get(str(bucket or "").strip(), ""),
+        "/".join(parts[:run_index]) if run_index else "",
+    )
 
 
 def _agent_access_api_response(refresh: bool = False):

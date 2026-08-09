@@ -356,6 +356,25 @@ def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) ->
         )
 
 
+def test_authorized_artifact_source_metadata_is_derived_from_key() -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    report = _discover()
+
+    assert runtime._artifact_source_metadata(
+        report,
+        "bucket-b",
+        "groot-1-7-finetune/duplicate-run/reports/sim2real.rrd",
+        "duplicate-run",
+    ) == ("bucket-b", "project-b", "groot-1-7-finetune")
+    assert runtime._artifact_source_metadata(
+        report,
+        "bucket-a",
+        "root-run/reports/sim2real.rrd",
+        "root-run",
+    ) == ("bucket-a", "project-a", "")
+
+
 def test_cross_project_membership_discovery_has_a_bucket_cap(monkeypatch) -> None:
     from npa.cli import agent_access_runtime as runtime
 

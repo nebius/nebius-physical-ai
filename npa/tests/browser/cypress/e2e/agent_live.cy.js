@@ -30,6 +30,67 @@ function liveAgentRequest(path, options = {}) {
   });
 }
 
+function artifactSourceQuery(entry) {
+  const params = new URLSearchParams();
+  const bucket = String((entry && entry.bucket) || "").trim();
+  const projectId = String((entry && entry.project_id) || "").trim();
+  const resolvedPrefix = String((entry && entry.resolved_prefix) || "").trim();
+  if (bucket) params.set("resource_bucket", bucket);
+  if (projectId) params.set("project_id", projectId);
+  if (resolvedPrefix) params.set("resolved_prefix", resolvedPrefix);
+  if (bucket) params.set("source_selected", "1");
+  return params.toString();
+}
+
+function sourceAwareLoadRunBody(runId, entry) {
+  return {
+    run_id: runId,
+    camera: "workspace",
+    resource_bucket: String((entry && entry.bucket) || ""),
+    project_id: String((entry && entry.project_id) || ""),
+    resolved_prefix: String((entry && entry.resolved_prefix) || ""),
+    source_selected: true,
+  };
+}
+
+function findArtifactInEntry(entry, predicate, cursor = "") {
+  const runId = String((entry && entry.run_id) || "");
+  const params = new URLSearchParams(artifactSourceQuery(entry));
+  if (cursor) params.set("cursor", cursor);
+  return liveAgentRequest(
+    `/api/artifacts/run/${encodeURIComponent(runId)}?${params.toString()}`,
+    { timeout: 120000, failOnStatusCode: false },
+  ).then((artifactsResponse) => {
+    if (artifactsResponse.status !== 200) return null;
+    const payload = artifactsResponse.body || {};
+    const artifact = (payload.artifacts || []).find((item) => predicate(item));
+    if (artifact) return artifact;
+    const nextCursor = String(payload.next_cursor || "");
+    return nextCursor ? findArtifactInEntry(entry, predicate, nextCursor) : null;
+  });
+}
+
+function findLiveRunArtifact(runId, predicate) {
+  return liveAgentRequest(
+    `/api/artifacts/runs?limit=200&q=${encodeURIComponent(runId)}`,
+    { timeout: 120000 },
+  ).then((runsResponse) => {
+    expect(runsResponse.status).to.eq(200);
+    const entries = ((runsResponse.body && runsResponse.body.runs) || []).filter(
+      (entry) => String((entry && entry.run_id) || "") === runId,
+    );
+    expect(entries.length, `artifact sources for ${runId}`).to.be.greaterThan(0);
+    const inspect = (index) => {
+      if (index >= entries.length) return cy.wrap(null, { log: false });
+      const entry = entries[index];
+      return findArtifactInEntry(entry, predicate).then((artifact) => {
+        return artifact ? { entry, artifact } : inspect(index + 1);
+      });
+    };
+    return inspect(0);
+  });
+}
+
 function parseRgb(value) {
   const match = String(value || "").match(/rgba?\(([^)]+)\)/);
   if (!match) return null;
@@ -414,10 +475,10 @@ describe("NPA agent UI against live infra", () => {
       );
     };
 
-    const loadRunUntilRerun = (attempt) => {
+    const loadRunUntilRerun = (attempt, source) => {
       liveAgentRequest("/api/sim-viz/load-run", {
         method: "POST",
-        body: { run_id: runId, camera: "workspace" },
+        body: sourceAwareLoadRunBody(runId, source.entry),
         timeout: 120000,
         failOnStatusCode: false,
       }).then((response) => {
@@ -435,7 +496,7 @@ describe("NPA agent UI against live infra", () => {
             assertRerunSimViz(simViz);
             return;
           }
-          cy.wait(1500).then(() => loadRunUntilRerun(attempt + 1));
+          cy.wait(1500).then(() => loadRunUntilRerun(attempt + 1, source));
           return;
         }
         assertRerunSimViz(simViz);
@@ -471,7 +532,14 @@ describe("NPA agent UI against live infra", () => {
         assertStatusUntilRerun(1);
       });
     };
-    loadRunUntilRerun(0);
+    findLiveRunArtifact(
+      runId,
+      (item) => String((item && item.render) || "") === "rerun" &&
+        /\/reports\/sim2real\.rrd$/.test(String((item && item.key) || "")),
+    ).then((source) => {
+      expect(source, `Rerun source for ${runId}`).not.to.eq(null);
+      loadRunUntilRerun(0, source);
+    });
   });
 
   it("presents the live run with an intuitive stage timeline and stable desktop layout", function () {
@@ -481,15 +549,22 @@ describe("NPA agent UI against live infra", () => {
     }
 
     cy.viewport(1440, 1000);
-    liveAgentRequest("/api/sim-viz/load-run", {
-      method: "POST",
-      body: { run_id: runId, camera: "workspace" },
-      timeout: 120000,
+    findLiveRunArtifact(
+      runId,
+      (item) => String((item && item.render) || "") === "rerun" &&
+        /\/reports\/sim2real\.rrd$/.test(String((item && item.key) || "")),
+    ).then((source) => {
+      expect(source, `Rerun source for ${runId}`).not.to.eq(null);
+      return liveAgentRequest("/api/sim-viz/load-run", {
+        method: "POST",
+        body: sourceAwareLoadRunBody(runId, source.entry),
+        timeout: 120000,
+      });
     }).then((response) => {
-      expect(response.status).to.eq(200);
-      expect(response.body).to.have.property("ok", true);
-      expect((response.body.sim_viz || {}).artifact_render).to.eq("rerun");
-      expect(String((response.body.sim_viz || {}).run_id || "")).to.eq(runId);
+        expect(response.status).to.eq(200);
+        expect(response.body).to.have.property("ok", true);
+        expect((response.body.sim_viz || {}).artifact_render).to.eq("rerun");
+        expect(String((response.body.sim_viz || {}).run_id || "")).to.eq(runId);
     });
     cy.reload();
     cy.get("#statusBar", { timeout: 30000 }).should("exist");
@@ -595,7 +670,7 @@ describe("NPA agent UI against live infra", () => {
       expect(runsResp.status).to.eq(200);
       const runs = (runsResp.body && runsResp.body.runs) || [];
       expect(runs.length, "discovered runs").to.be.greaterThan(0);
-      const candidates = runs.map((entry) => String((entry && entry.run_id) || "")).filter(Boolean);
+      const candidates = runs.filter((entry) => String((entry && entry.run_id) || ""));
 
       const findMp4 = (index) => {
         // mp4 presence is a live-data property, not a code contract (the Video viewer
@@ -604,14 +679,21 @@ describe("NPA agent UI against live infra", () => {
         if (index >= candidates.length) {
           return cy.wrap(null, { log: false });
         }
-        const runId = candidates[index];
-        return liveAgentRequest(`/api/artifacts/run/${encodeURIComponent(runId)}`).then((artsResp) => {
-          const arts = (artsResp.body && artsResp.body.artifacts) || [];
-          const mp4 = arts.find((a) => String((a && a.key) || "").toLowerCase().endsWith(".mp4"));
+        const entry = candidates[index];
+        const runId = String(entry.run_id || "");
+        return findArtifactInEntry(
+          entry,
+          (item) => String((item && item.key) || "").toLowerCase().endsWith(".mp4"),
+        ).then((mp4) => {
           if (!mp4) {
             return findMp4(index + 1);
           }
-          return { runId, key: String(mp4.key) };
+          return {
+            runId,
+            key: String(mp4.key),
+            s3Uri: String(mp4.s3_uri || ""),
+            entry,
+          };
         });
       };
 
@@ -621,10 +703,10 @@ describe("NPA agent UI against live infra", () => {
         cy.log("no mp4 artifact discoverable in live runs — skipping Video viewer assertions");
         return;
       }
-      const { runId, key } = found;
+      const { runId, s3Uri, entry } = found;
       return liveAgentRequest("/api/sim-viz/load-artifact", {
         method: "POST",
-        body: { run_id: runId, key },
+        body: { run_id: runId, s3_uri: s3Uri },
         timeout: 120000,
       }).then((loadResp) => {
         expect(loadResp.status).to.eq(200);
@@ -642,13 +724,18 @@ describe("NPA agent UI against live infra", () => {
         cy.get("#artifactRefreshRuns").click();
         cy.get("#artifactDiscoverStatus", { timeout: 30000 }).should("contain.text", "consolidated");
         cy.get("#runIdSelect", { timeout: 30000 }).then(($select) => {
-          const values = [...$select[0].options].map((opt) => opt.value);
-          if (values.includes(runId)) {
-            cy.wrap($select).select(runId);
-          }
+          const options = [...$select[0].options];
+          const sourceIndex = options.findIndex((option) =>
+            option.value === runId &&
+            String(option.dataset.bucket || "") === String(entry.bucket || "") &&
+            String(option.dataset.resolvedPrefix || "") === String(entry.resolved_prefix || "")
+          );
+          expect(sourceIndex, `source option for ${runId}`).to.be.at.least(0);
+          $select[0].selectedIndex = sourceIndex;
+          cy.wrap($select).trigger("change");
         });
         cy.get("#artifactTypeFilter").select("video");
-        cy.get("#artifactList", { timeout: 30000 }).should("contain.text", ".mp4");
+        cy.get("#artifactList", { timeout: 120000 }).should("contain.text", ".mp4");
         cy.contains("#artifactList button", "Play").first().click();
         cy.get("#renderModeVideo", { timeout: 30000 }).should("have.class", "is-active");
         cy.get("#viewerPaneMedia").should("have.class", "is-active-viewer");

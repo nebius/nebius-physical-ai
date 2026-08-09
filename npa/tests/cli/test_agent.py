@@ -936,7 +936,10 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "_record_sim_viz_run" in source
     assert "_wire_sim2real_run_preview" in source
     assert "Prefer a run-scoped Rerun recording over stale history entries" in source
-    assert "preferred and preferred.render == \"rerun\"" in source
+    assert (
+        'preferred and (preferred.render == "rerun" or '
+        "(requested_bucket and source_selected))" in source
+    )
     assert "held-out simulation camera stream" in source
     assert "reference proxy context" in source
     from npa.cli import agent as agent_module

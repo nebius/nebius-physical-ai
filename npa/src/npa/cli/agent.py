@@ -3272,6 +3272,7 @@ def _apply_loaded_artifact(
     s3_uri: str,
     render: str,
     local_path: Path,
+    source_identity: tuple[str, str, str] = ("", "", ""),
 ) -> dict:
     now = _now_iso()
     sim_viz = dict(DEFAULT_SIM_VIZ)
@@ -3292,6 +3293,7 @@ def _apply_loaded_artifact(
         # across loads, so a NuRec run following a Sim2Real one would report
         # camera="heldout-sim" while its own viewer note says the opposite.
         camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL
+    resource_bucket, project_id, resolved_prefix = source_identity
     sim_viz.update(
         {{
             "run_id": run_id,
@@ -3304,6 +3306,9 @@ def _apply_loaded_artifact(
             "artifact_render": render,
             "mode": "static",
             "camera": camera,
+            "bucket": str(resource_bucket or "").strip(),
+            "project_id": str(project_id or "").strip(),
+            "resolved_prefix": str(resolved_prefix or "").strip(),
         }}
     )
     if render == "rerun":
@@ -6845,6 +6850,9 @@ def sim_viz_load_run(payload: dict | None = None):
             uri=requested_rrd_uri,
             run_id=run_id,
         )
+        source_bucket, source_project, source_prefix = _artifact_source_metadata(
+            _agent_access_report(), bucket, key, run_id
+        )
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
         download_s3_uri(requested_rrd_uri, local_path, s3=s3)
@@ -6856,6 +6864,7 @@ def sim_viz_load_run(payload: dict | None = None):
             s3_uri=requested_rrd_uri,
             render=render_hint_for_object(key=key),
             local_path=local_path,
+            source_identity=(source_bucket, source_project, source_prefix),
         )
         if requested_camera:
             sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(key) else camera
@@ -6867,21 +6876,32 @@ def sim_viz_load_run(payload: dict | None = None):
     try:
         s3, settings = _agent_s3_client()
         requested_prefix = str(body.get("prefix") or "")
+        requested_bucket, requested_project, requested_resolved_prefix, source_selected = _selected_run_request(body)
         artifacts = []
-        if requested_prefix:
+        selected_prefix = ""
+        selected_bucket = requested_bucket
+        selected_project = requested_project
+        if requested_bucket:
+            selected_bucket, selected_project, selected_prefix, artifacts = _load_selected_run_artifacts(
+                s3=s3, settings=settings, run_id=run_id,
+                resource_bucket=requested_bucket, project_id=requested_project,
+                resolved_prefix=requested_resolved_prefix, source_selected=source_selected,
+                exclude=_discovery_exclude_roots(),
+            )
+        elif requested_prefix:
             effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
             artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
         # Generic fallback: find the run across all category folders under the run
         # root so a mismatched/absent prefix does not hide a mountable .rrd.
-        if not artifacts:
-            _run_bucket, artifacts = find_run_artifacts_across_buckets(
+        if not artifacts and not requested_bucket:
+            selected_bucket, artifacts = find_run_artifacts_across_buckets(
                 _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
                 run_id=validate_run_id(run_id),
                 s3=s3,
             )
         preferred = select_preferred_artifact(artifacts)
-        if preferred and preferred.render == "rerun":
+        if preferred and (preferred.render == "rerun" or (requested_bucket and source_selected)):
             local_name = _artifact_filename(preferred.key)
             local_path = RECORDINGS_DIR / local_name
             download_s3_uri(preferred.s3_uri, local_path, s3=s3)
@@ -6893,6 +6913,7 @@ def sim_viz_load_run(payload: dict | None = None):
                 s3_uri=preferred.s3_uri,
                 render=preferred.render,
                 local_path=local_path,
+                source_identity=(selected_bucket, selected_project, selected_prefix),
             )
             if requested_camera:
                 sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(preferred.key) else camera
@@ -6904,7 +6925,13 @@ def sim_viz_load_run(payload: dict | None = None):
                 "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id),
                 "preferred": preferred.to_dict(),
             }}
-    except Exception:
+        if requested_bucket:
+            raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
+    except AmbiguousRunSourceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except (ArtifactDiscoveryError, ClientError, BotoCoreError, OSError, KeyError, TypeError, ValueError):
         # Fall back to the historical in-memory run selector below; callers still
         # get a useful 404 if the run has never been seen.
         pass
@@ -7500,6 +7527,9 @@ def sim_viz_load_artifact(payload: dict | None = None):
         download_s3_uri(s3_uri, local_path, s3=s3)
         render = render_hint_for_object(key=key)
         state = _load_state()
+        source_bucket, source_project, source_prefix = _artifact_source_metadata(
+            _agent_access_report(), bucket, key, run_id
+        )
         sim_viz = _apply_loaded_artifact(
             state=state,
             run_id=run_id,
@@ -7507,6 +7537,7 @@ def sim_viz_load_artifact(payload: dict | None = None):
             s3_uri=s3_uri,
             render=render,
             local_path=local_path,
+            source_identity=(source_bucket, source_project, source_prefix),
         )
         return {{"ok": True, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri}}
     except HTTPException:
