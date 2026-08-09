@@ -324,10 +324,11 @@ def test_module_source_is_self_contained():
 def test_train_wrapper_enforces_boot_before_isaac_imports():
     s = rt.TRAIN_WRAPPER_SCRIPT
     # AppLauncher boot MUST precede any isaaclab/isaac_byo_robot_task import.
-    boot = s.index("AppLauncher(headless=True).app")
+    boot = s.index("app = AppLauncher(")
     assert boot < s.index("import isaaclab_tasks")
     assert boot < s.index("import isaac_byo_robot_task")
     assert s.index("import isaaclab_tasks") < s.index("robotmod.register")
+    assert '"--portable-root /tmp/npa-isaac-kit"' in s
     # trains via the rsl_rl runner and emits the done/ckpt markers
     assert "OnPolicyRunner" in s and "runner.learn" in s
     assert "ROBOT_TRAIN_DONE" in s

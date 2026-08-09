@@ -164,6 +164,8 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert "pip install" not in script
     assert "<<" not in script
     assert m["spec"]["backoffLimit"] == 1
+    assert "--portable-root /tmp/npa-isaac-kit" in pr.ISAAC_ROLLOUT_SCRIPT
+    assert "kit_args=os.environ.get(" in pr.ISAAC_ROLLOUT_SCRIPT
 
 
 def test_untrained_job_manifest_skips_download():

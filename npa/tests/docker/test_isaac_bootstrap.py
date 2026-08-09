@@ -618,6 +618,26 @@ def test_shim_and_bootstrap_are_valid_bash() -> None:
         subprocess.run(["bash", "-n", str(script)], check=True, timeout=60)
 
 
+def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
+    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+    shim = SHIM.read_text(encoding="utf-8")
+    expected = "--portable-root /tmp/npa-isaac-kit"
+
+    assert expected in bootstrap
+    assert "kit_args=os.environ.get(" in bootstrap
+    assert expected in shim
+    assert "export NPA_ISAAC_KIT_ARGS=" in shim
+    for variable in (
+        "OMNI_USER_DIR",
+        "OMNI_LOG_DIR",
+        "XDG_RUNTIME_DIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+    ):
+        assert f"export {variable}=" in shim
+
+
 def test_shim_propagates_the_refusal_exit_code(tmp_path: Path) -> None:
     """`/isaac-sim/python.sh` must fail closed, not fall back to a system python."""
     harness = Harness(tmp_path)

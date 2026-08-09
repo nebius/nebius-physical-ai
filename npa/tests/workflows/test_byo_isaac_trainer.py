@@ -501,6 +501,7 @@ def test_manifest_default_path_unchanged_without_physics():
     assert byo.TRAIN_SCRIPT in args
     assert "isaac_physics_task.py" not in args
     assert "--seed 42" in args
+    assert "--kit_args '--portable-root /tmp/npa-isaac-kit'" in args
 
 
 def test_byo_wrapper_saves_resumed_absolute_iteration() -> None:

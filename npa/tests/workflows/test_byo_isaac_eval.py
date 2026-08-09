@@ -64,6 +64,8 @@ def test_build_isaac_eval_job_manifest_shape():
     assert "pip install" not in args
     assert "<<" not in args
     assert "per_env_distances.json" in args  # uploads measured distances
+    assert "--portable-root /tmp/npa-isaac-kit" in ev.ISAAC_EVAL_SCRIPT
+    assert "kit_args=os.environ.get(" in ev.ISAAC_EVAL_SCRIPT
 
 
 def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):

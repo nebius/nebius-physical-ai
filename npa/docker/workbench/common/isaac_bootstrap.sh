@@ -302,9 +302,17 @@ deep_verify() {
   local venv="$1"
   log "launching Isaac Sim headless (deep verify; needs a GPU with RT cores)"
   "$venv/bin/python" - >&2 <<'PY'
+import os
+
 from isaaclab.app import AppLauncher
 
-launcher = AppLauncher(headless=True, enable_cameras=True)
+launcher = AppLauncher(
+    headless=True,
+    enable_cameras=True,
+    kit_args=os.environ.get(
+        "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+    ),
+)
 app = launcher.app
 for _ in range(8):
     app.update()

@@ -59,10 +59,11 @@ def test_train_wrapper_enforces_boot_before_isaac_imports():
     s = pt.TRAIN_WRAPPER_SCRIPT
     # AppLauncher boot MUST precede any isaaclab/isaac_physics_task import — the
     # whole point of the wrapper (pre-boot isaaclab import pulls pxr and dies).
-    boot = s.index("AppLauncher(headless=True).app")
+    boot = s.index("app = AppLauncher(")
     assert boot < s.index("import isaaclab_tasks")
     assert boot < s.index("import isaac_physics_task")
     assert s.index("import isaaclab_tasks") < s.index("physmod.register")
+    assert '"--portable-root /tmp/npa-isaac-kit"' in s
     # trains via the rsl_rl runner and emits the done/ckpt markers
     assert "OnPolicyRunner" in s and "runner.learn" in s
     assert "PHYS_TRAIN_DONE" in s

@@ -671,6 +671,9 @@ def build_isaac_job_manifest(
     # env cfg types `seed` as None, so hydra rejects an int there ("Incorrect type
     # under namespace: /seed. Expected: NoneType, Received: int").
     seed_arg = f" --seed {int(seed)}" if seed else ""
+    kit_args = os.environ.get(
+        "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+    )
 
     if robot_spec:
         # BYO-robot path (takes precedence over physics): run the task module and
@@ -819,7 +822,9 @@ def build_isaac_job_manifest(
             )
         train_line = (
             f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
-            f"--max_iterations {iterations} --headless{seed_arg} "
+            f"--max_iterations {iterations} --headless "
+            f"--kit_args {shlex.quote(kit_args)}"
+            f"{seed_arg} "
             f"agent.num_steps_per_env={steps_per_env} agent.save_interval=25 {override_str}"
         )
         train_block = (

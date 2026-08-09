@@ -307,7 +307,13 @@ def upload_and_exit(rollouts, note, applied=None):
     os._exit(0)
 try:
     from isaaclab.app import AppLauncher
-    app = AppLauncher(headless=True, enable_cameras=True).app
+    app = AppLauncher(
+        headless=True,
+        enable_cameras=True,
+        kit_args=os.environ.get(
+            "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+        ),
+    ).app
     import gymnasium as gym, torch
     import isaaclab_tasks  # noqa: F401
     _scenarios = None

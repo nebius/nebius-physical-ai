@@ -1220,7 +1220,12 @@ OUT = os.environ.get("ROBOT_OUT_DIR", "/tmp/robotrun")
 os.makedirs(OUT, exist_ok=True)
 # (1) boot the sim app FIRST — everything Isaac/pxr must come after this.
 from isaaclab.app import AppLauncher
-app = AppLauncher(headless=True).app
+app = AppLauncher(
+    headless=True,
+    kit_args=os.environ.get(
+        "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+    ),
+).app
 import torch
 import gymnasium as gym
 # (2) register the stock tasks, then (3) the BYO-robot variant (post-boot import).

@@ -342,7 +342,13 @@ def dump(distances, note, episodes=None, metrics=None, applied=None):
     print("EVAL_WROTE", OUT, note, "episodes", len(episodes or []), flush=True)
 try:
     from isaaclab.app import AppLauncher
-    app = AppLauncher(headless=True, enable_cameras=True).app
+    app = AppLauncher(
+        headless=True,
+        enable_cameras=True,
+        kit_args=os.environ.get(
+            "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+        ),
+    ).app
     import gymnasium as gym, torch
     import isaaclab_tasks  # noqa: F401  registers tasks
     # Opt-in BYO-robot variant: register a Lift variant that swaps in the customer

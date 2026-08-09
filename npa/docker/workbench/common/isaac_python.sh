@@ -70,7 +70,18 @@ fi
 export OMNI_USER_DIR="${OMNI_USER_DIR:-/tmp/isaac-sim-cache}"
 export OMNI_LOG_DIR="${OMNI_LOG_DIR:-/tmp/isaac-sim-cache/logs}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime}"
-mkdir -p "$OMNI_USER_DIR" "$OMNI_LOG_DIR" "$XDG_RUNTIME_DIR" 2>/dev/null || true
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/isaac-sim-cache/xdg-cache}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/tmp/isaac-sim-cache/xdg-config}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-/tmp/isaac-sim-cache/xdg-data}"
+# The pip Isaac distribution carries a Kit portable marker beside its binaries,
+# which takes precedence over XDG/OMNI path overrides. Every AppLauncher entrypoint
+# in the exact runtime consumes this argument so mutable user, shader, log, and data
+# state lands in Pod-local scratch instead of the read-only dependency closure.
+export NPA_ISAAC_KIT_ARGS="${NPA_ISAAC_KIT_ARGS:---portable-root /tmp/npa-isaac-kit}"
+mkdir -p \
+  "$OMNI_USER_DIR" "$OMNI_LOG_DIR" "$XDG_RUNTIME_DIR" \
+  "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
+  /tmp/npa-isaac-kit 2>/dev/null || true
 chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
 
 exec "$PYTHON" "$@"

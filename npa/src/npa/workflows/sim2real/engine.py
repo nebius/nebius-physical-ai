@@ -4426,10 +4426,17 @@ def _run_isaac_heldout_rollouts(
     capture_renders = renders_dir is not None and _heldout_render_frames_enabled()
     if capture_renders:
         renders_dir.mkdir(parents=True, exist_ok=True)
+    kit_args = os.environ.get(
+        "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+    )
     try:
-        launcher = AppLauncher(headless=True, enable_cameras=capture_renders)
+        launcher = AppLauncher(
+            headless=True,
+            enable_cameras=capture_renders,
+            kit_args=kit_args,
+        )
     except TypeError:  # pragma: no cover
-        launcher = AppLauncher(headless=True)
+        launcher = AppLauncher(headless=True, kit_args=kit_args)
     simulation_app = launcher.app
     # Isaac Sim's SimulationApp.close() hard-terminates the process, so it must
     # NOT be called here (the held-out report has to be uploaded first). The
