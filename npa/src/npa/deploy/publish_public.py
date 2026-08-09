@@ -44,6 +44,7 @@ import argparse
 import base64
 import binascii
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -125,6 +126,10 @@ def build_publish_plan(
 # --------------------------------------------------------------------------------------
 
 _PREFLIGHT_TIMEOUT_SECONDS = 60
+_TRIVY_CONTAINER_IMAGE = (
+    "docker.io/aquasec/trivy@"
+    "sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f"
+)
 
 
 def _repository(ref: str) -> str:
@@ -172,17 +177,33 @@ def _crane_blob_json(repository: str, digest: str) -> dict[str, Any]:
     return payload
 
 
+def _trivy_command() -> list[str]:
+    """Return a host Trivy or an exact-digest official container invocation."""
+    trivy = shutil.which("trivy")
+    if trivy:
+        return [trivy]
+
+    docker = shutil.which("docker")
+    if not docker:
+        raise RuntimeError(
+            "trivy not found on PATH and docker is unavailable; "
+            "install either for the Wan publication gate"
+        )
+
+    command = [docker, "run", "--rm"]
+    docker_config = Path(os.environ.get("DOCKER_CONFIG", str(Path.home() / ".docker")))
+    if (docker_config / "config.json").is_file():
+        command.extend(["--volume", f"{docker_config.resolve()}:/root/.docker:ro"])
+    command.append(_TRIVY_CONTAINER_IMAGE)
+    return command
+
+
 def _scan_wan_trivy_exact_digest(image_ref: str) -> dict[str, int]:
     """Rerun Trivy against the immutable Wan source bytes immediately before copy."""
 
-    trivy = shutil.which("trivy")
-    if not trivy:
-        raise RuntimeError(
-            "trivy not found on PATH; install Trivy for the Wan publication gate"
-        )
     completed = subprocess.run(
         [
-            trivy,
+            *_trivy_command(),
             "image",
             "--platform",
             "linux/amd64",

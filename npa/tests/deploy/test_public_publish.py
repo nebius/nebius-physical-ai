@@ -796,6 +796,57 @@ def test_wan_live_trivy_gate_fails_closed(
         )
 
 
+def test_wan_live_trivy_gate_uses_digest_pinned_container_fallback(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.deploy import publish_public
+
+    docker_config = tmp_path / "docker-config"
+    docker_config.mkdir()
+    (docker_config / "config.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("DOCKER_CONFIG", str(docker_config))
+    monkeypatch.setattr(
+        publish_public.shutil,
+        "which",
+        lambda name: "/usr/bin/docker" if name == "docker" else None,
+    )
+    invoked: list[str] = []
+
+    def clean_scan(args, **_kwargs):
+        invoked.extend(args)
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps({"Results": []}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(publish_public.subprocess, "run", clean_scan)
+
+    result = publish_public._scan_wan_trivy_exact_digest(
+        "source.example/npa-wan2-2@sha256:" + "1" * 64
+    )
+
+    assert result == {"critical_total": 0, "critical_with_fix": 0, "secrets": 0}
+    assert invoked[:3] == ["/usr/bin/docker", "run", "--rm"]
+    assert f"{docker_config.resolve()}:/root/.docker:ro" in invoked
+    assert publish_public._TRIVY_CONTAINER_IMAGE in invoked
+    assert invoked.index(publish_public._TRIVY_CONTAINER_IMAGE) < invoked.index("image")
+
+
+def test_wan_live_trivy_gate_fails_closed_without_scanner_runtime(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: None)
+
+    with pytest.raises(RuntimeError, match="docker is unavailable"):
+        publish_public._scan_wan_trivy_exact_digest(
+            "source.example/npa-wan2-2@sha256:" + "1" * 64
+        )
+
+
 def test_wan_publication_gate_refuses_digest_not_bound_to_gpu_proofs(
     monkeypatch,
 ) -> None:

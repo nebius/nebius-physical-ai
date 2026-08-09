@@ -93,12 +93,6 @@ jobs:
       - name: Install crane
         uses: imjasonh/setup-crane@v0.4
 
-      - name: Install Trivy for the exact-digest Wan publication gate
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.72.0
-          cache: true
-
       - name: Resolve target registry
         id: target
         shell: bash
