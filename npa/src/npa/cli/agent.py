@@ -43,7 +43,7 @@ from npa.cli.agent_access import (
     ACCESS_STATES,
     consistent_agent_service_account_id,
 )
-from npa.cli.agent_embed import without_embedded_standalone_block
+from npa.cli.agent_embed import embedded_python_source
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
@@ -209,46 +209,22 @@ AGENT_READABLE_COLOR_CONTRACT = (
 
 def _embedded_agent_workflow_source() -> str:
     """Return agent_workflow.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_workflow.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_python_source(Path(__file__).with_name("agent_workflow.py"))
 
 
 def _embedded_agent_routing_source() -> str:
     """Return agent_routing.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_routing.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_python_source(Path(__file__).with_name("agent_routing.py"))
 
 
 def _embedded_agent_chat_source() -> str:
     """Return agent_chat.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_chat.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_python_source(Path(__file__).with_name("agent_chat.py"))
 
 
 def _embedded_agent_recordings_source() -> str:
     """Return agent_recordings.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_recordings.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_python_source(Path(__file__).with_name("agent_recordings.py"))
 
 
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
@@ -271,24 +247,14 @@ _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
 def _embedded_agent_stages_source() -> str:
     """Return agent_stages.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_stages.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_python_source(Path(__file__).with_name("agent_stages.py"))
 
 
 def _embedded_agent_stage_runtime_source() -> str:
     """Return agent_stage_runtime.py source embedded into the backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_stage_runtime.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return without_embedded_standalone_block(raw)
+    return embedded_python_source(
+        Path(__file__).with_name("agent_stage_runtime.py"), strip_standalone=True
+    )
 
 
 def rendered_agent_ui_html() -> str:
@@ -306,87 +272,46 @@ def rendered_agent_ui_html() -> str:
 
 def _embedded_agent_visual_feedback_source() -> str:
     """Return agent_visual_feedback.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_visual_feedback.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_python_source(Path(__file__).with_name("agent_visual_feedback.py"))
 
 
 def _embedded_agent_rrd_proxy_source() -> str:
     """Return agent_rrd_proxy.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_rrd_proxy.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_python_source(Path(__file__).with_name("agent_rrd_proxy.py"))
 
 
 def _embedded_agent_state_source() -> str:
     """Return agent_state.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_state.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_python_source(Path(__file__).with_name("agent_state.py"))
 
 
 def _embedded_agent_s3_guard_source() -> str:
     """Return agent_s3_guard.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_s3_guard.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_python_source(Path(__file__).with_name("agent_s3_guard.py"))
 
 
 def _embedded_agent_artifacts_source() -> str:
     """Return workflows/artifacts.py source embedded into the remote agent backend."""
-    import re
-
     path = Path(__file__).resolve().parents[1] / "workflows" / "artifacts.py"
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_access_file(filename: str) -> str:
-    """Return an access module embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name(filename)
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return without_embedded_standalone_block(raw)
+    return embedded_python_source(path)
 
 
 def _embedded_agent_access_source() -> str:
-    return _embedded_agent_access_file("agent_access.py")
+    return embedded_python_source(
+        Path(__file__).with_name("agent_access.py"), strip_standalone=True
+    )
 
 
 def _embedded_agent_access_runtime_source() -> str:
-    return _embedded_agent_access_file("agent_access_runtime.py")
+    return embedded_python_source(
+        Path(__file__).with_name("agent_access_runtime.py"), strip_standalone=True
+    )
 
 
 def _embedded_agent_provenance_source() -> str:
     """Return workflows/data_factory_provenance.py source embedded into the backend."""
-    import re
-
     path = Path(__file__).resolve().parents[1] / "workflows" / "data_factory_provenance.py"
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
+    return embedded_python_source(path)
 
 
 @dataclass(frozen=True)
@@ -1945,7 +1870,7 @@ if [ -s /mnt/cloud-metadata/token ]; then
   expected_tenant={expected_agent_tenant_id}
   inventory_env=(env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN -u TF_VAR_iam_token -u NPA_REUSE_IAM_TOKEN HOME=/root NEBIUS_PROFILE={nebius_profile})
   whoami_json="$(sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam whoami --format json)"
-  if [ -n "$expected_sa" ] && [[ "$whoami_json" != *"$expected_sa"* ]]; then
+  if [ -n "$expected_sa" ] && ! python3 -c 'import json, sys; expected = sys.argv[1]; matches = lambda value: any(map(matches, value.values())) if isinstance(value, dict) else any(map(matches, value)) if isinstance(value, list) else isinstance(value, str) and value == expected; raise SystemExit(0 if matches(json.load(sys.stdin)) else 1)' "$expected_sa" <<<"$whoami_json"; then
     echo "attached service-account verification failed" >&2
     exit 1
   fi

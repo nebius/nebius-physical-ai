@@ -19,6 +19,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from npa.cli.agent_embed import embedded_python_source
+
 
 def _render_backend_body(monkeypatch) -> str:
     from npa.cli import agent as agent_module
@@ -78,6 +80,23 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     tree = ast.parse(body)
     assert tree is not None
     compile(body, "backend.py", "exec")
+
+
+def test_embedded_python_source_normalizes_module_and_standalone_block(tmp_path) -> None:
+    module = tmp_path / "runtime.py"
+    module.write_text(
+        '"""Module docs."""\n'
+        "from __future__ import annotations\n"
+        "kept = True\n"
+        "# NPA_EMBED_STANDALONE_START\n"
+        "standalone_only = True\n"
+        "# NPA_EMBED_STANDALONE_END\n",
+        encoding="utf-8",
+    )
+
+    source = embedded_python_source(module, strip_standalone=True)
+
+    assert source == "kept = True\n"
 
 
 def test_rendered_backend_ast_has_no_undefined_globals(monkeypatch) -> None:

@@ -23,13 +23,11 @@ if __name__ == "npa.cli.agent_stage_runtime":
     (
         ArtifactDiscoveryError,
         HTTPException,
-        RECORDINGS_DIR,
         _agent_access_report,
         _agent_artifact_list_scope,
         _agent_s3_buckets,
         _agent_s3_client,
         _artifact_discovery_prefix,
-        _artifact_filename,
         _merge_sim2real_run_details,
         _now_iso,
         _slug,
@@ -38,7 +36,6 @@ if __name__ == "npa.cli.agent_stage_runtime":
         artifact_bucket_projects,
         build_artifact_backed_stages,
         coerce_authoritative_stage_evidence,
-        download_s3_uri,
         find_run_artifacts,
         find_run_artifacts_across_buckets,
         list_artifacts,
@@ -50,7 +47,7 @@ if __name__ == "npa.cli.agent_stage_runtime":
         select_preferred_artifact,
         summarize_stage_evidence,
         validate_run_id,
-    ) = (None,) * 29
+    ) = (None,) * 26
 # NPA_EMBED_STANDALONE_END
 
 
@@ -384,13 +381,19 @@ def _artifact_backed_run_details(
         None,
     )
     if report_artifact:
-        local_report = RECORDINGS_DIR / (_artifact_filename(report_artifact.key) + ".json")
         try:
-            download_s3_uri(report_artifact.s3_uri, local_report, s3=s3)
-            report = json.loads(local_report.read_text(encoding="utf-8"))
-            viz = report.get("visualization") if isinstance(report.get("visualization"), dict) else {}
+            report = _read_bounded_json_object(s3, run_bucket, report_artifact.key)
+        except (ClientError, BotoCoreError, OSError, KeyError, TypeError, ValueError):
+            report = None
+        if report:
+            viz = report.get("visualization")
+            viz = viz if isinstance(viz, dict) else {}
             outer_loop = report.get("outer_loop", {})
-            decision = outer_loop.get("latest_decision", {}) if isinstance(outer_loop, dict) else {}
+            decision = (
+                outer_loop.get("latest_decision", {})
+                if isinstance(outer_loop, dict)
+                else {}
+            )
             source = str(viz.get("source") or "").strip()
             success_rate = decision.get("success_rate")
             if source or success_rate is not None:
@@ -400,8 +403,6 @@ def _artifact_backed_run_details(
                     + (f", success_rate={success_rate}" if success_rate is not None else "")
                     + "."
                 )
-        except Exception:
-            report_note = ""
     stage_summary = summarize_stage_evidence(stages)
     authoritative_run_status = str(parsed_evidence.get("run_status") or "").strip()
     return {

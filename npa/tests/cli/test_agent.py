@@ -1823,6 +1823,14 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
     )
 
     setup_script = captured["setup_script"]
+    shell_proc = subprocess.run(
+        ["bash", "-n"],
+        input=setup_script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert shell_proc.returncode == 0, shell_proc.stderr
     html_match = re.search(
         r"cat <<'HTML' \| sudo tee /opt/npa-agent/ui\.html >/dev/null\n(?P<html>.*?)\nHTML",
         setup_script,
@@ -2050,6 +2058,8 @@ def test_bootstrap_verifies_attached_identity_and_tenant_inventory() -> None:
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert "attached service-account verification failed" in source
     assert "expected_sa={expected_agent_service_account_id}" in source
+    assert "isinstance(value, str) and value == expected" in source
+    assert '[[ "$whoami_json" != *"$expected_sa"* ]]' not in source
     assert "iam project list --parent-id \"$expected_tenant\" --all" in source
     assert "env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN" in source
 

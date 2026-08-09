@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import secrets
+from pathlib import Path
 from types import SimpleNamespace
 
+from npa.cli import agent_stages
 from npa.cli.agent_stages import (
     artifact_stage_key,
     artifact_stage_label,
@@ -582,6 +584,21 @@ def test_stage_evidence_reads_enforce_byte_cap_and_close_every_body() -> None:
     assert [item["key"] for item in documents] == [valid.key]
     assert all(body.read_sizes == [_MAX_STAGE_EVIDENCE_BYTES + 1] for body in s3.bodies)
     assert all(body.closed for body in s3.bodies)
+
+
+def test_report_summary_uses_bounded_object_read_without_persisting_download() -> None:
+    runtime_source = (
+        Path(agent_stages.__file__)
+        .with_name("agent_stage_runtime.py")
+        .read_text(encoding="utf-8")
+    )
+
+    report_block = runtime_source.split("if report_artifact:", 1)[1].split(
+        "stage_summary =", 1
+    )[0]
+    assert "_read_bounded_json_object(s3, run_bucket, report_artifact.key)" in report_block
+    assert "download_s3_uri" not in report_block
+    assert "RECORDINGS_DIR" not in report_block
 
 
 def test_stage_evidence_document_order_preserves_status_precedence() -> None:
