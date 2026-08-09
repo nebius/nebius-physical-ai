@@ -779,6 +779,7 @@ def _rollback_owned_cluster(
             tenant_id="",
             region="",
             cluster_id=str(owned[0].get("provider_id") or ""),
+            operation_id=operation.operation_id,
             context_name=context,
             keep_local_state=False,
             force=True,

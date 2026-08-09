@@ -366,6 +366,7 @@ def _root_identity(
             "cluster_id",
             "cluster_name",
             "kubeconfig_path",
+            "operation_id",
         )
     elif phase == "workflow":
         collection = "workflows"
@@ -383,6 +384,11 @@ def _root_identity(
             "ownership",
             "iam_key_ids",
         )
+    # ``cluster_absent`` is observed state, not immutable identity.  Keeping it
+    # at the project root made a successful cleanup receipt for an old cluster
+    # prevent cleanup of a later cluster created with the same context.
+    if phase in {"cluster", "controller"}:
+        root.pop("cluster_absent", None)
     scoped = {
         key: root.pop(key)
         for key in resource_fields
@@ -505,12 +511,25 @@ def record_teardown_event(
         payload["events"] = events
         payload["updated_at"] = now
         payload["schema_version"] = SCHEMA_VERSION
+        existing_identity = dict(payload.get("identity") or {})
+        if cleaned_phase in {"cluster", "controller"}:
+            # Migrate receipts written before controller observations and
+            # operation IDs were scoped to an immutable cluster entry.
+            existing_identity.pop("cluster_absent", None)
+            legacy_operation_id = existing_identity.pop("operation_id", None)
+            clusters = existing_identity.get("clusters")
+            if (
+                legacy_operation_id
+                and isinstance(clusters, list)
+                and len(clusters) == 1
+                and isinstance(clusters[0], Mapping)
+                and not clusters[0].get("operation_id")
+            ):
+                clusters[0] = {**clusters[0], "operation_id": legacy_operation_id}
         durable_identity = _root_identity(
             cleaned_identity, phase=cleaned_phase, resource=cleaned_resource
         )
-        payload["identity"] = _merge_identity(
-            payload.get("identity", {}), durable_identity
-        )
+        payload["identity"] = _merge_identity(existing_identity, durable_identity)
         if project_alias and not payload.get("project_alias"):
             payload["project_alias"] = project_alias
         if project_id and not payload.get("project_id"):

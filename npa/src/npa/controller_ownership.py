@@ -248,8 +248,28 @@ def controller_preflight(project: str, context: str) -> tuple[str, str]:
     owner is the only safely bindable-after-create case.
     """
 
-    existing = controller_owner()
-    cluster = load_cluster_state(context)
+    try:
+        existing = controller_owner(strict=True)
+    except (ClusterOwnerIdentityMismatchError, ControllerIdentityUnavailableError) as exc:
+        return (
+            "blocked",
+            f"controller owner configuration is unsafe: {exc}; reconcile the exact "
+            "recorded owner before provisioning",
+        )
+    except Exception as exc:  # noqa: BLE001 - total preflight must fail closed
+        return (
+            "unknown",
+            f"controller owner resolution failed for project={project!r} "
+            f"context={context!r}: {type(exc).__name__}: {exc}",
+        )
+    try:
+        cluster = load_cluster_state(context)
+    except Exception as exc:  # noqa: BLE001 - corrupt/unreadable state blocks mutation
+        return (
+            "blocked",
+            f"cluster state for context {context!r} is unreadable: "
+            f"{type(exc).__name__}: {exc}; repair or remove only that exact stale state",
+        )
     if cluster is None:
         if existing is None:
             return "ready", "unowned new cluster will be bound after exact provider identity is durable"
@@ -263,7 +283,7 @@ def controller_preflight(project: str, context: str) -> tuple[str, str]:
             resolve_controller_candidate(project, context)
         )
     except ControllerIdentityUnavailableError as exc:
-        return "unknown", str(exc)
+        return "blocked", f"exact controller candidate cannot be verified: {exc}"
     except ClusterOwnerIdentityMismatchError as exc:
         return "blocked", str(exc)
     if existing is None:
@@ -271,7 +291,7 @@ def controller_preflight(project: str, context: str) -> tuple[str, str]:
     try:
         verify_live_controller_candidate(existing)
     except ControllerIdentityUnavailableError as exc:
-        return "unknown", str(exc)
+        return "blocked", f"recorded controller owner cannot be verified: {exc}"
     except ClusterOwnerIdentityMismatchError as exc:
         return "blocked", str(exc)
     if not _same_immutable_owner(existing, candidate):
@@ -327,14 +347,25 @@ def _configured_owner(payload: dict[str, Any]) -> ControllerOwner | None:
     return next(iter(legacy), None)
 
 
-def controller_owner(project: str = "") -> ControllerOwner | None:
+def controller_owner(project: str = "", *, strict: bool = False) -> ControllerOwner | None:
     import yaml
 
     try:
         payload = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
+    except FileNotFoundError:
+        payload = {}
+    except (OSError, yaml.YAMLError) as exc:
+        if strict:
+            raise ControllerIdentityUnavailableError(
+                f"NPA configuration {CONFIG_PATH} could not be read: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
         return None
     if not isinstance(payload, dict):
+        if strict:
+            raise ClusterOwnerIdentityMismatchError(
+                "NPA configuration root is not a mapping; controller ownership is ambiguous."
+            )
         return None
     owner = _configured_owner(payload)
     if owner is None or not project:

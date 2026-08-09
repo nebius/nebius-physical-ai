@@ -53,6 +53,10 @@ from npa.cli.agent_preflight import (
 from npa.cli.agent_network import (
     _agent_ssh_egress_result,
 )
+from npa.cli.agent_payloads import (
+    agent_credentials_payload as _agent_credentials_payload,
+    tool_catalog_payload as _tool_catalog_payload,
+)
 from npa.cli.agent_setup_convergence import (
     converge_remote_agent_setup,
     reconcile_agent_setup as _reconcile_agent_setup,
@@ -87,7 +91,6 @@ from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
 from npa.deploy.provisioner import ProvisionerError
-from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.provisioning_journal import (
     ProvisioningOperation,
     current_operation,
@@ -698,21 +701,6 @@ def _load_auth_secret(path: str) -> tuple[str, str]:
     return user, password
 
 
-def _tool_catalog_keys() -> list[str]:
-    return sorted(TOOL_CATALOG.keys())
-
-
-def _tool_catalog_payload() -> dict[str, dict[str, Any]]:
-    payload: dict[str, dict[str, Any]] = {}
-    for key in _tool_catalog_keys():
-        entry = TOOL_CATALOG[key]
-        payload[key] = {
-            "description": entry.description,
-            "argv_template": list(entry.argv_template),
-        }
-    return payload
-
-
 def _resolve_deploy_llm_credentials() -> tuple[str, str]:
     """Return Token Factory API key and default model for agent VM bootstrap."""
     from npa.clients.credentials import load_credentials
@@ -745,18 +733,6 @@ def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str
     if DEFAULT_LLM_MODEL not in normalized:
         normalized.insert(0, DEFAULT_LLM_MODEL)
     return normalized
-
-
-def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
-    """Normalize Nebius bootstrap output for persistence on the agent record."""
-    return {
-        "service_account_id": str(creds.get("service_account_id", "")).strip(),
-        "s3_bucket": str(creds.get("s3_bucket", "")).strip(),
-        "s3_prefix": str(creds.get("s3_prefix", "")).strip().strip("/"),
-        "s3_endpoint": str(creds.get("s3_endpoint", "")).strip(),
-        "access_key": str(creds.get("nebius_api_key", "")).strip(),
-        "secret_key": str(creds.get("nebius_secret_key", "")).strip(),
-    }
 
 
 def _storage_credentials_allow_writes(
@@ -8596,7 +8572,6 @@ def _transactional_agent_command(command: str):
             )
             with operation_context(operation):
                 try:
-                    operation.transition("mutating")
                     result = function(*args, **kwargs)
                 except BaseException as exc:
                     tf_dir = provisioner.working_dir_path(project, name)
@@ -8609,7 +8584,16 @@ def _transactional_agent_command(command: str):
                                 candidate, name=candidate.stem
                             )
                     phase = str(operation.read().get("phase") or "")
-                    if phase not in {
+                    if phase == "prepared":
+                        operation.transition(
+                            "rolled-back",
+                            error=str(exc),
+                            details={
+                                "error_type": type(exc).__name__,
+                                "mutation_started": False,
+                            },
+                        )
+                    elif phase not in {
                         "recovery-required",
                         "rollback-incomplete",
                         "rolled-back",
@@ -8810,6 +8794,10 @@ def deploy_cmd(
         if warn_result.status == "WARN":
             typer.echo(f"  Warning: {warn_result.summary}", err=True)
             typer.echo(f"           {warn_result.remedy}", err=True)
+
+    # Mark mutation only immediately before the first provider/storage action.
+    if operation is not None:
+        operation.transition("mutating")
 
     from npa.clients.nebius import (
         NebiusError,

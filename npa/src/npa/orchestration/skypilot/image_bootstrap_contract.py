@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import subprocess
 import tempfile
 from typing import Any
@@ -58,25 +59,82 @@ class ImageContractEvidence:
         return asdict(self)
 
 
-def immutable_image_reference(image: str, digest: str) -> str:
-    base = str(image).removeprefix("docker:").split("@", 1)[0]
-    if "/" not in base:
+@dataclass(frozen=True)
+class OCIReference:
+    registry: str
+    repository: str
+    tag: str = ""
+    digest: str = ""
+
+    @property
+    def name(self) -> str:
+        return f"{self.registry}/{self.repository}"
+
+
+def parse_oci_reference(image: str) -> OCIReference:
+    """Parse one registry-qualified OCI reference without confusing ports and tags."""
+
+    raw = str(image or "").strip()
+    if raw.startswith("docker:"):
+        raw = raw[len("docker:") :]
+    if not raw or any(character.isspace() for character in raw) or "://" in raw:
+        raise ImageBootstrapContractError("image is not a valid OCI reference")
+    if raw.count("@") > 1:
+        raise ImageBootstrapContractError("image has multiple digest separators")
+    named, separator, digest = raw.partition("@")
+    if separator and not digest:
+        raise ImageBootstrapContractError("image digest is empty")
+    if digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise ImageBootstrapContractError("image digest is not a valid sha256 digest")
+    if "/" not in named:
         raise ImageBootstrapContractError("image must have a registry-qualified repository")
-    tail = base.rsplit("/", 1)[-1]
-    if ":" in tail:
-        base = base.rsplit(":", 1)[0]
+    registry, path = named.split("/", 1)
+    if not registry or not path or path.startswith("/") or path.endswith("/"):
+        raise ImageBootstrapContractError("image has an invalid registry or repository")
+    if registry.startswith("["):
+        close = registry.find("]")
+        if close < 2 or registry[close + 1 :] not in {""} and not re.fullmatch(
+            r":[0-9]+", registry[close + 1 :]
+        ):
+            raise ImageBootstrapContractError("image has an invalid IPv6 registry authority")
+    elif registry.count(":") > 1 or (
+        ":" in registry and not registry.rsplit(":", 1)[1].isdigit()
+    ):
+        raise ImageBootstrapContractError("image has an invalid registry authority")
+    final = path.rsplit("/", 1)[-1]
+    tag = ""
+    if ":" in final:
+        final_name, tag = final.rsplit(":", 1)
+        if not final_name or not tag:
+            raise ImageBootstrapContractError("image has an invalid tag")
+        path = f"{path.rsplit('/', 1)[0]}/{final_name}" if "/" in path else final_name
+    if not all(part and part not in {".", ".."} for part in path.split("/")):
+        raise ImageBootstrapContractError("image has an invalid repository path")
+    return OCIReference(registry=registry, repository=path, tag=tag, digest=digest)
+
+
+def immutable_image_reference(image: str, digest: str) -> str:
+    parsed = parse_oci_reference(image)
     normalized = str(digest or "").strip()
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", normalized):
         raise ImageBootstrapContractError(
             "registry did not return an immutable sha256 image digest"
         )
-    return f"{base}@{normalized}"
+    if parsed.digest and parsed.digest != normalized:
+        raise ImageBootstrapContractError(
+            "image reference digest conflicts with the registry-resolved digest"
+        )
+    return f"{parsed.name}@{normalized}"
 
 
 def is_first_party_image(image: str) -> bool:
-    repository = str(image).removeprefix("docker:").split("@", 1)[0]
-    repository = repository.rsplit(":", 1)[0]
-    return repository.rsplit("/", 1)[-1].startswith(FIRST_PARTY_REPOSITORY_PREFIX)
+    try:
+        parsed = parse_oci_reference(image)
+    except ImageBootstrapContractError:
+        return False
+    return parsed.repository.rsplit("/", 1)[-1].startswith(
+        FIRST_PARTY_REPOSITORY_PREFIX
+    )
 
 
 def verify_attestation(
@@ -109,9 +167,16 @@ def verify_attestation(
     )
 
 
-def probe_name(digest: str) -> str:
-    suffix = hashlib.sha256(f"{digest}\0{CONTRACT_VERSION}".encode()).hexdigest()[:16]
-    return f"npa-sky-image-probe-{suffix}"
+def probe_name(digest: str, nonce: str = "") -> str:
+    """Return a per-invocation name while retaining digest correlation."""
+
+    correlation = hashlib.sha256(
+        f"{digest}\0{CONTRACT_VERSION}".encode()
+    ).hexdigest()[:10]
+    unique = str(nonce or secrets.token_hex(8)).lower()
+    if not re.fullmatch(r"[0-9a-f]{8,32}", unique):
+        raise ImageBootstrapContractError("probe nonce must be 8-32 hexadecimal characters")
+    return f"npa-sky-image-probe-{correlation}-{unique}"[:63].rstrip("-")
 
 
 Runner = Callable[[list[str], Mapping[str, str]], subprocess.CompletedProcess[str]]
@@ -135,13 +200,13 @@ def probe_image_capabilities(
     context: str,
     kubeconfig: str = "",
     runner: Runner = _run,
+    nonce_factory: Callable[[], str] = lambda: secrets.token_hex(8),
 ) -> ImageContractEvidence:
     """Run and exactly clean one bounded capability pod for an unattested image."""
 
     immutable = immutable_image_reference(image, digest)
     if not str(context or "").strip():
         raise ImageBootstrapContractError("an exact Kubernetes context is required")
-    name = probe_name(digest)
     env = dict(os.environ)
     if kubeconfig:
         env["KUBECONFIG"] = kubeconfig
@@ -154,24 +219,81 @@ def probe_image_capabilities(
         "test \"$(/bin/sh -c 'printf %s forwarded' sentinel)\" = forwarded"
     )
     common = ["kubectl", "--context", context]
-    create = runner(
-        [
-            *common,
-            "run",
-            name,
-            "--restart=Never",
-            f"--image={immutable}",
-            "--labels=npa.nebius.com/owned=true,npa.nebius.com/purpose=sky-image-probe",
-            "--",
-            "/bin/sh",
-            "-c",
-            script,
-        ],
-        env,
+    name = ""
+    probe_id = ""
+    create: subprocess.CompletedProcess[str] | None = None
+    for _attempt in range(3):
+        probe_id = str(nonce_factory()).lower()
+        name = probe_name(digest, probe_id)
+        labels = (
+            "npa.nebius.com/owned=true,"
+            "npa.nebius.com/purpose=sky-image-probe,"
+            f"npa.nebius.com/probe-id={probe_id}"
+        )
+        try:
+            create = runner(
+                [
+                    *common,
+                    "run",
+                    name,
+                    "--restart=Never",
+                    f"--image={immutable}",
+                    f"--labels={labels}",
+                    "--",
+                    "/bin/sh",
+                    "-c",
+                    script,
+                ],
+                env,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return _probe_evidence(
+                immutable,
+                digest,
+                state="indeterminate",
+                cleanup="not_applicable",
+                detail=f"probe creation failed: {type(exc).__name__}: {exc}",
+            )
+        if create.returncode == 0:
+            break
+        detail = (create.stderr or create.stdout).strip()
+        if "alreadyexists" not in detail.replace(" ", "").lower():
+            return _probe_evidence(
+                immutable,
+                digest,
+                state="indeterminate",
+                cleanup="not_applicable",
+                detail=detail[:500],
+            )
+    if create is None or create.returncode != 0:
+        return _probe_evidence(
+            immutable,
+            digest,
+            state="indeterminate",
+            cleanup="not_applicable",
+            detail="probe name collisions exhausted the bounded retry",
+        )
+
+    identity, identity_error = _read_owned_probe_identity(
+        common=common,
+        name=name,
+        probe_id=probe_id,
+        immutable=immutable,
+        runner=runner,
+        env=env,
     )
-    primary = "" if create.returncode == 0 else (create.stderr or create.stdout).strip()
-    wait = None
-    if create.returncode == 0:
+    if identity is None:
+        return _probe_evidence(
+            immutable,
+            digest,
+            state="indeterminate",
+            cleanup="refused_identity_mismatch",
+            detail=identity_error,
+        )
+
+    primary = ""
+    interrupted: BaseException | None = None
+    try:
         wait = runner(
             [
                 *common,
@@ -184,12 +306,50 @@ def probe_image_capabilities(
         )
         if wait.returncode != 0:
             primary = (wait.stderr or wait.stdout).strip()
-    delete = runner(
-        [*common, "delete", "pod", name, "--ignore-not-found=true", "--wait=true"],
-        env,
+    except BaseException as exc:  # cleanup must run even on operator interruption
+        interrupted = exc
+        primary = f"probe wait interrupted: {type(exc).__name__}"
+
+    current, current_error = _read_owned_probe_identity(
+        common=common,
+        name=name,
+        probe_id=probe_id,
+        immutable=immutable,
+        runner=runner,
+        env=env,
+        expected_uid=identity,
     )
-    cleanup = "verified" if delete.returncode == 0 else "failed"
-    if delete.returncode != 0:
+    if current is None:
+        cleanup = "refused_identity_mismatch"
+        cleanup_detail = current_error
+    else:
+        try:
+            delete = runner(
+                [
+                    *common,
+                    "delete",
+                    "pod",
+                    name,
+                    "--ignore-not-found=true",
+                    "--wait=true",
+                ],
+                env,
+            )
+            cleanup = "verified" if delete.returncode == 0 else "failed"
+            cleanup_detail = (delete.stderr or delete.stdout).strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            cleanup = "failed"
+            cleanup_detail = f"{type(exc).__name__}: {exc}"
+    if interrupted is not None:
+        if cleanup != "verified":
+            note = f"probe cleanup={cleanup}: {cleanup_detail[:300]}"
+            add_note = getattr(interrupted, "add_note", None)
+            if callable(add_note):
+                add_note(note)
+            else:  # Python 3.10 compatibility; preserve the primary exception.
+                setattr(interrupted, "__npa_cleanup_note__", note)
+        raise interrupted
+    if cleanup != "verified":
         return ImageContractEvidence(
             image=immutable,
             digest=digest,
@@ -197,14 +357,14 @@ def probe_image_capabilities(
             state="indeterminate",
             source="ephemeral_capability_probe",
             cleanup=cleanup,
-            detail="exact probe cleanup could not be verified",
+            detail=f"exact probe cleanup could not be verified: {cleanup_detail[:400]}",
         )
     if primary:
         return ImageContractEvidence(
             image=immutable,
             digest=digest,
             contract_version=CONTRACT_VERSION,
-            state="incompatible" if create.returncode == 0 else "indeterminate",
+            state="incompatible",
             source="ephemeral_capability_probe",
             cleanup=cleanup,
             detail=primary[:500],
@@ -226,6 +386,65 @@ def probe_image_capabilities(
         ),
         cleanup=cleanup,
     )
+
+
+def _probe_evidence(
+    immutable: str,
+    digest: str,
+    *,
+    state: str,
+    cleanup: str,
+    detail: str,
+) -> ImageContractEvidence:
+    return ImageContractEvidence(
+        image=immutable,
+        digest=digest,
+        contract_version=CONTRACT_VERSION,
+        state=state,
+        source="ephemeral_capability_probe",
+        cleanup=cleanup,
+        detail=str(detail or "")[:500],
+    )
+
+
+def _read_owned_probe_identity(
+    *,
+    common: list[str],
+    name: str,
+    probe_id: str,
+    immutable: str,
+    runner: Runner,
+    env: Mapping[str, str],
+    expected_uid: str = "",
+) -> tuple[str | None, str]:
+    """Read and verify the immutable identity of exactly this caller's pod."""
+
+    try:
+        result = runner([*common, "get", "pod", name, "-o", "json"], env)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"probe identity read failed: {type(exc).__name__}: {exc}"
+    if result.returncode != 0:
+        return None, "probe identity could not be read after creation"
+    try:
+        payload = json.loads(result.stdout)
+        metadata = payload["metadata"]
+        labels = metadata["labels"]
+        uid = str(metadata["uid"])
+        containers = payload["spec"]["containers"]
+        actual_image = str(containers[0]["image"])
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        return None, f"probe identity response is invalid: {type(exc).__name__}"
+    if (
+        str(metadata.get("name") or "") != name
+        or str(labels.get("npa.nebius.com/owned") or "") != "true"
+        or str(labels.get("npa.nebius.com/purpose") or "") != "sky-image-probe"
+        or str(labels.get("npa.nebius.com/probe-id") or "") != probe_id
+        or not uid
+        or actual_image != immutable
+        or (expected_uid and uid != expected_uid)
+    ):
+        return None, "probe ownership or immutable pod identity did not match this caller"
+    return uid, ""
 
 
 def cache_key(digest: str) -> str:

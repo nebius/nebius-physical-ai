@@ -608,17 +608,24 @@ def _destroy_agent_terraform(
 
         credentials = load_credentials(environ={})
         journal_bucket = str(backend.get("bucket", "") or "")
-        if (
-            journal_bucket
+        configured_bucket = credentials.s3_bucket.removeprefix("s3://").strip("/")
+        project_credentials_match = (
+            bool(journal_project_id)
             and credentials.s3_project_id == journal_project_id
-            and credentials.s3_bucket.removeprefix("s3://").strip("/")
-            == journal_bucket.removeprefix("s3://").strip("/")
+            and bool(configured_bucket)
+        )
+        if project_credentials_match and (
+            not journal_bucket
+            or configured_bucket == journal_bucket.removeprefix("s3://").strip("/")
         ):
             backend.update(
                 {
+                    "bucket": journal_bucket or configured_bucket,
                     "access_key": credentials.s3_access_key_id,
                     "secret_key": credentials.s3_secret_access_key,
                     "endpoint": backend.get("endpoint") or credentials.s3_endpoint,
+                    "region": backend.get("region")
+                    or str(operation_payload.get("region") or ""),
                 }
             )
     recovery_record = dict(record or {})

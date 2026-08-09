@@ -48,6 +48,54 @@ from npa.provisioning_journal import (
 
 logger = logging.getLogger(__name__)
 
+
+def _restore_recorded_destroy_phases(value: object):  # noqa: ANN201
+    """Rehydrate the immutable first-attempt target set for a destroy retry."""
+
+    from npa.project_destroy import DestroyPhase
+
+    if not isinstance(value, dict):
+        return None
+    topology = value.get("topology")
+    phase_values = topology.get("phases") if isinstance(topology, dict) else None
+    if not isinstance(phase_values, list):
+        raise RuntimeError("destroy operation has an invalid recorded phase topology")
+    phases = []
+    for item in phase_values:
+        if not isinstance(item, dict) or not isinstance(item.get("commands"), list):
+            raise RuntimeError("destroy operation has an invalid recorded phase")
+        commands = item["commands"]
+        if any(
+            not isinstance(command, list)
+            or not command
+            or any(not isinstance(argument, str) for argument in command)
+            for command in commands
+        ):
+            raise RuntimeError("destroy operation has invalid recorded command argv")
+        requires = item.get("requires", [])
+        metadata = item.get("metadata", {})
+        if not isinstance(requires, list) or not all(
+            isinstance(requirement, str) for requirement in requires
+        ):
+            raise RuntimeError("destroy operation has invalid phase dependencies")
+        if not isinstance(metadata, dict):
+            raise RuntimeError("destroy operation has invalid phase metadata")
+        phases.append(
+            DestroyPhase(
+                name=str(item.get("phase") or ""),
+                commands=tuple(tuple(command) for command in commands),
+                detail=str(item.get("detail") or ""),
+                requires=tuple(requires),
+                metadata=dict(metadata),
+            )
+        )
+    if not phases or any(not phase.name for phase in phases):
+        raise RuntimeError(
+            "destroy operation has an incomplete recorded phase topology"
+        )
+    return phases
+
+
 app = typer.Typer(
     name="npa",
     help=(
@@ -247,6 +295,15 @@ def destroy_project_cmd(
             ]
         ),
     )
+    recorded_phases = _restore_recorded_destroy_phases(
+        operation.read().get("preflight_plan")
+    )
+    if recorded_phases is not None:
+        # A partial retry must replay the original exact target set. Rebuilding
+        # from converged local state makes completed commands disappear and was
+        # incorrectly rejected as a topology change; admitting newly appeared
+        # targets would be a more dangerous widening of authorization.
+        phases = recorded_phases
     operation.record_preflight_plan(
         {
             "project_alias": project,

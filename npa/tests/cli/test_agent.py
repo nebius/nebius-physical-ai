@@ -523,7 +523,9 @@ def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(
     assert resolved["nebius_api_key"] == "ak-shared"
 
 
-def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(monkeypatch) -> None:
+def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(
+    monkeypatch,
+) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr(
@@ -544,7 +546,9 @@ def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(mon
             s3_secret_access_key="sk-shared",
         ),
     )
-    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        "npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True
+    )
     bootstrap = {
         "service_account_id": "sa-agent",
         "s3_bucket": "bootstrap-bucket",
@@ -2372,12 +2376,18 @@ def test_bootstrap_recordings_api_in_system_prompt() -> None:
 def test_agent_dry_run_counts_only_its_exact_healthy_project_record() -> None:
     source = _agent_source()
 
-    assert 'runtime_agent_name = str(os.environ.get("NPA_AGENT_NAME") or "agent")' in source
+    assert (
+        'runtime_agent_name = str(os.environ.get("NPA_AGENT_NAME") or "agent")'
+        in source
+    )
     assert "record = agents.get(runtime_agent_name)" in source
     assert "project_id != runtime_project_id" in source
-    assert "any(" not in source.split(
-        "def _configured_healthy_agent_exists", 1
-    )[1].split("def _agent_command_env", 1)[0]
+    assert (
+        "any("
+        not in source.split("def _configured_healthy_agent_exists", 1)[1].split(
+            "def _agent_command_env", 1
+        )[0]
+    )
 
 
 def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
@@ -3531,6 +3541,8 @@ def test_agent_whole_path_blocker_precedes_storage_and_terraform(
     storage.assert_not_called()
     bootstrap.assert_not_called()
     terraform.assert_not_called()
+    [journal] = (tmp_path / "operations").glob("*/journal.json")
+    assert json.loads(journal.read_text(encoding="utf-8"))["phase"] == "rolled-back"
 
 
 def test_agent_check_public_ip_quota_fails_when_exhausted(monkeypatch) -> None:
@@ -3981,6 +3993,98 @@ def test_destroy_terraform_no_state_refuses_unguarded_name_reclaim(monkeypatch) 
         agent_module._destroy_agent_terraform("p", "n", record=None)
 
     assert calls == ["ingress"]
+
+
+def test_destroy_recovers_empty_journal_backend_from_exact_project_credentials(
+    monkeypatch, tmp_path
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli import agent as agent_module
+    from npa.provisioning_journal import ProvisioningOperation
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="prod",
+        project_id="project-x",
+        tenant_id="tenant-x",
+        region="us-central1",
+        resource_type="agent",
+        requested_name="agent",
+        ownership_source="test",
+        resume_command="npa agent deploy --project prod --name agent",
+    )
+    operation.transition("recovery-required")
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda **_kwargs: SimpleNamespace(
+            s3_project_id="project-x",
+            s3_bucket="s3://project-state",
+            s3_access_key_id="access",
+            s3_secret_access_key="secret",
+            s3_endpoint="https://storage.us-central1.nebius.cloud",
+        ),
+    )
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_destroy_tf_vars",
+        lambda _p, _n, _r, *, backend_override: {
+            "nebius_region": "us-central1",
+            "instance_name": "agent-prod-agent",
+            "nebius_project_id": "project-x",
+            "s3_session_token": "",
+        },
+    )
+    monkeypatch.setattr(agent_module, "_cleanup_agent_ingress", lambda *_a: None)
+    monkeypatch.setattr(
+        agent_module,
+        "_cleanup_orphan_agent_instances",
+        lambda *_a, **kwargs: observed.setdefault(
+            "operation_id", kwargs["operation_id"]
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "resolve_terraform_state",
+        lambda _p: SimpleNamespace(
+            bucket="", access_key="", secret_key="", endpoint=""
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module, "_agent_terraform_state_exists", lambda _p, _n: False
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "prepare_working_dir",
+        lambda *_a, **kwargs: (
+            observed.setdefault("bucket", kwargs["bucket"]) and tmp_path
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "init",
+        lambda **kwargs: observed.setdefault("backend", kwargs["backend_config"]),
+    )
+    monkeypatch.setattr(agent_module.provisioner, "state_list", lambda _path: [])
+    monkeypatch.setattr(
+        agent_module.provisioner,
+        "destroy",
+        lambda **_kwargs: observed.setdefault("destroyed", True),
+    )
+
+    agent_module._destroy_agent_terraform(
+        "prod",
+        "agent",
+        operation_id=operation.operation_id,
+        project_id="project-x",
+    )
+
+    assert observed["bucket"] == "project-state"
+    assert observed["operation_id"] == operation.operation_id
+    assert observed["destroyed"] is True
+    assert operation.read()["phase"] == "destroyed"
 
 
 def _stub_owned_agent_destroy(monkeypatch, tmp_path):

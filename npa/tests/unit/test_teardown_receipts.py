@@ -285,3 +285,52 @@ def test_retry_cluster_ids_coexist_for_one_context_and_resolve_exactly(
         resource="gpu-context",
     )
     assert selected.get("cluster_id") == "cluster-retry"
+
+
+def test_controller_observation_does_not_poison_recreated_cluster_identity(
+    monkeypatch, tmp_path: Path
+) -> None:  # noqa: ANN001
+    _root(monkeypatch, tmp_path)
+    first = receipts.record_teardown_event(
+        phase="controller",
+        resource="gpu-context",
+        terminal_state="verified_absent",
+        project_id="project-1",
+        identity={
+            "project_id": "project-1",
+            "context": "gpu-context",
+            "cluster_id": "cluster-first",
+            "operation_id": "cluster-operation-first",
+            "cluster_absent": True,
+        },
+    )
+    legacy = json.loads(first.read_text(encoding="utf-8"))
+    legacy["identity"]["cluster_absent"] = True
+    legacy["identity"]["operation_id"] = legacy["identity"]["clusters"][0].pop(
+        "operation_id"
+    )
+    receipts._write_atomic(first, legacy)
+    second = receipts.record_teardown_event(
+        phase="controller",
+        resource="gpu-context",
+        terminal_state="in_progress",
+        project_id="project-1",
+        identity={
+            "project_id": "project-1",
+            "context": "gpu-context",
+            "cluster_id": "cluster-retry",
+            "operation_id": "cluster-operation-retry",
+            "cluster_absent": False,
+        },
+    )
+
+    assert first == second
+    payload = receipts.load_teardown_receipt(second.stem)
+    assert "cluster_absent" not in payload["identity"]
+    assert {
+        (item["cluster_id"], item["operation_id"])
+        for item in payload["identity"]["clusters"]
+    } == {
+        ("cluster-first", "cluster-operation-first"),
+        ("cluster-retry", "cluster-operation-retry"),
+    }

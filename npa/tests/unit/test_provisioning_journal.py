@@ -198,6 +198,42 @@ def test_paid_resource_without_cluster_id_is_attempted_incomplete_not_false_abse
     assert operation.read()["phase"] == "rollback-incomplete"
 
 
+def test_owned_cluster_rollback_passes_exact_operation_id(
+    journal_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.cli.cluster import terraform_lifecycle
+    from npa.provisioning import _rollback_owned_cluster
+
+    operation = _prepare(resource_type="cluster", requested_name="gpu")
+    operation.transition("mutating")
+    operation.record_resource(
+        resource_type="managed_kubernetes_cluster",
+        requested_name="gpu",
+        provider_id="cluster-exact",
+        project_id="project-a",
+        ownership="created_by_this_operation",
+        ownership_source="terraform-output",
+    )
+    observed: dict[str, object] = {}
+
+    def fake_down_cmd(**kwargs: object) -> None:
+        observed.update(kwargs)
+
+    monkeypatch.setattr(terraform_lifecycle, "down_cmd", fake_down_cmd)
+
+    assert _rollback_owned_cluster(
+        operation,
+        project_alias="prod",
+        context="gpu",
+        terraform_dir=None,
+        kubeconfig=None,
+        timeout=120,
+    )
+    assert observed["operation_id"] == operation.operation_id
+    assert observed["cluster_id"] == "cluster-exact"
+    assert operation.read()["phase"] == "rolled-back"
+
+
 def test_long_requested_name_produces_a_valid_retry_path(journal_root: Path) -> None:
     requested_name = "project-scoped-bucket-with-a-long-provider-name"
     first = _prepare(requested_name=requested_name)

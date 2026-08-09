@@ -31,7 +31,9 @@ This rule is specifically about the **full** `gpu and e2e` sky-cluster suite
 (`scripts/live-e2e.sh`), which launches many clusters and can leak spend. It
 stays manual-only: the daily dev-VM workflow (`docs/testing/dev-vm-daily.md`)
 never triggers the `live-gpu` tier on a schedule (guarded in both the workflow
-and the runner).
+and the runner). The exact-selector `mutation-live` lifecycle/controller tier is
+also manual-only and rejected from scheduled events; it is not part of ordinary
+default or scheduled coverage.
 
 The daily workflow does support **bounded** real GPU coverage, which the
 operator authorized: when `NPA_DAILY_ENABLE_GPU=1`, its `e2e-daily` tier (or the

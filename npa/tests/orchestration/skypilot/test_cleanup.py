@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from fnmatch import fnmatchcase
 import inspect
+import json
 import subprocess
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -348,6 +350,66 @@ def test_cleanup_all_for_run_does_not_touch_controller_by_default(
     assert controller_calls == []
 
 
+def test_stale_explicit_cluster_identity_refuses_before_any_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.teardown_receipts import record_teardown_event
+
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    receipt = record_teardown_event(
+        phase="controller",
+        resource="ctx-owned",
+        terminal_state="in_progress",
+        project_alias="demo",
+        project_id="project-owned",
+        context="ctx-owned",
+        identity={
+            "project_alias": "demo",
+            "project_id": "project-owned",
+            "context": "ctx-owned",
+            "cluster_id": "cluster-owned",
+            "cluster_name": "cluster-owned",
+        },
+    ).stem
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_environment",
+        lambda _project: SimpleNamespace(
+            project_id="project-owned", tenant_id="tenant-owned", region="region-owned"
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cluster.state.load_cluster_state",
+        lambda _context: SimpleNamespace(
+            cluster_id="cluster-owned",
+            name="cluster-owned",
+            kubeconfig_path="/owned/kubeconfig",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cluster.identity.resolve_verified_cluster_identity",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("provider verification must not run after identity conflict")
+        ),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("no SkyPilot or Kubernetes mutation may run")
+        ),
+    )
+
+    result = cleanup_module.cleanup_jobs_controller(
+        project="demo",
+        context="ctx-owned",
+        receipt=receipt,
+        cluster_id="cluster-stale",
+    )
+    assert result.outcome == "unsafe"
+    assert result.commands == []
+    assert any("cleanup identity conflict for cluster_id" in error for error in result.errors)
+
+
 def test_cleanup_all_for_run_with_no_matching_jobs_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -572,6 +634,32 @@ def test_exact_context_controller_pod_inventory_can_prove_absence(
     ]
     assert pods == []
     assert error == ""
+
+
+def test_matching_jobs_refuses_substring_collision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    run_id = "owned-run-123456"
+    rows = [
+        {"job_id": "1", "job_name": run_id, "status": "RUNNING"},
+        {"job_id": "2", "job_name": run_id + "-wave-1", "status": "RUNNING"},
+        {"job_id": "3", "job_name": "prefix-" + run_id, "status": "RUNNING"},
+        {"job_id": "4", "job_name": run_id + "collision", "status": "RUNNING"},
+    ]
+    monkeypatch.setattr(
+        cleanup_module,
+        "_all_jobs",
+        lambda **_kwargs: cleanup_module.JobQueueSnapshot(
+            state="verified_jobs", jobs=tuple(rows)
+        ),
+    )
+
+    matched = cleanup_module._matching_jobs(
+        run_id, isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
+    )
+
+    assert [row["job_id"] for row in matched] == ["1", "2"]
 
 
 def test_controller_pod_inventory_never_directly_deletes_a_lingering_pod(
@@ -898,6 +986,26 @@ def test_pinned_sky_empty_queue_diagnostic_is_verified_absence(
     assert snapshot.jobs == ()
 
 
+def test_duplicate_empty_marker_on_both_streams_is_deduplicated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout="No in-progress managed jobs.\n",
+            stderr="No in-progress managed jobs.\n",
+        ),
+    )
+    snapshot = cleanup_module._all_jobs(
+        isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
+    )
+    assert snapshot.state == "verified_empty"
+
+
 def test_pinned_sky_empty_queue_accepts_known_headers_warnings_and_ansi(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -980,13 +1088,135 @@ def test_pinned_sky_empty_queue_rejects_unknown_job_like_header(
         )
 
 
+def test_structured_empty_is_authoritative_with_noncontradictory_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='Checking managed jobs...\n{"jobs": []}\n',
+            stderr="Warning: optional presentation metadata was unavailable.\n",
+        ),
+    )
+    snapshot = cleanup_module._all_jobs(
+        isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
+    )
+    assert snapshot.state == "verified_empty"
+
+
+def test_structured_nonterminal_row_remains_authoritative_with_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    row = {"job_id": 17, "job_name": "owned-run", "status": "RUNNING"}
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps([row]),
+            stderr="Warning: optional presentation metadata was unavailable.\n",
+        ),
+    )
+    snapshot = cleanup_module._all_jobs(
+        isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
+    )
+    assert snapshot.state == "verified_jobs"
+    assert snapshot.jobs == (row,)
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "Warning: permission denied while refreshing controller state.",
+        "controller state unavailable",
+        "JOB_ID 19 RUNNING",
+    ],
+)
+def test_structured_empty_rejects_contradictory_or_unknown_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, diagnostic: str
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout="[]\n", stderr=diagnostic + "\n"
+        ),
+    )
+    with pytest.raises(cleanup_module.JobQueueUnreadableError):
+        cleanup_module._all_jobs(
+            isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
+        )
+
+
+def test_pinned_queue_contract_shapes_are_version_bound(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.skypilot._bin import REQUIRED_SKYPILOT_VERSION
+
+    fixture = (
+        Path(__file__).resolve().parents[2]
+        / "fixtures"
+        / "skypilot"
+        / "queue-0.12.2.json"
+    )
+    golden = json.loads(fixture.read_text(encoding="utf-8"))
+    assert golden["skypilot_version"] == REQUIRED_SKYPILOT_VERSION
+    assert golden["captured_from"] in {
+        "pinned-live-sanitized",
+        "sanitized-contract-fixture-pending-isolated-live-refresh",
+    }
+    sky_bin = _fake_sky(tmp_path)
+
+    for name, expected_state in (
+        ("empty", "verified_empty"),
+        ("nonterminal", "verified_jobs"),
+    ):
+        case = golden["cases"][name]
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda cmd, _case=case, **kwargs: subprocess.CompletedProcess(
+                cmd,
+                _case["returncode"],
+                stdout=_case["stdout"],
+                stderr=_case["stderr"],
+            ),
+        )
+        snapshot = cleanup_module._all_jobs(
+            isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
+        )
+        assert snapshot.state == expected_state
+
+    denied = golden["cases"]["auth_failed"]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            denied["returncode"],
+            stdout=denied["stdout"],
+            stderr=denied["stderr"],
+        ),
+    )
+    with pytest.raises(cleanup_module.JobQueueUnreadableError):
+        cleanup_module._all_jobs(
+            isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
+        )
+
+
 @pytest.mark.parametrize(
     ("returncode", "stdout", "stderr"),
     [
         (1, "No in-progress managed jobs.\n", "permission denied"),
         (2, "No in-progress managed jobs.\n", ""),
         (1, "warning: No in-progress managed jobs. retry failed", ""),
-        (0, "No in-progress managed jobs.\n[]", ""),
     ],
 )
 def test_empty_queue_words_do_not_mask_adversarial_diagnostics(
@@ -1042,7 +1272,7 @@ def test_verified_queue_states_are_distinct(
         subprocess,
         "run",
         lambda cmd, **kwargs: subprocess.CompletedProcess(
-            cmd, 0, stdout=stdout, stderr="harmless diagnostic"
+            cmd, 0, stdout=stdout, stderr="warning: harmless diagnostic"
         ),
     )
     assert (

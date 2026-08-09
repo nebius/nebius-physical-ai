@@ -889,6 +889,14 @@ def test_destroyed_agent_operation_needs_no_deleted_backend_credentials(
         operation_id=operation.operation_id,
         project_id="project-a",
     )
+    teardown_receipts.record_teardown_event(
+        phase="project_destroy_workflows",
+        resource="demo",
+        terminal_state="partial",
+        project_alias="demo",
+        project_id="project-a",
+        errors=["storage was already removed on a later retry"],
+    )
 
 
 def _owned_project_operation() -> ProvisioningOperation:
@@ -1079,6 +1087,91 @@ def test_delete_project_requires_yes_before_execution(
 
     assert result.exit_code == 0
     assert json.loads(result.output)["status"] == "plan_only"
+
+
+def test_destroy_retry_replays_original_exact_phase_topology() -> None:
+    from npa.cli.main import _restore_recorded_destroy_phases
+
+    restored = _restore_recorded_destroy_phases(
+        {
+            "topology": {
+                "phases": [
+                    DestroyPhase(
+                        "agents",
+                        (("npa", "agent", "destroy", "--name", "agent-a"),),
+                        "destroy exact agent",
+                    ).to_dict(),
+                    DestroyPhase(
+                        "bucket",
+                        (("npa", "storage", "bucket", "delete", "--name", "b"),),
+                        "destroy exact bucket",
+                        ("agents",),
+                    ).to_dict(),
+                ]
+            }
+        }
+    )
+
+    assert restored is not None
+    assert [phase.name for phase in restored] == ["agents", "bucket"]
+    assert restored[0].commands[0][-1] == "agent-a"
+    assert restored[1].requires == ("agents",)
+
+
+def test_destroy_bucket_fallback_requires_exact_project_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa import project_destroy
+
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda **_kwargs: SimpleNamespace(
+            s3_project_id="project-a", s3_bucket="s3://bucket-a/"
+        ),
+    )
+
+    assert project_destroy._project_bucket_name("project-a", "") == "s3://bucket-a/"
+    assert project_destroy._project_bucket_name("project-b", "") == ""
+    assert (
+        project_destroy._project_bucket_name("project-b", "state-owned")
+        == "state-owned"
+    )
+
+
+def test_destroy_retry_uses_durable_completed_phase_without_rerunning_inventory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from npa import project_destroy, teardown_receipts
+
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_environment",
+        lambda _project: SimpleNamespace(
+            project_id="project-a", tenant_id="tenant-a", region="us-central1"
+        ),
+    )
+    teardown_receipts.record_teardown_event(
+        phase="project_destroy_workflows",
+        resource="demo",
+        terminal_state="completed",
+        project_alias="demo",
+        project_id="project-a",
+    )
+
+    result = project_destroy.execute_project_destroy(
+        "demo",
+        [DestroyPhase("workflows", (("npa", "workflow-list"),), "inventory")],
+        runner=lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("completed inventory must not be rerun")
+        ),
+    )
+
+    assert result["status"] == "success"
+    assert result["phases"][0]["evidence"]["durable_prior_completion"] is True
 
 
 def test_incident_cleanup_order_continues_independent_phases_and_project_delete(
@@ -1304,6 +1397,13 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
         purge=True,
         strict=True,
         on_status=lambda _message: None,
+    )
+    teardown_receipts.record_teardown_event(
+        phase="project_destroy_network",
+        resource="demo",
+        terminal_state="completed",
+        project_alias="demo",
+        project_id="project-a",
     )
 
     observations = iter(

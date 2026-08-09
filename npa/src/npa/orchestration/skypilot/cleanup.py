@@ -27,7 +27,7 @@ from npa.orchestration.skypilot.controller import (
 )
 from npa.orchestration.skypilot.json_output import (
     is_verified_empty_queue_result,
-    queue_rows_from_output,
+    verified_structured_queue_rows,
 )
 from npa.orchestration.skypilot.workflow_state import redact_text
 
@@ -79,14 +79,6 @@ _RUN_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9-]+$")
 DEFAULT_JOB_DRAIN_TIMEOUT_SECONDS = 300
 DEFAULT_JOB_DRAIN_INTERVAL_SECONDS = 5.0
 _IN_PROGRESS_JOBS_MARKERS = ("in-progress managed jobs", "in progress managed jobs")
-_EMPTY_QUEUE_MESSAGES = frozenset(
-    {
-        "no in-progress managed jobs",
-        "no in-progress managed jobs.",
-        "no in-progress managed jobs found",
-        "no in-progress managed jobs found.",
-    }
-)
 
 
 class InvalidRunIdError(ValueError):
@@ -186,6 +178,36 @@ def cleanup_jobs_controller(
 
     if receipt:
         from npa.cleanup_identity import CleanupIdentityError, resolve_cleanup_identity
+        from npa.clients.config import resolve_environment
+
+        try:
+            configured = resolve_environment(project) if project else None
+        except (OSError, RuntimeError, ValueError) as exc:
+            cleanup.errors.append(
+                f"live controller configuration is unreadable; no mutation was attempted: {exc}"
+            )
+            cleanup.outcome = "unsafe"
+            return cleanup
+        local_cluster = None
+        if context:
+            try:
+                from npa.cluster.state import load_cluster_state
+
+                local_cluster = load_cluster_state(context)
+            except (OSError, RuntimeError, ValueError):
+                local_cluster = None
+        live_identity = {
+            "project_alias": project,
+            "project_id": str(getattr(configured, "project_id", "") or ""),
+            "tenant_id": str(getattr(configured, "tenant_id", "") or ""),
+            "region": str(getattr(configured, "region", "") or ""),
+            "context": context,
+            "cluster_id": str(getattr(local_cluster, "cluster_id", "") or ""),
+            "cluster_name": str(getattr(local_cluster, "name", "") or ""),
+            "kubeconfig_path": str(
+                getattr(local_cluster, "kubeconfig_path", "") or ""
+            ),
+        }
 
         try:
             receipt_identity = resolve_cleanup_identity(
@@ -197,6 +219,7 @@ def cleanup_jobs_controller(
                     "cluster_name": cluster_name,
                 },
                 receipt_id=receipt,
+                live=live_identity,
                 phase="controller",
                 resource=context,
             )
@@ -228,6 +251,7 @@ def cleanup_jobs_controller(
                     "cluster_name": cluster_name,
                 },
                 receipt_id=receipt,
+                live=live_identity,
                 phase="cluster",
                 resource=context,
             )
@@ -1088,7 +1112,7 @@ def _all_jobs(
             "managed-job queue command was rejected or unreachable: "
             + redact_text(detail)
         )
-    jobs = queue_rows_from_output(result.stdout)
+    jobs = verified_structured_queue_rows(result)
     if jobs is None:
         raise JobQueueUnreadableError(
             "managed-job queue returned empty, malformed, ambiguous, or "
@@ -1114,43 +1138,6 @@ def _is_verified_empty_queue_message(
     return is_verified_empty_queue_result(result)
 
 
-def _known_empty_queue_lines(value: str, *, stream: str) -> list[str] | None:
-    """Strip only pinned SkyPilot's known empty-queue presentation lines."""
-
-    import re
-
-    ansi = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-    normalized: list[str] = []
-    for raw in str(value or "").splitlines():
-        line = " ".join(ansi.sub("", raw).strip().lower().split())
-        if not line:
-            continue
-        if line in _EMPTY_QUEUE_MESSAGES:
-            normalized.append(line)
-            continue
-        if stream == "stdout" and (
-            line
-            in {
-                "managed jobs",
-                "managed jobs queue",
-                "fetching managed job statuses...",
-                "checking managed jobs",
-                "checking managed jobs...",
-                "checking managed jobs... done",
-            }
-            or re.fullmatch(r"[-=─━]{3,}", line)
-        ):
-            continue
-        if stream == "stderr" and (
-            line.startswith("warning: skypilot telemetry ")
-            or line.startswith("warning: skypilot update check ")
-            or line.startswith("warning: managed jobs output format ")
-        ):
-            continue
-        return None
-    return normalized
-
-
 def _matching_jobs(
     run_id: str,
     *,
@@ -1164,13 +1151,22 @@ def _matching_jobs(
         sky_bin=sky_bin,
     ).jobs
     patterns = {run_id, run_tag(run_id), _sanitize_name(run_id)}
+
+    def name_matches(value: object) -> bool:
+        normalized = str(value or "").strip()
+        return any(
+            pattern
+            and (normalized == pattern or normalized.startswith(pattern + "-"))
+            for pattern in patterns
+        )
+
     matched = []
     for job in jobs or []:
-        text = " ".join(
-            str(job.get(key, ""))
-            for key in ("name", "job_name", "task", "job_id", "id")
+        names_match = any(
+            name_matches(job.get(key)) for key in ("name", "job_name", "task")
         )
-        if any(pattern and pattern in text for pattern in patterns):
+        exact_id = str(job.get("job_id") or job.get("id") or "").strip()
+        if names_match or exact_id in patterns:
             matched.append(job)
     return matched
 
