@@ -7080,9 +7080,10 @@ def artifacts_for_run(
         allowed_buckets, _selected_scope = _agent_artifact_list_scope(
             access_report, resource_bucket, project_id
         )
+        search_buckets = [resource_bucket] if resource_bucket else allowed_buckets
         requested_prefix = _validated_resolved_prefix(resolved_prefix or prefix)
         matches, source_errors, discovery_complete = find_run_sources_across_buckets(
-            allowed_buckets,
+            search_buckets,
             base_prefix=settings.get("prefix", ""),
             run_id=normalized_run,
             exclude=_discovery_exclude_roots(),

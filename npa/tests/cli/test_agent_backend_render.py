@@ -544,11 +544,13 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         project_id="project-test",
         resolved_prefix="foreign",
     )
-    monkeypatch.setattr(
-        module,
-        "find_run_sources_across_buckets",
-        lambda *_args, **_kwargs: ([source], (), True),
-    )
+    source_search_buckets: list[list[str]] = []
+
+    def _find_selected_source(buckets, **_kwargs):
+        source_search_buckets.append(list(buckets))
+        return [source], (), True
+
+    monkeypatch.setattr(module, "find_run_sources_across_buckets", _find_selected_source)
     monkeypatch.setattr(
         module,
         "list_artifacts_page",
@@ -558,6 +560,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "foreign-run-1",
         resource_bucket="bucket-test",
     )
+    assert source_search_buckets == [["bucket-test"]]
     assert first_page["pagination"] == {
         "contract": "one_native_s3_page",
         "max_objects": 1000,
