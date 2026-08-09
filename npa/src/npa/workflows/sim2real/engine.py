@@ -3836,6 +3836,10 @@ def _normalize_heldout_report(
         "decomposed_metrics",
         "per_difficulty",
         "deployable_policy_eval",
+        # Canonical Isaac evaluator evidence emitted by the Stage 10 sibling.
+        # Stage 11 still owns the threshold decision; Stage 14 still owns RRD/MCAP.
+        "isaac_eval_summary",
+        "isaac_eval_summary_uri",
     ):
         if payload.get(key):
             report[key] = payload[key]
@@ -5512,6 +5516,25 @@ def _trigger_payload(config: Sim2RealLoopConfig) -> dict[str, Any]:
         "artifact_root": artifact_uris(config).get("root", ""),
         "byo_seams": byo_seams(config),
     }
+
+
+def _image_pull_policy(image: str) -> str:
+    """Choose a deterministic pull policy for a sibling component image.
+
+    Digest references are immutable and safe to cache.  The environment
+    override exists for controlled diagnostics; mutable genuine-build tags are
+    otherwise pulled afresh to avoid stale-node-cache provenance.
+    """
+
+    override = os.environ.get("NPA_SIM2REAL_IMAGE_PULL_POLICY", "").strip()
+    if override:
+        return override
+    if "@sha256:" in image:
+        return "IfNotPresent"
+    tag = image.rsplit(":", 1)[-1] if ":" in image.rsplit("/", 1)[-1] else ""
+    if "genuine" in tag:
+        return "Always"
+    return "IfNotPresent"
 
 
 def _redacted_config(config: Sim2RealLoopConfig) -> dict[str, Any]:

@@ -786,6 +786,7 @@ def build_isaac_eval_job_manifest(
     service_account: str,
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
+    image_pull_policy: str = "Always",
     seed: int = 0,
     object_usd: str = "",
     env_ids_json: str = "[]",
@@ -986,7 +987,7 @@ def build_isaac_eval_job_manifest(
                         {
                             "name": "eval",
                             "image": image,
-                            "imagePullPolicy": "Always",
+                            "imagePullPolicy": image_pull_policy,
                             # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
                             # write under the prebuilt workspace; current RTX PRO runtime
                             # requires root for that path. Keep this scoped to BYO Isaac jobs.
@@ -1046,6 +1047,8 @@ def run_isaac_eval_job(
 ) -> list[dict[str, Any]]:
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
+    from npa.workflows.sim2real.engine import _image_pull_policy
+
     bucket = (
         _env("NPA_SIM2REAL_BUCKET")
         or _env("S3_BUCKET")
@@ -1142,6 +1145,7 @@ def run_isaac_eval_job(
         namespace=namespace,
         service_account=sa,
         gpu_product=gpu_product,
+        image_pull_policy=_image_pull_policy(image),
         seed=seed,
         object_usd=object_usd,
         env_ids_json=json.dumps([e["env_id"] for e in gen]),

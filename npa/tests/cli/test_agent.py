@@ -214,6 +214,48 @@ def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(monke
     assert resolved["nebius_api_key"] == "ak-shared"
 
 
+def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(monkeypatch) -> None:
+    from npa.cli.agent import _resolve_deploy_storage_credentials
+
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="s3://project-bucket/isaac-runs/",
+            endpoint_url="https://storage.us-central1.nebius.cloud",
+            aws_access_key_id="ak-project",
+            aws_secret_access_key="sk-project",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.clients.credentials.load_credentials",
+        lambda **_kwargs: SimpleNamespace(
+            s3_bucket="s3://shared-bucket/",
+            s3_endpoint="https://storage.eu-north1.nebius.cloud",
+            s3_access_key_id="ak-shared",
+            s3_secret_access_key="sk-shared",
+        ),
+    )
+    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True)
+    bootstrap = {
+        "service_account_id": "sa-agent",
+        "s3_bucket": "bootstrap-bucket",
+        "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        "nebius_api_key": "ak-bootstrap",
+        "nebius_secret_key": "sk-bootstrap",
+    }
+
+    resolved = _resolve_deploy_storage_credentials(
+        region="us-central1",
+        bootstrap_creds=bootstrap,
+        project_alias="target-project",
+    )
+
+    assert resolved["service_account_id"] == "sa-agent"
+    assert resolved["s3_bucket"] == "project-bucket"
+    assert resolved["s3_prefix"] == "isaac-runs"
+    assert resolved["nebius_api_key"] == "ak-project"
+
+
 def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 

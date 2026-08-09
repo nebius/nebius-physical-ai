@@ -626,6 +626,7 @@ def build_isaac_rollout_job_manifest(
     gpu_product: str,
     horizon_steps: int = 300,
     gpu_resource: str = "nvidia.com/gpu",
+    image_pull_policy: str = "Always",
     object_usd: str = "",
     camera_views: str = "",
     capture: dict[str, Any] | None = None,
@@ -792,7 +793,7 @@ def build_isaac_rollout_job_manifest(
                         {
                             "name": "rollout",
                             "image": image,
-                            "imagePullPolicy": "Always",
+                            "imagePullPolicy": image_pull_policy,
                             # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
                             # write under the prebuilt workspace; current RTX PRO runtime
                             # requires root for that path. Keep this scoped to BYO Isaac jobs.
@@ -953,6 +954,8 @@ def run_isaac_rollout_job(
 ) -> list[str]:
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
+    from npa.workflows.sim2real.engine import _image_pull_policy
+
     bucket = (
         _env("NPA_SIM2REAL_BUCKET")
         or _env("S3_BUCKET")
@@ -1054,6 +1057,7 @@ def run_isaac_rollout_job(
         namespace=namespace,
         service_account=sa,
         gpu_product=gpu_product,
+        image_pull_policy=_image_pull_policy(image),
         object_usd=object_usd,
         camera_views=json.dumps(
             camera_metadata(

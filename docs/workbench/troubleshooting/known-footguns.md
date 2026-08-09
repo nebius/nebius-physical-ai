@@ -103,3 +103,21 @@ deploy health checks use SSH. Live commands honor the saved strategy and can
 self-heal legacy aliases by falling back through a transient SSH-local route.
 
 Category for follow-up: BYOVM networking.
+
+## Xet Transfer Rejects Gated Cosmos Downloads
+
+Symptom: a Hugging Face download of a gated Cosmos repo fails with `Unable to
+parse string as hex hash value`, with a valid token and an accepted license.
+
+Root cause: huggingface/xet-core#895 breaks the Xet transfer client on exactly
+`huggingface_hub==1.23.0` plus `hf-xet==1.5.1`. Newer releases fix it.
+
+The frozen `npa-cosmos3:1.2.2-cu130-r2` image bakes the compatible
+`huggingface_hub==0.36.2` / `hf-xet==1.3.2` pair and its build rejects the
+known-bad pair. In other runtimes, set `HF_HUB_DISABLE_XET=1` and retry or
+upgrade the pair. `npa workbench cosmos3 generate` warns on stderr only for the
+exact bad pair while Xet is enabled (`HF_HUB_DISABLE_XET=0` therefore still
+warns). The warning stays silent when the workaround is active. See
+`docs/workbench/cosmos3-access-preflight.md`.
+
+Category for follow-up: dependencies.

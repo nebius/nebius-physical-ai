@@ -39,3 +39,31 @@ def test_audit_workbench_image_tags_passes() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cosmos3_stale_tag_audit_distinguishes_rollback_from_runtime_refs(
+    tmp_path, monkeypatch
+) -> None:
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    script = root / "npa" / "scripts" / "audit_workbench_image_tags.py"
+    spec = importlib.util.spec_from_file_location("tag_audit", script)
+    assert spec is not None and spec.loader is not None
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+
+    monkeypatch.setattr(audit, "REPO_ROOT", tmp_path)
+    stale = tmp_path / "npa/workflows/cosmos3.yaml"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("image_id: npa-cosmos3:1.2.2-cu130\n", encoding="utf-8")
+    assert audit._scan_file(stale) == [
+        "npa/workflows/cosmos3.yaml: npa-cosmos3:1.2.2-cu130 "
+        "(use npa-cosmos3:1.2.2-cu130-r2)"
+    ]
+
+    rollback = tmp_path / "docs/workbench/cosmos3-generate.md"
+    rollback.parent.mkdir(parents=True)
+    rollback.write_text("Rollback: `npa-cosmos3:1.2.2-cu130`.\n", encoding="utf-8")
+    assert audit._scan_file(rollback) == []

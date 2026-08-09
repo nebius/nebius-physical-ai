@@ -123,8 +123,10 @@ genesis = "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 isaac-lab = "2.3.2.post1"
 cosmos = "cu128-torch27-sm100-1.0.9-20260803T002017Z"
 cosmos2-transfer = "2.5.1-skypilot-ready-20260801T053000Z"
-# cosmos-framework 1.2.2 (pinned commit) + torch cu130; weights stay out of the image.
-cosmos3 = "1.2.2-cu130"
+# Additive r2 image release for cosmos-framework 1.2.2 (pinned commit) + torch
+# cu130. The immutable 1.2.2-cu130 tag remains available for rollback; weights
+# stay out of both images.
+cosmos3 = "1.2.2-cu130-r2"
 cosmos3-reason = "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 # Cosmos Curator: NVIDIA upstream checkout + GPU-free curation stage deps.
 cosmos-curate = "0.1.2"

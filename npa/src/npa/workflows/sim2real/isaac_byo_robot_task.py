@@ -1351,7 +1351,10 @@ try:
     runner.learn(num_learning_iterations=ITERS, init_at_random_ep_len=True)
     # Defensive explicit save (learn saves at save_interval; ensure one exists).
     try:
-        final_iteration = int(getattr(runner, "current_learning_iteration", ITERS) or ITERS)
+        final_iteration = max(
+            ITERS,
+            int(getattr(runner, "current_learning_iteration", ITERS) or ITERS),
+        )
         final_path = os.path.join(OUT, "model_%d.pt" % final_iteration)
         runner.save(final_path)
         print("ROBOT_FINAL_CHECKPOINT iteration=%d path=%s" % (final_iteration, final_path), flush=True)
