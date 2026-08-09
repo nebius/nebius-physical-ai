@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import ast
-import io
 from pathlib import Path
-import tokenize
 import warnings
 
 from npa.guardrails.skypilot import (
@@ -209,9 +207,18 @@ def test_monolith_modules_do_not_grow() -> None:
         lines = len(source.splitlines())
         if rel_path == "npa/src/npa/cli/agent.py":
             generated_lines: set[int] = set()
-            for token in tokenize.generate_tokens(io.StringIO(source).readline):
-                if token.type == tokenize.STRING and token.end[0] > token.start[0]:
-                    generated_lines.update(range(token.start[0] + 1, token.end[0] + 1))
+            # Python 3.14 tokenizes f-strings into FSTRING_* pieces instead of
+            # one STRING token.  AST source spans are stable across every
+            # supported interpreter and also handle ordinary multiline strings.
+            for node in ast.walk(ast.parse(source, filename=str(path))):
+                is_string = (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                ) or isinstance(node, ast.JoinedStr)
+                if is_string and node.end_lineno and node.end_lineno > node.lineno:
+                    generated_lines.update(
+                        range(node.lineno + 1, node.end_lineno + 1)
+                    )
             lines -= len(generated_lines)
         if lines > cap:
             over.append(f"{rel_path}: {lines} lines > cap {cap}")

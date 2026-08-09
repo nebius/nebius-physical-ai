@@ -53,6 +53,10 @@ def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)
     monkeypatch.delenv("SKYPILOT_GLOBAL_CONFIG", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", raising=False)
+    # Keep these command-shape tests independent of the host runner.  GitHub's
+    # image includes kubectl while the local unit-test environment may not; the
+    # Kubernetes probe/transaction suites exercise the installed-kubectl path.
+    monkeypatch.setattr(workflow_module.shutil, "which", lambda _name: None)
 
     # Most tests in this module predate the transaction and isolate YAML/config/
     # streaming mechanics with one generic subprocess stub. Keep those unit seams
