@@ -9699,7 +9699,7 @@ def verify_live_cmd(
         workflow_status_resp = httpx.get(
             f"{agent_base}/api/workflows/sim2real/status",
             auth=(auth_user, auth_password),
-            timeout=5.0,
+            timeout=30.0,
             verify=tls_verify,
         )
         workflow_status_resp.raise_for_status()

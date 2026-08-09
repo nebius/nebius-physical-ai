@@ -1334,6 +1334,8 @@ def test_verify_live_requires_a_recorded_region(monkeypatch) -> None:
 
 
 def test_verify_live_runs_pytests(monkeypatch) -> None:
+    workflow_status_timeouts: list[float] = []
+
     class _Resp:
         def __init__(self, payload: dict[str, object] | str | bytes, *, status_code: int = 200) -> None:
             self.status_code = status_code
@@ -1446,6 +1448,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         if url_s.endswith("/api/infra/k8s"):
             return _Resp({"ok": True, "agent_npa_ready": True})
         if url_s.endswith("/api/workflows/sim2real/status"):
+            workflow_status_timeouts.append(float(_kwargs["timeout"]))
             return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
         if url_s.endswith("/welcome"):
             return _Resp("<html>NPA Agent is running</html>", status_code=200)
@@ -1600,6 +1603,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
     result = runner.invoke(app, ["verify-live"])
     assert result.exit_code == 0, result.output
     assert "verify-live: ok" in result.output
+    assert workflow_status_timeouts == [30.0]
     assert calls == [
         [
             "npa/.venv/bin/python",
