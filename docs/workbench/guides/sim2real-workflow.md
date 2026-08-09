@@ -73,14 +73,19 @@ kubectl -n default get secret npa-storage-credentials hf-ngc-tokens
 kubectl -n default get serviceaccount agent-sa -o yaml
 kubectl auth can-i patch jobs.batch \
   --as=system:serviceaccount:default:agent-sa -n default
+kubectl auth can-i list workloads.kueue.x-k8s.io \
+  --as=system:serviceaccount:default:agent-sa -n default
 ```
 
-The last command must return `yes`. The controller Role needs
+Both authorization commands must return `yes`. The controller Role needs
 `create`, `delete`, `get`, `list`, `watch`, and `patch` on `batch/jobs`.
 `patch` is load-bearing: durable reconciliation records structured heartbeats
 and adopts exact-identity sibling Jobs through the Kubernetes API. The
-Sim2Real health check fails before launch when the configured service account
-lacks this permission.
+Role also needs `list` on `kueue.x-k8s.io/workloads` so the controller can
+attest generated Workload admission, assigned flavor, and terminal state. A
+Kueue API denial retains its structured status/reason and fails closed; it is
+never reported as an absent Workload. The Sim2Real health check fails before
+launch when the configured service account lacks either permission.
 
 Isaac rendering is restricted to RT-core products: RTX PRO 6000 or L40S label
 variants. It is never routed to H100, H200, B200, or B300. When Kubernetes gives

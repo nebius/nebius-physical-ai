@@ -102,6 +102,41 @@ class _Core:
         return NS(items=[self.pod])
 
 
+class _Custom:
+    def list_namespaced_custom_object(
+        self, *_args: Any, **_kwargs: Any
+    ) -> dict[str, Any]:
+        return {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "job-workload",
+                        "ownerReferences": [{"kind": "Job", "uid": "job-uid"}],
+                    },
+                    "status": {
+                        "conditions": [
+                            {
+                                "type": "QuotaReserved",
+                                "status": "True",
+                                "reason": "QuotaReserved",
+                            },
+                            {
+                                "type": "Admitted",
+                                "status": "True",
+                                "reason": "Admitted",
+                            },
+                        ],
+                        "admission": {
+                            "podSetAssignments": [
+                                {"flavors": {"nvidia.com/gpu": "sim2real-rtx-pro-6000"}}
+                            ]
+                        },
+                    },
+                }
+            ]
+        }
+
+
 def _manifest() -> dict[str, Any]:
     return {
         "apiVersion": "batch/v1",
@@ -129,6 +164,36 @@ def test_snapshot_uses_structured_job_pod_container_and_owner_fields() -> None:
     assert snapshot.pods[0].resource_requests["nvidia.com/gpu"] == "1"
     assert snapshot.pods[0].containers[0].terminated_reason == "Completed"
     assert snapshot.pods[0].containers[0].exit_code == 0
+
+
+def test_snapshot_records_structured_kueue_admission() -> None:
+    client = KubernetesJobClient(
+        batch_api=_Batch(), core_api=_Core(), custom_api=_Custom()
+    )
+    admission = client.snapshot("job").kueue
+    assert admission.workload_name == "job-workload"
+    assert admission.quota_reserved is True
+    assert admission.admitted is True
+    assert admission.assigned_flavors == {"nvidia.com/gpu": "sim2real-rtx-pro-6000"}
+
+
+def test_kueue_authorization_error_preserves_api_status_and_reason() -> None:
+    class ApiError(Exception):
+        status = 403
+        reason = "Forbidden"
+
+    class ForbiddenCustom:
+        def list_namespaced_custom_object(self, *_args: Any, **_kwargs: Any) -> Any:
+            raise ApiError()
+
+    client = KubernetesJobClient(
+        batch_api=_Batch(), core_api=_Core(), custom_api=ForbiddenCustom()
+    )
+    with pytest.raises(
+        KubernetesReconcileError,
+        match="list_namespaced_workload failed: status=403 reason=Forbidden",
+    ):
+        client.snapshot("job")
 
 
 def test_owner_uid_mismatch_is_never_adopted_from_prose() -> None:

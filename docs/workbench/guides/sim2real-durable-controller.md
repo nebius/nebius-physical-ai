@@ -128,6 +128,12 @@ GPU sibling Jobs carry the queue label and begin suspended for Kueue admission.
 The controller watches the generated Workload and records admission, assigned
 flavor, quota, and timestamps in provenance.
 
+The controller service account therefore requires `list` on
+`kueue.x-k8s.io/workloads` in the run namespace. The preflight checks that
+permission explicitly. Authorization failures retain the Kubernetes API status
+and reason and stop the run; they are not collapsed into an apparently missing
+Workload or treated as contention.
+
 Ordinary contention remains queued. Product fallback is permitted only after a
 structured, terminal scheduling incompatibility for that flavor; queue waiting
 or lack of current quota is not fallback evidence.

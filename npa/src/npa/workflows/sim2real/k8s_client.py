@@ -608,17 +608,18 @@ class KubernetesJobClient:
         labels = dict(getattr(job.metadata, "labels", None) or {})
         if not labels.get(QUEUE_LABEL) or self.custom is None:
             return KueueAdmission()
-        try:
-            payload = self._call(
-                "list_namespaced_workload",
-                self.custom.list_namespaced_custom_object,
-                "kueue.x-k8s.io",
-                os.environ.get("NPA_SIM2REAL_KUEUE_API_VERSION", "v1beta2"),
-                namespace,
-                "workloads",
-            )
-        except KubernetesReconcileError:
-            return KueueAdmission()
+        # A queued Job without permission to observe its Kueue Workload is not
+        # equivalent to a Job for which no Workload exists.  Preserve the
+        # structured API status/reason so provisioning defects fail closed and
+        # cannot be misreported as ordinary scheduling state.
+        payload = self._call(
+            "list_namespaced_workload",
+            self.custom.list_namespaced_custom_object,
+            "kueue.x-k8s.io",
+            os.environ.get("NPA_SIM2REAL_KUEUE_API_VERSION", "v1beta2"),
+            namespace,
+            "workloads",
+        )
         workload = None
         for item in list(payload.get("items") or []):
             owners = list((item.get("metadata") or {}).get("ownerReferences") or [])
