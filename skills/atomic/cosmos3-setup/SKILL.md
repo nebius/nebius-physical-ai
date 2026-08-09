@@ -86,6 +86,10 @@ Defaults are controlled by these environment variable names:
 Never print token values. When diagnosing, report only whether each credential
 is configured, missing, skipped, or failed.
 
+A read token is sufficient for downloads. For a fine-grained token, explicitly
+grant read access to every gated model and guardrail repo the selected path
+uses; accepting the repo terms on the account does not add that token scope.
+
 ## Upstream Cosmos3 Notes
 
 When an agent needs upstream package guidance, clone or inspect

@@ -128,7 +128,7 @@ def test_require_model_access_demands_operator_hf_token() -> None:
 
 
 def test_require_model_access_missing_token_error_names_the_401_403_diagnostic() -> None:
-    """The 401 (bad token) vs 403 (unaccepted license) split, plus a doc pointer."""
+    """Authenticated 401 vs 403 guidance names every authorization cause."""
 
     with pytest.raises(Cosmos3GenerateError) as excinfo:
         require_model_access(checkpoint="Cosmos3-Nano", environ={})
@@ -137,6 +137,10 @@ def test_require_model_access_missing_token_error_names_the_401_403_diagnostic()
     assert "anonymous" in message
     assert "401" in message
     assert "403" in message
+    assert "with authentication" in message
+    assert "invalid, or revoked" in message
+    assert "fine-grained token" in message
+    assert "organization token policy" in message
     assert "docs/workbench/cosmos3-access-preflight.md" in message
 
 
@@ -232,6 +236,7 @@ def test_check_xet_pin_warns_only_on_the_exact_affected_pair(tmp_path: Path) -> 
 
     warning = check_xet_pin(
         repo,
+        environ={},
         runner=_version_probe_runner(
             {
                 "huggingface_hub": XET_AFFECTED_HUGGINGFACE_HUB_VERSION,
@@ -250,6 +255,7 @@ def test_check_xet_pin_is_silent_on_a_newer_unaffected_pair(tmp_path: Path) -> N
 
     warning = check_xet_pin(
         repo,
+        environ={},
         runner=_version_probe_runner(
             {"huggingface_hub": "1.26.0", "hf-xet": "1.6.0"}
         ),
@@ -264,7 +270,7 @@ def test_check_xet_pin_fails_open_when_the_probe_cannot_run(tmp_path: Path) -> N
     def broken_runner(argv, **kwargs):
         raise OSError("no such interpreter")
 
-    assert check_xet_pin(repo, runner=broken_runner) == ""
+    assert check_xet_pin(repo, environ={}, runner=broken_runner) == ""
 
 
 def test_installed_package_versions_probe_runs_against_a_real_interpreter() -> None:
@@ -288,7 +294,7 @@ def test_check_xet_pin_probes_the_venv_interpreter_for_both_packages(
         seen.append(list(argv))
         return subprocess.CompletedProcess(argv, 0, "{}", "")
 
-    check_xet_pin(repo, runner=capturing_runner)
+    check_xet_pin(repo, environ={}, runner=capturing_runner)
 
     argv = seen[0]
     assert argv[0] == str(repo / ".venv" / "bin" / "python")
@@ -321,10 +327,40 @@ def test_check_xet_pin_fails_open_on_every_probe_failure_mode(
             return subprocess.CompletedProcess(argv, 0, "not json at all", "")
         return subprocess.CompletedProcess(argv, 0, "[]", "")
 
-    assert check_xet_pin(repo, runner=runner) == ""
+    assert check_xet_pin(repo, environ={}, runner=runner) == ""
     assert _installed_package_versions(
         repo / ".venv" / "bin" / "python", ("huggingface_hub",), runner=runner
     ) == {}
+
+
+def test_check_xet_pin_skips_probe_when_xet_is_already_disabled(
+    tmp_path: Path,
+) -> None:
+    repo, _ = _fake_runtime(tmp_path)
+
+    def unexpected_runner(argv, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("an active workaround makes the probe unnecessary")
+
+    assert (
+        check_xet_pin(
+            repo,
+            environ={"HF_HUB_DISABLE_XET": "1"},
+            runner=unexpected_runner,
+        )
+        == ""
+    )
+
+
+def test_check_xet_pin_false_value_still_warns_for_affected_pair(tmp_path: Path) -> None:
+    repo, _ = _fake_runtime(tmp_path)
+
+    warning = check_xet_pin(
+        repo,
+        environ={"HF_HUB_DISABLE_XET": "0"},
+        runner=_version_probe_runner(AFFECTED_PAIR),
+    )
+
+    assert "HF_HUB_DISABLE_XET=1" in warning
 
 
 def _generate_with_probe(
@@ -333,10 +369,13 @@ def _generate_with_probe(
     versions: dict[str, str],
     *,
     no_guardrails: bool = False,
+    disable_xet: bool = False,
 ) -> None:
     """Drive the real check_xet_pin gate through run_cosmos3_generate's seam."""
 
     _, env = _fake_runtime(tmp_path)
+    if disable_xet:
+        env["HF_HUB_DISABLE_XET"] = "1"
 
     def fake_runner(argv, **kwargs):
         sample = output_dir / "npa-generate"
@@ -392,6 +431,19 @@ def test_run_generate_is_silent_on_an_unaffected_xet_pin(
         tmp_path,
         tmp_path / "out",
         {"huggingface_hub": "1.26.0", "hf-xet": "1.6.0"},
+    )
+
+    assert "HF_HUB_DISABLE_XET" not in capsys.readouterr().err
+
+
+def test_run_generate_is_silent_when_xet_workaround_is_already_active(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _generate_with_probe(
+        tmp_path,
+        tmp_path / "out",
+        AFFECTED_PAIR,
+        disable_xet=True,
     )
 
     assert "HF_HUB_DISABLE_XET" not in capsys.readouterr().err

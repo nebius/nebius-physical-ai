@@ -62,6 +62,14 @@ on:
           A denial is never skipped.
         type: boolean
         default: false
+      source_registry:
+        description: "Optional source registry override (host/path, without image name)"
+        required: false
+        default: ""
+      tool:
+        description: "Optional single workbench tool to publish without touching unrelated images"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -97,7 +105,23 @@ jobs:
           echo "Target: $target"
 
       - name: Plan (dry run — always)
-        run: python -m npa.deploy.publish_public --target "${{ steps.target.outputs.value }}" --dry-run
+        env:
+          # Repository-variable fallbacks let a branch add these inputs before the
+          # workflow-dispatch schema reaches the default branch. Operators must remove
+          # one-off variables after the run; explicit inputs always win once available.
+          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+        run: |
+          args=(--target "${{ steps.target.outputs.value }}")
+          if [ -n "$SOURCE_REGISTRY" ]; then
+            args+=(--source-registry "$SOURCE_REGISTRY")
+          fi
+          if [ -n "$SELECTED_TOOL" ]; then
+            python .github/scripts/publish_selected_public_image.py \
+              "${args[@]}" --tool "$SELECTED_TOOL" --mode plan
+          else
+            python -m npa.deploy.publish_public "${args[@]}" --dry-run
+          fi
 
       - name: Login to GHCR
         if: ${{ inputs.dry_run == false }}
@@ -116,9 +140,21 @@ jobs:
         env:
           NEBIUS_SA_CREDENTIALS_JSON: ${{ secrets.NEBIUS_SA_CREDENTIALS_JSON }}
           NEBIUS_CR_TOKEN: ${{ secrets.NEBIUS_CR_TOKEN }}
+          # A maintainer may install this temporary secret for a one-off source-registry
+          # override whose project is not visible to the normal mirror service account.
+          # It is deliberately separate so a release never overwrites the standing CI
+          # credential, and must be removed immediately after the dispatch.
+          NEBIUS_OVERRIDE_CR_TOKEN: ${{ secrets.NEBIUS_OVERRIDE_CR_TOKEN }}
+          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
           # A dry run without secrets still reports the plan and says what it could not check.
           REQUIRE_CREDENTIAL: ${{ inputs.dry_run == false }}
-        run: ./npa/scripts/ci_source_registry_login.sh
+        run: |
+          if [ -n "$SOURCE_REGISTRY" ] && [ -n "$NEBIUS_OVERRIDE_CR_TOKEN" ]; then
+            export NEBIUS_SA_CREDENTIALS_JSON=""
+            export NEBIUS_CR_TOKEN="$NEBIUS_OVERRIDE_CR_TOKEN"
+          fi
+          unset NEBIUS_OVERRIDE_CR_TOKEN
+          ./npa/scripts/ci_source_registry_login.sh
 
       # `crane auth login` writes a config file and exits 0 for any string -- it never
       # contacts the registry -- so the step above proves nothing about NEBIUS_CR_TOKEN.
@@ -127,11 +163,23 @@ jobs:
       # packages already created. It writes nothing, so it is safe in dry-run.
       - name: Preflight the source registry credential and every pinned tag
         if: ${{ steps.source-login.outputs.available == 'true' }}
+        env:
+          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
-          python -m npa.deploy.publish_public \
-            --target "${{ steps.target.outputs.value }}" \
-            ${{ inputs.skip_missing && '--skip-missing' || '' }} \
-            --preflight
+          args=(--target "${{ steps.target.outputs.value }}")
+          if [ -n "$SOURCE_REGISTRY" ]; then
+            args+=(--source-registry "$SOURCE_REGISTRY")
+          fi
+          if [ -n "$SELECTED_TOOL" ]; then
+            python .github/scripts/publish_selected_public_image.py \
+              "${args[@]}" --tool "$SELECTED_TOOL" --mode preflight
+          else
+            python -m npa.deploy.publish_public \
+              "${args[@]}" \
+              ${{ inputs.skip_missing && '--skip-missing' || '' }} \
+              --preflight
+          fi
 
       # Last line of defence before an irreversible action. publish_public trusts the
       # packaging contract, which is a statement about the Dockerfiles; this checks the
@@ -144,7 +192,7 @@ jobs:
       # Also runs in dry-run (it only reads), so the rehearsal exercises the whole safety
       # chain rather than leaving the gate to fire for the first time on the real run.
       - name: Gate — the Isaac canonical tags must not be Omniverse-baked
-        if: ${{ steps.source-login.outputs.available == 'true' }}
+        if: ${{ steps.source-login.outputs.available == 'true' && (inputs.tool || vars.NPA_PUBLISH_TOOL) == '' }}
         run: |
           set -euo pipefail
           source_registry="cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw"
@@ -181,10 +229,22 @@ jobs:
       # publish; the summary below turns it into a click-through list.
       - name: Publish and verify
         if: ${{ inputs.dry_run == false }}
+        env:
+          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
-          python -m npa.deploy.publish_public \
-            --target "${{ steps.target.outputs.value }}" \
-            ${{ inputs.skip_missing && '--skip-missing' || '' }}
+          args=(--target "${{ steps.target.outputs.value }}")
+          if [ -n "$SOURCE_REGISTRY" ]; then
+            args+=(--source-registry "$SOURCE_REGISTRY")
+          fi
+          if [ -n "$SELECTED_TOOL" ]; then
+            python .github/scripts/publish_selected_public_image.py \
+              "${args[@]}" --tool "$SELECTED_TOOL" --mode publish
+          else
+            python -m npa.deploy.publish_public \
+              "${args[@]}" \
+              ${{ inputs.skip_missing && '--skip-missing' || '' }}
+          fi
 
       - name: Write the visibility checklist to the job summary
         if: ${{ failure() && inputs.dry_run == false }}

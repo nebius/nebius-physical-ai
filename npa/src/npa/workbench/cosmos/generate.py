@@ -64,6 +64,7 @@ ACCESS_PREFLIGHT_DOC = "docs/workbench/cosmos3-access-preflight.md"
 # unconditional env default. See ACCESS_PREFLIGHT_DOC.
 XET_AFFECTED_HUGGINGFACE_HUB_VERSION = "1.23.0"
 XET_AFFECTED_HF_XET_VERSION = "1.5.1"
+HF_HUB_DISABLE_XET_ENV = "HF_HUB_DISABLE_XET"
 
 _IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 _VIDEO_SUFFIXES = (".mp4", ".webm", ".mkv", ".mov")
@@ -170,10 +171,13 @@ def require_model_access(
                 f"(or {HF_TOKEN_ENV_OVERRIDE}) to a token that has accepted those "
                 "licenses. A staged local/s3 --checkpoint only removes this "
                 "requirement when --no-guardrails is also passed. With no token "
-                "set, a fetch of a gated repo is anonymous and fails with 401; "
-                "if you set a token and then see 403 instead, the token itself "
-                "is reaching Hugging Face and the account behind it still has to "
-                f"accept the repo's license. See {ACCESS_PREFLIGHT_DOC}."
+                "set, the download is anonymous and cannot diagnose token "
+                "validity. Probe the gated file with authentication: 401 means "
+                "the supplied token is missing, invalid, or revoked; 403 means "
+                "the token authenticated but lacks authorization. For 403, "
+                "accept or request repo access, grant the fine-grained token "
+                "repo read scope, and check organization token policy. See "
+                f"{ACCESS_PREFLIGHT_DOC}."
             )
         hf_auth = "configured"
 
@@ -230,19 +234,29 @@ def _installed_package_versions(
     return {k: str(v) for k, v in versions.items() if isinstance(k, str)}
 
 
-def check_xet_pin(repo: Path, *, runner: Any = None) -> str:
+def check_xet_pin(
+    repo: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+    runner: Any = None,
+) -> str:
     """Warn when the runtime venv has the known-bad Xet-download pin pair.
 
     huggingface/xet-core#895 makes a gated-repo download fail with
     "Unable to parse string as hex hash value" on exactly
     ``huggingface_hub==1.23.0`` plus ``hf-xet==1.5.1``. Returns a warning
     string naming the ``HF_HUB_DISABLE_XET=1`` workaround when that exact
-    pair is installed, or "" when the pair cannot be confirmed (package
-    missing, versions differ, or the check itself failed). This never sets
-    the environment variable itself: newer releases fix the issue, so
-    disabling Xet unconditionally would cost every unaffected environment a
-    faster download path for no reason.
+    pair is installed and Xet is enabled, or "" when the workaround is already
+    active or the pair cannot be confirmed (package missing, versions differ,
+    or the check itself failed). This never sets the environment variable
+    itself: newer releases fix the issue, so disabling Xet unconditionally
+    would cost every unaffected environment a faster download path for no
+    reason.
     """
+
+    env = environ if environ is not None else os.environ
+    if _env_truthy(str(env.get(HF_HUB_DISABLE_XET_ENV, ""))):
+        return ""
 
     versions = _installed_package_versions(
         _venv_python(repo), ("huggingface_hub", "hf-xet"), runner=runner
@@ -257,7 +271,7 @@ def check_xet_pin(repo: Path, *, runner: Any = None) -> str:
             f"{XET_AFFECTED_HF_XET_VERSION} is affected by "
             "huggingface/xet-core#895 (gated-repo download fails with "
             "'Unable to parse string as hex hash value'). Set "
-            f"HF_HUB_DISABLE_XET=1 and retry; see {ACCESS_PREFLIGHT_DOC}."
+            f"{HF_HUB_DISABLE_XET_ENV}=1 and retry; see {ACCESS_PREFLIGHT_DOC}."
         )
     return ""
 
@@ -497,7 +511,9 @@ def run_cosmos3_generate(
         # Scoped to "this run downloads from Hugging Face", not to guardrails:
         # xet-core#895 is a transfer bug, so a guardrails-off run that still
         # pulls its checkpoint from HF hits it too.
-        xet_warning = check_xet_pin(Path(plan["repo"]), runner=version_probe_runner)
+        xet_warning = check_xet_pin(
+            Path(plan["repo"]), environ=env, runner=version_probe_runner
+        )
         if xet_warning:
             print(f"WARNING: {xet_warning}", file=sys.stderr)
 
