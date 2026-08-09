@@ -378,6 +378,7 @@ def build_isaac_job_manifest(
     service_account: str,
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
+    image_pull_policy: str = "Always",
     reward_overrides: dict[str, float] | None = None,
     object_usd: str = "",
     object_scale: str = "",
@@ -683,7 +684,7 @@ def build_isaac_job_manifest(
                         {
                             "name": "trainer",
                             "image": image,
-                            "imagePullPolicy": "Always",
+                            "imagePullPolicy": image_pull_policy,
                             # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
                             # write under the prebuilt workspace; current RTX PRO runtime
                             # requires root for that path. Keep this scoped to BYO Isaac jobs.
@@ -854,6 +855,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     image = _env("ISAAC_IMAGE") or _env("NPA_SIM2REAL_ISAAC_IMAGE")
     if not image:
         raise SystemExit("byo_isaac_trainer: ISAAC_IMAGE/NPA_SIM2REAL_ISAAC_IMAGE not set")
+    from npa.workflows.sim2real.engine import _image_pull_policy
     bucket = _env("NPA_SIM2REAL_BUCKET") or _env("S3_BUCKET")
     endpoint = _env("AWS_ENDPOINT_URL")
     namespace = _env("NPA_SIM2REAL_K8S_NAMESPACE", "default")
@@ -990,6 +992,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         namespace=namespace,
         service_account=service_account,
         gpu_product=gpu_product,
+        image_pull_policy=_image_pull_policy(image),
         reward_overrides=reward_overrides,
         object_usd=object_usd,
         object_scale=object_scale,

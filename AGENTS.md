@@ -15,7 +15,8 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/workflows/`: workflow-level procedures such as sim-to-real, policy training, Cosmos3 inference, and reference SkyPilot workflows.
 - `skills/atomic/`: reusable actions and review conventions such as GPU selection, workflow submission, testing conventions, image build/push, Cosmos3 setup/troubleshooting, and agent visual feedback (Describe this).
 - `skills/atomic/agent-visual-feedback/SKILL.md`: Describe-this multimodal feedback for Rerun / video / image / data viewers.
-- `skills/tools/`: concrete workbench and platform tools such as LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, SONIC, MJLab, Retargeting, SkyPilot, Scenario Gen, Dataset-of-record, and Nebius infra.
+- `skills/tools/`: concrete workbench and platform tools such as LeRobot, FiftyOne, Genesis, Isaac Lab, Cosmos, LanceDB, GR00T, SONIC, MJLab, Retargeting, SkyPilot, Scenario Gen, Dataset-of-record, Fleet, and Nebius infra.
+- `skills/tools/fleet/SKILL.md`: deploy a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an `npa.fleet/v0.0.1` spec — identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe.
 - `skills/tools/scenario-gen/SKILL.md`: adversarial scenario generation — an RL adversary that maximizes failures of a policy-under-test, scenario ranking, and the adversarial-scenario-hardening workflow.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate, and query production sensor data as a versioned, lineage-tracked dataset (FiftyOne curation + LanceDB query index).
 - `skills/tools/foxglove/SKILL.md`: Foxglove embedded viewer — the `@foxglove/embed` TypeScript SDK in the agent UI, MCAP recordings (convert/inspect/publish), and the `npa-foxglove-embed` container.

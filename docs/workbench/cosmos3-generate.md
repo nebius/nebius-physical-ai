@@ -46,10 +46,38 @@ This is enforced in three places: `require_model_access` refuses to launch
 inference without the token, the build fails if a checkpoint file lands in a
 layer, and `verify_env.py` re-asserts the absence of weights inside the image.
 
+Clearing the license for this repo's own gated guardrail model
+(`nvidia/Cosmos-Guardrail1`) does not clear the license for the *different*
+gated guardrail repo a vLLM-Omni serving deployment pulls
+(`nvidia/Cosmos-1.0-Guardrail`). See
+[`cosmos3-access-preflight.md`](cosmos3-access-preflight.md) for account
+setup, the two-repo table, the 401-vs-403 diagnostic for a gated-download
+failure, and the Xet download workaround for a specific Hugging Face client
+pin.
+
+The r2 image keeps the faster Xet transfer path enabled with its measured,
+compatible baked versions (`huggingface_hub==0.36.2`, `hf-xet==1.3.2`). The
+image build records this pair and fails if the known-bad `1.23.0` / `1.5.1`
+combination is ever resolved; only non-image/custom environments need the
+runtime diagnostic and `HF_HUB_DISABLE_XET=1` fallback described there.
+
 Guardrails are **on** unless you pass `--no-guardrails`, and every result
 manifest records `guardrails` so a run's posture stays auditable.
 
+Known limitation: a prior live run requested guardrails but upstream reported
+`No safety models found, returning safe`. The manifest currently records the
+requested posture, not proof of effective safety-model execution. This is
+tracked separately in [issue #270](https://github.com/nebius/nebius-physical-ai/issues/270);
+this release does not redesign guardrail behavior.
+
 ## Build
+
+The supported/default image release is `npa-cosmos3:1.2.2-cu130-r2`. It is an
+additive successor to `1.2.2-cu130`: the old immutable tag is retained for
+rollback and provenance and must never be overwritten or deleted. Pre-merge
+validation builds use a branch-specific candidate tag in a private registry;
+the official `1.2.2-cu130-r2` tag is built and published only from the reviewed
+trusted commit.
 
 ```bash
 # Defaults to the pinned framework commit and the supported-tools tag.
@@ -195,6 +223,7 @@ before generation starts.
 | `mode ... conditions on an input image/video` | An `image2video` / `video2video` / `image2image` run without `--input-path`. |
 | `Found no NVIDIA driver` | The container reached real inference but has no GPU. Generation is GPU-only. |
 | `cosmos-framework produced no image/video artifact` | Inference exited 0 but wrote nothing; check the upstream log above the error for a guardrail rejection. |
+| `Unable to parse string as hex hash value` from `huggingface_hub`'s Xet client | A download failure specific to the `hf-xet 1.5.1` + `huggingface_hub 1.23.0` pin pair (`huggingface/xet-core#895`), observed on a gated guardrail-repo download. Set `HF_HUB_DISABLE_XET=1` and retry; see [`cosmos3-access-preflight.md`](cosmos3-access-preflight.md). |
 
 For access checks before a run (`gh`/HF/NGC reachability) see
 `npa workbench cosmos check`. For the un-baked, clone-at-job-time text-to-image

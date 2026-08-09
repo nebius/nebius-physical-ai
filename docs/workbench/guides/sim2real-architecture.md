@@ -180,6 +180,19 @@ even when BYO trainer is configured.
 
 `run_heldout_eval()` writes `eval/heldout/report.json`.
 
+For a genuine Isaac-trained checkpoint, the default Stage 10 command is
+`npa.workflows.sim2real.byo_isaac_eval`. Its sibling job reuses the same shared
+policy loader, metric resolution, fail-closed behavior, and
+`npa.isaac_lab.eval.v1` summary implementation as
+`npa workbench isaac-lab eval`, while retaining Sim2Real's vectorized generated
+environments and camera capture. The detailed evaluator evidence is written to
+`eval/heldout/isaac-eval-summary.json` and carried in `report.json`.
+
+A runtime or policy-load failure fails Stage 10 and never produces synthetic
+fallback scores. Missing the configured success-rate bar produces a completed
+evaluation with `passed=false`; Stage 11 owns the promote/loop-back decision.
+Stage 14 remains the owner of run-level RRD and MCAP outputs.
+
 ```mermaid
 flowchart TD
   HE["run_heldout_eval"] --> BYO{"BYO_EVAL_COMMAND?"}

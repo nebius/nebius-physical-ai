@@ -89,7 +89,7 @@ resource "nebius_mk8s_v1_node_group" "cpu-only" {
     filesystems = var.enable_filestore ? [
       {
         attach_mode = "READ_WRITE"
-        mount_tag   = "data"
+        mount_tag   = local.filestore.mount_tag
         existing_filesystem = {
           id   = local.shared-filesystem.id
           size = local.shared-filesystem.size_gibibytes
@@ -105,6 +105,7 @@ resource "nebius_mk8s_v1_node_group" "cpu-only" {
     cloud_init_user_data = templatefile("${path.module}/../modules/cloud-init/k8s-cloud-init.tftpl", {
       enable_filestore     = var.enable_filestore ? "true" : "false",
       filestore_mount_path = local.filestore.mount_path,
+      filestore_mount_tag  = local.filestore.mount_tag,
       ssh_user_name        = var.ssh_user_name,
       ssh_public_key       = local.ssh_public_key
     })
@@ -160,7 +161,7 @@ resource "nebius_mk8s_v1_node_group" "gpu" {
     filesystems = var.enable_filestore ? [
       {
         attach_mode = "READ_WRITE"
-        mount_tag   = "data"
+        mount_tag   = local.filestore.mount_tag
         existing_filesystem = {
           id = local.shared-filesystem.id
         }
@@ -181,6 +182,7 @@ resource "nebius_mk8s_v1_node_group" "gpu" {
     cloud_init_user_data = templatefile("${path.module}/../modules/cloud-init/k8s-cloud-init.tftpl", {
       enable_filestore     = var.enable_filestore ? "true" : "false",
       filestore_mount_path = local.filestore.mount_path,
+      filestore_mount_tag  = local.filestore.mount_tag,
       ssh_user_name        = var.ssh_user_name,
       ssh_public_key       = local.ssh_public_key
     })

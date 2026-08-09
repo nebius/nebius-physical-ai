@@ -298,6 +298,23 @@ skills:
     path: skills/tools/nebius-infra/SKILL.md
     smoke:
       - type: configure_provision_dry_run
+  - name: fleet
+    category: tools
+    when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."
+    path: skills/tools/fleet/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["fleet", "deploy", "--help"]
+        contains: "--spec"
+      - type: cli_help
+        args: ["fleet", "plan", "--help"]
+        contains: "--spec"
+      - type: file_exists
+        path: npa/src/npa/fleet/spec.py
+      - type: file_exists
+        path: npa/src/npa/fleet/lifecycle.py
+      - type: file_exists
+        path: npa/tests/unit/test_fleet_cli.py
   - name: soperator
     category: tools
     when_to_use: "Deploy or operate a Nebius soperator (Slurm-on-Kubernetes) cluster from npa: npa.soperator/v0.0.1 spec, multi-preset worker pools, per-pool Docker/Enroot image cache, quota preflight, and post-deploy fixes."

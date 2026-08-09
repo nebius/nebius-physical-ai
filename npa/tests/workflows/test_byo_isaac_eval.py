@@ -25,7 +25,7 @@ def test_extract_checkpoint_uri_absent_returns_empty():
 def test_per_env_from_distances_scoring():
     rows = ev.per_env_from_distances([0.0, 0.05, 0.2], success_dist_m=0.05)
     assert rows[0]["success"] is True and rows[0]["score"] == 1.0
-    assert rows[1]["success"] is False  # 0.05 is not < 0.05
+    assert rows[1]["success"] is True  # boundary agrees with eval_runner (<=)
     assert rows[2]["success"] is False and rows[2]["score"] == 0.0
     assert rows[0]["details"]["object_goal_distance_m"] == 0.0
 
@@ -41,12 +41,21 @@ def test_build_isaac_eval_job_manifest_shape():
     )
     c = m["spec"]["template"]["spec"]["containers"][0]
     assert c["image"].endswith("npa-isaac-lab:2.3.2.post1")
+    assert c["imagePullPolicy"] == "Always"
     assert c["resources"]["limits"]["nvidia.com/gpu"] == "1"
     args = c["args"][0]
     assert "Isaac-Lift-Cube-Franka-v0" in args
     assert "s3://b/run1/model_latest.pt" in args      # downloads the checkpoint
     assert "eval_rollout.py" in args                  # runs the policy rollout
     assert "per_env_distances.json" in args           # uploads measured distances
+    assert "isaac_eval_runner.py" in args             # shared canonical evaluator
+    assert "load_rsl_rl_policy" in args
+    assert '|| echo "EVAL_SCRIPT_RC=$?"' not in args  # fail closed
+    assert "[0.5]*N" not in args                      # no fabricated failure result
+    assert c["envFrom"][0]["secretRef"] == {
+        "name": "hf-ngc-tokens",
+        "optional": True,
+    }
 
 
 def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
@@ -61,14 +70,39 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
         captured["job_name"] = kwargs["job_name"]
         captured["per_env_s3_uri"] = kwargs["per_env_s3_uri"]
         captured["renders_s3_prefix"] = kwargs["renders_s3_prefix"]
+        captured["min_success_rate"] = kwargs["min_success_rate"]
+        captured["success_dist_m"] = kwargs["success_dist_m"]
+        captured["image_pull_policy"] = kwargs["image_pull_policy"]
         return {"kind": "Job"}
 
     monkeypatch.setattr(ev, "build_isaac_eval_job_manifest", fake_build)
-    monkeypatch.setattr(ev, "_kubectl", lambda *a, **k: _Proc())
-    monkeypatch.setattr(ev, "_download_json", lambda _uri: {"object_goal_distances": [0.01]})
+    monkeypatch.setattr(ev, "_refresh_registry_pull_secret", lambda *a, **k: None)
+
+    def fake_kubectl(args, **_kwargs):
+        proc = _Proc()
+        if args[:2] == ["get", "job"]:
+            proc.stdout = json.dumps(
+                {"status": {"conditions": [{"type": "Complete", "status": "True"}]}}
+            )
+        return proc
+
+    monkeypatch.setattr(ev, "_kubectl", fake_kubectl)
+    monkeypatch.setattr(
+        ev,
+        "_download_json",
+        lambda _uri: {
+            "format": "npa.isaac_lab.eval.v1",
+            "status": "success",
+            "policy_loaded": True,
+            "object_goal_distances": [0.01],
+            "episodes": [{"success": True}],
+        },
+    )
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_EVAL_TAG", "outer-02")
+    monkeypatch.setenv("NPA_SIM2REAL_THRESHOLD", "0.75")
+    monkeypatch.setenv("NPA_SIM2REAL_IMAGE_PULL_POLICY", "Never")
 
     rows = ev.run_isaac_eval_job(
         "myrun",
@@ -83,6 +117,37 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
         "/byo-eval/s2r-byo-isaac-eval-myrun-outer-02/per_env_distances.json"
     )
     assert captured["renders_s3_prefix"].endswith("/byo-eval/s2r-byo-isaac-eval-myrun-outer-02/renders")
+    assert captured["min_success_rate"] == 0.75
+    assert captured["success_dist_m"] == ev.DEFAULT_SUCCESS_DIST_M
+    assert captured["image_pull_policy"] == "Never"
+
+
+def test_wait_for_job_terminal_returns_failed_without_waiting(monkeypatch):
+    class _Proc:
+        returncode = 0
+        stderr = ""
+        stdout = json.dumps(
+            {
+                "status": {
+                    "conditions": [
+                        {
+                            "type": "Failed",
+                            "status": "True",
+                            "message": "policy load failed",
+                        }
+                    ]
+                }
+            }
+        )
+
+    monkeypatch.setattr(ev, "_kubectl", lambda *a, **k: _Proc())
+
+    completed, detail = ev._wait_for_job_terminal(
+        "eval-job", namespace="default", timeout_s=60
+    )
+
+    assert completed is False
+    assert detail == "policy load failed"
 
 
 def test_dryrun_main_writes_normalizable_report(tmp_path, monkeypatch):
@@ -158,11 +223,27 @@ def test_eval_manifest_embeds_generated_seed():
 
 def test_eval_script_uses_oblique_workspace_camera_for_renders():
     script = ev.ISAAC_EVAL_SCRIPT
+    compile(script, "<sim2real-isaac-eval>", "exec")
     assert "pos=(-2.0, 0.0, 1.0)" in script
     assert "rot=(0.9945, 0.0, 0.1045, 0.0)" in script
     assert 'convention="world"' in script
     assert "width=256" in script and "height=256" in script
     assert "clipping_range=(0.05, 20.0)" in script
+
+
+def test_eval_script_marks_unavailable_reward_null_instead_of_zero() -> None:
+    script = ev.ISAAC_EVAL_SCRIPT
+
+    assert "reward_metric_unavailable" in script
+    assert '"reward": float(reward_sum[i]) if reward_available else None' in script
+    assert "reward batch does not match environment count" in script
+
+
+def test_main_rejects_invalid_threshold_before_launch(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NPA_SIM2REAL_OUTPUT_JSON", str(tmp_path / "report.json"))
+    monkeypatch.setenv("NPA_SIM2REAL_THRESHOLD", "90")
+
+    assert ev.main() == 2
 
 
 def test_eval_manifest_embeds_custom_object_usd():
@@ -225,6 +306,12 @@ def test_normalize_heldout_preserves_render_manifest_and_provenance():
         "deployable_policy_eval": True,
         "generated_envs_tested": 1,
         "generated_env_ids": ["env-00000"],
+        "isaac_eval_summary": {
+            "format": "npa.isaac_lab.eval.v1",
+            "status": "success",
+            "policy_loaded": True,
+        },
+        "isaac_eval_summary_uri": "s3://b/run/isaac-eval-summary.json",
     }
     cfg = build_config_from_env(threshold=0.45, s3_bucket="", run_id="t")
     report = _normalize_heldout_report(payload, config=cfg, outer_iteration=1,
@@ -233,6 +320,8 @@ def test_normalize_heldout_preserves_render_manifest_and_provenance():
     assert report["policy_checkpoint"].endswith("model_latest.pt")
     assert report["deployable_policy_eval"] is True
     assert report["generated_envs_tested"] == 1
+    assert report["isaac_eval_summary"]["policy_loaded"] is True
+    assert report["isaac_eval_summary_uri"].startswith("s3://")
 
 
 def test_build_heldout_report_multi_threshold_success_summary():
