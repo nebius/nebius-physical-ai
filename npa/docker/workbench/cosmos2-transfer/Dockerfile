@@ -174,6 +174,7 @@ RUN set -eux; \
 COPY --from=build --chown=1000:1000 /opt/cosmos /opt/cosmos
 COPY --chown=1000:1000 pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=1000:1000 src/npa /opt/npa/src/npa
+COPY --chown=1000:1000 workflows /opt/npa/workflows
 COPY --from=build /usr/local/bin/assert-no-forbidden-cosmos2-payload \
     /usr/local/bin/assert-no-forbidden-cosmos2-payload
 COPY --chmod=755 docker/workbench/cosmos2-transfer/smoke_functional.sh \

@@ -9,6 +9,7 @@ WORKDIR /opt/npa
 USER root
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip install --no-deps -e /opt/npa \

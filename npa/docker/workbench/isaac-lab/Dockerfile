@@ -74,6 +74,7 @@ COPY docker/workbench/isaac-lab/smoke_env.py /opt/npa/docker/workbench/isaac-lab
 COPY docker/workbench/isaac-lab/smoke_functional.py /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
 # python3.11 + PyTorch cu128 (sm_120 for Blackwell) + the complete OSS dependency closure
 # + the bootstrap, the /isaac-sim/python.sh shim and the SkyPilot k8s prerequisites. The

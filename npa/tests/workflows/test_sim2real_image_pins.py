@@ -17,6 +17,16 @@ from npa.deploy.images import supported_tool_version
 from npa.workflows.sim2real import constants
 
 
+_EXACT_SOURCE_DOCKERFILES = (
+    "cosmos2-transfer/Dockerfile",
+    "cosmos3-reason/Dockerfile",
+    "isaac-lab/Dockerfile",
+    "lerobot-vlm-rl/Dockerfile",
+    "sim2real-envgen/Dockerfile",
+    "sim2real-eval/Dockerfile",
+)
+
+
 @pytest.mark.parametrize(
     ("constant_name", "tool"),
     [
@@ -48,14 +58,24 @@ def test_sim2real_runbook_fallback_matches_supported_tool_version(
     environment_variable: str, tool: str
 ) -> None:
     runbook = (
-        Path(__file__).resolve().parents[2]
-        / "workflows"
-        / "sim2real.yaml"
+        Path(__file__).resolve().parents[2] / "workflows" / "sim2real.yaml"
     ).read_text(encoding="utf-8")
-    expected = (
-        f"${{{environment_variable}:-npa-{tool}:{supported_tool_version(tool)}}}"
-    )
+    expected = f"${{{environment_variable}:-npa-{tool}:{supported_tool_version(tool)}}}"
     assert expected in runbook, (
         f"{environment_variable} runbook fallback drifted from canonical "
         f"{tool}={supported_tool_version(tool)!r} (pyproject supported-tools)"
     )
+
+
+@pytest.mark.parametrize("relative_path", _EXACT_SOURCE_DOCKERFILES)
+def test_exact_source_images_copy_forced_workflow_package_data(
+    relative_path: str,
+) -> None:
+    """An exact-source image must be installable from its minimal build context."""
+
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "docker" / "workbench" / relative_path
+    ).read_text(encoding="utf-8")
+    assert "COPY" in dockerfile
+    assert "workflows /opt/npa/workflows" in dockerfile
+    assert "pyproject.toml /opt/npa/pyproject.toml" in dockerfile
