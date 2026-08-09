@@ -1236,6 +1236,13 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
                     if name not in seen:
                         seen.add(name)
                         hints.append(name)
+        if tool_ref == "workbench.byof.repo" and any(
+            value.startswith("byof-solution-smoke-wan22-") for value in step.argv
+        ):
+            for name in ("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS", "HF_TOKEN"):
+                if name not in seen:
+                    seen.add(name)
+                    hints.append(name)
     return tuple(hints)
 
 

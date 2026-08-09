@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 import numpy as np
 
 from npa.clients.project_credentials import s3_client_for_project
+from npa.deploy.images import wan_accepted_image_manifest
 
 APPLICATION_ID = "npa_wan2_2"
 ENTITY_ROOT = "wan2_2"
@@ -139,6 +140,36 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise WanRrdError(f"JSON evidence must be an object: {path.name}")
     return payload
+
+
+def _validate_container_image(summary: dict[str, Any]) -> dict[str, str]:
+    """Bind run/RRD evidence to the repository's accepted immutable image."""
+
+    reference = str(summary.get("image") or "").strip()
+    match = re.fullmatch(r"([^\s@]+)@(sha256:[0-9a-f]{64})", reference)
+    if match is None:
+        raise WanRrdError("BYOF summary image must be digest-pinned")
+    try:
+        accepted = wan_accepted_image_manifest()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise WanRrdError(
+            f"cannot load the accepted Wan image manifest: {exc}"
+        ) from exc
+    accepted_digest = str(accepted.get("oci_digest") or "")
+    accepted_tag = str(accepted.get("tag") or "")
+    _require(
+        bool(re.fullmatch(r"sha256:[0-9a-f]{64}", accepted_digest)),
+        "accepted Wan image digest is invalid",
+    )
+    _require(
+        match.group(2) == accepted_digest, "BYOF summary image digest is not accepted"
+    )
+    _require(bool(accepted_tag), "accepted Wan image tag is invalid")
+    return {
+        "reference": reference,
+        "oci_digest": accepted_digest,
+        "accepted_tag": accepted_tag,
+    }
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -703,6 +734,7 @@ def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
     """Validate immutable Wan output artifacts and return sanitized evidence."""
 
     summary = _load_json(run_dir / "npa_byof_summary.json")
+    container_image = _validate_container_image(summary)
     primary_path = _primary_path(run_dir, layout, summary)
     primary = _load_json(primary_path)
     inventory = _load_json(run_dir / layout.inventory_filename)
@@ -859,6 +891,7 @@ def validate_wan_run(run_dir: Path, layout: WanRunLayout) -> dict[str, Any]:
         "primary_filename": primary_path.name,
         "inventory": inventory,
         "source_metadata": source_metadata,
+        "container_image": container_image,
         "video": video,
         **execution,
     }
@@ -891,6 +924,7 @@ def _machine_summary(evidence: dict[str, Any]) -> dict[str, Any]:
         "official_source": source,
         "official_model": model,
         "tokenizer": tokenizer,
+        "container_image": evidence["container_image"],
         "generation": generation,
         "observed_output": {
             **evidence["video"]["observed"],
@@ -933,6 +967,7 @@ def _overview_markdown(evidence: dict[str, Any]) -> str:
         f"- **Run:** `{summary['run_id']}`\n"
         f"- **Source:** `{SOURCE_REPO}@{SOURCE_REF}`\n"
         f"- **Model:** `{MODEL_ID}@{MODEL_REF}` (fetched at run time)\n"
+        f"- **Container image digest:** `{summary['container_image']['oci_digest']}`\n"
         f"- **Runtime path:** {runtime_path}\n"
         f"- **Validated output:** `{output['filename']}` — "
         f"{output['frame_count']} H.264 frames, {output['width']}×{output['height']} "
@@ -1319,6 +1354,7 @@ def build_wan_rrd(
         "video_size_bytes": evidence["video"]["size_bytes"],
         "video_sha256": evidence["video"]["sha256"],
         "video_observed": evidence["video"]["observed"],
+        "container_image": evidence["container_image"],
         "primary_filename": evidence["primary_filename"],
         "verification": verification,
     }
@@ -1395,6 +1431,7 @@ def _manifest_payload(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_prefix_uri": source_prefix_uri,
         "source_objects": source_objects,
+        "container_image": build["container_image"],
         "rrd": {
             "uri": rrd_uri,
             "filename": build["layout"].rrd_filename,
@@ -1500,6 +1537,7 @@ def publish_wan_rrd_from_s3(
             Key=rrd_key,
             Body=rrd_bytes,
             ContentType="application/octet-stream",
+            IfNoneMatch="*",
         )
         remote_head = s3.head_object(Bucket=bucket, Key=rrd_key)
         remote_bytes = s3.get_object(Bucket=bucket, Key=rrd_key)["Body"].read()
@@ -1541,6 +1579,7 @@ def publish_wan_rrd_from_s3(
             Key=manifest_key,
             Body=manifest_bytes,
             ContentType="application/json",
+            IfNoneMatch="*",
         )
         manifest_head = s3.head_object(Bucket=bucket, Key=manifest_key)
         remote_manifest = s3.get_object(Bucket=bucket, Key=manifest_key)["Body"].read()
@@ -1575,6 +1614,7 @@ def publish_wan_rrd_from_s3(
             "manifest_sha256": _sha256_bytes(manifest_bytes),
             "entity_paths": remote_verification["required_entity_paths"],
             "video_sha256": build["video_sha256"],
+            "container_image": build["container_image"],
         }
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,23 @@ def test_token_resolution() -> None:
 def test_token_unknown_config_raises() -> None:
     with pytest.raises(TokenError):
         resolve_tokens("{{config.missing}}", config={}, run={"id": "x"})
+
+
+def test_base64_token_transform_keeps_shell_metacharacters_as_data() -> None:
+    hostile = '"; echo INJECTED; $(touch /tmp/never) #'
+    text = resolve_tokens(
+        'export VALUE_B64="{{config.value|base64}}"',
+        config={"value": hostile},
+        run={"id": "x"},
+    )
+    encoded = base64.b64encode(hostile.encode()).decode()
+    assert text == f'export VALUE_B64="{encoded}"'
+    assert "INJECTED" not in text
+
+
+def test_unknown_token_transform_fails_closed() -> None:
+    with pytest.raises(TokenError, match="unsupported token transform"):
+        resolve_tokens("{{config.value|shell}}", config={"value": "x"}, run={"id": "x"})
 
 
 def test_state_output_token() -> None:

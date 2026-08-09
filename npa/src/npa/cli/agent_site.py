@@ -196,12 +196,13 @@ def nginx_agent_site_body(
     proxy_send_timeout 900s;
     client_max_body_size 32m;
   }}
-  location /rerun/recordings/ {{
+  location ~ "^/rerun/recordings/(cap-[A-Za-z0-9_-]{{43}}\\.rrd)$" {{
     # Rerun WASM cannot attach HTTP Basic credentials to its recording fetch.
-    # Keep the static copy same-origin and non-CORS so unrelated browser origins
-    # cannot read it; the authenticated API blob remains the parent-page gate.
+    # The backend therefore publishes one random 256-bit, per-load capability
+    # filename and deletes the previous capability. Only that unguessable path
+    # is anonymously readable; fixed/run-derived recording names remain denied.
     auth_basic off;
-    alias /opt/npa-agent/recordings/;
+    alias /opt/npa-agent/recordings/$1;
     default_type application/octet-stream;
     add_header Cache-Control "no-cache" always;
     add_header Cross-Origin-Resource-Policy "same-origin" always;
@@ -211,6 +212,9 @@ def nginx_agent_site_body(
     gzip on;
     gzip_types application/octet-stream;
     gzip_min_length 1024;
+  }}
+  location /rerun/recordings/ {{
+    return 404;
   }}
 {foxglove_locations}  location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
     auth_basic off;

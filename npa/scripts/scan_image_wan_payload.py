@@ -20,6 +20,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import IO, Any
 
+try:
+    import zstandard as zstd
+except ModuleNotFoundError:  # The zstd signature still fails closed at scan time.
+    zstd = None  # type: ignore[assignment]
+
+ZSTD_ERROR: type[Exception] = zstd.ZstdError if zstd is not None else RuntimeError
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -131,6 +138,7 @@ FORBIDDEN_ELF_DEPENDENCY = re.compile(
 MAX_NESTED_ARCHIVE_DEPTH = 8
 MAX_NESTED_UNCOMPRESSED_BYTES = 8 * 1024**3
 MAX_NESTED_ARCHIVE_MEMBERS = 100_000
+MAX_AR_NAME_TABLE_BYTES = 8 * 1024**2
 
 
 @dataclass
@@ -168,7 +176,7 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
         "bd7d3f79eb42bbd4dbe9e00e8e9143568d131702dfecaad2a780eaad6c68c91c"
     ),
     "opt/wan-base/lib/python3.10/site-packages/PIL/__pycache__/ImageFont.cpython-310.pyc": (
-        "9fafda176439826d7d5615756deb2c64fdf460e69e06b44e3d08addef526c84c"
+        "f2c6f8e55d30d03dcbd7718beeb0fd3197ff315389d4ff77ec2e6e8b8e588ff1"
     ),
     "opt/wan-base/lib/python3.10/site-packages/accelerate/commands/config/sagemaker.py": (
         "4912eea7d5eb57f67edb703777c8196e4a9ba270dcb1c3030e66e99b2b42cdb6"
@@ -201,7 +209,7 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
         "d1ce694b50d009bb3dab11331a281323d70c46ff4724e692dab3c2481ed62074"
     ),
     "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-310.pyc": (
-        "c8ceff5f03506ed2d70f0346b96d440312c5e2b839d0d90d31902a95d276027d"
+        "f2ed8e3aa7939c79a2b2826463aaffb9d2613624ab6a2cc08a4fb70c4c65bdb1"
     ),
     "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/ssh.py": (
         "162b177bf9d429d3c67ea10d5612a99a86b399a23ca87f067be5466dcd1dca4c"
@@ -342,6 +350,14 @@ def _nested_archive_kind(stream: IO[bytes]) -> str | None:
         return "bzip2"
     if head.startswith(b"\xfd7zXZ\x00"):
         return "xz"
+    if head.startswith(b"\x28\xb5\x2f\xfd"):
+        return "zstd"
+    # Debian packages are Unix ar archives whose data.tar member may contain
+    # runtime libraries, weights, caches, or credentials.  Treat the outer ar
+    # as a first-class archive instead of only content-scanning its opaque
+    # bytes.
+    if head.startswith(b"!<arch>\n"):
+        return "ar"
     # POSIX ustar is only one valid tar dialect. V7/legacy tars have no magic,
     # so ask the standard-library reader to validate the header/checksum rather
     # than leaving those archives opaque to the payload scanner.
@@ -383,12 +399,18 @@ def _decompress_nested_stream(
         "bzip2": bz2.BZ2File,
         "xz": lzma.LZMAFile,
     }
-    opener = openers[kind]
-    compressed = (
-        gzip.GzipFile(fileobj=stream, mode="rb")
-        if kind == "gzip"
-        else opener(stream, mode="rb")
-    )
+    compressed: Any
+    if kind == "zstd":
+        if zstd is None:
+            raise ValueError("zstd archive support is unavailable")
+        compressed = zstd.ZstdDecompressor().stream_reader(stream)
+    else:
+        opener = openers[kind]
+        compressed = (
+            gzip.GzipFile(fileobj=stream, mode="rb")
+            if kind == "gzip"
+            else opener(stream, mode="rb")
+        )
     with compressed, tempfile.TemporaryFile() as expanded:
         while True:
             chunk = compressed.read(1024 * 1024)
@@ -399,7 +421,15 @@ def _decompress_nested_stream(
         expanded.seek(0)
         expanded_kind = _nested_archive_kind(expanded)
         expanded.seek(0)
-        if expanded_kind in {"tar", "zip", "gzip", "bzip2", "xz"}:
+        if expanded_kind in {
+            "tar",
+            "zip",
+            "gzip",
+            "bzip2",
+            "xz",
+            "zstd",
+            "ar",
+        }:
             _scan_nested_archive(
                 stream=expanded,
                 parent_path=parent_path,
@@ -412,6 +442,110 @@ def _decompress_nested_stream(
             _scan_file_stream(
                 path=f"{parent_path}!/<decompressed>",
                 stream=expanded,
+                source=source,
+                findings=findings,
+                depth=depth + 1,
+                budget=budget,
+            )
+
+
+def _read_ar_member(stream: IO[bytes], size: int, output: IO[bytes]) -> None:
+    """Copy exactly one ar member to disk and consume its alignment byte."""
+
+    remaining = size
+    while remaining:
+        chunk = stream.read(min(remaining, 1024 * 1024))
+        if not chunk:
+            raise ValueError("truncated ar member payload")
+        output.write(chunk)
+        remaining -= len(chunk)
+    if size % 2 and stream.read(1) != b"\n":
+        raise ValueError("invalid ar member alignment byte")
+    output.seek(0)
+
+
+def _gnu_ar_name(name_table: bytes, offset: int) -> str:
+    if offset < 0 or offset >= len(name_table):
+        raise ValueError("ar GNU filename offset is outside the name table")
+    tail = name_table[offset:]
+    end = len(tail)
+    for terminator in (b"/\n", b"\n", b"\x00"):
+        position = tail.find(terminator)
+        if position >= 0:
+            end = min(end, position)
+    name = tail[:end].decode("utf-8")
+    if not name:
+        raise ValueError("ar GNU filename is empty")
+    return name
+
+
+def _scan_ar_archive(
+    *,
+    stream: IO[bytes],
+    parent_path: str,
+    source: str,
+    findings: list[Finding],
+    depth: int,
+    budget: _NestedArchiveBudget,
+) -> None:
+    """Walk a System V/GNU/BSD ar archive, including Debian packages."""
+
+    stream.seek(0)
+    if stream.read(8) != b"!<arch>\n":
+        raise ValueError("invalid ar global header")
+    gnu_name_table = b""
+    while True:
+        header = stream.read(60)
+        if not header:
+            break
+        if len(header) != 60 or header[58:60] != b"`\n":
+            raise ValueError("invalid or truncated ar member header")
+        raw_size = header[48:58].decode("ascii").strip()
+        if not raw_size.isdecimal():
+            raise ValueError("invalid ar member size")
+        stored_size = int(raw_size)
+        budget.consume_member(stored_size)
+        raw_name = header[:16].decode("utf-8").rstrip()
+
+        with tempfile.TemporaryFile() as member:
+            _read_ar_member(stream, stored_size, member)
+            payload_offset = 0
+            if raw_name == "//":
+                if stored_size > MAX_AR_NAME_TABLE_BYTES:
+                    raise ValueError("ar GNU filename table exceeds the size limit")
+                gnu_name_table = member.read()
+                member.seek(0)
+                member_name = "<gnu-filename-table>"
+            elif raw_name.startswith("#1/"):
+                encoded_length = raw_name[3:]
+                if not encoded_length.isdecimal():
+                    raise ValueError("invalid BSD ar extended filename length")
+                payload_offset = int(encoded_length)
+                if payload_offset <= 0 or payload_offset > stored_size:
+                    raise ValueError("BSD ar extended filename exceeds member size")
+                member_name = (
+                    member.read(payload_offset).rstrip(b"\x00").decode("utf-8")
+                )
+                if not member_name:
+                    raise ValueError("BSD ar extended filename is empty")
+            elif raw_name.startswith("/") and raw_name[1:].isdecimal():
+                if not gnu_name_table:
+                    raise ValueError(
+                        "ar GNU filename reference precedes its name table"
+                    )
+                member_name = _gnu_ar_name(gnu_name_table, int(raw_name[1:]))
+            elif raw_name in {"/", "/SYM64/", "__.SYMDEF", "__.SYMDEF SORTED"}:
+                member_name = "<symbol-table>"
+            else:
+                member_name = raw_name.removesuffix("/")
+                if not member_name:
+                    raise ValueError("ar member filename is empty")
+
+            nested_path = f"{parent_path}!/{member_name.lstrip('/')}"
+            member.seek(payload_offset)
+            _scan_file_stream(
+                path=nested_path,
+                stream=member,
                 source=source,
                 findings=findings,
                 depth=depth + 1,
@@ -505,7 +639,7 @@ def _scan_nested_archive(
         )
         return
     try:
-        if kind in {"gzip", "bzip2", "xz"}:
+        if kind in {"gzip", "bzip2", "xz", "zstd"}:
             _decompress_nested_stream(
                 kind=kind,
                 stream=stream,
@@ -532,6 +666,15 @@ def _scan_nested_archive(
                             depth=depth + 1,
                             budget=budget,
                         )
+        elif kind == "ar":
+            _scan_ar_archive(
+                stream=stream,
+                parent_path=parent_path,
+                source=source,
+                findings=findings,
+                depth=depth,
+                budget=budget,
+            )
         else:
             with tarfile.open(fileobj=stream, mode="r:*") as archive:
                 for tar_member in archive:
@@ -556,6 +699,7 @@ def _scan_nested_archive(
         OSError,
         RuntimeError,
         ValueError,
+        ZSTD_ERROR,
         tarfile.TarError,
         zipfile.BadZipFile,
     ) as exc:

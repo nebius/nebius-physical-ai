@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import zstandard as zstd
 
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "scan_image_wan_payload.py"
@@ -48,6 +49,28 @@ def _zip_bytes(members: dict[str, bytes]) -> bytes:
         for name, content in members.items():
             archive.writestr(name, content)
     return payload.getvalue()
+
+
+def _ar_bytes(members: dict[str, bytes]) -> bytes:
+    payload = bytearray(b"!<arch>\n")
+    for name, content in members.items():
+        encoded_name = f"{name}/".encode("utf-8")
+        assert len(encoded_name) <= 16
+        header = (
+            encoded_name.ljust(16, b" ")
+            + b"0".ljust(12, b" ")
+            + b"0".ljust(6, b" ")
+            + b"0".ljust(6, b" ")
+            + b"100644".ljust(8, b" ")
+            + str(len(content)).encode("ascii").ljust(10, b" ")
+            + b"`\n"
+        )
+        assert len(header) == 60
+        payload.extend(header)
+        payload.extend(content)
+        if len(content) % 2:
+            payload.extend(b"\n")
+    return bytes(payload)
 
 
 def _v7_tar_bytes(name: str, payload: bytes) -> bytes:
@@ -293,6 +316,67 @@ def test_legacy_v7_tar_mutation_is_not_opaque(tmp_path: Path) -> None:
     assert any(
         "legacy.payload!/models/model.safetensors" in item.path for item in findings
     )
+
+
+def test_debian_ar_data_archive_mutation_is_not_opaque(tmp_path: Path) -> None:
+    data_tar = _tar_bytes(
+        {"usr/lib/x86_64-linux-gnu/libcudart.so.12": b"\x7fELF\x00libcudart.so.12\x00"},
+        mode="w:xz",
+    )
+    deb = _ar_bytes({"debian-binary": b"2.0\n", "data.tar.xz": data_tar})
+    findings = scanner.scan(
+        _tar(tmp_path / "deb-rootfs.tar", {"opt/application/payload.deb": deb}), {}
+    )
+    kinds = {item.kind for item in findings}
+    assert "cuda_library" in kinds
+    assert "cuda_elf_dependency" in kinds
+    assert any(
+        "payload.deb!/data.tar.xz!/usr/lib/x86_64-linux-gnu/libcudart.so.12"
+        in item.path
+        for item in findings
+    )
+
+
+def test_debian_ar_zstd_data_archive_mutation_is_not_opaque(tmp_path: Path) -> None:
+    data_tar = _tar_bytes(
+        {"usr/lib/x86_64-linux-gnu/libcudart.so.12": b"\x7fELF\x00libcudart.so.12\x00"}
+    )
+    compressed = zstd.ZstdCompressor().compress(data_tar)
+    deb = _ar_bytes({"debian-binary": b"2.0\n", "data.tar.zst": compressed})
+    findings = scanner.scan(
+        _tar(tmp_path / "zstd-deb-rootfs.tar", {"opt/application/payload.deb": deb}),
+        {},
+    )
+    kinds = {item.kind for item in findings}
+    assert "cuda_library" in kinds
+    assert "cuda_elf_dependency" in kinds
+
+
+def test_zstd_archive_fails_closed_when_decoder_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    compressed = zstd.ZstdCompressor().compress(b"clean data")
+    monkeypatch.setattr(scanner, "zstd", None)
+    findings = scanner.scan(
+        _tar(tmp_path / "zstd-rootfs.tar", {"opt/application/data.zst": compressed}),
+        {},
+    )
+    assert "nested_archive_unreadable" in {item.kind for item in findings}
+    assert any(
+        "zstd archive support is unavailable" in item.detail for item in findings
+    )
+
+
+def test_malformed_debian_ar_fails_closed(tmp_path: Path) -> None:
+    malformed = b"!<arch>\n" + b"broken"
+    findings = scanner.scan(
+        _tar(
+            tmp_path / "malformed-deb-rootfs.tar",
+            {"opt/application/broken.deb": malformed},
+        ),
+        {},
+    )
+    assert "nested_archive_unreadable" in {item.kind for item in findings}
 
 
 def test_nested_siblings_share_cumulative_decompression_budget(

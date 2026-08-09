@@ -109,7 +109,12 @@ run: |
       for path in root.rglob("*"):
           if path.is_file():
               key = prefix + str(path.relative_to(root))
-              s3.upload_file(str(path), parsed.netloc, key)
+              s3.put_object(
+                  Bucket=parsed.netloc,
+                  Key=key,
+                  Body=path.read_bytes(),
+                  IfNoneMatch="*",
+              )
               uploaded += 1
               print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
       summary_key = prefix + "npa_byof_summary.json"

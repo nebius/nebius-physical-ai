@@ -40,19 +40,24 @@ config:
     # wan2_2_ti2v_5b_text_to_video.json. The solution-scoped resolver below
     # switches both fields together for the optional I2V configuration:
     # wan2.2_ti2v_5b_image_to_video emits wan2_2_ti2v_5b_image_to_video.json.
-    export WAN22_PROMPT="{{config.prompt}}"
-    export WAN22_CONTEXT_IMAGE_URI="{{config.context_image_uri}}"
+    # User-provided text crosses the shell boundary only as base64 data. The
+    # Python consumers decode it without evaluating it as shell syntax.
+    export WAN22_PROMPT_B64="{{config.prompt|base64}}"
+    export WAN22_CONTEXT_IMAGE_URI_B64="{{config.context_image_uri|base64}}"
     export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
     # Validate the config-facing input/capability/artifact contract before the
     # accepted CUDA runtime fetch can create a cache or contact a package index.
     /opt/wan-base/bin/python - <<'PY'
+    import base64
     import os
 
     from npa_wan_input_contract import WanInputContractError, resolve_wan_input_contract
 
     try:
         resolve_wan_input_contract(
-            context_image_uri=os.environ.get("WAN22_CONTEXT_IMAGE_URI", ""),
+            context_image_uri=base64.b64decode(
+                os.environ.get("WAN22_CONTEXT_IMAGE_URI_B64", ""), validate=True
+            ).decode("utf-8"),
             declared_capability=os.environ.get("BYOF_CAPABILITY_NAME", ""),
             declared_artifact=os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
         )
@@ -63,6 +68,7 @@ config:
     /opt/byof/.venv/bin/python - <<'PY'
     from __future__ import annotations
 
+    import base64
     import copy
     import hashlib
     import importlib.metadata
@@ -99,7 +105,9 @@ config:
     out_dir.mkdir(parents=True, exist_ok=True)
     cache_dir = Path(os.environ.get("WAN22_CACHE_DIR", "/workspace/model-cache/wan2.2"))
     cache_dir.mkdir(parents=True, exist_ok=True)
-    prompt = os.environ.get("WAN22_PROMPT", "").strip()
+    prompt = base64.b64decode(
+        os.environ.get("WAN22_PROMPT_B64", ""), validate=True
+    ).decode("utf-8").strip()
     if not prompt:
         raise SystemExit("WAN22_PROMPT must be non-empty")
 
@@ -291,7 +299,9 @@ config:
         s3_client().download_file(parsed.netloc, parsed.path.lstrip("/"), str(target))
         return target
 
-    context_uri = os.environ.get("WAN22_CONTEXT_IMAGE_URI", "")
+    context_uri = base64.b64decode(
+        os.environ.get("WAN22_CONTEXT_IMAGE_URI_B64", ""), validate=True
+    ).decode("utf-8")
     selected_contract = resolve_wan_input_contract(
         context_image_uri=context_uri,
         declared_capability=os.environ.get("BYOF_CAPABILITY_NAME", ""),
@@ -413,7 +423,7 @@ config:
         "task": task,
         "prompt": prompt,
         "seed": seed,
-        "context_image_uri": os.environ.get("WAN22_CONTEXT_IMAGE_URI", ""),
+        "context_image_uri": context_uri,
         "requested": {
             "width": requested_width,
             "height": requested_height,
@@ -485,7 +495,7 @@ config:
   poll_interval: "60"
   output_root: "s3://{{config.bucket}}/oss-solutions/wan2.2"
   summary_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/npa_byof_summary.json"
-  artifact_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_ti2v_5b_text_to_video.json"
+  artifact_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/{{config.smoke_artifact_name}}"
   inventory_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_runtime_inventory.json"
   video_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_ti2v_5b.mp4"
   rrd_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_ti2v_5b.rrd"

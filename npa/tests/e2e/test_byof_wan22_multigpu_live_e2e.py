@@ -10,6 +10,7 @@ generation with NCCL, FULL_SHARD FSDP, and Ulysses.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import re
@@ -118,7 +119,9 @@ def test_wan22_multigpu_spec_plans_the_real_official_path() -> None:
     assert "process_group_destroyed" in smoke
     assert "ncclGetVersion" in smoke
     assert "wan2_2_multigpu_topology.json" in smoke
-    assert str(config["prompt"]) in smoke
+    encoded_prompt = base64.b64encode(str(config["prompt"]).encode()).decode()
+    assert encoded_prompt in smoke
+    assert str(config["prompt"]) not in smoke
     assert "{{config." not in smoke
     for capability in EXPECTED_CAPABILITIES:
         assert capability in smoke

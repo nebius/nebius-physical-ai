@@ -244,6 +244,23 @@ def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:
     assert config["rrd_manifest_uri"].endswith("wan2_2_ti2v_5b_rrd_manifest.json")
 
 
+@pytest.mark.parametrize(
+    "filename",
+    ["byof-wan2.2.yaml", "byof-wan2.2-multigpu.yaml"],
+)
+def test_wan22_prompt_is_not_interpolated_as_shell_syntax(filename: str) -> None:
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+
+    spec = load_spec(WORKFLOW_DIR / filename)
+    hostile = '"; echo WAN_PROMPT_INJECTION; $(touch /tmp/never) #'
+    spec.config["prompt"] = hostile
+    rendered = "\n".join(build_plan(spec, run_id="prompt-safety").steps[0].argv)
+
+    assert hostile not in rendered
+    assert "WAN_PROMPT_INJECTION" not in rendered
+    assert "{{config.prompt" not in rendered
+
+
 def test_wan22_context_image_config_contract_fails_closed() -> None:
     contract = _load_wan_input_contract()
     config = _load_config(WORKFLOW_DIR / "byof-wan2.2.yaml")

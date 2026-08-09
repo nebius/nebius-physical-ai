@@ -282,7 +282,10 @@ describe("NPA agent UI against live infra", () => {
       expect(String(simViz.preview_entity || "")).to.eq("camera");
       expect(simViz.visualization_note || "").to.match(/held-out simulation camera|reference proxy/i);
       expect(decodeURIComponent(String(simViz.rerun_iframe_url || ""))).to.include(
-        "/rerun/recordings/sim2real.rrd",
+        String(simViz.artifact_preview_url || ""),
+      );
+      expect(String(simViz.artifact_preview_url || "")).to.match(
+        /^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/,
       );
     };
 
@@ -335,15 +338,20 @@ describe("NPA agent UI against live infra", () => {
             cy.get("#tabRerun").click();
             cy.get("#rerunFrame").should(($frame) => {
               const src = String($frame.attr("src") || "");
-              expect(decodeURIComponent(src)).to.include("/rerun/recordings/sim2real.rrd");
+              expect(decodeURIComponent(src)).to.include(statusViz.artifact_preview_url);
             });
             // Rerun's WASM fetch cannot attach the agent's Basic credentials.
             // Prove both that its same-origin transport is anonymously readable
             // and that the real viewer painted non-blank recording pixels.
-            const publicRecordingUrl = `${String(Cypress.config("baseUrl") || "").replace(/\/$/, "")}/rerun/recordings/sim2real.rrd`;
+            const publicRecordingUrl = `${String(Cypress.env("agentBaseUrl") || Cypress.env("NPA_AGENT_BASE_URL") || Cypress.config("baseUrl") || "").replace(/\/$/, "")}${statusViz.artifact_preview_url}`;
             cy.request({ url: publicRecordingUrl, failOnStatusCode: false }).then((rrdResp) => {
               expect(rrdResp.status).to.eq(200);
-              expect(Number(rrdResp.headers["content-length"] || 0)).to.be.greaterThan(0);
+              // Nginx can legitimately omit Content-Length (for example when
+              // chunked transfer is selected), while Cypress has still read
+              // the complete response body. Assert the bytes Cypress
+              // received instead of requiring one particular transport
+              // header.
+              expect(String(rrdResp.body || "").length).to.be.greaterThan(0);
             });
             const waitForRenderedRecording = (attempt) => {
               cy.window().then((win) => {

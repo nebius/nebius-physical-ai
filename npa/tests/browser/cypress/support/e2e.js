@@ -66,6 +66,8 @@ const GENERIC_WORKFLOW_RUN_DETAILS = {
   },
 };
 
+const RERUN_RECORDING_PATH = `/rerun/recordings/cap-${"A".repeat(43)}.rrd`;
+
 const SIM_VIZ = {
   run_id: "mock-run",
   active_run_id: "mock-run",
@@ -74,7 +76,7 @@ const SIM_VIZ = {
   rrd_uri: "file:///opt/npa-agent/sim2real.rrd",
   rrd_updated_at: "2026-07-07T03:33:00Z",
   rerun_ready: true,
-  rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=workspace",
+  rerun_iframe_url: `/rerun/?url=https://example.test${RERUN_RECORDING_PATH}&hide_welcome_screen=1&camera=workspace`,
   mcap_uri: "file:///opt/npa-agent/recordings/sim2real.mcap",
   lichtblick_ready: true,
   lichtblick_iframe_url: "/lichtblick/?ds=remote-file&ds.url=%2Flichtblick%2Frecordings%2Fsim2real.mcap",
@@ -96,7 +98,7 @@ const NON_STOCK_SIM_VIZ = {
   rrd_uri: "file:///opt/npa-agent/recordings/sim2real.rrd",
   rrd_updated_at: "2026-07-07T04:12:00Z",
   rerun_ready: true,
-  rerun_iframe_url: "/rerun/?url=https://example.test/rerun/recordings/sim2real.rrd&hide_welcome_screen=1&camera=customer-overhead",
+  rerun_iframe_url: `/rerun/?url=https://example.test${RERUN_RECORDING_PATH}&hide_welcome_screen=1&camera=customer-overhead`,
   available_run_ids: [NON_STOCK_RUN_ID, "mock-run", "submitted-run"],
   available_runs: [
     { run_id: NON_STOCK_RUN_ID, last_modified: "2026-07-11T18:00:00Z", stage: "stage_14_rerun_viz" },
@@ -106,8 +108,8 @@ const NON_STOCK_SIM_VIZ = {
   artifact_render: "rerun",
   artifact_key: `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
   artifact_uri: `s3://mock/${NON_STOCK_RUN_ID}/reports/sim2real.rrd`,
-  artifact_preview_url: "/rerun/recordings/sim2real.rrd",
-  artifact_download_url: "/rerun/recordings/sim2real.rrd",
+  artifact_preview_url: RERUN_RECORDING_PATH,
+  artifact_download_url: RERUN_RECORDING_PATH,
   mcap_uri: `file:///opt/npa-agent/recordings/sim2real.mcap`,
   lichtblick_ready: true,
   lichtblick_iframe_url: "/lichtblick/?ds=remote-file&ds.url=%2Flichtblick%2Frecordings%2Fsim2real.mcap",

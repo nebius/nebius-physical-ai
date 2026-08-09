@@ -29,7 +29,8 @@ config:
   workload: solution-smoke
   smoke_command: |
     set -euo pipefail
-    export WAN22_PROMPT="{{config.prompt}}"
+    # User-provided prompt crosses the shell boundary only as base64 data.
+    export WAN22_PROMPT_B64="{{config.prompt|base64}}"
     export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
     export WAN22_EXPECTED_WORLD_SIZE="4"
     export WAN22_OUTPUT_NAME="wan2_2_ti2v_5b_multigpu.mp4"
@@ -100,6 +101,19 @@ config:
     )
     PY
     CHECKPOINT_DIR="$(tr -d '\n' < "${CHECKPOINT_FILE}")"
+    export WAN22_PROMPT="$(/opt/wan-base/bin/python - <<'PY'
+    import base64
+    import os
+    import sys
+
+    prompt = base64.b64decode(
+        os.environ.get("WAN22_PROMPT_B64", ""), validate=True
+    ).decode("utf-8").strip()
+    if not prompt or "\x00" in prompt:
+        raise SystemExit("decoded Wan prompt is empty or contains NUL")
+    sys.stdout.write(prompt)
+    PY
+    )"
 
     cat > "${WRAPPER}" <<'PY'
     from __future__ import annotations

@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from npa.deploy.images import wan_accepted_image_manifest
 from npa.workflows.wan_rerun import (
     MULTI_GPU_LAYOUT,
     SINGLE_GPU_LAYOUT,
@@ -20,6 +21,11 @@ from npa.workflows.wan_rerun import (
     publish_wan_rrd_from_s3,
 )
 from npa.solutions.wan2_2 import rerun as wan_rerun
+
+
+def _accepted_image_ref() -> str:
+    accepted = wan_accepted_image_manifest()
+    return f"registry.example/project/npa-wan2-2@{accepted['oci_digest']}"
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -130,6 +136,7 @@ def _materialize_multigpu_run(root: Path) -> None:
             "tool": "byof",
             "workload": "solution-smoke-wan22-b200-4gpu",
             "run_id": "wan-test-run",
+            "image": _accepted_image_ref(),
             "solution_name": "wan2.2-multigpu",
             "capability_name": "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
             "smoke_artifact_name": "wan2_2_ti2v_5b_multigpu.json",
@@ -311,6 +318,7 @@ def _materialize_single_gpu_run(root: Path) -> None:
             "tool": "byof",
             "workload": "solution-smoke-wan22-rtxpro-gpu",
             "run_id": "wan-single-run",
+            "image": _accepted_image_ref(),
             "solution_name": "wan2.2",
             "capability_name": "wan2.2_ti2v_5b_text_to_video",
             "smoke_artifact_name": "wan2_2_ti2v_5b_text_to_video.json",
@@ -454,7 +462,11 @@ class _MemoryS3:
         Key: str,
         Body: bytes,
         ContentType: str,
+        IfNoneMatch: str,
     ) -> dict[str, Any]:
+        assert IfNoneMatch == "*"
+        if (Bucket, Key) in self.objects:
+            raise RuntimeError("precondition failed: object already exists")
         self.objects[(Bucket, Key)] = bytes(Body)
         self.content_types[(Bucket, Key)] = ContentType
         return {"ETag": f'"{hashlib.md5(Body, usedforsecurity=False).hexdigest()}"'}
@@ -510,6 +522,22 @@ def test_single_gpu_schema_drift_fails_with_structured_error(tmp_path: Path) -> 
     _write_json(artifact, payload)
 
     with pytest.raises(WanRrdError, match="tokenizer identity"):
+        build_wan_rrd(run_dir, tmp_path / "broken.rrd", layout=SINGLE_GPU_LAYOUT)
+
+
+@pytest.mark.parametrize(
+    "image",
+    ["", "registry.example/wan:wrong", "registry.example/wan@sha256:" + "0" * 64],
+)
+def test_run_image_must_match_the_accepted_digest(tmp_path: Path, image: str) -> None:
+    run_dir = tmp_path / "single"
+    _materialize_single_gpu_run(run_dir)
+    summary_path = run_dir / "npa_byof_summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["image"] = image
+    _write_json(summary_path, summary)
+
+    with pytest.raises(WanRrdError, match="image"):
         build_wan_rrd(run_dir, tmp_path / "broken.rrd", layout=SINGLE_GPU_LAYOUT)
 
 
@@ -580,6 +608,10 @@ def test_single_gpu_publish_manifest_and_source_roles(tmp_path: Path) -> None:
     )
     assert result["status"] == "verified"
     assert manifest["variant"] == "single-gpu"
+    assert (
+        manifest["container_image"]["oci_digest"]
+        == wan_accepted_image_manifest()["oci_digest"]
+    )
     assert len(manifest["source_objects"]) == 5
     assert not any(
         item["role"].startswith("distributed") for item in manifest["source_objects"]
@@ -750,6 +782,7 @@ def test_publish_wan_rrd_rechecks_remote_bytes_and_writes_manifest(
     assert manifest["schema"] == RRD_MANIFEST_SCHEMA
     assert manifest["status"] == "verified"
     assert manifest["capability"] == RRD_CAPABILITY
+    assert manifest["container_image"] == result["container_image"]
     assert manifest["rrd"]["sha256"] == result["rrd_sha256"]
     assert manifest["video"]["embedded_sha256"] == result["video_sha256"]
     assert manifest["verification"]["remote_rerun_cli_verify"] == "passed"
@@ -765,3 +798,21 @@ def test_publish_wan_rrd_rechecks_remote_bytes_and_writes_manifest(
     assert s3.content_types[(bucket, prefix + MULTI_GPU_LAYOUT.manifest_filename)] == (
         "application/json"
     )
+
+
+def test_publish_wan_rrd_refuses_to_overwrite_an_existing_recording(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    _materialize_single_gpu_run(run_dir)
+    bucket = "test-bucket"
+    prefix = "oss-solutions/wan2.2/immutable-run/"
+    s3 = _MemoryS3(bucket, prefix, run_dir)
+
+    publish_wan_rrd_from_s3(
+        f"s3://{bucket}/{prefix}", variant="single-gpu", s3_client=s3
+    )
+    with pytest.raises(RuntimeError, match="object already exists"):
+        publish_wan_rrd_from_s3(
+            f"s3://{bucket}/{prefix}", variant="single-gpu", s3_client=s3
+        )

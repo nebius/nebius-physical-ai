@@ -25,6 +25,9 @@ lands only in `/workspace/.cache/npa/wan2-2/runtime`.
 Offline reuse succeeds only for a complete cache whose requirements/Python-ABI
 stamp matches exactly; empty or deliberately stale caches fail closed with exit
 69, while missing operator acceptance fails before download with exit 78.
+Workflow submissions must forward the acceptance gate and Hugging Face token
+through the secret channel with `--secret-env NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS`
+and `--secret-env HF_TOKEN`; neither value belongs in a spec or rendered YAML.
 
 The hard gate generates 17 frames at the official TI2V-5B 1280×704 spatial
 size and 24 fps with eight sampling steps. The shorter duration and sampling
@@ -157,11 +160,11 @@ local plus remote verification results. Only a verified manifest names the
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260809T002636Z`, fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
+| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260809T015145Z`, fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
 | `wan2.2_decoded_mp4_validation` | accepted | same run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
-| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | `byof-wan22-multigpu-e2e-20260809T003617Z`, official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | `byof-wan22-multigpu-e2e-20260809T014018Z`, official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
 | `wan2.2_distributed_rank_topology_validation` | accepted | same run proved unique ranks/devices, NCCL 2.27.7 runtime transport and sum 10/10, T5/DiT FULL_SHARD, Ulysses calls, and process-group teardown |
-| `wan2.2_verified_rerun_recording` | accepted | RRD built from that fresh distributed MP4 and JSON evidence, then uploaded, remotely re-verified, and loaded byte-identically into the live agent |
+| `wan2.2_verified_rerun_recording` | accepted | fresh single- and four-GPU RRDs were built from their exact MP4/JSON evidence, uploaded, and remotely re-verified; the single-GPU RRD was loaded byte-identically and visibly rendered in the live agent |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | optional real input path exists but lacks separately accepted live evidence |
 | A14B, S2V-14B, Animate-14B | deferred | separate models and input/GPU contracts |
 | official TI2V fine-tuning | deferred | pinned official source has no TI2V training entrypoint |
@@ -178,16 +181,18 @@ revisions, observed image IDs, run IDs, and MP4/RRD proof hashes is recorded in
 
 The materialized accepted distributed recording is:
 
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260809T003617Z/wan2_2_ti2v_5b_multigpu.rrd`
-  (2,948,210 bytes; SHA-256
-  `b83f687cf2aa603995f319e8d595b9bd360f21463ac0bea4c4c069f70f4d3eb1`).
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260809T003617Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
-  (10,463 bytes; SHA-256
-  `1847e76df9712040c54f6be9c073762091eea5cd88c3e38e741896117fd5f7bd`).
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260809T014018Z/wan2_2_ti2v_5b_multigpu.rrd`
+  (2,948,508 bytes; SHA-256
+  `5a4f77461f0877e72c3543508df20edd3a12d0e1fb6bf3f9cfd7215b0dfe0606`).
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260809T014018Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
+  (10,801 bytes; SHA-256
+  `1f256009e149100c5dfb06c200861537e41e89dc11d11a5923b4615fb14bc308`).
 
 S3 HEAD/GET, local and downloaded `rerun rrd verify`, `rerun rrd stats`, entity
-inspection, embedded-video identity, and the live agent Rerun blob all agreed
-on those exact bytes.
+inspection, and embedded-video identity agreed on those exact distributed
+bytes. The live agent Rerun blob and compositor separately agreed with and
+visibly rendered the 3,045,269-byte single-GPU RRD
+(`49a57f5b5233a83dbde4fb43aa4eeab8d289e045d09f3ce9971ff654c4dcfb10`).
 
 ## Licensing and publication
 

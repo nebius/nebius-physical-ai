@@ -90,7 +90,13 @@ def test_output_storage_preflight_writes_reads_and_deletes(monkeypatch) -> None:
     calls: list[tuple[str, str, str]] = []
 
     class FakeS3:
+        def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
+            calls.append(("list", Bucket, Prefix))
+            assert MaxKeys == 1
+            return {"Contents": []}
+
         def put_object(self, *, Bucket, Key, **_kwargs):
+            assert _kwargs["IfNoneMatch"] == "*"
             calls.append(("put", Bucket, Key))
 
         def head_object(self, *, Bucket, Key):
@@ -116,6 +122,7 @@ def test_output_storage_preflight_writes_reads_and_deletes(monkeypatch) -> None:
     )
 
     assert calls == [
+        ("list", "bucket", "prefix/byof-demo/"),
         ("put", "bucket", "prefix/byof-demo/.npa-write-preflight"),
         ("head", "bucket", "prefix/byof-demo/.npa-write-preflight"),
         ("delete", "bucket", "prefix/byof-demo/.npa-write-preflight"),
@@ -126,6 +133,9 @@ def test_output_storage_preflight_fails_before_launch(monkeypatch) -> None:
     module = _load_module()
 
     class DeniedS3:
+        def list_objects_v2(self, **_kwargs):
+            return {"Contents": []}
+
         def put_object(self, **_kwargs):
             raise PermissionError("Access denied")
 
@@ -136,6 +146,27 @@ def test_output_storage_preflight_fails_before_launch(monkeypatch) -> None:
     )
 
     with pytest.raises(RuntimeError, match="output storage preflight failed"):
+        module.preflight_output_storage(
+            output_root="s3://bucket/prefix", run_id="byof-demo"
+        )
+
+
+def test_output_storage_preflight_rejects_reused_run_prefix(monkeypatch) -> None:
+    module = _load_module()
+
+    class ExistingS3:
+        def list_objects_v2(self, **_kwargs):
+            return {"Contents": [{"Key": "prefix/byof-demo/result.json"}]}
+
+    monkeypatch.setattr(
+        module,
+        "s3_client_for_project",
+        lambda *_args, **_kwargs: ExistingS3(),
+    )
+
+    with pytest.raises(
+        RuntimeError, match="refusing to reuse a non-empty BYOF run prefix"
+    ):
         module.preflight_output_storage(
             output_root="s3://bucket/prefix", run_id="byof-demo"
         )

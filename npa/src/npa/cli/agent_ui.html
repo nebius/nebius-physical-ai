@@ -3826,7 +3826,7 @@
       let lastRerunMountStatus = "pending";
       let lastRerunRecordingUrl = "";
       let rerunViewerAppReady = false;
-      const RERUN_RECORDING_PATH = "/rerun/recordings/sim2real.rrd";
+      let RERUN_RECORDING_PATH = "";
       const RERUN_BUNDLE_ASSETS = ["/rerun/re_viewer.js", "/rerun/re_viewer_bg.wasm"];
       let rerunBundleWarmPromise = null;
       const RERUN_BLOB_SUCCESS = "SUCCESS";
@@ -4025,13 +4025,16 @@
         };
       }
       async function resolveRerunRecordingUrl() {
+        if (!/^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/.test(RERUN_RECORDING_PATH)) {
+          throw new Error("Rerun recording capability is unavailable");
+        }
         const cacheBust = "?t=" + String(Date.now());
         const recordingUrl = location.origin + RERUN_RECORDING_PATH + cacheBust;
         const resp = await fetchWithTimeout(RERUN_RECORDING_PATH, { credentials: "include", method: "HEAD" }, 8000);
         if (!resp.ok) {
           throw new Error("Rerun recording not published yet");
         }
-        setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording=public");
+        setRerunBlobStatus(RERUN_BLOB_SUCCESS, "recording=capability");
         return recordingUrl;
       }
       async function rerunIframeSrc(camera, runId) {
@@ -4897,7 +4900,7 @@
         if (!iframe) return true;
         const mountKey = String(runId || activeRunId || camera || "workspace").trim() || "workspace";
         // Always prefer soft-swap when wasm is alive — even for the same mountKey,
-        // because published /recordings/sim2real.rrd bytes may have changed.
+        // because the active per-load recording capability may have changed.
         if (rerunIframeLoaded && !iframe.hidden && iframe.getAttribute("src")) {
           if (await swapRerunRecordingInPlace(camera, runId)) {
             return true;
@@ -5967,7 +5970,12 @@
           showToast("Download failed: " + String((err && err.message) || err), "error");
         }
       }
+      let artifactLoadGeneration = 0;
+      let refreshGeneration = 0;
       async function loadArtifact(payload) {
+        const loadGeneration = ++artifactLoadGeneration;
+        // Invalidate any status refresh that started for the previous artifact.
+        refreshGeneration += 1;
         const body = {
           run_id: String((payload && payload.run_id) || "").trim(),
           key: String((payload && payload.key) || "").trim(),
@@ -5978,6 +5986,7 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
         });
+        if (loadGeneration !== artifactLoadGeneration) return false;
         const simViz = data.sim_viz || {};
         const render = String(data.render || simViz.artifact_render || "");
         activeArtifactRender = render;
@@ -5995,6 +6004,7 @@
           return true;
         }
         await activateMainTab("rerun", { skipEnsure: true });
+        if (loadGeneration !== artifactLoadGeneration) return false;
         if (render === "rerun") {
           setRenderMode("rerun");
           hideArtifactPreview();
@@ -6012,6 +6022,7 @@
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
           await showArtifactPreview(simViz, render);
         }
+        if (loadGeneration !== artifactLoadGeneration) return false;
         // Loading/viewing an artifact must not spam the chat log; the viewer +
         // rendered-data summary already reflect the loaded artifact.
         await refresh();
@@ -6173,6 +6184,7 @@
         });
       }
       async function refresh() {
+        const generation = ++refreshGeneration;
         try {
           const statusPath = activeRunId
             ? "/api/sim-viz/status?run_id=" + encodeURIComponent(activeRunId)
@@ -6184,6 +6196,7 @@
             loadJson("/api/sim-assets"),
             loadJson(statusPath),
           ]);
+          if (generation !== refreshGeneration) return false;
           if (session && session.llm) {
             const currentModel = String(
               (session.llm.model || session.llm.default_model || session.llm.default || "")
@@ -6203,8 +6216,20 @@
             }
           }
           activeRunId = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
+          const recordingCapability = String((simViz && simViz.artifact_preview_url) || "");
+          RERUN_RECORDING_PATH = /^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/.test(recordingCapability)
+            ? recordingCapability
+            : "";
           updateRunSelector(simViz);
-          await loadRunDetails(activeRunId);
+          // An RRD discovered directly in object storage can have valid sim-viz
+          // state without a separate workflow/run-detail record. Keep that
+          // optional enrichment from aborting the status labels and viewer mount.
+          try {
+            await loadRunDetails(activeRunId);
+          } catch (runDetailErr) {
+            console.warn("run detail enrichment unavailable", runDetailErr);
+          }
+          if (generation !== refreshGeneration) return false;
           renderAssetsSummary(assets);
           document.getElementById("simRunId").textContent = String(simViz.run_id || "-");
           document.getElementById("simStage").textContent = String(simViz.stage || "idle");

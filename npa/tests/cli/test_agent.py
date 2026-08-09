@@ -489,11 +489,12 @@ def test_bootstrap_enables_public_https_nginx() -> None:
 
 def test_bootstrap_nginx_serves_rerun_recording_to_same_origin_wasm() -> None:
     source = _agent_source()
+    assert r"cap-[A-Za-z0-9_-]{{43}}\\.rrd" in source
     assert "location /rerun/recordings/" in source
-    assert "alias /opt/npa-agent/recordings/" in source
-    recordings_location = source.split("location /rerun/recordings/ {{", 1)[1].split(
-        "location ~* ^/rerun/", 1
-    )[0]
+    assert "alias /opt/npa-agent/recordings/$1;" in source
+    recordings_location = source.split('location ~ "^/rerun/recordings/(cap-', 1)[
+        1
+    ].split("location /rerun/recordings/", 1)[0]
     directives = [
         line.strip()
         for line in recordings_location.splitlines()
@@ -502,6 +503,10 @@ def test_bootstrap_nginx_serves_rerun_recording_to_same_origin_wasm() -> None:
     assert "auth_basic off;" in directives
     assert not [line for line in directives if "Access-Control" in line]
     assert 'add_header Cross-Origin-Resource-Policy "same-origin" always;' in directives
+    denied_location = source.split("location /rerun/recordings/ {{", 1)[1].split(
+        "location ~* ^/rerun/", 1
+    )[0]
+    assert "return 404;" in denied_location
     rerun_viewer_location = source.split("location /rerun/ {{", 1)[1].split(
         "location / {{", 1
     )[0]
@@ -958,7 +963,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "location.origin + rrdUrl" in source
     assert "_rerun_iframe_url" in source
     assert "NPA_AGENT_PUBLIC_URL" in source
-    assert "/rerun/recordings/sim2real.rrd" in source
+    assert "cap-[A-Za-z0-9_-]{{43}}" in source
     assert (
         "Prefer the public recording copy; authenticated blob fetch remains the fallback"
         in source
@@ -2046,6 +2051,11 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
     )
 
     setup_script = captured["setup_script"]
+    assert "RERUN_CAPABILITY_NAME_RE" in setup_script
+    assert "RERUN_RECORDING_HTTP_PATH" not in setup_script
+    assert 'sim_viz["served_recording_sha256"] = hashlib.sha256(' in setup_script
+    assert 'sim_viz.pop("served_recording_sha256", None)' in setup_script
+    assert "hashlib.sha256(recording_bytes).hexdigest() == bound_sha256" in setup_script
     html_match = re.search(
         r"cat <<'HTML' \| sudo tee /opt/npa-agent/ui\.html >/dev/null\n(?P<html>.*?)\nHTML",
         setup_script,

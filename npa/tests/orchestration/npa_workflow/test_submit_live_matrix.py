@@ -337,6 +337,24 @@ def test_cosmos3_generate_registered_for_live_infra() -> None:
     assert not case.runtime
 
 
+@pytest.mark.parametrize(
+    "spec",
+    ["byof-wan2.2.yaml", "byof-wan2.2-multigpu.yaml"],
+)
+def test_wan_submit_cases_forward_runtime_acceptance_as_secret(spec: str) -> None:
+    case = next(
+        (candidate for candidate in SUBMIT_LIVE_MATRIX if candidate.spec == spec), None
+    )
+
+    assert case is not None
+    assert {
+        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
+        "HF_TOKEN",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    } <= set(case.secret_envs)
+
+
 # --------------------------------------------------------------- runtime cases
 
 

@@ -305,14 +305,14 @@ an explicit `sm_120` architecture check, and run-time model acquisition. No
 weights are baked, and the upstream native PyTorch SDPA fallback is used.
 
 Accepted live hard-gate capabilities, validated by
-`byof-wan22-e2e-20260809T002636Z` on one RTX PRO 6000 Blackwell (`sm_120`):
+`byof-wan22-e2e-20260809T015145Z` on one RTX PRO 6000 Blackwell (`sm_120`):
 
 - `wan2.2_ti2v_5b_text_to_video` (real 1280x704 MP4)
 - `wan2.2_decoded_mp4_validation` (decode all frames; dimensions/count/fps and
   conservative non-uniform-content checks)
 
 Accepted distributed hard-gate capabilities, validated by
-`byof-wan22-multigpu-e2e-20260809T003617Z` on one node with four B200s
+`byof-wan22-multigpu-e2e-20260809T014018Z` on one node with four B200s
 (`sm_100`, world/local world size 4):
 
 - `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses`

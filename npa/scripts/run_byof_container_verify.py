@@ -237,14 +237,15 @@ def _resolved_storage_env() -> dict[str, str]:
 
 
 def preflight_output_storage(*, output_root: str, run_id: str) -> None:
-    """Prove the selected S3 run prefix is writable before provisioning compute."""
+    """Reserve a new S3 run prefix and prove it is writable before compute."""
 
     parsed = urlparse(_normalize_output_root(output_root))
     bucket = parsed.netloc.strip()
     if parsed.scheme != "s3" or not bucket:
         raise ValueError("BYOF output root must be a valid s3:// URI")
     prefix = parsed.path.strip("/")
-    key = "/".join(part for part in (prefix, run_id, ".npa-write-preflight") if part)
+    run_prefix = "/".join(part for part in (prefix, run_id) if part).rstrip("/") + "/"
+    key = run_prefix + ".npa-write-preflight"
     project = (
         os.environ.get("NPA_E2E_PROJECT", "").strip()
         or os.environ.get("NPA_PROJECT", "").strip()
@@ -253,11 +254,17 @@ def preflight_output_storage(*, output_root: str, run_id: str) -> None:
     client = s3_client_for_project(project or None, allow_host_creds=True)
     created = False
     try:
+        existing = client.list_objects_v2(Bucket=bucket, Prefix=run_prefix, MaxKeys=1)
+        if existing.get("Contents"):
+            raise RuntimeError(
+                "refusing to reuse a non-empty BYOF run prefix; choose a new run ID"
+            )
         client.put_object(
             Bucket=bucket,
             Key=key,
             Body=b"npa BYOF write preflight\n",
             ContentType="text/plain",
+            IfNoneMatch="*",
         )
         created = True
         head = client.head_object(Bucket=bucket, Key=key)

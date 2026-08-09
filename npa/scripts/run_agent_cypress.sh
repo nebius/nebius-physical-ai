@@ -6,6 +6,8 @@
 #
 # Live mode:
 #   bash npa/scripts/run_agent_cypress.sh --live --project <alias> --name agent
+#   NPA_AGENT_CYPRESS_RUN_ID=<run> NPA_AGENT_CYPRESS_ARTIFACT_KEY=<key> \
+#     bash npa/scripts/run_agent_cypress.sh --live --project <alias> --name agent
 #   NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE=1 bash npa/scripts/run_agent_cypress.sh --live --project <alias> --name agent
 set -euo pipefail
 
@@ -20,6 +22,7 @@ PROJECT="${NPA_AGENT_PROJECT:-us-central1}"
 NAME="${NPA_AGENT_NAME:-agent}"
 LIVE_DESTRUCTIVE="${NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE:-0}"
 LIVE_RUN_ID="${NPA_AGENT_CYPRESS_RUN_ID:-${NPA_AGENT_RUN_ID:-}}"
+LIVE_ARTIFACT_KEY="${NPA_AGENT_CYPRESS_ARTIFACT_KEY:-}"
 
 usage() {
   cat <<EOF
@@ -105,13 +108,24 @@ if [[ -z "${AGENT_URL}" || -z "${AGENT_USER:-}" || -z "${AGENT_PASSWORD:-}" ]]; 
   exit 1
 fi
 
+LIVE_CYPRESS_SCRIPT="cy:live"
+if [[ -n "${LIVE_RUN_ID}" || -n "${LIVE_ARTIFACT_KEY}" ]]; then
+  if [[ -z "${LIVE_RUN_ID}" || -z "${LIVE_ARTIFACT_KEY}" ]]; then
+    echo "Exact RRD mode requires both NPA_AGENT_CYPRESS_RUN_ID and NPA_AGENT_CYPRESS_ARTIFACT_KEY" >&2
+    exit 2
+  fi
+  LIVE_CYPRESS_SCRIPT="cy:live-rrd"
+fi
+
 (
   cd "${BROWSER_DIR}"
   NODE_TLS_REJECT_UNAUTHORIZED=0 \
+    NPA_AGENT_BASE_URL="${AGENT_URL}" \
     CYPRESS_NPA_AGENT_BASE_URL="${AGENT_URL}" \
     CYPRESS_NPA_AGENT_USER="${AGENT_USER}" \
     CYPRESS_NPA_AGENT_PASSWORD="${AGENT_PASSWORD}" \
     CYPRESS_NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE="${LIVE_DESTRUCTIVE}" \
     CYPRESS_NPA_AGENT_CYPRESS_RUN_ID="${LIVE_RUN_ID}" \
-    npm run cy:live -- --env "NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE=${LIVE_DESTRUCTIVE},NPA_AGENT_CYPRESS_RUN_ID=${LIVE_RUN_ID}"
+    CYPRESS_NPA_AGENT_CYPRESS_ARTIFACT_KEY="${LIVE_ARTIFACT_KEY}" \
+    npm run "${LIVE_CYPRESS_SCRIPT}" -- --env "NPA_AGENT_CYPRESS_LIVE_DESTRUCTIVE=${LIVE_DESTRUCTIVE},NPA_AGENT_CYPRESS_RUN_ID=${LIVE_RUN_ID},NPA_AGENT_CYPRESS_ARTIFACT_KEY=${LIVE_ARTIFACT_KEY}"
 )

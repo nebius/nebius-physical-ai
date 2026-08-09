@@ -18,6 +18,7 @@ retry exercises the pushed image without rebuilding it.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -243,7 +244,9 @@ def test_wan22_spec_plans_the_real_pinned_rtxpro_workload() -> None:
     assert "--wait-timeout -1" in rendered
     assert "WanTI2V" in rendered and "generator.generate(" in rendered
     assert "cv2.VideoCapture" in rendered and "wan2_2_ti2v_5b.mp4" in rendered
-    assert str(config["prompt"]) in rendered
+    encoded_prompt = base64.b64encode(str(config["prompt"]).encode()).decode()
+    assert encoded_prompt in rendered
+    assert str(config["prompt"]) not in rendered
     assert "{{config." not in rendered
     for capability in EXPECTED_CAPABILITIES:
         assert capability in rendered

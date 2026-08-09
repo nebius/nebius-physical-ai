@@ -1,8 +1,8 @@
 {
   "format": "npa_wan_accepted_image_manifest_v1",
-  "tag": "2.2-ti2v5b-rtfetch-cu128-20260809T001206Z-r6",
-  "oci_digest": "sha256:41d85d9667e9bbb2019eab5c26498d2f875a68133e06b21ab4468dd190c1e7a9",
-  "amd64_manifest": "sha256:03c4098dfbc02ee86e1b13da37abf4bb36e84778234fa06da4a8733db77a90a7",
+  "tag": "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7",
+  "oci_digest": "sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13",
+  "amd64_manifest": "sha256:e3d9e30aa38f0909f6f39d5ba8fb5460d77ca6cd4c2549a44510bb338e9cfdd1",
   "runtime_requirements_sha256": "5ee34ad0ec406cfbe0c8071d41faf791dbceeb44defb6ed8b24422ba6022098f",
   "source": {
     "repository": "https://github.com/Wan-Video/Wan2.2.git",
@@ -17,36 +17,36 @@
     "revision": "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"
   },
   "runtime_acceptance": {
-    "manifest_sha256": "dda66a84149e5aa5b908b9259173775e1e017d630b8b3c8b9a5eb6219c13e937",
+    "manifest_sha256": "d941b538a6db722b794cd6758a4b90a2453078a263003669ffa0114d10360bf8",
     "image_immutable_after_install": true,
     "runtime_and_weights_outside_image": true
   },
   "single_gpu_proof": {
-    "run_id": "byof-wan22-e2e-20260809T002636Z",
+    "run_id": "byof-wan22-e2e-20260809T015145Z",
     "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
     "gpu_count": 1,
-    "observed_image_id_digest": "sha256:41d85d9667e9bbb2019eab5c26498d2f875a68133e06b21ab4468dd190c1e7a9",
+    "observed_image_id_digest": "sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13",
     "mp4_sha256": "60001084033f0f9d88f8b7b3dcca0fd59884efaca1a8f23fee7299c809392328",
-    "rrd_sha256": "9aa40bda9a6e4fc3ad21d65e5d1cc4c6fc94ad5d3180d3fe76596781d162e4b4",
-    "rrd_manifest_sha256": "2e41f8bf7e3d18b6cd84d63bb88695a92c3921bfd4d3eaa1807dfd635e60f391"
+    "rrd_sha256": "49a57f5b5233a83dbde4fb43aa4eeab8d289e045d09f3ce9971ff654c4dcfb10",
+    "rrd_manifest_sha256": "6718fe2aa731d3c6f64ed3ccca8247301e7d3aa9a2bcc588bae6e7e8480cb8fd"
   },
   "distributed_proof": {
-    "run_id": "byof-wan22-multigpu-e2e-20260809T003617Z",
+    "run_id": "byof-wan22-multigpu-e2e-20260809T014018Z",
     "gpu_model": "NVIDIA B200",
     "gpu_count": 4,
     "world_size": 4,
-    "observed_image_id_digest": "sha256:41d85d9667e9bbb2019eab5c26498d2f875a68133e06b21ab4468dd190c1e7a9",
+    "observed_image_id_digest": "sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13",
     "mp4_sha256": "9574f79ca01ddd4f0e34945e6f3c309813c924da425daa5a4198b2cdaf894865",
-    "rrd_sha256": "b83f687cf2aa603995f319e8d595b9bd360f21463ac0bea4c4c069f70f4d3eb1",
-    "rrd_manifest_sha256": "1847e76df9712040c54f6be9c073762091eea5cd88c3e38e741896117fd5f7bd"
+    "rrd_sha256": "5a4f77461f0877e72c3543508df20edd3a12d0e1fb6bf3f9cfd7215b0dfe0606",
+    "rrd_manifest_sha256": "1f256009e149100c5dfb06c200861537e41e89dc11d11a5923b4615fb14bc308"
   },
   "payload_scan": {
-    "report_sha256": "3b567c41fb1556f62dec6bf0da4c4fd3f8823f944729e2f218d02f1886acbec1",
+    "report_sha256": "f0f5a4b04bffc31370e8ae5b1dfd0c6d774beccae43e71d98468644e5d9221c6",
     "archives_scanned": 20,
     "findings": 0
   },
   "vulnerability_scan": {
-    "report_sha256": "40121b8d418ba74037290206ca502176ad73ed65bfa314c2a1f072d8833af0a4",
+    "report_sha256": "8bcc7203ee46f441d06028177d70a67d5720fd106f9c052239a49df7199f9b96",
     "critical_total": 27,
     "critical_with_fix": 0,
     "critical_statuses": {

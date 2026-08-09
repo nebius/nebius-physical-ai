@@ -1941,6 +1941,7 @@ sudo cp {AGENT_SOURCE_ROOT}/npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js
 sudo chmod -R a+rX /opt/npa-agent/foxglove
 {_AGENT_BACKEND_SHIP}
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
+import hashlib
 import json
 import os
 import re
@@ -1989,7 +1990,7 @@ from agent_backend.foxglove import (
 )
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
 
-RERUN_RECORDING_HTTP_PATH = "/rerun/recordings/sim2real.rrd"
+RERUN_CAPABILITY_NAME_RE = re.compile(r"cap-[A-Za-z0-9_-]{{43}}\\.rrd")
 MCAP_RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.mcap")
 LICHTBLICK_RECORDING_HTTP_PATH = "/lichtblick/recordings/sim2real.mcap"
 
@@ -2006,9 +2007,12 @@ def _agent_public_origin() -> str:
     return ""
 
 
-def _rerun_recording_url(*, cache_bust: bool = False) -> str:
+def _rerun_recording_url(recording_path: str = "", *, cache_bust: bool = False) -> str:
     origin = _agent_public_origin()
-    path = RERUN_RECORDING_HTTP_PATH
+    path = str(recording_path or "").strip()
+    name = path.removeprefix("/rerun/recordings/")
+    if not RERUN_CAPABILITY_NAME_RE.fullmatch(name): return ""
+    path = f"/rerun/recordings/{{name}}"
     if origin:
         url = f"{{origin}}{{path}}"
     else:
@@ -2018,11 +2022,12 @@ def _rerun_recording_url(*, cache_bust: bool = False) -> str:
     return url
 
 
-def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "") -> str:
+def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "", recording_path: str = "") -> str:
     cam = (camera or "workspace").strip() or "workspace"
     if live_url:
         return f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
-    recording = _rerun_recording_url()
+    recording = _rerun_recording_url(recording_path)
+    if not recording: return "/rerun/"
     # Rerun web viewer treats path-only values like `/rerun/...` as host `rerun`.
     return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
 
@@ -2928,17 +2933,24 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
         )
     rr.log("demo/active_camera", rr.TextLog(active))
     rr.save(str(target))
-    _publish_rrd_recording(target)
     return target
 
-def _publish_rrd_recording(source: Path) -> Path:
-    if not source.is_file():
-        return RECORDING_PATH
+def _publish_rrd_recording(source: Path) -> str:
+    if not source.is_file(): return ""
     RECORDING_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = RECORDING_PATH.with_suffix(".rrd.tmp")
     shutil.copy2(source, tmp)
     tmp.replace(RECORDING_PATH)
-    return RECORDING_PATH
+    capability_name = f"cap-{{secrets.token_urlsafe(32)}}.rrd"
+    if not RERUN_CAPABILITY_NAME_RE.fullmatch(capability_name): raise RuntimeError("generated Rerun capability filename is invalid")
+    capability_path = RECORDINGS_DIR / capability_name
+    capability_tmp = capability_path.with_suffix(".rrd.tmp")
+    shutil.copy2(RECORDING_PATH, capability_tmp)
+    capability_tmp.replace(capability_path)
+    for stale in RECORDINGS_DIR.glob("cap-*.rrd"):
+        if stale != capability_path and RERUN_CAPABILITY_NAME_RE.fullmatch(stale.name):
+            stale.unlink(missing_ok=True)
+    return f"/rerun/recordings/{{capability_name}}"
 
 
 def _safe_artifact_key(key: str) -> str:
@@ -3514,6 +3526,8 @@ def _apply_loaded_artifact(
     current = state.get("sim_viz")
     if isinstance(current, dict):
         sim_viz.update(current)
+    # Never let a previous RRD's binding survive a later media load.
+    sim_viz.pop("served_recording_sha256", None)
     camera = str(sim_viz.get("camera") or "workspace")
     # Keep the data-factory exclusion on one line: npa/tests/cli/test_agent.py
     # guards that exact expression as source text.
@@ -3541,14 +3555,15 @@ def _apply_loaded_artifact(
         }}
     )
     if render == "rerun":
-        _publish_rrd_recording(local_path)
+        capability_path = _publish_rrd_recording(local_path)
+        sim_viz["served_recording_sha256"] = hashlib.sha256(RECORDING_PATH.read_bytes()).hexdigest()
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
-        sim_viz["artifact_preview_url"] = "/rerun/recordings/sim2real.rrd"
-        sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
-        sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"))
-        sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
+        sim_viz["artifact_preview_url"] = capability_path
+        sim_viz["artifact_download_url"] = "/api/sim-viz/rrd-blob"
+        sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"), recording_path=capability_path)
+        sim_viz["rerun_ready"] = bool(capability_path) and rerun_ready
         if _is_data_factory_recording(key):
             sim_viz["preview_entity"] = "augmented"
             sim_viz["visualization_note"] = (
@@ -3731,7 +3746,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
             shutil.copy2(source, run_rec)
         except Exception:
             pass
-    _publish_rrd_recording(run_rec if run_rec.is_file() else source)
+    capability_path = _publish_rrd_recording(run_rec if run_rec.is_file() else source)
     if RECORDING_PATH.is_file():
         RRD_PATH.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(RECORDING_PATH, RRD_PATH)
@@ -3745,7 +3760,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     iframe_url = (
         f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
         if live_url
-        else _rerun_iframe_url(cam)
+        else _rerun_iframe_url(cam, recording_path=capability_path)
     )
     viz = {{
         "run_id": run_id,
@@ -3755,7 +3770,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
         "artifact_uri": str(current.get("artifact_uri") or latest.get("rrd_uri") or ""),
         "artifact_key": str(current.get("artifact_key") or ""),
         "artifact_render": "rerun",
-        "artifact_preview_url": "/rerun/recordings/sim2real.rrd",
+        "artifact_preview_url": capability_path,
         "artifact_download_url": "/api/sim-viz/rrd-blob",
         "live_grpc_url": live_url,
         "mode": "live" if live_url else "static",
@@ -3793,6 +3808,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     cam = (camera or "workspace").strip() or "workspace"
     state["camera_selection"] = [cam]
     target = _generate_franka_demo_rrd(camera=cam)
+    capability_path = _publish_rrd_recording(target)
     restarted = _restart_rerun_serve()
     viewer_ready = _wait_for_rerun_web_viewer() if restarted else False
     now = _now_iso()
@@ -3808,12 +3824,12 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
-        "rerun_iframe_url": _rerun_iframe_url(cam),
+        "rerun_iframe_url": _rerun_iframe_url(cam, recording_path=capability_path),
         "artifact_render": "rerun",
         "artifact_key": "",
         "artifact_uri": "",
-        "artifact_preview_url": "/rerun/recordings/sim2real.rrd",
-        "artifact_download_url": "/rerun/recordings/sim2real.rrd",
+        "artifact_preview_url": capability_path,
+        "artifact_download_url": "/api/sim-viz/rrd-blob",
         "visualization_note": "",
     }}
     state["sim_viz"] = viz
@@ -3826,6 +3842,7 @@ def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "works
     cam = (camera or "workspace").strip() or "workspace"
     state["camera_selection"] = [cam]
     target = _generate_franka_demo_rrd(camera=cam)
+    capability_path = _publish_rrd_recording(target)
     restarted = _restart_rerun_serve()
     viewer_ready = _wait_for_rerun_web_viewer() if restarted else False
     now = _now_iso()
@@ -3840,7 +3857,9 @@ def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "works
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
-        "rerun_iframe_url": _rerun_iframe_url(cam),
+        "rerun_iframe_url": _rerun_iframe_url(cam, recording_path=capability_path),
+        "artifact_preview_url": capability_path,
+        "artifact_download_url": "/api/sim-viz/rrd-blob",
         "submit_mode": "sim2real",
         "workflow_name": "sim2real",
         "pipeline_visualization": True,
@@ -4751,6 +4770,7 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
             _run_specific = False
         run_rec = RECORDINGS_DIR / run_recording_basename(run_id)
         recording_uri = f"file://{{run_rec}}" if run_rec.is_file() else ""
+        capability_path = _publish_rrd_recording(rrd_path) if _run_specific else ""
         # rerun_ready / rrd_uri only when the recording is genuinely run-specific.
         sim_viz.update(
             {{
@@ -4760,9 +4780,9 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
                 "recording_uri": recording_uri,
                 "rrd_updated_at": _now_iso(),
                 "rerun_ready": bool(_run_specific and RECORDING_PATH.is_file() and _rerun_web_viewer_healthy()),
-                "rerun_iframe_url": (
-                    _rerun_iframe_url(str(sim_viz.get("camera") or "workspace")) if _run_specific else ""
-                ),
+                "rerun_iframe_url": _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"), recording_path=capability_path) if _run_specific else "",
+                "artifact_preview_url": capability_path,
+                "artifact_download_url": "/api/sim-viz/rrd-blob" if _run_specific else "",
                 "camera": str(sim_viz.get("camera") or "workspace"),
             }}
         )
@@ -6857,7 +6877,15 @@ def tool(tool_ref: str):
 
 def _served_recording_is_run_specific() -> bool:
     try:
-        return RECORDING_PATH.is_file() and recording_has_run_entities(RECORDING_PATH.read_bytes())
+        if not RECORDING_PATH.is_file(): return False
+        recording_bytes = RECORDING_PATH.read_bytes()
+        sim_viz = _load_state().get("sim_viz")
+        if isinstance(sim_viz, dict):
+            bound_sha256 = str(sim_viz.get("served_recording_sha256") or "").strip().lower()
+            if re.fullmatch(r"[0-9a-f]{{64}}", bound_sha256):
+                return hashlib.sha256(recording_bytes).hexdigest() == bound_sha256
+        # Compatibility for recordings wired by the legacy Sim2Real path.
+        return recording_has_run_entities(recording_bytes)
     except Exception:
         return False
 
@@ -6929,7 +6957,7 @@ def sim_viz_status(run_id: str = ""):
                 f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{camera}}"
             )
         else:
-            payload["rerun_iframe_url"] = _rerun_iframe_url(camera)
+            payload["rerun_iframe_url"] = _rerun_iframe_url(camera, recording_path=str(payload.get("artifact_preview_url") or ""))
     else:
         payload["rerun_iframe_url"] = ""
     if not payload.get("rrd_uri") and may_use_default_recording and RRD_PATH.is_file():
@@ -7061,7 +7089,7 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     else:
         payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
         if not payload.get("rerun_iframe_url"):
-            payload["rerun_iframe_url"] = _rerun_iframe_url(str(payload.get("camera") or "workspace"))
+            payload["rerun_iframe_url"] = _rerun_iframe_url(str(payload.get("camera") or "workspace"), recording_path=str(payload.get("artifact_preview_url") or ""))
     return payload
 
 
@@ -7690,12 +7718,18 @@ def sim_viz_rrd_blob(run_id: str = ""):
 def _boot_preload_sim_viz() -> None:
     if not RRD_PATH.is_file():
         return
-    _publish_rrd_recording(RRD_PATH)
+    capability_path = _publish_rrd_recording(RRD_PATH)
     state = _load_state()
     sim_viz = state.get("sim_viz", {{}})
     if not isinstance(sim_viz, dict):
         sim_viz = {{}}
     if str(sim_viz.get("rrd_uri") or "").strip():
+        sim_viz["artifact_preview_url"] = capability_path
+        sim_viz["artifact_download_url"] = "/api/sim-viz/rrd-blob"
+        sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"), recording_path=capability_path)
+        state["sim_viz"] = sim_viz
+        _record_sim_viz_run(state, sim_viz)
+        _save_state(state)
         return
     selected = state.get("camera_selection", ["workspace"])
     cam = str(selected[0] if isinstance(selected, list) and selected else "workspace")
@@ -7712,7 +7746,9 @@ def _boot_preload_sim_viz() -> None:
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": _rerun_ready_state(rrd_uri=f"file://{{RRD_PATH}}"),
-        "rerun_iframe_url": _rerun_iframe_url(cam),
+        "rerun_iframe_url": _rerun_iframe_url(cam, recording_path=capability_path),
+        "artifact_preview_url": capability_path,
+        "artifact_download_url": "/api/sim-viz/rrd-blob",
     }}
     _record_sim_viz_run(state, state["sim_viz"])
     _save_state(state)

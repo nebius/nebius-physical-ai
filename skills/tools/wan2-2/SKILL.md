@@ -25,11 +25,11 @@ Also load `byof-onboard`, `oss-solution-registry-onboard`,
 - Official model: `Wan-AI/Wan2.2-TI2V-5B`, pinned to
   `921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
 - TI2V-5B is a stock generative-video model supporting text and image inputs.
-- Run `byof-wan22-e2e-20260809T002636Z` accepted the real single-GPU
+- Run `byof-wan22-e2e-20260809T015145Z` accepted the real single-GPU
   text-to-video path on RTX PRO 6000 Blackwell (`sm_120`) from immutable image
-  digest `sha256:41d85d9667e9bbb2019eab5c26498d2f875a68133e06b21ab4468dd190c1e7a9`,
+  digest `sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13`,
   including exact MP4/RRD byte identity.
-- Run `byof-wan22-multigpu-e2e-20260809T003617Z` accepted one shared official
+- Run `byof-wan22-multigpu-e2e-20260809T014018Z` accepted one shared official
   generation from that same observed image digest on four B200s (`sm_100`) with
   world size 4, NCCL, T5 and DiT FULL_SHARD FSDP, Ulysses size 4, and exact
   MP4/RRD byte identity.
@@ -136,6 +136,9 @@ checkpoint, credential, and cache bytes absent from every layer and history via
 current NVIDIA terms before `wan-runtime` writes the CUDA stack to its volume;
 model/tokenizer acquisition remains runtime-only. Do not treat automation as
 human legal approval and never publish merely because the Dockerfile looks clean.
+Carry both the acceptance gate and Hugging Face token only as submission secrets
+(`--secret-env NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS --secret-env HF_TOKEN`), never
+as workflow config, task env literals, or image metadata.
 
 ## Validation
 
