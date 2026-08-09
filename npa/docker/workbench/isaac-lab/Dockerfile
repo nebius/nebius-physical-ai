@@ -51,6 +51,7 @@ LABEL npa.tool="isaac-lab" \
 # npa/tests/docker/test_packaging_contract.py fails the build if any of them reappears.
 ENV DEBIAN_FRONTEND=noninteractive \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_SKIP_EAGER_IMPORTS=1 \
     ISAAC_LAB_VERSION=${ISAAC_LAB_VERSION} \
     ISAAC_SIM_VERSION=${ISAAC_SIM_VERSION} \
     NPA_ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT} \
@@ -89,6 +90,10 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
 
 # Exact controller source is part of the image digest. Isaac's pinned runtime
 # provides the scientific closure; these packages are never installed by Jobs.
+# This purpose-built runtime opts out of the public SDK's convenience imports so
+# importing the controller does not require unrelated data/viewer extras such as
+# PyArrow.  The controller modules themselves are imported below, so a missing
+# dependency on their real path still fails the image build.
 RUN /opt/npa/sim/venv/bin/python -m pip install --no-deps /opt/npa \
     && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir \
       'kubernetes==33.1.0' 'mcap==1.4.0' \

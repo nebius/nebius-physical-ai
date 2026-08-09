@@ -79,3 +79,19 @@ def test_exact_source_images_copy_forced_workflow_package_data(
     assert "COPY" in dockerfile
     assert "workflows /opt/npa/workflows" in dockerfile
     assert "pyproject.toml /opt/npa/pyproject.toml" in dockerfile
+
+
+def test_isaac_exact_source_image_uses_light_package_imports() -> None:
+    """Isaac's purpose-built venv must not require unrelated NPA SDK extras."""
+
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "isaac-lab"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
+    assert "import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation" in (
+        dockerfile
+    )
