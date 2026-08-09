@@ -17,6 +17,21 @@ from npa.workflows.sim2real_envgen import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+EXPLORE_POLICY_DOCKERFILE = (
+    REPO_ROOT / "npa/docker/workbench/sim2real-explore-policy/Dockerfile"
+)
+
+
+def test_explore_policy_image_replaces_inherited_source_provenance() -> None:
+    dockerfile = EXPLORE_POLICY_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "ARG NPA_SOURCE_SHA" in dockerfile
+    assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert 'test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40' in dockerfile
+
+
 def test_policy_image_contract_documents_swap_points() -> None:
     contract = build_policy_image_contract(
         train_envs_uri="s3://bucket/run/envs/train/envs.jsonl",
