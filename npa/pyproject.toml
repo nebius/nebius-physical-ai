@@ -48,8 +48,9 @@ lancedb = [
     "lancedb==0.30.2",
     "pandas>=2.0",
 ]
-# Rerun viewer/recording integration (`npa rerun`, sim-viz adapters).
-viz = ["rerun-sdk==0.31.4"]
+# Rerun viewer/recording integration (`npa rerun`, sim-viz adapters). PyAV
+# makes Wan's MP4 verification independent of host ffmpeg/ffprobe packages.
+viz = ["rerun-sdk==0.31.4", "av==17.1.0"]
 # Foxglove embedded viewer: MCAP read/write for `npa workbench foxglove`
 # (pure-python; the browser SDK itself is fetched at build/bootstrap time).
 # Upper bound is deliberate: mcap 1.4.0 trips mypy module discovery (see the

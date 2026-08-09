@@ -16,7 +16,6 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from fractions import Fraction
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -210,82 +209,36 @@ def _decode_video_metrics(video_path: Path) -> dict[str, Any]:
     """Independently decode the downloaded MP4 rather than trusting run JSON."""
 
     try:
-        probe = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=codec_name,width,height,avg_frame_rate",
-                "-of",
-                "json",
-                str(video_path),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError as exc:
+        import av
+    except ModuleNotFoundError as exc:
         raise WanRrdError(
-            f"ffprobe is required for Wan MP4 verification: {exc}"
+            "Wan MP4 verification requires PyAV; install the npa[viz] extra"
         ) from exc
-    if probe.returncode:
-        raise WanRrdError(
-            f"downloaded MP4 probe failed ({probe.returncode}): {probe.stderr.strip()}"
-        )
-    try:
-        streams = json.loads(probe.stdout).get("streams") or []
-        stream = streams[0]
-        codec = str(stream["codec_name"]).lower()
-        width = int(stream["width"])
-        height = int(stream["height"])
-        fps = float(Fraction(str(stream["avg_frame_rate"])))
-    except (IndexError, KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
-        raise WanRrdError("downloaded MP4 has invalid video stream metadata") from exc
-    _require(codec == "h264", "downloaded source video is not H.264")
-    _require(width > 0 and height > 0 and fps > 0, "downloaded MP4 metadata is invalid")
 
     try:
-        decode = subprocess.run(
-            [
-                "ffmpeg",
-                "-nostdin",
-                "-v",
-                "error",
-                "-i",
-                str(video_path),
-                "-map",
-                "0:v:0",
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "pipe:1",
-            ],
-            check=False,
-            capture_output=True,
-        )
-    except OSError as exc:
+        with av.open(str(video_path), mode="r") as container:
+            stream = container.streams.video[0]
+            codec = str(stream.codec_context.name or "").lower()
+            width = int(stream.codec_context.width)
+            height = int(stream.codec_context.height)
+            fps = float(stream.average_rate or 0)
+            decoded_frames = [
+                frame.to_ndarray(format="rgb24") for frame in container.decode(stream)
+            ]
+    except (IndexError, OSError, TypeError, ValueError, av.FFmpegError) as exc:
         raise WanRrdError(
-            f"ffmpeg is required for Wan MP4 verification: {exc}"
+            f"downloaded MP4 probe failed or decode failed: {exc}"
         ) from exc
-    if decode.returncode:
-        detail = decode.stderr.decode(errors="replace").strip()
-        raise WanRrdError(
-            f"downloaded MP4 decode failed ({decode.returncode}): {detail}"
-        )
-    frame_bytes = width * height * 3
-    _require(
-        frame_bytes > 0 and len(decode.stdout) % frame_bytes == 0,
-        "downloaded MP4 decoded byte count is invalid",
-    )
-    frame_count = len(decode.stdout) // frame_bytes
+
+    _require(codec == "h264", "downloaded source video is not H.264")
+    _require(width > 0 and height > 0 and fps > 0, "downloaded MP4 metadata is invalid")
+    frame_count = len(decoded_frames)
     _require(frame_count > 0, "downloaded MP4 has no decodable frames")
-    frames = np.frombuffer(decode.stdout, dtype=np.uint8).reshape(
-        frame_count, height, width, 3
+    _require(
+        all(frame.shape == (height, width, 3) for frame in decoded_frames),
+        "downloaded MP4 decoded frame geometry is inconsistent",
     )
+    frames = np.stack(decoded_frames)
     max_spatial_std = max(float(np.std(frame)) for frame in frames)
     pixel_range = int(frames.max()) - int(frames.min())
     mean_temporal_abs_delta = (

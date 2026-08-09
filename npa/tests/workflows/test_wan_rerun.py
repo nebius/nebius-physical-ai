@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import subprocess
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import av
+import numpy as np
 import pytest
 
 from npa.deploy.images import wan_accepted_image_manifest
@@ -36,34 +37,26 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 @lru_cache(maxsize=1)
 def _valid_video_bytes() -> bytes:
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc2=size=1280x704:rate=24",
-            "-frames:v",
-            "17",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "frag_keyframe+empty_moov",
-            "-f",
-            "mp4",
-            "pipe:1",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    return result.stdout
+    output = io.BytesIO()
+    x = np.arange(1280, dtype=np.uint16)[None, :]
+    y = np.arange(704, dtype=np.uint16)[:, None]
+    with av.open(output, mode="w", format="mp4") as container:
+        stream = container.add_stream("libx264", rate=24)
+        stream.width = 1280
+        stream.height = 704
+        stream.pix_fmt = "yuv420p"
+        stream.options = {"preset": "ultrafast"}
+        for index in range(17):
+            pixels = np.empty((704, 1280, 3), dtype=np.uint8)
+            pixels[:, :, 0] = (x + index * 13) % 256
+            pixels[:, :, 1] = (y * 2 + index * 7) % 256
+            pixels[:, :, 2] = (x // 4 + y // 4 + index * 17) % 256
+            frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    return output.getvalue()
 
 
 def _rank(rank: int) -> dict[str, Any]:
