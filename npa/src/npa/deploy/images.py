@@ -26,6 +26,7 @@ BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/u00j7q4jjkahvsx0jy"
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
+WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
     "lerobot": "npa-lerobot",
@@ -166,6 +167,8 @@ def sonic_image_manifest() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise RuntimeError("SONIC image manifest must be a JSON object")
     if payload.get("format") != "npa_sonic_image_manifest_v1":
         raise RuntimeError("Unsupported SONIC image manifest format")
     return payload
@@ -182,6 +185,27 @@ def sonic_image_variants() -> dict[str, dict[str, Any]]:
         if variant_id:
             variants[variant_id] = item
     return variants
+
+
+@lru_cache(maxsize=1)
+def wan_accepted_image_manifest() -> dict[str, Any]:
+    """Return the immutable image/runtime/GPU proof tuple allowed for publication."""
+
+    text = (
+        resources.files(__package__)
+        .joinpath(WAN_IMAGE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise RuntimeError("Wan accepted image manifest must be a JSON object")
+    if payload.get("format") != "npa_wan_accepted_image_manifest_v1":
+        raise RuntimeError("Unsupported Wan accepted image manifest format")
+    if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["wan2-2"]:
+        raise RuntimeError(
+            "Wan accepted image manifest tag drifted from the supported tag"
+        )
+    return payload
 
 
 def supported_tool_version(tool: str) -> str:

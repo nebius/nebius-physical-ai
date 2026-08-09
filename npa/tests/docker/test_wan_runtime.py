@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import signal
 import subprocess
 import time
@@ -30,6 +31,69 @@ def test_runtime_requirements_are_hash_locked() -> None:
     assert requirements
     assert all(" --hash=sha256:" in line for line in requirements)
     assert "--require-hashes" in RUNTIME_SCRIPT.read_text(encoding="utf-8")
+
+
+def _offline_runtime_env(
+    tmp_path: Path, *, current_stamp: str
+) -> tuple[dict[str, str], Path]:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("example==1 --hash=sha256:" + "0" * 64 + "\n")
+    fake_base = tmp_path / "fake-base-python"
+    fake_base.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' '3.10-linux_x86_64'\n",
+        encoding="utf-8",
+    )
+    fake_base.chmod(0o755)
+    tree = cache / current_stamp
+    (tree / "venv" / "bin").mkdir(parents=True)
+    fake_venv = tree / "venv" / "bin" / "python"
+    fake_venv.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_venv.chmod(0o755)
+    (tree / ".complete").touch()
+    (cache / "current").symlink_to(tree)
+    return (
+        {
+            **os.environ,
+            "NPA_WAN_RUNTIME_CACHE": str(cache),
+            "NPA_WAN_BASE_PYTHON": str(fake_base),
+            "NPA_WAN_RUNTIME_REQUIREMENTS": str(requirements),
+            "NPA_WAN_RUNTIME_OFFLINE": "1",
+            "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS": "YES",
+        },
+        requirements,
+    )
+
+
+def test_offline_runtime_refuses_a_complete_stale_stamp(tmp_path: Path) -> None:
+    env, _requirements = _offline_runtime_env(tmp_path, current_stamp="stale-stamp")
+    completed = subprocess.run(
+        ["bash", str(RUNTIME_SCRIPT), "ensure"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 69
+    assert "does not match the current requirements and Python ABI" in completed.stderr
+
+
+def test_offline_runtime_reuses_only_the_exact_current_stamp(tmp_path: Path) -> None:
+    requirements_payload = "example==1 --hash=sha256:" + "0" * 64 + "\n"
+    requirements_sha = hashlib.sha256(requirements_payload.encode()).hexdigest()
+    stamp = hashlib.sha256(
+        f"{requirements_sha}|3.10-linux_x86_64".encode()
+    ).hexdigest()[:16]
+    env, _requirements = _offline_runtime_env(tmp_path, current_stamp=stamp)
+    completed = subprocess.run(
+        ["bash", str(RUNTIME_SCRIPT), "ensure"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_interrupted_install_removes_partial_runtime_tree(tmp_path: Path) -> None:

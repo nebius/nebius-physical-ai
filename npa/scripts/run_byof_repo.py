@@ -16,7 +16,7 @@ from typing import Any
 
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
-from npa.deploy.images import container_image_for_tool
+from npa.deploy.images import container_image_for_tool, wan_accepted_image_manifest
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
 from npa.workflows.byof.postprocess import (
     PostprocessContext,
@@ -46,6 +46,20 @@ PLACEHOLDER_VALUES = frozenset(
         "<base-profile>",
     }
 )
+WAN_POSTPROCESS_CONTRACTS = {
+    "wan2.2_ti2v_5b_text_to_video": (
+        "wan2.2",
+        "wan2_2_ti2v_5b_text_to_video.json",
+    ),
+    "wan2.2_ti2v_5b_image_to_video": (
+        "wan2.2",
+        "wan2_2_ti2v_5b_image_to_video.json",
+    ),
+    "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses": (
+        "wan2.2-multigpu",
+        "wan2_2_ti2v_5b_multigpu.json",
+    ),
+}
 
 
 def _utc_stamp() -> str:
@@ -57,6 +71,65 @@ def _normalize_optional(value: str) -> str:
     if cleaned in PLACEHOLDER_VALUES:
         return ""
     return cleaned
+
+
+def _image_repository_name(image_ref: str) -> str:
+    ref = image_ref.removeprefix("docker:").split("@", 1)[0]
+    return ref.rsplit("/", 1)[-1].split(":", 1)[0]
+
+
+def _required_postprocess_key(
+    args: argparse.Namespace, *, base_image: str, base_profile: str
+) -> str | None:
+    """Resolve mandatory postprocessing from the immutable workload contract.
+
+    A caller-provided solution label may select an ordinary registered
+    postprocessor, but it may not turn postprocessing off for a Wan image.  The
+    accepted Wan path is bound independently to its prebuilt digest, capability,
+    and artifact contract so an empty or misspelled label fails before launch.
+    """
+
+    if args.workload != "solution-smoke":
+        return None
+    requested = args.solution_name.strip().lower()
+    capability = args.capability_name.strip()
+    artifact = args.smoke_artifact_name.strip()
+    base_is_wan = _image_repository_name(base_image) == "npa-wan2-2"
+    wan_signaled = (
+        base_is_wan
+        or requested in {"wan2.2", "wan2.2-multigpu"}
+        or capability.startswith("wan2.2_")
+        or artifact.startswith("wan2_2_")
+    )
+    if not wan_signaled:
+        return requested if has_registered_postprocess(requested) else None
+
+    accepted_digest = str(wan_accepted_image_manifest()["oci_digest"])
+    if (
+        not base_is_wan
+        or base_profile != "prebuilt"
+        or not base_image.endswith(f"@{accepted_digest}")
+    ):
+        raise ValueError(
+            "Wan solution-smoke requires the exact GPU-accepted prebuilt image digest "
+            f"{accepted_digest}"
+        )
+    contract = WAN_POSTPROCESS_CONTRACTS.get(capability)
+    if contract is None:
+        raise ValueError(
+            f"Wan solution-smoke capability {capability!r} has no mandatory postprocess contract"
+        )
+    expected_key, expected_artifact = contract
+    if artifact != expected_artifact:
+        raise ValueError(
+            f"Wan capability {capability!r} requires smoke artifact {expected_artifact!r}"
+        )
+    if requested != expected_key:
+        raise ValueError(
+            f"Wan capability {capability!r} requires solution name {expected_key!r}; "
+            "the label cannot disable verified RRD postprocessing"
+        )
+    return expected_key
 
 
 def _run(
@@ -248,9 +321,11 @@ def _parse_last_json(text: str) -> dict[str, Any] | None:
         if not line.startswith("{"):
             continue
         try:
-            return json.loads(line)
+            payload = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(payload, dict):
+            return payload
     return None
 
 
@@ -296,7 +371,17 @@ def _base_image_candidates(
         tool = explicit_base.removeprefix("tool://").strip()
         if not tool:
             raise ValueError("tool:// base image must name a registered image tool")
-        return [container_image_for_tool(tool, registry=registry)]
+        resolved = container_image_for_tool(tool, registry=registry)
+        if tool == "wan2-2":
+            slash = resolved.rfind("/")
+            colon = resolved.rfind(":")
+            repository = resolved[:colon] if colon > slash else resolved
+            resolved = (
+                repository
+                + "@"
+                + str(wan_accepted_image_manifest()["oci_digest"])
+            )
+        return [resolved]
     if explicit_base:
         return [explicit_base]
     normalized_profile = profile if profile in BASE_PROFILES else "ubuntu"
@@ -442,14 +527,18 @@ def main(argv: list[str] | None = None) -> int:
     docker_config_dir: str | None = None
     docker_env: dict[str, str] = {}
     try:
-        requires_postprocess = (
-            args.workload == "solution-smoke"
-            and has_registered_postprocess(args.solution_name)
+        postprocess_key = _required_postprocess_key(
+            args, base_image=base_image, base_profile=base_profile
         )
-        if requires_postprocess and not args.output_root.strip():
+        if postprocess_key is not None and not args.output_root.strip():
             raise ValueError(
-                f"registered solution {args.solution_name!r} requires --output-root "
+                f"registered solution {postprocess_key!r} requires --output-root "
                 "so its verified postprocess cannot be skipped"
+            )
+        if postprocess_key is not None and args.skip_run:
+            raise ValueError(
+                f"registered solution {postprocess_key!r} cannot use --skip-run "
+                "because verified postprocessing is mandatory"
             )
         if not skip_build:
             if not skip_push:
@@ -606,16 +695,20 @@ def main(argv: list[str] | None = None) -> int:
             summary["run"] = _parse_last_json(run_proc.stdout) or {
                 "status": "submitted"
             }
-            if requires_postprocess:
+            if postprocess_key is not None:
                 postprocess = run_registered_postprocess(
-                    args.solution_name,
+                    postprocess_key,
                     PostprocessContext(
                         run_prefix_uri=f"{args.output_root.rstrip('/')}/{args.run_id}/",
                         project=args.project or None,
                     ),
                 )
-                if postprocess is not None:
-                    summary["postprocess"] = postprocess
+                if postprocess is None:
+                    raise RuntimeError(
+                        f"registered solution {postprocess_key!r} returned no "
+                        "verified postprocess result"
+                    )
+                summary["postprocess"] = postprocess
         else:
             summary["run"] = {"skipped": True}
         summary["status"] = "ok"

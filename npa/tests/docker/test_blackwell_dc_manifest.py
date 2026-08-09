@@ -70,7 +70,9 @@ def test_every_entry_is_well_formed(manifest: dict, entries: list[dict]) -> None
     for entry in entries:
         name = entry["name"]
         assert name.startswith("npa-"), f"{name} should use its npa-* image name"
-        assert entry["verdict"] in allowed_verdicts, f"{name} has verdict {entry['verdict']!r}"
+        assert entry["verdict"] in allowed_verdicts, (
+            f"{name} has verdict {entry['verdict']!r}"
+        )
         assert entry["validation"] in allowed_validation, (
             f"{name} has validation state {entry['validation']!r}"
         )
@@ -78,7 +80,9 @@ def test_every_entry_is_well_formed(manifest: dict, entries: list[dict]) -> None
         assert dockerfile.is_file(), f"{name} points at missing {entry['dockerfile']}"
         if "alternate_dockerfile" in entry:
             alternate = WORKBENCH_DOCKER / entry["alternate_dockerfile"]
-            assert alternate.is_file(), f"{name} points at missing {entry['alternate_dockerfile']}"
+            assert alternate.is_file(), (
+                f"{name} points at missing {entry['alternate_dockerfile']}"
+            )
         if "build_script" in entry:
             script = WORKBENCH_DOCKER / entry["build_script"]
             assert script.is_file(), f"{name} points at missing {entry['build_script']}"
@@ -91,7 +95,9 @@ def test_blocked_entries_track_an_upstream_reason(entries: list[dict]) -> None:
     assert blocked, "the manifest should still record the vendor-paced images"
     for entry in blocked:
         name = entry["name"]
-        assert entry.get("blocked_reason", "").strip(), f"{name} is blocked with no reason"
+        assert entry.get("blocked_reason", "").strip(), (
+            f"{name} is blocked with no reason"
+        )
         assert entry.get("upstream_tracking", "").strip(), (
             f"{name} is blocked with nothing to track upstream"
         )
@@ -100,7 +106,9 @@ def test_blocked_entries_track_an_upstream_reason(entries: list[dict]) -> None:
 def test_port_entries_name_their_blocker(entries: list[dict]) -> None:
     for entry in [item for item in entries if item["verdict"] == "port"]:
         name = entry["name"]
-        assert entry.get("port_blocker", "").strip(), f"{name} needs a port but names no blocker"
+        assert entry.get("port_blocker", "").strip(), (
+            f"{name} needs a port but names no blocker"
+        )
         assert entry.get("upstream_tracking", "").strip(), (
             f"{name} needs a port but nothing to track upstream"
         )
@@ -112,7 +120,9 @@ def test_gpu_entries_declare_a_real_capability_smoke(entries: list[dict]) -> Non
     for entry in entries:
         if entry["verdict"] == "not-applicable":
             continue
-        assert entry.get("smoke", "").strip(), f"{entry['name']} declares no capability smoke"
+        assert entry.get("smoke", "").strip(), (
+            f"{entry['name']} declares no capability smoke"
+        )
 
 
 def test_lerobot_b300_uses_the_supported_python_and_cuda_stack() -> None:
@@ -123,7 +133,9 @@ def test_lerobot_b300_uses_the_supported_python_and_cuda_stack() -> None:
     assert "torch==2.9.0" in dockerfile
     assert "torchvision==0.24.0" in dockerfile
     assert "torchcodec==0.8.1" in dockerfile
-    assert "/opt/npa/venv/bin" in dockerfile, "the inherited base validator venv must remain usable"
+    assert "/opt/npa/venv/bin" in dockerfile, (
+        "the inherited base validator venv must remain usable"
+    )
     assert dockerfile.index("pip install \\") < dockerfile.index(
         "dpkg --purge --force-depends linux-libc-dev"
     ), "build-time Linux headers must survive until evdev has compiled"
@@ -187,7 +199,9 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
         )
 
 
-def test_redistribution_claims_do_not_drift_from_the_contract(entries: list[dict]) -> None:
+def test_redistribution_claims_do_not_drift_from_the_contract(
+    entries: list[dict],
+) -> None:
     """The manifest must not keep its own stale copy of the redistribution class.
 
     The Isaac images were re-architected to fetch Isaac Sim at run time and are
@@ -278,6 +292,40 @@ def test_measured_arch_lists_back_the_verdicts(entries: list[dict]) -> None:
                 f"{entry['name']} is filed as 'port' but its measured wheel already "
                 f"carries sm_100 ({arch_list}); re-check the verdict"
             )
+
+
+def test_wan_validation_is_bound_to_an_immutable_accepted_tuple(
+    entries: list[dict],
+) -> None:
+    wan = next(entry for entry in entries if entry["name"] == "npa-wan2-2")
+    manifest_path = ROOT / wan["accepted_image_manifest"]
+    accepted = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert accepted["format"] == "npa_wan_accepted_image_manifest_v1"
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", accepted["oci_digest"])
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", accepted["amd64_manifest"])
+    assert re.fullmatch(r"[0-9a-f]{64}", accepted["runtime_requirements_sha256"])
+    for identity_name in ("source", "model", "tokenizer"):
+        assert re.fullmatch(r"[0-9a-f]{40}", accepted[identity_name]["revision"])
+    assert re.fullmatch(
+        r"[0-9a-f]{64}", accepted["runtime_acceptance"]["manifest_sha256"]
+    )
+    for proof_name, count in (("single_gpu_proof", 1), ("distributed_proof", 4)):
+        proof = accepted[proof_name]
+        assert proof["gpu_count"] == count
+        assert proof["observed_image_id_digest"] == accepted["oci_digest"]
+        for key in ("mp4_sha256", "rrd_sha256", "rrd_manifest_sha256"):
+            assert re.fullmatch(r"[0-9a-f]{64}", proof[key])
+    assert accepted["distributed_proof"]["run_id"] == wan["validation_run"]
+    assert re.fullmatch(r"[0-9a-f]{64}", accepted["payload_scan"]["report_sha256"])
+    assert accepted["payload_scan"]["archives_scanned"] == 20
+    assert accepted["payload_scan"]["findings"] == 0
+    assert re.fullmatch(
+        r"[0-9a-f]{64}", accepted["vulnerability_scan"]["report_sha256"]
+    )
+    assert accepted["vulnerability_scan"]["critical_total"] == 27
+    assert accepted["vulnerability_scan"]["critical_with_fix"] == 0
+    assert accepted["vulnerability_scan"]["secrets"] == 0
 
 
 def test_base_image_covers_both_blackwell_majors(entries: list[dict]) -> None:

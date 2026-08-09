@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import IO, Any
@@ -118,75 +120,335 @@ SECRET_CONTENT = (
 FORBIDDEN_ELF_DEPENDENCY = re.compile(
     rb"lib(?:[A-Za-z0-9]+_)*(?:cuda|cudart|cublas|cudnn|nccl|nvrtc|nvjitlink|"
     rb"nvtx|nvtoolsext|nvfatbin|nvptxcompiler|cupti|cufile|cusparse|cusolver|"
-    rb"curand|cufft|npp[a-z]*|nvidia)[A-Za-z0-9_.-]*\.so",
+    rb"curand|cufft|npp[a-z]*|nvidia|nvcuvid|nvoptix|nvencode|nvdecode)"
+    rb"[A-Za-z0-9_.-]*\.so",
     re.I,
 )
 
-SECRET_CONTENT_EXCLUSIONS = (
-    re.compile(
-        r"^opt/wan-base/lib/python3\.10/site-packages/PIL/(?:ImageFont\.py|__pycache__/ImageFont\.)"
+MAX_NESTED_ARCHIVE_DEPTH = 8
+MAX_NESTED_UNCOMPRESSED_BYTES = 8 * 1024**3
+
+# Exact OSS files whose examples, parser literals, or command-line help include
+# secret-shaped text.  This is deliberately a path+byte allowlist rather than a
+# path exclusion: inserting a real credential into any of these locations must
+# fail the publication scan.  A dependency/base refresh fails closed until the
+# replacement bytes have been independently audited.
+AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
+    "opt/wan-base/lib/python3.10/site-packages/PIL/ImageFont.py": (
+        "bd7d3f79eb42bbd4dbe9e00e8e9143568d131702dfecaad2a780eaad6c68c91c"
     ),
-    re.compile(
-        r"^opt/wan-base/lib/python3\.10/site-packages/accelerate/commands/config/sagemaker\.py$"
+    "opt/wan-base/lib/python3.10/site-packages/PIL/__pycache__/ImageFont.cpython-310.pyc": (
+        "cbec9b4674e9567bc429c6bdef7ab815c734f1e7ce03688b656e8d3808323019"
     ),
-    re.compile(
-        r"^opt/wan-base/lib/python3\.10/site-packages/boto3/(?:examples/cloudfront\.rst|session\.py)$"
+    "opt/wan-base/lib/python3.10/site-packages/accelerate/commands/config/sagemaker.py": (
+        "4912eea7d5eb57f67edb703777c8196e4a9ba270dcb1c3030e66e99b2b42cdb6"
     ),
-    re.compile(
-        r"^opt/wan-base/lib/python3\.10/site-packages/boto3-[^/]+\.dist-info/METADATA$"
+    "opt/wan-base/lib/python3.10/site-packages/boto3/examples/cloudfront.rst": (
+        "2beb01599c682e30010991eba8066ce7b71879fc0f9838abd37a66e8f13f9a1e"
     ),
-    re.compile(
-        r"^opt/wan-base/lib/python3\.10/site-packages/botocore/(?:credentials\.py|data/(?:iam/2010-05-08|sts/2011-06-15)/examples-1\.json)$"
+    "opt/wan-base/lib/python3.10/site-packages/boto3/session.py": (
+        "98493dcacb64905e94418b46250f4427938bf0f35badb02b5436049c5d5b5fcc"
     ),
-    re.compile(
-        r"^opt/wan-base/lib/python3\.10/site-packages/botocore-[^/]+\.dist-info/METADATA$"
+    "opt/wan-base/lib/python3.10/site-packages/boto3-1.39.11.dist-info/METADATA": (
+        "5524ef6a8ea9110d3b1c2b0b4d034393a5408e6c9b80c9168379ce37fd4ea374"
     ),
-    re.compile(
-        r"^opt/wan-base/lib/python3\.10/site-packages/cryptography/hazmat/primitives/serialization/(?:ssh\.py|__pycache__/ssh\.)"
+    "opt/wan-base/lib/python3.10/site-packages/botocore/credentials.py": (
+        "9b14c632b0a025c02655170cc6b42654e8cbb258e78e3c84f17025129fd7dee3"
     ),
-    re.compile(
-        r"^opt/wan-base/lib/python3\.10/site-packages/diffusers/loaders/textual_inversion\.py$"
+    "opt/wan-base/lib/python3.10/site-packages/botocore/data/iam/2010-05-08/examples-1.json": (
+        "4f912aac51590625652fd76c37e4f90e78a05355273125df555c012b4d005ab5"
     ),
-    re.compile(
-        r"^usr/(?:bin/ssh(?:-add|-agent|-keygen|-keyscan)?|lib/openssh/ssh-(?:keysign|pkcs11-helper|sk-helper)|sbin/sshd)$"
+    "opt/wan-base/lib/python3.10/site-packages/botocore/data/sts/2011-06-15/examples-1.json": (
+        "c83fc27073767fdb7d3e5190e4dcce25a09871c7b118fa289db056d93e0e31c9"
     ),
-    re.compile(
-        r"^usr/lib/x86_64-linux-gnu/(?:libmbedcrypto|libssh-gcrypt|libssh2|libunistring)\.so\."
+    "opt/wan-base/lib/python3.10/site-packages/botocore-1.39.17.dist-info/METADATA": (
+        "d1ce694b50d009bb3dab11331a281323d70c46ff4724e692dab3c2481ed62074"
     ),
-)
+    "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/__pycache__/ssh.cpython-310.pyc": (
+        "97f1bfaca131ec9c1096c63199e80837fba3805b91d650a2489c8c1bc1c30b50"
+    ),
+    "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/ssh.py": (
+        "162b177bf9d429d3c67ea10d5612a99a86b399a23ca87f067be5466dcd1dca4c"
+    ),
+    "opt/wan-base/lib/python3.10/site-packages/diffusers/loaders/textual_inversion.py": (
+        "621e0cc3edc401459a4290d7a6d20cb8d6f201884d462afe8abaa81d23ef3b1f"
+    ),
+    "usr/bin/ssh": "04f2ff5f506a3f332e7adeb1478a4c551ae74acdd328e6fb5c2495664d4064e6",
+    "usr/bin/ssh-add": (
+        "1e02d3fca3c8d72570c11ded9681dcacd4775a33560786a27c489b9e4388ec06"
+    ),
+    "usr/bin/ssh-agent": (
+        "165e70f42cf6a147ae2101fae05a4503791d95ac9de7cca7974577316d963829"
+    ),
+    "usr/bin/ssh-keygen": (
+        "2843cd46c617cf771c32e6f8a2a11585d83510ec528e3aeff8f7a7f0445420ba"
+    ),
+    "usr/bin/ssh-keyscan": (
+        "9475d0851a26a4f494dc7d40240b68b04874543cbd30f54195ff9af055aaf848"
+    ),
+    "usr/lib/openssh/ssh-keysign": (
+        "c4f5b14604acf3cd0111ca969a0975194e4219f818565df12a7f3ad4663ca93a"
+    ),
+    "usr/lib/openssh/ssh-pkcs11-helper": (
+        "9951c90e5173921f2c3ae553d6b2ce5967862944c12eb63d635586130728bd07"
+    ),
+    "usr/lib/openssh/ssh-sk-helper": (
+        "9caaf480bbd3bfb916195c8ac868e3a1e78968408500f090f037b4a186aac1df"
+    ),
+    "usr/lib/x86_64-linux-gnu/libmbedcrypto.so.2.28.3": (
+        "c04f91fdb172e17ddb21c9e0b75c04cb4f802bdfc40bb65484550746cd0019a8"
+    ),
+    "usr/lib/x86_64-linux-gnu/libssh-gcrypt.so.4.9.6": (
+        "6733636aeb1c5d541aa06c578a95d12c2253c4e99fc85623595341905d3d6221"
+    ),
+    "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1": (
+        "66f751ec9d3d5bff254a498e020d37f9bbde8e0193ba11d1b78f29153ffe694a"
+    ),
+    "usr/sbin/sshd": "9f6cdc787a2d5144f3189e850fc104aa7d8ab12593a3d4e902c692a38794716e",
+    "usr/lib/x86_64-linux-gnu/libunistring.so.2.2.0": (
+        "bc5951aa3d6eaba20ff9688efa3420dc95785aae3709ec48ff6df46d6f409ee5"
+    ),
+}
+
+# Exact Debian base-library bytes whose parser/dlopen literals were independently
+# audited. A base-image update fails closed until its new bytes are re-audited;
+# path-only exclusions would let renamed CUDA libraries or credentials pass.
+AUDITED_LITERAL_LIBRARY_SHA256: dict[str, str] = {
+    "usr/lib/x86_64-linux-gnu/libavcodec.so.59.37.100": (
+        "4af5d9cffe2721f5c2cabf35d63c5c6a039b400df5721aaedf69995e37bd2a0d"
+    ),
+    "usr/lib/x86_64-linux-gnu/libavutil.so.57.28.100": (
+        "c46ee8987cacb9f9af711f676cc98bb6d465a340566dad9c678d21baa26e2c9d"
+    ),
+    "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3": (
+        "779b25d20249988bea2c1aa6bbeb218f5ae7ea8a9d30ce4f54ea37372965cc4b"
+    ),
+}
 
 
-def _scan_secret_content(path: str) -> bool:
-    """Scan mutable/application paths, not known OSS binaries and example source."""
+def _is_audited_literal_library(path: str, sha256: str | None) -> bool:
+    """Whether path and bytes equal one independently audited Debian library."""
 
-    return not any(pattern.search(path) for pattern in SECRET_CONTENT_EXCLUSIONS)
+    return sha256 is not None and AUDITED_LITERAL_LIBRARY_SHA256.get(path) == sha256
 
 
 def _contains_secret(stream: IO[bytes]) -> bool:
     """Stream arbitrary-size files while retaining boundary-spanning matches."""
 
-    overlap = b""
-    while chunk := stream.read(1024 * 1024):
-        payload = overlap + chunk
-        if any(pattern.search(payload) for pattern in SECRET_CONTENT):
-            return True
-        overlap = payload[-1024:]
-    return False
+    _, secret, _ = _inspect_content(stream, scan_secret=True)
+    return secret
 
 
 def _contains_forbidden_elf_dependency(stream: IO[bytes]) -> bool:
     """Detect a renamed ELF that still dynamically depends on NVIDIA/CUDA."""
 
+    elf_dependency, _, _ = _inspect_content(stream, scan_secret=False)
+    return elf_dependency
+
+
+def _inspect_content(
+    stream: IO[bytes],
+    *,
+    scan_secret: bool,
+    calculate_sha256: bool = False,
+    copy_to: IO[bytes] | None = None,
+) -> tuple[bool, bool, str | None]:
+    """Inspect one member once, avoiding rewinds of compressed image layers."""
+
     head = stream.read(4)
-    if head != b"\x7fELF":
-        return False
-    overlap = head
-    while chunk := stream.read(1024 * 1024):
-        payload = overlap + chunk
-        if FORBIDDEN_ELF_DEPENDENCY.search(payload):
-            return True
-        overlap = payload[-256:]
-    return False
+    is_elf = head == b"\x7fELF"
+    elf_dependency = False
+    secret = False
+    elf_overlap = b""
+    secret_overlap = b""
+    digest = hashlib.sha256() if calculate_sha256 else None
+    chunk = head
+    while chunk:
+        if copy_to is not None:
+            copy_to.write(chunk)
+        if digest is not None:
+            digest.update(chunk)
+        if is_elf and not elf_dependency:
+            elf_payload = elf_overlap + chunk
+            elf_dependency = bool(FORBIDDEN_ELF_DEPENDENCY.search(elf_payload))
+            elf_overlap = elf_payload[-256:]
+        if scan_secret and not secret:
+            secret_payload = secret_overlap + chunk
+            secret = any(pattern.search(secret_payload) for pattern in SECRET_CONTENT)
+            secret_overlap = secret_payload[-1024:]
+        if copy_to is None and (
+            digest is None
+            and (not is_elf or elf_dependency)
+            and (not scan_secret or secret)
+        ):
+            break
+        chunk = stream.read(1024 * 1024)
+    return elf_dependency, secret, digest.hexdigest() if digest is not None else None
+
+
+def _add_forbidden_path_findings(
+    path: str, source: str, findings: list[Finding]
+) -> None:
+    for kind, pattern in FORBIDDEN_PATHS:
+        if pattern.search(path):
+            findings.append(Finding(kind, path, f"forbidden bytes in {source}"))
+
+
+def _nested_archive_kind(stream: IO[bytes]) -> str | None:
+    stream.seek(0)
+    head = stream.read(512)
+    stream.seek(0)
+    if head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+        return "zip"
+    if (
+        head.startswith((b"\x1f\x8b", b"BZh", b"\xfd7zXZ\x00"))
+        or head[257:262] == b"ustar"
+    ):
+        return "tar"
+    return None
+
+
+def _scan_file_stream(
+    *,
+    path: str,
+    stream: IO[bytes],
+    source: str,
+    findings: list[Finding],
+    depth: int,
+) -> None:
+    _add_forbidden_path_findings(path, source, findings)
+    audited_secret_sha256 = AUDITED_SECRET_LITERAL_FILE_SHA256.get(path)
+    audited_library_sha256 = AUDITED_LITERAL_LIBRARY_SHA256.get(path)
+    # zipfile requires a fully seekable object; Python 3.10's
+    # SpooledTemporaryFile wrapper does not expose seekable(). Keep the captured
+    # bytes on disk so arbitrarily large image members do not consume RAM.
+    with tempfile.TemporaryFile() as captured:
+        elf_dependency, secret, sha256 = _inspect_content(
+            stream,
+            scan_secret=True,
+            calculate_sha256=(
+                audited_secret_sha256 is not None or audited_library_sha256 is not None
+            ),
+            copy_to=captured,
+        )
+        audited_literal_library = _is_audited_literal_library(path, sha256)
+        audited_secret_literal = (
+            audited_secret_sha256 is not None and sha256 == audited_secret_sha256
+        )
+        expected_audited_sha256 = audited_secret_sha256 or audited_library_sha256
+        if expected_audited_sha256 is not None and sha256 != expected_audited_sha256:
+            findings.append(
+                Finding(
+                    "audited_literal_byte_drift",
+                    path,
+                    f"audited literal bytes changed in {source}",
+                )
+            )
+        if elf_dependency and not audited_literal_library:
+            findings.append(
+                Finding(
+                    "cuda_elf_dependency",
+                    path,
+                    f"ELF links to forbidden runtime in {source}",
+                )
+            )
+        if secret and not (audited_literal_library or audited_secret_literal):
+            findings.append(
+                Finding(
+                    "credential_content",
+                    path,
+                    f"secret-like bytes in {source}",
+                )
+            )
+        captured.seek(0)
+        _scan_nested_archive(
+            stream=captured,
+            parent_path=path,
+            source=source,
+            findings=findings,
+            depth=depth,
+        )
+
+
+def _scan_nested_archive(
+    *,
+    stream: IO[bytes],
+    parent_path: str,
+    source: str,
+    findings: list[Finding],
+    depth: int,
+) -> None:
+    kind = _nested_archive_kind(stream)
+    if kind is None:
+        return
+    if depth >= MAX_NESTED_ARCHIVE_DEPTH:
+        findings.append(
+            Finding(
+                "nested_archive_depth",
+                parent_path,
+                f"nested archive exceeds depth {MAX_NESTED_ARCHIVE_DEPTH} in {source}",
+            )
+        )
+        return
+    total_size = 0
+    try:
+        if kind == "zip":
+            with zipfile.ZipFile(stream) as archive:
+                for member in archive.infolist():
+                    nested_path = f"{parent_path}!/{member.filename.lstrip('/')}"
+                    if member.is_dir():
+                        _add_forbidden_path_findings(nested_path, source, findings)
+                        continue
+                    total_size += member.file_size
+                    if total_size > MAX_NESTED_UNCOMPRESSED_BYTES:
+                        raise ValueError(
+                            "nested archive exceeds uncompressed byte limit"
+                        )
+                    with archive.open(member) as nested:
+                        _scan_file_stream(
+                            path=nested_path,
+                            stream=nested,
+                            source=source,
+                            findings=findings,
+                            depth=depth + 1,
+                        )
+        else:
+            with tarfile.open(fileobj=stream, mode="r:*") as archive:
+                for member in archive:
+                    nested_path = f"{parent_path}!/{member.name.lstrip('/')}"
+                    if not member.isfile():
+                        _add_forbidden_path_findings(nested_path, source, findings)
+                        continue
+                    total_size += member.size
+                    if total_size > MAX_NESTED_UNCOMPRESSED_BYTES:
+                        raise ValueError(
+                            "nested archive exceeds uncompressed byte limit"
+                        )
+                    nested = archive.extractfile(member)
+                    if nested is not None:
+                        with nested:
+                            _scan_file_stream(
+                                path=nested_path,
+                                stream=nested,
+                                source=source,
+                                findings=findings,
+                                depth=depth + 1,
+                            )
+    except (
+        EOFError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        tarfile.TarError,
+        zipfile.BadZipFile,
+    ) as exc:
+        findings.append(
+            Finding(
+                "nested_archive_unreadable",
+                parent_path,
+                f"cannot inspect nested archive in {source}: {exc}",
+            )
+        )
 
 
 def _history_text(config: dict[str, Any]) -> str:
@@ -217,34 +479,19 @@ def _scan_tars(tars: list[Path], config: dict[str, Any]) -> list[Finding]:
                 path = member.name.lstrip("./")
                 if not path:
                     continue
-                for kind, pattern in FORBIDDEN_PATHS:
-                    if pattern.search(path):
-                        findings.append(
-                            Finding(kind, path, f"forbidden bytes in {tar_path.name}")
-                        )
                 if member.isfile():
-                    elf = archive.extractfile(member)
-                    if elf is not None and _contains_forbidden_elf_dependency(elf):
-                        findings.append(
-                            Finding(
-                                "cuda_elf_dependency",
-                                path,
-                                f"ELF links to forbidden runtime in {tar_path.name}",
+                    fileobj = archive.extractfile(member)
+                    if fileobj is not None:
+                        with fileobj:
+                            _scan_file_stream(
+                                path=path,
+                                stream=fileobj,
+                                source=tar_path.name,
+                                findings=findings,
+                                depth=0,
                             )
-                        )
-                if not member.isfile() or not _scan_secret_content(path):
-                    continue
-                fileobj = archive.extractfile(member)
-                if fileobj is None:
-                    continue
-                if _contains_secret(fileobj):
-                    findings.append(
-                        Finding(
-                            "credential_content",
-                            path,
-                            f"secret-like bytes in {tar_path.name}",
-                        )
-                    )
+                else:
+                    _add_forbidden_path_findings(path, tar_path.name, findings)
 
     history = _history_text(config)
     for kind, pattern in FORBIDDEN_HISTORY:

@@ -172,6 +172,75 @@ def _crane_blob_json(repository: str, digest: str) -> dict[str, Any]:
     return payload
 
 
+def _scan_wan_trivy_exact_digest(image_ref: str) -> dict[str, int]:
+    """Rerun Trivy against the immutable Wan source bytes immediately before copy."""
+
+    trivy = shutil.which("trivy")
+    if not trivy:
+        raise RuntimeError(
+            "trivy not found on PATH; install Trivy for the Wan publication gate"
+        )
+    completed = subprocess.run(
+        [
+            trivy,
+            "image",
+            "--platform",
+            "linux/amd64",
+            "--scanners",
+            "vuln,secret",
+            "--severity",
+            "CRITICAL",
+            "--format",
+            "json",
+            "--quiet",
+            "--exit-code",
+            "0",
+            image_ref,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(detail or "Wan exact-digest Trivy scan failed")
+    payload = json.loads(completed.stdout)
+    if not isinstance(payload, dict) or not isinstance(payload.get("Results"), list):
+        raise RuntimeError("Wan exact-digest Trivy scan returned invalid JSON")
+    vulnerabilities: list[dict[str, Any]] = []
+    secrets: list[dict[str, Any]] = []
+    for result in payload["Results"]:
+        if not isinstance(result, dict):
+            raise RuntimeError("Wan exact-digest Trivy result entry is invalid")
+        vulnerabilities.extend(
+            finding
+            for finding in (result.get("Vulnerabilities") or [])
+            if isinstance(finding, dict)
+            and str(finding.get("Severity") or "").upper() == "CRITICAL"
+        )
+        secrets.extend(
+            finding
+            for finding in (result.get("Secrets") or [])
+            if isinstance(finding, dict)
+        )
+    fixed = [
+        item for item in vulnerabilities if str(item.get("FixedVersion") or "").strip()
+    ]
+    if fixed:
+        raise RuntimeError(
+            f"Wan exact-digest Trivy scan found {len(fixed)} fixed CRITICAL vulnerabilities"
+        )
+    if secrets:
+        raise RuntimeError(
+            f"Wan exact-digest Trivy scan found {len(secrets)} secret findings"
+        )
+    return {
+        "critical_total": len(vulnerabilities),
+        "critical_with_fix": len(fixed),
+        "secrets": len(secrets),
+    }
+
+
 def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
     """Bind Wan publication to exact clean bytes plus SPDX/SLSA attestations."""
 
@@ -181,6 +250,13 @@ def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
         digest_ok, index_digest = _crane_digest(item.source_ref)
         if not digest_ok:
             raise RuntimeError(index_digest)
+        accepted = images.wan_accepted_image_manifest()
+        accepted_digest = str(accepted.get("oci_digest") or "")
+        if index_digest != accepted_digest:
+            raise RuntimeError(
+                "Wan source digest is not the immutable GPU-accepted digest "
+                f"{accepted_digest}"
+            )
         index = _crane_json(["manifest", item.source_ref])
         manifests = index.get("manifests")
         if not isinstance(manifests, list):
@@ -197,22 +273,96 @@ def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
         if platform is None:
             raise RuntimeError("Wan OCI index has no linux/amd64 platform manifest")
         platform_digest = str(platform.get("digest") or "")
-        attestation = next(
-            (
-                entry
-                for entry in manifests
-                if isinstance(entry, dict)
-                and (entry.get("annotations") or {}).get("vnd.docker.reference.type")
-                == "attestation-manifest"
-                and (entry.get("annotations") or {}).get("vnd.docker.reference.digest")
-                == platform_digest
-            ),
-            None,
-        )
-        if attestation is None:
+        if platform_digest != accepted.get("amd64_manifest"):
             raise RuntimeError(
-                "Wan linux/amd64 manifest has no bound attestation manifest"
+                "Wan linux/amd64 manifest is not the GPU-accepted platform digest"
             )
+        for proof_name, gpu_count in (
+            ("single_gpu_proof", 1),
+            ("distributed_proof", 4),
+        ):
+            proof = accepted.get(proof_name)
+            if not isinstance(proof, dict):
+                raise RuntimeError(f"Wan accepted manifest has no {proof_name}")
+            if proof.get("gpu_count") != gpu_count:
+                raise RuntimeError(f"Wan {proof_name} GPU count is invalid")
+            if proof.get("observed_image_id_digest") != accepted_digest:
+                raise RuntimeError(
+                    f"Wan {proof_name} did not observe the accepted image digest"
+                )
+            for key in ("run_id", "mp4_sha256", "rrd_sha256", "rrd_manifest_sha256"):
+                if not proof.get(key):
+                    raise RuntimeError(f"Wan {proof_name} has no {key}")
+        runtime_hash = str(accepted.get("runtime_requirements_sha256") or "")
+        if re.fullmatch(r"[0-9a-f]{64}", runtime_hash) is None:
+            raise RuntimeError("Wan accepted runtime requirements hash is invalid")
+        for identity_name in ("source", "model", "tokenizer"):
+            identity = accepted.get(identity_name)
+            if not isinstance(identity, dict) or not identity.get("revision"):
+                raise RuntimeError(
+                    f"Wan accepted manifest has no pinned {identity_name} revision"
+                )
+        runtime_acceptance = accepted.get("runtime_acceptance")
+        if (
+            not isinstance(runtime_acceptance, dict)
+            or re.fullmatch(
+                r"[0-9a-f]{64}", str(runtime_acceptance.get("manifest_sha256") or "")
+            )
+            is None
+        ):
+            raise RuntimeError("Wan accepted runtime proof hash is invalid")
+        payload_scan = accepted.get("payload_scan")
+        if (
+            not isinstance(payload_scan, dict)
+            or re.fullmatch(
+                r"[0-9a-f]{64}", str(payload_scan.get("report_sha256") or "")
+            )
+            is None
+            or int(payload_scan.get("archives_scanned") or 0) <= 1
+            or payload_scan.get("findings") != 0
+        ):
+            raise RuntimeError("Wan accepted payload-scan proof is invalid")
+        vulnerability_scan = accepted.get("vulnerability_scan")
+        if not isinstance(vulnerability_scan, dict):
+            raise RuntimeError("Wan accepted manifest has no vulnerability scan")
+        if vulnerability_scan.get("critical_with_fix") != 0:
+            raise RuntimeError("Wan accepted image has fixed CRITICAL vulnerabilities")
+        if (
+            vulnerability_scan.get("secrets") != 0
+            or re.fullmatch(
+                r"[0-9a-f]{64}", str(vulnerability_scan.get("report_sha256") or "")
+            )
+            is None
+        ):
+            raise RuntimeError("Wan accepted vulnerability/secret scan is invalid")
+        bound_attestations = [
+            entry
+            for entry in manifests
+            if isinstance(entry, dict)
+            and (entry.get("annotations") or {}).get("vnd.docker.reference.type")
+            == "attestation-manifest"
+            and (entry.get("annotations") or {}).get("vnd.docker.reference.digest")
+            == platform_digest
+        ]
+        allowed_manifest_digests = {
+            platform_digest,
+            *(str(entry.get("digest") or "") for entry in bound_attestations),
+        }
+        unexpected_manifests = [
+            entry
+            for entry in manifests
+            if not isinstance(entry, dict)
+            or str(entry.get("digest") or "") not in allowed_manifest_digests
+        ]
+        if len(bound_attestations) != 1:
+            raise RuntimeError(
+                "Wan linux/amd64 manifest requires exactly one bound attestation manifest"
+            )
+        if unexpected_manifests:
+            raise RuntimeError(
+                "Wan OCI index contains an unscanned/unattested extra manifest"
+            )
+        attestation = bound_attestations[0]
         repository = _repository(item.source_ref)
         attestation_manifest = _crane_json(
             ["manifest", f"{repository}@{attestation['digest']}"]
@@ -273,9 +423,23 @@ def verify_wan_publication_source(item: PublishItem) -> tuple[bool, str]:
         scan_result = json.loads(scan.stdout)
         if scan_result.get("status") != "pass" or scan_result.get("findings"):
             raise RuntimeError("Wan exact-digest payload scan did not pass cleanly")
+        live_vulnerability_scan = _scan_wan_trivy_exact_digest(digest_ref)
+        accepted_vulnerability_scan = {
+            key: int(vulnerability_scan.get(key) or 0)
+            for key in ("critical_total", "critical_with_fix", "secrets")
+        }
+        if live_vulnerability_scan != accepted_vulnerability_scan:
+            raise RuntimeError(
+                "Wan exact-digest live Trivy result disagrees with the accepted "
+                f"disclosure: live={live_vulnerability_scan}, "
+                f"accepted={accepted_vulnerability_scan}"
+            )
         return (
             True,
-            f"exact digest {index_digest}; payload clean; SPDX+SLSA bound to {platform_digest}",
+            f"exact accepted digest {index_digest}; payload and live Trivy clean; "
+            f"SPDX+SLSA bound "
+            f"to {platform_digest}; residual unfixed CRITICAL findings disclosed: "
+            f"{live_vulnerability_scan['critical_total']}",
         )
     except (KeyError, StopIteration, TypeError, ValueError, RuntimeError) as exc:
         return False, str(exc)

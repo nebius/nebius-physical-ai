@@ -154,9 +154,9 @@ local plus remote verification results. Only a verified manifest names the
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260808T195949Z`, fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
+| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260808T221824Z`, fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
 | `wan2.2_decoded_mp4_validation` | accepted | same run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
-| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | `byof-wan22-multigpu-e2e-20260808T202308Z`, official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | `byof-wan22-multigpu-e2e-20260808T222011Z`, official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
 | `wan2.2_distributed_rank_topology_validation` | accepted | same run proved unique ranks/devices, NCCL 2.27.7 runtime transport and sum 10/10, T5/DiT FULL_SHARD, Ulysses calls, and process-group teardown |
 | `wan2.2_verified_rerun_recording` | accepted | RRD built from that fresh distributed MP4 and JSON evidence, then uploaded, remotely re-verified, and loaded byte-identically into the live agent |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | optional real input path exists but lacks separately accepted live evidence |
@@ -167,14 +167,20 @@ local plus remote verification results. Only a verified manifest names the
 The generated RRD is an evidence visualization of official inference. It does
 not turn Wan into a world model or add action conditioning.
 
+Kubernetes independently reported the accepted OCI digest as the running
+container `imageID` for both the one-GPU and four-GPU pods. The immutable tuple
+of OCI/platform digests, runtime-requirements hash, source/model/tokenizer
+revisions, observed image IDs, run IDs, and MP4/RRD proof hashes is recorded in
+`npa/src/npa/deploy/wan2_2_image_manifest.json`.
+
 The materialized accepted distributed recording is:
 
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260808T202308Z/wan2_2_ti2v_5b_multigpu.rrd`
-  (2,943,670 bytes; SHA-256
-  `ab9ea016a3ff25e01ce595523a924e7beb76c0f444c417426efccba9a31929c2`).
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260808T202308Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
-  (6,636 bytes; SHA-256
-  `088a4b7d017fa7f918408dd5e083a4febf8895898c4d458c83ecf2d2b6a44dcc`).
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260808T222011Z/wan2_2_ti2v_5b_multigpu.rrd`
+  (2,948,326 bytes; SHA-256
+  `dae41d23b65a2030452bc0939f7c32b14f30b9b884592c3ed2a19c68ff81a97c`).
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260808T222011Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
+  (10,463 bytes; SHA-256
+  `9f65b80d3e8ab5f92bb4e5fb17913f100ed44a2aa684447b342b9fe71bf278f7`).
 
 S3 HEAD/GET, local and downloaded `rerun rrd verify`, `rerun rrd stats`, entity
 inspection, embedded-video identity, and the live agent Rerun blob all agreed
@@ -192,9 +198,17 @@ with `npa/scripts/scan_image_wan_payload.py`; inspect the BuildKit SPDX
 attestation; bind the SLSA provenance to the exact platform manifest; and review
 the license inventory. The scanner proves prohibited-byte absence only—it does
 not generate or review the SBOM or make a legal determination. The publication
-preflight repeats the exact-digest scan and attestation binding before any copy.
-Passing these gates remains an engineering classification and still requires the
-organization's human publication/legal approval.
+preflight rejects any digest other than the immutable GPU-accepted tuple, then
+repeats the exact-digest scan and attestation binding before any copy.
+
+The exact accepted candidate's Trivy report contains 27 CRITICAL OS-package
+findings for which the installed distribution reports no fixed version: 16
+`affected`, 9 `fix_deferred`, 1 `end_of_life`, and 1 `will_not_fix`. It contains
+zero Trivy secret findings. These are disclosed residual risks under the
+repository's `ignore-unfixed` policy; any CRITICAL finding with an available fix
+still fails publication. Passing these gates remains an engineering
+classification and still requires the organization's human publication/legal
+approval.
 
 ## Validation
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import importlib.util
 import json
 import sys
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -18,13 +20,31 @@ sys.modules[_SPEC.name] = scanner
 _SPEC.loader.exec_module(scanner)
 
 
-def _tar(path: Path, members: dict[str, bytes]) -> Path:
-    with tarfile.open(path, "w") as archive:
+def _tar(path: Path, members: dict[str, bytes], *, mode: str = "w") -> Path:
+    with tarfile.open(path, mode) as archive:
         for name, payload in members.items():
             info = tarfile.TarInfo(name)
             info.size = len(payload)
             archive.addfile(info, io.BytesIO(payload))
     return path
+
+
+def _tar_bytes(members: dict[str, bytes], *, mode: str = "w") -> bytes:
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode=mode) as archive:
+        for name, content in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+    return payload.getvalue()
+
+
+def _zip_bytes(members: dict[str, bytes]) -> bytes:
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content in members.items():
+            archive.writestr(name, content)
+    return payload.getvalue()
 
 
 def test_clean_oss_rootfs_and_runtime_fetch_plumbing_pass(tmp_path: Path) -> None:
@@ -168,6 +188,263 @@ def test_renamed_elf_with_cuda_dependency_fails(tmp_path: Path) -> None:
     )
     findings = scanner.scan(rootfs, {})
     assert "cuda_elf_dependency" in {item.kind for item in findings}
+
+
+@pytest.mark.parametrize(
+    ("nested_name", "nested_payload", "expected_kind"),
+    [
+        (
+            "opt/application/vendor.whl",
+            _zip_bytes({"site-packages/nvidia/cublas/lib/libcublas.so.12": b"vendor"}),
+            "nvidia_python_distribution",
+        ),
+        (
+            "opt/application/payload.tar.gz",
+            _tar_bytes({"models/model.safetensors": b"weights"}, mode="w:gz"),
+            "checkpoint_or_weight",
+        ),
+        (
+            "opt/application/renamed.zip",
+            _zip_bytes(
+                {
+                    "lib/innocent.so": b"\x7fELF\x00libnvencode.so.1\x00",
+                }
+            ),
+            "cuda_elf_dependency",
+        ),
+    ],
+)
+def test_nested_archive_mutations_fail_closed(
+    tmp_path: Path, nested_name: str, nested_payload: bytes, expected_kind: str
+) -> None:
+    findings = scanner.scan(
+        _tar(tmp_path / "nested-rootfs.tar", {nested_name: nested_payload}), {}
+    )
+    assert expected_kind in {item.kind for item in findings}
+    assert any("!/" in item.path for item in findings)
+
+
+def test_malformed_nested_archive_fails_closed(tmp_path: Path) -> None:
+    findings = scanner.scan(
+        _tar(
+            tmp_path / "malformed-nested-rootfs.tar",
+            {"opt/application/broken.zip": b"PK\x03\x04not-a-real-archive"},
+        ),
+        {},
+    )
+    assert "nested_archive_unreadable" in {item.kind for item in findings}
+
+
+def test_member_content_is_extracted_once_for_elf_and_secret_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rootfs = _tar(
+        tmp_path / "single-pass.tar.gz",
+        {
+            "opt/application/librenamed.so": (
+                b"\x7fELF"
+                + b"x" * (1024 * 1024)
+                + b"libcuda.so.1\x00AKIAABCDEFGHIJKLMNOP"
+            )
+        },
+        mode="w:gz",
+    )
+    original = scanner.tarfile.TarFile.extractfile
+    calls = 0
+
+    def counting_extractfile(archive, member):
+        nonlocal calls
+        calls += 1
+        return original(archive, member)
+
+    monkeypatch.setattr(scanner.tarfile.TarFile, "extractfile", counting_extractfile)
+    findings = scanner.scan(rootfs, {})
+    assert {item.kind for item in findings} == {
+        "credential_content",
+        "cuda_elf_dependency",
+    }
+    assert calls == 1
+
+
+def test_known_debian_parser_and_optional_acceleration_literals_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    members = {
+        "usr/lib/x86_64-linux-gnu/libavcodec.so.59.37.100": (
+            b"\x7fELF\x00libcuda.so.1\x00libnvcuvid.so.1\x00"
+        ),
+        "usr/lib/x86_64-linux-gnu/libavutil.so.57.28.100": (
+            b"\x7fELF\x00libcuda.so.1\x00"
+        ),
+        "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3": (
+            b"\x7fELF\x00-----BEGIN PRIVATE KEY-----\x00"
+        ),
+    }
+    monkeypatch.setattr(
+        scanner,
+        "AUDITED_LITERAL_LIBRARY_SHA256",
+        {
+            name: hashlib.sha256(payload).hexdigest()
+            for name, payload in members.items()
+        },
+    )
+    rootfs = _tar(
+        tmp_path / "debian-literals.tar",
+        members,
+    )
+    assert scanner.scan(rootfs, {}) == []
+
+
+def test_secret_literal_exception_requires_exact_audited_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = "opt/wan-base/lib/python3.10/site-packages/example.py"
+    audited_payload = b"example = 'AKIAABCDEFGHIJKLMNOP'\n"
+    monkeypatch.setattr(
+        scanner,
+        "AUDITED_SECRET_LITERAL_FILE_SHA256",
+        {path: hashlib.sha256(audited_payload).hexdigest()},
+    )
+
+    assert (
+        scanner.scan(_tar(tmp_path / "audited.tar", {path: audited_payload}), {}) == []
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        b"\nAKIAQRSTUVWXYZABCDEF",
+        b"\n-----BEGIN OPENSSH PRIVATE KEY-----",
+        b"\nhf_token=hf_actual_secret_value",
+        b"\nbenign byte drift",
+    ],
+)
+def test_secret_literal_exception_mutations_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: bytes
+) -> None:
+    path = "opt/wan-base/lib/python3.10/site-packages/example.py"
+    audited_payload = b"example = 'AKIAABCDEFGHIJKLMNOP'\n"
+    monkeypatch.setattr(
+        scanner,
+        "AUDITED_SECRET_LITERAL_FILE_SHA256",
+        {path: hashlib.sha256(audited_payload).hexdigest()},
+    )
+
+    findings = scanner.scan(
+        _tar(tmp_path / "mutated-audited.tar", {path: audited_payload + mutation}), {}
+    )
+    assert "audited_literal_byte_drift" in {item.kind for item in findings}
+
+
+@pytest.mark.parametrize(
+    ("path", "audited_payload", "mutation", "expected_kind"),
+    [
+        (
+            "usr/lib/x86_64-linux-gnu/libavcodec.so.59.37.100",
+            b"\x7fELF\x00libcuda.so.1\x00",
+            b"modified",
+            "cuda_elf_dependency",
+        ),
+        (
+            "usr/lib/x86_64-linux-gnu/libavutil.so.57.28.100",
+            b"\x7fELF\x00libcuda.so.1\x00",
+            b"modified",
+            "cuda_elf_dependency",
+        ),
+        (
+            "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
+            b"\x7fELF\x00-----BEGIN PRIVATE KEY-----\x00",
+            b"-----BEGIN OPENSSH PRIVATE KEY-----",
+            "credential_content",
+        ),
+        (
+            "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
+            b"\x7fELF\x00-----BEGIN PRIVATE KEY-----\x00",
+            b"AKIAABCDEFGHIJKLMNOP",
+            "credential_content",
+        ),
+        (
+            "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
+            b"\x7fELF\x00-----BEGIN PRIVATE KEY-----\x00",
+            b"hf_token=hf_example_secret_value",
+            "credential_content",
+        ),
+    ],
+)
+def test_audited_library_path_mutations_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    audited_payload: bytes,
+    mutation: bytes,
+    expected_kind: str,
+) -> None:
+    monkeypatch.setattr(
+        scanner,
+        "AUDITED_LITERAL_LIBRARY_SHA256",
+        {path: hashlib.sha256(audited_payload).hexdigest()},
+    )
+    findings = scanner.scan(
+        _tar(tmp_path / "mutated-library.tar", {path: audited_payload + mutation}), {}
+    )
+    assert expected_kind in {item.kind for item in findings}
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        b"\x7fELF\x00libother.so.1\x00",
+        b"XXXX\x00libcuda.so.1\x00",
+        b"\x7fELF\x00benign replacement\x00",
+    ],
+)
+def test_audited_library_replacement_or_header_drift_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: bytes
+) -> None:
+    path = "usr/lib/x86_64-linux-gnu/libavcodec.so.59.37.100"
+    audited_payload = b"\x7fELF\x00libcuda.so.1\x00"
+    monkeypatch.setattr(
+        scanner,
+        "AUDITED_LITERAL_LIBRARY_SHA256",
+        {path: hashlib.sha256(audited_payload).hexdigest()},
+    )
+    findings = scanner.scan(
+        _tar(tmp_path / "replaced-library.tar", {path: replacement}), {}
+    )
+    assert "audited_literal_byte_drift" in {item.kind for item in findings}
+
+
+def test_gzip_layer_detects_boundary_spanning_elf_dependency(tmp_path: Path) -> None:
+    chunk_size = 1024 * 1024
+    payload = b"\x7fELF" + b"x" * (chunk_size - 5) + b"libcu" + b"dart.so.12\x00"
+    rootfs = _tar(
+        tmp_path / "boundary.tar.gz",
+        {"opt/application/librenamed.so": payload},
+        mode="w:gz",
+    )
+    findings = scanner.scan(rootfs, {})
+    assert "cuda_elf_dependency" in {item.kind for item in findings}
+
+
+@pytest.mark.parametrize("secret_first", [False, True])
+def test_gzip_layer_detects_both_hit_orders_across_chunks(
+    tmp_path: Path, secret_first: bool
+) -> None:
+    dependency = b"libcuda.so.1\x00"
+    secret = b"AKIAABCDEFGHIJKLMNOP"
+    first, second = (secret, dependency) if secret_first else (dependency, secret)
+    payload = b"\x7fELF" + first + b"x" * (1024 * 1024 + 32) + second
+    rootfs = _tar(
+        tmp_path / f"hit-order-{secret_first}.tar.gz",
+        {"opt/application/librenamed.so": payload},
+        mode="w:gz",
+    )
+    findings = scanner.scan(rootfs, {})
+    assert {item.kind for item in findings} == {
+        "credential_content",
+        "cuda_elf_dependency",
+    }
 
 
 @pytest.mark.parametrize(

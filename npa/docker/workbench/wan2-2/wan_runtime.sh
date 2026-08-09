@@ -100,15 +100,18 @@ PY
 ensure_runtime() {
   # This gate intentionally precedes mkdir, locks, package probes, and network.
   require_acceptance
-  [[ "$OFFLINE" != 1 ]] || {
-    ready_tree "$CACHE_ROOT/current" || die "$EX_UNAVAILABLE" "offline mode requested but no complete cache exists"
-    verify_tree "$CACHE_ROOT/current"
-    return
-  }
-
   local stamp target lock base_site cache_site
   stamp="$(cache_stamp)"
   target="$CACHE_ROOT/$stamp"
+  [[ "$OFFLINE" != 1 ]] || {
+    [[ -L "$CACHE_ROOT/current" && "$(readlink "$CACHE_ROOT/current")" == "$target" ]] \
+      || die "$EX_UNAVAILABLE" "offline cache does not match the current requirements and Python ABI"
+    ready_tree "$target" \
+      || die "$EX_UNAVAILABLE" "offline mode requested but no complete current-stamp cache exists"
+    verify_tree "$target"
+    return
+  }
+
   lock="$CACHE_ROOT/.install.lock"
   mkdir -p "$CACHE_ROOT"
   exec 9>"$lock"
@@ -145,7 +148,11 @@ ensure_runtime() {
 }
 
 status() {
-  if ready_tree "$CACHE_ROOT/current"; then
+  local stamp target
+  stamp="$(cache_stamp)"
+  target="$CACHE_ROOT/$stamp"
+  if [[ -L "$CACHE_ROOT/current" && "$(readlink "$CACHE_ROOT/current")" == "$target" ]] \
+    && ready_tree "$target"; then
     printf '{"status":"ready","cache":"%s"}\n' "$CACHE_ROOT/current"
   else
     printf '{"status":"absent","cache":"%s"}\n' "$CACHE_ROOT/current"

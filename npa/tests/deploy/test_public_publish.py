@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -612,6 +613,42 @@ def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) ->
     index_digest = "sha256:" + "2" * 64
     attestation_digest = "sha256:" + "3" * 64
     subject = [{"name": "pkg", "digest": {"sha256": "1" * 64}}]
+    accepted = {
+        "oci_digest": index_digest,
+        "amd64_manifest": platform_digest,
+        "runtime_requirements_sha256": "4" * 64,
+        "source": {"revision": "source-ref"},
+        "model": {"revision": "model-ref"},
+        "tokenizer": {"revision": "tokenizer-ref"},
+        "runtime_acceptance": {"manifest_sha256": "b" * 64},
+        "payload_scan": {
+            "report_sha256": "c" * 64,
+            "archives_scanned": 2,
+            "findings": 0,
+        },
+        "single_gpu_proof": {
+            "run_id": "single",
+            "gpu_count": 1,
+            "observed_image_id_digest": index_digest,
+            "mp4_sha256": "5" * 64,
+            "rrd_sha256": "6" * 64,
+            "rrd_manifest_sha256": "7" * 64,
+        },
+        "distributed_proof": {
+            "run_id": "multi",
+            "gpu_count": 4,
+            "observed_image_id_digest": index_digest,
+            "mp4_sha256": "8" * 64,
+            "rrd_sha256": "9" * 64,
+            "rrd_manifest_sha256": "a" * 64,
+        },
+        "vulnerability_scan": {
+            "report_sha256": "d" * 64,
+            "critical_total": 27,
+            "critical_with_fix": 0,
+            "secrets": 0,
+        },
+    }
     index = {
         "manifests": [
             {
@@ -648,6 +685,9 @@ def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) ->
         publish_public, "_crane_digest", lambda ref, **_: (True, index_digest)
     )
     monkeypatch.setattr(
+        publish_public.images, "wan_accepted_image_manifest", lambda: accepted
+    )
+    monkeypatch.setattr(
         publish_public,
         "_crane_json",
         lambda args: (
@@ -672,10 +712,39 @@ def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) ->
 
     class CleanScan:
         returncode = 0
-        stdout = json.dumps({"status": "pass", "findings": []})
         stderr = ""
 
-    monkeypatch.setattr(publish_public.subprocess, "run", lambda *a, **k: CleanScan())
+        def __init__(self, stdout: str):
+            self.stdout = stdout
+
+    def clean_scan(args, **_kwargs):
+        if args[0] == "/usr/bin/trivy":
+            return CleanScan(
+                json.dumps(
+                    {
+                        "Results": [
+                            {
+                                "Vulnerabilities": [
+                                    {
+                                        "VulnerabilityID": f"CVE-test-{index}",
+                                        "Severity": "CRITICAL",
+                                        "FixedVersion": "",
+                                    }
+                                    for index in range(27)
+                                ]
+                            }
+                        ]
+                    }
+                )
+            )
+        return CleanScan(json.dumps({"status": "pass", "findings": []}))
+
+    monkeypatch.setattr(
+        publish_public.shutil,
+        "which",
+        lambda name: f"/usr/bin/{name}",
+    )
+    monkeypatch.setattr(publish_public.subprocess, "run", clean_scan)
     ok, detail = REAL_WAN_PUBLICATION_GATE(
         PublishItem(
             tool="wan2-2",
@@ -687,6 +756,146 @@ def test_wan_publication_gate_binds_clean_bytes_and_attestations(monkeypatch) ->
     assert ok, detail
     assert index_digest in detail
     assert platform_digest in detail
+    assert "residual unfixed CRITICAL findings disclosed: 27" in detail
+
+
+@pytest.mark.parametrize(
+    ("result", "message"),
+    [
+        (
+            {
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": "CVE-fixed",
+                        "Severity": "CRITICAL",
+                        "FixedVersion": "1.2.3",
+                    }
+                ]
+            },
+            "fixed CRITICAL vulnerabilities",
+        ),
+        ({"Secrets": [{"RuleID": "private-key"}]}, "secret findings"),
+    ],
+)
+def test_wan_live_trivy_gate_fails_closed(
+    monkeypatch, result: dict, message: str
+) -> None:
+    from npa.deploy import publish_public
+
+    completed = subprocess.CompletedProcess(
+        ["trivy"], 0, stdout=json.dumps({"Results": [result]}), stderr=""
+    )
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess, "run", lambda *args, **kwargs: completed
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        publish_public._scan_wan_trivy_exact_digest(
+            "source.example/npa-wan2-2@sha256:" + "1" * 64
+        )
+
+
+def test_wan_publication_gate_refuses_digest_not_bound_to_gpu_proofs(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    accepted_digest = "sha256:" + "a" * 64
+    observed_digest = "sha256:" + "b" * 64
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, observed_digest)
+    )
+    monkeypatch.setattr(
+        publish_public.images,
+        "wan_accepted_image_manifest",
+        lambda: {"oci_digest": accepted_digest},
+    )
+
+    ok, detail = REAL_WAN_PUBLICATION_GATE(
+        PublishItem(
+            tool="wan2-2",
+            source_ref="source.example/npa-wan2-2:retagged",
+            target_ref="ghcr.io/example/npa-wan2-2:retagged",
+        )
+    )
+
+    assert not ok
+    assert accepted_digest in detail
+
+
+def test_wan_publication_gate_refuses_an_extra_unscanned_platform(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    index_digest = "sha256:" + "1" * 64
+    platform_digest = "sha256:" + "2" * 64
+    attestation_digest = "sha256:" + "3" * 64
+    proof = {
+        "run_id": "run",
+        "observed_image_id_digest": index_digest,
+        "mp4_sha256": "4" * 64,
+        "rrd_sha256": "5" * 64,
+        "rrd_manifest_sha256": "6" * 64,
+    }
+    accepted = {
+        "oci_digest": index_digest,
+        "amd64_manifest": platform_digest,
+        "runtime_requirements_sha256": "7" * 64,
+        "source": {"revision": "source-ref"},
+        "model": {"revision": "model-ref"},
+        "tokenizer": {"revision": "tokenizer-ref"},
+        "runtime_acceptance": {"manifest_sha256": "9" * 64},
+        "payload_scan": {
+            "report_sha256": "a" * 64,
+            "archives_scanned": 2,
+            "findings": 0,
+        },
+        "single_gpu_proof": {**proof, "gpu_count": 1},
+        "distributed_proof": {**proof, "gpu_count": 4},
+        "vulnerability_scan": {
+            "report_sha256": "b" * 64,
+            "critical_total": 0,
+            "critical_with_fix": 0,
+            "secrets": 0,
+        },
+    }
+    index = {
+        "manifests": [
+            {
+                "digest": platform_digest,
+                "platform": {"architecture": "amd64", "os": "linux"},
+            },
+            {
+                "digest": attestation_digest,
+                "annotations": {
+                    "vnd.docker.reference.type": "attestation-manifest",
+                    "vnd.docker.reference.digest": platform_digest,
+                },
+            },
+            {
+                "digest": "sha256:" + "8" * 64,
+                "platform": {"architecture": "arm64", "os": "linux"},
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, index_digest)
+    )
+    monkeypatch.setattr(
+        publish_public.images, "wan_accepted_image_manifest", lambda: accepted
+    )
+    monkeypatch.setattr(publish_public, "_crane_json", lambda args: index)
+
+    ok, detail = REAL_WAN_PUBLICATION_GATE(
+        PublishItem(
+            tool="wan2-2",
+            source_ref="source.example/npa-wan2-2:accepted",
+            target_ref="ghcr.io/example/npa-wan2-2:accepted",
+        )
+    )
+
+    assert not ok
+    assert "unscanned/unattested extra manifest" in detail
 
 
 def test_wan_publication_gate_blocks_copy_before_any_write(monkeypatch, capsys) -> None:
