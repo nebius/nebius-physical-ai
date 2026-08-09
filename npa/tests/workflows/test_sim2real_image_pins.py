@@ -92,8 +92,9 @@ def test_isaac_exact_source_image_uses_light_package_imports() -> None:
         / "Dockerfile"
     ).read_text(encoding="utf-8")
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
-    assert "import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation" in (
-        dockerfile
+    assert (
+        "import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation"
+        in (dockerfile)
     )
 
 
@@ -109,3 +110,128 @@ def test_cosmos2_exact_source_image_uses_light_package_imports() -> None:
     ).read_text(encoding="utf-8")
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
     assert "import npa.workflows.sim2real.runtime_attestation" in dockerfile
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    (
+        "cosmos3-reason/Dockerfile",
+        "lerobot-vlm-rl/Dockerfile",
+        "sim2real-envgen/Dockerfile",
+        "sim2real-eval/Dockerfile",
+        "isaac-lab/Dockerfile",
+    ),
+)
+def test_exact_source_runtime_installs_are_resolver_closed(relative_path: str) -> None:
+    """Specialized images may add only exact packages without transitive drift."""
+
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "docker" / "workbench" / relative_path
+    ).read_text(encoding="utf-8")
+    assert "--no-deps" in dockerfile
+    assert "pip check" in dockerfile
+    assert (
+        "find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} +"
+        in dockerfile
+    )
+    assert (
+        "find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} +"
+        in dockerfile
+    )
+    assert "chmod -R" not in dockerfile
+    assert "pip install tomli " not in dockerfile
+    assert ">=" not in dockerfile
+
+
+def test_cosmos3_system_packages_use_an_immutable_snapshot() -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "cosmos3-reason"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "ARG UBUNTU_SNAPSHOT=20260801T053000Z" in dockerfile
+    assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in dockerfile
+    assert "rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list" in dockerfile
+    assert "pip install --no-deps -e /opt/npa" not in dockerfile
+    assert "PYTHONPATH=/opt/npa/src" in dockerfile
+    for requirement in (
+        "tomli==2.4.1",
+        "accelerate==1.14.0",
+        "huggingface_hub==0.36.0",
+        "qwen-vl-utils==0.0.14",
+        "safetensors==0.8.0",
+        "transformers==4.57.6",
+    ):
+        assert requirement in dockerfile
+
+
+def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
+    requirements = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "common"
+        / "sim2real-control-requirements.txt"
+    ).read_text(encoding="utf-8")
+    lines = [
+        line.strip()
+        for line in requirements.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert lines
+    assert all(line.count("==") == 1 for line in lines)
+    for expected in (
+        "kubernetes==33.1.0",
+        "mcap==1.4.0",
+        "durationpy==0.10",
+        "google-auth==2.56.3",
+        "cryptography==50.0.0",
+        "cffi==2.1.1",
+        "pycparser==3.0",
+        "lz4==4.4.5",
+        "zstandard==0.25.0",
+    ):
+        assert expected in lines
+
+    root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
+    for relative_path in ("lerobot-vlm-rl/Dockerfile", "isaac-lab/Dockerfile"):
+        dockerfile = (root / relative_path).read_text(encoding="utf-8")
+        assert "sim2real-control-requirements.txt" in dockerfile
+        assert "--no-deps" in dockerfile
+
+    isaac_dockerfile = (root / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    assert (
+        "find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} +"
+        in isaac_dockerfile
+    )
+    assert (
+        "find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} +"
+        in isaac_dockerfile
+    )
+    assert "chmod -R" not in isaac_dockerfile
+    assert "PYTHONPATH=/opt/npa/src" in isaac_dockerfile
+
+    genesis_requirements = (
+        root / "common" / "sim2real-genesis-requirements.txt"
+    ).read_text(encoding="utf-8")
+    genesis_lines = [
+        line.strip()
+        for line in genesis_requirements.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert genesis_lines == [
+        "huggingface-hub==0.35.3",
+        "tomli==2.4.1",
+        "transformers==4.57.6",
+    ]
+    for relative_path in (
+        "sim2real-envgen/Dockerfile",
+        "sim2real-eval/Dockerfile",
+        "lerobot-vlm-rl/Dockerfile",
+    ):
+        dockerfile = (root / relative_path).read_text(encoding="utf-8")
+        assert "sim2real-control-requirements.txt" in dockerfile
+        assert "sim2real-genesis-requirements.txt" in dockerfile
+        assert "pip check" in dockerfile

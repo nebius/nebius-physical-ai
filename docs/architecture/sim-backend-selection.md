@@ -103,15 +103,15 @@ URDFs ship without an integrated gripper, so those presets run gripperless
 (the gripper action channel is ignored) until a customer attaches and
 configures one.
 
-## Code injection into the Isaac image
+## Immutable workbench code in the Isaac image
 
-The Isaac Lab image ships Isaac Sim + Isaac Lab only under its bundled
-interpreter and bakes no workbench code. The held-out eval component therefore
-injects the branch's workbench code into that interpreter at container start —
-from an object-storage source tarball (using the pod's mounted storage
-credentials) or, when the source repo is reachable, a shallow git clone — and
-ensures the storage client dependency is present. This keeps the simulator
-image generic and lets any branch run without rebuilding it.
+The Isaac Lab image bakes the exact NPA source revision, controller dependency
+closure, and Isaac Job entrypoints. Jobs execute only the registry digest whose
+source label matches the requested Git SHA; they do not install packages, clone
+a branch, or inject a source tarball after acquiring a GPU. Isaac Sim and Isaac
+Lab themselves remain hash-pinned, fail-closed runtime fetches under the
+operator's EULA acceptance, so proprietary NVIDIA bytes are not redistributed
+in the image. A source change therefore requires a new immutable image digest.
 
 ## Licensing reality
 

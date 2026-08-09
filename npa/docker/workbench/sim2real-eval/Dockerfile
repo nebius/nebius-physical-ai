@@ -12,7 +12,7 @@ ENV PYTHONUNBUFFERED=1 \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SIM2REAL_GENESIS_BATCH_SIZE=16 \
     NPA_SIM2REAL_GENESIS_MAX_STEPS=240 \
-    PYTHONPATH=/opt/npa/src:$PYTHONPATH
+    PYTHONPATH=/opt/npa/src
 
 WORKDIR /workspace
 
@@ -21,11 +21,21 @@ USER root
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
+COPY docker/workbench/common/sim2real-control-requirements.txt \
+    /opt/npa/sim2real-control-requirements.txt
+COPY docker/workbench/common/sim2real-genesis-requirements.txt \
+    /opt/npa/sim2real-genesis-requirements.txt
 
 USER root
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
-    && python -m pip install tomli \
+    && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
+    && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
+    && chmod a+r /opt/npa/pyproject.toml \
+    && python -m pip install --no-deps \
+      -r /opt/npa/sim2real-control-requirements.txt \
+      -r /opt/npa/sim2real-genesis-requirements.txt \
+    && python -m pip check \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
     && python -c "from npa.genesis.env_pick_place import EnvConfig, FrankaPickPlaceEnv; assert EnvConfig(action_space='cartesian').action_space == 'cartesian'; assert FrankaPickPlaceEnv.__name__ == 'FrankaPickPlaceEnv'" \

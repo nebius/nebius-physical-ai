@@ -125,10 +125,10 @@ def register(params: dict[str, float] | None = None) -> str | None:
 
 
 def module_source() -> str:
-    """Return this module's own source, for shipping into the Isaac container.
+    """Return this module's source for immutable Isaac image assembly.
 
-    The Isaac-Lab image has no ``npa`` package, so the BYO trainer writes this
-    file into the job (via heredoc) and the train wrapper imports it post-boot.
+    The image build writes the source into its baked runtime directory. Jobs
+    only import that digest-attested copy; they never inject application source.
     """
     from pathlib import Path
 

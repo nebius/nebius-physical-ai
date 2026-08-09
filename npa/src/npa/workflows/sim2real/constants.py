@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-# Keep sim2real constants importable without npa.workbench (Isaac held-out siblings
-# bootstrap npa from a source tarball and lack lancedb/pyarrow/fiftyone).
+# Keep sim2real constants importable without npa.workbench. Purpose-built Isaac
+# siblings use the source baked into their immutable image and intentionally omit
+# unrelated lancedb/pyarrow/fiftyone dependencies.
 DEFAULT_COSMOS_REASON_CACHE = "/tmp/hf_home/cosmos-reason2"
 DEFAULT_COSMOS_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
 DEFAULT_COSMOS_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"

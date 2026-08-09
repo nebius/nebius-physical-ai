@@ -10,8 +10,19 @@ USER root
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
+COPY docker/workbench/common/sim2real-control-requirements.txt \
+    /opt/npa/sim2real-control-requirements.txt
+COPY docker/workbench/common/sim2real-genesis-requirements.txt \
+    /opt/npa/sim2real-genesis-requirements.txt
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
+    && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
+    && chmod a+r /opt/npa/pyproject.toml \
+    && python -m pip install --no-deps \
+      -r /opt/npa/sim2real-control-requirements.txt \
+      -r /opt/npa/sim2real-genesis-requirements.txt \
+    && python -m pip check \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py
 

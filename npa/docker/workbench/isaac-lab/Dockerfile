@@ -65,7 +65,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OMNI_LOG_DIR=/tmp/isaac-sim-cache/logs \
     XDG_RUNTIME_DIR=/tmp/xdg-runtime \
     NVIDIA_DRIVER_CAPABILITIES=all \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/npa/src
 
 SHELL ["/bin/bash", "-lc"]
 USER root
@@ -94,9 +95,12 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
 # importing the controller does not require unrelated data/viewer extras such as
 # PyArrow.  The controller modules themselves are imported below, so a missing
 # dependency on their real path still fails the image build.
-RUN /opt/npa/sim/venv/bin/python -m pip install --no-deps /opt/npa \
-    && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir \
-      'kubernetes==33.1.0' 'mcap==1.4.0' \
+RUN find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
+    && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
+    && chmod a+r /opt/npa/pyproject.toml \
+    && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --no-deps \
+      -r /opt/npa/docker/workbench/common/sim2real-control-requirements.txt \
+    && /opt/npa/sim/venv/bin/python -m pip check \
     && /opt/npa/sim/venv/bin/python -c \
       'import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation'
 
