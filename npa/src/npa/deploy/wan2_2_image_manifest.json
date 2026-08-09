@@ -22,7 +22,7 @@
     "runtime_and_weights_outside_image": true
   },
   "single_gpu_proof": {
-    "run_id": "byof-wan22-e2e-20260809T015145Z",
+    "run_id": "private-single-gpu-validation-record",
     "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
     "gpu_count": 1,
     "observed_image_id_digest": "sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13",
@@ -31,7 +31,7 @@
     "rrd_manifest_sha256": "6718fe2aa731d3c6f64ed3ccca8247301e7d3aa9a2bcc588bae6e7e8480cb8fd"
   },
   "distributed_proof": {
-    "run_id": "byof-wan22-multigpu-e2e-20260809T014018Z",
+    "run_id": "private-four-gpu-validation-record",
     "gpu_model": "NVIDIA B200",
     "gpu_count": 4,
     "world_size": 4,

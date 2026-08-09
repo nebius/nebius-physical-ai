@@ -160,9 +160,9 @@ local plus remote verification results. Only a verified manifest names the
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
-| `wan2.2_ti2v_5b_text_to_video` | accepted | `byof-wan22-e2e-20260809T015145Z`, fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
+| `wan2.2_ti2v_5b_text_to_video` | accepted | private validation record: fresh real 1280×704 output on RTX PRO 6000 Blackwell from the accepted runtime-fetch candidate |
 | `wan2.2_decoded_mp4_validation` | accepted | same run decoded all 17 frames at 24 fps and passed non-uniform-content gates |
-| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | `byof-wan22-multigpu-e2e-20260809T014018Z`, official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted | private validation record: official four-rank path on 4×B200 with the accepted runtime-fetch candidate |
 | `wan2.2_distributed_rank_topology_validation` | accepted | same run proved unique ranks/devices, NCCL 2.27.7 runtime transport and sum 10/10, T5/DiT FULL_SHARD, Ulysses calls, and process-group teardown |
 | `wan2.2_verified_rerun_recording` | accepted | fresh single- and four-GPU RRDs were built from their exact MP4/JSON evidence, uploaded, and remotely re-verified; the single-GPU RRD was loaded byte-identically and visibly rendered in the live agent |
 | `wan2.2_ti2v_5b_image_to_video` | deferred | optional real input path exists but lacks separately accepted live evidence |
@@ -181,10 +181,10 @@ revisions, observed image IDs, run IDs, and MP4/RRD proof hashes is recorded in
 
 The materialized accepted distributed recording is:
 
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260809T014018Z/wan2_2_ti2v_5b_multigpu.rrd`
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/<private-run-id>/wan2_2_ti2v_5b_multigpu.rrd`
   (2,948,508 bytes; SHA-256
   `5a4f77461f0877e72c3543508df20edd3a12d0e1fb6bf3f9cfd7215b0dfe0606`).
-- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/byof-wan22-multigpu-e2e-20260809T014018Z/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
+- `s3://<project-bucket>/oss-solutions/wan2.2-multigpu/<private-run-id>/wan2_2_ti2v_5b_multigpu_rrd_manifest.json`
   (10,801 bytes; SHA-256
   `1f256009e149100c5dfb06c200861537e41e89dc11d11a5923b4615fb14bc308`).
 
