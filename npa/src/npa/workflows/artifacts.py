@@ -1226,7 +1226,7 @@ def build_fiftyone_dataset(
         from npa.workbench.vlm_eval import RESULT_FILENAME as _VLM_RESULT_FILENAME
     except Exception:  # noqa: BLE001
         _VLM_RESULT_FILENAME = "vlm_eval_stub.json"
-    grade = {}
+    grade: dict[str, Any] = {}
     for _grade_name in (_VLM_RESULT_FILENAME, "vlm_eval.json"):
         grade = read_json(json_rel.get(f"grade/{_grade_name}", "")) or {}
         if grade:
