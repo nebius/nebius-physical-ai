@@ -84,7 +84,7 @@ def test_runbook_driver_is_cpu_only_and_preserves_sibling_gpu_config() -> None:
             "secret": {
                 "secretName": "npa-nebius-registry",
                 "items": [{"key": ".dockerconfigjson", "path": "config.json"}],
-                "defaultMode": 0o400,
+                "defaultMode": 0o444,
             },
         }
     ]
@@ -100,6 +100,15 @@ def test_runbook_driver_is_cpu_only_and_preserves_sibling_gpu_config() -> None:
     labels = job.manifest["metadata"]["labels"]
     assert labels["sim2real.local/run-id"] == "sim2real-unit-run"
     assert job.manifest["spec"]["template"]["metadata"]["labels"] == labels
+
+
+def test_registry_config_is_non_root_readable_and_never_writable() -> None:
+    pod = _materialize().manifest["spec"]["template"]["spec"]
+    secret = pod["volumes"][0]["secret"]
+    mode = secret["defaultMode"]
+    assert mode & 0o004
+    assert mode & 0o222 == 0
+    assert pod["containers"][0]["volumeMounts"][0]["readOnly"] is True
 
 
 def test_explicit_positive_timeout_adds_job_deadline() -> None:

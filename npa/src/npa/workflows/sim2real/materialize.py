@@ -268,7 +268,12 @@ def materialize_k8s_job(
                 "secret": {
                     "secretName": registry_config_secret,
                     "items": [{"key": ".dockerconfigjson", "path": "config.json"}],
-                    "defaultMode": 0o400,
+                    # Runtime images execute as the non-root ``ubuntu`` user.
+                    # Secret volumes are root-owned unless a Pod-level fsGroup
+                    # is imposed, so 0400 makes this fail-closed credential
+                    # unreadable and incorrectly triggers the CLI fallback.
+                    # The volume is read-only and no write bit is granted.
+                    "defaultMode": 0o444,
                 },
             }
         ]
