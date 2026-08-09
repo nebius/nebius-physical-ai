@@ -6894,20 +6894,11 @@ def sim_viz_select_run(payload: dict | None = None):
     matches = [
         item
         for item in runs
-        if (
-            requested_ref
-            and str(item.get("artifact_run_ref") or "").strip() == requested_ref
-        )
-        or (
-            not requested_ref
-            and str(item.get("run_id") or "").strip() == requested_run
-        )
+        if (requested_ref and str(item.get("artifact_run_ref") or "").strip() == requested_ref)
+        or (not requested_ref and str(item.get("run_id") or "").strip() == requested_run)
     ]
     if len(matches) > 1:
-        raise HTTPException(
-            status_code=409,
-            detail="run_id is ambiguous in viewer history; provide run_ref",
-        )
+        raise HTTPException(status_code=409, detail="run_id is ambiguous in viewer history; provide run_ref")
     selected = matches[0] if matches else None
     if not isinstance(selected, dict):
         raise HTTPException(status_code=404, detail=f"run_id not found: {{requested_run}}")
@@ -6917,24 +6908,14 @@ def sim_viz_select_run(payload: dict | None = None):
     selected_ref = str(selected.get("artifact_run_ref") or "").strip()
     selected_render = str(selected.get("artifact_render") or "").strip().lower()
     if selected_ref and selected_render == "rerun":
-        # Source-qualified history is metadata, not an immutable local recording:
-        # every load publishes into the shared active RECORDING_PATH. Re-resolve
-        # and download the snapshot's exact S3 object before activating it so an
-        # A -> B -> history-select-A switch cannot serve B's bytes as A.
+        # Re-resolve source-qualified history because every load replaces the
+        # shared active recording; metadata alone cannot restore exact bytes.
         selected_uri = str(selected.get("artifact_uri") or "").strip()
         if not selected_uri.startswith("s3://"):
-            raise HTTPException(
-                status_code=409,
-                detail="source-qualified Rerun history is missing its S3 artifact URI",
-            )
-        loaded = sim_viz_load_run(
-            {{
-                "run_id": requested_run,
-                "run_ref": selected_ref,
-                "rrd_uri": selected_uri,
-                "camera": str(selected.get("camera") or "").strip(),
-            }}
-        )
+            raise HTTPException(status_code=409, detail="source-qualified Rerun history is missing its S3 artifact URI")
+        reload_request = {{"run_id": requested_run, "run_ref": selected_ref, "rrd_uri": selected_uri}}
+        reload_request["camera"] = str(selected.get("camera") or "").strip()
+        loaded = sim_viz_load_run(reload_request)
         return {{"ok": True, "sim_viz": loaded["sim_viz"], "selected": selected}}
     sim_viz = dict(DEFAULT_SIM_VIZ)
     if isinstance(state.get("sim_viz"), dict):
@@ -6949,7 +6930,6 @@ def sim_viz_select_run(payload: dict | None = None):
     }}
     _save_state(state)
     return {{"ok": True, "sim_viz": sim_viz_status(), "selected": selected}}
-
 def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     # Echo the just-applied snapshot. Do not re-enter sim_viz_status here:
     # concurrent UI polls can rewrite state mid-load and return the wrong run.
@@ -6994,15 +6974,13 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
             payload["rerun_iframe_url"] = _rerun_iframe_url(str(payload.get("camera") or "workspace"), recording_path=str(payload.get("artifact_preview_url") or ""))
     return payload
 
-
 @app.post("/sim-viz/load-run")
 def sim_viz_load_run(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
     run_id = str(body.get("run_id") or "").strip()
     if not run_id:
         raise HTTPException(status_code=400, detail="run_id is required")
-    try:
-        run_id = _validate_run_basename(run_id)
+    try: run_id = _validate_run_basename(run_id)
     except ArtifactDiscoveryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     requested_camera = str(body.get("camera") or "").strip()
@@ -7030,10 +7008,7 @@ def sim_viz_load_run(payload: dict | None = None):
             item.key == key and item.s3_uri == requested_rrd_uri
             for item in resolution.artifacts
         ):
-            raise HTTPException(
-                status_code=400,
-                detail="RRD URI is outside the selected run",
-            )
+            raise HTTPException(status_code=400, detail="RRD URI is outside the selected run")
         run_id = resolution.run_id
         requested_run_ref = resolution.run_ref
         local_name = _artifact_filename(key)
