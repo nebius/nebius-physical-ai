@@ -6911,6 +6911,31 @@ def sim_viz_select_run(payload: dict | None = None):
     selected = matches[0] if matches else None
     if not isinstance(selected, dict):
         raise HTTPException(status_code=404, detail=f"run_id not found: {{requested_run}}")
+    selected_run = str(selected.get("run_id") or "").strip()
+    if selected_run and selected_run != requested_run:
+        raise HTTPException(status_code=400, detail="run_ref does not identify run_id")
+    selected_ref = str(selected.get("artifact_run_ref") or "").strip()
+    selected_render = str(selected.get("artifact_render") or "").strip().lower()
+    if selected_ref and selected_render == "rerun":
+        # Source-qualified history is metadata, not an immutable local recording:
+        # every load publishes into the shared active RECORDING_PATH. Re-resolve
+        # and download the snapshot's exact S3 object before activating it so an
+        # A -> B -> history-select-A switch cannot serve B's bytes as A.
+        selected_uri = str(selected.get("artifact_uri") or "").strip()
+        if not selected_uri.startswith("s3://"):
+            raise HTTPException(
+                status_code=409,
+                detail="source-qualified Rerun history is missing its S3 artifact URI",
+            )
+        loaded = sim_viz_load_run(
+            {{
+                "run_id": requested_run,
+                "run_ref": selected_ref,
+                "rrd_uri": selected_uri,
+                "camera": str(selected.get("camera") or "").strip(),
+            }}
+        )
+        return {{"ok": True, "sim_viz": loaded["sim_viz"], "selected": selected}}
     sim_viz = dict(DEFAULT_SIM_VIZ)
     if isinstance(state.get("sim_viz"), dict):
         sim_viz.update(state["sim_viz"])

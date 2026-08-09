@@ -405,7 +405,17 @@ def test_source_qualified_rrd_loads_keep_independent_history(
 
     def _resolve(_buckets, *, base_prefix, run_ref_or_id, s3):
         assert base_prefix == "nested/root"
-        run_id, source_prefix, _body = selections[run_ref_or_id]
+        selection = selections.get(run_ref_or_id)
+        if selection is None:
+            selection = next(
+                candidate
+                for candidate in selections.values()
+                if module.encode_run_ref(
+                    "artifact-bucket", candidate[1], candidate[0]
+                )
+                == run_ref_or_id
+            )
+        run_id, source_prefix, _body = selection
         key = f"{source_prefix}/{run_id}/reports/run.rrd"
         artifact = module.Artifact(
             run_id,
@@ -430,13 +440,23 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         destination.write_bytes(body)
         return destination
 
+    published_capabilities = []
+
     def _publish(source):
         shutil.copy2(source, module.RECORDING_PATH)
-        return "/rerun/recordings/cap-" + ("a" * 43) + ".rrd"
+        capability = (
+            "/rerun/recordings/cap-"
+            + chr(ord("a") + len(published_capabilities)) * 43
+            + ".rrd"
+        )
+        published_capabilities.append(capability)
+        return capability
 
     monkeypatch.setattr(module, "resolve_run_artifacts", _resolve)
     monkeypatch.setattr(module, "download_s3_uri", _download)
     monkeypatch.setattr(module, "_publish_rrd_recording", _publish)
+    monkeypatch.setattr(module, "_rerun_service_active", lambda: True)
+    monkeypatch.setattr(module, "_rerun_web_viewer_healthy", lambda: True)
     monkeypatch.setattr(module, "_restart_rerun_serve", lambda **_kwargs: True)
     monkeypatch.setattr(module, "_wait_rerun_web_viewer_healthy", lambda: True)
 
@@ -483,6 +503,30 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         )
         available_refs = {item["run_ref"] for item in load_response["available_runs"]}
         assert available_refs == {ref_one, ref_two}
+
+        # History selection must reload A's exact S3 bytes after B was active,
+        # publish a fresh capability, and keep the two source identities separate.
+        assert module.RECORDING_PATH.read_bytes() == selections["npa1_source_two"][2]
+        selected_one = module.sim_viz_select_run(
+            {"run_id": "run-one", "run_ref": ref_one}
+        )["sim_viz"]
+        assert module.RECORDING_PATH.read_bytes() == selections["npa1_source_one"][2]
+        assert selected_one["run_id"] == "run-one"
+        assert selected_one["artifact_run_ref"] == ref_one
+        assert selected_one["artifact_key"].endswith(
+            "category-one/run-one/reports/run.rrd"
+        )
+        assert selected_one["artifact_uri"].endswith(
+            "category-one/run-one/reports/run.rrd"
+        )
+        assert selected_one["served_recording_sha256"] == hashlib.sha256(
+            selections["npa1_source_one"][2]
+        ).hexdigest()
+        assert selected_one["artifact_preview_url"] == published_capabilities[-1]
+        assert selected_one["artifact_preview_url"] != responses[0]["sim_viz"][
+            "artifact_preview_url"
+        ]
+        assert selected_one["rerun_ready"] is True
     finally:
         sys.modules.pop(module_name, None)
 
