@@ -555,7 +555,9 @@ def test_agent_chat_complex_artifact_discovery_intent(ctx: AgentLiveContext) -> 
                 }
             ]
         },
-        timeout=30.0,
+        # This grounded intent performs tenant artifact discovery before the
+        # model response, so its live budget must cover both bounded stages.
+        timeout=60.0,
     )
     chat.raise_for_status()
     payload = chat.json()
