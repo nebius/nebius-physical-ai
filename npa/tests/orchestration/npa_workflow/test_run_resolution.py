@@ -417,3 +417,67 @@ def test_ordinary_exact_workflow_contract_remains_supported(
     assert resolved.found is True
     assert resolved.source == "ordinary_workflow"
     assert resolved.manifest == manifest
+
+
+def test_stale_planned_receipt_cannot_override_terminal_s3_manifest(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "completed-ten-wave"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "launch_state": "planned",
+            "workflow": {"name": "physical-ai-data-factory"},
+            "planning": {"state": "durable"},
+        },
+    )
+    manifest = _manifest(run_id)
+    manifest["status"] = "SUCCEEDED"
+    manifest["sky_job_id"] = ""
+    manifest["steps"] = [
+        {"state": f"wave-{index:02d}", "status": "SUCCEEDED"}
+        for index in range(1, 11)
+    ]
+    resolver_env.put_json(
+        "alias-bucket",
+        f"physical-ai-data-factory/{run_id}/npa-workflow/manifest.json",
+        manifest,
+    )
+    for index in range(40):
+        resolver_env.objects[
+            (
+                "alias-bucket",
+                f"physical-ai-data-factory/{run_id}/reports/artifact-{index:02d}.json",
+            )
+        ] = b"{}"
+
+    resolved = resolve_run(
+        run_id, project="paidf", allow_local_not_submitted=True
+    )
+    assert resolved.found is True
+    assert resolved.not_submitted is False
+    assert resolved.manifest is not None
+    assert resolved.manifest["status"] == "SUCCEEDED"
+
+
+def test_planned_receipt_is_not_not_submitted_when_later_evidence_unavailable(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "planned-but-storage-unavailable"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "launch_state": "planned",
+            "workflow": {"name": "physical-ai-data-factory"},
+            "planning": {"state": "durable"},
+        },
+    )
+    resolver_env.failure = PermissionError("eventual consistency / auth outage")
+
+    resolved = resolve_run(
+        run_id, project="paidf", allow_local_not_submitted=True
+    )
+    assert resolved.not_submitted is False
+    assert resolved.verification_unavailable is True

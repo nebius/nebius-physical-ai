@@ -233,6 +233,9 @@ class SkypilotRenderOptions:
 
     registry: str = ""
     image_overrides: Mapping[str, str] = field(default_factory=dict)
+    # Exact tag/reference -> registry-resolved immutable digest reference. Submit
+    # populates this only after pull + bootstrap-contract verification.
+    image_digest_pins: Mapping[str, str] = field(default_factory=dict)
     default_setup: bool = True
     execution: str = "serial"
     aws_endpoint_url: str = field(default_factory=_default_aws_endpoint_url)
@@ -437,6 +440,20 @@ def normalize_task_config(resources: Mapping[str, Any]) -> dict[str, Any]:
     return {"kubernetes": selected} if selected else {}
 
 
+def _contains_uid_zero_override(value: object) -> bool:
+    """Return whether Kubernetes config explicitly forces a container to UID 0."""
+
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if str(key) == "runAsUser" and str(child).strip() == "0":
+                return True
+            if _contains_uid_zero_override(child):
+                return True
+    elif isinstance(value, (list, tuple)):
+        return any(_contains_uid_zero_override(child) for child in value)
+    return False
+
+
 def tool_image_key(tool_ref: str) -> str | None:
     """Return the CONTAINER_IMAGE_NAMES key for a toolRef, if known."""
 
@@ -462,29 +479,27 @@ def resolve_task_image(
     """Resolve a fully-qualified image ref for one planned step."""
 
     if tool_ref in options.image_overrides:
-        return str(options.image_overrides[tool_ref] or "").strip()
-    if "*" in options.image_overrides:
-        return str(options.image_overrides["*"] or "").strip()
+        resolved = str(options.image_overrides[tool_ref] or "").strip()
+    elif "*" in options.image_overrides:
+        resolved = str(options.image_overrides["*"] or "").strip()
+    else:
+        resolved = str(resources.get("image") or "").strip()
+        if not resolved:
+            tool = tool_image_key(tool_ref)
+            if not tool:
+                return ""
+            from npa.deploy.images import container_image_for_tool
 
-    explicit = str(resources.get("image") or "").strip()
-    if explicit:
-        return explicit
-
-    tool = tool_image_key(tool_ref)
-    if not tool:
-        return ""
-
-    from npa.deploy.images import container_image_for_tool
-
-    kwargs: dict[str, Any] = {}
-    if options.registry:
-        kwargs["registry"] = options.registry
-    if tool == "sonic":
-        if options.gpu_target:
-            kwargs["gpu_target"] = options.gpu_target
-        if options.image_variant:
-            kwargs["image_variant"] = options.image_variant
-    return container_image_for_tool(tool, **kwargs)
+            kwargs: dict[str, Any] = {}
+            if options.registry:
+                kwargs["registry"] = options.registry
+            if tool == "sonic":
+                if options.gpu_target:
+                    kwargs["gpu_target"] = options.gpu_target
+                if options.image_variant:
+                    kwargs["image_variant"] = options.image_variant
+            resolved = container_image_for_tool(tool, **kwargs)
+    return str(options.image_digest_pins.get(resolved, resolved)).strip()
 
 
 #: How long to wait for a self-hosted model server to answer /health, and how often to ask.
@@ -1404,6 +1419,16 @@ def build_skypilot_task_doc(
     if num_nodes > 1:
         doc["num_nodes"] = num_nodes
     task_config = normalize_task_config(scheduler_task.get("resources") or {})
+    if image and task_config:
+        from npa.orchestration.skypilot.image_bootstrap_contract import (
+            is_first_party_image,
+        )
+
+        if is_first_party_image(image) and _contains_uid_zero_override(task_config):
+            raise NpaWorkflowRenderError(
+                "first-party workflow images must satisfy the SkyPilot bootstrap "
+                "contract as their declared image user; runAsUser: 0 overrides are forbidden"
+            )
     if task_config:
         doc["config"] = task_config
     setup = render_setup_for_tool(

@@ -97,3 +97,11 @@ is selected deterministically. A discovered/root job ID must never be broadcast
 across runtime stages. Conflicting or missing history is reported as ambiguous
 or unknown. Root-ID fan-out is compatible only with the legacy single-managed-
 job manifest contract.
+
+SkyPilot 0.12.2 job names are not idempotency keys. NPA wraps the non-idempotent
+launch POST in an owner-only logical-identity lock plus structured queue
+reconciliation. The durable wave records readiness samples, launch sequence,
+failure category, reconciliation/adoption, recovery decision, and cancellation
+verification. `UP` and `STOPPED` controllers are usable; controller absence is a
+distinct state that requires stable Kubernetes API readiness before creation.
+Unknown/ambiguous queue evidence blocks both relaunch and fuzzy cancellation.

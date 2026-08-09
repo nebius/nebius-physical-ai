@@ -16,6 +16,15 @@ from npa.orchestration.skypilot.workflow import (
     submit_workflow,
     workflow_status,
 )
+from npa.orchestration.skypilot.launch_transaction import (
+    FailureCategory,
+    LaunchState,
+    LaunchTransactionError,
+    LaunchTransactionResult,
+)
+
+
+_REAL_RUN_LAUNCH_TRANSACTION = workflow_module.run_launch_transaction
 
 
 def _fake_sky(tmp_path: Path) -> Path:
@@ -44,6 +53,29 @@ def _skip_version_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     monkeypatch.delenv("NPA_SKYPILOT_BIN", raising=False)
     monkeypatch.delenv("SKYPILOT_GLOBAL_CONFIG", raising=False)
     monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", raising=False)
+
+    # Most tests in this module predate the transaction and isolate YAML/config/
+    # streaming mechanics with one generic subprocess stub. Keep those unit seams
+    # narrow; transaction/reconciliation behavior has dedicated tests below and in
+    # test_launch_transaction.py.
+    def legacy_transaction(**kwargs):
+        result = LaunchTransactionResult(LaunchState.SUBMITTED, kwargs["logical_id"])
+        try:
+            launch_pair = kwargs["launch"]()
+        except BaseException as exc:
+            result.state = LaunchState.TERMINAL_FAILURE
+            result.category = FailureCategory.UNKNOWN
+            result.primary_error = str(exc)
+            raise LaunchTransactionError(str(exc), result) from exc
+        command_result = launch_pair[0]
+        result.job_id = workflow_module._parse_job_id(
+            f"{command_result.stdout}\n{command_result.stderr}"
+        )
+        result.launch_sequence = 1
+        result.launch_result = launch_pair
+        return result
+
+    monkeypatch.setattr(workflow_module, "run_launch_transaction", legacy_transaction)
 
 
 def test_submit_workflow_loads_yaml_applies_controller_and_calls_subprocess(
@@ -397,6 +429,26 @@ def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> No
     assert captured_env["SKY_RUNTIME_DIR"] == str(tmp_path / "isolated" / "sky-runtime")
 
 
+def test_sky_environment_preserves_nebius_exec_auth_without_copying(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    operator_home = tmp_path / "operator"
+    provider_config = operator_home / ".nebius"
+    provider_config.mkdir(parents=True)
+    (provider_config / "config.yaml").write_text("profiles: {}\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(operator_home))
+
+    isolated = tmp_path / "isolated"
+    env = sky_environment(isolated)
+
+    linked = isolated / "home" / ".nebius"
+    assert linked.is_symlink()
+    assert linked.resolve() == provider_config.resolve()
+    assert env["HOME"] == str(isolated / "home")
+
+
 def test_submit_workflow_require_controller_up_uses_canonical_preflight(
     monkeypatch, tmp_path
 ) -> None:
@@ -548,6 +600,27 @@ def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
 
     assert result.status == "SUCCEEDED"
     assert result.job_id == "42"
+
+
+def test_workflow_status_treats_real_empty_queue_as_verified_absence(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout="",
+            stderr="sky.exceptions.ClusterNotUpError: No in-progress managed jobs.\n",
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "ABSENT"
+    assert result.error == ""
 
 
 @pytest.mark.parametrize(
@@ -1103,6 +1176,28 @@ def test_exact_managed_job_lookup_preserves_absent_vs_unavailable(
     assert "provider unavailable" in unavailable.error
 
 
+def test_exact_managed_job_lookup_accepts_real_0_12_2_empty_queue(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout="",
+            stderr="sky.exceptions.ClusterNotUpError: No in-progress managed jobs.\n",
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert evidence.outcome == "absent"
+
+
 def test_exact_managed_job_lookup_refuses_ambiguous_name_without_immutable_id(
     monkeypatch, tmp_path
 ) -> None:
@@ -1274,3 +1369,98 @@ def test_submit_can_run_without_streaming(tmp_path, monkeypatch) -> None:
 
     assert result.status == "SUBMITTED"
     assert seen == [subprocess.PIPE]
+
+
+def test_submit_transaction_recovers_controller_creation_refusal(
+    monkeypatch, tmp_path
+) -> None:
+    """Hermetic reproduction of the first-PAIDF-submit TOCTOU boundary."""
+
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState,
+        ProbeObservation,
+        RecoveryPolicy,
+        StabilityPolicy,
+    )
+
+    monkeypatch.setattr(
+        workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION
+    )
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: demo\nresources:\n  cloud: kubernetes\n", encoding="utf-8"
+    )
+    sky_bin = _fake_sky(tmp_path)
+    clock = {"now": 0.0}
+    launch_calls = 0
+    exact_job = ""
+
+    def now() -> float:
+        return clock["now"]
+
+    def sleep(seconds: float) -> None:
+        clock["now"] += max(seconds, 0.1)
+
+    def probe() -> ProbeObservation:
+        return ProbeObservation(
+            EvidenceState.READY,
+            observed_at=f"t{clock['now']}",
+            monotonic_at=clock["now"],
+        )
+
+    def fake_run(cmd, **_kwargs):
+        nonlocal launch_calls, exact_job
+        if _is_status_cmd(cmd):
+            return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+        if cmd[1:3] == ["jobs", "queue"]:
+            rows = (
+                [
+                    {
+                        "job_id": int(exact_job),
+                        "job_name": "paidf-wave-1",
+                        "status": "PENDING",
+                    }
+                ]
+                if exact_job
+                else []
+            )
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps(rows), stderr=""
+            )
+        if cmd[1:3] == ["jobs", "launch"]:
+            launch_calls += 1
+            if launch_calls == 1:
+                return subprocess.CompletedProcess(
+                    cmd, 1, stdout="", stderr="dial tcp: connection refused"
+                )
+            exact_job = "501"
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Job submitted, ID: 501\n", stderr=""
+            )
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "paidf-wave-1",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/exact-context",
+        stream_output=False,
+        stability_probe=probe,
+        stability_policy=StabilityPolicy(2, 0, 0, 1),
+        recovery_policy=RecoveryPolicy(10, 1, 1, 2, 0),
+        transaction_clock=now,
+        transaction_sleeper=sleep,
+        transaction_random=lambda: 0.5,
+        launch_lock_root=tmp_path / "locks",
+    )
+    assert result.status == "SUBMITTED"
+    assert result.job_id == "501"
+    assert launch_calls == 2
+    assert result.launch_transaction["launch_sequence"] == 2
+    assert (
+        result.launch_transaction["recovery_decision"]
+        == "submitted_and_reconciled"
+    )
+    assert result.launch_transaction["controller"]["state"] == "absent"

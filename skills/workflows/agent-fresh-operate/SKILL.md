@@ -27,6 +27,10 @@ For chat UX, API shapes, and Rerun iframe behavior, use `npa-agent`. For
   operation-journal, record, or exact identities stop before deletion; NPA never
   performs a display-name/prefix VM sweep.
 - `npa/scripts/agent_fresh_setup_loop.sh` — destroy → fresh-setup → smoke chat (loop until success)
+- Exact-name retries after client transport loss adopt a healthy exact VM or
+  resume its first incomplete phase. Do not use `--replace` solely because the
+  final Terraform/SSH response was lost; mismatched or unavailable evidence is
+  indeterminate and resumable.
 - `npa/scripts/agent_mature_verify_loop.sh` — bootstrap-first mature loop (existing agents; not fresh deploy)
 
 All `npa agent …` and `nebius` commands run on the **operator/dev VM** with

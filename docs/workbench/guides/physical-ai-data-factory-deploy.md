@@ -254,6 +254,10 @@ and lineage in `input/provenance.json`, and invokes Cosmos with mandatory
 | `missing prerequisites: ... SkyPilot CLI is not usable` | SkyPilot never bootstrapped, or only exported in a previous shell | `npa skypilot bootstrap` (persists `skypilot.sky_bin`) |
 | `missing prerequisites: ... config.bucket is the spec placeholder` | submitting against `example-bucket` | `--var bucket=<your-bucket>` |
 | `controller health check failed: ... kubeconfig ... No such file` | a cached `sky-jobs-controller-*` from another setup points at a kubeconfig that is gone | inspect with `npa skypilot status`, then (after all workflows are terminal) run `npa skypilot cleanup-controller --yes`; provision/point at a real cluster (`npa provision-if-absent`), and pass `--infra k8s/<context>` |
+| `managed-job launch indeterminate` | the launch may have reached SkyPilot, but exact structured queue reconciliation is unavailable or ambiguous | do not retry with a new ID and do not cancel by name. Restore the selected context/SkyPilot queue access, then use the printed `--resume-run <same-id>` action; NPA adopts an exact existing job or relaunches only after authoritative absence |
+| `recovery_deadline_exhausted_verified_absent` | Kubernetes controller creation remained transiently unavailable through the bounded recovery deadline, and structured reconciliation proved no exact job exists | wait for the selected API to stabilize, then `--resume-run <same-id>`; the recorded logical identity prevents a duplicate |
+| first-party bootstrap attestation missing/mismatched | the selected digest was not built for the pinned SkyPilot contract | rebuild with the required packages, declared user/sudo and forwarding entrypoint; publish a unique validation tag and submit its resolved digest |
+| status reports `EVIDENCE_INCONSISTENT` | exact current-ledger, S3, or immutable-job evidence conflicts | preserve the run and inspect the reported identities; do not force `NOT_SUBMITTED` or rerun succeeded waves |
 | `Kube context '<name>' ... is not available` | no cluster for that context: neither your kubeconfig nor `~/.npa/clusters/<name>/` has it | provision one (`npa provision-if-absent --project <alias>`, and read its warnings — it now exits non-zero when it could not) or point `KUBECONFIG` at the cluster you want; `kubectl config get-contexts` lists what is resolvable |
 | A cluster is RUNNING in the console but npa has no kubeconfig for it (interrupted provision) | `up` writes the kubeconfig only after apply finishes | `npa cluster kubeconfig --cluster-name <name> --project <alias>` adopts it (writes the kubeconfig + cluster state), or `npa cluster up` again to resume, or `npa cluster down --force` to remove it |
 | `blocked` quota rows before apply | one or more exact hard quotas (instance, disk count, `compute.disk.size.network-ssd` bytes, public IP, or GPU) cannot cover the cumulative topology | read each row's exact `required`, `available`, and `shortfall` (disk capacity is also rendered in GiB), reduce the topology, or ask the tenant operator to resolve the named allowance; the default cluster needs 1,151 GiB (128 + 1,023), and the README agent+cluster path needs 1,251 GiB; preemptible nodes consume exactly the same disk bytes |
@@ -518,6 +522,10 @@ npa workbench workflow preflight-images npa/workflows/physical-ai-data-factory.y
 That reports each image as `ok` / `not_found` / `forbidden` and prints the exact
 build command for anything missing. `npa workbench workflow submit` runs the same
 check before it provisions anything, so a missing image costs no GPU time.
+For a validation registry containing distinct images, repeat
+`--image-override TOOL_REF=IMAGE` on both commands. Each exact override is
+resolved and attested independently and takes precedence over `--image`; pass
+immutable digest references in recorded/live acceptance commands.
 
 For the public mirror, `ok` needs no login or build. For a private registry,
 build and push what preflight reports missing (tags below track
@@ -812,15 +820,25 @@ npa storage service-account reconcile --project "$PROJECT" --id <exact-id> \
 npa storage service-account delete --project "$PROJECT" --dry-run
 npa storage service-account delete --project "$PROJECT" --yes
 
-# 7. Optional: delete only a proven NPA-created, provider-empty project.
-npa destroy --project "$PROJECT" --all --delete-project --yes --json
+# 7. If this validation created a private image registry, delete its exact
+#    immutable artifact DAG and registry. For an NPA-created disposable project,
+#    remove only its unique provider default topology; either command refuses
+#    mixed/shared evidence.
+npa registry delete --project "$PROJECT" --project-id <project-id> \
+  --tenant-id <tenant-id> --id <registry-id> --name <registry-name> --yes
+npa network delete-project-default --project "$PROJECT" \
+  --project-id <project-id> --tenant-id <tenant-id> --yes
 
-# 8. Forget the retained/deleted project's local alias after cloud convergence.
-npa configure --forget-project "$PROJECT"
+# 8. Optional: delete only a proven NPA-created, provider-empty project.
+npa destroy --project "$PROJECT" --all --delete-project --yes --json
 
 # 9. Remove known shared-service credentials, caches, the SkyPilot venv/state,
 #    and empty ~/.npa residue. Non-empty/unrelated local data is preserved.
 npa cleanup --full --yes --project "$PROJECT"
+
+# 10. Forget the retained/deleted project's local alias after cloud and local
+#     cleanup converge.
+npa configure --forget-project "$PROJECT"
 ```
 
 If project configuration was already removed, take the opaque receipt ID printed

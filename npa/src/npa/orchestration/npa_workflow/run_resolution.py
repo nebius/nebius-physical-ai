@@ -340,6 +340,7 @@ def resolve_run(
     explicit_uri = workflow_s3_uri or (
         run_id if str(run_id).startswith("s3://") else ""
     )
+    planned_only_candidate = False
 
     if explicit_uri:
         try:
@@ -408,14 +409,12 @@ def resolve_run(
                 result.receipt, project=ledger_project, run_id=resolved_id
             )
         ):
-            result.not_submitted = True
-            result.source = "durable_submission_receipt"
+            planned_only_candidate = True
             result.checks[-1] = ResolutionCheck(
                 "durable_submission_receipt",
                 "found",
-                "durable local ledger has no launch transition; submission never began",
+                "durable local ledger has no launch transition; checking later durable sources",
             )
-            return result
         launch_status = str(launch.get("status") or "").lower()
         receipt_proves_run = bool(
             workflow
@@ -621,6 +620,19 @@ def resolve_run(
             )
             result.verification_unavailable = True
 
+    if planned_only_candidate and not result.found and not result.verification_unavailable:
+        later_checks = [
+            check
+            for check in result.checks
+            if check.source != "durable_submission_receipt"
+        ]
+        if all(
+            check.outcome in {"absent", "not_supplied", "skipped"}
+            for check in later_checks
+        ):
+            result.not_submitted = True
+            result.source = "durable_submission_receipt"
+            return result
     result.conclusively_absent = not result.verification_unavailable and all(
         check.outcome in {"absent", "not_supplied", "skipped"}
         for check in result.checks

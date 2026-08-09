@@ -173,6 +173,12 @@ or provider/auth verification failure is partial cleanup and exits 2.
   into the existing project-ID-keyed receipt namespace; it never recreates an
   alias. Exact NotFound is absence, while RBAC/auth/network/parse uncertainty is
   unresolved and nonzero.
+- Disposable validation registries are removed with `npa registry delete` using
+  exact project/tenant/registry ID/name selectors; immutable artifacts are
+  inventoried and deleted before the registry. An NPA-created disposable
+  project's unique provider default topology can be removed with `npa network
+  delete-project-default`; extra, shared, or non-default network inventory fails
+  closed. Run both before guarded project deletion.
 - With no cluster state/inventory and no NPA kubeconfig, `npa cluster down` is a
   no-op before binary lookup, authentication, Terraform init/provider download,
   or Kubernetes/RBAC calls. Real apply/destroy uses marked ephemeral
@@ -232,6 +238,13 @@ only falls back to the ambient token if the exchange fails.
   `workbench`.
 - Cached kubeconfig reuse is a success path for `provision-if-absent`; absence
   of a cached kubeconfig triggers Terraform only outside dry-run mode.
+- A green cluster/GPU snapshot is not sufficient evidence for the later
+  Kubernetes jobs-controller creation boundary. Workflow submit probes the exact
+  selected context using the same `KUBECONFIG` environment SkyPilot receives and
+  requires a stable `/readyz` series. Auth, RBAC, missing/wrong context,
+  certificate/config, and identity failures stop immediately; only centrally
+  classified transport, API 429, and appropriate API 5xx warm-up failures can
+  enter reconciled bounded recovery.
 
 ## Verify
 

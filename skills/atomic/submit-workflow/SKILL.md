@@ -57,6 +57,19 @@ healthy `sky check kubernetes`:
 
 ## Gotchas
 
+- **Kubernetes controller launch is transactional.** Immediately before every
+  Kubernetes managed-job launch, NPA probes `/readyz` on the exact selected
+  context with SkyPilot's `KUBECONFIG` environment. Readiness requires three
+  consecutive successes spanning 10 seconds. After any failed/uncertain launch,
+  NPA reconciles exact `sky jobs queue --all --output json` evidence: adopt one
+  immutable ID, retry only after authoritative absence plus a classified
+  transport/API warm-up failure, or fail closed as indeterminate. Never bypass
+  this with raw `sky jobs launch`, retry by name, or cancel by name.
+- Transaction recovery uses capped exponential jitter and a 180-second recovery
+  deadline. This is product behavior, not an operator job/time budget. A
+  recovered launch proceeds in the same command; use `--resume-run <same-id>`
+  only for crash/restart or a printed indeterminate/deadline recovery action.
+
 - SkyPilot `envs` does not support self-referencing interpolation. The
   npa.workflow renderer resolves images and config before submit so rendered
   YAML has no `${VAR}` placeholders.
@@ -88,6 +101,10 @@ healthy `sky check kubernetes`:
   `tests/guardrails/test_paidf_image_tags_match_code.py`). `submit` runs the same
   check **before `deployIfAbsent`**, so a registry without the images costs no
   cluster time.
+- **Multi-tool validation images stay distinct.** Repeat
+  `--image-override TOOL_REF=IMAGE` on preflight and submit. Exact tool refs take
+  precedence over the optional global `--image`; preflight resolves each selected
+  artifact to the digest the renderer uses.
 - **A registry `403` stalls rather than fails.** Kubernetes retries image pulls
   forever, so an unpullable image leaves the job in `PENDING`/`ImagePullBackOff`.
   Listing a repository's tags is a *different permission* from pulling it, so a

@@ -539,6 +539,7 @@ def cancel_workflow_job(
     cluster: str = "",
     timeout: int = 900,
     poll_seconds: float = 10.0,
+    also_down_cluster: bool = True,
 ) -> dict[str, Any]:
     cancel = subprocess.run(
         [sky_bin, "jobs", "cancel", "--yes", str(job_id)],
@@ -549,17 +550,24 @@ def cancel_workflow_job(
         check=False,
     )
     cluster_name = cluster or run_id
-    down = subprocess.run(
+    down = subprocess.CompletedProcess(
         [sky_bin, "down", "--yes", cluster_name],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
+        0,
+        stdout="not requested",
+        stderr="",
     )
+    if also_down_cluster:
+        down = subprocess.run(
+            [sky_bin, "down", "--yes", cluster_name],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
     deadline = time.monotonic() + timeout
     last_status = ""
-    while time.monotonic() < deadline:
+    while also_down_cluster and time.monotonic() < deadline:
         status = subprocess.run(
             [sky_bin, "status", "--refresh"],
             text=True,

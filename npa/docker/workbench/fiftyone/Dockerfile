@@ -17,7 +17,8 @@ ARG PILLOW_VERSION=12.2.0
 ARG MONGODB_VERSION=7.0.14
 
 LABEL npa.tool="fiftyone" \
-      npa.version="${FIFTYONE_VERSION}"
+      npa.version="${FIFTYONE_VERSION}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     FIFTYONE_VERSION=${FIFTYONE_VERSION} \
@@ -49,6 +50,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && install -d -m 0755 /run/sshd \
     && rm -rf /var/lib/apt/lists/*
 
+# SkyPilot invokes apt and service through sudo. Restricting executable names
+# would be cosmetic because apt can install arbitrary root code; this grant is
+# confined to the image's dedicated workflow user.
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-fiftyone \
     && chmod 0440 /etc/sudoers.d/npa-fiftyone \

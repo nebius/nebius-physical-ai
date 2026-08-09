@@ -74,6 +74,7 @@ class ImagePullCheck:
     operator_status: str = ""
     target_status: str = "unverified"
     authority: str = "operator"
+    digest: str = ""
 
     @property
     def ok(self) -> bool:
@@ -128,10 +129,108 @@ HttpResponse = tuple[int, dict[str, str], bytes]
 Fetcher = Callable[[str, dict[str, str], int], HttpResponse]
 
 
+def fetch_image_config_metadata(
+    image: str,
+    *,
+    username: str = "",
+    password: str = "",
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    fetcher: Fetcher | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Return immutable digest and OCI config labels for the selected amd64 image."""
+
+    fetch = fetcher or _fetch
+    reference = parse_image_reference(image)
+    headers = {"Accept": MANIFEST_ACCEPT}
+    status, response_headers, body = fetch(reference.manifest_url, headers, timeout)
+    if status == 401:
+        challenge = _parse_www_authenticate(response_headers.get("www-authenticate", ""))
+        realm = challenge.get("realm", "")
+        if not realm:
+            raise RegistryPreflightError("registry authentication challenge has no realm")
+        parsed_realm = urllib.parse.urlsplit(realm)
+        query = dict(urllib.parse.parse_qsl(parsed_realm.query, keep_blank_values=True))
+        query.update(
+            {"service": challenge.get("service", reference.registry), "scope": reference.pull_scope}
+        )
+        token_url = urllib.parse.urlunsplit(parsed_realm._replace(query=urllib.parse.urlencode(query)))
+        token_headers = {"Authorization": _basic_auth(username or "iam", password)} if password else {}
+        token_status, _, token_body = fetch(token_url, token_headers, timeout)
+        if token_status >= 400:
+            raise RegistryPreflightError(f"registry token request failed with HTTP {token_status}")
+        token_payload = json.loads(token_body.decode("utf-8", errors="replace") or "{}")
+        bearer = str(token_payload.get("token") or token_payload.get("access_token") or "")
+        if not bearer:
+            raise RegistryPreflightError("registry token response contains no token")
+        headers = {"Accept": MANIFEST_ACCEPT, "Authorization": f"Bearer {bearer}"}
+        status, response_headers, body = fetch(reference.manifest_url, headers, timeout)
+    if not 200 <= status < 300:
+        raise RegistryPreflightError(f"manifest fetch failed with HTTP {status}")
+    top_digest = str(response_headers.get("docker-content-digest") or "").strip()
+    manifest = json.loads(body.decode("utf-8", errors="replace") or "{}")
+    manifests = manifest.get("manifests") if isinstance(manifest, dict) else None
+    if isinstance(manifests, list):
+        selected = next(
+            (
+                item
+                for item in manifests
+                if isinstance(item, dict)
+                and str((item.get("platform") or {}).get("os") or "") == "linux"
+                and str((item.get("platform") or {}).get("architecture") or "") == "amd64"
+            ),
+            None,
+        )
+        if not selected:
+            raise RegistryPreflightError("image index has no linux/amd64 manifest")
+        selected_digest = str(selected.get("digest") or "")
+        selected_url = f"https://{reference.registry}/v2/{reference.repository}/manifests/{selected_digest}"
+        status, selected_headers, body = fetch(selected_url, headers, timeout)
+        if not 200 <= status < 300:
+            raise RegistryPreflightError(f"platform manifest fetch failed with HTTP {status}")
+        manifest = json.loads(body.decode("utf-8", errors="replace") or "{}")
+        # Pin the index digest when the original reference resolves to a
+        # multi-platform index. Kubernetes then selects the platform manifest,
+        # while the immutable reference still describes exactly what was
+        # resolved during preflight.
+        top_digest = top_digest or str(
+            selected_headers.get("docker-content-digest") or selected_digest
+        )
+    config = manifest.get("config") if isinstance(manifest, dict) else None
+    config_digest = str(config.get("digest") or "") if isinstance(config, dict) else ""
+    if not config_digest:
+        raise RegistryPreflightError("image manifest contains no config digest")
+    config_url = f"https://{reference.registry}/v2/{reference.repository}/blobs/{config_digest}"
+    status, _, config_body = fetch(config_url, headers, timeout)
+    if not 200 <= status < 300:
+        raise RegistryPreflightError(f"image config fetch failed with HTTP {status}")
+    config_payload = json.loads(config_body.decode("utf-8", errors="replace") or "{}")
+    labels_raw = (config_payload.get("config") or {}).get("Labels") or {}
+    labels = {str(key): str(value) for key, value in labels_raw.items()} if isinstance(labels_raw, dict) else {}
+    if not top_digest:
+        top_digest = reference.reference if reference.reference.startswith("sha256:") else ""
+    return top_digest, labels
+
+
+class _RegistryRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Do not leak registry bearer credentials to signed blob-storage URLs."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is None:
+            return None
+        source = urllib.parse.urlsplit(req.full_url)
+        target = urllib.parse.urlsplit(newurl)
+        if (source.scheme, source.netloc) != (target.scheme, target.netloc):
+            redirected.remove_header("Authorization")
+            redirected.remove_header("Proxy-Authorization")
+        return redirected
+
+
 def _fetch(url: str, headers: dict[str, str], timeout: int) -> HttpResponse:
     request = urllib.request.Request(url, headers=headers, method="GET")
+    opener = urllib.request.build_opener(_RegistryRedirectHandler())
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with opener.open(request, timeout=timeout) as response:
             return (
                 int(response.status),
                 {key.lower(): value for key, value in response.headers.items()},
@@ -298,7 +397,13 @@ def check_image_pull(
 
     detail = _registry_error_detail(body)
     if 200 <= status < 300:
-        return ImagePullCheck(image=reference.raw, status="ok", http_status=status)
+        digest = str(response_headers.get("docker-content-digest") or "").strip()
+        return ImagePullCheck(
+            image=reference.raw,
+            status="ok",
+            http_status=status,
+            digest=(reference.reference if reference.reference.startswith("sha256:") else digest),
+        )
     if status == 403:
         return ImagePullCheck(
             image=reference.raw,
@@ -448,7 +553,14 @@ def resolve_registry_credentials(
         if not configured_server or configured_server != target:
             return username, ""
     if target and configured_server and configured_server != target:
-        return username, ""
+        # Never send a credential scoped to a different server. For another
+        # Nebius registry, however, mint a fresh IAM token for the requested
+        # host instead of degrading an explicit --registry/--image-override to
+        # an anonymous pull merely because NPA_REGISTRY names another project.
+        password = ""
+        username = "iam"
+        if not _is_nebius_registry(target):
+            return username, ""
     if not password and mint and (not target or _is_nebius_registry(target)):
         from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
 

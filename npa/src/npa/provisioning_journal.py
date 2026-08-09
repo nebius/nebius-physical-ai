@@ -9,7 +9,7 @@ small audit receipts; ordinary cleanup does not remove either location.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -24,6 +24,7 @@ import re
 import shlex
 import sys
 import tempfile
+import threading
 import time
 from typing import Any
 
@@ -757,6 +758,38 @@ class ProvisioningOperation:
             payload["updated_at"] = now
             _write_atomic(self.path, payload)
 
+    def checkpoint(self, name: str, evidence: Mapping[str, Any]) -> None:
+        """Persist one named, secret-free lifecycle checkpoint.
+
+        Checkpoints complement the coarse provisioning phases.  They are used by
+        multi-step resources (notably the agent VM) to resume after a client-side
+        transport loss without pretending that a subprocess return code is the
+        remote system's state.
+        """
+
+        checkpoint_name = _slug(name, fallback="checkpoint")
+        now = utc_now()
+        with _locked_operation(self.operation_id):
+            payload = _read_unlocked(self.path)
+            if not payload:
+                raise OperationJournalError(f"operation {self.operation_id} is missing")
+            sanitized = _sanitize(dict(evidence))
+            payload.setdefault("checkpoints", {})[checkpoint_name] = {
+                **(sanitized if isinstance(sanitized, dict) else {}),
+                "recorded_at": now,
+            }
+            payload["heartbeat_at"] = now
+            payload["updated_at"] = now
+            payload.setdefault("events", []).append(
+                {
+                    "phase": str(payload.get("phase") or "prepared"),
+                    "lifecycle": "checkpoint",
+                    "checkpoint": checkpoint_name,
+                    "recorded_at": now,
+                }
+            )
+            _write_atomic(self.path, payload)
+
     def interrupt(self, error: BaseException | str = "operation interrupted") -> None:
         """Atomically retain the current recoverable phase as interrupted."""
 
@@ -1186,6 +1219,54 @@ _CURRENT_OPERATION: ContextVar[ProvisioningOperation | None] = ContextVar(
 
 def current_operation() -> ProvisioningOperation | None:
     return _CURRENT_OPERATION.get()
+
+
+@contextmanager
+def operation_heartbeats(
+    operation: ProvisioningOperation | None,
+    *,
+    phase: str,
+    interval_seconds: float = 15.0,
+    emit: Callable[[dict[str, Any]], None] | None = None,
+) -> Iterator[None]:
+    """Emit structured liveness while a blocking local transport call runs.
+
+    The worker thread only writes redacted journal metadata and emits a stable
+    phase/count payload; it never receives argv, environment, provider bodies, or
+    credentials.  The caller remains in the main thread, so interrupts retain
+    their normal semantics.
+    """
+
+    if operation is None:
+        yield
+        return
+    interval = max(0.005, float(interval_seconds))
+    stop = threading.Event()
+
+    def beat() -> None:
+        count = 0
+        while not stop.wait(interval):
+            count += 1
+            details = {"operation_phase": str(phase), "heartbeat_sequence": count}
+            operation.heartbeat(details=details)
+            if emit is not None:
+                emit(dict(details))
+
+    thread = threading.Thread(
+        target=beat,
+        name=f"npa-operation-heartbeat-{operation.operation_id}",
+        daemon=True,
+    )
+    initial = {"operation_phase": str(phase), "heartbeat_sequence": 0}
+    operation.heartbeat(details=initial)
+    if emit is not None:
+        emit(dict(initial))
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=min(interval, 1.0))
 
 
 @contextmanager

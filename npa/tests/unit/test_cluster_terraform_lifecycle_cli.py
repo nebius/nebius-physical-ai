@@ -59,6 +59,41 @@ def _find_call(stream_calls: list[list[str]], *prefix: str) -> list[str] | None:
     return None
 
 
+def test_explicit_context_is_the_terraform_resource_name() -> None:
+    tfvars = {"cluster_name": "npa-cluster"}
+    context = "k8s-live-unique"
+
+    assert tf_mod._apply_context_cluster_name(tfvars, context) == context
+    assert tfvars["cluster_name"] == context
+    with pytest.raises(Exception, match="conflicts with the resolved cluster name"):
+        tf_mod._apply_context_cluster_name(
+            tfvars, "different-context", inherited_name=context
+        )
+
+
+def test_saved_cluster_identity_uses_resolved_environment_project(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured = []
+    monkeypatch.setattr(
+        tf_mod, "save_cluster_state", lambda state, **_kwargs: captured.append(state)
+    )
+
+    tf_mod._save_terraform_cluster_state(
+        {"cluster_name": "exact", "cpu_nodes_count": 1},
+        {"id": "cluster-id"},
+        "exact",
+        tmp_path / "kubeconfig",
+        env={
+            "TF_VAR_parent_id": "project-exact",
+            "TF_VAR_region": "us-central1",
+        },
+    )
+
+    assert captured[0].project_id == "project-exact"
+    assert captured[0].region == "us-central1"
+
+
 def _successful_stream(tf_dir: Path, calls: list[list[str]]):
     """Mock Terraform and materialize the state a successful apply guarantees."""
 

@@ -44,7 +44,9 @@ def test_docker_login_uses_profile_token_for_password_stdin(monkeypatch) -> None
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="profile-token\n", stderr=""
+            )
         if cmd[:4] == ["docker", "login", "-u", "iam"]:
             seen["stdin"] = stdin
             seen["env"] = env
@@ -55,7 +57,9 @@ def test_docker_login_uses_profile_token_for_password_stdin(monkeypatch) -> None
     monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
     monkeypatch.delenv("NEBIUS_PROFILE", raising=False)
     monkeypatch.setattr(module, "_run", fake_run)
-    module._docker_login_nebius("cr.example.nebius.cloud", env={"DOCKER_CONFIG": "/tmp/docker-auth"})
+    module._docker_login_nebius(
+        "cr.example.nebius.cloud", env={"DOCKER_CONFIG": "/tmp/docker-auth"}
+    )
 
     assert seen["stdin"] == "profile-token"
     assert seen["env"] == {"DOCKER_CONFIG": "/tmp/docker-auth"}
@@ -68,17 +72,26 @@ def test_docker_login_honors_nebius_profile_env(monkeypatch) -> None:
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
             seen["token_cmd"] = list(cmd)
-            return subprocess.CompletedProcess(cmd, 0, stdout="agent-token\n", stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="agent-token\n", stderr=""
+            )
         if cmd[:4] == ["docker", "login", "-u", "iam"]:
             seen["stdin"] = stdin
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(f"unexpected command: {cmd}")
 
+    monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
     monkeypatch.setenv("NEBIUS_PROFILE", "agent-sa")
     monkeypatch.setattr(module, "_run", fake_run)
     module._docker_login_nebius("cr.example.nebius.cloud")
 
-    assert seen["token_cmd"] == ["nebius", "--profile", "agent-sa", "iam", "get-access-token"]
+    assert seen["token_cmd"] == [
+        "nebius",
+        "--profile",
+        "agent-sa",
+        "iam",
+        "get-access-token",
+    ]
     assert seen["stdin"] == "agent-token"
 
 
@@ -93,19 +106,25 @@ def test_main_reports_403_base_image_hint(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         module,
         "container_image_for_tool",
-        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test",
+        lambda *_args, **_kwargs: (
+            "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test"
+        ),
     )
     monkeypatch.setenv("NPA_BYOF_SKIP_REGISTRY_REFRESH", "1")
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="profile-token\n", stderr=""
+            )
         if cmd[:2] == ["docker", "build"]:
             raise RuntimeError("403 Forbidden while pulling BYOF_BASE_IMAGE")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_run", fake_run)
-    rc = module.main(["--run-id", "leisaac-hint-case", "--base-profile", "isaac-lab", "--skip-run"])
+    rc = module.main(
+        ["--run-id", "leisaac-hint-case", "--base-profile", "isaac-lab", "--skip-run"]
+    )
 
     assert rc == 1
     output = json.loads(capsys.readouterr().out)
@@ -130,13 +149,17 @@ def test_main_reports_403_push_hint(monkeypatch, capsys) -> None:
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="profile-token\n", stderr=""
+            )
         if cmd[:2] == ["docker", "push"]:
             raise RuntimeError("command failed (1): docker push ... 403 Forbidden")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_run", fake_run)
-    rc = module.main(["--run-id", "leisaac-push-403", "--base-profile", "isaac-lab", "--skip-run"])
+    rc = module.main(
+        ["--run-id", "leisaac-push-403", "--base-profile", "isaac-lab", "--skip-run"]
+    )
 
     assert rc == 1
     output = json.loads(capsys.readouterr().out)
@@ -160,11 +183,15 @@ def test_main_derives_base_registry_from_target_image(monkeypatch, capsys) -> No
         seen_registries.append(registry)
         return f"{registry}/npa-isaac-lab:test"
 
-    monkeypatch.setattr(module, "container_image_for_tool", fake_container_image_for_tool)
+    monkeypatch.setattr(
+        module, "container_image_for_tool", fake_container_image_for_tool
+    )
     monkeypatch.setattr(
         module,
         "_run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(["noop"], 0, stdout="", stderr=""),
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            ["noop"], 0, stdout="", stderr=""
+        ),
     )
 
     rc = module.main(
@@ -183,7 +210,10 @@ def test_main_derives_base_registry_from_target_image(monkeypatch, capsys) -> No
     assert rc == 0
     assert "cr.eu-north1.nebius.cloud/custom/proj" in seen_registries
     output = json.loads(capsys.readouterr().out)
-    assert "cr.eu-north1.nebius.cloud/custom/proj/npa-isaac-lab:test" in output["base_image_candidates"]
+    assert (
+        "cr.eu-north1.nebius.cloud/custom/proj/npa-isaac-lab:test"
+        in output["base_image_candidates"]
+    )
 
 
 def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> None:
@@ -196,7 +226,9 @@ def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> Non
         lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/default/project",
     )
 
-    def fake_container_image_for_tool(tool: str, registry: str | None = None, **_kwargs):
+    def fake_container_image_for_tool(
+        tool: str, registry: str | None = None, **_kwargs
+    ):
         assert tool == "isaac-lab"
         if registry == "cr.eu-north1.nebius.cloud/custom/proj":
             return "cr.eu-north1.nebius.cloud/custom/proj/npa-isaac-lab:fallback"
@@ -206,15 +238,21 @@ def test_main_retries_build_with_fallback_base_image(monkeypatch, capsys) -> Non
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="profile-token\n", stderr=""
+            )
         if cmd[:2] == ["docker", "build"]:
-            base = next((part for part in cmd if part.startswith("BYOF_BASE_IMAGE=")), "")
+            base = next(
+                (part for part in cmd if part.startswith("BYOF_BASE_IMAGE=")), ""
+            )
             build_args.append(base)
             if base.endswith(":stable") or base.endswith(":default"):
                 raise RuntimeError("403 Forbidden while pulling BYOF_BASE_IMAGE")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    monkeypatch.setattr(module, "container_image_for_tool", fake_container_image_for_tool)
+    monkeypatch.setattr(
+        module, "container_image_for_tool", fake_container_image_for_tool
+    )
     monkeypatch.setattr(module, "_run", fake_run)
     rc = module.main(
         [
@@ -247,13 +285,17 @@ def test_main_forwards_yaml_override_to_runner(monkeypatch) -> None:
     monkeypatch.setattr(
         module,
         "container_image_for_tool",
-        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test",
+        lambda *_args, **_kwargs: (
+            "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test"
+        ),
     )
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd and cmd[0] == sys.executable and str(module.ISAAC_RUNNER) in cmd:
             seen["cmd"] = list(cmd)
-            return subprocess.CompletedProcess(cmd, 0, stdout='{"status":"submitted"}\n', stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"status":"submitted"}\n', stderr=""
+            )
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_run", fake_run)
@@ -288,13 +330,17 @@ def test_main_forwards_datagen_workload_to_datagen_runner(monkeypatch) -> None:
     monkeypatch.setattr(
         module,
         "container_image_for_tool",
-        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test",
+        lambda *_args, **_kwargs: (
+            "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test"
+        ),
     )
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd and cmd[0] == sys.executable and str(module.DATAGEN_RUNNER) in cmd:
             seen["cmd"] = list(cmd)
-            return subprocess.CompletedProcess(cmd, 0, stdout='{"status":"submitted"}\n', stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"status":"submitted"}\n', stderr=""
+            )
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_run", fake_run)
@@ -353,14 +399,23 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     monkeypatch.setattr(
         module,
         "storage_env_for_project",
-        lambda *_args, **_kwargs: {"AWS_ENDPOINT_URL": "https://storage.example", "AWS_ACCESS_KEY_ID": "key"},
+        lambda *_args, **_kwargs: {
+            "AWS_ENDPOINT_URL": "https://storage.example",
+            "AWS_ACCESS_KEY_ID": "key",
+        },
     )
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
-        if cmd and cmd[0] == sys.executable and str(module.CONTAINER_VERIFY_RUNNER) in cmd:
+        if (
+            cmd
+            and cmd[0] == sys.executable
+            and str(module.CONTAINER_VERIFY_RUNNER) in cmd
+        ):
             seen["cmd"] = list(cmd)
             seen["env"] = dict(env or {})
-            return subprocess.CompletedProcess(cmd, 0, stdout='{"status":"submitted"}\n', stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"status":"submitted"}\n', stderr=""
+            )
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_run", fake_run)
@@ -431,7 +486,9 @@ def test_base_image_candidates_isaac_lab_profile(monkeypatch) -> None:
     monkeypatch.setattr(
         module,
         "container_image_for_tool",
-        lambda *_args, **_kwargs: "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test",
+        lambda *_args, **_kwargs: (
+            "cr.eu-north1.nebius.cloud/example/project/npa-isaac-lab:test"
+        ),
     )
     candidates = module._base_image_candidates(
         profile="isaac-lab",
@@ -443,7 +500,9 @@ def test_base_image_candidates_isaac_lab_profile(monkeypatch) -> None:
     assert "nvcr.io/nvidia/isaac-sim:4.5.0" in candidates
 
 
-def test_main_ubuntu_profile_uses_byof_base_image_build_arg(monkeypatch, capsys) -> None:
+def test_main_ubuntu_profile_uses_byof_base_image_build_arg(
+    monkeypatch, capsys
+) -> None:
     module = _load_module()
     build_args: list[str] = []
 
@@ -455,7 +514,9 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(monkeypatch, capsys)
 
     def fake_run(cmd, *, stdin=None, capture=False, env=None):
         if cmd[:1] == ["nebius"] and cmd[-2:] == ["iam", "get-access-token"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="profile-token\n", stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="profile-token\n", stderr=""
+            )
         if cmd[:2] == ["docker", "build"]:
             build_args.extend(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -479,7 +540,9 @@ def test_main_ubuntu_profile_uses_byof_base_image_build_arg(monkeypatch, capsys)
 
     assert rc == 0
     assert any(part == "BYOF_BASE_IMAGE=ubuntu:22.04" for part in build_args)
-    assert any(part == "BYOF_BUILD_COMMAND=python3 -m pip install -e ." for part in build_args)
+    assert any(
+        part == "BYOF_BUILD_COMMAND=python3 -m pip install -e ." for part in build_args
+    )
     output = json.loads(capsys.readouterr().out)
     assert output["base_profile"] == "ubuntu"
     assert output["base_image"] == "ubuntu:22.04"
@@ -495,7 +558,7 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "printf" in text
     assert "/opt/byof" in text
     assert "USER ubuntu" in text
-    assert "npa.packaging.tier=\"interactive\"" in text
+    assert 'npa.packaging.tier="interactive"' in text
     assert "useradd" in text
     assert "python3" in text
     assert "NOPASSWD:ALL" in text
@@ -505,7 +568,9 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:
     shim_path = ROOT / "npa" / "scripts" / "run_isaac_lab_byof_repo.py"
-    spec = importlib.util.spec_from_file_location("run_isaac_lab_byof_repo_shim", shim_path)
+    spec = importlib.util.spec_from_file_location(
+        "run_isaac_lab_byof_repo_shim", shim_path
+    )
     assert spec and spec.loader
     shim = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(shim)

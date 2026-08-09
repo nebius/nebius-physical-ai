@@ -65,14 +65,31 @@ def test_skypilot_bootstrap_idempotent_existing_install(tmp_path: Path) -> None:
     assert '"version": "0.12.2"' in marker.read_text(encoding="utf-8")
 
 
-def test_skypilot_bootstrap_rejects_existing_version_mismatch(tmp_path: Path) -> None:
+def test_skypilot_failed_upgrade_preserves_existing_version_byte_for_byte(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     venv = _fake_installed_venv(tmp_path / "sky-venv", version="0.12.1")
+    before = {
+        path.relative_to(venv): path.read_bytes()
+        for path in venv.rglob("*")
+        if path.is_file()
+    }
+
+    def fail_create(_path: Path, _python: object) -> None:
+        raise skypilot_cli.SkyPilotBootstrapError("offline resolver failure")
+
+    monkeypatch.setattr(skypilot_cli, "_create_venv", fail_create)
 
     result = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
 
     assert result.exit_code == 1
-    assert "Version conflict" in result.output
-    assert "0.12.1" in result.output
+    assert "offline resolver failure" in result.output
+    after = {
+        path.relative_to(venv): path.read_bytes()
+        for path in venv.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
 
 
 def test_skypilot_path_can_come_from_flag_or_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -114,8 +131,12 @@ def test_skypilot_bootstrap_reports_network_failure_from_pip(
     tmp_path: Path,
 ) -> None:
     venv = tmp_path / "sky-venv"
-    _write_executable(venv / "bin" / "python", "#!/bin/sh\nexit 0\n")
-    _write_executable(venv / "bin" / "pip", "#!/bin/sh\nexit 0\n")
+
+    def fake_create(path: Path, _python: object) -> None:
+        _write_executable(path / "bin" / "python", "#!/bin/sh\nexit 0\n")
+        _write_executable(path / "bin" / "pip", "#!/bin/sh\nexit 0\n")
+
+    monkeypatch.setattr(skypilot_cli, "_create_venv", fake_create)
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if cmd[1:4] == ["-m", "pip", "install"]:
@@ -466,8 +487,8 @@ def test_bootstrap_still_succeeds_when_saving_fails(
 @pytest.mark.parametrize(
     ("version", "supported"),
     [
-        (None, True),
-        ("", True),
+        (None, False),
+        ("", False),
         ("30.1.0", True),
         ("31.0.0", True),
         # SkyPilot 0.12.2 already excludes 32.0.0 itself.
@@ -517,21 +538,20 @@ def test_skypilot_bootstrap_repairs_a_reused_venv_with_a_broken_client(
     tmp_path: Path,
 ) -> None:
     venv = _fake_installed_venv(tmp_path / "sky-venv", kubernetes_version="36.0.3")
-    installs: list[list[str]] = []
-    original = skypilot_cli._run_no_raise
+    original_bytes = (venv / "bin" / "sky").read_bytes()
 
-    def fake_run(cmd, *, env=None):  # noqa: ANN001 - test stub
-        if cmd[1:4] == ["-m", "pip", "install"]:
-            installs.append(list(cmd))
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-        return original(cmd, env=env)
+    def fake_create(path: Path, _python: object) -> None:
+        _fake_installed_venv(path, kubernetes_version="34.1.0")
 
-    monkeypatch.setattr(skypilot_cli, "_run_no_raise", fake_run)
+    monkeypatch.setattr(skypilot_cli, "_create_venv", fake_create)
+    monkeypatch.setattr(skypilot_cli, "_ensure_pip", lambda _state: None)
+    monkeypatch.setattr(skypilot_cli, "_install_package", lambda _state, _spec: None)
 
     result = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
 
     assert result.exit_code == 0, result.output
-    assert [cmd[-1] for cmd in installs] == [skypilot_cli.KUBERNETES_CLIENT_SPEC]
+    assert skypilot_cli.inspect_venv(venv).kubernetes_version == "34.1.0"
+    assert (venv / "bin" / "sky").read_bytes() == original_bytes
 
 
 def test_skypilot_uninstall_removes_venv_and_clears_saved_bin(tmp_path: Path) -> None:
@@ -664,3 +684,77 @@ def test_skypilot_verify_fails_on_a_broken_client(tmp_path: Path) -> None:
 
     assert result.exit_code == 1, result.output
     assert "npa skypilot bootstrap" in result.output
+
+
+def test_bootstrap_preserves_unrelated_npa_state_byte_for_byte(tmp_path: Path) -> None:
+    root = tmp_path / "custom-npa"
+    sentinels = {
+        "config.yaml": b"projects: {customer: {region: test}}\n",
+        "credentials.yaml": b"tokens: {MODEL_KEY: sentinel}\n",
+        "agents/customer/agent/record.json": b'{"id":"agent-sentinel"}\n',
+        "operations/op.json": b'{"state":"running"}\n',
+        "teardown-receipts/r.json": b'{"receipt":"sentinel"}\n',
+        "runs/run-1/runtime.json": b'{"wave":"sentinel"}\n',
+    }
+    for name, body in sentinels.items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(body)
+    venv = _fake_installed_venv(root / "managed" / "sky")
+
+    result = runner.invoke(
+        app, ["skypilot", "bootstrap", "--path", str(venv), "--no-save"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert {name: (root / name).read_bytes() for name in sentinels} == sentinels
+
+
+def test_bootstrap_rejects_symlink_and_parent_targets(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "linked"
+    link.symlink_to(real, target_is_directory=True)
+
+    linked = runner.invoke(
+        app, ["skypilot", "bootstrap", "--path", str(link / "sky"), "--no-save"]
+    )
+    broad = runner.invoke(
+        app, ["skypilot", "bootstrap", "--path", str(tmp_path / ".npa"), "--no-save"]
+    )
+
+    assert linked.exit_code == 1
+    assert "symlink" in linked.output
+    assert broad.exit_code == 1
+    assert "parent NPA state" in broad.output
+
+
+def test_bootstrap_recovers_interrupted_exchange(tmp_path: Path) -> None:
+    target = tmp_path / "sky"
+    previous, journal = skypilot_cli._bootstrap_paths(target)
+    _fake_installed_venv(previous)
+    skypilot_cli._write_bootstrap_journal(
+        journal,
+        {"target": str(target), "staging": ".sky.staging-dead", "previous": previous.name},
+    )
+
+    result = runner.invoke(
+        app, ["skypilot", "bootstrap", "--path", str(target), "--no-save"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (target / "bin" / "sky").is_file()
+    assert not previous.exists()
+    assert not journal.exists()
+
+
+def test_bootstrap_lock_is_owner_only(tmp_path: Path) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky")
+
+    result = runner.invoke(
+        app, ["skypilot", "bootstrap", "--path", str(venv), "--no-save"]
+    )
+
+    assert result.exit_code == 0, result.output
+    lock = venv.with_name(f".{venv.name}{skypilot_cli.BOOTSTRAP_LOCK_SUFFIX}")
+    assert lock.stat().st_mode & 0o777 == 0o600

@@ -248,6 +248,17 @@ def _stub_pull(monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]) ->
         "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_secrets",
         lambda *args, **kwargs: {},
     )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        lambda *, images, **_kwargs: [
+            {
+                "image": f"{image.split(':', 1)[0]}@sha256:{'a' * 64}",
+                "state": "compatible",
+            }
+            for image in images
+        ],
+    )
 
 
 NEBIUS_IMAGE = "cr.us-central1.nebius.cloud/u000/npa-cosmos2-transfer:2.5.1"
@@ -313,6 +324,43 @@ def test_pullable_images_pass(
     assert "1 image(s) pullable" in capsys.readouterr().err
 
 
+def test_first_party_image_without_attestation_fails_instead_of_probing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    digest = "sha256:" + "a" * 64
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
+        lambda *_args, **_kwargs: ("iam", "opaque"),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: (digest, {}),
+    )
+
+    def probe_forbidden(**_kwargs):
+        raise AssertionError("first-party missing evidence must not use a runtime probe")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        probe_forbidden,
+    )
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._preflight_image_bootstrap_contracts(
+            images=[NEBIUS_IMAGE],
+            pull_checks=[
+                ImagePullCheck(
+                    image=NEBIUS_IMAGE,
+                    status="ok",
+                    http_status=200,
+                    digest=digest,
+                )
+            ],
+            context="exact-context",
+        )
+    assert excinfo.type.__name__ == "Exit"
+
+
 def test_preflight_is_skipped_when_disabled(
     monkeypatch: pytest.MonkeyPatch, spec_path: Path
 ) -> None:
@@ -326,6 +374,34 @@ def test_preflight_is_skipped_when_disabled(
     workflow_cli._preflight_submit_images(
         spec_path, options=object(), assume_decision="", enabled=False
     )
+
+
+def test_parse_exact_image_overrides() -> None:
+    assert workflow_cli._parse_image_overrides(
+        [
+            "workbench.fiftyone.curate_augmented=cr.example/fiftyone@sha256:abc",
+            "workbench.cosmos_evaluator.evaluate=cr.example/evaluator@sha256:def",
+        ]
+    ) == {
+        "workbench.fiftyone.curate_augmented": "cr.example/fiftyone@sha256:abc",
+        "workbench.cosmos_evaluator.evaluate": "cr.example/evaluator@sha256:def",
+    }
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["missing-equals"],
+        ["*=cr.example/all:latest"],
+        ["workbench.tool="],
+        ["workbench.tool=one", "workbench.tool=two"],
+    ],
+)
+def test_parse_exact_image_overrides_rejects_ambiguous_input(
+    values: list[str],
+) -> None:
+    with pytest.raises(ValueError):
+        workflow_cli._parse_image_overrides(values)
 
 
 def test_catalog_helper_reports_max_per_node() -> None:

@@ -4,10 +4,12 @@ import base64
 import json
 import subprocess
 import urllib.parse
+import urllib.request
 
 import pytest
 
 from npa.orchestration.skypilot.registry_preflight import (
+    _RegistryRedirectHandler,
     RegistryPreflightError,
     check_image_pull,
     check_image_pulls,
@@ -29,6 +31,25 @@ CHALLENGE = {
         f'Bearer realm="https://{REGISTRY}/v2/token/",service="{REGISTRY}"'
     )
 }
+
+
+def test_registry_redirect_strips_authorization_cross_origin() -> None:
+    request = urllib.request.Request(
+        "https://cr.us-central1.nebius.cloud/v2/repo/blobs/sha256:a",
+        headers={"Authorization": "Bearer secret", "Accept": "application/json"},
+    )
+    redirected = _RegistryRedirectHandler().redirect_request(
+        request,
+        None,
+        307,
+        "Temporary Redirect",
+        {},
+        "https://storage.us-central1.nebius.cloud/signed-object",
+    )
+
+    assert redirected is not None
+    assert redirected.get_header("Authorization") is None
+    assert redirected.get_header("Accept") == "application/json"
 
 
 class FakeRegistry:
@@ -357,6 +378,24 @@ def test_npa_registry_itself_scopes_private_credentials(
 
     assert checks[0].ok
     assert registry.calls[1][1]["Authorization"].startswith("Basic ")
+
+
+def test_other_nebius_registry_mints_fresh_token_instead_of_using_ambient_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "NPA_REGISTRY", "cr.eu-north1.nebius.cloud/project-repository"
+    )
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "wrong-user")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "wrong-project-token")
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.registry_auth.mint_nebius_registry_token",
+        lambda: "fresh-target-token",
+    )
+
+    assert resolve_registry_credentials(
+        "cr.us-central1.nebius.cloud", mint=True
+    ) == ("iam", "fresh-target-token")
 
 
 def test_a_private_registry_that_refuses_an_anonymous_token_still_says_so() -> None:

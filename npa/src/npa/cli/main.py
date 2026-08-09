@@ -29,6 +29,7 @@ from npa.cli.demo import app as demo_app
 from npa.cli.network import app as network_app
 from npa.cli.provision import app as provision_app
 from npa.cli.rerun import app as rerun_app
+from npa.cli.registry import app as registry_app
 from npa.cli.skypilot import app as skypilot_app
 from npa.cli.cleanup import cleanup_cmd as _cleanup_cmd
 from npa.cli.uninstall import uninstall_cmd as _uninstall_cmd
@@ -75,6 +76,7 @@ app.add_typer(demo_app, name="demo", rich_help_panel="Platform utilities")
 app.add_typer(network_app, name="network", rich_help_panel="Platform utilities")
 app.add_typer(provision_app, name="provision-if-absent", rich_help_panel="Setup")
 app.add_typer(rerun_app, name="rerun", rich_help_panel="Platform utilities")
+app.add_typer(registry_app, name="registry", rich_help_panel="Platform utilities")
 app.add_typer(skypilot_app, name="skypilot", rich_help_panel="Platform utilities")
 app.add_typer(storage_app, name="storage", rich_help_panel="Platform utilities")
 app.command("cleanup", rich_help_panel="Platform utilities")(_cleanup_cmd)
@@ -213,7 +215,10 @@ def destroy_project_cmd(
         tenant_id=operation_tenant_id,
         region=operation_region,
         resource_type="project-teardown",
-        requested_name=project,
+        # A receipt recovery intentionally has a narrower topology than the
+        # original full-project plan. Give it a distinct durable operation
+        # identity so it cannot collide with (or rewrite) that earlier journal.
+        requested_name=(f"{project}:{receipt_id}" if receipt_id else project),
         ownership_source="project-destroy-cli",
         resume_command="",
         resume_argv=(

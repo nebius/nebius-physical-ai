@@ -183,7 +183,20 @@ class RuntimeRunState:
             status = str(record.get("status") or "")
             if status == "succeeded":
                 return None
-            return dict(record) if status == "running" else None
+            recovery = str(record.get("recovery_decision") or "")
+            unresolved = recovery in {
+                "block_indeterminate",
+                "block_after_uncertain_success",
+                "recovery_deadline_exhausted_verified_absent",
+                "interrupted_verified_absent",
+            }
+            return dict(record) if status == "running" or unresolved else None
+        return None
+
+    def latest_wave(self, key: str) -> dict[str, Any] | None:
+        for record in reversed(self.waves):
+            if record.get("key") == key:
+                return dict(record)
         return None
 
     def record_wave(self, record: Mapping[str, Any]) -> None:

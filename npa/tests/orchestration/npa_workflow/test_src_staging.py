@@ -162,8 +162,10 @@ def test_changed_source_invalidates_the_cached_provenance(tmp_path: Path) -> Non
     assert manifest["file_count"] == 3
 
 
-def test_iter_source_files_prefers_the_git_index(tmp_path: Path) -> None:
-    """A dirty working tree must not push local state or secrets into the bucket."""
+def test_iter_source_files_includes_nonignored_dirty_source_but_not_secrets(
+    tmp_path: Path,
+) -> None:
+    """A dirty tree runs new source without pushing denied local state."""
     import subprocess
 
     root = _fake_package(tmp_path / "npa")
@@ -184,7 +186,12 @@ def test_iter_source_files_prefers_the_git_index(tmp_path: Path) -> None:
 
     files = {path.as_posix() for path in iter_source_files(root)}
 
-    assert files == {"pyproject.toml", "src/npa/__init__.py", "src/npa/cli.py"}
+    assert files == {
+        "pyproject.toml",
+        "scratch.py",
+        "src/npa/__init__.py",
+        "src/npa/cli.py",
+    }
 
 
 def test_git_index_filter_rejects_tracked_secrets_symlinks_and_gitlinks(

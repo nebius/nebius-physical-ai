@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.runtime import RuntimeReport
+from npa.orchestration.npa_workflow.run_resolution import RunResolution
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -23,6 +24,72 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
 FANOUT = SPECS / "token-factory-parallel-fanout.yaml"
 GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
 RUNNER = CliRunner()
+
+
+def test_terminal_ten_wave_runtime_without_active_jobs_stays_succeeded() -> None:
+    from npa.cli.workbench.workflow import _manifest_pending_status
+
+    run_id = "paidf-terminal-ten"
+    resolution = RunResolution(
+        run_id=run_id,
+        project="live",
+        found=True,
+        source="durable_runtime_ledger",
+        workflow_name="physical-ai-data-factory",
+        run_prefix_uri=f"s3://bucket/physical-ai-data-factory/{run_id}",
+        manifest_uri=(
+            f"s3://bucket/physical-ai-data-factory/{run_id}/npa-workflow/manifest.json"
+        ),
+        runtime_state={
+            "schema_version": "npa.workflow.runtime.v1",
+            "status": "succeeded",
+            "waves": [
+                {
+                    "key": f"wave-{index}",
+                    "states": [f"stage-{index}"],
+                    "status": "succeeded",
+                    "attempt": 1,
+                }
+                for index in range(10)
+            ],
+        },
+    )
+    payload = _manifest_pending_status(
+        resolution,
+        project="live",
+        sky_bin="",
+        startup_failure_threshold=3,
+    )
+    assert payload["status"] == "SUCCEEDED"
+    assert payload["status"] != "NOT_SUBMITTED"
+    assert payload["verification_status"] == "VERIFIED"
+    assert payload["manifest_state"] == "pending"
+
+
+def test_terminal_status_uses_latest_attempt_without_erasing_history() -> None:
+    from npa.cli.workbench.workflow import _latest_runtime_wave_states
+
+    waves = [
+        {"key": "001|serial|:prepare:-", "attempt": 1, "status": "succeeded"},
+        {"key": "002|serial|:augment:-", "attempt": 1, "status": "failed"},
+        {"key": "002|serial|:augment:-", "attempt": 2, "status": "succeeded"},
+        {"key": "003|serial|:finalize:-", "attempt": 1, "status": "succeeded"},
+    ]
+
+    assert _latest_runtime_wave_states(waves) == {"SUCCEEDED"}
+    # The immutable failed attempt is preserved for diagnostics and audit.
+    assert waves[1]["status"] == "failed"
+
+
+def test_terminal_status_keeps_latest_failed_attempt_inconsistent() -> None:
+    from npa.cli.workbench.workflow import _latest_runtime_wave_states
+
+    waves = [
+        {"key": "001|serial|:augment:-", "attempt": 1, "status": "succeeded"},
+        {"key": "001|serial|:augment:-", "attempt": 2, "status": "failed"},
+    ]
+
+    assert _latest_runtime_wave_states(waves) == {"FAILED"}
 
 
 def test_prepare_run_is_fresh_by_default_and_resume_is_explicit(
@@ -219,6 +286,54 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
     assert payload["runtime_state_uri"].endswith("/npa-workflow/runtime.json")
 
 
+def test_submit_runtime_refreshes_pull_secret_before_driver(
+    fake_runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The runtime branch must not bypass private-registry secret refresh."""
+
+    events: list[tuple[str, str]] = []
+
+    def refresh(rendered_path: Path) -> None:
+        events.append(("refresh", rendered_path.name))
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._refresh_kubernetes_pull_secrets", refresh
+    )
+
+    original = __import__(
+        "npa.orchestration.npa_workflow.runtime", fromlist=["run_workflow_runtime"]
+    ).run_workflow_runtime
+
+    def ordered_driver(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        events.append(("driver", str(kwargs.get("run_id") or "")))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime", ordered_driver
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-pull-secret-order",
+            "--runtime",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert events[0] == ("refresh", "token-factory-parallel-fanout.skypilot.yaml")
+    assert events[1] == ("driver", "rt-pull-secret-order")
+
+
 def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
     result = RUNNER.invoke(
         app,
@@ -363,10 +478,20 @@ def test_submit_without_runtime_uses_the_one_shot_path(
         "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
     )
     submitted: dict[str, object] = {}
+    submit_calls = 0
 
     def fake_submit(path, run_id, **kwargs):
+        nonlocal submit_calls
+        submit_calls += 1
         submitted["content"] = Path(path).read_text(encoding="utf-8")
-        return WorkflowResult(status="SUBMITTED", job_id="9", returncode=0)
+        return WorkflowResult(
+            status="SUBMITTED",
+            job_id="9",
+            returncode=0,
+            launch_transaction={
+                "state": "adopted" if submit_calls > 1 else "submitted"
+            },
+        )
 
     submit_mock = mocker.patch(
         "npa.orchestration.skypilot.workflow.submit_workflow", side_effect=fake_submit
@@ -410,8 +535,8 @@ def test_submit_without_runtime_uses_the_one_shot_path(
         ],
     )
     assert resumed.exit_code == 0, resumed.output
-    assert "no duplicate launch" in resumed.output
-    assert submit_mock.call_count == 1
+    assert "status: SUBMITTED" in resumed.output
+    assert submit_mock.call_count == 2
 
 
 def test_plan_only_wins_over_runtime(mocker, monkeypatch, satisfied_preflight) -> None:

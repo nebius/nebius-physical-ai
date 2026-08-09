@@ -331,6 +331,15 @@ def up_cmd(
         gpu_platform = topology.gpu_platform
         gpu_preset = topology.gpu_preset
         preemptible = topology.gpu_preemptible
+    explicit_context = _apply_context_cluster_name(
+        tfvars,
+        context_name,
+        inherited_name=(
+            str(inherited_plan.topology.cluster_name or "")
+            if inherited_plan is not None
+            else ""
+        ),
+    )
     # First-class node-count flags: a runbook can pick "agent XOR 2-GPU cluster"
     # under a tight compute.instance.count without editing tfvars or exporting
     # TF_VAR_*. -1 means "leave the configured value alone".
@@ -345,7 +354,7 @@ def up_cmd(
         _apply_string_override(tfvars, key, value)
     if preemptible is not None:
         tfvars["gpu_nodes_preemptible"] = bool(preemptible)
-    context = context_name.strip() or str(tfvars.get("cluster_name") or "npa-cluster")
+    context = explicit_context or str(tfvars.get("cluster_name") or "npa-cluster")
 
     with isolated_terraform_data_dir(tf_dir, context) as terraform_data:
         env = _terraform_env(nebius_bin)
@@ -504,7 +513,9 @@ def up_cmd(
 
         kubeconfig_path = kubeconfig or kubeconfig_file(context)
         _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
-        _save_terraform_cluster_state(tfvars, cluster, context, kubeconfig_path)
+        _save_terraform_cluster_state(
+            tfvars, cluster, context, kubeconfig_path, env=env
+        )
 
         typer.echo(f"Cluster ID: {cluster_id}")
         typer.echo(f"Cluster name: {cluster_name}")
@@ -1123,6 +1134,7 @@ def kubeconfig_cmd(
         {"id": cluster_id, "name": name},
         context,
         kubeconfig_path,
+        env=env,
     )
     typer.echo(f"Cluster ID: {cluster_id}")
     typer.echo(f"Kubeconfig: {kubeconfig_path}")
@@ -1817,6 +1829,22 @@ def _apply_node_count_override(tfvars: dict[str, Any], key: str, value: int) -> 
     """Set ``tfvars[key]`` from a ``--gpu-nodes``/``--cpu-nodes`` flag (-1 = keep)."""
     if value is not None and value >= 0:
         tfvars[key] = int(value)
+
+
+def _apply_context_cluster_name(
+    tfvars: dict[str, Any], context_name: str, *, inherited_name: str = ""
+) -> str:
+    """Make an explicit context the actual Terraform cluster resource name."""
+
+    context = str(context_name or "").strip()
+    resolved = str(inherited_name or "").strip()
+    if context and resolved and context != resolved:
+        raise typer.BadParameter(
+            f"--context {context!r} conflicts with the resolved cluster name {resolved!r}"
+        )
+    if context:
+        tfvars["cluster_name"] = context
+    return context
 
 
 def _apply_inherited_plan_tfvars(tfvars: dict[str, Any], plan: Any) -> Any:
@@ -2540,6 +2568,8 @@ def _save_terraform_cluster_state(
     cluster: dict[str, Any],
     context: str,
     kubeconfig_path: Path,
+    *,
+    env: dict[str, str] | None = None,
 ) -> None:
     endpoints = (
         cluster.get("endpoints") if isinstance(cluster.get("endpoints"), dict) else {}
@@ -2547,8 +2577,8 @@ def _save_terraform_cluster_state(
     state = ClusterState(
         name=context,
         cluster_id=str(cluster.get("id") or ""),
-        project_id=str(tfvars.get("parent_id") or ""),
-        region=str(tfvars.get("region") or ""),
+        project_id=str(_tfvar_value(tfvars, env or {}, "parent_id", "") or ""),
+        region=str(_tfvar_value(tfvars, env or {}, "region", "") or ""),
         node_count=int(tfvars.get("cpu_nodes_count") or 0)
         + int(tfvars.get("gpu_nodes_count") or 0),
         node_platform=str(tfvars.get("gpu_nodes_platform") or ""),

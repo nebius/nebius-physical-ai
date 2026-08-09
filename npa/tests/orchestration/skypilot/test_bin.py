@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+from unittest.mock import ANY
 
 import pytest
 import yaml
@@ -22,6 +23,7 @@ from npa.orchestration.skypilot._bin import (
 
 
 def _executable(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\n", encoding="utf-8")
     path.chmod(0o755)
     return path
@@ -295,13 +297,20 @@ def test_ensure_skypilot_version_accepts_required_version(monkeypatch: pytest.Mo
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
+        if cmd[-1] != "--version":
+            return bin_module.subprocess.CompletedProcess(
+                cmd, 0, stdout="3.12 34.1.0\n", stderr=""
+            )
         return bin_module.subprocess.CompletedProcess(cmd, 0, stdout=f"SkyPilot {REQUIRED_SKYPILOT_VERSION}\n", stderr="")
 
     monkeypatch.setattr(bin_module.subprocess, "run", fake_run)
 
     assert ensure_skypilot_version(sky) == sky.resolve()
     assert ensure_skypilot_version(sky) == sky.resolve()
-    assert calls == [[str(sky.resolve()), "--version"]]
+    assert calls == [
+        [str(sky.resolve()), "--version"],
+        [str(sky.resolve().parent / "python"), "-c", ANY],
+    ]
 
 
 def test_ensure_skypilot_version_rejects_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -314,4 +323,28 @@ def test_ensure_skypilot_version_rejects_mismatch(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(bin_module.subprocess, "run", fake_run)
 
     with pytest.raises(SkyPilotVersionError, match="expected 0.12.2, got 0.12.1"):
+        ensure_skypilot_version(sky)
+
+
+@pytest.mark.parametrize(
+    ("runtime", "match"),
+    [
+        ("3.14 34.1.0\n", "Python 3.14"),
+        ("3.12 36.0.0\n", "kubernetes 36.0.0"),
+        ("3.12 32.0.0\n", "kubernetes 32.0.0"),
+    ],
+)
+def test_ensure_skypilot_version_rejects_runtime_drift_before_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, runtime: str, match: str
+) -> None:
+    clear_skypilot_version_cache()
+    sky = _executable(tmp_path / "bin" / "sky")
+
+    def fake_run(cmd, **kwargs):
+        output = f"SkyPilot {REQUIRED_SKYPILOT_VERSION}\n" if cmd[-1] == "--version" else runtime
+        return bin_module.subprocess.CompletedProcess(cmd, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr(bin_module.subprocess, "run", fake_run)
+
+    with pytest.raises(SkyPilotVersionError, match=match):
         ensure_skypilot_version(sky)

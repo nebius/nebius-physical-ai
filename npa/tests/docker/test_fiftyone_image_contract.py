@@ -17,6 +17,10 @@ def test_fiftyone_image_satisfies_skypilot_non_root_setup_contract() -> None:
     assert "ubuntu ALL=(ALL) NOPASSWD:ALL" in text
     assert "USER ubuntu" in text
     assert "install -d -m 0755 /run/sshd" in text
+    assert (
+        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"'
+        in text
+    )
 
 
 def test_fiftyone_entrypoint_executes_the_kubernetes_command() -> None:

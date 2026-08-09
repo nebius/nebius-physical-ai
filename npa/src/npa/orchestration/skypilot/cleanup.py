@@ -25,7 +25,10 @@ from npa.orchestration.skypilot.controller import (
     DEFAULT_CONTROLLER_BACKEND,
     ControllerBackend,
 )
-from npa.orchestration.skypilot.json_output import queue_rows_from_output
+from npa.orchestration.skypilot.json_output import (
+    is_verified_empty_queue_result,
+    queue_rows_from_output,
+)
 from npa.orchestration.skypilot.workflow_state import redact_text
 
 
@@ -1070,7 +1073,7 @@ def _all_jobs(
         raise JobQueueUnreadableError(
             "managed-job queue command failed: " + redact_text(str(exc))
         ) from exc
-    if _is_verified_empty_queue_message(result):
+    if is_verified_empty_queue_result(result):
         return JobQueueSnapshot(state="verified_empty")
     combined = " ".join(
         str(value or "").lower() for value in (result.stdout, result.stderr)
@@ -1108,15 +1111,7 @@ def _is_verified_empty_queue_message(
     sentence from becoming false absence proof.
     """
 
-    if result.returncode not in {0, 1}:
-        return False
-    stdout_lines = _known_empty_queue_lines(result.stdout, stream="stdout")
-    stderr_lines = _known_empty_queue_lines(result.stderr, stream="stderr")
-    if stdout_lines is None or stderr_lines is None:
-        return False
-    lines = [*stdout_lines, *stderr_lines]
-    markers = [line for line in lines if line in _EMPTY_QUEUE_MESSAGES]
-    return len(markers) == 1
+    return is_verified_empty_queue_result(result)
 
 
 def _known_empty_queue_lines(value: str, *, stream: str) -> list[str] | None:
@@ -1134,7 +1129,15 @@ def _known_empty_queue_lines(value: str, *, stream: str) -> list[str] | None:
             normalized.append(line)
             continue
         if stream == "stdout" and (
-            line in {"managed jobs", "managed jobs queue"}
+            line
+            in {
+                "managed jobs",
+                "managed jobs queue",
+                "fetching managed job statuses...",
+                "checking managed jobs",
+                "checking managed jobs...",
+                "checking managed jobs... done",
+            }
             or re.fullmatch(r"[-=─━]{3,}", line)
         ):
             continue
@@ -1584,6 +1587,20 @@ def sky_environment(isolated_config_dir: Path | None = None) -> dict[str, str]:
     runtime = root / "sky-runtime"
     home.mkdir(parents=True, exist_ok=True)
     runtime.mkdir(parents=True, exist_ok=True)
+    # Kubernetes kubeconfigs commonly use the Nebius CLI as an exec credential
+    # plugin.  Isolating HOME for SkyPilot must not make that exact provider
+    # identity disappear: link the already-selected operator configuration into
+    # the owner-only run home without copying credentials into journals/state.
+    provider_home = Path(env.get("HOME") or "").expanduser()
+    provider_config = provider_home / ".nebius"
+    isolated_provider_config = home / ".nebius"
+    if (
+        provider_home != home
+        and provider_config.is_dir()
+        and not isolated_provider_config.exists()
+        and not isolated_provider_config.is_symlink()
+    ):
+        isolated_provider_config.symlink_to(provider_config, target_is_directory=True)
     env["HOME"] = str(home)
     env["SKY_RUNTIME_DIR"] = str(runtime)
     env["PYTHONUNBUFFERED"] = "1"

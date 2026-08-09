@@ -4,6 +4,23 @@ Canonical contract for packaging workbench containers correctly, securely, and
 with the right runtime features exposed. Machine-readable rules live in
 `npa/docker/workbench/packaging-contract.yaml` (enforced by unit tests).
 
+## SkyPilot worker bootstrap contract
+
+Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
+effective user; root or verified passwordless sudo; `openssh-server`, `rsync`,
+and compatible service/init behavior; writable `/tmp` and home; and an
+entrypoint that forwards orchestrator arguments. Compliant first-party images
+record `org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1` in OCI
+config, with Dockerfile behavior covered by build tests.
+
+Submit resolves the selected tag to an immutable digest and validates metadata
+on that digest. Missing/mismatched first-party evidence fails before launch.
+Arbitrary unattested images get one bounded exact-context capability pod; probe
+cleanup failure also fails closed. Cache keys use digest plus contract version,
+never a tag. Image-byte licensing scans remain mandatory before registry push.
+For a multi-tool spec, repeat `--image-override TOOL_REF=IMAGE` to select each
+tool's artifact independently; the preflight and renderer share that same map.
+
 ## Inventory
 
 All first-class images live under `npa/docker/workbench/`:

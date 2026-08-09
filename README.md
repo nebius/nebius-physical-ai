@@ -386,6 +386,28 @@ npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
+Every Kubernetes managed-job launch now crosses one controller-launch
+transaction. NPA probes the exact selected context through the same
+`KUBECONFIG` environment SkyPilot uses and requires three consecutive `/readyz`
+successes spanning 10 seconds. It then reconciles the exact job name through
+structured SkyPilot queue output under an owner-only logical-launch lock. A
+transient controller-creation refusal is retried automatically only after exact
+job absence is proven and API stability is re-established; an accepted request
+is adopted by immutable job ID. Ambiguous existence blocks without duplicate
+launch or name-based cancellation. JSON exposes `launch_transaction`; runtime
+ledgers expose the same readiness, reconciliation, recovery, and cancellation
+evidence per wave. See the [controller launch decision](docs/architecture/skypilot-controller-launch-transaction.md).
+
+Workflow image preflight resolves each selected tag to an immutable digest. NPA
+verifies first-party OCI bootstrap-contract metadata; arbitrary unattested images
+receive one exact, bounded capability probe in the selected context, whose pod
+must be deleted successfully. Results are cached by digest plus contract version.
+First-party images cannot replace their declared user with `runAsUser: 0`.
+Multi-tool workflows can pin distinct validated images with repeatable
+`--image-override TOOL_REF=IMAGE`; an exact tool override takes precedence over
+the optional global `--image` fallback, and the rendered task uses the digest
+that preflight verified.
+
 With no input flag, that command fetches the pinned **RoboPro Aloha-Agilex
 physical robot capture**, verifies SHA-256
 `caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198`, caches it
@@ -499,6 +521,11 @@ For scripted/non-interactive deploys, `npa agent fresh-setup --project <alias>
 the UI/backend/nginx layer without touching infra. Operator docs:
 [skills/tools/npa-agent/SKILL.md](skills/tools/npa-agent/SKILL.md) ·
 teardown/reproduce loop: [skills/workflows/agent-fresh-operate/SKILL.md](skills/workflows/agent-fresh-operate/SKILL.md).
+
+Deploy and bootstrap are reconciled phased operations. If a client loses the
+final Terraform/SSH response, repeating the exact operation adopts a matching
+healthy VM or resumes its first incomplete phase; it does not replace a healthy
+VM based on the lost response. Long calls emit secret-free structured heartbeats.
 
 Setup prints four bounded phases around Terraform, SSH installation, and the
 final probe; the SSH phase can be quiet for several minutes and prints a
@@ -614,10 +641,18 @@ npa storage service-account reconcile --project <alias> --id <exact-id> \
   --reason '<legacy NPA setup evidence>' --attest-npa-created --yes
 npa storage service-account delete --project <alias> --dry-run
 npa storage service-account delete --project <alias> --yes
+# If validation created a project-local registry, delete its exact artifact DAG
+# and registry using the immutable ID/name recorded at creation:
+npa registry delete --project <alias> --project-id <project-id> \
+  --tenant-id <tenant-id> --id <registry-id> --name <registry-name> --yes
+# NPA-created disposable projects may contain one provider-created default
+# topology. This command refuses any extra, shared, or non-default topology:
+npa network delete-project-default --project <alias> --project-id <project-id> \
+  --tenant-id <tenant-id> --yes
 # Optional and ownership-gated; omit to retain the project (the safe default):
 npa destroy --project <alias> --all --delete-project --yes --json
-npa configure --forget-project <alias>
 npa cleanup --full --yes --project <alias>
+npa configure --forget-project <alias>
 ```
 
 `configure --forget-project` durably writes and prints an opaque receipt ID
@@ -639,6 +674,15 @@ Cleanup identity precedence is deterministic: exact flags, then the selected
 receipt, then live configuration. Any overlapping mismatch is unsafe and fails
 before provider or Terraform mutation; NPA never substitutes a default alias,
 current Kubernetes context, or unrelated SkyPilot profile.
+
+Registry and provider-default-network deletion require the same unique durable
+NPA project-creation proof as project deletion. Registry teardown inventories
+and removes immutable artifact IDs before deleting the exact registry. Default
+network teardown accepts only one `default-network`, its one linked
+`default-subnet-*`, and its provider-marked `default-security-group-*`; mixed or
+additional inventory fails closed. Project deletion waits for eventual provider
+absence instead of treating the first still-visible post-delete observation as
+a failed mutation.
 
 Every destructive phase writes a versioned, atomic, non-secret receipt under
 `~/.npa/teardown-receipts/` before deleting the local evidence needed to audit

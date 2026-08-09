@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -35,8 +36,26 @@ from npa.orchestration.skypilot.diagnostics import (
     diagnose_skypilot_output,
 )
 from npa.orchestration.skypilot.json_output import (
+    is_verified_empty_queue_result,
     parse_single_json_document,
     queue_rows_from_output,
+)
+from npa.orchestration.skypilot.launch_transaction import (
+    ControllerState,
+    EvidenceState,
+    FailureCategory,
+    KubectlApiProbe,
+    LaunchState,
+    LaunchTransactionError,
+    LaunchTransactionResult,
+    ReconciliationEvidence,
+    ReconciliationState,
+    RecoveryPolicy,
+    StabilityPolicy,
+    classify_failure,
+    logical_launch_identity,
+    run_launch_transaction,
+    wait_for_api_stability,
 )
 from npa.orchestration.skypilot.workflow_state import redact_text
 
@@ -89,6 +108,7 @@ class WorkflowResult:
     stderr: str = ""
     submitted_yaml_path: str = ""
     error: str = ""
+    launch_transaction: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -108,6 +128,27 @@ class ManagedJobEvidence:
 
 class SkyPilotSubmitError(RuntimeError):
     """Raised when a SkyPilot workflow cannot be submitted."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        transaction: LaunchTransactionResult | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.transaction = transaction
+
+
+class _SkyPilotLaunchCommandError(RuntimeError):
+    """Preserve launch command evidence for the central failure classifier."""
+
+    def __init__(
+        self,
+        message: str,
+        result: subprocess.CompletedProcess[str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.result = result
 
 
 def _controller_region_from_infra(
@@ -133,6 +174,37 @@ def _controller_region_from_infra(
     return None
 
 
+def _selected_kube_context(
+    infra: str,
+    *,
+    env: Mapping[str, str],
+    controller_backend: ControllerBackend,
+) -> str:
+    """Resolve the exact context SkyPilot will use without changing it."""
+
+    explicit = _controller_region_from_infra(infra, controller_backend)
+    if explicit:
+        return explicit
+    if controller_backend != "kubernetes":
+        return ""
+    kubectl = shutil.which("kubectl")
+    if kubectl is None:
+        return ""
+    try:
+        result = subprocess.run(
+            [kubectl, "config", "current-context"],
+            env=dict(env),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def submit_workflow(
     yaml_path: Path,
     run_id: str,
@@ -150,6 +222,15 @@ def submit_workflow(
     controller_preflight_interval: float = 15.0,
     stream_output: bool = True,
     echo: Callable[[str], None] | None = None,
+    logical_launch_id: str = "",
+    transaction_recorder: Callable[[dict[str, Any]], None] | None = None,
+    stability_policy: StabilityPolicy = StabilityPolicy(),
+    recovery_policy: RecoveryPolicy = RecoveryPolicy(),
+    stability_probe: Callable[[], Any] | None = None,
+    transaction_clock: Callable[[], float] = time.monotonic,
+    transaction_sleeper: Callable[[float], None] = time.sleep,
+    transaction_random: Callable[[], float] | None = None,
+    launch_lock_root: Path | None = None,
 ) -> WorkflowResult:
     """Submit a SkyPilot YAML through NPA's controller convention."""
 
@@ -207,7 +288,7 @@ def submit_workflow(
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
         stable_cwd = _stable_sky_cwd(runtime_config.isolated_config_dir)
-        _wait_for_healthy_jobs_controller(
+        controller_state = _wait_for_healthy_jobs_controller(
             sky_executable,
             env=env,
             timeout=controller_preflight_timeout,
@@ -227,45 +308,150 @@ def submit_workflow(
             if stream_output
             else None
         )
-        result, streamed_diagnoses = _run_launch(
-            cmd,
+        selected_context = _selected_kube_context(
+            infra,
             env=env,
-            cwd=stable_cwd,
-            timeout=timeout,
-            log_dir=submission_dir,
-            streamer=streamer,
+            controller_backend=controller_backend,
         )
-        if result.returncode != 0:
-            _cleanup_owned_submission_dir(owned_submission_dir)
-            raise SkyPilotSubmitError(
-                _format_submit_error(cmd, result, streamed=streamed_diagnoses)
+        readiness_probe = stability_probe
+        if readiness_probe is None and controller_backend == "kubernetes":
+            readiness_probe = KubectlApiProbe(
+                env=env,
+                context=selected_context,
+                clock=transaction_clock,
             )
-        combined = f"{result.stdout}\n{result.stderr}"
-        job_id = _verified_job_id(
-            _parse_job_id(combined),
+
+        def _readiness():
+            if controller_backend != "kubernetes":
+                from npa.orchestration.skypilot.launch_transaction import StabilityResult
+
+                return StabilityResult(EvidenceState.READY, FailureCategory.NONE)
+            assert readiness_probe is not None
+            return wait_for_api_stability(
+                readiness_probe,
+                policy=stability_policy,
+                clock=transaction_clock,
+                sleeper=transaction_sleeper,
+                progress=echo or _default_launch_echo,
+            )
+
+        def _reconcile() -> ReconciliationEvidence:
+            return _reconcile_managed_job_env(
+                run_id,
+                env=env,
+                sky_executable=sky_executable,
+                cwd=stable_cwd,
+            )
+
+        def _launch() -> tuple[subprocess.CompletedProcess[str], list[SkyPilotDiagnosis]]:
+            try:
+                launch_result, diagnoses = _run_launch(
+                    cmd,
+                    env=env,
+                    cwd=stable_cwd,
+                    timeout=timeout,
+                    log_dir=submission_dir,
+                    streamer=streamer,
+                )
+            except subprocess.TimeoutExpired as exc:
+                message = f"sky jobs launch timed out after {timeout}s"
+                for diagnosis in streamer.diagnoses if streamer is not None else ():
+                    message = f"{message}\n{diagnosis.render()}"
+                raise _SkyPilotLaunchCommandError(message) from exc
+            if launch_result.returncode != 0:
+                raise _SkyPilotLaunchCommandError(
+                    _format_submit_error(cmd, launch_result, streamed=diagnoses),
+                    launch_result,
+                )
+            return launch_result, diagnoses
+
+        def _classify(exc: BaseException) -> tuple[EvidenceState, FailureCategory]:
+            command_result = getattr(exc, "result", None)
+            return classify_failure(
+                phase="launch",
+                stdout=str(getattr(command_result, "stdout", "") or ""),
+                stderr=str(getattr(command_result, "stderr", "") or ""),
+                exception=exc,
+            )
+
+        identity = logical_launch_id or logical_launch_identity(
+            str(runtime_config.isolated_config_dir or "default"),
+            selected_context,
             run_id,
-            env=env,
-            sky_executable=sky_executable,
-            cwd=stable_cwd,
+            hashlib.sha256(prepared_yaml.read_bytes()).hexdigest(),
         )
+        random_source = transaction_random
+        if random_source is None:
+            import random as _random
+
+            random_source = _random.random
+
+        def _record_with_controller(payload: dict[str, Any]) -> None:
+            if transaction_recorder is None:
+                return
+            enriched = dict(payload)
+            enriched["controller"] = {
+                "state": controller_state.value,
+                "selected_context": selected_context,
+            }
+            transaction_recorder(enriched)
+
+        try:
+            transaction = run_launch_transaction(
+                logical_id=identity,
+                readiness=_readiness,
+                launch=_launch,
+                reconcile=_reconcile,
+                classify_launch_error=_classify,
+                recovery_policy=recovery_policy,
+                lock_root=launch_lock_root,
+                clock=transaction_clock,
+                sleeper=transaction_sleeper,
+                random_source=random_source,
+                record=_record_with_controller,
+                progress=echo or _default_launch_echo,
+            )
+        except LaunchTransactionError as exc:
+            exc.result.controller = {
+                "state": controller_state.value,
+                "selected_context": selected_context,
+            }
+            if exc.result.state in {
+                LaunchState.INDETERMINATE,
+                LaunchState.TRANSIENT_API_FAILURE,
+                LaunchState.INTERRUPTED,
+            }:
+                exc.result.operator_remedy = (
+                    f"Re-run the identical submit arguments with `--resume-run {run_id}` "
+                    "for this exact logical launch; do not choose a new run ID or cancel "
+                    "by name."
+                )
+            message = str(exc)
+            if exc.result.operator_remedy and exc.result.operator_remedy not in message:
+                message = f"{message}\n{exc.result.operator_remedy}"
+            raise SkyPilotSubmitError(message, transaction=exc.result) from exc
+        transaction.controller = {
+            "state": controller_state.value,
+            "selected_context": selected_context,
+        }
+        launch_pair = transaction.launch_result
+        result = launch_pair[0] if isinstance(launch_pair, tuple) else None
+        job_id = transaction.job_id
         return WorkflowResult(
+            # Preserve the public result contract; adoption is exposed through
+            # launch_transaction.state and the human reconciliation message.
             status="SUBMITTED",
             job_id=job_id,
             log_paths={
                 "submission_dir": str(submission_dir),
                 "config": str(generated_config_path),
             },
-            returncode=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
+            returncode=result.returncode if result is not None else 0,
+            stdout=result.stdout if result is not None else "",
+            stderr=result.stderr if result is not None else "",
             submitted_yaml_path=str(prepared_yaml),
+            launch_transaction=transaction.to_dict(),
         )
-    except subprocess.TimeoutExpired as exc:
-        _cleanup_owned_submission_dir(owned_submission_dir)
-        message = f"sky jobs launch timed out after {timeout}s"
-        for diagnosis in streamer.diagnoses if streamer is not None else ():
-            message = f"{message}\n{diagnosis.render()}"
-        raise SkyPilotSubmitError(message) from exc
     except SkyPilotSubmitError:
         _cleanup_owned_submission_dir(owned_submission_dir)
         raise
@@ -320,6 +506,14 @@ def workflow_status(
         timeout=timeout,
         check=False,
     )
+    if is_verified_empty_queue_result(result):
+        return WorkflowResult(
+            status="ABSENT",
+            job_id=job_id,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
     if result.returncode != 0:
         return WorkflowResult(
             status="UNKNOWN",
@@ -505,19 +699,23 @@ def lookup_managed_job(
         )
     except Exception as exc:  # noqa: BLE001 - callers must distinguish unavailability
         return ManagedJobEvidence("unavailable", error=redact_text(str(exc)))
-    if result.returncode != 0:
+    if is_verified_empty_queue_result(result):
+        jobs: list[dict[str, Any]] = []
+    elif result.returncode != 0:
         detail = (
             result.stderr.strip()
             or result.stdout.strip()
             or f"exit {result.returncode}"
         )
         return ManagedJobEvidence("unavailable", error=redact_text(detail))
-    jobs = queue_rows_from_output(result.stdout)
-    if jobs is None:
-        return ManagedJobEvidence(
-            "unavailable",
-            error="SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON",
-        )
+    else:
+        parsed_jobs = queue_rows_from_output(result.stdout)
+        if parsed_jobs is None:
+            return ManagedJobEvidence(
+                "unavailable",
+                error="SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON",
+            )
+        jobs = parsed_jobs
 
     wanted_id = str(job_id or "").strip()
     matching_ids: set[int] = set()
@@ -564,6 +762,83 @@ def lookup_managed_job(
         job_id=selected,
         status=_status_from_queue_payload(result.stdout, selected) or "UNKNOWN",
         task_rows=rows,
+    )
+
+
+def _reconcile_managed_job_env(
+    job_name: str,
+    *,
+    env: Mapping[str, str],
+    sky_executable: str,
+    cwd: str | None,
+    timeout: int = 60,
+) -> ReconciliationEvidence:
+    """Reconcile one exact name through the same SkyPilot runtime as launch."""
+
+    try:
+        result = subprocess.run(
+            [sky_executable, "jobs", "queue", "--all", "--output", "json"],
+            env=dict(env),
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except (KeyboardInterrupt, InterruptedError):
+        raise
+    except BaseException as exc:
+        return ReconciliationEvidence(
+            ReconciliationState.UNAVAILABLE, error=redact_text(str(exc))
+        )
+    if is_verified_empty_queue_result(result):
+        rows: list[dict[str, Any]] = []
+    elif result.returncode != 0:
+        detail = _command_detail(result)
+        state, _category = classify_failure(
+            phase="reconciliation", stdout=result.stdout, stderr=result.stderr
+        )
+        return ReconciliationEvidence(
+            ReconciliationState.UNAVAILABLE
+            if state is not EvidenceState.AMBIGUOUS
+            else ReconciliationState.AMBIGUOUS,
+            error=redact_text(detail),
+        )
+    else:
+        parsed_rows = queue_rows_from_output(result.stdout)
+        if parsed_rows is None:
+            return ReconciliationEvidence(
+                ReconciliationState.AMBIGUOUS,
+                error="SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON",
+            )
+        rows = parsed_rows
+    matching: set[str] = set()
+    statuses: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("job_name") or row.get("name") or "") != job_name:
+            continue
+        job_id = str(row.get("job_id") or row.get("id") or "")
+        if job_id.isdigit():
+            matching.add(job_id)
+            statuses[job_id] = str(row.get("status") or "UNKNOWN").upper()
+    if not matching:
+        return ReconciliationEvidence(ReconciliationState.ABSENT)
+    if len(matching) != 1:
+        return ReconciliationEvidence(
+            ReconciliationState.AMBIGUOUS,
+            error=(
+                f"exact managed-job name {job_name!r} maps to multiple immutable IDs: "
+                + ", ".join(sorted(matching, key=int))
+            ),
+        )
+    selected = next(iter(matching))
+    return ReconciliationEvidence(
+        ReconciliationState.FOUND,
+        job_id=selected,
+        status=statuses.get(selected, "UNKNOWN"),
     )
 
 
@@ -829,7 +1104,7 @@ def _wait_for_healthy_jobs_controller(
     interval: float,
     require_existing: bool = False,
     cwd: str | None = None,
-) -> None:
+) -> ControllerState:
     """Block launch while an existing managed-jobs controller is not ready."""
 
     deadline = time.monotonic() + max(timeout, 0)
@@ -863,7 +1138,14 @@ def _wait_for_healthy_jobs_controller(
                 if status.upper() not in READY_CONTROLLER_STATUSES
             ]
             if not unhealthy:
-                return
+                if not controllers:
+                    return ControllerState.ABSENT
+                statuses = {status.upper() for _name, status in controllers}
+                return (
+                    ControllerState.UP
+                    if HEALTHY_CONTROLLER_STATUS in statuses
+                    else ControllerState.STOPPED
+                )
             last_summary = ", ".join(
                 f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy
             )

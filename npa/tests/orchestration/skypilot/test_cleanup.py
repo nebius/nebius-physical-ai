@@ -867,6 +867,11 @@ def test_every_unreadable_queue_shape_is_explicit(
         (1, "", "No in-progress managed jobs.\n"),
         (0, "No in-progress managed jobs found.\n", ""),
         (1, "", "No in-progress managed jobs found\n"),
+        (
+            1,
+            "",
+            "sky.exceptions.ClusterNotUpError: No in-progress managed jobs.\n",
+        ),
     ],
 )
 def test_pinned_sky_empty_queue_diagnostic_is_verified_absence(
@@ -912,6 +917,44 @@ def test_pinned_sky_empty_queue_accepts_known_headers_warnings_and_ansi(
         isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
     )
 
+    assert snapshot.state == "verified_empty"
+    assert snapshot.jobs == ()
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    [
+        ("[]\n", ""),
+        ("Fetching managed job statuses...\n[]\n", ""),
+        ('Checking managed jobs...\n{"jobs": []}\n', ""),
+        (
+            "Fetching managed job statuses...\nManaged jobs\nNo in-progress managed jobs.\n",
+            "Warning: SkyPilot telemetry is disabled.\n",
+        ),
+        (
+            "\x1b[36mFetching managed job statuses...\x1b[0m\n"
+            "\x1b[1mManaged jobs\x1b[0m\nNo in-progress managed jobs.\n",
+            "Warning: SkyPilot update check is unavailable.\n",
+        ),
+    ],
+)
+def test_skypilot_0_12_2_realistic_empty_queue_goldens(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stdout: str,
+    stderr: str,
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=stdout, stderr=stderr
+        ),
+    )
+    snapshot = cleanup_module._all_jobs(
+        isolated_config_dir=tmp_path, config_path=None, sky_bin=sky_bin
+    )
     assert snapshot.state == "verified_empty"
     assert snapshot.jobs == ()
 

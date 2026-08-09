@@ -181,6 +181,7 @@ images:
       distribution conditions and full artifact evidence are recorded in
       cosmos2-transfer/REDISTRIBUTION.md; built-byte scans are a release gate.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos3:
     dockerfile: cosmos3/Dockerfile
     tier: job
@@ -207,11 +208,13 @@ images:
     # weights it would otherwise need are fetched at run time with the operator's
     # own token, so nothing license-restricted is baked into this image.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos-evaluator:
     dockerfile: cosmos-evaluator/Dockerfile
     tier: job
     notes: "Mode-based entrypoint; the wired checks need no model weights."
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   lerobot-vlm-rl:
     dockerfile: lerobot-vlm-rl/Dockerfile
     tier: job
@@ -234,6 +237,7 @@ images:
       non-root ubuntu user (openssh-server, rsync, sudo, passwordless service
       restart). The service deploy path supplies the FiftyOne App command.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos:
     dockerfile: cosmos/Dockerfile
     tier: interactive

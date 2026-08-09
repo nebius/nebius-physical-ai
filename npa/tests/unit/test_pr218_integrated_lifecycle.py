@@ -970,6 +970,49 @@ def test_owned_empty_project_delete_is_exact_receipted_and_isolated(
     assert not teardown_receipts.list_teardown_receipts(project_id="project-b")
 
 
+def test_owned_project_delete_waits_for_eventual_provider_absence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa import project_destroy
+    from npa.clients import config, nebius
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    _owned_project_operation()
+    present = nebius.ProjectIdentity("project-a", "demo", "tenant-a", "eu-test1")
+    observations = iter([present, present, None])
+    monkeypatch.setattr(
+        nebius, "get_project_identity", lambda *_a, **_k: next(observations)
+    )
+    monkeypatch.setattr(nebius, "list_project_dependencies", lambda *_a, **_k: {})
+    monkeypatch.setattr(nebius, "delete_project", lambda *_a, **_k: None)
+    sleeps: list[float] = []
+    monkeypatch.setattr(project_destroy.time, "sleep", sleeps.append)
+
+    result = execute_project_destroy(
+        "demo", [DestroyPhase("delete_project", (), "delete")]
+    )
+
+    assert result["status"] == "success"
+    assert sleeps == [project_destroy.PROJECT_DELETE_VERIFY_INTERVAL_SECONDS]
+
+
 def test_owned_project_not_found_retry_is_idempotent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -21,6 +21,34 @@ if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
     from npa.workflows.sim2real_health import CheckResult
 
 
+def _exact_owned_cluster_name(project_id: str, fallback: str) -> str:
+    """Return one durable NPA-owned cluster identity, never a name-only guess."""
+
+    from npa.provisioning_journal import list_operations
+
+    matches: list[str] = []
+    for operation in list_operations(project_id=project_id, resource_type="cluster"):
+        payload = operation.read()
+        if payload.get("phase") != "committed":
+            continue
+        requested_name = str(payload.get("requested_name") or "").strip()
+        resources = payload.get("resources")
+        if not requested_name or not isinstance(resources, list):
+            continue
+        owns_exact_cluster = any(
+            isinstance(resource, dict)
+            and resource.get("resource_type") == "managed_kubernetes_cluster"
+            and resource.get("ownership") == "created_by_this_operation"
+            and resource.get("project_id") == project_id
+            and resource.get("requested_name") == requested_name
+            and bool(str(resource.get("provider_id") or "").strip())
+            for resource in resources
+        )
+        if owns_exact_cluster and requested_name not in matches:
+            matches.append(requested_name)
+    return matches[0] if len(matches) == 1 else fallback
+
+
 def _agent_check_whole_path_capacity(
     project_id: str,
     tenant_id: str,
@@ -39,9 +67,10 @@ def _agent_check_whole_path_capacity(
 
     region = (get_project_region(project_id) or str(fallback_region or "")).strip()
     requested = resolve_topology(agent_requested=True, agent_exists=agent_exists)
+    cluster_name = _exact_owned_cluster_name(project_id, requested.cluster_name)
     existing = discover_existing_capacity(
         project_id=project_id,
-        cluster_name=requested.cluster_name,
+        cluster_name=cluster_name,
         cpu_platform=requested.cpu_platform,
         cpu_preset=requested.cpu_preset,
         gpu_platform=requested.gpu_platform,

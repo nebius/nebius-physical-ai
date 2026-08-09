@@ -12,14 +12,18 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Any
+
+import fcntl
 
 import typer
 from rich.console import Console
 
 from npa.orchestration.skypilot._bin import REQUIRED_SKYPILOT_VERSION
+from npa.orchestration.skypilot.workflow_state import redact_text
 
 app = typer.Typer(
     name="skypilot",
@@ -45,6 +49,10 @@ DEFAULT_VENV_PATH = Path.home() / ".npa" / "skypilot-venv"
 VENV_PATH_ENV = "NPA_SKYPILOT_VENV_PATH"
 PYTHON_ENV = "NPA_SKYPILOT_PYTHON"
 MARKER_FILE = ".npa-bootstrap-ok"
+BOOTSTRAP_SCHEMA_VERSION = "npa.skypilot.bootstrap.v1"
+BOOTSTRAP_LOCK_SUFFIX = ".bootstrap.lock"
+BOOTSTRAP_JOURNAL_SUFFIX = ".bootstrap-journal.json"
+CONSTRAINTS_FILE = Path(__file__).with_name("constraints-0.12.2.txt")
 
 # SkyPilot 0.12.2 (and its `kubernetes`/`ray` dependencies) build and import
 # cleanly only on this Python range. On a too-new interpreter (e.g. 3.14 on a
@@ -66,6 +74,39 @@ def _supported_python_range_str() -> str:
 
 class SkyPilotBootstrapError(RuntimeError):
     """Raised when the isolated SkyPilot runtime cannot be bootstrapped."""
+
+
+class _BootstrapLock:
+    """Owner-only advisory lock serializing one exact managed environment."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._handle: Any | None = None
+
+    def __enter__(self) -> _BootstrapLock:
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            self.path.parent.chmod(0o700)
+        except OSError:
+            pass
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(self.path, flags, 0o600)
+        except OSError as exc:
+            raise SkyPilotBootstrapError(
+                f"Cannot acquire the SkyPilot bootstrap lock {self.path}: {exc}"
+            ) from exc
+        os.fchmod(fd, 0o600)
+        self._handle = os.fdopen(fd, "a+", encoding="utf-8")
+        fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        if self._handle is not None:
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+            self._handle.close()
 
 
 @dataclass(frozen=True)
@@ -193,9 +234,8 @@ def uninstall_cmd(
     """
 
     venv_path = _resolve_venv_path(path)
-    # Never delete the NPA interpreter/venv even if someone points --path at it.
     try:
-        _reject_npa_environment(venv_path)
+        _validate_managed_venv_path(venv_path)
     except SkyPilotBootstrapError as exc:
         _fail(str(exc))
         return
@@ -206,7 +246,19 @@ def uninstall_cmd(
             typer.echo("Aborted.")
             raise typer.Exit(code=1)
     if existed:
-        shutil.rmtree(venv_path, ignore_errors=True)
+        state = inspect_venv(venv_path)
+        if not state.has_python or not state.marker_path.is_file():
+            _fail(
+                f"Refusing to delete {venv_path}: it is not an exact NPA-managed "
+                f"SkyPilot environment (missing Python or {MARKER_FILE})."
+            )
+            return
+        tombstone = venv_path.with_name(f".{venv_path.name}.uninstall-{os.getpid()}")
+        if tombstone.exists() or tombstone.is_symlink():
+            _fail(f"Refusing occupied uninstall staging path: {tombstone}")
+            return
+        os.replace(venv_path, tombstone)
+        shutil.rmtree(tombstone)
         typer.echo(f"Removed SkyPilot venv {venv_path}.")
     else:
         typer.echo(f"No SkyPilot venv at {venv_path}.")
@@ -646,64 +698,207 @@ def bootstrap_skypilot(
     expected_version: str = SKYPILOT_VERSION,
     extras: tuple[str, ...] = SKYPILOT_EXTRAS,
 ) -> BootstrapResult:
-    """Create or reuse an isolated SkyPilot virtualenv."""
+    """Create or upgrade one isolated environment as an atomic transaction.
+
+    Package installation never runs in the active environment.  A complete
+    sibling is built and self-checked first, then only the exact environment
+    directory is exchanged under an owner-only lock.  The parent NPA state tree
+    is never renamed, recreated, or recursively removed.
+    """
 
     path = _resolve_venv_path(venv_path)
+    _validate_managed_venv_path(path)
+    lock_path = path.with_name(f".{path.name}{BOOTSTRAP_LOCK_SUFFIX}")
+    with _BootstrapLock(lock_path):
+        _recover_bootstrap_exchange(path)
+        state = inspect_venv(path)
+        if state.installed and state.kubernetes_compatible:
+            _write_marker(
+                state,
+                package_spec=package_spec,
+                expected_version=expected_version,
+                extras=extras,
+                reused=True,
+            )
+            return BootstrapResult(
+                path=state.path,
+                sky_bin=state.sky_bin,
+                installed=True,
+                reused=True,
+                marker_path=state.marker_path,
+            )
+        if state.exists and not state.has_python:
+            raise SkyPilotBootstrapError(
+                f"Path collision: {path} exists but is not an NPA-managed Python "
+                "virtualenv. Choose a different --path; NPA will not replace it."
+            )
+
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        staging = Path(
+            tempfile.mkdtemp(prefix=f".{path.name}.staging-", dir=path.parent)
+        )
+        staging.chmod(0o700)
+        try:
+            _create_venv(staging, python_bin)
+            staged = inspect_venv(staging)
+            _ensure_pip(staged)
+            _install_package(staged, package_spec)
+            staged = inspect_venv(staging)
+            _validate_staged_runtime(staged, expected_version=expected_version)
+            _relocate_staged_scripts(staging, path)
+            _activate_staged_runtime(path, staging)
+        except BaseException:
+            # A failed stage is diagnostic evidence.  It is owner-only and named
+            # in the raised error/parent; the previous active runtime is intact.
+            raise
+        final = inspect_venv(path)
+        _validate_staged_runtime(final, expected_version=expected_version)
+        _write_marker(
+            final,
+            package_spec=package_spec,
+            expected_version=expected_version,
+            extras=extras,
+            reused=False,
+        )
+        return BootstrapResult(
+            path=final.path,
+            sky_bin=final.sky_bin,
+            installed=True,
+            reused=False,
+            marker_path=final.marker_path,
+        )
+
+
+def _validate_managed_venv_path(path: Path) -> None:
+    """Reject broad, symlinked, or unsafe bootstrap/delete targets."""
+
     _reject_npa_environment(path)
-    if path.exists() and not path.is_dir():
+    if path == Path(path.anchor) or path == path.parent:
+        raise SkyPilotBootstrapError(f"Refusing broad SkyPilot environment path: {path}")
+    if path.name in {"", ".", "..", ".npa"}:
+        raise SkyPilotBootstrapError(f"Refusing parent NPA state path: {path}")
+    raw = Path(os.path.abspath(os.path.expanduser(os.fspath(path))))
+    current = Path(raw.anchor)
+    for part in raw.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise SkyPilotBootstrapError(
+                f"Refusing SkyPilot environment path containing a symlink: {current}"
+            )
+    if raw.exists() and not raw.is_dir():
         raise SkyPilotBootstrapError(
-            f"Path collision: {path} exists and is not a directory. "
-            "Suggested action: choose a different --path or remove the file."
+            f"Path collision: {raw} exists and is not a directory. Choose another --path."
         )
 
-    state = inspect_venv(path)
-    if state.version and state.version != expected_version:
-        raise SkyPilotBootstrapError(
-            f"Version conflict: {state.sky_bin} reports SkyPilot {state.version}, "
-            f"but NPA requires {expected_version}. Suggested action: remove {path} "
-            "or choose a new --path."
-        )
-    if state.installed:
-        # A venv bootstrapped before the pin existed still holds a broken client;
-        # repair it in place rather than reusing it into another controller hang.
-        if not state.kubernetes_compatible:
-            _pin_skypilot_kubernetes(state)
-            state = inspect_venv(path)
-        _write_marker(state, package_spec=package_spec, expected_version=expected_version, extras=extras, reused=True)
-        return BootstrapResult(path=state.path, sky_bin=state.sky_bin, installed=True, reused=True, marker_path=state.marker_path)
 
-    if state.exists and not state.has_python:
-        raise SkyPilotBootstrapError(
-            f"Path collision: {path} exists but is not a Python virtualenv. "
-            "Suggested action: choose a different --path or remove the directory."
-        )
+def _bootstrap_paths(path: Path) -> tuple[Path, Path]:
+    return (
+        path.with_name(f".{path.name}.previous"),
+        path.with_name(f".{path.name}{BOOTSTRAP_JOURNAL_SUFFIX}"),
+    )
 
-    if not state.exists:
-        _create_venv(path, python_bin)
 
-    state = inspect_venv(path)
-    _ensure_pip(state)
-    _install_package(state, package_spec)
+def _write_bootstrap_journal(journal: Path, payload: dict[str, str]) -> None:
+    tmp = journal.with_name(f".{journal.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"schema_version": BOOTSTRAP_SCHEMA_VERSION, **payload}, handle)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, journal)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
-    state = inspect_venv(path)
-    if state.version and state.version != expected_version:
+
+def _recover_bootstrap_exchange(path: Path) -> None:
+    previous, journal = _bootstrap_paths(path)
+    if not journal.exists():
+        if previous.exists():
+            raise SkyPilotBootstrapError(
+                f"Unexpected prior-runtime directory {previous}; refusing to guess ownership."
+            )
+        return
+    try:
+        payload = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
         raise SkyPilotBootstrapError(
-            f"Version conflict after install: expected SkyPilot {expected_version}, got {state.version}. "
-            "Suggested action: remove the venv and retry."
-        )
-    if not state.importable:
-        raise SkyPilotBootstrapError(
-            f"SkyPilot installed in {path}, but `import sky` failed. "
-            "Suggested action: inspect the venv Python and pip install logs, then retry bootstrap."
-        )
+            f"Bootstrap recovery journal is unreadable: {journal}"
+        ) from exc
+    if payload.get("schema_version") != BOOTSTRAP_SCHEMA_VERSION:
+        raise SkyPilotBootstrapError(f"Unsupported bootstrap journal: {journal}")
+    if not path.exists() and previous.is_dir() and not previous.is_symlink():
+        os.replace(previous, path)
+    elif path.exists() and previous.is_dir() and not previous.is_symlink():
+        # Activation completed before interruption. Keep the new runtime and
+        # retain no duplicate active environment.
+        shutil.rmtree(previous)
+    journal.unlink()
+
+
+def _activate_staged_runtime(path: Path, staging: Path) -> None:
+    previous, journal = _bootstrap_paths(path)
+    if previous.exists() or previous.is_symlink():
+        raise SkyPilotBootstrapError(f"Refusing occupied bootstrap backup path: {previous}")
+    _write_bootstrap_journal(
+        journal,
+        {"target": str(path), "staging": staging.name, "previous": previous.name},
+    )
+    moved_previous = False
+    try:
+        if path.exists():
+            os.replace(path, previous)
+            moved_previous = True
+        os.replace(staging, path)
+    except BaseException:
+        if moved_previous and not path.exists() and previous.exists():
+            os.replace(previous, path)
+        raise
+    else:
+        if previous.exists():
+            shutil.rmtree(previous)
+        journal.unlink(missing_ok=True)
+
+
+def _relocate_staged_scripts(staging: Path, target: Path) -> None:
+    """Rewrite venv console-script shebangs before the atomic directory swap."""
+
+    source = os.fsencode(str(staging))
+    destination = os.fsencode(str(target))
+    bin_dir = staging / ("Scripts" if os.name == "nt" else "bin")
+    for entry in bin_dir.iterdir():
+        if entry.is_symlink() or not entry.is_file():
+            continue
+        try:
+            body = entry.read_bytes()
+        except OSError:
+            continue
+        first_line, separator, remainder = body.partition(b"\n")
+        if not first_line.startswith(b"#!") or source not in first_line:
+            continue
+        entry.write_bytes(first_line.replace(source, destination) + separator + remainder)
+
+
+def _validate_staged_runtime(state: VenvState, *, expected_version: str) -> None:
+    problems: list[str] = []
+    if state.version != expected_version:
+        problems.append(f"expected SkyPilot {expected_version}, got {state.version or 'unknown'}")
     if not state.has_sky:
+        problems.append("sky executable is missing")
+    if not state.importable:
+        problems.append("import sky failed")
+    if not state.kubernetes_version:
+        problems.append("kubernetes client import/version check failed")
+    elif not state.kubernetes_compatible:
+        problems.append(kubernetes_client_remedy(state.kubernetes_version))
+    if problems:
         raise SkyPilotBootstrapError(
-            f"SkyPilot installed in {path}, but no executable sky binary was found. "
-            "Suggested action: inspect pip console-script installation and retry bootstrap."
+            f"Staged SkyPilot runtime self-check failed in {state.path}: "
+            + "; ".join(problems)
+            + ". The previous runtime was preserved."
         )
-
-    _write_marker(state, package_spec=package_spec, expected_version=expected_version, extras=extras, reused=False)
-    return BootstrapResult(path=state.path, sky_bin=state.sky_bin, installed=True, reused=False, marker_path=state.marker_path)
 
 
 def inspect_venv(path: Path | str) -> VenvState:
@@ -736,7 +931,9 @@ def inspect_venv(path: Path | str) -> VenvState:
 
 def _resolve_venv_path(path: Path | str | None) -> Path:
     value = path or os.environ.get(VENV_PATH_ENV) or DEFAULT_VENV_PATH
-    return Path(value).expanduser().resolve(strict=False)
+    # Do not resolve symlinks here: bootstrap/delete validation must observe and
+    # reject every symlink component before any filesystem mutation.
+    return Path(os.path.abspath(Path(value).expanduser()))
 
 
 def _reject_npa_environment(path: Path) -> None:
@@ -842,8 +1039,20 @@ def _ensure_pip(state: VenvState) -> None:
 
 
 def _install_package(state: VenvState, package_spec: str) -> None:
+    if not CONSTRAINTS_FILE.is_file():
+        raise SkyPilotBootstrapError(
+            f"SkyPilot compatibility constraints are missing: {CONSTRAINTS_FILE}"
+        )
     result = _run_observable(
-        [str(state.python_bin), "-m", "pip", "install", package_spec],
+        [
+            str(state.python_bin),
+            "-m",
+            "pip",
+            "install",
+            "--constraint",
+            str(CONSTRAINTS_FILE),
+            package_spec,
+        ],
         label="SkyPilot bootstrap package install",
     )
     if result.returncode == 0:
@@ -868,15 +1077,15 @@ def _install_package(state: VenvState, package_spec: str) -> None:
 def kubernetes_client_supported(version: str | None) -> bool:
     """Whether ``version`` of the kubernetes client is usable by SkyPilot.
 
-    An unknown version is treated as supported: bootstrap should not fail closed
-    on a client it could not introspect.
+    Unknown or malformed versions are incompatible: workflow mutation must fail
+    closed when the isolated runtime cannot prove its dependency contract.
     """
 
     if not version:
-        return True
+        return False
     match = re.match(r"\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?", version)
     if not match:
-        return True
+        return False
     major = int(match.group(1))
     minor = int(match.group(2) or 0)
     patch = int(match.group(3) or 0)
@@ -1047,7 +1256,13 @@ def _summarize_completed_process(result: subprocess.CompletedProcess[str]) -> st
 
 
 def _combined_output(result: subprocess.CompletedProcess[str]) -> str:
-    return "\n".join(part.strip() for part in (result.stdout, result.stderr) if part and part.strip())
+    return redact_text(
+        "\n".join(
+            part.strip()
+            for part in (result.stdout, result.stderr)
+            if part and part.strip()
+        )
+    )
 
 
 def _looks_like_network_failure(detail: str) -> bool:

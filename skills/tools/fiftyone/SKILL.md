@@ -5,6 +5,11 @@ description: Use when deploying, launching, loading data into, or reviewing the 
 
 # FiftyOne
 
+The PAIDF worker image remains contract-attested and non-root for SkyPilot
+0.12.2, with passwordless sudo, SSH/rsync/service prerequisites, writable paths,
+and a forwarding entrypoint. Submit the verified immutable digest; never use a
+`runAsUser: 0` workflow override.
+
 FiftyOne is the dataset curation and visualization tool. It is CPU-only and does not require a GPU.
 
 ## Interfaces

@@ -154,8 +154,14 @@ def _is_safe_regular_source(root: Path, relative: Path) -> bool:
         return False
 
 
-def _git_tracked_files(root: Path) -> list[Path] | None:
-    """Return git-tracked files under *root*, or ``None`` when it is not a checkout."""
+def _git_source_files(root: Path) -> list[Path] | None:
+    """Return tracked plus non-ignored untracked source under *root*.
+
+    Live validation and development runs must execute the preserved dirty tree,
+    including newly added modules that have not been staged in git yet.  Git's
+    exclude machinery remains the authority for local state, and the explicit
+    sensitive-file filter is applied again below.
+    """
 
     import subprocess
 
@@ -168,6 +174,7 @@ def _git_tracked_files(root: Path) -> list[Path] | None:
                 "ls-files",
                 "-z",
                 "--cached",
+                "--others",
                 "--exclude-standard",
             ],
             capture_output=True,
@@ -179,24 +186,22 @@ def _git_tracked_files(root: Path) -> list[Path] | None:
         return None
     if result.returncode != 0:
         return None
-    tracked = [Path(name) for name in result.stdout.split("\0") if name]
-    return tracked or None
+    source_files = [Path(name) for name in result.stdout.split("\0") if name]
+    return source_files or None
 
 
 def iter_source_files(root: Path) -> Iterable[Path]:
     """Yield the package files worth uploading, relative to *root*.
 
-    Prefers the git index: a directory walk uploads whatever else the working tree
-    happens to hold — including the local state and secrets ``.gitignore`` exists
-    to keep out of the repo (``*.tfvars``, ``*.tfstate``, ``*.pem``, ``.env``,
-    ``credentials.yaml``) — into a shared bucket and onto every worker. The walk
-    remains the fallback for a source tree that is not a checkout, and drops those
-    names explicitly.
+    Prefers git's tracked plus non-ignored-untracked view. This includes newly
+    created dirty implementation files while excluding local state covered by
+    ``.gitignore``; explicit sensitive-name filtering is applied independently.
+    The directory walk remains the fallback outside a checkout.
     """
 
-    tracked = _git_tracked_files(root)
-    if tracked is not None:
-        for relative in sorted(tracked):
+    git_files = _git_source_files(root)
+    if git_files is not None:
+        for relative in sorted(git_files):
             if _is_safe_regular_source(root, relative):
                 yield relative
         return

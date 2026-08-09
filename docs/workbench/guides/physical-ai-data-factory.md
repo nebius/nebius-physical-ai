@@ -277,6 +277,15 @@ npa workbench workflow submit "$SPEC" --project <alias> \
   --assume-decision promote_checkpoint --infra k8s/<your-kube-context>
 ```
 
+The launch path does not treat the earlier cluster/GPU snapshot as controller
+readiness. Immediately before each Kubernetes controller launch it requires a
+stable series of API `/readyz` observations using the exact selected context and
+SkyPilot environment. A transient refusal is reconciled first: NPA adopts an
+exact job if the request landed, retries only after authoritative absence, and
+blocks as indeterminate when structured queue evidence is unavailable. A
+recovered launch continues inside the same command; `--resume-run` remains the
+crash/restart recovery contract.
+
 Status, logs, artifacts, and cancel share the same precedence: explicit URI,
 owner-only per-project/run submission receipt, exact canonical PAIDF prefix,
 exact pinned SkyPilot managed-job evidence, then the ordinary workflow layout.
@@ -295,6 +304,26 @@ timeout, context, controller, or parse failure therefore leads with
 `VERIFICATION_UNAVAILABLE`, exits nonzero, preserves a labeled last-known state,
 and shows the unchanged heartbeat as stale plus an NPA retry command. It is not
 itself a terminal workflow failure.
+
+Runtime JSON records `logical_launch_id`, `launch_sequence`, `error_category`,
+readiness samples, reconciliation outcomes, recovery decision, immutable adopted
+job ID, and cancellation state. Cancellation state is one of `requested`,
+`verified`, `failed`, or `not_applicable`; it is never inferred from merely
+issuing a cancel command, and no cancellation is attempted without an exact job
+ID.
+
+PAIDF images are submitted using the digest verified during bootstrap preflight.
+Use repeatable `--image-override TOOL_REF=IMAGE` arguments when validating
+separately tagged Transfer, Evaluator, Curator, and FiftyOne images; the exact
+tool override wins over a global `--image` fallback and is digest-pinned before
+rendering.
+The FiftyOne stage stays non-root; UID-0 pod overrides are rejected. After
+completion, exact current-ledger, durable S3 manifest/artifact, immutable job,
+and planning evidence share one precedence. A complete current-schema ten-wave
+run remains terminal after active jobs disappear. `NOT_SUBMITTED` requires proof
+that no launch occurred and cannot override later evidence. Exact durable
+conflicts are typed as inconsistent; explicit resume skips every succeeded wave
+and launches nothing.
 
 Provisioning, inference, and curation durations are capacity/workload dependent,
 not guarantees. For practical warm/cold ranges and recovery guidance, see

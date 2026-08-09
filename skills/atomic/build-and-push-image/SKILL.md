@@ -12,6 +12,12 @@ or workflow image references for NPA workbench tools.
 
 ## Procedure
 
+For SkyPilot workflow images, build/test the versioned bootstrap contract and
+record it in OCI config. Preflight consumes the selected digest, not its tag.
+Keep live-validation tags unique, scan built bytes for restricted payloads, and
+push only to the authorized project registry unless shared publication is
+explicitly requested.
+
 1. Resolve runtime registry settings with `npa configure` or
    `npa.clients.config.resolve_container_registry` or `npa configure`.
 2. Build from the checked-in Dockerfile for the tool; do not invent a detached

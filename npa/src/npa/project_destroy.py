@@ -6,12 +6,16 @@ from dataclasses import dataclass, field
 import re
 import subprocess
 import sys
+import time
 from typing import Any, Callable, Mapping
 
 from npa.clients.json_output import parse_single_json_document
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+
+PROJECT_DELETE_VERIFY_TIMEOUT_SECONDS = 180.0
+PROJECT_DELETE_VERIFY_INTERVAL_SECONDS = 2.0
 
 _FATAL_INVENTORY_DIAGNOSTIC = re.compile(
     r"(?i)\b(?:unauthenticated|unauthorized|permission denied|access denied|forbidden|"
@@ -421,8 +425,8 @@ def _delete_owned_empty_project(
             "project_id": project_id,
             "tenant_id": tenant_id,
             "region": region,
-            "operation_id": ownership.operation_id,
-            "ownership": "npa",
+            "project_operation_id": ownership.operation_id,
+            "ownership": "npa_disposable_project",
         },
         precheck={
             "provider_identity_verified": True,
@@ -432,9 +436,14 @@ def _delete_owned_empty_project(
     )
     try:
         delete_project(project_id, profile=profile or None)
-        after = get_project_identity(
-            project_id, tenant_id=tenant_id, profile=profile or None
-        )
+        deadline = time.monotonic() + PROJECT_DELETE_VERIFY_TIMEOUT_SECONDS
+        while True:
+            after = get_project_identity(
+                project_id, tenant_id=tenant_id, profile=profile or None
+            )
+            if after is None or time.monotonic() >= deadline:
+                break
+            time.sleep(PROJECT_DELETE_VERIFY_INTERVAL_SECONDS)
     except NebiusError as exc:
         raise RuntimeError(f"exact provider project deletion failed: {exc}") from exc
     if after is not None:

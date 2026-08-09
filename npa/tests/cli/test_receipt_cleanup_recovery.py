@@ -216,11 +216,16 @@ def test_cluster_no_state_insufficient_identity_fails_before_terraform(
 def test_workflow_reserved_ledger_is_not_submitted_without_s3_or_sky(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from npa.orchestration.npa_workflow.run_resolution import RunResolution
+
     update_submission_state("demo", "reserved-run", {"launch_state": "reserved"})
     monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("SkyPilot must not be inspected")
+        "npa.orchestration.npa_workflow.run_resolution.resolve_run",
+        lambda *_args, **_kwargs: RunResolution(
+            run_id="reserved-run",
+            project="demo",
+            not_submitted=True,
+            source="durable_submission_receipt",
         ),
     )
     result = runner.invoke(
@@ -237,6 +242,8 @@ def test_workflow_reserved_ledger_is_not_submitted_without_s3_or_sky(
 def test_workflow_plan_only_receipt_is_not_submitted_without_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from npa.orchestration.npa_workflow.run_resolution import RunResolution
+
     update_submission_state(
         "demo",
         "planned-run",
@@ -248,9 +255,12 @@ def test_workflow_plan_only_receipt_is_not_submitted_without_dependencies(
         },
     )
     monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("SkyPilot must not be inspected")
+        "npa.orchestration.npa_workflow.run_resolution.resolve_run",
+        lambda *_args, **_kwargs: RunResolution(
+            run_id="planned-run",
+            project="demo",
+            not_submitted=True,
+            source="durable_submission_receipt",
         ),
     )
     result = runner.invoke(

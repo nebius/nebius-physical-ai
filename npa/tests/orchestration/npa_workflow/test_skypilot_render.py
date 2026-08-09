@@ -494,6 +494,36 @@ def test_resolve_task_image_uses_override() -> None:
     assert image == "cr.example/custom:1"
 
 
+def test_first_party_image_rejects_uid_zero_pod_override() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    for profile in spec.resources.values():
+        if isinstance(profile, dict):
+            profile["kubernetes"] = {
+                "pod_config": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "worker",
+                                "securityContext": {"runAsUser": 0},
+                            }
+                        ]
+                    }
+                }
+            }
+    with pytest.raises(NpaWorkflowRenderError, match="runAsUser: 0"):
+        render_skypilot_yaml(
+            spec,
+            build_plan(spec, run_id="no-root"),
+            run_id="no-root",
+            options=SkypilotRenderOptions(
+                image_overrides={
+                    "*": "cr.us-central1.nebius.cloud/project/npa-fiftyone:validation"
+                },
+                materialize_registry_secrets=False,
+            ),
+        )
+
+
 def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
     with pytest.raises(Exception, match="assume-decision"):
         prepare_npa_workflow_for_submit(

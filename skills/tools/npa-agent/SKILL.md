@@ -36,6 +36,12 @@ Persists `ssh_key_path` + `credentials` on the agent record and stages
 `llm.env`, `s3.env`, and `nebius.env` on the VM. Bootstrap resolves SSH from
 the agent record (or `--ssh-key` / `NPA_SSH_KEY`) — not from workbench SSH config.
 
+Deploy/bootstrap persists pre-mutation through health-verification checkpoints
+and emits secret-free structured heartbeats during long calls. After lost client
+transport, reconcile the exact remote setup marker and authenticated
+`/api/models`: adopt matching healthy evidence, resume incomplete phases, and
+preserve ambiguous/mismatched evidence without replacing the VM.
+
 All `npa agent …` and `nebius` IAM commands run on the **operator/dev VM**.
 The **agent VM** only receives staged `/opt/npa-agent/*.env` files.
 

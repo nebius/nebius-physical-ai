@@ -100,6 +100,18 @@ def _successful_storage_probe(monkeypatch):
     monkeypatch.setattr(
         "npa.cli.agent._agent_check_whole_path_capacity", lambda *args, **kwargs: None
     )
+    # Reconciliation is a distinct remote boundary from bootstrap. Tests in
+    # this module that stub bootstrap as successful also get exact healthy
+    # evidence; failure/adoption matrices live in test_agent_setup_convergence.
+    monkeypatch.setattr(
+        "npa.cli.agent._reconcile_agent_setup",
+        lambda **_kwargs: {
+            "state": "healthy",
+            "service_fingerprint": "test-service-fingerprint",
+            "credential_fingerprint": "test-credential-fingerprint",
+            "models_healthy": True,
+        },
+    )
 
 
 def _agent_source() -> str:

@@ -1,7 +1,8 @@
 # Exact, hash-verified PyPI wheel URLs for fixes to the pinned upstream lock.
-# uv 0.8.12 validates transitive requirement metadata under --require-hashes even
-# with --no-deps. PEP 503 URL fragments still make uv verify these wheel bytes,
-# while --no-deps preserves the already locked dependency closure.
+# PEP 503 URL fragments make uv verify these exact wheel bytes. ``--no-deps``
+# preserves the already locked dependency closure. Do not combine this URL list
+# with ``--require-hashes``: uv 0.8.12 then incorrectly demands exact pins for
+# ignored transitive metadata such as ``numpy>=2.0.0``.
 https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl#sha256=a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
 https://files.pythonhosted.org/packages/6e/89/a0b0f35e2820d6a99d75ea1c11977ee6d5c9e6658eceb45b0c7620881faa/nltk-3.10.0-py3-none-any.whl#sha256=54ff84d4916d3ef127e8953bee0023f6a6b320b75d634a19e06ef056d3d244bf
 https://files.pythonhosted.org/packages/62/36/a3aed958d60531cb442b7ab4596cda7b3621cfb916f8ae1d6769795c7dc1/pip-26.2-py3-none-any.whl#sha256=931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad

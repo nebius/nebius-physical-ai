@@ -329,6 +329,23 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   deterministically; missing/conflicting evidence is `unknown`/ambiguous rather
   than an invented mapping. Legacy root-ID fan-out remains only for the proven
   single-managed-job manifest contract.
+- **Controller launch is a transaction, including wave 1 and resume.** NPA
+  requires stable exact-context Kubernetes API readiness, serializes the durable
+  logical wave/attempt identity locally, and reconciles structured SkyPilot queue
+  evidence before retry or cancellation. A client-side refusal after acceptance
+  adopts the immutable job ID; authoritative absence plus transient transport
+  may recover within the same submit; indeterminate existence blocks and prints
+  the exact `--resume-run <same-id>` remedy. No ID means cancellation is
+  `not_applicable`, never a name-based teardown or a fabricated `CANCELLED` state.
+- **Image and completion evidence are digest/run bound.** Selected PAIDF images
+  satisfy the SkyPilot 0.12.2 bootstrap contract at immutable digest; FiftyOne
+  uses its declared non-root user and UID-0 overrides are forbidden. A terminal
+  current-schema ten-wave ledger with exact durable artifacts remains terminal
+  after managed jobs disappear. Stale planning cannot produce `NOT_SUBMITTED`;
+  resume skips succeeded waves without launch.
+  Supply distinct validation artifacts with repeatable
+  `--image-override TOOL_REF=IMAGE`, using the same exact mapping for preflight,
+  initial submit, and resume; each verified digest is rendered only for its tool.
 - **Neither NVIDIA component fetches code at run time.** The evaluator looks for
   a checkout at `NPA_COSMOS_EVALUATOR_SRC` / `/opt/cosmos-evaluator` and falls
   back to the in-repo port; the curator requires `NPA_COSMOS_CURATE_SRC` /

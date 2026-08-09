@@ -50,6 +50,30 @@ class ProjectIdentity:
     profile: str = ""
 
 
+@dataclass(frozen=True)
+class RegistryIdentity:
+    """Allowlisted immutable identity for guarded registry teardown."""
+
+    registry_id: str
+    name: str
+    project_id: str
+    profile: str = ""
+
+
+@dataclass(frozen=True)
+class ProjectDefaultNetworkIdentity:
+    """Exact provider-created default topology in one disposable project."""
+
+    network_id: str
+    network_name: str
+    subnet_id: str
+    subnet_name: str
+    security_group_id: str
+    security_group_name: str
+    project_id: str
+    profile: str = ""
+
+
 # ── Low-level CLI runner ─────────────────────────────────────────────────
 
 _NEBIUS_VERSION_CHECKED = False
@@ -600,9 +624,10 @@ def get_project_identity(
     ).strip()
     name = str(metadata.get("name") or "").strip()
     region = (
-        str((status or {}).get("region") if isinstance(status, dict) else "").strip()
-        or str(spec.get("region") or "").strip()
-    )
+        str((status or {}).get("region") or "").strip()
+        if isinstance(status, dict)
+        else ""
+    ) or str(spec.get("region") or "").strip()
     if returned_id != exact_id or not returned_tenant or not name or not region:
         raise NebiusError("Nebius returned incomplete or mismatched project identity")
     if expected_tenant and returned_tenant != expected_tenant:
@@ -705,6 +730,232 @@ def delete_project(project_id: str, *, profile: str | None = None) -> None:
         if _is_not_found(str(exc)):
             return
         raise
+
+
+def get_registry_identity(
+    registry_id: str, *, profile: str | None = None
+) -> RegistryIdentity | None:
+    """Strictly get one registry by immutable ID; exact NotFound is absence."""
+
+    exact_id = str(registry_id or "").strip()
+    if not exact_id:
+        raise NebiusError("exact registry ID is required")
+    profile_args, resolved_profile = _iam_profile_args(profile)
+    try:
+        payload = _run_json([*profile_args, "registry", "get", "--id", exact_id])
+    except NebiusError as exc:
+        if _is_not_found(str(exc)):
+            return None
+        raise
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    if not isinstance(metadata, dict):
+        raise NebiusError("Nebius returned schema-invalid registry identity")
+    returned_id = str(metadata.get("id") or "").strip()
+    project_id = str(
+        metadata.get("parent_id") or metadata.get("parentId") or ""
+    ).strip()
+    name = str(metadata.get("name") or "").strip()
+    if returned_id != exact_id or not project_id or not name:
+        raise NebiusError("Nebius returned incomplete or mismatched registry identity")
+    return RegistryIdentity(exact_id, name, project_id, resolved_profile)
+
+
+def delete_registry(registry_id: str, *, profile: str | None = None) -> None:
+    """Delete one exact container registry through the supported provider adapter."""
+
+    exact_id = str(registry_id or "").strip()
+    if not exact_id:
+        raise NebiusError("exact registry ID is required")
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    try:
+        _run([*profile_args, "registry", "delete", "--id", exact_id])
+    except NebiusError as exc:
+        if _is_not_found(str(exc)):
+            return
+        raise
+
+
+def get_project_default_network_identity(
+    project_id: str, *, profile: str | None = None
+) -> ProjectDefaultNetworkIdentity | None:
+    """Return the unique provider default topology, rejecting mixed inventory."""
+
+    exact_project = str(project_id or "").strip()
+    if not exact_project:
+        raise NebiusError("exact project ID is required")
+    profile_args, resolved_profile = _iam_profile_args(profile)
+
+    def _items(kind: str, command: list[str]) -> list[dict[str, Any]]:
+        payload = _run_json(
+            [*profile_args, *command, "--parent-id", exact_project, "--all"]
+        )
+        if payload == {} or payload == {"items": None}:
+            return []
+        rows = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise NebiusError(f"Nebius returned schema-invalid {kind} inventory")
+        return rows
+
+    networks = _items("network", ["vpc", "network", "list"])
+    subnets = _items("subnet", ["vpc", "subnet", "list"])
+    groups = _items("security-group", ["vpc", "security-group", "list"])
+    if not networks and not subnets and not groups:
+        return None
+    if len(networks) != 1 or len(subnets) != 1 or len(groups) != 1:
+        raise NebiusError(
+            "project network inventory is not the unique provider default topology"
+        )
+
+    def _metadata(row: dict[str, Any], kind: str) -> tuple[str, str]:
+        metadata = row.get("metadata")
+        if not isinstance(metadata, dict):
+            raise NebiusError(f"Nebius returned schema-invalid {kind} identity")
+        resource_id = str(metadata.get("id") or "").strip()
+        parent_id = str(
+            metadata.get("parent_id") or metadata.get("parentId") or ""
+        ).strip()
+        name = str(metadata.get("name") or "").strip()
+        if not resource_id or parent_id != exact_project or not name:
+            raise NebiusError(f"Nebius returned mismatched {kind} identity")
+        return resource_id, name
+
+    network_id, network_name = _metadata(networks[0], "network")
+    subnet_id, subnet_name = _metadata(subnets[0], "subnet")
+    group_id, group_name = _metadata(groups[0], "security-group")
+    subnet_spec = subnets[0].get("spec")
+    group_spec = groups[0].get("spec")
+    group_status = groups[0].get("status")
+    if (
+        not network_name.startswith("default-network")
+        or not subnet_name.startswith("default-subnet-")
+        or not group_name.startswith("default-security-group-")
+        or not isinstance(subnet_spec, dict)
+        or str(subnet_spec.get("network_id") or "") != network_id
+        or not isinstance(group_spec, dict)
+        or str(group_spec.get("network_id") or "") != network_id
+        or not isinstance(group_status, dict)
+        or group_status.get("default") is not True
+    ):
+        raise NebiusError(
+            "project network inventory does not match the provider default topology"
+        )
+    return ProjectDefaultNetworkIdentity(
+        network_id,
+        network_name,
+        subnet_id,
+        subnet_name,
+        group_id,
+        group_name,
+        exact_project,
+        resolved_profile,
+    )
+
+
+def delete_project_default_network(
+    identity: ProjectDefaultNetworkIdentity, *, profile: str | None = None
+) -> None:
+    """Delete one already-verified provider default subnet and parent network."""
+
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    for command, resource_id in (
+        (("vpc", "subnet", "delete"), identity.subnet_id),
+        (("vpc", "network", "delete"), identity.network_id),
+    ):
+        try:
+            _run([*profile_args, *command, "--id", resource_id])
+        except NebiusError as exc:
+            if not _is_not_found(str(exc)):
+                raise
+
+
+def list_registry_image_ids(
+    registry_id: str, *, profile: str | None = None
+) -> tuple[str, ...]:
+    """List immutable image IDs under one exact registry, failing on bad schema."""
+
+    exact_id = str(registry_id or "").strip()
+    if not exact_id:
+        raise NebiusError("exact registry ID is required")
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    payload = _run_json(
+        [
+            *profile_args,
+            "registry",
+            "image",
+            "list",
+            "--parent-id",
+            exact_id,
+            "--all",
+        ]
+    )
+    if payload == {} or payload == {"items": None}:
+        items: Any = []
+    else:
+        items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        raise NebiusError("Nebius returned schema-invalid registry image inventory")
+    image_ids: list[tuple[bool, str]] = []
+    for item in items:
+        # Registry image list rows are a flat Artifact API projection. They do
+        # not repeat parent_id; the exact --parent-id selector is the parent
+        # boundary, while every returned row must still carry an immutable ID.
+        image_id = str((item.get("id") or "") if isinstance(item, dict) else "").strip()
+        if not image_id:
+            raise NebiusError(
+                "Nebius returned a registry image without immutable identity"
+            )
+        image_ids.append((bool(item.get("tags")), image_id))
+    # Tagged manifests are repository roots and therefore depend on their
+    # untagged platform/config manifests. Delete roots first.
+    return tuple(
+        image_id
+        for tagged, image_id in sorted(image_ids, key=lambda row: (not row[0], row[1]))
+    )
+
+
+def delete_registry_image(image_id: str, *, profile: str | None = None) -> None:
+    """Delete one registry image by exact immutable ID."""
+
+    exact_id = str(image_id or "").strip()
+    if not exact_id:
+        raise NebiusError("exact registry image ID is required")
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    try:
+        _run([*profile_args, "registry", "image", "delete", "--id", exact_id])
+    except NebiusError as exc:
+        if _is_not_found(str(exc)):
+            return
+        raise
+
+
+def delete_all_registry_images(
+    registry_id: str, *, profile: str | None = None
+) -> tuple[str, ...]:
+    """Delete the exact registry's artifact DAG and verify it becomes empty."""
+
+    removed: list[str] = []
+    while True:
+        remaining = list_registry_image_ids(registry_id, profile=profile)
+        if not remaining:
+            return tuple(removed)
+        progress = False
+        dependency_errors: list[str] = []
+        for image_id in remaining:
+            try:
+                delete_registry_image(image_id, profile=profile)
+            except NebiusError as exc:
+                detail = str(exc).lower()
+                if "resources that depends on the artifact" in detail:
+                    dependency_errors.append(image_id)
+                    continue
+                raise
+            removed.append(image_id)
+            progress = True
+        if not progress:
+            raise NebiusError(
+                "registry artifact dependency cleanup made no progress for exact IDs: "
+                + ", ".join(dependency_errors)
+            )
 
 
 def list_quota_allowances(tenant_id: str) -> dict[str, Any]:
