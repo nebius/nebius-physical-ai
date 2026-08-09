@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import base64
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from npa.workflows.sim2real import registry_auth
+from npa.workflows.sim2real.k8s_client import KubernetesJobClient
 
 from npa.cli.workbench.workflow import (
     _refresh_kubernetes_pull_secrets,
@@ -83,12 +83,16 @@ def test_the_applied_secret_authenticates_every_host(monkeypatch: pytest.MonkeyP
 
     applied: dict[str, object] = {}
 
-    def fake_run(cmd, *, input, **kwargs):  # noqa: ANN001, ANN202 - stands in for kubectl
-        applied.update(json.loads(input))
-        return subprocess.CompletedProcess(cmd, 0, stdout="secret/npa-nebius-registry", stderr="")
+    class _Client:
+        def apply_secret(self, manifest):
+            applied.update(manifest)
 
     monkeypatch.setattr(registry_auth, "mint_nebius_registry_token", lambda **_: "tok")
-    monkeypatch.setattr(registry_auth.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        KubernetesJobClient,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: _Client()),
+    )
 
     registry_auth.ensure_nebius_registry_pull_secret(
         registry_servers=["cr.eu-north1.nebius.cloud", "cr.us-central1.nebius.cloud"]
@@ -105,12 +109,16 @@ def test_non_nebius_hosts_are_dropped_before_applying(monkeypatch: pytest.Monkey
 
     applied: dict[str, object] = {}
 
-    def fake_run(cmd, *, input, **kwargs):  # noqa: ANN001, ANN202
-        applied.update(json.loads(input))
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+    class _Client:
+        def apply_secret(self, manifest):
+            applied.update(manifest)
 
     monkeypatch.setattr(registry_auth, "mint_nebius_registry_token", lambda **_: "tok")
-    monkeypatch.setattr(registry_auth.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        KubernetesJobClient,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: _Client()),
+    )
 
     registry_auth.ensure_nebius_registry_pull_secret(
         registry_servers=["ghcr.io", "cr.us-central1.nebius.cloud", "docker.io"]

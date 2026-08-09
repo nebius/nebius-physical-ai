@@ -1,7 +1,7 @@
 """CLI tests for ``npa workbench sim2real onboard-robot`` (B4).
 
 Validate-and-derive runs fully offline. The ``--smoke`` submit path is exercised
-with the cluster kubectl call monkeypatched, so no real infrastructure is touched
+with the structured Kubernetes client monkeypatched, so no infrastructure is touched
 (per repo policy). These guard that: the shipped Kinova example onboards, the
 derived config is shown, an incompatible embodiment is rejected with a non-zero
 exit, a malformed spec fails fast, and a failed smoke submit propagates a
@@ -17,7 +17,7 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.workflows.sim2real import byo_isaac_trainer as trainer
+from npa.workflows.sim2real.k8s_client import KubernetesJobClient
 from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
 
 runner = CliRunner()
@@ -149,26 +149,28 @@ def test_onboard_smoke_requires_image(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _smoke_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ISAAC_IMAGE", "cr.example/npa-isaac-lab:test")
+    monkeypatch.setenv(
+        "ISAAC_IMAGE", f"cr.example/npa-isaac-lab@sha256:{'a' * 64}"
+    )
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "test-bucket")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://s3.example")
 
 
 def test_onboard_smoke_submits_job(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--smoke builds + applies a BYO trainer job; success => exit 0."""
+    """--smoke reconciles a queued, immutable BYO trainer Job."""
     _smoke_env(monkeypatch)
     applied: list[dict] = []
 
-    class _OK:
-        returncode = 0
-        stderr = ""
+    class _Client:
+        def create_or_adopt(self, manifest, **_kwargs):
+            applied.append(manifest)
+            return "job-uid", False
 
-    def _fake_kubectl(args, *, stdin=None, timeout=300):
-        if args[:1] == ["apply"]:
-            applied.append(json.loads(stdin))
-        return _OK()
-
-    monkeypatch.setattr(trainer, "_kubectl", _fake_kubectl)
+    monkeypatch.setattr(
+        KubernetesJobClient,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: _Client()),
+    )
     result = runner.invoke(
         app,
         [
@@ -182,13 +184,16 @@ def test_onboard_smoke_submits_job(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert result.exit_code == 0, result.output
     assert "submitted" in result.output.lower()
-    assert applied, "expected a kubectl apply with the job manifest"
+    assert applied, "expected a structured API create with the job manifest"
     manifest = applied[0]
     assert manifest["kind"] == "Job"
+    assert manifest["spec"]["suspend"] is True
+    assert manifest["metadata"]["labels"]["kueue.x-k8s.io/queue-name"]
     # The BYO-robot routing + B2-derived task config are baked into the container
     # command (the wrapper exports them in-container), not pod env. Confirm both
     # reach the job, plus the customer robot name, so the smoke job trains THIS arm.
     container = manifest["spec"]["template"]["spec"]["containers"][0]
+    assert "@sha256:" in container["image"]
     script = decode_compressed_bash_args(container["args"])
     assert "NPA_BYO_ROBOT_SPEC_JSON" in script
     assert "NPA_BYO_TASK_CONFIG_JSON" in script
@@ -198,14 +203,19 @@ def test_onboard_smoke_submits_job(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_onboard_smoke_apply_failure_is_nonzero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failed kubectl apply must exit non-zero, never print a false success."""
+    """A failed API reconcile must exit non-zero, never print a false success."""
     _smoke_env(monkeypatch)
 
-    class _Fail:
-        returncode = 1
-        stderr = "forbidden"
+    class _Client:
+        def create_or_adopt(self, manifest, **_kwargs):
+            del manifest
+            raise RuntimeError("forbidden")
 
-    monkeypatch.setattr(trainer, "_kubectl", lambda *a, **k: _Fail())
+    monkeypatch.setattr(
+        KubernetesJobClient,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: _Client()),
+    )
     result = runner.invoke(
         app,
         [

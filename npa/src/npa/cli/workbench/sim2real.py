@@ -584,8 +584,6 @@ def onboard_robot_command(
         return
 
     # --- smoke submit (real cluster) ---
-    from npa.workflows.sim2real import byo_isaac_trainer as trainer
-
     image = _onboard_env("ISAAC_IMAGE") or _onboard_env("NPA_SIM2REAL_ISAAC_IMAGE")
     bucket = _onboard_env("NPA_SIM2REAL_BUCKET") or _onboard_env("S3_BUCKET")
     endpoint = _onboard_env("AWS_ENDPOINT_URL")
@@ -597,26 +595,27 @@ def onboard_robot_command(
 
     rid = run_id.strip() or f"onboard-{_slug(parsed.robot.name)}"
 
-    def _kubectl_apply(manifest: dict) -> int:
-        trainer._kubectl(
-            [
-                "delete",
-                "job",
-                f"s2r-onboard-smoke-{rid}"[:63],
-                "-n",
-                k8s_namespace,
-                "--ignore-not-found",
-            ],
-            timeout=60,
-        )
-        res = trainer._kubectl(
-            ["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120
-        )
-        if res.returncode != 0:
-            typer.secho(
-                f"kubectl apply failed: {res.stderr}", fg=typer.colors.RED, err=True
+    def _kubernetes_apply(manifest: dict) -> int:
+        from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+
+        try:
+            client = KubernetesJobClient.from_environment(namespace=k8s_namespace)
+            client.create_or_adopt(
+                manifest,
+                run_id=rid,
+                source_sha=_onboard_env(
+                    "NPA_SIM2REAL_SOURCE_SHA", "onboarding-smoke"
+                ),
+                runtime_image=image.removeprefix("docker:"),
             )
-        return res.returncode
+        except Exception as exc:
+            typer.secho(
+                f"Kubernetes Job reconcile failed: {exc}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            return 1
+        return 0
 
     result = onboarding_svc.submit_smoke_job(
         plan,
@@ -628,7 +627,7 @@ def onboard_robot_command(
         service_account=service_account,
         iterations=smoke_iterations,
         num_envs=smoke_num_envs,
-        kubectl_apply=_kubectl_apply,
+        kubectl_apply=_kubernetes_apply,
     )
     if result["apply_rc"] != 0:
         typer.secho(

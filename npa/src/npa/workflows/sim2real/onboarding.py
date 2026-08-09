@@ -174,6 +174,15 @@ def submit_smoke_job(
         robot_usd_uri=plan.robot_usd_uri,
         task_config=plan.derived.to_dict(),
     )
+    from npa.workflows.sim2real.job_scheduling import configure_gpu_job
+
+    manifest = configure_gpu_job(
+        manifest,
+        image=image,
+        product=gpu_product,
+        gpu_resource="nvidia.com/gpu",
+        gpu_count=1,
+    )
     rc = 0
     if kubectl_apply is not None:
         rc = int(kubectl_apply(manifest))

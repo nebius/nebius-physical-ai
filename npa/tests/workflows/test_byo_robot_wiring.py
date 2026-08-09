@@ -1,8 +1,7 @@
-"""Wiring tests for the opt-in BYO-robot task path in the trainer + eval.
+"""Wiring tests for the baked BYO-robot task path in the trainer + eval.
 
-Asserts the gated path ships the isaac_byo_robot_task wrapper into the Isaac job
-manifest, takes precedence over the physics path, and that the default (flag
-unset / no spec) manifest is byte-for-byte the stock path.
+Asserts the gated path invokes only scripts baked into the immutable Isaac image,
+takes precedence over the physics path, and leaves the stock path unchanged.
 """
 
 from __future__ import annotations
@@ -147,11 +146,12 @@ def test_train_manifest_embeds_wrapper_when_robot_spec_set():
         _byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd"
     )
     s = _train_script(robot_spec=spec, robot_usd_uri="s3://bucket/robots/acme_arm.usd")
-    # ships the module + post-boot wrapper and passes the spec
-    assert "isaac_byo_robot_task.py" in s
-    assert "NPA_ROBOT_MODULE_DIR=/tmp/npa_robot" in s
+    # Invokes the baked post-boot wrapper and passes the spec without source injection.
+    assert "/opt/npa/isaac-runtime/isaac_robot_train.py" in s
+    assert "NPA_ROBOT_MODULE_DIR=/opt/npa/isaac-runtime" in s
+    assert "cat >" not in s
     assert "NPA_BYO_ROBOT_SPEC_JSON" in s
-    assert "ROBOT_TRAIN_DONE" in s
+    assert "BYO_TRAIN_DONE" in s
     # stages the customer USD from S3
     assert "STAGING_ROBOT_USD" in s and "acme_arm.usd" in s
     # does NOT fall through to the stock train.py line
@@ -163,15 +163,17 @@ def test_train_manifest_robot_takes_precedence_over_physics():
         _byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd"
     )
     s = _train_script(robot_spec=spec, physics={"friction": 0.7, "mass_scale": 1.0})
-    assert "cat > /tmp/npa_robot/isaac_byo_robot_task.py" in s
-    # physics variant must NOT be shipped when the robot path wins
-    assert "cat > /tmp/npa_phys/isaac_physics_task.py" not in s
+    assert "/opt/npa/isaac-runtime/isaac_robot_train.py" in s
+    # The baked physics variant must not run when the robot path wins.
+    assert "/opt/npa/isaac-runtime/isaac_physics_train.py" not in s
+    assert "cat >" not in s
 
 
 def test_train_manifest_physics_only_unaffected():
     s = _train_script(physics={"friction": 0.7, "mass_scale": 1.0})
-    assert "isaac_physics_task.py" in s
-    assert "isaac_byo_robot_task" not in s
+    assert "/opt/npa/isaac-runtime/isaac_physics_train.py" in s
+    assert "/opt/npa/isaac-runtime/isaac_robot_train.py" not in s
+    assert "cat >" not in s
 
 
 # --------------------------------------------------------------------------- #
@@ -211,11 +213,10 @@ def test_eval_manifest_embeds_module_when_robot_spec_set():
         _byo_spec(), usd_container_path="/tmp/npa_robot/robot.usd"
     )
     s = _eval_script(robot_spec=spec, robot_usd_uri="s3://bucket/robots/acme_arm.usd")
-    assert "isaac_byo_robot_task.py" in s
+    assert "/opt/npa/isaac-runtime/isaac_eval.py" in s
     assert "NPA_BYO_ROBOT_SPEC_JSON" in s
-    assert "NPA_ROBOT_MODULE_DIR=/tmp/evalwork" in s
-    # the embedded eval rollout registers the variant + rebinds TASK
-    assert "EVAL_BYO_ROBOT_TASK" in s
+    assert "NPA_ROBOT_MODULE_DIR=/opt/npa/isaac-runtime" in s
+    assert "cat >" not in s
 
 
 def test_eval_rollout_registration_block_is_guarded():
