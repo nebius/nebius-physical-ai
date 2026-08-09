@@ -64,10 +64,14 @@ The reusable unit is intentionally smaller than an outer iteration:
 
 A completed unit is reusable only when its canonical payload SHA-256, immutable
 controller identity, and input digest match the current unit. External artifact
-URIs and their hashes remain in ComponentRecords. Stage 8 output can therefore survive a controller
-restart and feed Stage 9 without repeating the model Job. Finalization resumes
-after its last committed stage and never pairs metrics with a render directory
-from another split or checkpoint.
+URIs and their hashes remain in ComponentRecords. Before a unit-level commit,
+each logical sibling execution also has a stable SHA-256-derived component I/O
+prefix and Kubernetes Job base name. Re-entering an incomplete Stage 8 therefore
+adopts the existing Job and exact output object instead of generating a new
+attempt suffix. Stage 8 output can survive a controller restart and feed Stage 9
+without repeating the model Job. Finalization resumes after its last committed
+stage and never pairs metrics with a render directory from another split or
+checkpoint.
 
 ## Kubernetes reconciliation
 
@@ -184,6 +188,12 @@ digest. Gold metrics accept only a render manifest whose split is
 `gold_heldout` and whose checkpoint/scenario lineage exactly matches the gold
 report. Validation renders can never be selected lexicographically as a gold
 fallback.
+
+Validation and gold evaluation receive distinct exact `envs.jsonl` S3 object
+URIs. A replacement controller hydrates that object into its new local cache;
+it never treats a previous Pod's local directory as durable state, discovers a
+split by listing a prefix, or falls back from an unavailable gold object to a
+validation directory. Reports preserve the exact scenario-record URI.
 
 Gold remains sealed until the final configured Stage 10. Placement success is a
 stable final placement strictly inside 5 cm; closest distance, reach, contact,

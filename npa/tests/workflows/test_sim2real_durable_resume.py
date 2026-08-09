@@ -215,3 +215,180 @@ def test_driver_restart_reuses_stage8_and_continues_at_stage9(
     assert signal_calls == ["rollout-0000", "rollout-0000"]
     assert evidence["iterations"][0]["sample_vlm_eval"]["score"] == 0.5
     assert any("stage09-signal" in key for key in storage.objects)
+
+
+def test_mid_stage8_restart_reuses_component_uri_and_job_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-entering an incomplete Stage 8 addresses the already-created Job/output."""
+
+    config = _config(tmp_path)
+    rollout = tmp_path / "rollout-0000"
+    rollout.mkdir(parents=True)
+    manifest = {
+        "schema": "npa.sim2real.action_rollout.v1",
+        "rollout_id": "rollout-0000",
+        "task_description": "place cube",
+        "actions": [{"step": 0, "action": [0.0, 0.0, 0.0]}],
+        "camera_observations": ["camera-000.ppm"],
+    }
+    manifest_path = rollout / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    (rollout / "camera-000.ppm").write_bytes(b"P6\n1 1\n255\n\x00\x00\x00")
+
+    uploaded_attempts: list[str] = []
+    output_uris: list[str] = []
+    job_names: list[str] = []
+
+    def fake_upload(
+        _config: Sim2RealLoopConfig,
+        _directory: Path,
+        *,
+        component: str,
+        attempt_id: str,
+        name: str,
+    ) -> str:
+        uploaded_attempts.append(attempt_id)
+        return f"s3://durable-bucket/input/{component}/{attempt_id}/{name}/"
+
+    def fake_run(
+        _image: str,
+        *,
+        component: str,
+        env: dict[str, str],
+        output_json: Path,
+        output_uri: str,
+        config: Sim2RealLoopConfig,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        output_uris.append(output_uri)
+        job_names.append(
+            engine._k8s_job_name(config.run_id, component, identity=output_uri)
+        )
+        output_json.parent.mkdir(parents=True, exist_ok=True)
+        output_json.write_text(
+            json.dumps(
+                {
+                    "schema": "npa.sim2real.vlm_eval.v1",
+                    "rollout_id": "rollout-0000",
+                    "success": False,
+                    "score": 0.4,
+                    "summary": "real component result",
+                    "model": env["NPA_SIM2REAL_VLM_MODEL"],
+                    "per_step": [
+                        {
+                            "step": 0,
+                            "critique_text": "placement is incomplete",
+                            "error_tags": ["placement"],
+                            "action": [0.0, 0.0, 0.0],
+                            "camera_observation": "camera-000.ppm",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "mode": "kubernetes_job",
+            "component": component,
+            "job_name": job_names[-1],
+            "output_uri": output_uri,
+        }
+
+    monkeypatch.setattr(engine, "_upload_component_directory", fake_upload)
+    monkeypatch.setattr(engine, "_run_image_component", fake_run)
+
+    for replacement in ("driver-one", "driver-two"):
+        result, invocation = engine._evaluate_reason_rollout_k8s(
+            rollout,
+            manifest=manifest,
+            manifest_path=manifest_path,
+            rollout_id="rollout-0000",
+            config=config,
+            model="reason-model",
+            image="registry/reason@sha256:" + "a" * 64,
+            component="vlm_eval_reason2",
+            output_dir=tmp_path / replacement,
+        )
+        assert result["score"] == 0.4
+        assert invocation["mode"] == "kubernetes_job"
+
+    assert uploaded_attempts[0] == uploaded_attempts[1]
+    assert output_uris[0] == output_uris[1]
+    assert job_names[0] == job_names[1]
+    assert len(job_names[0]) <= 63
+
+
+def test_validation_and_gold_commands_receive_distinct_durable_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[tuple[str, str]] = []
+
+    def fake_command(
+        _command: str,
+        *,
+        cwd: Path,
+        env: dict[str, str],
+        component: str,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        seen.append(
+            (
+                env["NPA_SIM2REAL_EVALUATION_SPLIT"],
+                env["NPA_SIM2REAL_HELDOUT_ENVS_URI"],
+            )
+        )
+        output = Path(env["NPA_SIM2REAL_OUTPUT_JSON"])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(
+                {
+                    "schema": "npa.sim2real.heldout_eval.v1",
+                    "policy_checkpoint": "s3://bucket/checkpoints/model.pt",
+                    "per_env": [
+                        {
+                            "env_id": "scenario-0",
+                            "score": 0.0,
+                            "success": False,
+                            "details": {},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {"mode": "command", "component": component, "returncode": 0}
+
+    monkeypatch.setattr(engine, "_run_component_command", fake_command)
+    config = Sim2RealLoopConfig(
+        run_id="durable-split-run",
+        output_dir=tmp_path,
+        validation_envs_uri="s3://bucket/run/envs/validation/",
+        gold_heldout_envs_uri="s3://bucket/run/envs/gold-heldout/",
+        validation_env_count=1,
+        heldout_env_count=1,
+        byo_eval_command="durable-eval",
+    )
+    evidence = {"selected_checkpoint_uri": "s3://bucket/checkpoints/model.pt"}
+    validation = engine.run_heldout_eval(
+        config,
+        local_dir=tmp_path,
+        inner_evidence=evidence,
+        outer_iteration=1,
+        evaluation_split="validation",
+    )
+    gold = engine.run_heldout_eval(
+        config,
+        local_dir=tmp_path,
+        inner_evidence=evidence,
+        outer_iteration=1,
+        evaluation_split="gold_heldout",
+    )
+
+    assert seen == [
+        ("validation", "s3://bucket/run/envs/validation/envs.jsonl"),
+        ("gold_heldout", "s3://bucket/run/envs/gold-heldout/envs.jsonl"),
+    ]
+    assert validation["scenario_records_uri"] != gold["scenario_records_uri"]
+    assert validation["gold_heldout_untouched"] is True
+    assert gold["gold_heldout_untouched"] is False

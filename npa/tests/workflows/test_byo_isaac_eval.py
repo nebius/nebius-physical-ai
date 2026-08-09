@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
+import pytest
 
 from npa.workflows.sim2real import byo_isaac_eval as ev
 from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
@@ -203,6 +206,93 @@ def test_read_generated_envs(tmp_path):
     assert [e["env_id"] for e in envs] == ["env-00000", "env-00001"]
     assert envs[0]["seed"] == 111 and envs[1]["seed"] == 222
     assert ev.read_generated_envs(str(tmp_path / "missing")) == []
+
+
+def test_read_durable_generated_envs_downloads_exact_object(tmp_path, monkeypatch):
+    class FakeStorage:
+        def download_file(self, source: str, destination: str) -> str:
+            assert source == "s3://bucket/run/envs/validation/envs.jsonl"
+            target = Path(destination)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                '{"env_id":"validation-000","seed":17}\n', encoding="utf-8"
+            )
+            return str(target)
+
+    monkeypatch.setattr(
+        ev.StorageClient,
+        "from_environment",
+        classmethod(lambda cls, **_kwargs: FakeStorage()),
+    )
+    rows = ev.read_durable_generated_envs(
+        "s3://bucket/run/envs/validation/envs.jsonl",
+        cache_dir=tmp_path / "cache",
+    )
+    assert rows == [{"env_id": "validation-000", "seed": 17}]
+
+    with pytest.raises(ValueError, match="exact s3:// object"):
+        ev.read_durable_generated_envs(
+            "s3://bucket/run/envs/validation/",
+            cache_dir=tmp_path / "prefix",
+        )
+
+
+def test_main_prefers_durable_s3_scenarios_after_local_cache_loss(
+    tmp_path, monkeypatch
+):
+    durable_rows = [
+        {
+            "env_id": f"validation-{difficulty}",
+            "seed": index + 1,
+            "difficulty": difficulty,
+            "scenario_config_digest": f"digest-{difficulty}",
+        }
+        for index, difficulty in enumerate(("easy", "medium", "hard"))
+    ]
+
+    class FakeStorage:
+        def download_file(self, source: str, destination: str) -> str:
+            assert source == "s3://bucket/run/envs/validation/envs.jsonl"
+            target = Path(destination)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "".join(json.dumps(row) + "\n" for row in durable_rows),
+                encoding="utf-8",
+            )
+            return str(target)
+
+    monkeypatch.setattr(
+        ev.StorageClient,
+        "from_environment",
+        classmethod(lambda cls, **_kwargs: FakeStorage()),
+    )
+    output = tmp_path / "report.json"
+    missing_local = tmp_path / "deleted-controller-cache"
+    evidence = tmp_path / "inner.json"
+    evidence.write_text(
+        json.dumps({"selected_checkpoint_uri": "s3://bucket/run/model.pt"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NPA_BYO_ISAAC_DRYRUN", "1")
+    monkeypatch.setenv("NPA_SIM2REAL_OUTPUT_JSON", str(output))
+    monkeypatch.setenv("NPA_SIM2REAL_INNER_EVIDENCE_JSON", str(evidence))
+    monkeypatch.setenv("NPA_SIM2REAL_HELDOUT_ENVS_DIR", str(missing_local))
+    monkeypatch.setenv(
+        "NPA_SIM2REAL_HELDOUT_ENVS_URI",
+        "s3://bucket/run/envs/validation/envs.jsonl",
+    )
+    monkeypatch.setenv("NPA_SIM2REAL_EVALUATION_SPLIT", "validation")
+    monkeypatch.setenv("NPA_SIM2REAL_HELDOUT_ENV_COUNT", "3")
+
+    assert ev.main() == 0
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["scenario_records_source"] == "durable_s3_object"
+    assert report["scenario_records_uri"].endswith("/validation/envs.jsonl")
+    assert set(report["generated_env_ids"]) == {
+        "validation-easy",
+        "validation-medium",
+        "validation-hard",
+    }
 
 
 def test_per_env_labelled_by_generated_env_id_and_seed():

@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
 from npa.workflows.sim2real.isaac_job_payload import compressed_bash_launch
@@ -195,6 +196,32 @@ def read_generated_envs(envs_dir: str, *, limit: int = 0) -> list[dict[str, Any]
         if limit and len(envs) >= limit:
             break
     return envs
+
+
+def read_durable_generated_envs(
+    envs_uri: str,
+    *,
+    cache_dir: Path,
+) -> list[dict[str, Any]]:
+    """Hydrate one exact scenario-record object into the replacement controller.
+
+    Directory/prefix discovery is deliberately forbidden here: validation and
+    gold lineage must identify the exact immutable ``envs.jsonl`` object.
+    """
+
+    if not envs_uri.startswith("s3://") or envs_uri.endswith("/"):
+        raise ValueError(
+            "NPA_SIM2REAL_HELDOUT_ENVS_URI must be an exact s3:// object URI"
+        )
+    local_path = cache_dir / "envs.jsonl"
+    client = StorageClient.from_environment(
+        endpoint_url=_env("AWS_ENDPOINT_URL") or _env("S3_ENDPOINT_URL")
+    )
+    client.download_file(envs_uri, str(local_path))
+    rows = read_generated_envs(str(cache_dir))
+    if not rows:
+        raise ValueError(f"durable scenario-record object is empty: {envs_uri}")
+    return rows
 
 
 def select_stratified_eval_envs(
@@ -1306,13 +1333,27 @@ def main() -> int:
 
     # GENERATED held-out env specs (env_id + seed) — drive eval on the envgen
     # distribution and label results by the real generated env_id.
+    envs_uri = _env("NPA_SIM2REAL_HELDOUT_ENVS_URI")
     envs_dir = _env("NPA_SIM2REAL_HELDOUT_ENVS_DIR")
-    generated_envs = read_generated_envs(envs_dir) if envs_dir else []
+    if envs_uri:
+        generated_envs = read_durable_generated_envs(
+            envs_uri,
+            cache_dir=Path(output_json).parent / "durable-scenario-input",
+        )
+        scenario_records_source = "durable_s3_object"
+    else:
+        generated_envs = read_generated_envs(envs_dir) if envs_dir else []
+        scenario_records_source = "local_ephemeral"
     if generated_envs:
         generated_envs = select_stratified_eval_envs(
             generated_envs,
             count=num_envs,
             split=_env("NPA_SIM2REAL_EVALUATION_SPLIT", "heldout"),
+        )
+
+    if not generated_envs and checkpoint_uri and _env("NPA_BYO_ISAAC_DRYRUN") != "1":
+        raise ValueError(
+            "real Isaac evaluation requires complete durable generated scenarios"
         )
 
     if _env("NPA_BYO_ISAAC_DRYRUN") == "1":
@@ -1348,6 +1389,8 @@ def main() -> int:
     )
     report["generated_envs_tested"] = len(generated_envs)
     report["generated_env_ids"] = [e["env_id"] for e in generated_envs]
+    report["scenario_records_uri"] = envs_uri
+    report["scenario_records_source"] = scenario_records_source
     report["component_invocation"] = {
         "mode": "kubernetes_job" if _LAST_GPU_PROVENANCE else "dryrun",
         "gpu_provenance": _LAST_GPU_PROVENANCE,

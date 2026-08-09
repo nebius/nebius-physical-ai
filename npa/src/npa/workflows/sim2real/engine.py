@@ -41,7 +41,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1938,7 +1937,11 @@ def _run_kubernetes_indexed_image_component(
     timeout_s: int,
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
-    base_job_name = _k8s_job_name(config.run_id, component)
+    base_job_name = _k8s_job_name(
+        config.run_id,
+        component,
+        identity=env.get("NPA_SIM2REAL_OUTPUT_URI", ""),
+    )
     _refresh_registry_pull_secret_for_sibling_job(
         image, config=config, namespace=namespace
     )
@@ -2029,7 +2032,11 @@ def _run_kubernetes_image_component(
     timeout_s: int,
 ) -> dict[str, Any]:
     namespace = config.k8s_namespace or _serviceaccount_namespace() or "default"
-    base_job_name = _k8s_job_name(config.run_id, component)
+    base_job_name = _k8s_job_name(
+        config.run_id,
+        component,
+        identity=output_uri or env.get("NPA_SIM2REAL_OUTPUT_URI", ""),
+    )
     _refresh_registry_pull_secret_for_sibling_job(
         image, config=config, namespace=namespace
     )
@@ -2117,10 +2124,17 @@ def _run_kubernetes_image_component(
 def _component_attempt_id(
     config: Sim2RealLoopConfig, component: str, label: str
 ) -> str:
-    digest = hashlib.sha1(
+    """Return the durable identity for one logical component execution.
+
+    A restarted exact-SHA controller must address the same immutable component
+    input/output prefix. Random attempt suffixes made partially completed Stage 8
+    work undiscoverable and caused duplicate GPU Jobs after driver replacement.
+    """
+
+    digest = hashlib.sha256(
         f"{config.run_id}:{component}:{label}".encode("utf-8")
     ).hexdigest()
-    return f"{_safe_slug(component)}-{digest[:10]}-{uuid.uuid4().hex[:8]}"
+    return f"{_safe_slug(component)}-{digest[:24]}"
 
 
 def _component_io_prefix(
@@ -2199,10 +2213,14 @@ def _storage_client(config: Sim2RealLoopConfig) -> StorageClient:
     return StorageClient.from_environment(endpoint_url=config.s3_endpoint)
 
 
-def _k8s_job_name(run_id: str, component: str) -> str:
-    run_part = _safe_slug(run_id)[:22] or "run"
+def _k8s_job_name(run_id: str, component: str, *, identity: str = "") -> str:
+    """Return a stable Job base name suitable for create-or-adopt reconciliation."""
+
+    run_part = _safe_slug(run_id)[:18] or "run"
     component_part = _safe_slug(component)[:16] or "component"
-    suffix = uuid.uuid4().hex[:8]
+    suffix = hashlib.sha256(
+        f"{run_id}:{component}:{identity}".encode("utf-8")
+    ).hexdigest()[:12]
     return f"s2r-{component_part}-{run_part}-{suffix}"[:63].rstrip("-")
 
 
@@ -2788,6 +2806,16 @@ def run_heldout_eval(
         if evaluation_split == "validation"
         else config.heldout_env_count
     )
+    configured_split_envs_uri = (
+        config.validation_envs_uri
+        if evaluation_split == "validation"
+        else (config.gold_heldout_envs_uri or config.heldout_envs_uri)
+    )
+    scenario_records_uri = (
+        _resolve_env_records_s3_uri(_normalized_s3_prefix(configured_split_envs_uri))
+        if configured_split_envs_uri
+        else ""
+    )
     output_dir = local_dir / "eval" / split_dir_name / f"outer-{outer_iteration:02d}"
     if inner_iteration:
         output_dir = output_dir / f"iter-{inner_iteration:02d}"
@@ -2820,6 +2848,10 @@ def run_heldout_eval(
             )
         ),
     }
+    if scenario_records_uri:
+        # The exact split object is the source of truth across controller Pod
+        # replacement. The local directory is merely a disposable cache.
+        extra["NPA_SIM2REAL_HELDOUT_ENVS_URI"] = scenario_records_uri
     # BYO robot: opt the held-out eval into the SAME robot-swapped Lift variant the
     # policy trained on. This sets NPA_BYO_ROBOT_TASK=1 (+ the robot uri/source/preset)
     # so byo_isaac_eval resolves the spec, ships the retarget module, and registers the
@@ -2850,6 +2882,16 @@ def run_heldout_eval(
     ):
         eval_command = "python3 -m npa.workflows.sim2real.byo_isaac_eval"
     if eval_command:
+        if (
+            config.s3_bucket.strip()
+            and os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip()
+            == "1"
+            and not scenario_records_uri
+        ):
+            raise Sim2RealLoopError(
+                f"real {evaluation_split} evaluation requires an exact durable "
+                "scenario-records S3 URI"
+            )
         invocation = _run_component_command(
             eval_command,
             cwd=local_dir,
@@ -2912,15 +2954,8 @@ def run_heldout_eval(
                 else ""
             ),
         )
-        split_envs_uri = (
-            config.validation_envs_uri
-            if evaluation_split == "validation"
-            else (config.gold_heldout_envs_uri or config.heldout_envs_uri)
-        )
-        if split_envs_uri:
-            heldout_envs_uri = _resolve_env_records_s3_uri(
-                _normalized_s3_prefix(split_envs_uri)
-            )
+        if scenario_records_uri:
+            heldout_envs_uri = scenario_records_uri
         else:
             local_heldout = local_dir / "envs" / split_dir_name
             jsonl_path = local_heldout / "envs.jsonl"
@@ -2940,6 +2975,7 @@ def run_heldout_eval(
                     attempt_id=attempt_id,
                     name="heldout-envs",
                 )
+            scenario_records_uri = heldout_envs_uri
         inner_evidence_uri = _upload_component_file(
             config,
             inner_path,
@@ -2981,6 +3017,10 @@ def run_heldout_eval(
         invocation=invocation,
     )
     report["evaluation_split"] = evaluation_split
+    report["scenario_records_uri"] = scenario_records_uri
+    report["scenario_records_source"] = (
+        "durable_s3_object" if scenario_records_uri else "local_ephemeral"
+    )
     report["checkpoint_training_iteration"] = checkpoint_iteration
     report["gold_heldout_untouched"] = evaluation_split == "validation"
     report = _ensure_heldout_renders_for_viz(
@@ -4693,7 +4733,13 @@ def _resolve_env_records_s3_uri(uri: str) -> str:
         return uri
     base = uri.rstrip("/")
     leaf = base.rsplit("/", 1)[-1]
-    if leaf in {"heldout", "train", "raw"} or uri.endswith("/"):
+    if leaf in {
+        "heldout",
+        "gold-heldout",
+        "validation",
+        "train",
+        "raw",
+    } or uri.endswith("/"):
         return f"{base}/envs.jsonl"
     return uri
 
