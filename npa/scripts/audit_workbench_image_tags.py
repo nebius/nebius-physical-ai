@@ -41,6 +41,7 @@ ALLOWLIST_SUBSTRINGS = (
 STALE_TOOL_TAGS: dict[str, set[str]] = {
     "cosmos2-transfer": {"2.5.0"},
     "cosmos3-reason": {"3.0.1-genuine-sm120"},
+    "cosmos3": {"1.2.2-cu130"},
     "envgen": {"0.1.1", "0.1.2"},
     "reference-policy": {"0.1.1", "0.1.2"},
     "loop-eval": {
@@ -55,6 +56,13 @@ STALE_TOOL_TAGS: dict[str, set[str]] = {
     "detection-training": {
         "bdd100k-real-labelmap-eval-w9-registry-fix-20260519T214847Z",
     },
+}
+
+# The old Cosmos3 tag is immutable rollback evidence, not a supported default.
+# Keep its one human-facing reference narrowly allowlisted; any workflow/source
+# use of the same tag remains an actionable stale-reference failure.
+ALLOWLISTED_STALE_REFS: set[tuple[str, str, str]] = {
+    ("docs/workbench/cosmos3-generate.md", "npa-cosmos3", "1.2.2-cu130"),
 }
 
 IMAGE_REF_RE = re.compile(r"(npa-[a-z0-9-]+):([a-z0-9._-]+(?:T[0-9]+Z)?)", re.IGNORECASE)
@@ -85,6 +93,8 @@ def _scan_file(path: Path) -> list[str]:
             continue
         stale = STALE_TOOL_TAGS.get(tool, set())
         if tag in stale:
+            if (str(rel), image.lower(), tag) in ALLOWLISTED_STALE_REFS:
+                continue
             canonical = supported_tool_version(tool)
             issues.append(
                 f"{rel}: {image}:{tag} (use {CONTAINER_IMAGE_NAMES[tool]}:{canonical})"

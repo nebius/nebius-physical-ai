@@ -74,6 +74,11 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
         "npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z"
     )
     assert (
+        container_image_for_tool("cosmos3")
+        == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/"
+        "npa-cosmos3:1.2.2-cu130-r2"
+    )
+    assert (
         container_image_for_tool("cosmos3-reason")
         == "cr.eu-north1.nebius.cloud/e00cm0vc6t09m0z5gw/npa-cosmos3-reason:"
         "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"

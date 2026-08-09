@@ -323,6 +323,10 @@ def test_train_wrapper_enforces_boot_before_isaac_imports():
     # trains via the rsl_rl runner and emits the done/ckpt markers
     assert "OnPolicyRunner" in s and "runner.learn" in s
     assert "ROBOT_TRAIN_DONE" in s
+    # A resumed run must name its explicit final checkpoint with the runner's
+    # absolute iteration rather than overwrite model_<added iterations>.pt.
+    assert 'getattr(runner, "current_learning_iteration", ITERS)' in s
+    assert "ROBOT_FINAL_CHECKPOINT" in s
     # refuses a silent stock fallback when a customer USD was requested
     assert "ROBOT_USD_MISMATCH" in s
     # surfaces the retarget plan + the honest task/robot compatibility verdict

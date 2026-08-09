@@ -803,51 +803,130 @@ def _resolve_deploy_storage_credentials(
 ) -> dict[str, str]:
     """Resolve the exact writable-storage credentials agent deploy will use.
 
-    Configured project/shared credentials are evaluated first. This is the same
-    health-verified decision used by preflight, setup, fresh-setup, and refresh;
-    IAM access-key inventory is only reached later when no configured candidate
-    works and a caller explicitly supplies freshly bootstrapped credentials.
+    Project-scoped credentials are evaluated before shared and bootstrap
+    credentials. This is the same health-verified decision used by preflight,
+    setup, fresh-setup, and refresh; IAM access-key inventory is only reached
+    later when no configured candidate works and a caller explicitly supplies
+    freshly bootstrapped credentials.
     """
 
     candidate = dict(bootstrap_creds or {})
+    from npa.clients.credentials import load_credentials
+
     project_name = str(project_alias or "").strip()
-    try:
-        configured = resolve_project_storage(project_name or None)
-    except ConfigError:
-        configured = None
-    configured_bucket = str(getattr(configured, "checkpoint_bucket", "") or "").strip()
-    configured_prefix = ""
-    if configured_bucket.startswith("s3://"):
-        rest = configured_bucket[len("s3://") :]
-        configured_bucket, _sep, configured_prefix = rest.partition("/")
-        configured_prefix = configured_prefix.strip("/")
-    configured_endpoint = str(
-        getattr(configured, "endpoint_url", "")
-        or f"https://storage.{region}.nebius.cloud"
-    ).strip()
-    configured_access_key = str(
-        getattr(configured, "aws_access_key_id", "") or ""
-    ).strip()
-    configured_secret_key = str(
-        getattr(configured, "aws_secret_access_key", "") or ""
-    ).strip()
-    if configured_bucket and _storage_credentials_allow_writes(
-        bucket=configured_bucket,
-        endpoint=configured_endpoint,
-        access_key=configured_access_key,
-        secret_key=configured_secret_key,
+    if project_name:
+        try:
+            project_storage = resolve_project_storage(
+                project_name,
+                include_shared_credentials=False,
+            )
+        except ConfigError:
+            project_storage = None
+        if project_storage is not None:
+            project_bucket = str(project_storage.checkpoint_bucket or "").strip()
+            project_prefix = ""
+            if project_bucket.startswith("s3://"):
+                rest = project_bucket[len("s3://"):]
+                project_bucket, _sep, project_prefix = rest.partition("/")
+                project_prefix = project_prefix.strip("/")
+            project_endpoint = str(
+                project_storage.endpoint_url
+                or f"https://storage.{region}.nebius.cloud"
+            ).strip()
+            project_access_key = str(project_storage.aws_access_key_id or "").strip()
+            project_secret_key = str(project_storage.aws_secret_access_key or "").strip()
+            if project_bucket and _storage_credentials_allow_writes(
+                bucket=project_bucket,
+                endpoint=project_endpoint,
+                access_key=project_access_key,
+                secret_key=project_secret_key,
+                region=region,
+                prefix=project_prefix,
+            ):
+                if emit_status:
+                    typer.echo(
+                        "  Using health-verified project artifact storage credentials."
+                    )
+                candidate["s3_bucket"] = project_bucket
+                candidate["s3_prefix"] = project_prefix
+                candidate["s3_endpoint"] = project_endpoint
+                candidate["nebius_api_key"] = project_access_key
+                candidate["nebius_secret_key"] = project_secret_key
+                return candidate
+
+    # With no selected project, resolve_project_storage(None) is the canonical
+    # shared/default storage view and may combine the configured bucket with the
+    # shared credential file. Never use this view for an explicit project: that
+    # path above deliberately disables shared credential injection first.
+    if not project_name:
+        try:
+            configured = resolve_project_storage(None)
+        except ConfigError:
+            configured = None
+        configured_bucket = str(
+            getattr(configured, "checkpoint_bucket", "") or ""
+        ).strip()
+        configured_prefix = ""
+        if configured_bucket.startswith("s3://"):
+            rest = configured_bucket[len("s3://") :]
+            configured_bucket, _sep, configured_prefix = rest.partition("/")
+            configured_prefix = configured_prefix.strip("/")
+        configured_endpoint = str(
+            getattr(configured, "endpoint_url", "")
+            or f"https://storage.{region}.nebius.cloud"
+        ).strip()
+        configured_access_key = str(
+            getattr(configured, "aws_access_key_id", "") or ""
+        ).strip()
+        configured_secret_key = str(
+            getattr(configured, "aws_secret_access_key", "") or ""
+        ).strip()
+        if configured_bucket and _storage_credentials_allow_writes(
+            bucket=configured_bucket,
+            endpoint=configured_endpoint,
+            access_key=configured_access_key,
+            secret_key=configured_secret_key,
+            region=region,
+            prefix=configured_prefix,
+        ):
+            if emit_status:
+                typer.echo(
+                    "  Using health-verified configured artifact storage credentials."
+                )
+            candidate["s3_bucket"] = configured_bucket
+            candidate["s3_prefix"] = configured_prefix
+            candidate["s3_endpoint"] = configured_endpoint
+            candidate["nebius_api_key"] = configured_access_key
+            candidate["nebius_secret_key"] = configured_secret_key
+            return candidate
+
+    shared = load_credentials(environ={})
+    shared_bucket = str(shared.s3_bucket or "").strip()
+    shared_prefix = ""
+    if shared_bucket.startswith("s3://"):
+        rest = shared_bucket[len("s3://"):]
+        shared_bucket, _sep, shared_prefix = rest.partition("/")
+        shared_prefix = shared_prefix.strip("/")
+    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
+    shared_access_key = str(shared.s3_access_key_id or "").strip()
+    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
+    if shared_bucket and _storage_credentials_allow_writes(
+        bucket=shared_bucket,
+        endpoint=shared_endpoint,
+        access_key=shared_access_key,
+        secret_key=shared_secret_key,
         region=region,
-        prefix=configured_prefix,
+        prefix=shared_prefix,
     ):
         if emit_status:
             typer.echo(
-                "  Using health-verified configured artifact storage credentials."
+                "  Using health-verified shared artifact storage credentials."
             )
-        candidate["s3_bucket"] = configured_bucket
-        candidate["s3_prefix"] = configured_prefix
-        candidate["s3_endpoint"] = configured_endpoint
-        candidate["nebius_api_key"] = configured_access_key
-        candidate["nebius_secret_key"] = configured_secret_key
+        candidate["s3_bucket"] = shared_bucket
+        candidate["s3_prefix"] = shared_prefix
+        candidate["s3_endpoint"] = shared_endpoint
+        candidate["nebius_api_key"] = shared_access_key
+        candidate["nebius_secret_key"] = shared_secret_key
         return candidate
 
     bucket = str(candidate.get("s3_bucket", "")).strip()

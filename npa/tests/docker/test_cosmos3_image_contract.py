@@ -10,6 +10,7 @@ regressing.
 from __future__ import annotations
 
 import re
+import importlib.util
 from pathlib import Path
 
 try:  # tomllib is stdlib from 3.11; the repo still supports 3.10 via tomli.
@@ -18,6 +19,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on the 3.10 CI leg
     import tomli as tomllib
 
 import yaml
+import pytest
 
 from npa.deploy.images import CONTAINER_IMAGE_NAMES, supported_tool_version
 from npa.smoke.capabilities import GOLDEN_EVAL_CAPABILITIES
@@ -27,7 +29,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 NPA_ROOT = REPO_ROOT / "npa"
 DOCKERFILE = NPA_ROOT / "docker/workbench/cosmos3/Dockerfile"
 SMOKE_SCRIPT = NPA_ROOT / "docker/workbench/cosmos3/smoke_functional.sh"
+VERIFY_ENV = NPA_ROOT / "docker/workbench/cosmos3/verify_env.py"
 CONTRACT = NPA_ROOT / "docker/workbench/packaging-contract.yaml"
+# Deliberate tripwire: do not derive this from the production resolver. Keeping
+# an independent literal makes a one-sided tag edit fail instead of teaching the
+# test the same mistake; this is safer than coupling packaging tests to another
+# mutable tag source.
+COSMOS3_RELEASE_TAG = "1.2.2-cu130-r2"
 
 # Anything that would pull weight bytes into a build layer.
 WEIGHT_FETCH_PATTERNS = (
@@ -51,6 +59,7 @@ def test_cosmos3_is_registered_as_a_container_tool() -> None:
     assert CONTAINER_IMAGE_NAMES["cosmos3"] == "npa-cosmos3"
 
     pinned = supported_tool_version("cosmos3")
+    assert pinned == COSMOS3_RELEASE_TAG
     pyproject = tomllib.loads((NPA_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert pyproject["tool"]["npa"]["supported-tools"]["cosmos3"] == pinned
 
@@ -96,6 +105,33 @@ def test_dockerfile_pins_the_framework_and_guards_against_baked_weights() -> Non
     assert "model weights baked into image" in instructions
     # Upstream attribution travels with the redistributed source.
     assert "/opt/cosmos3/licenses" in instructions
+
+
+def _load_verify_env():
+    spec = importlib.util.spec_from_file_location("cosmos3_verify_env", VERIFY_ENV)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_image_build_rejects_the_known_bad_xet_pair(monkeypatch) -> None:
+    module = _load_verify_env()
+    versions = {"huggingface_hub": "1.23.0", "hf-xet": "1.5.1"}
+    monkeypatch.setattr(module.metadata, "version", versions.__getitem__)
+
+    with pytest.raises(RuntimeError, match="known-bad gated-download pair"):
+        module.check_hf_transfer_pair()
+
+
+def test_image_build_accepts_the_measured_compatible_xet_pair(monkeypatch) -> None:
+    module = _load_verify_env()
+    versions = {"huggingface_hub": "0.36.2", "hf-xet": "1.3.2"}
+    monkeypatch.setattr(module.metadata, "version", versions.__getitem__)
+
+    assert module.check_hf_transfer_pair() == (
+        "huggingface_hub=0.36.2 hf-xet=1.3.2 (Xet enabled)"
+    )
 
 
 def test_smoke_script_requires_the_operator_token() -> None:

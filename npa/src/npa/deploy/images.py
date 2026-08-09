@@ -124,9 +124,10 @@ SUPPORTED_TOOL_VERSIONS = {
     "isaac-lab": "2.3.2.post1",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
     "cosmos2-transfer": "2.5.1-skypilot-ready-20260801T053000Z",
-    # cosmos-framework 1.2.2 (pinned commit 5e67049c) + torch cu130 inference env.
+    # Additive r2 release of cosmos-framework 1.2.2 (pinned commit 5e67049c) +
+    # torch cu130. The immutable 1.2.2-cu130 tag remains rollback provenance.
     # No weights baked; gated Cosmos3 checkpoints download at runtime.
-    "cosmos3": "1.2.2-cu130",
+    "cosmos3": "1.2.2-cu130-r2",
     "cosmos3-reason": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "cosmos-curate": "0.1.2",
     "cosmos-evaluator": "0.1.2",

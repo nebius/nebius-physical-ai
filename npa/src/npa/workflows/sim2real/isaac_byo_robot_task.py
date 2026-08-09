@@ -1224,8 +1224,17 @@ try:
         print("ROBOT_RESUME_LOADED", resume_ckpt, flush=True)
     runner.learn(num_learning_iterations=ITERS, init_at_random_ep_len=True)
     # Defensive explicit save (learn saves at save_interval; ensure one exists).
+    # On a resumed run ``current_learning_iteration`` includes the checkpoint's
+    # prior iterations, while ``ITERS`` is only the number added by this run.
+    # Preserve the historical fresh-run ``model_<ITERS>.pt`` name, but never
+    # overwrite an older numeric checkpoint with the resumed final policy.
+    final_iteration = max(
+        ITERS, int(getattr(runner, "current_learning_iteration", ITERS))
+    )
+    final_checkpoint = os.path.join(OUT, "model_%d.pt" % final_iteration)
     try:
-        runner.save(os.path.join(OUT, "model_%d.pt" % ITERS))
+        runner.save(final_checkpoint)
+        print("ROBOT_FINAL_CHECKPOINT", final_checkpoint, flush=True)
     except Exception as e:
         print("explicit save failed (learn may have saved already):", repr(e), flush=True)
     import glob

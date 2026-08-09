@@ -31,6 +31,7 @@
 #   TEST_NAMESPACE  Namespace used for the temporary node-debugger pods.
 #                   Defaults to the current kubectl namespace or default.
 #   MOUNT_POINT     Host path to validate. Defaults to the Terraform mount.
+#   MOUNT_TAG       Stable virtiofs tag to validate. Defaults to data.
 #   DEBUG_IMAGE     Image used by kubectl debug. Defaults to ubuntu.
 #   VERIFY_ALL_NODES  When true, validates every node in the cluster. Defaults
 #                     to false.
@@ -49,6 +50,7 @@ source "${SCRIPT_DIR}/common.sh"
 DEBUG_IMAGE="${DEBUG_IMAGE:-ubuntu}"
 VERIFY_ALL_NODES="${VERIFY_ALL_NODES:-false}"
 TARGET_NODE="${TARGET_NODE:-}"
+MOUNT_TAG="${MOUNT_TAG:-data}"
 FAILED=0
 
 normalize_node_name() {
@@ -63,6 +65,7 @@ normalize_node_name() {
 log_step "Starting Nebius Shared Filesystem mount verification"
 log_info "Namespace for temporary debug pods: ${TEST_NAMESPACE}"
 log_info "Expected mount point: ${MOUNT_POINT}"
+log_info "Expected mount tag: ${MOUNT_TAG}"
 log_info "Debug image: ${DEBUG_IMAGE}"
 
 log_step "Checking required local dependencies"
@@ -108,7 +111,7 @@ for node in "${NODES_TO_CHECK[@]}"; do
   echo "------------------------------------------------------------"
   echo "=== ${node} ==="
   output_file="$(mktemp)"
-  if ! kubectl debug -n "${TEST_NAMESPACE}" "${node}" \
+  if kubectl debug -n "${TEST_NAMESPACE}" "${node}" \
     --attach=true \
     --quiet \
     --image="${DEBUG_IMAGE}" \
@@ -116,15 +119,27 @@ for node in "${NODES_TO_CHECK[@]}"; do
     chroot /host sh -lc "
       set -eu
       echo '[check] Verifying that the Nebius Shared Filesystem is actively mounted at ${MOUNT_POINT}'
-      mount | awk '\$3 == \"${MOUNT_POINT}\" { print; found=1 } END { exit found ? 0 : 1 }'
-      echo '[check] Verifying that the mount is persisted in /etc/fstab for node reboot safety'
-      awk '\$2 == \"${MOUNT_POINT}\" { print; found=1 } END { exit found ? 0 : 1 }' /etc/fstab
+      mount | awk '\$1 == \"${MOUNT_TAG}\" && \$3 == \"${MOUNT_POINT}\" && \$5 == \"virtiofs\" && \$6 ~ /^\\(rw([,)]|\$)/ { print; found=1 } END { exit found ? 0 : 1 }'
+      echo '[check] Verifying that fstab persists the exact virtiofs tag with the required nofail option'
+      awk '\$1 == \"${MOUNT_TAG}\" && \$2 == \"${MOUNT_POINT}\" && \$3 == \"virtiofs\" { count=split(\$4, options, \",\"); for (i=1; i<=count; i++) if (options[i] == \"nofail\") safe=1; if (safe) { print; found=1 } } END { exit found ? 0 : 1 }' /etc/fstab
       echo '[check] Verifying that the mounted filesystem reports capacity and is readable'
       df -h ${MOUNT_POINT}
       echo '[check] Verifying that the target directory exists on the host'
       test -d ${MOUNT_POINT}
-      echo '[result] PASS: shared filesystem host mount is active and healthy at ${MOUNT_POINT} on this node'
+      echo '[check] Verifying that the host mount is writable'
+      probe=${MOUNT_POINT}/.npa-filesystem-host-probe-\$\$
+      printf '%s\\n' host-write-ok > \"\$probe\"
+      grep -qx host-write-ok \"\$probe\"
+      rm -f \"\$probe\"
+      echo '[result] PASS: shared filesystem host mount is writable virtiofs with reboot-safe nofail at ${MOUNT_POINT} on this node'
     " 2>&1 | tee "${output_file}"; then
+    if ! grep -Fq \
+      "[result] PASS: shared filesystem host mount is writable virtiofs with reboot-safe nofail at ${MOUNT_POINT} on this node" \
+      "${output_file}"; then
+      FAILED=1
+      echo "[result] FAIL: ${node} completed without the required shared-filesystem success evidence" >&2
+    fi
+  else
     FAILED=1
     echo "[result] FAIL: ${node} does not have a healthy shared filesystem mount at ${MOUNT_POINT}" >&2
   fi

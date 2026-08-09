@@ -111,10 +111,16 @@ def test_no_tool_ref_argv_passes_a_flag_its_cli_rejects() -> None:
     )
 
 
+#: Top-level CLI groups a toolRef may invoke. `workbench` is the tool layer;
+#: `soperator` and `fleet` are the infra-provisioning groups behind the
+#: `infra.*` toolRefs.
+TOOL_REF_CLI_GROUPS = ("workbench", "soperator", "fleet")
+
+
 @pytest.mark.parametrize("tool_ref", _cli_backed_tool_refs())
 def test_tool_ref_argv_resolves_to_a_real_command(tool_ref: str) -> None:
     command = resolve_argv_command(TOOL_CATALOG[tool_ref].argv_template)
-    assert command.path.startswith("workbench") or command.path.startswith("soperator")
+    assert command.path.startswith(TOOL_REF_CLI_GROUPS)
     assert command.flags, f"{tool_ref}: {command.path} declares no options"
 
 
