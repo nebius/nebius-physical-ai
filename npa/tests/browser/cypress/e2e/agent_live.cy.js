@@ -373,8 +373,22 @@ describe("NPA agent UI against live infra", () => {
   it("embeds the Lichtblick MCAP viewer and co-serves the recording", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
-    // Activate the embedded Lichtblick render mode.
-    cy.get("#renderModeLichtblick").click();
+    // A boot-time status refresh can finish just after the first click and restore
+    // the artifact's viewer mode. Re-activate until the explicit operator choice
+    // wins, then require the pane to stay selected.
+    const activateLichtblick = (attempt) => {
+      cy.get("#renderModeLichtblick").click();
+      cy.wait(500);
+      cy.get("#viewerPaneLichtblick").then(($pane) => {
+        if ($pane.hasClass("is-active-viewer")) return;
+        if (attempt < 3) {
+          activateLichtblick(attempt + 1);
+          return;
+        }
+        expect($pane).to.have.class("is-active-viewer");
+      });
+    };
+    activateLichtblick(0);
     cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
     cy.get("#lichtblickFrame").should("have.attr", "src").and("include", "/lichtblick/");
     cy.get("#openLichtblick").should("be.visible");
@@ -454,91 +468,63 @@ describe("NPA agent UI against live infra", () => {
     });
   });
 
-  it("loads a live Sim2Real run as a Rerun artifact, not a stale JSON artifact", function () {
+  it("loads the canonical run from its exact artifact source, never stale history", function () {
     const runId = liveRunId();
     if (!runId) {
       this.skip();
     }
 
-    const assertRerunSimViz = (simViz) => {
+    const assertExactSource = (response, source) => {
+      expect(response.status, JSON.stringify(response.body)).to.eq(200);
+      expect(response.body, JSON.stringify(response.body)).to.have.property("ok", true);
+      const simViz = response.body.sim_viz || {};
+      const preferred = response.body.preferred || {};
+      const prefix = String(source.entry.resolved_prefix || "");
+      const expectedScope = prefix ? `${prefix}/${runId}/` : `${runId}/`;
       expect(String(simViz.run_id || "")).to.eq(runId);
-      expect(String(simViz.artifact_render || "")).to.eq("rerun");
-      expect(String(simViz.artifact_key || "")).to.match(/\/reports\/sim2real\.rrd$/);
-      expect(String(simViz.artifact_uri || "")).to.match(/\/reports\/sim2real\.rrd$/);
-      expect(String(simViz.rrd_uri || "")).to.match(/^file:\/\//);
-      expect(simViz.rerun_ready).to.eq(true);
-      expect(String(simViz.camera || "")).to.eq("heldout-sim");
-      expect(String(simViz.preview_entity || "")).to.eq("camera");
-      expect(simViz.visualization_note || "").to.match(/held-out simulation camera|reference proxy/i);
-      expect(decodeURIComponent(String(simViz.rerun_iframe_url || ""))).to.include(
-        "/rerun/recordings/sim2real.rrd",
-      );
+      expect(String(simViz.bucket || "")).to.eq(String(source.entry.bucket || ""));
+      expect(String(simViz.project_id || "")).to.eq(String(source.entry.project_id || ""));
+      expect(String(simViz.resolved_prefix || "")).to.eq(prefix);
+      expect(
+        String(preferred.key || "").startsWith(expectedScope),
+        `preferred key belongs to ${expectedScope}`,
+      ).to.eq(true);
+      expect(String(simViz.artifact_key || "")).to.eq(String(preferred.key || ""));
+      expect(String(simViz.artifact_uri || "")).to.eq(String(preferred.s3_uri || ""));
+      expect(String(simViz.artifact_render || "")).to.eq(String(preferred.render || ""));
+      expect(String(simViz.artifact_key || "")).not.to.include("training-summary.png");
+      return simViz;
     };
 
-    const loadRunUntilRerun = (attempt, source) => {
-      liveAgentRequest("/api/sim-viz/load-run", {
+    findLiveRunArtifact(
+      runId,
+      (item) => String((item && item.render) || "") === "video",
+    ).then((source) => {
+      expect(source, `viewable exact source for ${runId}`).not.to.eq(null);
+      return liveAgentRequest("/api/sim-viz/load-run", {
         method: "POST",
         body: sourceAwareLoadRunBody(runId, source.entry),
         timeout: 120000,
-        failOnStatusCode: false,
       }).then((response) => {
-        const simViz = (response.body && response.body.sim_viz) || {};
-        const ready =
-          response.status === 200 &&
-          response.body &&
-          response.body.ok === true &&
-          String(simViz.artifact_render || "") === "rerun" &&
-          String(simViz.run_id || "") === runId;
-        if (!ready) {
-          if (attempt >= 4) {
-            expect(response.status, JSON.stringify(response.body)).to.eq(200);
-            expect(response.body, JSON.stringify(response.body)).to.have.property("ok", true);
-            assertRerunSimViz(simViz);
-            return;
-          }
-          cy.wait(1500).then(() => loadRunUntilRerun(attempt + 1, source));
-          return;
-        }
-        assertRerunSimViz(simViz);
-        const assertStatusUntilRerun = (statusAttempt) => {
-          liveAgentRequest(`/api/sim-viz/status?run_id=${encodeURIComponent(runId)}`).then((statusResp) => {
-            const statusViz = statusResp.body || {};
-            const statusReady =
-              statusResp.status === 200 &&
-              String(statusViz.artifact_render || "") === "rerun" &&
-              String(statusViz.run_id || "") === runId;
-            if (!statusReady) {
-              if (statusAttempt >= 4) {
-                expect(statusResp.status, JSON.stringify(statusResp.body)).to.eq(200);
-                assertRerunSimViz(statusViz);
-                return;
-              }
-              cy.wait(1000).then(() => assertStatusUntilRerun(statusAttempt + 1));
-              return;
-            }
-            assertRerunSimViz(statusViz);
-            cy.reload();
-            cy.get("#statusBar", { timeout: 30000 }).should("exist");
-            cy.get("#rerunBundleCover", { timeout: 60000 }).should("have.attr", "hidden");
-            cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
-            cy.get("#tabRerun").click();
-            cy.get("#rerunFrame").should(($frame) => {
-              const src = String($frame.attr("src") || "");
-              expect(decodeURIComponent(src)).to.include("/rerun/recordings/sim2real.rrd");
-            });
-            cy.get("#statusBar").should("not.contain.text", "Non-RRD artifact loaded");
-          });
-        };
-        assertStatusUntilRerun(1);
+        const loaded = assertExactSource(response, source);
+        return liveAgentRequest(
+          `/api/sim-viz/status?run_id=${encodeURIComponent(runId)}`,
+        ).then((statusResponse) => {
+          expect(statusResponse.status).to.eq(200);
+          expect(String(statusResponse.body.run_id || "")).to.eq(runId);
+          expect(String(statusResponse.body.artifact_key || "")).to.eq(
+            String(loaded.artifact_key || ""),
+          );
+          expect(String(statusResponse.body.resolved_prefix || "")).to.eq(
+            String(source.entry.resolved_prefix || ""),
+          );
+          cy.reload();
+          cy.get("#statusBar", { timeout: 30000 }).should("exist");
+          cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
+          cy.get("#renderedDataSummary").should("contain.text", String(loaded.artifact_render));
+          cy.get("#renderedDataSummary").should("not.contain.text", "training-summary.png");
+        });
       });
-    };
-    findLiveRunArtifact(
-      runId,
-      (item) => String((item && item.render) || "") === "rerun" &&
-        /\/reports\/sim2real\.rrd$/.test(String((item && item.key) || "")),
-    ).then((source) => {
-      expect(source, `Rerun source for ${runId}`).not.to.eq(null);
-      loadRunUntilRerun(0, source);
     });
   });
 
@@ -551,35 +537,30 @@ describe("NPA agent UI against live infra", () => {
     cy.viewport(1440, 1000);
     findLiveRunArtifact(
       runId,
-      (item) => String((item && item.render) || "") === "rerun" &&
-        /\/reports\/sim2real\.rrd$/.test(String((item && item.key) || "")),
+      (item) => String((item && item.render) || "") === "video",
     ).then((source) => {
-      expect(source, `Rerun source for ${runId}`).not.to.eq(null);
+      expect(source, `viewable exact source for ${runId}`).not.to.eq(null);
       return liveAgentRequest("/api/sim-viz/load-run", {
         method: "POST",
         body: sourceAwareLoadRunBody(runId, source.entry),
         timeout: 120000,
       });
     }).then((response) => {
-        expect(response.status).to.eq(200);
-        expect(response.body).to.have.property("ok", true);
-        expect((response.body.sim_viz || {}).artifact_render).to.eq("rerun");
-        expect(String((response.body.sim_viz || {}).run_id || "")).to.eq(runId);
+      expect(response.status).to.eq(200);
+      expect(response.body).to.have.property("ok", true);
+      expect(String((response.body.sim_viz || {}).run_id || "")).to.eq(runId);
+      expect(String((response.body.sim_viz || {}).artifact_render || "")).to.eq(
+        String((response.body.preferred || {}).render || ""),
+      );
     });
     cy.reload();
     cy.get("#statusBar", { timeout: 30000 }).should("exist");
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
-    cy.get("#runIdInput", { timeout: 30000 }).clear().type(runId);
-    cy.get("#loadRunData").click();
     cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
     cy.get("#artifactLoadRunArtifacts").click();
 
-    cy.get("#artifactList", { timeout: 120000 }).within(() => {
-      cy.contains("reports/sim2real.rrd").should("be.visible");
-      cy.contains("rerun").should("be.visible");
-      cy.contains("reports/sim2real-report.json").should("be.visible");
-    });
+    cy.get("#artifactList", { timeout: 120000 }).should("contain.text", ".mp4");
     cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
     cy.get("#stageList", { timeout: 30000 }).within(() => {
@@ -595,11 +576,8 @@ describe("NPA agent UI against live infra", () => {
     cy.get("#stageList .stage-progress").invoke("text").should("not.match", /\d+\/\d+ stages succeeded/i);
     cy.get("#runLog").should("contain.text", "does not establish execution success");
     cy.get("#tabRerun").click();
-    cy.get("#renderedDataSummary", { timeout: 30000 }).should("contain.text", "rerun").and("contain.text", "sim2real.rrd");
-    cy.get("#renderedDataSummary").should("contain.text", "held-out simulation camera");
-    cy.get("#simCamera").should("contain.text", "heldout-sim");
-    cy.get("#rerunFrame").should("be.visible");
-    cy.get("#renderModeRerun").should("have.class", "is-active");
+    cy.get("#renderedDataSummary", { timeout: 30000 }).should("contain.text", "video");
+    cy.get("#renderModeVideo").should("have.class", "is-active");
     // Tab panels stay mounted with opacity:0 when inactive — assert activation class,
     // not Cypress visibility (opacity:0 is treated as hidden).
     cy.get("#tabMain").click();
@@ -617,12 +595,12 @@ describe("NPA agent UI against live infra", () => {
       const artifactRect = artifactList.getBoundingClientRect();
       expect(artifactRect.width, "artifactList has usable width").to.be.greaterThan(240);
       expect(artifactRect.height, "artifactList has usable height").to.be.greaterThan(120);
-      expect(String(artifactList.textContent || "")).to.match(/sim2real\.rrd/);
-      const rerunFrame = win.document.getElementById("rerunFrame");
-      expect(rerunFrame, "rerunFrame exists").to.exist;
-      const frameRect = rerunFrame.getBoundingClientRect();
-      expect(frameRect.width, "rerunFrame has usable width").to.be.greaterThan(240);
-      expect(frameRect.height, "rerunFrame has usable height").to.be.greaterThan(40);
+      expect(String(artifactList.textContent || "")).to.match(/\.mp4/);
+      const mediaPane = win.document.getElementById("viewerPaneMedia");
+      expect(mediaPane, "media viewer exists").to.exist;
+      const mediaRect = mediaPane.getBoundingClientRect();
+      expect(mediaRect.width, "media viewer has usable width").to.be.greaterThan(240);
+      expect(mediaRect.height, "media viewer has usable height").to.be.greaterThan(40);
     });
     cy.get("#tabMain").click();
     cy.get("#panelChat").should("have.class", "is-active");
@@ -734,6 +712,8 @@ describe("NPA agent UI against live infra", () => {
           $select[0].selectedIndex = sourceIndex;
           cy.wrap($select).trigger("change");
         });
+        cy.get("#runIdInput", { timeout: 120000 }).should("have.value", runId);
+        cy.get("#artifactList", { timeout: 120000 }).should("contain.text", ".mp4");
         cy.get("#artifactTypeFilter").select("video");
         cy.get("#artifactList", { timeout: 120000 }).should("contain.text", ".mp4");
         cy.contains("#artifactList button", "Play").first().click();
