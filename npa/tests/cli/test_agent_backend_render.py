@@ -232,6 +232,52 @@ def _capture_setup_script(monkeypatch) -> str:
     return captured["setup_script"]
 
 
+def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
+    """Import the emitted backend and its shipped helper package for route tests."""
+    import importlib.util
+
+    setup_script = _capture_setup_script(monkeypatch)
+
+    def _extract(remote_path: str) -> str:
+        match = re.search(
+            r"cat <<'PY' \| sudo tee "
+            + re.escape(remote_path)
+            + r" >/dev/null\n(.*?)\nPY\n",
+            setup_script,
+            flags=re.DOTALL,
+        )
+        assert match, f"bootstrap does not write {remote_path}"
+        return match.group(1)
+
+    package = tmp_path / "agent_backend"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    for name in (
+        "memory",
+        "actions",
+        "semantic_router",
+        "sim2real_loop",
+        "retrieval",
+        "trace",
+        "foxglove",
+        "foxglove_routes",
+    ):
+        (package / f"{name}.py").write_text(
+            _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
+        )
+    backend_path = tmp_path / "backend.py"
+    backend_path.write_text(
+        _extract("/opt/npa-agent/backend.py"), encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    spec = importlib.util.spec_from_file_location(module_name, backend_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.mark.parametrize(
     ("module", "marker"),
     [
@@ -312,6 +358,219 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         spec.loader.exec_module(module)
     finally:
         sys.modules.pop("npa_rendered_backend", None)
+
+
+def test_source_qualified_rrd_loads_keep_independent_history(
+    monkeypatch, tmp_path
+) -> None:
+    """Each exact run selection loads its own bytes and retains its own snapshot."""
+    import hashlib
+    import shutil
+    import sys
+
+    module_name = "npa_rendered_artifact_history_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    recordings = tmp_path / "recordings"
+    recordings.mkdir()
+    module.RECORDINGS_DIR = recordings
+    module.RECORDING_PATH = recordings / "active.rrd"
+    state: dict = {}
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda _state: None)
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (
+            object(),
+            {"bucket": "artifact-bucket", "prefix": "nested/root"},
+        ),
+    )
+    monkeypatch.setattr(
+        module, "_agent_s3_buckets", lambda _s3, _settings: ["artifact-bucket"]
+    )
+    selections = {
+        "npa1_source_one": (
+            "run-one",
+            "nested/root/category-one",
+            b"first recording bytes",
+        ),
+        "npa1_source_two": (
+            "run-two",
+            "nested/root/category-two",
+            b"second, different recording bytes",
+        ),
+    }
+
+    def _resolve(_buckets, *, base_prefix, run_ref_or_id, s3):
+        assert base_prefix == "nested/root"
+        run_id, source_prefix, _body = selections[run_ref_or_id]
+        key = f"{source_prefix}/{run_id}/reports/run.rrd"
+        artifact = module.Artifact(
+            run_id,
+            key,
+            f"s3://artifact-bucket/{key}",
+            32,
+            "2026-08-01T00:00:00+00:00",
+            "rerun",
+            True,
+        )
+        return module.RunResolution(
+            run_id, "artifact-bucket", source_prefix, [artifact]
+        )
+
+    def _download(s3_uri, destination, *, s3):
+        body = next(
+            body
+            for run_id, source_prefix, body in selections.values()
+            if f"/{source_prefix}/{run_id}/" in s3_uri
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(body)
+        return destination
+
+    def _publish(source):
+        shutil.copy2(source, module.RECORDING_PATH)
+        return "/rerun/recordings/cap-" + ("a" * 43) + ".rrd"
+
+    monkeypatch.setattr(module, "resolve_run_artifacts", _resolve)
+    monkeypatch.setattr(module, "download_s3_uri", _download)
+    monkeypatch.setattr(module, "_publish_rrd_recording", _publish)
+    monkeypatch.setattr(module, "_restart_rerun_serve", lambda **_kwargs: True)
+    monkeypatch.setattr(module, "_wait_rerun_web_viewer_healthy", lambda: True)
+
+    try:
+        responses = []
+        for run_ref, (run_id, source_prefix, _body) in selections.items():
+            key = f"{source_prefix}/{run_id}/reports/run.rrd"
+            responses.append(
+                module.sim_viz_load_artifact(
+                    {"run_id": run_id, "run_ref": run_ref, "key": key}
+                )
+            )
+
+        assert [item["sim_viz"]["run_id"] for item in responses] == [
+            "run-one",
+            "run-two",
+        ]
+        snapshots = state["sim_viz_runs"]
+        ref_one = module.encode_run_ref(
+            "artifact-bucket", "nested/root/category-one", "run-one"
+        )
+        ref_two = module.encode_run_ref(
+            "artifact-bucket", "nested/root/category-two", "run-two"
+        )
+        assert set(snapshots) == {ref_one, ref_two}
+        assert snapshots[ref_one]["artifact_key"].endswith(
+            "category-one/run-one/reports/run.rrd"
+        )
+        assert snapshots[ref_two]["artifact_key"].endswith(
+            "category-two/run-two/reports/run.rrd"
+        )
+        assert snapshots[ref_one]["served_recording_sha256"] == (
+            hashlib.sha256(selections["npa1_source_one"][2]).hexdigest()
+        )
+        assert snapshots[ref_two]["served_recording_sha256"] == (
+            hashlib.sha256(selections["npa1_source_two"][2]).hexdigest()
+        )
+        assert (
+            snapshots[ref_one]["served_recording_sha256"]
+            != snapshots[ref_two]["served_recording_sha256"]
+        )
+        load_response = module._sim_viz_load_response(
+            state, responses[-1]["sim_viz"], run_id="run-two"
+        )
+        available_refs = {item["run_ref"] for item in load_response["available_runs"]}
+        assert available_refs == {ref_one, ref_two}
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
+    monkeypatch, tmp_path
+) -> None:
+    """Caller-controlled buckets and path-like object keys fail before download."""
+    import sys
+
+    module_name = "npa_rendered_artifact_security_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (
+            object(),
+            {"bucket": "configured-bucket", "prefix": "nested/root"},
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "download_s3_uri",
+        lambda *_args, **_kwargs: pytest.fail("rejected requests must not download"),
+    )
+    try:
+        for key in ("../secret", "folder/../secret", "folder\\secret", "bad\x00key"):
+            with pytest.raises(module.HTTPException) as exc_info:
+                module._safe_artifact_key(key)
+            assert exc_info.value.status_code == 400
+
+        with pytest.raises(module.HTTPException) as exc_info:
+            module.artifacts_download(key="safe.bin", bucket="foreign-bucket")
+        assert exc_info.value.status_code == 400
+
+        with pytest.raises(module.HTTPException) as exc_info:
+            module.artifacts_download(
+                s3_uri="s3://configured-bucket/../secret.bin"
+            )
+        assert exc_info.value.status_code == 400
+
+        allowed_key = "nested/root/category/run-one/reports/run.rrd"
+        allowed_artifact = module.Artifact(
+            "run-one",
+            allowed_key,
+            f"s3://configured-bucket/{allowed_key}",
+            12,
+            "2026-08-01T00:00:00+00:00",
+            "rerun",
+            True,
+        )
+        monkeypatch.setattr(
+            module,
+            "_agent_s3_buckets",
+            lambda _s3, _settings: ["configured-bucket"],
+        )
+        monkeypatch.setattr(
+            module,
+            "resolve_run_artifacts",
+            lambda *_args, **_kwargs: module.RunResolution(
+                "run-one",
+                "configured-bucket",
+                "nested/root/category",
+                [allowed_artifact],
+            ),
+        )
+        with pytest.raises(module.HTTPException) as exc_info:
+            module.sim_viz_load_run(
+                {
+                    "run_id": "run-one",
+                    "run_ref": "npa1_exact",
+                    "rrd_uri": "s3://configured-bucket/another/run.rrd",
+                }
+            )
+        assert exc_info.value.status_code == 400
+        with pytest.raises(module.HTTPException) as exc_info:
+            module.sim_viz_load_run(
+                {
+                    "run_id": "run-one",
+                    "run_ref": "npa1_exact",
+                    "rrd_uri": "s3://configured-bucket/nested/root/category/run-one/movie.mp4",
+                }
+            )
+        assert exc_info.value.status_code == 400
+    finally:
+        sys.modules.pop(module_name, None)
 
     paths = {getattr(route, "path", "") for route in module.app.routes}
     for expected in (

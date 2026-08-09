@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
     <meta name="npa-ui-version" content="{AGENT_UI_VERSION}">
+    <meta name="npa-artifact-discovery-contract" content="s3-source-qualified-v1">
     <title>NPA Agent</title>
     <link rel="preload" href="/rerun/re_viewer.js" as="script" crossorigin>
     <link rel="preload" href="/rerun/re_viewer_bg.wasm" as="fetch" type="application/wasm" crossorigin>
@@ -5428,6 +5429,7 @@
       let knownAvailableRuns = [];
       let discoveredArtifactRuns = [];
       let mergedRunsCache = [];
+      let activeArtifactRunRef = "";
       // Load the whole run list into the picker by default so every run shows
       // without the operator having to guess a search fragment. The server still
       // supports (q=) search for buckets larger than this, and the "Find run" /
@@ -5461,15 +5463,28 @@
         const query = String(typed || "").trim();
         const fallback = String(selected || "").trim();
         if (!query) return fallback;
-        const exact = mergedRunsCache.find((run) => String((run && run.run_id) || "") === query);
-        if (exact) return query;
+        const exact = mergedRunsCache.filter((run) => String((run && run.run_id) || "") === query);
+        if (exact.length === 1) return String(exact[0].run_ref || exact[0].run_id || "").trim();
+        if (exact.length > 1 && exact.some((run) => String((run && run.run_ref) || "") === fallback)) {
+          return fallback;
+        }
         const lowered = query.toLowerCase();
         const matches = mergedRunsCache.filter((run) =>
           String((run && run.run_id) || "").toLowerCase().includes(lowered)
         );
-        if (matches.length === 1) return String(matches[0].run_id || "").trim();
+        if (matches.length === 1) return String(matches[0].run_ref || matches[0].run_id || "").trim();
         // Allow loading a pasted id that is not yet in the cached list.
         return query;
+      }
+      function resolveRunSelection(value) {
+        const requested = String(value || "").trim();
+        const match = mergedRunsCache.find((run) =>
+          String((run && run.run_ref) || "").trim() === requested
+        );
+        return {
+          run_id: String((match && match.run_id) || requested).trim(),
+          run_ref: String((match && match.run_ref) || "").trim(),
+        };
       }
       // Effective run timestamp for display + sort: when the run STARTED
       // (started_at). Falls back to artifact recency (last_modified), then viewer
@@ -5480,11 +5495,23 @@
       }
       function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
         const map = new Map();
-        const ingest = (run, source) => {
+        const discoveredByRunId = new Map();
+        for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) {
+          const runId = String((run && run.run_id) || "").trim();
+          if (!runId) continue;
+          const values = discoveredByRunId.get(runId) || [];
+          values.push(run);
+          discoveredByRunId.set(runId, values);
+        }
+        const ingest = (run, source, forcedKey) => {
           const runId = String((run && run.run_id) || run || "").trim();
           if (!runId) return;
-          const prev = map.get(runId) || {
+          const runRef = String((run && run.run_ref) || "").trim();
+          const identity = String(forcedKey || runRef || runId);
+          const prev = map.get(identity) || {
             run_id: runId,
+            run_ref: runRef,
+            source_prefix: String((run && run.source_prefix) || ""),
             started_at: "",
             last_modified: "",
             activity_at: "",
@@ -5506,11 +5533,20 @@
           if (run && run.has_viewable) prev.has_viewable = true;
           if (run && run.artifact_count) prev.artifact_count = Number(run.artifact_count) || prev.artifact_count;
           if (run && run.stage) prev.stage = String(run.stage || "");
+          if (runRef) prev.run_ref = runRef;
+          if (run && run.source_prefix) prev.source_prefix = String(run.source_prefix || "");
           prev.source = prev.source === "both" || (prev.source && prev.source !== source) ? "both" : source;
-          map.set(runId, prev);
+          map.set(identity, prev);
         };
-        for (const run of Array.isArray(knownRuns) ? knownRuns : []) ingest(run, "known");
         for (const run of Array.isArray(discoveredRuns) ? discoveredRuns : []) ingest(run, "discovered");
+        for (const run of Array.isArray(knownRuns) ? knownRuns : []) {
+          const runId = String((run && run.run_id) || run || "").trim();
+          const matches = discoveredByRunId.get(runId) || [];
+          const key = matches.length === 1
+            ? String(matches[0].run_ref || runId)
+            : "history:" + runId;
+          ingest(run, "known", key);
+        }
         return [...map.values()].sort((a, b) => {
           const cmp = effectiveRunTs(b).localeCompare(effectiveRunTs(a));
           if (cmp !== 0) return cmp;
@@ -5527,15 +5563,18 @@
         for (const run of runs) {
           const runId = String((run && run.run_id) || run || "").trim();
           if (!runId) continue;
+          const runRef = String((run && run.run_ref) || "").trim();
+          const selector = runRef || runId;
           const opt = document.createElement("option");
-          opt.value = runId;
+          opt.value = selector;
           const bits = [runId];
           if (run && run.has_viewable) bits.push("viewable");
           if (run && run.artifact_count) bits.push(String(run.artifact_count) + " artifacts");
           const shownTs = effectiveRunTs(run);
           if (shownTs) bits.push(shownTs.slice(0, 19));
+          if (run && run.source_prefix) bits.push(String(run.source_prefix));
           opt.textContent = bits.length > 1 ? (runId + " · " + bits.slice(1).join(" · ")) : runId;
-          if (runId === current || (!current && runId === previous)) opt.selected = true;
+          if (selector === current || runId === current || (!current && selector === previous)) opt.selected = true;
           select.appendChild(opt);
         }
       }
@@ -5561,14 +5600,14 @@
         }
         // When exactly one run matches the search, preselect it for one-click Load.
         if (filtered.length === 1 && select) {
-          select.value = String(filtered[0].run_id || "");
+          select.value = String(filtered[0].run_ref || filtered[0].run_id || "");
         }
         return filtered;
       }
       function applyMergedRunSelectors(current) {
         const merged = mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
         mergedRunsCache = merged;
-        const chosen = String(current || activeRunId || "").trim();
+        const chosen = String(activeArtifactRunRef || current || activeRunId || "").trim();
         // Filter the Rerun-tab run picker by the "Find run (name or ID)" box.
         const runFilter = runFilterValue().toLowerCase();
         const runList = runFilter
@@ -5600,8 +5639,8 @@
         const data = await apiJson(url);
         const runs = Array.isArray(data.runs) ? data.runs : [];
         if (q) {
-          const byId = new Map((discoveredArtifactRuns || []).map((r) => [String((r && r.run_id) || ""), r]));
-          for (const r of runs) byId.set(String((r && r.run_id) || ""), r);
+          const byId = new Map((discoveredArtifactRuns || []).map((r) => [String((r && (r.run_ref || r.run_id)) || ""), r]));
+          for (const r of runs) byId.set(String((r && (r.run_ref || r.run_id)) || ""), r);
           discoveredArtifactRuns = [...byId.values()];
         } else {
           discoveredArtifactRuns = runs;
@@ -5620,13 +5659,16 @@
       async function loadArtifactsForSelectedRun(explicitRunId) {
         // explicitRunId is optional; guard against event objects passed by
         // click handlers (bindClick calls fn(event)).
-        const runId = (typeof explicitRunId === "string" && explicitRunId.trim())
+        const requestedRun = (typeof explicitRunId === "string" && explicitRunId.trim())
           ? explicitRunId.trim()
           : selectedRunIdFromUi();
-        if (!runId) throw new Error("Select a run or enter a run_id first");
-        syncRunChooserFields(runId);
+        if (!requestedRun) throw new Error("Select a run or enter a run_id first");
         // No path prefix: the server locates the run by id across the whole run root.
-        const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(runId));
+        const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(requestedRun));
+        const runId = String(data.run_id || requestedRun).trim();
+        const runRef = String(data.run_ref || "").trim();
+        activeArtifactRunRef = runRef;
+        syncRunChooserFields(runId);
         const list = document.getElementById("artifactList");
         if (!list) return false;
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
@@ -5685,7 +5727,7 @@
                 '"><span class="hint">&hellip;</span></div>'
               : "") +
             '<div style="margin-top:6px;"><button class="btn' + primary + '" type="button" data-action="load-artifact" data-run-id="' +
-            escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+            escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
             '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button>' +
             ' <button class="btn" type="button" data-action="download-artifact" data-run-id="' +
             escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
@@ -5698,6 +5740,7 @@
             event.preventDefault();
             const payload = {
               run_id: String(btn.getAttribute("data-run-id") || "").trim(),
+              run_ref: String(btn.getAttribute("data-run-ref") || "").trim(),
               key: String(btn.getAttribute("data-key") || "").trim(),
               s3_uri: String(btn.getAttribute("data-s3-uri") || "").trim(),
             };
@@ -5737,6 +5780,7 @@
         if (preferred && String(preferred.render || "") === "rerun" && !isMobileLayout()) {
           await loadArtifact({
             run_id: runId,
+            run_ref: runRef,
             key: String(preferred.key || "").trim(),
             s3_uri: String(preferred.s3_uri || "").trim(),
           });
@@ -5912,7 +5956,7 @@
           '<div class="prov-head">Pipeline stages (click a stage to browse its artifacts)</div>' +
           banner + rows;
         for (const row of host.querySelectorAll(".prov-clickable")) {
-          const go = () => selectArtifactStage(row.getAttribute("data-stage"), runId);
+          const go = () => selectArtifactStage(row.getAttribute("data-stage"), activeArtifactRunRef || runId);
           row.addEventListener("click", go);
           row.addEventListener("keydown", (event) => {
             if (event.key === "Enter" || event.key === " ") { event.preventDefault(); go(); }
@@ -5978,6 +6022,7 @@
         refreshGeneration += 1;
         const body = {
           run_id: String((payload && payload.run_id) || "").trim(),
+          run_ref: String((payload && payload.run_ref) || "").trim(),
           key: String((payload && payload.key) || "").trim(),
           s3_uri: String((payload && payload.s3_uri) || "").trim(),
         };
@@ -5990,6 +6035,7 @@
         const simViz = data.sim_viz || {};
         const render = String(data.render || simViz.artifact_render || "");
         activeArtifactRender = render;
+        activeArtifactRunRef = String(data.run_ref || body.run_ref || "").trim();
         const loadedRunId = String(simViz.run_id || body.run_id || activeRunId || "").trim();
         if (loadedRunId) activeRunId = loadedRunId;
         updateRenderedDataSummary(simViz);
@@ -6370,10 +6416,11 @@
         }
       }
       function updateRunSelector(simViz) {
-        const current = String((simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || "").trim();
+        const current = String((simViz && (simViz.artifact_run_ref || simViz.active_run_ref || simViz.active_run_id || simViz.run_id)) || activeArtifactRunRef || activeRunId || "").trim();
         if (Array.isArray(simViz && simViz.available_runs) && simViz.available_runs.length) {
           knownAvailableRuns = simViz.available_runs.map((item) => ({
             run_id: String((item && item.run_id) || "").trim(),
+            run_ref: String((item && item.run_ref) || "").trim(),
             started_at: String((item && (item.started_at || item.submitted_at)) || "").trim(),
             last_modified: String((item && item.last_modified) || "").trim(),
             activity_at: String((item && (item.activity_at || item.rrd_updated_at)) || "").trim(),
@@ -6392,10 +6439,12 @@
         if (!chosen) {
           throw new Error("Enter or select a run_id first");
         }
-        syncRunChooserFields(chosen);
+        const selection = resolveRunSelection(chosen);
+        activeArtifactRunRef = selection.run_ref;
+        syncRunChooserFields(selection.run_id);
         const input = document.getElementById("runIdInput");
-        if (input) input.value = chosen;
-        await loadRunData();
+        if (input) input.value = selection.run_id;
+        await loadRunData(selection);
       }
       function normalizeStageStatus(value) {
         const raw = String(value || "pending").trim().toLowerCase();
@@ -6648,15 +6697,20 @@
           return null;
         }
       }
-      async function loadRunData() {
-        const runId = String(selectedRunIdFromUi() || "").trim();
+      async function loadRunData(explicitSelection) {
+        const requested = explicitSelection && typeof explicitSelection === "object" &&
+          Object.prototype.hasOwnProperty.call(explicitSelection, "run_id")
+          ? explicitSelection
+          : resolveRunSelection(selectedRunIdFromUi());
+        const runId = String(requested.run_id || "").trim();
+        const runRef = String(requested.run_ref || "").trim();
         if (!runId) {
           throw new Error("Enter or select a run_id first");
         }
         const data = await apiJson("/api/sim-viz/load-run", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ run_id: runId }),
+          body: JSON.stringify({ run_id: runId, run_ref: runRef }),
         });
         activeRunId = runId;
         appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");

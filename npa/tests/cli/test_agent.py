@@ -182,10 +182,11 @@ def test_resolve_deploy_storage_credentials_prefers_bootstrap_when_writable(
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr(
-        "npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True
+        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes",
+        lambda **_kwargs: True,
     )
     monkeypatch.setattr(
-        "npa.clients.credentials.load_credentials",
+        "npa.cli.agent_artifact_storage.load_credentials",
         lambda **_kwargs: SimpleNamespace(
             s3_bucket="",
             s3_endpoint="",
@@ -214,11 +215,11 @@ def test_resolve_deploy_storage_credentials_prefers_shared_artifact_bucket(
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr(
-        "npa.cli.agent._storage_credentials_allow_writes",
+        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes",
         lambda **kwargs: kwargs["bucket"] == "shared-bucket",
     )
     monkeypatch.setattr(
-        "npa.clients.credentials.load_credentials",
+        "npa.cli.agent_artifact_storage.load_credentials",
         lambda **_kwargs: SimpleNamespace(
             s3_bucket="s3://shared-bucket/checkpoints/",
             s3_endpoint="https://storage.us-central1.nebius.cloud",
@@ -248,7 +249,7 @@ def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr(
-        "npa.cli.agent.resolve_project_storage",
+        "npa.cli.agent_artifact_storage.resolve_project_storage",
         lambda *_args, **_kwargs: SimpleNamespace(
             checkpoint_bucket="s3://project-bucket/isaac-runs/",
             endpoint_url="https://storage.us-central1.nebius.cloud",
@@ -257,7 +258,7 @@ def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(
         ),
     )
     monkeypatch.setattr(
-        "npa.clients.credentials.load_credentials",
+        "npa.cli.agent_artifact_storage.load_credentials",
         lambda **_kwargs: SimpleNamespace(
             s3_bucket="s3://shared-bucket/",
             s3_endpoint="https://storage.eu-north1.nebius.cloud",
@@ -266,7 +267,8 @@ def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(
         ),
     )
     monkeypatch.setattr(
-        "npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: True
+        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes",
+        lambda **_kwargs: True,
     )
     bootstrap = {
         "service_account_id": "sa-agent",
@@ -288,15 +290,58 @@ def test_resolve_deploy_storage_credentials_prefers_selected_project_storage(
     assert resolved["nebius_api_key"] == "ak-project"
 
 
+def test_resolve_explicit_artifact_project_storage_preserves_nested_prefix(
+    monkeypatch,
+) -> None:
+    from npa.cli.agent import _resolve_artifact_project_storage
+
+    monkeypatch.setattr(
+        "npa.cli.agent_artifact_storage.resolve_project_storage",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            checkpoint_bucket="s3://artifact-bucket/nested/shared-root/",
+            endpoint_url="https://storage.us-central1.nebius.cloud",
+            aws_access_key_id="artifact-ak",
+            aws_secret_access_key="artifact-sk",
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes",
+        lambda **_kwargs: True,
+    )
+
+    resolved = _resolve_artifact_project_storage(
+        "artifact-source", region="us-central1"
+    )
+
+    assert resolved == (
+        "artifact-bucket",
+        "nested/shared-root",
+        "https://storage.us-central1.nebius.cloud",
+        "artifact-ak",
+        "artifact-sk",
+    )
+
+
+def test_artifact_prefix_validation_rejects_traversal() -> None:
+    from npa.cli.agent import _validate_artifact_prefix
+
+    assert _validate_artifact_prefix("/nested/shared-root/") == "nested/shared-root"
+    for value in ("../escape", "nested/../escape", "nested\\escape"):
+        with pytest.raises(ValueError):
+            _validate_artifact_prefix(value)
+
+
 def test_resolve_deploy_storage_credentials_falls_back_to_shared(monkeypatch) -> None:
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     def _probe(**kwargs):
         return kwargs["bucket"] == "shared-bucket"
 
-    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
     monkeypatch.setattr(
-        "npa.clients.credentials.load_credentials",
+        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes", _probe
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_artifact_storage.load_credentials",
         lambda **_kwargs: SimpleNamespace(
             s3_bucket="s3://shared-bucket/",
             s3_endpoint="https://storage.us-central1.nebius.cloud",
@@ -333,9 +378,12 @@ def test_resolve_deploy_storage_credentials_prefers_saved_project_state(
     def _probe(**kwargs):
         return kwargs["bucket"] == "state-bucket"
 
-    monkeypatch.setattr("npa.cli.agent._storage_credentials_allow_writes", _probe)
     monkeypatch.setattr(
-        "npa.cli.agent.resolve_terraform_state", lambda _project: _TfState()
+        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes", _probe
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent_artifact_storage.resolve_terraform_state",
+        lambda _project: _TfState(),
     )
     bootstrap = {
         "service_account_id": "sa-agent",
@@ -362,10 +410,11 @@ def test_resolve_deploy_storage_credentials_fails_without_writable_storage(
     from npa.cli.agent import _resolve_deploy_storage_credentials
 
     monkeypatch.setattr(
-        "npa.cli.agent._storage_credentials_allow_writes", lambda **_kwargs: False
+        "npa.cli.agent_artifact_storage._storage_credentials_allow_writes",
+        lambda **_kwargs: False,
     )
     monkeypatch.setattr(
-        "npa.clients.credentials.load_credentials",
+        "npa.cli.agent_artifact_storage.load_credentials",
         lambda **_kwargs: SimpleNamespace(
             s3_bucket="s3://shared-bucket/",
             s3_endpoint="https://storage.us-central1.nebius.cloud",
@@ -782,12 +831,12 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "#panelVoxel.is-inactive { display: none; }" in source
     # Voxel51 auto-loads the latest run so the tab always shows content.
     assert "/api/artifacts/runs?limit=1" in source
-    # Multi-bucket discovery: the agent searches every accessible bucket (never
-    # relies on copying a run into one bucket).
+    # Multi-bucket discovery is deterministic: only configured buckets are scanned.
     assert "def _agent_s3_buckets(" in source
     assert "list_accessible_buckets" in source
     assert "list_runs_cached_multi" in source
     assert "find_run_artifacts_across_buckets" in source
+    assert "Never enumerate every credential-readable bucket" in source
     # Modern refresh + iOS/desktop friendliness (cascade override layer):
     assert "Modern refresh (2026)" in source
     assert "-webkit-font-smoothing: antialiased" in source
@@ -1102,6 +1151,11 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '@app.get("/artifacts/runs")' in source
     assert '@app.get("/artifacts/run/{{run_id:path}}")' in source
     assert '@app.post("/sim-viz/load-artifact")' in source
+    assert 'npa-artifact-discovery-contract" content="s3-source-qualified-v1' in source
+    assert "run_ref" in source
+    assert "resolve_run_artifacts" in source
+    assert "artifact_run_ref" in source
+    assert "served_recording_sha256" in source
     # Every artifact must be directly downloadable: streaming download endpoint
     # + a per-artifact Download button wired to it.
     assert '@app.get("/artifacts/download")' in source
@@ -1260,13 +1314,14 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     assert 'fillRunSelectOptionsRich(document.getElementById("runIdSelect")' in source
 
 
-def test_bootstrap_run_history_uses_run_id_index() -> None:
+def test_bootstrap_run_history_uses_source_qualified_index() -> None:
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
     assert '"sim_viz_runs": []' not in source
     assert "if not isinstance(runs, dict):" in source
-    assert "runs[run_id] = snapshot" in source
+    assert "history_key = run_ref or run_id" in source
+    assert "runs[history_key] = snapshot" in source
     assert 'state["active_run_id"] = run_id' in source
     assert (
         "Never let a sparse update erase richer artifact fields from load-run" in source
@@ -1305,9 +1360,8 @@ def test_default_run_discovery_is_generic_not_hardcoded() -> None:
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    # Generic scan across all bucket roots AND every accessible bucket; no
-    # hardcoded workflow prefixes. The no-prefix endpoint calls the multi-bucket
-    # cached wrapper (which discovers via list_all_runs per bucket under the hood).
+    # Generic scan across all roots in configured buckets; no hardcoded workflow
+    # prefixes. The no-prefix endpoint calls the multi-bucket cached wrapper.
     assert "list_runs_cached_multi(" in source
     assert "exclude=_discovery_exclude_roots()" in source
     assert "AGENT_DEFAULT_WORKFLOW_PREFIXES" not in source
@@ -1332,7 +1386,7 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
-    assert "body: JSON.stringify({ run_id: runId })" in ui
+    assert "body: JSON.stringify({ run_id: runId, run_ref: runRef })" in ui
     assert "prefix: artifactPrefixValue()" not in ui
 
 

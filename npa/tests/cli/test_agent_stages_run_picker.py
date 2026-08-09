@@ -46,7 +46,7 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     assert 'getElementById("stagesRunSelect")' in ui
     assert 'getElementById("runIdSelect")' in ui
     load_fn = ui.split("async function loadSelectedRun")[1].split("function normalizeStageStatus")[0]
-    assert "loadRunData()" in load_fn
+    assert "loadRunData(selection)" in load_fn
     assert "syncRunChooserFields" in load_fn
 
 

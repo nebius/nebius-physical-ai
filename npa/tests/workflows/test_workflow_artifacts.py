@@ -6,17 +6,21 @@ from pathlib import Path
 import pytest
 
 from npa.workflows.artifacts import (
+    AmbiguousRunError,
     Artifact,
     ArtifactDiscoveryError,
     artifact_media_type,
     build_fiftyone_dataset,
     download_s3_uri,
+    decode_run_ref,
+    encode_run_ref,
     find_run_artifacts,
     list_all_runs,
     list_artifacts,
     list_run_categories,
     list_runs,
     render_hint_for_object,
+    resolve_run_artifacts,
     select_preferred_artifact,
 )
 
@@ -474,6 +478,49 @@ class _PrefixAwareS3:
         return _P()
 
 
+class _PaginatedPrefixAwareS3(_PrefixAwareS3):
+    """Prefix-aware fake that splits every object/category listing into pages."""
+
+    def __init__(self, keys: list[tuple[str, str]], *, page_size: int = 1):
+        super().__init__(keys)
+        self.page_size = page_size
+        self.object_body_fetches = 0
+
+    def get_object(self, **_kwargs):
+        self.object_body_fetches += 1
+        raise AssertionError("run listing must not fetch object bodies")
+
+    def get_paginator(self, name: str):
+        assert name == "list_objects_v2"
+        store = self._keys
+        page_size = self.page_size
+
+        class _P:
+            def paginate(self, Bucket=None, Prefix="", Delimiter=None):  # noqa: N803
+                if Delimiter:
+                    values: list[dict] = []
+                    seen: set[str] = set()
+                    for key, _ts in store:
+                        if not key.startswith(Prefix):
+                            continue
+                        rest = key[len(Prefix) :]
+                        if "/" not in rest:
+                            continue
+                        segment = rest.split("/", 1)[0]
+                        common = Prefix + segment + "/"
+                        if segment and common not in seen:
+                            seen.add(common)
+                            values.append({"Prefix": common})
+                    for offset in range(0, len(values), page_size):
+                        yield {"CommonPrefixes": values[offset : offset + page_size]}
+                else:
+                    values = [_obj(key, ts=ts) for key, ts in store if key.startswith(Prefix)]
+                    for offset in range(0, len(values), page_size):
+                        yield {"Contents": values[offset : offset + page_size]}
+
+        return _P()
+
+
 _LAYOUT = [
     ("checkpoints/sim2real-b/run-a/reports/sim2real.rrd", "2026-07-01T00:00:00+00:00"),
     ("checkpoints/physical-ai-data-factory/paidf-1/cosmos_augmented/f.png", "2026-07-22T00:00:00+00:00"),
@@ -509,6 +556,123 @@ def test_find_run_artifacts_locates_run_in_any_category() -> None:
     # A run under a different category is also found without a hardcoded prefix.
     assert find_run_artifacts("bucket", base_prefix="checkpoints", run_id="run-a", s3=s3)
     assert find_run_artifacts("bucket", base_prefix="checkpoints", run_id="missing", s3=s3) == []
+
+
+def test_nested_storage_root_discovers_and_resolves_both_runs_without_body_fetch() -> None:
+    layout = [
+        ("archive/solutions/tool-a/run-one/report.rrd", "2026-08-01T00:00:00+00:00"),
+        ("archive/solutions/tool-a/run-one/result.mp4", "2026-08-01T00:00:01+00:00"),
+        ("archive/solutions/tool-b/run-two/manifest.json", "2026-08-02T00:00:00+00:00"),
+        ("archive/solutions/tool-b/run-two/notes.txt", "2026-08-02T00:00:01+00:00"),
+    ]
+    s3 = _PaginatedPrefixAwareS3(layout, page_size=1)
+    page = list_all_runs(
+        "bucket", base_prefix="archive/solutions", limit=100, s3=s3
+    )
+    assert {item.run_id for item in page.runs} == {"run-one", "run-two"}
+    assert page.total_runs == 2
+    assert all(item.run_ref for item in page.runs)
+    assert s3.object_body_fetches == 0
+
+    resolved = resolve_run_artifacts(
+        ["bucket"],
+        base_prefix="archive/solutions",
+        run_ref_or_id="run-two",
+        s3=s3,
+    )
+    assert resolved is not None
+    assert resolved.source_prefix == "archive/solutions/tool-b"
+    assert {item.key for item in resolved.artifacts} == {
+        "archive/solutions/tool-b/run-two/manifest.json",
+        "archive/solutions/tool-b/run-two/notes.txt",
+    }
+
+
+def test_paginated_discovery_has_no_duplicate_or_lost_runs() -> None:
+    layout = [
+        (f"nested/root/category-{i % 3}/run-{i}/artifact-{j}.json", f"2026-08-{i + 1:02d}T00:00:0{j}+00:00")
+        for i in range(6)
+        for j in range(2)
+    ]
+    s3 = _PaginatedPrefixAwareS3(layout, page_size=1)
+    page = list_all_runs("bucket", base_prefix="nested/root", limit=100, s3=s3)
+    assert page.total_runs == 6
+    assert len(page.runs) == 6
+    assert {item.run_id for item in page.runs} == {f"run-{i}" for i in range(6)}
+    assert s3.object_body_fetches == 0
+
+
+def test_paginated_category_reports_true_total_beyond_global_limit() -> None:
+    layout = [
+        (
+            f"nested/root/only-category/run-{index:03d}/artifact.json",
+            f"2026-08-{(index % 28) + 1:02d}T00:00:00+00:00",
+        )
+        for index in range(101)
+    ]
+    s3 = _PaginatedPrefixAwareS3(layout, page_size=7)
+    page = list_all_runs("bucket", base_prefix="nested/root", limit=100, s3=s3)
+    assert len(page.runs) == 100
+    assert page.total_runs == 101
+    assert page.truncated is True
+    assert len({item.run_ref for item in page.runs}) == 100
+    assert s3.object_body_fetches == 0
+
+
+def test_duplicate_run_basenames_are_source_qualified_and_plain_lookup_fails_closed() -> None:
+    layout = [
+        ("root/category-a/shared-run/a.rrd", "2026-08-01T00:00:00+00:00"),
+        ("root/category-b/shared-run/b.rrd", "2026-08-02T00:00:00+00:00"),
+    ]
+    s3 = _PrefixAwareS3(layout)
+    page = list_all_runs("bucket", base_prefix="root", limit=100, s3=s3)
+    duplicates = [item for item in page.runs if item.run_id == "shared-run"]
+    assert len(duplicates) == 2
+    assert len({item.run_ref for item in duplicates}) == 2
+    with pytest.raises(AmbiguousRunError):
+        resolve_run_artifacts(
+            ["bucket"], base_prefix="root", run_ref_or_id="shared-run", s3=s3
+        )
+
+    exact = resolve_run_artifacts(
+        ["bucket"],
+        base_prefix="root",
+        run_ref_or_id=next(item.run_ref for item in duplicates if item.source_prefix.endswith("category-b")),
+        s3=s3,
+    )
+    assert exact is not None
+    assert [item.key for item in exact.artifacts] == ["root/category-b/shared-run/b.rrd"]
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("run/view.rrd", "rerun"),
+        ("run/movie.mp4", "video"),
+        ("run/data.json", "json"),
+        ("run/readme.txt", "text"),
+        ("run/frame.png", "image"),
+        ("run/blob.future", "download"),
+    ],
+)
+def test_render_contract_covers_viewers_and_unknown_download(key: str, expected: str) -> None:
+    assert render_hint_for_object(key=key) == expected
+
+
+def test_run_refs_and_ids_reject_traversal_and_malformed_values() -> None:
+    ref = encode_run_ref("valid-bucket", "nested/root", "safe-run")
+    assert decode_run_ref(ref) == ("valid-bucket", "nested/root", "safe-run")
+    for bad in ("npa1_not-base64!", "npa1_", "../run", "folder/run"):
+        if bad.startswith("npa1_"):
+            with pytest.raises(ArtifactDiscoveryError):
+                decode_run_ref(bad)
+        else:
+            with pytest.raises(ArtifactDiscoveryError):
+                resolve_run_artifacts(
+                    ["valid-bucket"], base_prefix="nested/root", run_ref_or_id=bad, s3=_PrefixAwareS3([])
+                )
+    with pytest.raises(ArtifactDiscoveryError):
+        encode_run_ref("valid-bucket", "nested/../escape", "safe-run")
 
 
 # Runs also live at the BUCKET ROOT under a category (not under the configured
@@ -679,13 +843,18 @@ def test_list_accessible_buckets_primary_first_deduped() -> None:
     import npa.workflows.artifacts as A
 
     class _S3:
+        called = False
+
         def list_buckets(self):
+            self.called = True
             return {"Buckets": [{"Name": "b2"}, {"Name": "primary"}, {"Name": "b3"}]}
 
-    got = A.list_accessible_buckets(_S3(), primary="primary", extra=["b2"])
+    s3 = _S3()
+    got = A.list_accessible_buckets(s3, primary="primary", extra=["b2"])
     assert got[0] == "primary"
     assert got.count("primary") == 1 and got.count("b2") == 1
-    assert set(got) == {"primary", "b2", "b3"}
+    assert set(got) == {"primary", "b2"}
+    assert s3.called is False
 
 
 def test_list_accessible_buckets_survives_no_listbuckets_permission() -> None:
@@ -699,22 +868,24 @@ def test_list_accessible_buckets_survives_no_listbuckets_permission() -> None:
     assert got == ["primary", "x"]  # falls back to primary/extras only
 
 
-def test_find_run_artifacts_across_buckets_returns_first_match(monkeypatch) -> None:
+def test_find_run_artifacts_across_buckets_fails_closed_on_duplicate(monkeypatch) -> None:
     import npa.workflows.artifacts as A
 
     scanned: list[str] = []
 
     def fake_find(bucket, *, base_prefix, run_id, s3):
         scanned.append(bucket)
-        if bucket == "b2":
-            return [A.Artifact(run_id, f"byof/{run_id}/x.json", f"s3://b2/byof/{run_id}/x.json", 1, "t", "json", False)]
+        if bucket in {"b2", "b3"}:
+            artifact = A.Artifact(run_id, f"byof/{run_id}/{bucket}.json", f"s3://{bucket}/byof/{run_id}/{bucket}.json", 1, "t", "json", True)
+            return [A.RunResolution(run_id, bucket, "byof", [artifact])]
         return []
 
-    monkeypatch.setattr(A, "find_run_artifacts", fake_find)
-    bkt, arts = A.find_run_artifacts_across_buckets(["b1", "b2", "b3"], base_prefix="", run_id="run-x", s3=object())
-    assert bkt == "b2" and len(arts) == 1
-    assert arts[0].s3_uri == "s3://b2/byof/run-x/x.json"
-    assert scanned == ["b1", "b2"]  # stops at first match
+    monkeypatch.setattr(A, "find_run_artifact_matches", fake_find)
+    with pytest.raises(A.AmbiguousRunError):
+        A.find_run_artifacts_across_buckets(
+            ["b1", "b2", "b3"], base_prefix="", run_id="run-x", s3=object()
+        )
+    assert scanned == ["b1", "b2", "b3"]
 
 
 def test_list_all_runs_across_buckets_merges_and_tags(monkeypatch) -> None:

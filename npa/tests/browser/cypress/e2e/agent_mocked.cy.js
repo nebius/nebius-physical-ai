@@ -903,6 +903,55 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   });
 
+  it("keeps duplicate run basenames as separate source-qualified cards", () => {
+    const RUN_ID = "duplicate-run";
+    const REF_A = "npa1_source_a";
+    const REF_B = "npa1_source_b";
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        contract: "s3-source-qualified-v1",
+        runs: [
+          { run_id: RUN_ID, run_ref: REF_A, source_prefix: "shared/category-a", has_viewable: true, artifact_count: 1 },
+          { run_id: RUN_ID, run_ref: REF_B, source_prefix: "shared/category-b", has_viewable: true, artifact_count: 1 },
+        ],
+        total_runs: 2,
+        truncated: false,
+      },
+    }).as("qualifiedRuns");
+    cy.intercept("GET", `/api/artifacts/run/${REF_B}*`, {
+      statusCode: 200,
+      body: {
+        ok: true,
+        contract: "s3-source-qualified-v1",
+        run_id: RUN_ID,
+        run_ref: REF_B,
+        prefix: "shared/category-b",
+        artifacts: [
+          { key: `shared/category-b/${RUN_ID}/result.future`, s3_uri: `s3://mock/shared/category-b/${RUN_ID}/result.future`, render: "download", size: 9 },
+        ],
+      },
+    }).as("qualifiedRunB");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@qualifiedRuns");
+    cy.get("#runIdSelect option").then(($opts) => {
+      const values = [...$opts].map((option) => option.value).filter(Boolean);
+      expect(values).to.include(REF_A);
+      expect(values).to.include(REF_B);
+      expect(values.filter((value) => value === RUN_ID)).to.have.length(0);
+    });
+    cy.get("#runIdSelect").select(REF_B, { force: true });
+    cy.wait("@qualifiedRunB");
+    cy.get("#artifactList .artifact-card").should("have.length", 1);
+    cy.get("#artifactList").should("contain.text", "result.future");
+    cy.get("#artifactList").should("contain.text", "download");
+    cy.get('meta[name="npa-artifact-discovery-contract"]')
+      .should("have.attr", "content", "s3-source-qualified-v1");
+  });
+
   it("rejects uniform gray / blank canvases in frameLooksBlank", () => {
     cy.window().then((win) => {
       const api = win.__NPA_AGENT_TEST__;

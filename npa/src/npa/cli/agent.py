@@ -25,7 +25,6 @@ import typer
 from npa.clients.config import (
     ConfigError,
     resolve_environment,
-    resolve_project_storage,
     resolve_ssh_config,
     resolve_terraform_state,
     write_config,
@@ -38,6 +37,11 @@ from npa.clients.network import (
 )
 from npa.clients.ssh import SSHClient, SSHError
 from npa.agent_backend.shipping import render_shipped_backend_install
+from npa.cli.agent_artifact_storage import (
+    _resolve_artifact_project_storage,
+    _resolve_deploy_storage_credentials,
+    _validate_artifact_prefix,
+)
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
@@ -74,6 +78,7 @@ DEFAULT_LLM_MODELS = (
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
 AGENT_UI_VERSION = "2026073001"
+ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
@@ -995,164 +1000,6 @@ def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
         "access_key": str(creds.get("nebius_api_key", "")).strip(),
         "secret_key": str(creds.get("nebius_secret_key", "")).strip(),
     }
-
-
-def _storage_credentials_allow_writes(
-    *,
-    bucket: str,
-    endpoint: str,
-    access_key: str,
-    secret_key: str,
-    region: str,
-    prefix: str = "",
-) -> bool:
-    """Return True when credentials can list, write, and delete in the bucket."""
-    bucket_name = str(bucket or "").strip()
-    if not bucket_name:
-        return False
-    endpoint_url = str(endpoint or "").strip()
-    if not endpoint_url:
-        endpoint_url = f"https://storage.{str(region or '').strip() or 'eu-north1'}.nebius.cloud"
-    try:
-        import boto3
-    except Exception:
-        return False
-    client_kwargs = {
-        "endpoint_url": endpoint_url,
-        "aws_access_key_id": str(access_key or "").strip(),
-        "region_name": str(region or "").strip() or None,
-        "aws_" "secret_access_key": str(secret_key or "").strip(),
-    }
-    client = boto3.client("s3", **client_kwargs)
-    normalized_prefix = str(prefix or "").strip().strip("/")
-    probe_base = "/".join(part for part in (normalized_prefix, "npa-agent/probe") if part)
-    probe_key = f"{probe_base}/{secrets.token_hex(8)}.txt"
-    try:
-        client.list_objects_v2(Bucket=bucket_name, Prefix=(probe_base + "/") if probe_base else "", MaxKeys=1)
-        client.put_object(Bucket=bucket_name, Key=probe_key, Body=b"ok")
-        client.delete_object(Bucket=bucket_name, Key=probe_key)
-        return True
-    except Exception:
-        return False
-
-
-def _resolve_deploy_storage_credentials(
-    *,
-    region: str,
-    bootstrap_creds: dict[str, str],
-    project_alias: str = "",
-) -> dict[str, str]:
-    """Prefer project artifact storage, then shared or bootstrap credentials."""
-    candidate = dict(bootstrap_creds)
-    from npa.clients.credentials import load_credentials
-
-    project_name = str(project_alias or "").strip()
-    if project_name:
-        try:
-            project_storage = resolve_project_storage(
-                project_name,
-                include_shared_credentials=False,
-            )
-        except ConfigError:
-            project_storage = None
-        if project_storage is not None:
-            project_bucket = str(project_storage.checkpoint_bucket or "").strip()
-            project_prefix = ""
-            if project_bucket.startswith("s3://"):
-                rest = project_bucket[len("s3://"):]
-                project_bucket, _sep, project_prefix = rest.partition("/")
-                project_prefix = project_prefix.strip("/")
-            project_endpoint = str(
-                project_storage.endpoint_url
-                or f"https://storage.{region}.nebius.cloud"
-            ).strip()
-            project_access_key = str(project_storage.aws_access_key_id or "").strip()
-            project_secret_key = str(project_storage.aws_secret_access_key or "").strip()
-            if project_bucket and _storage_credentials_allow_writes(
-                bucket=project_bucket,
-                endpoint=project_endpoint,
-                access_key=project_access_key,
-                secret_key=project_secret_key,
-                region=region,
-                prefix=project_prefix,
-            ):
-                typer.echo("  Using project-configured artifact storage credentials for the agent.")
-                candidate["s3_bucket"] = project_bucket
-                candidate["s3_prefix"] = project_prefix
-                candidate["s3_endpoint"] = project_endpoint
-                candidate["nebius_api_key"] = project_access_key
-                candidate["nebius_secret_key"] = project_secret_key
-                return candidate
-
-    shared = load_credentials(environ={})
-    shared_bucket = str(shared.s3_bucket or "").strip()
-    shared_prefix = ""
-    if shared_bucket.startswith("s3://"):
-        rest = shared_bucket[len("s3://"):]
-        shared_bucket, _sep, shared_prefix = rest.partition("/")
-        shared_prefix = shared_prefix.strip("/")
-    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
-    shared_access_key = str(shared.s3_access_key_id or "").strip()
-    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
-    if shared_bucket and _storage_credentials_allow_writes(
-        bucket=shared_bucket,
-        endpoint=shared_endpoint,
-        access_key=shared_access_key,
-        secret_key=shared_secret_key,
-        region=region,
-        prefix=shared_prefix,
-    ):
-        typer.echo("  Using shared configured artifact storage credentials for the agent.")
-        candidate["s3_bucket"] = shared_bucket
-        candidate["s3_prefix"] = shared_prefix
-        candidate["s3_endpoint"] = shared_endpoint
-        candidate["nebius_api_key"] = shared_access_key
-        candidate["nebius_secret_key"] = shared_secret_key
-        return candidate
-
-    bucket = str(candidate.get("s3_bucket", "")).strip()
-    endpoint = str(candidate.get("s3_endpoint", "")).strip()
-    access_key = str(candidate.get("nebius_api_key", "")).strip()
-    secret_key = str(candidate.get("nebius_secret_key", "")).strip()
-    if _storage_credentials_allow_writes(
-        bucket=bucket,
-        endpoint=endpoint,
-        access_key=access_key,
-        secret_key=secret_key,
-        region=region,
-        prefix=str(candidate.get("s3_prefix", "")),
-    ):
-        return candidate
-    if project_name:
-        try:
-            saved_state = resolve_terraform_state(project_name)
-        except ConfigError:
-            saved_state = None
-        if saved_state is not None:
-            saved_bucket = str(getattr(saved_state, "bucket", "") or "").strip()
-            saved_endpoint = str(getattr(saved_state, "endpoint", "") or "").strip()
-            saved_access_key = str(getattr(saved_state, "access_key", "") or "").strip()
-            saved_secret_key = str(getattr(saved_state, "secret_key", "") or "").strip()
-            if _storage_credentials_allow_writes(
-                bucket=saved_bucket,
-                endpoint=saved_endpoint,
-                access_key=saved_access_key,
-                secret_key=saved_secret_key,
-                region=region,
-            ):
-                typer.echo(
-                    "  Bootstrap S3 key has no data-plane access; "
-                    "falling back to saved project terraform_state credentials."
-                )
-                candidate["s3_bucket"] = saved_bucket
-                candidate["s3_endpoint"] = saved_endpoint
-                candidate["nebius_api_key"] = saved_access_key
-                candidate["nebius_secret_key"] = saved_secret_key
-                return candidate
-    _fail(
-        "unable to verify writable S3 credentials for deploy; "
-        "configure object-storage credentials with data-plane access before deploying the agent"
-    )
 
 
 def _resolve_agent_service_account_id(
@@ -2335,7 +2182,9 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
     runs = state.get("sim_viz_runs")
     if not isinstance(runs, dict):
         runs = {{}}
-    existing = runs.get(run_id) if isinstance(runs.get(run_id), dict) else {{}}
+    run_ref = str(payload.get("artifact_run_ref") or "").strip()
+    history_key = run_ref or run_id
+    existing = runs.get(history_key) if isinstance(runs.get(history_key), dict) else {{}}
     snapshot = dict(DEFAULT_SIM_VIZ)
     if isinstance(existing, dict):
         snapshot.update(existing)
@@ -2377,9 +2226,10 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
                 snapshot[key] = existing[key]
         if not payload.get("foxglove_ready") and existing.get("foxglove_ready") and str(snapshot.get("foxglove_url") or "").strip():
             snapshot["foxglove_ready"] = True
-    runs[run_id] = snapshot
+    runs[history_key] = snapshot
     state["sim_viz_runs"] = runs
     state["active_run_id"] = run_id
+    state["active_run_ref"] = run_ref
 
 
 def _default_sim2real_run_details(run_id: str, *, submitted_at: str = "", selection: dict | None = None) -> dict:
@@ -2663,8 +2513,21 @@ def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
     payload = dict(DEFAULT_SIM_VIZ)
     runs = state.get("sim_viz_runs")
     target = str(run_id or state.get("active_run_id") or "").strip()
-    if isinstance(runs, dict) and target and isinstance(runs.get(target), dict):
-        payload.update(runs[target])
+    direct = runs.get(target) if isinstance(runs, dict) and target else None
+    if isinstance(direct, dict):
+        payload.update(direct)
+    elif isinstance(runs, dict) and target:
+        matches = [
+            item
+            for item in runs.values()
+            if isinstance(item, dict)
+            and str(item.get("run_id") or "").strip() == target
+        ]
+        # A plain basename is safe only when it names one historical source.
+        if len(matches) == 1:
+            payload.update(matches[0])
+        elif run_id:
+            payload["run_id"] = target
     elif run_id:
         payload["run_id"] = target
     else:
@@ -2957,6 +2820,8 @@ def _safe_artifact_key(key: str) -> str:
     value = str(key or "").strip().lstrip("/")
     if not value:
         raise HTTPException(status_code=400, detail="artifact key is required")
+    if "\\\\" in value or any(ord(ch) < 32 for ch in value):
+        raise HTTPException(status_code=400, detail="artifact key contains unsupported characters")
     parts = value.split("/")
     if any(part in {{"", ".", ".."}} for part in parts):
         raise HTTPException(status_code=400, detail="artifact key traversal is not allowed")
@@ -3000,11 +2865,14 @@ def _agent_insights_settings() -> dict[str, str]:
 
 
 def _artifact_discovery_prefix(settings: dict[str, str], user_prefix: str = "") -> str:
-    requested = str(user_prefix or "").strip().strip("/")
-    base = str(settings.get("prefix") or "").strip().strip("/")
+    try:
+        requested = _validate_source_prefix(str(user_prefix or ""))
+        base = _validate_source_prefix(str(settings.get("prefix") or ""))
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if requested:
         return _join_agent_s3_prefix(base, requested)
-    return _join_agent_s3_prefix(base, "sim2real-b")
+    return base
 
 def _discovery_exclude_roots() -> set:
     # Bucket-root prefixes that hold the agent's own state/chat-memory, not runs.
@@ -3042,19 +2910,13 @@ def _agent_s3_client():
 
 
 def _agent_s3_buckets(s3, settings) -> list:
-    # Every bucket the agent can access — so runs are discoverable regardless of
-    # which bucket a workflow wrote to (never rely on copying runs into one
-    # bucket). Primary (configured) bucket first, then optional configured extras
-    # (NPA_AGENT_S3_BUCKETS), then everything ListBuckets returns.
-    # NOTE: use only for discovery. Operator-supplied s3_uri must use
-    # _configured_agent_s3_buckets / _assert_s3_uri_in_agent_bucket instead.
+    # Discovery is limited to the configured primary bucket plus explicit extras.
+    # Never enumerate every credential-readable bucket: that is slow, can surface
+    # unrelated storage, and makes the default UI scope non-deterministic.
     primary = str(settings.get("bucket") or "")
     override = str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip()
     extra = [b.strip() for b in override.split(",") if b.strip()] if override else []
-    try:
-        buckets = list_accessible_buckets(s3, primary=primary, extra=extra)
-    except Exception:
-        buckets = [primary] if primary else []
+    buckets = list_accessible_buckets(s3, primary=primary, extra=extra)
     return buckets or ([primary] if primary else [])
 
 
@@ -3520,6 +3382,7 @@ def _apply_loaded_artifact(
     s3_uri: str,
     render: str,
     local_path: Path,
+    run_ref: str = "",
 ) -> dict:
     now = _now_iso()
     sim_viz = dict(DEFAULT_SIM_VIZ)
@@ -3550,6 +3413,7 @@ def _apply_loaded_artifact(
             "artifact_uri": s3_uri,
             "artifact_key": key,
             "artifact_render": render,
+            "artifact_run_ref": str(run_ref or ""),
             "mode": "static",
             "camera": camera,
         }}
@@ -6980,6 +6844,7 @@ def sim_viz_status(run_id: str = ""):
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
+            "run_ref": str(item.get("artifact_run_ref") or "").strip(),
             # activity_at is when this run was last loaded/visualized in the agent
             # (rrd_updated_at), NOT when its artifacts were produced. It is exposed
             # separately so the client never relabels a days-old run as recent just
@@ -7021,25 +6886,36 @@ def sim_viz_runs():
 def sim_viz_select_run(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
     requested_run = str(body.get("run_id") or "").strip()
+    requested_ref = str(body.get("run_ref") or "").strip()
     if not requested_run:
         raise HTTPException(status_code=400, detail="run_id is required")
     state = _load_state()
     runs = _sim_viz_runs(state)
-    selected = next((item for item in runs if str(item.get("run_id") or "").strip() == requested_run), None)
+    matches = [
+        item
+        for item in runs
+        if (
+            requested_ref
+            and str(item.get("artifact_run_ref") or "").strip() == requested_ref
+        )
+        or (
+            not requested_ref
+            and str(item.get("run_id") or "").strip() == requested_run
+        )
+    ]
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="run_id is ambiguous in viewer history; provide run_ref",
+        )
+    selected = matches[0] if matches else None
     if not isinstance(selected, dict):
         raise HTTPException(status_code=404, detail=f"run_id not found: {{requested_run}}")
     sim_viz = dict(DEFAULT_SIM_VIZ)
     if isinstance(state.get("sim_viz"), dict):
         sim_viz.update(state["sim_viz"])
-    sim_viz.update(
-        {{
-            "run_id": requested_run,
-            "stage": str(selected.get("stage") or sim_viz.get("stage") or "submitted"),
-            "rrd_uri": str(selected.get("rrd_uri") or sim_viz.get("rrd_uri") or ""),
-            "rrd_updated_at": str(selected.get("rrd_updated_at") or sim_viz.get("rrd_updated_at") or ""),
-            "camera": str(selected.get("camera") or sim_viz.get("camera") or "workspace"),
-        }}
-    )
+    sim_viz.update(selected)
+    sim_viz["run_id"] = requested_run
     state["sim_viz"] = sim_viz
     state["latest_submit"] = {{
         "run_id": requested_run,
@@ -7064,6 +6940,7 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
+            "run_ref": str(item.get("artifact_run_ref") or "").strip(),
             # See sim_viz_status: activity_at is viewer-load time, not artifact
             # recency; last_modified stays blank so S3 discovery owns the date.
             "activity_at": str(
@@ -7099,9 +6976,14 @@ def sim_viz_load_run(payload: dict | None = None):
     run_id = str(body.get("run_id") or "").strip()
     if not run_id:
         raise HTTPException(status_code=400, detail="run_id is required")
+    try:
+        run_id = _validate_run_basename(run_id)
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     requested_camera = str(body.get("camera") or "").strip()
     camera = requested_camera or "workspace"
     requested_rrd_uri = str(body.get("rrd_uri") or "").strip()
+    requested_run_ref = str(body.get("run_ref") or "").strip()
 
     # Prefer a run-scoped Rerun recording over stale history entries. History can
     # contain JSON artifacts from prior clicks, which otherwise makes Load Run
@@ -7110,6 +6992,25 @@ def sim_viz_load_run(payload: dict | None = None):
         s3, _settings = _agent_s3_client()
         _assert_s3_uri_in_agent_bucket(requested_rrd_uri, _settings)
         bucket, key = parse_s3_uri(requested_rrd_uri)
+        key = _safe_artifact_key(key)
+        if render_hint_for_object(key=key) != "rerun":
+            raise HTTPException(status_code=400, detail="rrd_uri must identify an RRD artifact")
+        resolution = resolve_run_artifacts(
+            _agent_s3_buckets(s3, _settings),
+            base_prefix=_settings.get("prefix", ""),
+            run_ref_or_id=requested_run_ref or run_id,
+            s3=s3,
+        )
+        if resolution is None or not any(
+            item.key == key and item.s3_uri == requested_rrd_uri
+            for item in resolution.artifacts
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="RRD URI is outside the selected run",
+            )
+        run_id = resolution.run_id
+        requested_run_ref = resolution.run_ref
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
         download_s3_uri(requested_rrd_uri, local_path, s3=s3)
@@ -7119,8 +7020,9 @@ def sim_viz_load_run(payload: dict | None = None):
             run_id=validate_run_id(run_id),
             key=key,
             s3_uri=requested_rrd_uri,
-            render=render_hint_for_object(key=key),
+            render="rerun",
             local_path=local_path,
+            run_ref=requested_run_ref,
         )
         if requested_camera:
             sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(key) else camera
@@ -7132,32 +7034,34 @@ def sim_viz_load_run(payload: dict | None = None):
     try:
         s3, settings = _agent_s3_client()
         requested_prefix = str(body.get("prefix") or "")
+        resolution = None
         artifacts = []
         if requested_prefix:
             effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
             artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
-        # Generic fallback: find the run across all category folders under the run
-        # root so a mismatched/absent prefix does not hide a mountable .rrd.
         if not artifacts:
-            artifacts = find_run_artifacts(
-                settings["bucket"],
+            resolution = resolve_run_artifacts(
+                _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
-                run_id=validate_run_id(run_id),
+                run_ref_or_id=requested_run_ref or run_id,
                 s3=s3,
             )
+            artifacts = resolution.artifacts if resolution is not None else []
         preferred = select_preferred_artifact(artifacts)
         if preferred and preferred.render == "rerun":
+            resolved_run_id = resolution.run_id if resolution is not None else run_id
             local_name = _artifact_filename(preferred.key)
             local_path = RECORDINGS_DIR / local_name
             download_s3_uri(preferred.s3_uri, local_path, s3=s3)
             state = _load_state()
             sim_viz = _apply_loaded_artifact(
                 state=state,
-                run_id=run_id,
+                run_id=resolved_run_id,
                 key=preferred.key,
                 s3_uri=preferred.s3_uri,
                 render=preferred.render,
                 local_path=local_path,
+                run_ref=(resolution.run_ref if resolution is not None else requested_run_ref),
             )
             if requested_camera:
                 sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(preferred.key) else camera
@@ -7166,9 +7070,18 @@ def sim_viz_load_run(payload: dict | None = None):
                 _save_state(state)
             return {{
                 "ok": True,
-                "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id),
+                "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=resolved_run_id),
                 "preferred": preferred.to_dict(),
             }}
+    except AmbiguousRunError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
+        ) from exc
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception:
         # Fall back to the historical in-memory run selector below; callers still
         # get a useful 404 if the run has never been seen.
@@ -7178,7 +7091,21 @@ def sim_viz_load_run(payload: dict | None = None):
     runs = state.get("sim_viz_runs")
     if not isinstance(runs, dict):
         runs = {{}}
-    selected = runs.get(run_id)
+    history_key = requested_run_ref or run_id
+    selected = runs.get(history_key)
+    if not isinstance(selected, dict) and not requested_run_ref:
+        matches = [
+            item
+            for item in runs.values()
+            if isinstance(item, dict)
+            and str(item.get("run_id") or "").strip() == run_id
+        ]
+        if len(matches) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail="run_id is ambiguous in viewer history; provide run_ref",
+            )
+        selected = matches[0] if matches else None
     sim2real_runs = state.get("sim2real_runs") if isinstance(state.get("sim2real_runs"), dict) else {{}}
     # Never invent phantom run ids — require a known sim-viz or sim2real run.
     if not isinstance(selected, dict) or not selected:
@@ -7257,8 +7184,8 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
                 contains=query,
                 s3=s3,
             )
-            return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, **page.to_dict()}}
-        # No user prefix: discover runs generically across ALL bucket roots.
+            return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, **page.to_dict()}}
+        # No user prefix: discover runs generically across configured bucket roots.
         # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
         # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
         # (e.g. scenario-gen-smoke/..., physical-ai-data-factory/...). list_all_runs
@@ -7266,8 +7193,7 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
         # workflow's runs show without hardcoding any workflow path. Cached the same
         # way (the no-prefix walk is the slowest and the default UI view).
         base = settings.get("prefix", "")
-        # Discover across EVERY accessible bucket (not just the configured one), so
-        # a run is visible no matter which bucket its workflow wrote to.
+        # Scan the primary + explicitly configured extra buckets only.
         buckets = _agent_s3_buckets(s3, settings)
         page = list_runs_cached_multi(
             buckets,
@@ -7277,7 +7203,7 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
             contains=query,
             s3=s3,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
+        return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "bucket": settings["bucket"], "buckets": buckets, "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -7287,38 +7213,51 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
 @app.get("/artifacts/run/{{run_id:path}}")
 def artifacts_for_run(run_id: str, prefix: str = ""):
     try:
-        normalized_run = validate_run_id(run_id)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
         s3, settings = _agent_s3_client()
         effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        artifacts = []
-        run_bucket = settings["bucket"]
+        resolution = None
         if prefix:
-            artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3)
-        # Generic fallback: locate the run across EVERY accessible bucket and its
-        # category folders (no hardcoded workflow path, no single-bucket assumption).
-        if not artifacts:
-            run_bucket, artifacts = find_run_artifacts_across_buckets(
+            normalized_run = _validate_run_basename(run_id)
+            artifacts = list_artifacts(
+                settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3
+            )
+            if artifacts:
+                resolution = RunResolution(
+                    normalized_run, settings["bucket"], effective_prefix, artifacts
+                )
+        else:
+            resolution = resolve_run_artifacts(
                 _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
-                run_id=normalized_run,
+                run_ref_or_id=run_id,
                 s3=s3,
             )
-            if not run_bucket:
-                run_bucket = settings["bucket"]
+        normalized_run = resolution.run_id if resolution is not None else (
+            decode_run_ref(run_id)[2] if str(run_id).startswith("npa1_") else _validate_run_basename(run_id)
+        )
+        artifacts = resolution.artifacts if resolution is not None else []
+        run_bucket = resolution.bucket if resolution is not None else settings["bucket"]
+        source_prefix = resolution.source_prefix if resolution is not None else effective_prefix
         preferred = select_preferred_artifact(artifacts)
         return {{
             "ok": True,
+            "contract": ARTIFACT_DISCOVERY_CONTRACT,
             "bucket": run_bucket,
-            "prefix": effective_prefix,
+            "prefix": source_prefix,
             "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
+            "run_ref": resolution.run_ref if resolution is not None else "",
             "count": len(artifacts),
             "artifacts": [item.to_dict() for item in artifacts],
             "preferred": preferred.to_dict() if preferred else None,
         }}
+    except AmbiguousRunError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
+        ) from exc
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -7508,6 +7447,7 @@ def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket
         s3, settings = _agent_s3_client()
         if requested_uri:
             obj_bucket, obj_key = parse_s3_uri(requested_uri)
+            obj_key = _safe_artifact_key(obj_key)
             # Restrict caller-supplied URIs to the configured agent bucket(s) only
             # (never ListBuckets / every credential-readable bucket).
             _assert_s3_uri_in_agent_bucket(requested_uri, settings)
@@ -7516,18 +7456,19 @@ def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket
             obj_key = _safe_artifact_key(requested_key)
             obj_bucket = requested_bucket or settings["bucket"]
             if not requested_bucket and str(run_id or "").strip():
-                try:
-                    rb, _arts = find_run_artifacts_across_buckets(
-                        _agent_s3_buckets(s3, settings),
-                        base_prefix=settings.get("prefix", ""),
-                        run_id=validate_run_id(run_id),
-                        s3=s3,
-                    )
-                    if rb:
-                        obj_bucket = rb
-                except Exception:
-                    pass
+                resolution = resolve_run_artifacts(
+                    _agent_s3_buckets(s3, settings),
+                    base_prefix=settings.get("prefix", ""),
+                    run_ref_or_id=run_id,
+                    s3=s3,
+                )
+                if resolution is None:
+                    raise HTTPException(status_code=404, detail="run_id not found")
+                if obj_key not in {{item.key for item in resolution.artifacts}}:
+                    raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
+                obj_bucket = resolution.bucket
             uri = f"s3://{{obj_bucket}}/{{obj_key}}"
+        _assert_s3_uri_in_agent_bucket(uri, settings)
         local_path = RECORDINGS_DIR / _artifact_filename(obj_key)
         download_s3_uri(uri, local_path, s3=s3)
         leaf = Path(obj_key).name or "artifact.bin"
@@ -7547,6 +7488,7 @@ def sim_viz_load_artifact(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
     requested_uri = str(body.get("s3_uri") or "").strip()
     requested_run = str(body.get("run_id") or "").strip()
+    requested_run_ref = str(body.get("run_ref") or "").strip()
     requested_key = str(body.get("key") or "").strip()
     if not requested_uri and not (requested_run and requested_key):
         raise HTTPException(status_code=400, detail="Provide either s3_uri or run_id + key")
@@ -7554,28 +7496,42 @@ def sim_viz_load_artifact(payload: dict | None = None):
         s3, settings = _agent_s3_client()
         if requested_uri:
             bucket, key = parse_s3_uri(requested_uri)
+            key = _safe_artifact_key(key)
             # Configured agent bucket only — blocks arbitrary-bucket exfil.
             _assert_s3_uri_in_agent_bucket(requested_uri, settings)
             run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
             run_id = validate_run_id(run_guess) if run_guess else "artifact"
             s3_uri = requested_uri
-        else:
-            run_id = validate_run_id(requested_run)
-            key = _safe_artifact_key(requested_key)
-            # Resolve the run's bucket across all accessible buckets so a run in a
-            # non-primary bucket still loads (no copy required).
-            bucket = settings["bucket"]
-            try:
-                rb, _arts = find_run_artifacts_across_buckets(
+            resolved_ref = ""
+            if requested_run_ref:
+                resolution = resolve_run_artifacts(
                     _agent_s3_buckets(s3, settings),
                     base_prefix=settings.get("prefix", ""),
-                    run_id=run_id,
+                    run_ref_or_id=requested_run_ref,
                     s3=s3,
                 )
-                if rb:
-                    bucket = rb
-            except Exception:
-                pass
+                if resolution is None or not any(
+                    item.key == key and item.s3_uri == requested_uri
+                    for item in resolution.artifacts
+                ):
+                    raise HTTPException(status_code=400, detail="artifact URI is outside the selected run")
+                run_id = resolution.run_id
+                resolved_ref = resolution.run_ref
+        else:
+            key = _safe_artifact_key(requested_key)
+            resolution = resolve_run_artifacts(
+                _agent_s3_buckets(s3, settings),
+                base_prefix=settings.get("prefix", ""),
+                run_ref_or_id=requested_run_ref or requested_run,
+                s3=s3,
+            )
+            if resolution is None:
+                raise HTTPException(status_code=404, detail="run_id not found")
+            if key not in {{item.key for item in resolution.artifacts}}:
+                raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
+            run_id = resolution.run_id
+            bucket = resolution.bucket
+            resolved_ref = resolution.run_ref
             s3_uri = f"s3://{{bucket}}/{{key}}"
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
@@ -7589,8 +7545,16 @@ def sim_viz_load_artifact(payload: dict | None = None):
             s3_uri=s3_uri,
             render=render,
             local_path=local_path,
+            run_ref=resolved_ref,
         )
-        return {{"ok": True, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri}}
+        return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri, "run_ref": resolved_ref}}
+    except AmbiguousRunError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
+        ) from exc
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -9153,6 +9117,22 @@ def bootstrap_cmd(
         "--refresh-credentials",
         help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
     ),
+    artifact_project: str = typer.Option(
+        "",
+        "--artifact-project",
+        help=(
+            "Use artifact-storage credentials from this configured NPA project alias. "
+            "The selected credentials persist on the agent record."
+        ),
+    ),
+    artifact_prefix: str = typer.Option(
+        "",
+        "--artifact-prefix",
+        help=(
+            "Override the S3 namespace root used for run discovery (for example a "
+            "shared workflows root); persisted with the agent credentials."
+        ),
+    ),
     foxglove_embed_src: str = typer.Option(
         "",
         "--foxglove-embed-src",
@@ -9275,6 +9255,26 @@ def bootstrap_cmd(
                     }
                 }
             )
+    if str(artifact_project or "").strip():
+        try:
+            (
+                s3_bucket,
+                project_artifact_prefix,
+                s3_endpoint,
+                s3_access_key,
+                s3_secret_key,
+            ) = _resolve_artifact_project_storage(
+                str(artifact_project).strip(), region=region
+            )
+        except ConfigError as exc:
+            _fail(f"unable to resolve artifact project storage: {exc}")
+        s3_prefix = project_artifact_prefix
+        typer.echo("  Using explicitly selected project artifact storage for the agent.")
+    if str(artifact_prefix or "").strip():
+        try:
+            s3_prefix = _validate_artifact_prefix(str(artifact_prefix))
+        except ValueError as exc:
+            _fail(str(exc))
     try:
         _bootstrap_agent_stack(
             host=public_ip,
