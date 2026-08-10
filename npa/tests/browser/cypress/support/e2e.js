@@ -412,13 +412,26 @@ function simVizForArtifact(key) {
 
 function installAgentApiMocks() {
   let activeSimViz = SIM_VIZ;
-  cy.intercept("GET", "/api/health", json({ ok: true, tool_refs: 19 })).as("health");
+  const deployment = {
+    deployment_id: "npa-agent-mocked-wan",
+    deployment_name: "wan-pr261",
+    project_alias: "mock-project",
+    runtime_namespace: "mock-project/wan-pr261",
+    repository: "nebius/nebius-physical-ai",
+    branch: "codex/wan-pr261",
+    commit: "0123456789abcdef0123456789abcdef01234567",
+    short_commit: "0123456789ab",
+    workspace_label: "Wan Workbench",
+    bootstrap_timestamp: "2026-08-10T00:00:00Z",
+  };
+  cy.intercept("GET", "/api/health", json({ ok: true, tool_refs: 19, deployment })).as("health");
   cy.intercept("GET", "/api/models", json({
     ok: true,
     model: "nvidia/Cosmos3-Super-Reasoner",
     models: ["nvidia/Cosmos3-Super-Reasoner", "mock/model"],
   })).as("models");
   cy.intercept("GET", "/api/session", json({
+    deployment,
     selection: ASSETS.selection,
     sim_viz: SIM_VIZ,
     latest_submit: { run_id: "mock-run" },

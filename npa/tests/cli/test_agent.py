@@ -1518,6 +1518,19 @@ def test_verify_live_requires_a_recorded_region(monkeypatch) -> None:
 
 
 def test_verify_live_runs_pytests(monkeypatch) -> None:
+    deployment = {
+        "deployment_id": "npa-agent-test",
+        "deployment_name": "agent",
+        "project_alias": "us-central1",
+        "runtime_namespace": "us-central1/agent",
+        "repository": "nebius/nebius-physical-ai",
+        "branch": "codex/test",
+        "commit": "a" * 40,
+        "short_commit": "a" * 12,
+        "workspace_label": "NPA Workbench",
+        "bootstrap_timestamp": "2026-08-10T00:00:00Z",
+    }
+
     class _Resp:
         def __init__(
             self, payload: dict[str, object] | str | bytes, *, status_code: int = 200
@@ -1567,6 +1580,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             "sim_assets_url": "https://203.0.113.50/assets/",
             "cameras_api_url": "https://203.0.113.50/assets/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
+            "deployment": deployment,
         },
     )
     monkeypatch.setattr("npa.cli.agent._load_auth_secret", lambda _: ("npa", "secret"))
@@ -1574,6 +1588,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
 
     def _fake_http_get(url, *_args, **_kwargs):
         url_s = str(url)
+        if url_s.endswith("/api/deployment"):
+            return _Resp(deployment)
         if url_s.endswith("/api/tools"):
             return _Resp({"tool_refs": [f"tool.{idx}" for idx in range(19)]})
         if url_s.endswith("/api/sim-assets"):

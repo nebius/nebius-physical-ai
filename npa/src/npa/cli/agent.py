@@ -12,7 +12,6 @@ import subprocess
 import ipaddress
 import tarfile
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -43,6 +42,42 @@ from npa.cli.agent_artifact_storage import (
     _validate_artifact_prefix,
 )
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
+from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility exports
+    AGENT_CHAT_QUEUE_CONTRACT,
+    AGENT_FOXGLOVE_CONTRACT,
+    AGENT_MEDIA_PREVIEW_CONTRACT,
+    AGENT_READABLE_COLOR_CONTRACT,
+    AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT,
+    AGENT_STAGES_RUN_PICKER_CONTRACT,
+    AGENT_VIEWER_CHAT_DRAWER_CONTRACT,
+    AGENT_VISUAL_FEEDBACK_CONTRACT,
+    _embedded_agent_artifacts_source,
+    _embedded_agent_chat_source,
+    _embedded_agent_provenance_source,
+    _embedded_agent_recordings_source,
+    _embedded_agent_routing_source,
+    _embedded_agent_rrd_proxy_source,
+    _embedded_agent_s3_guard_source,
+    _embedded_agent_stages_source,
+    _embedded_agent_state_source,
+    _embedded_agent_visual_feedback_source,
+    _embedded_agent_workflow_source,
+    rendered_agent_ui_html,
+)
+from npa.cli.agent_deployment import (
+    AgentConfig,
+    DeploymentIdentityError,
+    assert_live_deployment,
+    assert_record_ownership,
+    build_agent_urls,
+    build_deployment_manifest,
+    fetch_live_deployment,
+    normalize_workspace_label,
+    record_customer_url as _record_customer_url,
+    record_public_https as _record_public_https,
+    record_tls_verify as _record_tls_verify,
+    verify_remote_deployment,
+)
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
 from npa.deploy.provisioner import ProvisionerError
@@ -77,178 +112,11 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026073001"
+AGENT_UI_VERSION = "2026081001"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
-
-# Contract markers that must stay in the embedded agent UI/backend. verify-live,
-# smoke, and unit tests share this list so media-preview regressions cannot
-# silently disappear after a bootstrap drift or template edit.
-AGENT_MEDIA_PREVIEW_CONTRACT = (
-    "authenticatedPreviewObjectUrl",
-    "Loading video preview…",
-    'data-preview-url="',
-    "Keep the Rerun iframe mounted under the media pane",
-    'id="renderModeVideo"',
-    'id="artifactPreviewHost"',
-    'id="viewerPaneMedia"',
-    "URL.createObjectURL(blob)",
-    '@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])',
-    "artifact_media_type(",
-)
-
-# Rerun wasm splash must never be user-visible. Cover the iframe until past
-# "Loading application bundle", and fully warm assets before first reveal.
-AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT = (
-    'id="rerunBundleCover"',
-    "waitUntilRerunPastBundleSplash",
-    "showRerunBundleCover",
-    "hideRerunBundleCover",
-    "safeHideRerunBundleCover",
-    "Warm Rerun assets before revealing the iframe",
-    "Preparing viewer…",
-    # Cover may stay up, but mount/boot must not await long splash polls (latency).
-    "Uncover without blocking mount latency",
-    # Canvas-painted splash is not DOM text — require non-blank pixels before uncover.
-    "non-blank canvas",
-    # Run switches must soft-swap recordings without remounting wasm.
-    "swapRerunRecordingInPlace",
-    "add_receiver",
-)
-
-# Describe-this visual feedback: capture current viewer frame → vision tier chat.
-AGENT_VISUAL_FEEDBACK_CONTRACT = (
-    'id="describeVisual"',
-    "captureVisualContext",
-    "describeVisual",
-    "[npa-visual-feedback]",
-    "visual_context",
-    "normalize_messages_for_llm",
-    "infer_visual_domain_hints",
-    "frameLooksBlank",
-    "sampleFrameStats",
-    "captureCanvasDataUrl",
-    "ensureRerunCaptureBridge",
-    "grabFromRerunCaptureBridge",
-    "pickBestIframeCanvas",
-    "probeRerunCanvasContent",
-    "waitForQualityRerunFrame",
-    "skipUserAppend",
-    "Describe this — capturing",
-    "client_max_body_size 32m",
-    "maxChars = 700000",
-    # Grounded original-input ("what was the original input image") resolution.
-    "_maybe_origin_reply",
-    "build_run_origin",
-    "Grounded origin facts for this run",
-)
-
-# Embedded Foxglove viewer: the real @foxglove/embed SDK, loaded on demand from
-# same-origin assets, mounted into its own viewer pane, and fed by /api/foxglove/*.
-AGENT_FOXGLOVE_CONTRACT = (
-    'id="renderModeFoxglove"',
-    'id="viewerPaneFoxglove"',
-    'id="foxgloveHost"',
-    'id="foxgloveStatus"',
-    "ensureFoxgloveViewer",
-    "setFoxgloveDataSource",
-    "refreshFoxgloveViewer",
-    "mountFoxgloveViewer",
-    "/api/foxglove/config",
-    "captureFoxgloveContext",
-    "convertRunToMcap",
-    "/api/foxglove/convert-run",
-    # Two backends behind one pane: the official app (SDK) and the self-hosted
-    # OSS viewer that renders MCAP without a Foxglove account.
-    "mountSelfHostedViewer",
-    "self-hosted",
-    # Cross-origin embed: never claim a captured frame for the official app.
-    "cross-origin iframe",
-)
-
-AGENT_CHAT_QUEUE_CONTRACT = (
-    "chatQueue",
-    "enqueueChatJob",
-    "processChatQueue",
-    "queueChatText",
-)
-
-AGENT_VIEWER_CHAT_DRAWER_CONTRACT = (
-    "viewer-focus",
-    "chat-drawer-open",
-    'id="chatDrawerToggle"',
-    "openChatDrawer",
-    "openFullChatTab",
-    "setChatDrawerOpen",
-    'id="openFullChatTab"',
-    'id="chatDrawerClose"',
-    "chat-fab",
-    "transform-origin: bottom right",
-)
-
-AGENT_STAGES_RUN_PICKER_CONTRACT = (
-    'id="stagesRunSelect"',
-    'id="stagesRunInput"',
-    'id="stagesLoadRun"',
-    "stages-run-picker",
-    "loadSelectedRun",
-    "syncRunChooserFields",
-    "filterStagesRunSelect",
-    "Search or paste run ID",
-)
-
-AGENT_READABLE_COLOR_CONTRACT = (
-    "--ink-strong",
-    "thinking-ellipsis",
-    "Color contrast rules",
-)
-
-
-def _embedded_agent_workflow_source() -> str:
-    """Return agent_workflow.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_workflow.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_routing_source() -> str:
-    """Return agent_routing.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_routing.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_chat_source() -> str:
-    """Return agent_chat.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_chat.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_recordings_source() -> str:
-    """Return agent_recordings.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_recordings.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
 
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
@@ -263,204 +131,6 @@ _AGENT_S3_GUARD_EMBED = "__NPA_AGENT_S3_GUARD_EMBED__"
 _AGENT_STAGES_EMBED = "__NPA_AGENT_STAGES_EMBED__"
 _AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
-
-
-def _embedded_agent_stages_source() -> str:
-    """Return agent_stages.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_stages.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def rendered_agent_ui_html() -> str:
-    """Return the agent UI HTML with bootstrap placeholders substituted.
-
-    The UI lives in ``agent_ui.html`` (outside the bootstrap f-string) so JS can
-    use normal braces and ``agent.py`` stays under the monolith size ratchet.
-    """
-    path = Path(__file__).with_name("agent_ui.html")
-    raw = path.read_text(encoding="utf-8")
-    return raw.replace("{AGENT_UI_VERSION}", AGENT_UI_VERSION).replace(
-        "{DEFAULT_AGENT_USER}", DEFAULT_AGENT_USER
-    )
-
-
-def _embedded_agent_visual_feedback_source() -> str:
-    """Return agent_visual_feedback.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_visual_feedback.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_rrd_proxy_source() -> str:
-    """Return agent_rrd_proxy.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_rrd_proxy.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_state_source() -> str:
-    """Return agent_state.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_state.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_s3_guard_source() -> str:
-    """Return agent_s3_guard.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_s3_guard.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_artifacts_source() -> str:
-    """Return workflows/artifacts.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).resolve().parents[1] / "workflows" / "artifacts.py"
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_provenance_source() -> str:
-    """Return workflows/data_factory_provenance.py source embedded into the backend."""
-    import re
-
-    path = Path(__file__).resolve().parents[1] / "workflows" / "data_factory_provenance.py"
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-@dataclass(frozen=True)
-class AgentConfig:
-    project_alias: str
-    name: str
-    project_id: str
-    tenant_id: str
-    region: str
-    public_ip: str
-    instance_id: str
-    agent_url: str
-    rerun_url: str
-    sim_viz_url: str
-    sim_assets_url: str
-    cameras_api_url: str
-    auth_user: str
-    auth_secret_path: str
-    llm_provider: str
-    llm_model: str
-    service_account_id: str = ""
-    llm_models: tuple[str, ...] = ()
-    public_url: str = ""
-    public_https: bool = True
-    direct_url: str = ""
-    ssh_key_path: str = ""
-    credentials: dict[str, str] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "project_id": self.project_id,
-            "tenant_id": self.tenant_id,
-            "region": self.region,
-            "public_ip": self.public_ip,
-            "instance_id": self.instance_id,
-            "service_account_id": self.service_account_id,
-            "agent_url": self.agent_url,
-            "rerun_url": self.rerun_url,
-            "sim_viz_url": self.sim_viz_url,
-            "sim_assets_url": self.sim_assets_url,
-            "cameras_api_url": self.cameras_api_url,
-            "auth_user": self.auth_user,
-            "auth_secret_path": self.auth_secret_path,
-            "llm": {
-                "provider": self.llm_provider,
-                "model": self.llm_model,
-                "models": list(self.llm_models or (self.llm_model,)),
-            },
-        }
-        if self.public_url:
-            payload["public_url"] = self.public_url
-        if self.public_https:
-            payload["public_https"] = True
-        if self.direct_url:
-            payload["direct_url"] = self.direct_url
-        if self.ssh_key_path:
-            payload["ssh_key_path"] = self.ssh_key_path
-        if self.service_account_id:
-            payload["service_account_id"] = self.service_account_id
-        if self.credentials:
-            payload["credentials"] = dict(self.credentials)
-        return payload
-
-
-def build_agent_urls(
-    public_ip: str,
-    *,
-    agent_port: int = DEFAULT_AGENT_PORT,
-    public_https: bool = True,
-) -> dict[str, str]:
-    """Return customer-facing and operator-direct URLs for an agent VM."""
-    direct = f"http://{public_ip}:{agent_port}/"
-    if public_https:
-        base = f"https://{public_ip}/"
-    else:
-        base = direct
-    root = base.rstrip("/")
-    return {
-        "public_url": base,
-        "agent_url": base,
-        "rerun_url": f"{root}/rerun/",
-        "sim_viz_url": f"{root}/rerun/",
-        "sim_assets_url": f"{root}/assets/",
-        "cameras_api_url": f"{root}/assets/api/sim-assets/cameras",
-        "direct_url": direct,
-    }
-
-
-def _record_public_https(record: dict[str, Any]) -> bool:
-    if "public_https" in record:
-        return bool(record.get("public_https"))
-    public_url = str(record.get("public_url", "")).strip()
-    if public_url.startswith("https://"):
-        return True
-    agent_url = str(record.get("agent_url", "")).strip()
-    return agent_url.startswith("https://")
-
-
-def _record_tls_verify(record: dict[str, Any]) -> bool:
-    """Self-signed HTTPS on the VM public IP is expected; skip CA verification."""
-    return not _record_public_https(record)
-
-
-def _record_customer_url(record: dict[str, Any]) -> str:
-    public_url = str(record.get("public_url", "")).strip()
-    if public_url:
-        return public_url
-    return str(record.get("agent_url", "")).strip()
 
 
 def _fail(message: str) -> NoReturn:
@@ -1643,6 +1313,7 @@ def _bootstrap_agent_stack(
     foxglove_embed_src: str = "",
     foxglove_org_slug: str = "",
     foxglove_live_url: str = "",
+    deployment: dict[str, str] | None = None,
 ) -> None:
     ssh = SSHClient(
         config=resolve_ssh_config(
@@ -1666,14 +1337,18 @@ def _bootstrap_agent_stack(
     agent_s3_guard_source = _embedded_agent_s3_guard_source()
     agent_stages_source = _embedded_agent_stages_source()
     agent_provenance_source = _embedded_agent_provenance_source()
+    deployment = deployment or build_deployment_manifest(
+        project_alias=project_alias,
+        name=agent_name,
+        require_clean=False,
+    )
+    deployment_json = json.dumps(deployment, sort_keys=True)
+    deployment_b64 = base64.b64encode(deployment_json.encode("utf-8")).decode("ascii")
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
-    nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
-    # Foxglove embedded-viewer settings (no secrets). CLI flag wins, then the
-    # operator environment, then the SDK's documented default embed host.
-    # Left empty unless the operator configured one: the Foxglove-hosted app needs
-    # an account, so a stock deploy renders MCAP with the self-hosted OSS viewer
-    # instead of showing a sign-in wall.
+    nginx_site_body = _nginx_agent_site_body(
+        backend_port=backend_port, rerun_port=rerun_port
+    )
     foxglove_embed_src_value = _env_line_value(
         foxglove_embed_src or os.environ.get("NPA_FOXGLOVE_EMBED_SRC", "")
     )
@@ -1761,6 +1436,8 @@ if [ -s /mnt/cloud-metadata/token ]; then
   fi
 fi
 sudo mkdir -p /opt/npa-agent
+printf '%s' {shlex.quote(deployment_b64)} | base64 -d | sudo tee /opt/npa-agent/deployment.json >/dev/null
+sudo chmod 0644 /opt/npa-agent/deployment.json
 cat <<'ENV' | sudo tee /opt/npa-agent/public.env >/dev/null
 NPA_AGENT_PUBLIC_URL=https://{host}
 NPA_AGENT_PUBLIC_HOST={host}
@@ -1807,6 +1484,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 app = FastAPI(title="npa-agent")
+DEPLOYMENT = {deployment_json}
 TOOL_CATALOG = {catalog_json}
 TOOL_REFS = sorted(TOOL_CATALOG.keys())
 STATE_PATH = Path("/opt/npa-agent/session_state.json")
@@ -6625,7 +6303,11 @@ def agent_trace_analyze(payload: dict):
 
 @app.get("/health")
 def health():
-    return {{"ok": True, "tool_refs": len(TOOL_REFS)}}
+    return {{"ok": True, "tool_refs": len(TOOL_REFS), "deployment": dict(DEPLOYMENT)}}
+
+@app.get("/deployment")
+def deployment_identity():
+    return dict(DEPLOYMENT)
 
 @app.get("/models")
 def models(refresh: bool = False):
@@ -6654,6 +6336,7 @@ def session_bootstrap():
     if not isinstance(history, list):
         history = []
     return {{
+        "deployment": dict(DEPLOYMENT),
         "selection": state.get("selection", dict(DEFAULT_SELECTION)),
         "sim_viz": sim_viz,
         "latest_submit": state.get("latest_submit", {{}}),
@@ -8679,6 +8362,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
             "sudo systemctl reset-failed npa-agent-backend || true; "
             "sudo systemctl restart npa-agent-backend"
         )
+    verify_remote_deployment(ssh, deployment, backend_port=backend_port)
 
 
 def _health(
@@ -8769,8 +8453,24 @@ def deploy_cmd(
         "--no-public-https",
         help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
     ),
+    workspace_label: str = typer.Option(
+        "NPA Workbench",
+        "--workspace-label",
+        help="Non-secret workspace identity displayed with immutable Git provenance.",
+    ),
 ) -> None:
     """Provision VM + bootstrap the public NPA agent stack."""
+    try:
+        deployment = build_deployment_manifest(
+            project_alias=project,
+            name=name,
+            workspace_label=normalize_workspace_label(workspace_label),
+        )
+        existing = _agent_record(project, name)
+        if existing:
+            assert_record_ownership(existing, deployment)
+    except DeploymentIdentityError as exc:
+        _fail(str(exc))
     profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
     if profile and shutil.which("nebius"):
         subprocess.run(["nebius", "profile", "activate", profile], check=False)
@@ -8955,6 +8655,7 @@ def deploy_cmd(
             foxglove_embed_src=foxglove_embed_src,
             foxglove_org_slug=foxglove_org_slug,
             foxglove_live_url=foxglove_live_url,
+            deployment=deployment,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         try:
@@ -9001,6 +8702,7 @@ def deploy_cmd(
         ssh_key_path=ssh_key_path,
         service_account_id=str(creds.get("service_account_id", "")),
         credentials=agent_credentials,
+        deployment=deployment,
     )
     _store_agent_record(project, name, record.to_dict())
     _persist_agent_project_config(
@@ -9063,6 +8765,11 @@ def fresh_setup_cmd(
         "--replace",
         help="Destroy an existing agent with the same project/name before fresh deploy.",
     ),
+    workspace_label: str = typer.Option(
+        "NPA Workbench",
+        "--workspace-label",
+        help="Non-secret workspace identity displayed with immutable Git provenance.",
+    ),
 ) -> None:
     """Initialize fresh project config and deploy a new agent from scratch."""
     existing = _agent_record(project, name)
@@ -9094,6 +8801,7 @@ def fresh_setup_cmd(
         llm_model=llm_model,
         llm_models=llm_models,
         no_public_https=no_public_https,
+        workspace_label=workspace_label,
     )
 
 
@@ -9156,11 +8864,36 @@ def bootstrap_cmd(
         "--no-public-https",
         help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
     ),
+    workspace_label: str = typer.Option(
+        "",
+        "--workspace-label",
+        help="Workspace identity; defaults to the identity already recorded for this deployment.",
+    ),
+    adopt_legacy_identity: bool = typer.Option(
+        False,
+        "--adopt-legacy-identity",
+        help="Explicitly claim a legacy record that has no immutable deployment owner.",
+    ),
 ) -> None:
     """Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform)."""
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
+    recorded_deployment = record.get("deployment", {})
+    recorded_label = (
+        recorded_deployment.get("workspace_label", "")
+        if isinstance(recorded_deployment, dict)
+        else ""
+    )
+    try:
+        deployment = build_deployment_manifest(
+            project_alias=project,
+            name=name,
+            workspace_label=workspace_label or recorded_label,
+        )
+        assert_record_ownership(record, deployment, allow_legacy=adopt_legacy_identity)
+    except DeploymentIdentityError as exc:
+        _fail(str(exc))
     public_ip = str(record.get("public_ip", "")).strip()
     if not _is_routable_public_ip(public_ip):
         _fail("agent VM does not have a routable public IP")
@@ -9307,6 +9040,7 @@ def bootstrap_cmd(
             foxglove_embed_src=foxglove_embed_src,
             foxglove_org_slug=foxglove_org_slug,
             foxglove_live_url=foxglove_live_url,
+            deployment=deployment,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         _fail(f"VM bootstrap failed: {exc}")
@@ -9333,6 +9067,7 @@ def bootstrap_cmd(
     llm_payload["models"] = list(resolved_llm_models)
     updated["llm"] = llm_payload
     updated["ssh_key_path"] = ssh_key_path
+    updated["deployment"] = deployment
     if service_account_id:
         updated["service_account_id"] = service_account_id
         _persist_agent_service_account_id(service_account_id)
@@ -9373,12 +9108,30 @@ def status_cmd(
     sim_viz_url = str(record.get("sim_viz_url", rerun_url))
     sim_assets_url = str(record.get("sim_assets_url", agent_url))
     cameras_api_url = str(
-        record.get("cameras_api_url", f"{agent_url.rstrip('/')}/assets/api/sim-assets/cameras")
+        record.get(
+            "cameras_api_url", f"{agent_url.rstrip('/')}/assets/api/sim-assets/cameras"
+        )
     )
     public_url = _record_customer_url(record)
     tls_verify = _record_tls_verify(record)
-    ui_ok, ui_code = _health(agent_url, user=auth_user, password=auth_password, verify=tls_verify)
-    rerun_ok, rerun_code = _health(sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify)
+    ui_ok, ui_code = _health(
+        agent_url, user=auth_user, password=auth_password, verify=tls_verify
+    )
+    rerun_ok, rerun_code = _health(
+        sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify
+    )
+    recorded_deployment = record.get("deployment", {})
+    live_deployment: dict[str, Any] = {}
+    deployment_matches_record = False
+    try:
+        live_deployment = fetch_live_deployment(
+            agent_url, user=auth_user, password=auth_password, verify=tls_verify
+        )
+        if isinstance(recorded_deployment, dict) and recorded_deployment:
+            assert_live_deployment(recorded_deployment, live_deployment)
+            deployment_matches_record = True
+    except (httpx.HTTPError, DeploymentIdentityError):
+        pass
     payload = {
         "project": project,
         "name": name,
@@ -9395,6 +9148,9 @@ def status_cmd(
         "ui_status_code": ui_code,
         "rerun_status_code": rerun_code,
         "llm": record.get("llm", {}),
+        "deployment": recorded_deployment,
+        "live_deployment": live_deployment,
+        "deployment_matches_record": deployment_matches_record,
     }
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -9445,6 +9201,19 @@ def verify_live_cmd(
 
     customer_url = _record_customer_url(record)
     tls_verify = _record_tls_verify(record)
+    recorded_deployment = record.get("deployment", {})
+    if not isinstance(recorded_deployment, dict) or not recorded_deployment:
+        _fail("agent record is missing immutable deployment provenance")
+    try:
+        live_deployment = fetch_live_deployment(
+            str(record.get("agent_url", "")),
+            user=auth_user,
+            password=auth_password,
+            verify=tls_verify,
+        )
+        assert_live_deployment(recorded_deployment, live_deployment)
+    except (httpx.HTTPError, DeploymentIdentityError) as exc:
+        _fail(f"deployment provenance verification failed: {exc}")
     if customer_url:
         try:
             welcome_resp = httpx.get(

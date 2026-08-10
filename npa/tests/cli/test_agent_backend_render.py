@@ -74,6 +74,9 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     tree = ast.parse(body)
     assert tree is not None
     compile(body, "backend.py", "exec")
+    assert 'DEPLOYMENT = {"bootstrap_timestamp":' in body
+    assert '@app.get("/deployment")' in body
+    assert '"deployment": dict(DEPLOYMENT)' in body
 
 
 def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
