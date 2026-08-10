@@ -63,6 +63,13 @@ PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT = 256.0
 # distinguish a transient slow sample from the required dwell.  This does not
 # change any success threshold and remains zero outside the strict event.
 PLACEMENT_STRICT_DWELL_REWARD_WEIGHT = 2048.0
+# Train17 earned nonzero dwell reward and produced a nine-step strict placement,
+# but every validation policy later drove the object away before timeout.  Keep
+# the saturated positive dwell, restore the sparse completion reward that was
+# accidentally coupled to success termination, and make post-success departure
+# explicitly costly until reset.  The magnitude matches the bounded signed
+# progress term, avoiding the earlier transport-suppressing -5000 failure.
+PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT = -512.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
 _DROP_PENALTY_TYPE: type | None = None
@@ -207,6 +214,14 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_stable_placement_reward_steps = torch.zeros(
             env.num_envs, dtype=torch.long, device=env.device
         )
+    if not hasattr(env, "npa_stable_placement_achieved"):
+        env.npa_stable_placement_achieved = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+    if not hasattr(env, "npa_stable_placement_newly_achieved"):
+        env.npa_stable_placement_newly_achieved = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
     if not hasattr(env, "npa_previous_placement_distance"):
         env.npa_previous_placement_distance = torch.full(
             (env.num_envs,), float("inf"), dtype=torch.float, device=env.device
@@ -232,6 +247,8 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
     env.npa_scenario_indices[ids] = scenario_ids
     env.npa_stable_placement_steps[ids] = 0
     env.npa_stable_placement_reward_steps[ids] = 0
+    env.npa_stable_placement_achieved[ids] = False
+    env.npa_stable_placement_newly_achieved[ids] = False
     env.npa_previous_placement_distance[ids] = float("inf")
     env.npa_scenario_applied_counts += torch.bincount(scenario_ids, minlength=len(rows))
     return ids, scenario_ids
@@ -691,6 +708,29 @@ def stable_placement_dwell_signal(
     return steps, float(steps) / float(required_steps)
 
 
+def stable_placement_retention_signal(
+    is_stable: bool,
+    previous_steps: int,
+    achieved: bool,
+    *,
+    required_steps: int = STABLE_PLACEMENT_STEPS,
+) -> tuple[int, float, bool, float, float]:
+    """Advance dwell and expose one-shot completion plus later departure.
+
+    Returns ``(steps, dwell, achieved, completion, departure)``. Completion is
+    one only on the first exact three-step event. Departure is one whenever a
+    previously achieved episode no longer satisfies the unchanged strict event.
+    """
+
+    steps, dwell = stable_placement_dwell_signal(
+        is_stable, previous_steps, required_steps=required_steps
+    )
+    newly_achieved = bool(is_stable and steps >= required_steps and not achieved)
+    achieved_now = bool(achieved or newly_achieved)
+    departure = float(achieved_now and not is_stable)
+    return steps, dwell, achieved_now, float(newly_achieved), departure
+
+
 def stable_placement_dwell(
     env: Any,
     *,
@@ -719,7 +759,7 @@ def stable_placement_dwell(
         & (distance < float(success_distance_m))
         & (speed < float(stable_speed_mps))
     )
-    env.npa_stable_placement_reward_steps = torch.where(
+    next_steps = torch.where(
         stable,
         torch.clamp(
             env.npa_stable_placement_reward_steps + 1,
@@ -727,9 +767,42 @@ def stable_placement_dwell(
         ),
         torch.zeros_like(env.npa_stable_placement_reward_steps),
     )
+    newly_achieved = (
+        stable
+        & (next_steps >= int(required_steps))
+        & ~env.npa_stable_placement_achieved
+    )
+    env.npa_stable_placement_reward_steps = next_steps
+    env.npa_stable_placement_newly_achieved = newly_achieved
+    env.npa_stable_placement_achieved |= newly_achieved
     return env.npa_stable_placement_reward_steps.to(position.dtype) / float(
         required_steps
     )
+
+
+def stable_placement_completion(env: Any) -> Any:
+    """Reward the first exact dwell event without ending the episode."""
+
+    import torch  # noqa: WPS433 - Isaac runtime dependency
+
+    return env.npa_stable_placement_newly_achieved.to(dtype=torch.float32)
+
+
+def stable_placement_departure(
+    env: Any,
+    *,
+    command_name: str = "object_pose",
+    object_name: str = "object",
+    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
+    stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
+) -> Any:
+    """Mark every post-achievement step that leaves the strict event."""
+
+    distance, speed, position, _ = _placement_state(
+        env, command_name=command_name, object_name=object_name
+    )
+    stable = (distance < float(success_distance_m)) & (speed < float(stable_speed_mps))
+    return (env.npa_stable_placement_achieved & ~stable).to(position.dtype)
 
 
 def strict_basin_settling(
@@ -929,7 +1002,20 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "required_steps": STABLE_PLACEMENT_STEPS,
         },
     )
-    from isaaclab.envs import mdp
+    env_cfg.rewards.stable_placement_completion = RewardTermCfg(
+        func=stable_placement_completion,
+        weight=PLACEMENT_COMPLETION_REWARD_WEIGHT,
+    )
+    env_cfg.rewards.stable_placement_departure = RewardTermCfg(
+        func=stable_placement_departure,
+        weight=PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT,
+        params={
+            "command_name": "object_pose",
+            "object_name": "object",
+            "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
+            "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
+        },
+    )
 
     env_cfg.rewards.object_drop_penalty = RewardTermCfg(
         func=_scheduled_drop_penalty_type(),
@@ -954,11 +1040,6 @@ def install_env_cfg(env_cfg: Any) -> bool:
                 "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
                 "required_steps": STABLE_PLACEMENT_STEPS,
             },
-        )
-        env_cfg.rewards.stable_placement_completion = RewardTermCfg(
-            func=mdp.is_terminated_term,
-            weight=PLACEMENT_COMPLETION_REWARD_WEIGHT,
-            params={"term_keys": "stable_placement_success"},
         )
     # The light is global across cloned envs.  All curated records use this exact
     # value, so setting it once is an applied contract, not a per-env label.
@@ -1004,6 +1085,9 @@ def install_env_cfg(env_cfg: Any) -> bool:
                     "goal_curriculum_lift_m": PLACEMENT_GOAL_CURRICULUM_LIFT_M,
                     "drop_penalty_weight": PLACEMENT_DROP_PENALTY_WEIGHT,
                     "completion_reward_weight": (PLACEMENT_COMPLETION_REWARD_WEIGHT),
+                    "post_success_departure_weight": (
+                        PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT
+                    ),
                     "strict_distance_m": STABLE_PLACEMENT_DISTANCE_M,
                     "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
                     "stable_steps": STABLE_PLACEMENT_STEPS,

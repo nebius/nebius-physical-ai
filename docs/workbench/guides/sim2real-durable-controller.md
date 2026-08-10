@@ -286,6 +286,17 @@ metric updates for that index, and excludes post-reset frames from its render
 manifest. Thus terminal strict metrics and their images always describe the
 same validation or gold scenario rather than an arbitrary later auto-reset.
 
+Validation-only Train17 then showed why completion and termination must be
+separate controls. Its training telemetry contained nonzero strict dwell reward,
+and checkpoint 4100 held a validation object inside 5 cm below 0.03 m/s for nine
+steps, but moved again before the sealed episode terminal. Disabling success
+termination had also removed the old termination-keyed completion bonus. The
+task now always pays a one-shot bonus on the first exact three-step event without
+resetting, keeps the saturated dwell reward while stable, and applies a bounded
+post-success departure penalty until episode reset. Immediate success termination
+remains an independent diagnostic opt-in; validation and gold still require the
+unchanged stable terminal placement.
+
 ## Required integration ladder
 
 Before a full run, the exact image and live target must prove:

@@ -27,6 +27,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_HOLD_REWARD_FLOOR,
     PLACEMENT_HOLD_STD_M,
     PLACEMENT_NEAR_STD_M,
+    PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT,
     PLACEMENT_MINIMAL_LIFT_M,
     PLACEMENT_PROGRESS_REWARD_WEIGHT,
     PLACEMENT_PROGRESS_SCALE_M,
@@ -43,6 +44,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     placement_curriculum_signal,
     placement_progress_signal,
     stable_placement_dwell_signal,
+    stable_placement_retention_signal,
     strict_basin_settling_signal,
     goal_curriculum_fraction,
     read_scenarios,
@@ -298,6 +300,7 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     assert PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT == 256.0
     assert PLACEMENT_STRICT_DWELL_REWARD_WEIGHT == 2048.0
+    assert PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT == -512.0
     assert STABLE_PLACEMENT_STEPS == 3
     source = module_source()
     assert "def stable_placement_curriculum" in source
@@ -306,12 +309,16 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert "env_cfg.rewards.potential_placement_progress" in source
     assert "env_cfg.rewards.strict_basin_settling" in source
     assert "env_cfg.rewards.stable_placement_dwell" in source
+    assert "env_cfg.rewards.stable_placement_departure" in source
     assert "env_cfg.rewards.object_drop_penalty" in source
     assert "env_cfg.rewards.stable_placement_completion" in source
+    assert "func=stable_placement_completion" in source
+    assert source.index("env_cfg.rewards.stable_placement_completion") < source.index(
+        "if success_termination_enabled"
+    )
     assert "npa_previous_placement_distance" in source
     assert "combine_frame_transforms" in source
     assert "scheduled_drop_penalty" in source
-    assert "mdp.is_terminated_term" in source
     assert "func=_scheduled_drop_penalty_type()" in source
     assert "return mdp.is_terminated_term(env" not in source
     assert "env_cfg.terminations.stable_placement_success" in source
@@ -369,6 +376,19 @@ def test_strict_dwell_reward_requires_three_unchanged_stable_steps() -> None:
     assert stable_placement_dwell_signal(False, steps) == (0, 0.0)
     with pytest.raises(ValueError, match="positive"):
         stable_placement_dwell_signal(True, 0, required_steps=0)
+
+
+def test_stable_placement_retention_rewards_once_and_penalizes_departure() -> None:
+    state = stable_placement_retention_signal(True, 0, False)
+    assert state == (1, pytest.approx(1 / 3), False, 0.0, 0.0)
+    state = stable_placement_retention_signal(True, state[0], state[2])
+    assert state == (2, pytest.approx(2 / 3), False, 0.0, 0.0)
+    state = stable_placement_retention_signal(True, state[0], state[2])
+    assert state == (3, 1.0, True, 1.0, 0.0)
+    state = stable_placement_retention_signal(True, state[0], state[2])
+    assert state == (3, 1.0, True, 0.0, 0.0)
+    state = stable_placement_retention_signal(False, state[0], state[2])
+    assert state == (0, 0.0, True, 0.0, 1.0)
 
 
 def test_strict_basin_settling_rewards_braking_without_target_avoidance() -> None:
