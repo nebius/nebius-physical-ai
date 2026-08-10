@@ -397,6 +397,15 @@ that result is a valid signal, not sufficient efficacy. The scale is therefore
 ordinary arm motion while leaving the 5 cm, 0.03 m/s, three-step verdict and
 terminal evaluation semantics unchanged.
 
+Train33 confirmed that the widened term was no longer saturated: its final
+weighted contribution rose to about 10.0, 57/64 validation objects ended inside
+5 cm, and 11/64 entered the strict speed basin. Checkpoint 5400 produced a
+second genuine actor-only terminal placement on a different validation
+scenario, but the canary rate remained only 1/64. The arm term was still weaker
+than each broader placement contribution (about 28), so its positive-only
+weight now matches the `4096` strict-dwell weight. This changes curriculum
+salience only; it does not change the policy action path or any success rule.
+
 ## Required integration ladder
 
 Before a full run, the exact image and live target must prove:
