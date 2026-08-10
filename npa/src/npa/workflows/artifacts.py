@@ -1679,23 +1679,75 @@ def find_run_sources_across_buckets(
     *,
     base_prefix: str,
     run_id: str,
+    exact_prefix: "str | None" = None,
     exclude: "set[str] | None" = None,
     bucket_projects: "dict[str, str] | None" = None,
     s3=None,
 ) -> tuple[list[RunSummary], tuple[dict[str, str], ...], bool]:
     """Return every exact source for ``run_id`` without silently choosing one."""
+    if s3 is None:
+        raise ArtifactDiscoveryError("s3 client is required")
+    bucket_list = [str(value).strip() for value in buckets if str(value).strip()]
+    normalized_run = _validate_run_basename(run_id)
+    # A source-qualified request already carries the exact directory above the
+    # run id. Re-authorize that tuple with one bounded server-side prefix probe
+    # instead of walking every category in the bucket again. The probe remains
+    # fail-closed: the bucket came from effective access, excluded structural
+    # roots are rejected, and a caller-supplied path is accepted only when S3
+    # currently returns an object beneath the exact ``prefix/run_id/`` scope.
+    if exact_prefix is not None and len(bucket_list) == 1:
+        bucket = bucket_list[0]
+        parent = _validate_source_prefix(str(exact_prefix or ""))
+        excluded = _normalized_discovery_exclusions(exclude)
+        if _path_in_non_run_tree(parent, excluded) or is_infrastructure_root(
+            normalized_run
+        ):
+            return [], (), True
+        scope = "/".join(part for part in (parent, normalized_run) if part) + "/"
+        try:
+            response = s3.list_objects_v2(Bucket=bucket, Prefix=scope, MaxKeys=1)
+        except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+            return [], (
+                {
+                    "bucket": bucket,
+                    "project_id": str((bucket_projects or {}).get(bucket) or ""),
+                    "code": "artifact_discovery_unavailable",
+                    "message": "Run discovery is unavailable for this object storage resource.",
+                },
+            ), False
+        objects = [
+            item
+            for item in response.get("Contents", []) or []
+            if str(item.get("Key") or "").startswith(scope)
+        ]
+        if not objects:
+            return [], (), True
+        first = objects[0]
+        last_modified = _to_iso8601(first.get("LastModified"))
+        source = RunSummary(
+            run_id=normalized_run,
+            last_modified=last_modified,
+            artifact_count=1,
+            has_viewable=None,
+            bucket=bucket,
+            project_id=str((bucket_projects or {}).get(bucket) or ""),
+            summary_complete=False,
+            started_at=_run_started_at(normalized_run, last_modified),
+            resolved_prefix=parent,
+        )
+        return [source], (), True
     page = list_all_runs_across_buckets(
-        buckets,
+        bucket_list,
         base_prefix=base_prefix,
         limit=MAX_RUN_PARENT_CANDIDATES,
         exclude=exclude,
-        contains=run_id,
+        contains=normalized_run,
         bucket_projects=bucket_projects,
         lightweight=True,
         s3=s3,
     )
     matches = sorted(
-        (item for item in page.runs if item.run_id == run_id),
+        (item for item in page.runs if item.run_id == normalized_run),
         key=lambda item: (item.project_id, item.bucket, item.resolved_prefix),
     )
     # A caller-selected source is an authorization boundary. If the bounded

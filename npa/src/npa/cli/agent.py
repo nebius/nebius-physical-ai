@@ -6618,6 +6618,9 @@ def artifacts_for_run(
             search_buckets,
             base_prefix=settings.get("prefix", ""),
             run_id=normalized_run,
+            exact_prefix=(requested_prefix if requested_prefix else "")
+            if resource_bucket and (requested_prefix or source_selected)
+            else None,
             exclude=_discovery_exclude_roots(),
             bucket_projects=bucket_projects,
             s3=s3,

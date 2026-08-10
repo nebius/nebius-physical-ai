@@ -1334,6 +1334,76 @@ def test_exact_source_discovery_reports_a_truncated_candidate_set_incomplete(
     assert complete is False
 
 
+def test_exact_source_discovery_uses_one_bounded_prefix_probe(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    calls: list[dict[str, object]] = []
+
+    class _S3:
+        def list_objects_v2(self, **kwargs):
+            calls.append(dict(kwargs))
+            return {
+                "Contents": [
+                    {
+                        "Key": "category/nested/run-known/report.json",
+                        "LastModified": datetime(2026, 8, 10, tzinfo=timezone.utc),
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        A,
+        "list_all_runs_across_buckets",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("exact source probe must not scan the whole bucket")
+        ),
+    )
+    matches, errors, complete = A.find_run_sources_across_buckets(
+        ["bucket"],
+        base_prefix="",
+        run_id="run-known",
+        exact_prefix="category/nested",
+        exclude={"npa-agent/tenants"},
+        bucket_projects={"bucket": "project"},
+        s3=_S3(),
+    )
+
+    assert calls == [
+        {
+            "Bucket": "bucket",
+            "Prefix": "category/nested/run-known/",
+            "MaxKeys": 1,
+        }
+    ]
+    assert errors == ()
+    assert complete is True
+    assert len(matches) == 1
+    assert matches[0].bucket == "bucket"
+    assert matches[0].project_id == "project"
+    assert matches[0].resolved_prefix == "category/nested"
+    assert matches[0].summary_complete is False
+
+
+def test_exact_source_discovery_rejects_excluded_structural_prefix() -> None:
+    import npa.workflows.artifacts as A
+
+    class _S3:
+        def list_objects_v2(self, **_kwargs):
+            raise AssertionError("excluded prefixes must not be probed")
+
+    matches, errors, complete = A.find_run_sources_across_buckets(
+        ["bucket"],
+        base_prefix="",
+        run_id="run-known",
+        exact_prefix="npa-agent/tenants",
+        s3=_S3(),
+    )
+
+    assert matches == []
+    assert errors == ()
+    assert complete is True
+
+
 def test_multi_bucket_discovery_keeps_accessible_siblings_when_one_is_denied(monkeypatch) -> None:
     import npa.workflows.artifacts as A
 

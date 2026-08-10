@@ -386,6 +386,7 @@ def _resolve_selected_run_source(
         [bucket],
         base_prefix=str((settings or {}).get("prefix") or ""),
         run_id=validate_run_id(run_id),
+        exact_prefix=prefix if prefix else "" if source_selected else None,
         exclude=exclude,
         bucket_projects=artifact_bucket_projects(report),
         s3=s3,
@@ -555,6 +556,12 @@ def _resolve_accessible_run_artifact(
         candidates = [requested_bucket]
     else:
         candidates = accessible
+    key_parts = [part for part in normalized_key.strip("/").split("/") if part]
+    try:
+        run_index = key_parts.index(normalized_run)
+    except ValueError:
+        run_index = -1
+    exact_prefix = "/".join(key_parts[:run_index]) if run_index >= 0 else None
     for candidate in candidates:
         try:
             sources, _source_errors, _discovery_complete = (
@@ -562,6 +569,7 @@ def _resolve_accessible_run_artifact(
                     [candidate],
                     base_prefix=str((settings or {}).get("prefix") or ""),
                     run_id=normalized_run,
+                    exact_prefix=exact_prefix if requested_bucket else None,
                     s3=s3,
                 )
             )
