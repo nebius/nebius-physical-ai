@@ -75,6 +75,21 @@ class PublishItem:
     target_ref: str
 
 
+def _mark_copy_phase_complete() -> None:
+    """Tell GitHub Actions that every planned copy operation completed.
+
+    The publish command can still exit non-zero after this point when GHCR created a
+    private package and anonymous verification fails. Keeping that state separate from
+    the process exit status prevents a pre-copy failure from producing irreversible
+    package-visibility instructions.
+    """
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if not github_output:
+        return
+    with Path(github_output).open("a", encoding="utf-8") as output:
+        output.write("copy_phase_completed=true\n")
+
+
 def build_publish_plan(
     *,
     target_registry: str,
@@ -1029,6 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
             already_current += 1
         else:
             copied += 1
+    _mark_copy_phase_complete()
     print(f"\nCopied {copied} image(s).")
     print(f"Skipped {already_current} already-current image(s).")
 

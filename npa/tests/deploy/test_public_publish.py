@@ -545,9 +545,12 @@ def test_a_token_endpoint_refusal_is_reported_as_a_verdict_not_a_glitch(
 
 
 def test_the_copy_path_writes_nothing_when_a_source_is_unreadable(
-    monkeypatch, capsys
+    monkeypatch, capsys, tmp_path
 ) -> None:
     from npa.deploy import publish_public
+
+    github_output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
 
     def explode(item) -> None:  # pragma: no cover - must not run
         raise AssertionError(
@@ -565,6 +568,7 @@ def test_the_copy_path_writes_nothing_when_a_source_is_unreadable(
 
     assert rc == 1
     assert "nothing was copied" in capsys.readouterr().err
+    assert not github_output.exists()
 
 
 def test_preflight_reports_the_registrys_own_reason(monkeypatch) -> None:
@@ -972,12 +976,14 @@ def test_wan_publication_gate_blocks_copy_before_any_write(monkeypatch, capsys) 
 
 
 def test_a_successful_copy_still_fails_while_the_packages_are_private(
-    monkeypatch, capsys
+    monkeypatch, capsys, tmp_path
 ) -> None:
     """Copying every image and exiting 0 would be the silent false success we guard against."""
     from npa.deploy import publish_public
 
     copied: list[str] = []
+    github_output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
     monkeypatch.setattr(
         publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
     )
@@ -993,6 +999,7 @@ def test_a_successful_copy_still_fails_while_the_packages_are_private(
 
     assert rc == 1
     assert copied, "the copy itself must still have happened"
+    assert github_output.read_text(encoding="utf-8") == "copy_phase_completed=true\n"
     assert "The copy succeeded" in captured.err, "must not read as a failed copy"
     # The click-through list is the whole point: no hunting for 20-odd packages by hand.
     assert "/packages/container/" in captured.out

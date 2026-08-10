@@ -228,6 +228,7 @@ jobs:
       # worked but nothing is publicly pullable. That is the expected outcome of the FIRST
       # publish; the summary below turns it into a click-through list.
       - name: Publish and verify
+        id: publish
         if: ${{ inputs.dry_run == false }}
         env:
           SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
@@ -247,7 +248,10 @@ jobs:
           fi
 
       - name: Write the visibility checklist to the job summary
-        if: ${{ failure() && inputs.dry_run == false }}
+        if: ${{ failure() && inputs.dry_run == false && steps.publish.outputs.copy_phase_completed == 'true' }}
+        env:
+          SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
+          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
           ## Images copied, but not yet public
@@ -266,11 +270,21 @@ jobs:
 
           MD
           # Only the packages that are still private, so the list shrinks as they are flipped.
-          python -m npa.deploy.publish_public \
-            --target "${{ steps.target.outputs.value }}" \
-            ${{ inputs.skip_missing && '--skip-missing' || '' }} \
-            --verify-public --checklist 2>/dev/null \
-            | grep '^- \[ \]' >> "$GITHUB_STEP_SUMMARY" || true
+          args=(--target "${{ steps.target.outputs.value }}")
+          if [ -n "$SOURCE_REGISTRY" ]; then
+            args+=(--source-registry "$SOURCE_REGISTRY")
+          fi
+          if [ -n "$SELECTED_TOOL" ]; then
+            python .github/scripts/publish_selected_public_image.py \
+              "${args[@]}" --tool "$SELECTED_TOOL" --mode checklist 2>/dev/null \
+              | grep '^- \[ \]' >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            python -m npa.deploy.publish_public \
+              "${args[@]}" \
+              ${{ inputs.skip_missing && '--skip-missing' || '' }} \
+              --verify-public --checklist 2>/dev/null \
+              | grep '^- \[ \]' >> "$GITHUB_STEP_SUMMARY" || true
+          fi
           cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
 
           Re-run this workflow with `dry_run=false` to re-verify, or run locally:
@@ -278,4 +292,15 @@ jobs:
           ```
           npa/.venv/bin/python -m npa.deploy.publish_public --verify-public
           ```
+          MD
+
+      - name: Write pre-copy failure guidance to the job summary
+        if: ${{ failure() && inputs.dry_run == false && steps.publish.outputs.copy_phase_completed != 'true' }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
+          ## Publication stopped before copy completion
+
+          The job did not record completion of the registry copy phase. Do **not** infer
+          that a package was created, and do not change GHCR visibility based on this run.
+          Inspect the failing step and fix that error before dispatching another publish.
           MD
