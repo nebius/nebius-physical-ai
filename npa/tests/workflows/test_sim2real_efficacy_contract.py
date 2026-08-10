@@ -317,8 +317,15 @@ def test_stable_placement_curriculum_is_dense_across_live_canary_basin() -> None
     assert STABLE_PLACEMENT_REWARD_WEIGHT * canary_basin_approach > 10.0
     slow = placement_curriculum_signal(0.057, 0.01, 0.02, tanh=math.tanh)
     fly_through = placement_curriculum_signal(0.057, 0.20, 0.02, tanh=math.tanh)
-    assert slow > 1.0
+    assert slow > 0.9
     assert slow > fly_through + 0.4
+
+
+def test_stable_placement_curriculum_penalizes_strict_basin_fly_through() -> None:
+    stopped = placement_curriculum_signal(0.027, 0.0, 0.02, tanh=math.tanh)
+    fly_through = placement_curriculum_signal(0.027, 0.20, 0.02, tanh=math.tanh)
+    assert stopped > 1.5
+    assert fly_through < 0.0
 
 
 def test_stable_placement_curriculum_does_not_suppress_transport() -> None:

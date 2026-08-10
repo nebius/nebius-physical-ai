@@ -458,15 +458,18 @@ def placement_curriculum_signal(
     dwell_scale: float = PLACEMENT_DWELL_SCALE,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
 ) -> Any:
-    """Return held-object proximity plus a near-target dwell incentive.
+    """Return held-object proximity plus a near-target settling objective.
 
     Train3 exposed that velocity-gating the whole approach signal suppresses
     deliberate transport. Train4 then showed that a signed step delta is
     exploitable through drop/reset cycles. Absolute proximity therefore remains
     independent of velocity but is gated by end-effector/object proximity. This
     attenuates the Train5 loophole where throwing the object earned placement
-    reward before a later drop. A bounded floor preserves grasp/lift exploration;
-    stillness is valuable only in the narrow target basin.
+    reward before a later drop. Train8 then entered the strict 5 cm basin without
+    arresting motion because fast near-target motion merely lost the positive
+    dwell bonus. The signed settling term makes that fly-through costly only in
+    the narrow basin. A bounded floor preserves grasp/lift exploration and the
+    broad approach signal remains positive during transport.
     ``tanh`` is injected so this contract is testable without Isaac's Torch runtime.
     """
 
@@ -476,7 +479,8 @@ def placement_curriculum_signal(
         1.0 - tanh(hold_distance / float(hold_std_m))
     )
     strict_stillness = 1.0 - tanh(speed / float(stable_speed_mps))
-    return held * (approach + float(dwell_scale) * near * strict_stillness)
+    signed_stillness = 2.0 * strict_stillness - 1.0
+    return held * (approach + float(dwell_scale) * near * signed_stillness)
 
 
 def _placement_state(

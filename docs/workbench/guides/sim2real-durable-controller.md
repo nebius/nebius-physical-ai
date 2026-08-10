@@ -227,7 +227,13 @@ canary reached and contacted 3/3 objects and grasped/lifted 2/3, but its closest
 target distances were still 0.205--0.364 m; the earlier 0.15 m, weight-8 term was
 effectively flat there and left lift as the dominant objective. A follow-up
 seven-checkpoint validation ladder proved that later training learned 3/3
-reach/contact/grasp/lift and came within 0.057 m, but then moved away. The 0.15
+reach/contact/grasp/lift and came within 0.057 m, but then moved away. A later
+exact-goal resumed pass retained 3/3 reach/contact/grasp/lift and entered the
+strict basin at 0.009 m, but all seven validation checkpoints still produced
+zero stable placements: fast near-target motion merely lost the positive dwell
+bonus. The narrow-basin term is therefore signed around strict stillness. Fast
+fly-through inside 5 cm is negative, while broad approach remains positive at
+transport distances; the strict evaluator threshold is unchanged. The 0.15
 m/s velocity gate added in the next canary was itself rejected by live evidence:
 it suppressed reward while the object was transported and regressed validation
 to 0/3 placement and 2/3 lift. A signed step-progress follow-up was also rejected:
