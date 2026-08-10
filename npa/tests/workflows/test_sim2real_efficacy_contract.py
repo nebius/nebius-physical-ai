@@ -281,7 +281,7 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert STABLE_PLACEMENT_SPEED_MPS == 0.03
     assert PLACEMENT_MINIMAL_LIFT_M == 0.04
     assert PLACEMENT_APPROACH_STD_M == 0.35
-    assert PLACEMENT_BASIN_WIDTH_M == 0.01
+    assert PLACEMENT_BASIN_WIDTH_M == 0.05
     assert PLACEMENT_NEAR_STD_M == 0.08
     assert PLACEMENT_HOLD_STD_M == 0.15
     assert PLACEMENT_HOLD_REWARD_FLOOR == 0.20
@@ -352,11 +352,16 @@ def test_strict_basin_settling_rewards_braking_without_target_avoidance() -> Non
     stopped = strict_basin_settling_signal(0.03, 0.0, 0.02, tanh=math.tanh)
     threshold = strict_basin_settling_signal(0.03, 0.03, 0.02, tanh=math.tanh)
     fly_through = strict_basin_settling_signal(0.03, 0.20, 0.02, tanh=math.tanh)
+    prearrival_stopped = strict_basin_settling_signal(0.10, 0.0, 0.02, tanh=math.tanh)
+    prearrival_fast = strict_basin_settling_signal(0.10, 0.20, 0.02, tanh=math.tanh)
     transporting = strict_basin_settling_signal(0.20, 0.20, 0.02, tanh=math.tanh)
     assert stopped > 0.5
     assert stopped > threshold > fly_through > 0.0
     assert stopped > fly_through + 0.5
-    assert abs(transporting * PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT) < 0.01
+    assert prearrival_stopped > prearrival_fast + 0.05
+    assert prearrival_fast > transporting > 0.0
+    # Nominal value before Isaac's dt multiplier stays negligible at 20 cm.
+    assert transporting * PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT < 0.1
     with pytest.raises(ValueError, match="positive"):
         strict_basin_settling_signal(0.03, 0.0, 0.02, tanh=math.tanh, basin_width_m=0.0)
 

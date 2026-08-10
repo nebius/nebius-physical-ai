@@ -38,7 +38,12 @@ PLACEMENT_HOLD_REWARD_FLOOR = 0.20
 PLACEMENT_HOLD_MAX_DISTANCE_M = 0.30
 PLACEMENT_DWELL_SCALE = 2.0
 PLACEMENT_SETTLING_SPEED_MPS = 0.20
-PLACEMENT_BASIN_WIDTH_M = 0.01
+# Train12 crossed the strict basin at 0.10-0.12 m/s and managed only one
+# sub-0.03 m/s sample before leaving. A 1 cm logistic transition starts the
+# braking reward only after the policy is effectively at the 5 cm boundary,
+# which is physically too late. Keep the verdict at 5 cm, but expose its
+# positive-only settling gradient over the preceding 5 cm of approach.
+PLACEMENT_BASIN_WIDTH_M = 0.05
 PLACEMENT_GOAL_CURRICULUM_LIFT_M = 0.08
 PLACEMENT_PROGRESS_SCALE_M = 0.02
 PLACEMENT_PROGRESS_REWARD_WEIGHT = 512.0
@@ -509,9 +514,11 @@ def strict_basin_settling_signal(
     Exact c8a1980 validation put every scenario inside 5 cm but none below
     0.03 m/s for three steps. Train11 proved that a negative basin reward teaches
     avoidance instead of braking. This signal is therefore effectively zero
-    during transport and positive in the basin, with a smooth velocity gradient
-    plus an exact-boundary-focused component. Sustained stillness earns more than
-    a fast crossing without making the target repulsive.
+    during broad transport and becomes positive over the final 5 cm of approach,
+    with a smooth velocity gradient plus an exact-boundary-focused component. The
+    wider positive-only envelope gives a moving policy enough distance to brake;
+    it does not alter the strict success boundary. Sustained stillness earns more
+    than a fast crossing without making the target repulsive.
     """
 
     if basin_width_m <= 0 or settling_speed_mps <= 0 or stable_speed_mps <= 0:
