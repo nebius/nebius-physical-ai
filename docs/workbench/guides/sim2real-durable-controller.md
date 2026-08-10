@@ -215,20 +215,24 @@ changing that verdict. It activates after a real 4 cm lift, transforms the
 base-frame goal through the robot root exactly as Isaac's stock reward does,
 provides an object-to-goal approach gradient only while the end effector remains
 near the object, and limits the stillness incentive to the narrow target basin.
-An episode-local best-distance potential rewards only new held-object progress;
-its first eligible sample is zero and reset returns it to infinity, so a drop or
-reset cannot manufacture progress. The exact `object_dropping` termination has
-a time-step-scaled terminal penalty that ramps with first-pass goal difficulty,
-while the unchanged 5 cm / 0.03 m/s success termination has a larger positive
-completion reward. Resumed exact-goal passes apply the full drop consequence
+An episode-local signed potential rewards held-object approach and penalizes
+departure; its first eligible sample is zero and reset returns it to infinity,
+so a drop or reset cannot manufacture progress. Positive approach tapers to
+zero over the final 5 cm before the strict boundary while negative departure
+remains fully active. The exact `object_dropping` termination has a
+time-step-scaled terminal penalty that ramps with first-pass goal difficulty.
+The unchanged 5 cm / 0.03 m/s event advances an exact three-step dwell reward;
+after the third step that reward remains saturated until the policy leaves the
+strict event. Resumed exact-goal passes apply the full drop consequence
 immediately. The first pass
 interpolates each applied scenario from an 8 cm
 lift directly above its real object pose to the exact recorded goal by 60% of
 the configured steps; the remaining 40% and every resumed pass use only the
-unmodified scenario goal. Training terminates a
-successful episode after
-the same three consecutive stable steps used by evaluation; evaluation itself
-does not enable that termination and independently observes the complete event.
+unmodified scenario goal. Training deliberately does not terminate after the
+first three stable steps: strict validation requires the object to remain
+stably placed at episode end, so continued saturated dwell reward teaches the
+same sustained hold that validation and sealed gold measure. Immediate success
+termination remains an explicit opt-in diagnostic only.
 Its 0.35 m approach scale and weight 32 are deliberate: the first live validation
 canary reached and contacted 3/3 objects and grasped/lifted 2/3, but its closest
 target distances were still 0.205--0.364 m; the earlier 0.15 m, weight-8 term was
@@ -238,9 +242,12 @@ reach/contact/grasp/lift and came within 0.057 m, but then moved away. A later
 exact-goal resumed pass retained 3/3 reach/contact/grasp/lift and entered the
 strict basin at 0.009 m, but all seven validation checkpoints still produced
 zero stable placements: fast near-target motion merely lost the positive dwell
-bonus. The narrow-basin term is therefore signed around strict stillness. Fast
-fly-through inside 5 cm is negative, while broad approach remains positive at
-transport distances; the strict evaluator threshold is unchanged. The 0.15
+bonus. A negative narrow-basin term was tested and rejected because it taught
+target avoidance. The current basin signal is positive-only, exposes braking
+over the final 5 cm of approach, and combines a 0.20 m/s settling gradient with
+the unchanged 0.03 m/s boundary. Departure is handled by the signed potential;
+broad approach remains positive at transport distances and the strict evaluator
+threshold is unchanged. The 0.15
 m/s velocity gate added in the next canary was itself rejected by live evidence:
 it suppressed reward while the object was transported and regressed validation
 to 0/3 placement and 2/3 lift. A signed step-progress follow-up was also rejected:
@@ -260,12 +267,16 @@ approach signal outside the hold gate, and accepts held-progress eligibility to
 `mdp.is_terminated_term` manager term, preserving its resolved Isaac termination
 names and timeout filtering; it is never invoked as a free function. This
 preserves early discovery while still making the measured late throw/drop
-shortcut costly. PPO begins each pass
-at the stock-like entropy coefficient (`0.006`) and anneals to `0.0005` after
-60% of the configured iterations. This preserves early grasp/lift discovery while
-allowing the final policy to stop carrying or dropping the object; the initial
-coefficient, final coefficient, and transition fraction remain explicit
-operator settings in runtime provenance.
+shortcut costly. The first PPO pass begins at the stock-like entropy coefficient
+(`0.006`) and anneals to `0.0005` after 60% of its iterations, preserving early
+grasp/lift discovery. A resumed policy has already crossed that exploration
+wall, so it instead uses a dedicated convergence phase: `0.0005` to `0.0` after
+20% of the pass with optimizer learning rate `0.0005`. All settings remain
+operator-tunable and appear in runtime provenance. Validation-only Train16
+confirmed the need for the sustained-hold contract: an immutable checkpoint
+held the exact stable event for nine consecutive steps, then departed before
+episode end and correctly scored zero strict success. Training now optimizes
+the missing post-success interval rather than weakening that verdict.
 
 ## Required integration ladder
 

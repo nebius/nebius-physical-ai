@@ -133,9 +133,32 @@ def test_build_isaac_job_manifest_shape():
     assert "pip install" not in args
     assert "<<" not in args
     env = {item["name"]: item["value"] for item in container["env"]}
-    assert env["NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION"] == "1"
+    # Strict validation requires the object to remain stably placed at episode
+    # end. Training therefore keeps running after the first three-step event so
+    # the saturated dwell reward teaches post-success holding behavior.
+    assert env["NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION"] == "0"
     assert env["NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM"] == "1"
     assert env["NPA_SIM2REAL_GOAL_CURRICULUM_FULL_STEP"] == "2160"
+
+    opt_in = byo.build_isaac_job_manifest(
+        job_name="s2r-byo-isaac-train-run1-opt-in",
+        run_id="run1-opt-in",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=1024,
+        iterations=150,
+        s3_output_uri="s3://bucket/sim2real-b/run1-opt-in/byo-trainer/job/",
+        s3_endpoint="https://s3.example",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        success_termination_enabled=True,
+    )
+    opt_in_env = {
+        item["name"]: item["value"]
+        for item in opt_in["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert opt_in_env["NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION"] == "1"
 
 
 def test_dryrun_main_writes_contract_json(tmp_path, monkeypatch):
@@ -794,6 +817,15 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
         captured["scenarios_uri"] = kwargs.get("scenarios_uri", "")
         captured["scenarios_jsonl"] = kwargs.get("scenarios_jsonl", "")
         captured["scenarios_sha256"] = kwargs.get("scenarios_sha256", "")
+        captured["entropy_coef"] = kwargs.get("entropy_coef", "")
+        captured["entropy_final_coef"] = kwargs.get("entropy_final_coef", "")
+        captured["entropy_anneal_fraction"] = kwargs.get("entropy_anneal_fraction", "")
+        captured["ppo_optimizer_learning_rate"] = kwargs.get(
+            "ppo_optimizer_learning_rate", ""
+        )
+        captured["success_termination_enabled"] = kwargs.get(
+            "success_termination_enabled"
+        )
         return {"manifest": True}
 
     monkeypatch.setattr(byo, "build_isaac_job_manifest", fake_build)
@@ -875,6 +907,17 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     # resume uri threaded through to the manifest builder
     assert captured["resume_uri"] == "s3://bkt/prior/model_latest.pt"
     assert captured["resume_sha256"] == "b" * 64
+    assert captured["entropy_coef"] == byo.DEFAULT_RESUME_ENTROPY_COEF
+    assert captured["entropy_final_coef"] == byo.DEFAULT_RESUME_ENTROPY_FINAL_COEF
+    assert (
+        captured["entropy_anneal_fraction"]
+        == byo.DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION
+    )
+    assert (
+        captured["ppo_optimizer_learning_rate"]
+        == byo.DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE
+    )
+    assert captured["success_termination_enabled"] is False
     assert captured["scenarios_uri"] == "s3://bkt/myrun/envs/train/envs.jsonl"
     assert captured["scenarios_jsonl"] == ""
     assert captured["scenarios_sha256"] == hashlib.sha256(b"{}\n").hexdigest()

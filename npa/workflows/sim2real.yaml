@@ -190,6 +190,17 @@ envs:
   # Native PPO optimizer initial LR (adaptive task schedule). Independent from
   # LEARNING_RATE, which applies only to the signal adapter/control attribution.
   NPA_BYO_ISAAC_PPO_LEARNING_RATE: "0.001"
+  # A resumed policy already knows reach/grasp/lift. Use a distinct convergence
+  # schedule so each inner/outer pass does not reintroduce first-pass exploration
+  # and target fly-through. Live validation selects checkpoints deterministically.
+  NPA_BYO_ISAAC_RESUME_ENTROPY_COEF: "0.0005"
+  NPA_BYO_ISAAC_RESUME_ENTROPY_FINAL_COEF: "0.0"
+  NPA_BYO_ISAAC_RESUME_ENTROPY_ANNEAL_FRACTION: "0.2"
+  NPA_BYO_ISAAC_RESUME_PPO_LEARNING_RATE: "0.0005"
+  # Keep training alive after the first three-step stable event. The exact dwell
+  # reward then teaches the policy to remain placed through episode end, matching
+  # strict validation/gold instead of training an immediate-success reset.
+  NPA_BYO_ISAAC_ENABLE_SUCCESS_TERMINATION: "0"
   NPA_ENVGEN_SHARD_COUNT: "16"
   NPA_SIM2REAL_K8S_MAX_PARALLEL_GPUS: "16"
   # Advanced defaults (leave unless tuning specific infra/runtime behavior).

@@ -62,6 +62,15 @@ DEFAULT_ENTROPY_COEF = "0.006"
 DEFAULT_ENTROPY_FINAL_COEF = "0.0005"
 DEFAULT_ENTROPY_ANNEAL_FRACTION = "0.6"
 DEFAULT_PPO_OPTIMIZER_LEARNING_RATE = "0.001"
+# A resumed policy has already crossed the reach/grasp/lift exploration wall.
+# Re-applying the first-pass exploration schedule on every inner/outer pass kept
+# deterministic placement noisy in live validation. Resume uses a separate,
+# operator-tunable convergence phase: short low-entropy adaptation followed by
+# zero entropy and a smaller PPO optimizer rate.
+DEFAULT_RESUME_ENTROPY_COEF = "0.0005"
+DEFAULT_RESUME_ENTROPY_FINAL_COEF = "0.0"
+DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION = "0.2"
+DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE = "0.0005"
 _STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
 # rsl_rl experiment_name for the Franka Lift task (logs/rsl_rl/<experiment_name>/).
@@ -596,6 +605,7 @@ def build_isaac_job_manifest(
     entropy_anneal_fraction: str = "",
     ppo_optimizer_learning_rate: str = "",
     init_noise_std: str = "",
+    success_termination_enabled: bool = False,
     validation_interval: int = 100,
     resume_uri: str = "",
     resume_sha256: str = "",
@@ -969,7 +979,9 @@ def build_isaac_job_manifest(
                                 },
                                 {
                                     "name": "NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION",
-                                    "value": "1",
+                                    "value": (
+                                        "1" if success_termination_enabled else "0"
+                                    ),
                                 },
                                 {
                                     "name": "NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM",
@@ -1255,18 +1267,6 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         "NPA_BYO_ISAAC_PPO_LEARNING_RATE",
         DEFAULT_PPO_OPTIMIZER_LEARNING_RATE,
     )
-    if entropy_coef:
-        print(
-            "byo_isaac_trainer: PPO entropy curriculum -> "
-            f"{entropy_coef} then {entropy_final_coef} after "
-            f"{entropy_anneal_fraction} of each pass",
-            flush=True,
-        )
-    print(
-        "byo_isaac_trainer: PPO optimizer initial learning_rate -> "
-        f"{ppo_optimizer_learning_rate} (independent of signal adapter)",
-        flush=True,
-    )
     if object_usd:
         default_tag = " (default)" if not _env("NPA_BYO_ISAAC_OBJECT_USD") else ""
         print(
@@ -1424,6 +1424,53 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
                 flush=True,
             )
 
+    # The first pass needs enough exploration to discover reach/grasp/lift. A
+    # resumed pass has already crossed that wall and must instead consolidate a
+    # deterministic, motion-stable placement. Keeping these knobs separate
+    # prevents each inner/outer resume from reintroducing the high exploration
+    # that live validation measured as target fly-through.
+    if resume_uri and not physics:
+        raw_ent = _env(
+            "NPA_BYO_ISAAC_RESUME_ENTROPY_COEF",
+            DEFAULT_RESUME_ENTROPY_COEF,
+        )
+        entropy_coef = "" if raw_ent.lower() in _STOCK_ENTROPY_SENTINELS else raw_ent
+        entropy_final_coef = _env(
+            "NPA_BYO_ISAAC_RESUME_ENTROPY_FINAL_COEF",
+            DEFAULT_RESUME_ENTROPY_FINAL_COEF,
+        )
+        entropy_anneal_fraction = _env(
+            "NPA_BYO_ISAAC_RESUME_ENTROPY_ANNEAL_FRACTION",
+            DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+        )
+        ppo_optimizer_learning_rate = _env(
+            "NPA_BYO_ISAAC_RESUME_PPO_LEARNING_RATE",
+            DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE,
+        )
+        if not entropy_coef:
+            entropy_final_coef = ""
+            entropy_anneal_fraction = ""
+
+    raw_success_termination = _env("NPA_BYO_ISAAC_ENABLE_SUCCESS_TERMINATION", "0")
+    if raw_success_termination not in {"0", "1"}:
+        raise ValueError("NPA_BYO_ISAAC_ENABLE_SUCCESS_TERMINATION must be 0 or 1")
+    success_termination_enabled = raw_success_termination == "1"
+    if entropy_coef:
+        print(
+            "byo_isaac_trainer: PPO entropy curriculum -> "
+            f"{entropy_coef} then {entropy_final_coef} after "
+            f"{entropy_anneal_fraction} of "
+            f"{'resume convergence' if resume_uri and not physics else 'exploration'}",
+            flush=True,
+        )
+    print(
+        "byo_isaac_trainer: PPO optimizer initial learning_rate -> "
+        f"{ppo_optimizer_learning_rate} (independent of signal adapter); "
+        "stable-placement success termination -> "
+        f"{'enabled' if success_termination_enabled else 'disabled for sustained dwell'}",
+        flush=True,
+    )
+
     manifest = build_isaac_job_manifest(
         job_name=job_name,
         run_id=run_id,
@@ -1448,6 +1495,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         entropy_anneal_fraction=entropy_anneal_fraction,
         ppo_optimizer_learning_rate=ppo_optimizer_learning_rate,
         init_noise_std=init_noise_std,
+        success_termination_enabled=success_termination_enabled,
         validation_interval=validation_interval,
         resume_uri=resume_uri,
         resume_sha256=resume_sha256,
@@ -1547,6 +1595,15 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             else "task_default"
         ),
         "init_noise_std": float(init_noise_std) if init_noise_std else "task_default",
+        "training_phase": (
+            "resume_convergence" if resume_uri and not physics else "exploration"
+        ),
+        "success_termination_enabled": success_termination_enabled,
+        "strict_dwell_training_contract": (
+            "sustained_until_episode_end"
+            if not success_termination_enabled
+            else "terminate_after_three_stable_steps"
+        ),
         "reward_weights": reward_overrides,
         "iterations": iterations,
         "num_envs": num_envs,
