@@ -211,8 +211,10 @@ near the object, and limits the stillness incentive to the narrow target basin.
 An episode-local best-distance potential rewards only new held-object progress;
 its first eligible sample is zero and reset returns it to infinity, so a drop or
 reset cannot manufacture progress. The exact `object_dropping` termination has
-a time-step-scaled terminal penalty, while the unchanged 5 cm / 0.03 m/s success
-termination has the matching positive completion reward. The first pass
+a time-step-scaled terminal penalty that ramps with first-pass goal difficulty,
+while the unchanged 5 cm / 0.03 m/s success termination has a larger positive
+completion reward. Resumed exact-goal passes apply the full drop consequence
+immediately. The first pass
 interpolates each applied scenario from an 8 cm
 lift directly above its real object pose to the exact recorded goal by 60% of
 the configured steps; the remaining 40% and every resumed pass use only the
@@ -236,9 +238,13 @@ curriculum reached fraction 1.0 with 35,412 true-goal assignments, but late drop
 rate still reached 0.8269 and validation remained 0/3. Isaac's reward manager
 multiplies every weight by the environment time step; the old weight `-50`
 therefore contributed only about `-0.16` to late episode summaries and did not
-counter the throw/drop shortcut. Held-object gating, reset-safe monotonic
-progress, and symmetric terminal success/drop weights close that measured
-loophole without changing the final target or strict evaluator. PPO begins each pass
+counter the throw/drop shortcut. A subsequent from-scratch canary with weight
+`-5000` eliminated late drops but also suppressed grasp/lift exploration and
+collapsed to timeouts. The final schedule therefore starts the first pass at
+zero, ramps to `-2000` with the goal curriculum, retains 20% of the dense
+approach signal outside the hold gate, and accepts held-progress eligibility to
+30 cm. This preserves early discovery while still making the measured late
+throw/drop shortcut costly. PPO begins each pass
 at the stock-like entropy coefficient (`0.006`) and anneals to `0.0005` after
 60% of the configured iterations. This preserves early grasp/lift discovery while
 allowing the final policy to stop carrying or dropping the object; the initial

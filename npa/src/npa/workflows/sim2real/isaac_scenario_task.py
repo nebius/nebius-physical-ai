@@ -33,15 +33,19 @@ STABLE_PLACEMENT_STEPS = 3
 PLACEMENT_APPROACH_STD_M = 0.35
 PLACEMENT_NEAR_STD_M = 0.08
 PLACEMENT_HOLD_STD_M = 0.15
+PLACEMENT_HOLD_REWARD_FLOOR = 0.20
+PLACEMENT_HOLD_MAX_DISTANCE_M = 0.30
 PLACEMENT_DWELL_SCALE = 2.0
 PLACEMENT_GOAL_CURRICULUM_LIFT_M = 0.08
 PLACEMENT_PROGRESS_SCALE_M = 0.02
-PLACEMENT_PROGRESS_REWARD_WEIGHT = 128.0
+PLACEMENT_PROGRESS_REWARD_WEIGHT = 512.0
 # Isaac RewardManager multiplies every weight by the environment dt.  Train5's
 # nominal -50 terminal weight contributed only about -0.16 to late episode
 # summaries while throw/drop returns exceeded 18, so terminal consequences must
-# be expressed on that time-scaled basis.  Success and drop remain symmetric.
-PLACEMENT_DROP_PENALTY_WEIGHT = -5000.0
+# be expressed on that time-scaled basis. Train6 then showed that -5000 from the
+# first step suppressed grasp/lift discovery; the bounded penalty below ramps with
+# the goal curriculum while the rarer exact completion retains the larger bonus.
+PLACEMENT_DROP_PENALTY_WEIGHT = -2000.0
 PLACEMENT_COMPLETION_REWARD_WEIGHT = 5000.0
 STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
@@ -291,6 +295,42 @@ def goal_curriculum_fraction(step: int, full_goal_step: int) -> float:
     return min(1.0, max(0.0, float(step) / float(full_goal_step)))
 
 
+def drop_penalty_schedule_fraction(
+    step: int, full_goal_step: int, *, curriculum_enabled: bool
+) -> float:
+    """Ramp drop consequences with first-pass goal difficulty.
+
+    Resumed passes use the exact goal from their first step and therefore apply
+    the complete consequence immediately. A from-scratch pass starts at zero so
+    PPO can discover grasp/lift before dropping becomes increasingly expensive.
+    """
+
+    if not curriculum_enabled:
+        return 1.0
+    return goal_curriculum_fraction(step, full_goal_step)
+
+
+def scheduled_drop_penalty(
+    env: Any,
+    *,
+    term_keys: str = "object_dropping",
+    full_goal_step: int = 1,
+) -> Any:
+    """Return the structured drop termination scaled by training phase."""
+
+    from isaaclab.envs import mdp
+
+    env_step = int(getattr(env, "_sim_step_counter", 0)) // int(env.cfg.decimation)
+    scale = drop_penalty_schedule_fraction(
+        env_step,
+        full_goal_step,
+        curriculum_enabled=(
+            os.environ.get("NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0") == "1"
+        ),
+    )
+    return mdp.is_terminated_term(env, term_keys=term_keys) * float(scale)
+
+
 def _scenario_command_type() -> type:
     global _COMMAND_TYPE
     if _COMMAND_TYPE is not None:
@@ -384,6 +424,7 @@ def placement_curriculum_signal(
     approach_std_m: float = PLACEMENT_APPROACH_STD_M,
     near_std_m: float = PLACEMENT_NEAR_STD_M,
     hold_std_m: float = PLACEMENT_HOLD_STD_M,
+    hold_reward_floor: float = PLACEMENT_HOLD_REWARD_FLOOR,
     dwell_scale: float = PLACEMENT_DWELL_SCALE,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
 ) -> Any:
@@ -393,14 +434,17 @@ def placement_curriculum_signal(
     deliberate transport. Train4 then showed that a signed step delta is
     exploitable through drop/reset cycles. Absolute proximity therefore remains
     independent of velocity but is gated by end-effector/object proximity. This
-    closes the Train5 loophole where throwing the object earned placement reward
-    before a later drop. Stillness is valuable only in the narrow target basin.
+    attenuates the Train5 loophole where throwing the object earned placement
+    reward before a later drop. A bounded floor preserves grasp/lift exploration;
+    stillness is valuable only in the narrow target basin.
     ``tanh`` is injected so this contract is testable without Isaac's Torch runtime.
     """
 
     approach = 1.0 - tanh(distance / float(approach_std_m))
     near = 1.0 - tanh(distance / float(near_std_m))
-    held = 1.0 - tanh(hold_distance / float(hold_std_m))
+    held = float(hold_reward_floor) + (1.0 - float(hold_reward_floor)) * (
+        1.0 - tanh(hold_distance / float(hold_std_m))
+    )
     strict_stillness = 1.0 - tanh(speed / float(stable_speed_mps))
     return held * (approach + float(dwell_scale) * near * strict_stillness)
 
@@ -442,7 +486,7 @@ def monotonic_placement_progress(
     object_name: str = "object",
     ee_frame_name: str = "ee_frame",
     progress_scale_m: float = PLACEMENT_PROGRESS_SCALE_M,
-    hold_std_m: float = PLACEMENT_HOLD_STD_M,
+    hold_max_distance_m: float = PLACEMENT_HOLD_MAX_DISTANCE_M,
     minimal_lift_m: float = PLACEMENT_MINIMAL_LIFT_M,
 ) -> Any:
     """Reward new held-object progress without a reset/drop exploit.
@@ -466,7 +510,7 @@ def monotonic_placement_progress(
     )
     initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
     lifted = position[:, 2] - initial_z >= float(minimal_lift_m)
-    eligible = lifted & (hold_distance < float(hold_std_m))
+    eligible = lifted & (hold_distance < float(hold_max_distance_m))
     previous = env.npa_best_placement_distance
     initialized = torch.isfinite(previous)
     improvement = torch.where(
@@ -490,6 +534,7 @@ def stable_placement_curriculum(
     approach_std_m: float = PLACEMENT_APPROACH_STD_M,
     near_std_m: float = PLACEMENT_NEAR_STD_M,
     hold_std_m: float = PLACEMENT_HOLD_STD_M,
+    hold_reward_floor: float = PLACEMENT_HOLD_REWARD_FLOOR,
     dwell_scale: float = PLACEMENT_DWELL_SCALE,
     success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
@@ -526,6 +571,7 @@ def stable_placement_curriculum(
         approach_std_m=approach_std_m,
         near_std_m=near_std_m,
         hold_std_m=hold_std_m,
+        hold_reward_floor=hold_reward_floor,
         dwell_scale=dwell_scale,
         stable_speed_mps=stable_speed_mps,
     )
@@ -589,6 +635,7 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "approach_std_m": PLACEMENT_APPROACH_STD_M,
             "near_std_m": PLACEMENT_NEAR_STD_M,
             "hold_std_m": PLACEMENT_HOLD_STD_M,
+            "hold_reward_floor": PLACEMENT_HOLD_REWARD_FLOOR,
             "dwell_scale": PLACEMENT_DWELL_SCALE,
             "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
             "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
@@ -603,16 +650,21 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "object_name": "object",
             "ee_frame_name": "ee_frame",
             "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
-            "hold_std_m": PLACEMENT_HOLD_STD_M,
+            "hold_max_distance_m": PLACEMENT_HOLD_MAX_DISTANCE_M,
             "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
         },
     )
     from isaaclab.envs import mdp
 
     env_cfg.rewards.object_drop_penalty = RewardTermCfg(
-        func=mdp.is_terminated_term,
+        func=scheduled_drop_penalty,
         weight=PLACEMENT_DROP_PENALTY_WEIGHT,
-        params={"term_keys": "object_dropping"},
+        params={
+            "term_keys": "object_dropping",
+            "full_goal_step": int(
+                os.environ.get("NPA_SIM2REAL_GOAL_CURRICULUM_FULL_STEP", "1") or 1
+            ),
+        },
     )
     success_termination_enabled = (
         os.environ.get("NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION", "0") == "1"
@@ -658,6 +710,8 @@ def install_env_cfg(env_cfg: Any) -> bool:
                     "approach_std_m": PLACEMENT_APPROACH_STD_M,
                     "near_std_m": PLACEMENT_NEAR_STD_M,
                     "hold_std_m": PLACEMENT_HOLD_STD_M,
+                    "hold_reward_floor": PLACEMENT_HOLD_REWARD_FLOOR,
+                    "hold_max_distance_m": PLACEMENT_HOLD_MAX_DISTANCE_M,
                     "dwell_scale": PLACEMENT_DWELL_SCALE,
                     "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
                     "progress_reward_weight": PLACEMENT_PROGRESS_REWARD_WEIGHT,

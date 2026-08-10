@@ -21,6 +21,8 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_DWELL_SCALE,
     PLACEMENT_DROP_PENALTY_WEIGHT,
     PLACEMENT_GOAL_CURRICULUM_LIFT_M,
+    PLACEMENT_HOLD_MAX_DISTANCE_M,
+    PLACEMENT_HOLD_REWARD_FLOOR,
     PLACEMENT_HOLD_STD_M,
     PLACEMENT_NEAR_STD_M,
     PLACEMENT_MINIMAL_LIFT_M,
@@ -31,6 +33,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     STABLE_PLACEMENT_SPEED_MPS,
     STABLE_PLACEMENT_STEPS,
     ScenarioContractError,
+    drop_penalty_schedule_fraction,
     module_source,
     placement_curriculum_signal,
     goal_curriculum_fraction,
@@ -274,11 +277,13 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert PLACEMENT_APPROACH_STD_M == 0.35
     assert PLACEMENT_NEAR_STD_M == 0.08
     assert PLACEMENT_HOLD_STD_M == 0.15
+    assert PLACEMENT_HOLD_REWARD_FLOOR == 0.20
+    assert PLACEMENT_HOLD_MAX_DISTANCE_M == 0.30
     assert PLACEMENT_DWELL_SCALE == 2.0
     assert PLACEMENT_GOAL_CURRICULUM_LIFT_M == 0.08
     assert PLACEMENT_PROGRESS_SCALE_M == 0.02
-    assert PLACEMENT_PROGRESS_REWARD_WEIGHT == 128.0
-    assert PLACEMENT_DROP_PENALTY_WEIGHT == -5000.0
+    assert PLACEMENT_PROGRESS_REWARD_WEIGHT == 512.0
+    assert PLACEMENT_DROP_PENALTY_WEIGHT == -2000.0
     assert PLACEMENT_COMPLETION_REWARD_WEIGHT == 5000.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     assert STABLE_PLACEMENT_STEPS == 3
@@ -291,6 +296,7 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert "env_cfg.rewards.stable_placement_completion" in source
     assert "npa_best_placement_distance" in source
     assert "combine_frame_transforms" in source
+    assert "scheduled_drop_penalty" in source
     assert "mdp.is_terminated_term" in source
     assert "env_cfg.terminations.stable_placement_success" in source
     assert "NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM" in source
@@ -322,7 +328,14 @@ def test_stable_placement_curriculum_does_not_suppress_transport() -> None:
 def test_stable_placement_curriculum_rejects_thrown_object_reward() -> None:
     held = placement_curriculum_signal(0.20, 0.20, 0.02, tanh=math.tanh)
     thrown = placement_curriculum_signal(0.20, 0.20, 0.50, tanh=math.tanh)
-    assert held > thrown * 100
+    assert held > thrown * 3
+
+
+def test_drop_penalty_ramps_only_during_first_pass() -> None:
+    assert drop_penalty_schedule_fraction(0, 7200, curriculum_enabled=True) == 0.0
+    assert drop_penalty_schedule_fraction(3600, 7200, curriculum_enabled=True) == 0.5
+    assert drop_penalty_schedule_fraction(7200, 7200, curriculum_enabled=True) == 1.0
+    assert drop_penalty_schedule_fraction(0, 7200, curriculum_enabled=False) == 1.0
 
 
 def test_goal_curriculum_reaches_exact_target_and_fails_closed() -> None:
