@@ -404,6 +404,7 @@ try:
     from npa.workflows.sim2real.placement_policy import (
         SETTLE_HOLD_TRIGGER_DISTANCE_M,
         advance_settle_hold,
+        joint_position_hold_action,
         settle_hold_trigger,
     )
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
@@ -450,6 +451,31 @@ try:
     }
     actions_log = {i: [] for i in range(N)}
     uenv = env.unwrapped
+    action_manager = uenv.action_manager
+    action_terms = list(action_manager.active_terms)
+    action_dims = list(action_manager.action_term_dim)
+    if "arm_action" not in action_terms or "gripper_action" not in action_terms:
+        raise RuntimeError(
+            "settle-hold requires named arm_action and gripper_action terms"
+        )
+    arm_term_index = action_terms.index("arm_action")
+    gripper_term_index = action_terms.index("gripper_action")
+    arm_start = sum(action_dims[:arm_term_index])
+    arm_end = arm_start + action_dims[arm_term_index]
+    gripper_start = sum(action_dims[:gripper_term_index])
+    arm_term = action_manager.get_term("arm_action")
+    if arm_term.action_dim != arm_end - arm_start:
+        raise RuntimeError("settle-hold arm action dimensions are inconsistent")
+
+    def measured_joint_hold_actions(actor_actions):
+        hold_actions = actor_actions.detach().clone()
+        joint_position = arm_term._asset.data.joint_pos[:, arm_term._joint_ids]
+        hold_actions[:, arm_start:arm_end] = joint_position_hold_action(
+            joint_position,
+            arm_term._scale,
+            arm_term._offset,
+        )
+        return hold_actions
     previous_goal_distance = np.full(N, np.nan)
     previous_ee_distance = np.full(N, np.nan)
     initial_object_z = None
@@ -536,7 +562,7 @@ try:
             contact_now &= force_contact
         except Exception as e:
             print("ROLLOUT_CONTACT_SENSOR_FALLBACK", repr(e), flush=True)
-        gripper_closed = a_np[:, -1] < 0.0
+        gripper_closed = a_np[:, gripper_start] < 0.0
         stable_grasp_now = contact_now & gripper_closed & (lift_m > 0.01)
         stable_grasp_steps = np.where(stable_grasp_now, stable_grasp_steps + 1, 0)
         stable_grasp_now = stable_grasp_steps >= 3
@@ -554,7 +580,8 @@ try:
             new_mask = torch.as_tensor(
                 newly_latched, dtype=torch.bool, device=actions.device
             )
-            settle_hold_actions[new_mask] = actions.detach()[new_mask]
+            measured_hold = measured_joint_hold_actions(actions)
+            settle_hold_actions[new_mask] = measured_hold[new_mask]
             settle_hold_step[newly_latched] = _step
             print(
                 "PLACEMENT_SETTLE_HOLD_LATCHED",

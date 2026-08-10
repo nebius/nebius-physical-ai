@@ -369,9 +369,12 @@ joint targets remained the source of terminal failure.
 Deployment now composes that learned actor with an explicit deterministic
 settle-hold phase. The actor still performs reach, contact, grasp, lift, and all
 goal-directed transport. Only after a genuinely lifted, contacted object held
-by a closed gripper enters a tighter 4 cm basin does the controller latch the
-actor's current joint target, allowing the position-controlled arm and object
-to settle. The latch neither declares success nor changes the authoritative
+by a closed gripper enters a tighter 4 cm basin does the controller invert
+Isaac's live affine action term and command the robot's measured joint position,
+allowing the position-controlled arm and object to settle. Replaying the actor's
+last normalized action is explicitly insufficient because it preserves the old
+moving target rather than the measured pose. The latch neither declares success
+nor changes the authoritative
 metric: validation and sealed gold still require final distance below 5 cm,
 object speed below 0.03 m/s for three consecutive steps, and the exact learned
 checkpoint. Rollout action records and held-out reports expose the latch state

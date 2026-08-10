@@ -52,3 +52,24 @@ def advance_settle_hold(latched: Any, trigger: Any) -> tuple[Any, Any]:
 
     newly_latched = (~latched) & trigger
     return latched | newly_latched, newly_latched
+
+
+def joint_position_hold_action(
+    joint_position: Any,
+    scale: Any,
+    offset: Any,
+) -> Any:
+    """Invert Isaac's affine joint action into a measured-position hold action.
+
+    ``JointPositionAction`` applies ``offset + scale * raw_action``. Replaying
+    the actor's last raw action preserves its old target, not the robot's
+    current position, so a moving arm continues through the goal. This inverse
+    transform commands the measured joint position at latch time.
+    """
+
+    zero_scale = scale == 0
+    if hasattr(zero_scale, "any"):
+        zero_scale = zero_scale.any()
+    if bool(zero_scale):
+        raise ValueError("settle-hold joint action scale must be nonzero")
+    return (joint_position - offset) / scale

@@ -37,7 +37,7 @@ def _report(*, stable: bool, split: str = "validation") -> dict:
             "scripted_post_actor_controller": True,
             "policy_composition": ("learned_actor_with_deterministic_settle_hold"),
             "post_actor_controller": {
-                "type": "latched_joint_target_hold",
+                "type": "measured_joint_position_hold",
                 "trigger_distance_m": 0.04,
                 "declares_success": False,
             },

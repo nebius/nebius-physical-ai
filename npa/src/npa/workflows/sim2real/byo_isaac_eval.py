@@ -103,6 +103,33 @@ def extract_checkpoint_uri(inner_evidence: dict[str, Any]) -> str:
     return ""
 
 
+def policy_inference_provenance(
+    *, checkpoint_uri: str, checkpoint: dict[str, Any]
+) -> dict[str, Any]:
+    """Describe the exact learned actor and its non-verdict post-controller."""
+
+    return {
+        "backend": "isaac_rsl_rl_inference",
+        "checkpoint_uri": checkpoint_uri,
+        "checkpoint_sha256": str(checkpoint.get("sha256") or ""),
+        "checkpoint_size_bytes": int(checkpoint.get("size_bytes") or 0),
+        "loaded_for_inference": bool(checkpoint),
+        "stock_or_scripted_policy": False,
+        "actor_is_learned": True,
+        "scripted_post_actor_controller": True,
+        "policy_composition": "learned_actor_with_deterministic_settle_hold",
+        "post_actor_controller": {
+            "type": "measured_joint_position_hold",
+            "trigger_distance_m": SETTLE_HOLD_TRIGGER_DISTANCE_M,
+            "minimal_lift_m": SETTLE_HOLD_MINIMAL_LIFT_M,
+            "requires_lift": True,
+            "requires_contact": True,
+            "requires_closed_gripper": True,
+            "declares_success": False,
+        },
+    }
+
+
 def build_heldout_report(
     per_env: list[dict[str, Any]],
     *,
@@ -550,6 +577,7 @@ try:
     from npa.workflows.sim2real.placement_policy import (
         SETTLE_HOLD_TRIGGER_DISTANCE_M,
         advance_settle_hold,
+        joint_position_hold_action,
         settle_hold_trigger,
     )
     # The ACTUAL env count is the single source of truth for per-env sizing.
@@ -565,6 +593,32 @@ try:
         obs, _ = env.get_observations()
     print("OBS_TYPE", type(obs).__name__, "realN", realN, flush=True)
     N = realN
+
+    action_manager = env.unwrapped.action_manager
+    action_terms = list(action_manager.active_terms)
+    action_dims = list(action_manager.action_term_dim)
+    if "arm_action" not in action_terms or "gripper_action" not in action_terms:
+        raise RuntimeError(
+            "settle-hold requires named arm_action and gripper_action terms"
+        )
+    arm_term_index = action_terms.index("arm_action")
+    gripper_term_index = action_terms.index("gripper_action")
+    arm_start = sum(action_dims[:arm_term_index])
+    arm_end = arm_start + action_dims[arm_term_index]
+    gripper_start = sum(action_dims[:gripper_term_index])
+    arm_term = action_manager.get_term("arm_action")
+    if arm_term.action_dim != arm_end - arm_start:
+        raise RuntimeError("settle-hold arm action dimensions are inconsistent")
+
+    def measured_joint_hold_actions(actor_actions):
+        hold_actions = actor_actions.detach().clone()
+        joint_position = arm_term._asset.data.joint_pos[:, arm_term._joint_ids]
+        hold_actions[:, arm_start:arm_end] = joint_position_hold_action(
+            joint_position,
+            arm_term._scale,
+            arm_term._offset,
+        )
+        return hold_actions
 
     def _to_batched(v):
         # Ensure a group tensor is [realN, feat]. A 1-D tensor is either a single
@@ -820,7 +874,7 @@ try:
                     pass
                 contact |= active & contact_now
                 gripper_closed = (
-                    executed_actions[:, -1].detach().cpu().numpy() < 0.0
+                    executed_actions[:, gripper_start].detach().cpu().numpy() < 0.0
                 )
                 stable_grasp_steps = np.where(
                     active,
@@ -848,7 +902,8 @@ try:
                     new_mask = torch.as_tensor(
                         newly_latched, dtype=torch.bool, device=actions.device
                     )
-                    settle_hold_actions[new_mask] = executed_actions[new_mask]
+                    measured_hold = measured_joint_hold_actions(executed_actions)
+                    settle_hold_actions[new_mask] = measured_hold[new_mask]
                     settle_hold_step[newly_latched] = _step
                     print(
                         "PLACEMENT_SETTLE_HOLD_LATCHED",
@@ -1657,26 +1712,10 @@ def main() -> int:
     report["policy_checkpoint_size_bytes"] = int(
         _CHECKPOINT_PROVENANCE.get("size_bytes") or 0
     )
-    report["policy_inference_provenance"] = {
-        "backend": "isaac_rsl_rl_inference",
-        "checkpoint_uri": checkpoint_uri,
-        "checkpoint_sha256": report["policy_checkpoint_sha256"],
-        "checkpoint_size_bytes": report["policy_checkpoint_size_bytes"],
-        "loaded_for_inference": bool(_CHECKPOINT_PROVENANCE),
-        "stock_or_scripted_policy": False,
-        "actor_is_learned": True,
-        "scripted_post_actor_controller": True,
-        "policy_composition": "learned_actor_with_deterministic_settle_hold",
-        "post_actor_controller": {
-            "type": "latched_joint_target_hold",
-            "trigger_distance_m": SETTLE_HOLD_TRIGGER_DISTANCE_M,
-            "minimal_lift_m": SETTLE_HOLD_MINIMAL_LIFT_M,
-            "requires_lift": True,
-            "requires_contact": True,
-            "requires_closed_gripper": True,
-            "declares_success": False,
-        },
-    }
+    report["policy_inference_provenance"] = policy_inference_provenance(
+        checkpoint_uri=checkpoint_uri,
+        checkpoint=_CHECKPOINT_PROVENANCE,
+    )
     report["applied_scenario_proof"] = _APPLIED_SCENARIO_AUDIT
     report["scenario_input_provenance"] = _SCENARIO_INPUT_PROVENANCE
     if _RENDER_MANIFEST.get("episodes"):

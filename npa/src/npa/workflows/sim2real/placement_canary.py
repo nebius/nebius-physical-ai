@@ -42,7 +42,7 @@ def assess_placement_report(
         != "learned_actor_with_deterministic_settle_hold"
         or inference.get("actor_is_learned") is not True
         or inference.get("scripted_post_actor_controller") is not True
-        or post_actor.get("type") != "latched_joint_target_hold"
+        or post_actor.get("type") != "measured_joint_position_hold"
         or post_actor.get("declares_success") is not False
         or float(post_actor.get("trigger_distance_m") or 0.0) >= STRICT_DISTANCE_M
     ):
@@ -205,18 +205,12 @@ def run_validation_canary(
             "policy_checkpoint_size_bytes": isaac_eval._CHECKPOINT_PROVENANCE.get(
                 "size_bytes", 0
             ),
-            "policy_inference_provenance": {
-                "backend": "isaac_rsl_rl_inference",
-                "checkpoint_uri": checkpoint_uri,
-                "checkpoint_sha256": isaac_eval._CHECKPOINT_PROVENANCE.get(
-                    "sha256", ""
-                ),
-                "checkpoint_size_bytes": isaac_eval._CHECKPOINT_PROVENANCE.get(
-                    "size_bytes", 0
-                ),
-                "loaded_for_inference": bool(isaac_eval._CHECKPOINT_PROVENANCE),
-                "stock_or_scripted_policy": False,
-            },
+            "policy_inference_provenance": (
+                isaac_eval.policy_inference_provenance(
+                    checkpoint_uri=checkpoint_uri,
+                    checkpoint=isaac_eval._CHECKPOINT_PROVENANCE,
+                )
+            ),
             "applied_scenario_proof": isaac_eval._APPLIED_SCENARIO_AUDIT,
             "scenario_input_provenance": isaac_eval._SCENARIO_INPUT_PROVENANCE,
         }

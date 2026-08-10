@@ -8,6 +8,7 @@ import pytest
 from npa.workflows.sim2real.placement_policy import (
     SETTLE_HOLD_TRIGGER_DISTANCE_M,
     advance_settle_hold,
+    joint_position_hold_action,
     settle_hold_trigger,
 )
 
@@ -51,3 +52,18 @@ def test_settle_hold_rejects_nonpositive_physical_boundaries(
             trigger_distance_m=trigger_distance_m,
             minimal_lift_m=minimal_lift_m,
         )
+
+
+def test_joint_position_hold_inverts_isaac_affine_action() -> None:
+    joint_position = np.array([[0.1, -0.4], [0.3, 0.0]])
+    offset = np.array([[0.0, -0.2], [0.2, -0.1]])
+    scale = 0.5
+
+    raw_hold = joint_position_hold_action(joint_position, scale, offset)
+
+    assert np.allclose(offset + scale * raw_hold, joint_position)
+
+
+def test_joint_position_hold_rejects_zero_scale() -> None:
+    with pytest.raises(ValueError, match="nonzero"):
+        joint_position_hold_action(np.array([[0.1]]), 0.0, np.array([[0.0]]))

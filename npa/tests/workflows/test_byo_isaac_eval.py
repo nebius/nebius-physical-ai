@@ -33,6 +33,19 @@ def test_extract_checkpoint_uri_absent_returns_empty():
     assert ev.extract_checkpoint_uri({}) == ""
 
 
+def test_policy_inference_provenance_discloses_non_verdict_controller() -> None:
+    provenance = ev.policy_inference_provenance(
+        checkpoint_uri="s3://bucket/model.pt",
+        checkpoint={"sha256": "a" * 64, "size_bytes": 123},
+    )
+    assert provenance["actor_is_learned"] is True
+    assert provenance["scripted_post_actor_controller"] is True
+    assert provenance["post_actor_controller"]["type"] == (
+        "measured_joint_position_hold"
+    )
+    assert provenance["post_actor_controller"]["declares_success"] is False
+
+
 def test_per_env_from_distances_scoring():
     rows = ev.per_env_from_distances([0.0, 0.05, 0.2], success_dist_m=0.05)
     assert rows[0]["success"] is True and rows[0]["score"] == 1.0
@@ -75,6 +88,7 @@ def test_build_isaac_eval_job_manifest_shape():
     assert "max_consecutive_strict_stable_steps" in ev.ISAAC_EVAL_SCRIPT
     assert "PLACEMENT_SETTLE_HOLD_LATCHED" in ev.ISAAC_EVAL_SCRIPT
     assert "settle_hold_trigger(" in ev.ISAAC_EVAL_SCRIPT
+    assert "joint_position_hold_action(" in ev.ISAAC_EVAL_SCRIPT
 
 
 def test_first_episode_masks_seal_auto_reset_state():
