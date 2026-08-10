@@ -216,6 +216,30 @@ def test_fresh_deploy_state_inspection_failure_is_nondestructive(
     assert mutations == []
 
 
+def test_fresh_deploy_backend_init_failure_is_nondestructive(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.deploy.provisioner import ProvisionerError
+
+    _deployment, mutations = _mock_fresh_deploy_until_terraform(monkeypatch, tmp_path)
+
+    def fail_init(**_kwargs):
+        raise ProvisionerError("backend authentication unavailable")
+
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", fail_init)
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.state_list",
+        lambda _tf_dir: mutations.append("state-list"),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.apply", lambda **_kwargs: mutations.append("apply")
+    )
+
+    with pytest.raises(Exit):
+        _call_fresh_deploy()
+    assert mutations == []
+
+
 def test_fresh_deploy_remote_state_refusal_leaves_no_record(
     monkeypatch, tmp_path
 ) -> None:

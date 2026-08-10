@@ -242,13 +242,21 @@ def _apply_agent_terraform(
         region=env_region,
         endpoint=merged_vars.get("s3_endpoint", ""),
     )
-    provisioner.init(
-        tf_dir=tf_dir,
-        backend_config={
-            "access_key": merged_vars.get("nebius_api_key", ""),
-            "secret_key": merged_vars.get("nebius_secret_key", ""),
-        },
-    )
+    try:
+        provisioner.init(
+            tf_dir=tf_dir,
+            backend_config={
+                "access_key": merged_vars.get("nebius_api_key", ""),
+                "secret_key": merged_vars.get("nebius_secret_key", ""),
+            },
+        )
+    except ProvisionerError as exc:
+        if require_empty_state:
+            raise DeploymentIdentityError(
+                "Unable to initialize and inspect the Terraform state namespace; "
+                "refusing to apply or destroy unknown resources"
+            ) from exc
+        raise
     if require_empty_state:
         try:
             existing_resources = provisioner.state_list(tf_dir)
