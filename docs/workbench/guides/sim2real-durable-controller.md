@@ -243,8 +243,11 @@ counter the throw/drop shortcut. A subsequent from-scratch canary with weight
 collapsed to timeouts. The final schedule therefore starts the first pass at
 zero, ramps to `-2000` with the goal curriculum, retains 20% of the dense
 approach signal outside the hold gate, and accepts held-progress eligibility to
-30 cm. This preserves early discovery while still making the measured late
-throw/drop shortcut costly. PPO begins each pass
+30 cm. The scheduled penalty subclasses Isaac Lab 2.3's stateful
+`mdp.is_terminated_term` manager term, preserving its resolved Isaac termination
+names and timeout filtering; it is never invoked as a free function. This
+preserves early discovery while still making the measured late throw/drop
+shortcut costly. PPO begins each pass
 at the stock-like entropy coefficient (`0.006`) and anneals to `0.0005` after
 60% of the configured iterations. This preserves early grasp/lift discovery while
 allowing the final policy to stop carrying or dropping the object; the initial

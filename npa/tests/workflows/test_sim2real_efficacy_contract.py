@@ -33,6 +33,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     STABLE_PLACEMENT_SPEED_MPS,
     STABLE_PLACEMENT_STEPS,
     ScenarioContractError,
+    _scheduled_drop_penalty_type,
     drop_penalty_schedule_fraction,
     module_source,
     placement_curriculum_signal,
@@ -298,6 +299,8 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert "combine_frame_transforms" in source
     assert "scheduled_drop_penalty" in source
     assert "mdp.is_terminated_term" in source
+    assert "func=_scheduled_drop_penalty_type()" in source
+    assert "return mdp.is_terminated_term(env" not in source
     assert "env_cfg.terminations.stable_placement_success" in source
     assert "NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM" in source
     assert "npa_goal_curriculum_true_assignments" in source
@@ -336,6 +339,35 @@ def test_drop_penalty_ramps_only_during_first_pass() -> None:
     assert drop_penalty_schedule_fraction(3600, 7200, curriculum_enabled=True) == 0.5
     assert drop_penalty_schedule_fraction(7200, 7200, curriculum_enabled=True) == 1.0
     assert drop_penalty_schedule_fraction(0, 7200, curriculum_enabled=False) == 1.0
+
+
+def test_drop_penalty_preserves_isaac_stateful_manager_term_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, object]] = []
+
+    class FakeIsaacTerm:
+        def __init__(self, cfg: object, env: object) -> None:
+            calls.append((cfg, env))
+
+        def __call__(self, env: object, term_keys: str | list[str] = ".*") -> float:
+            calls.append((env, term_keys))
+            return 2.0
+
+    class Cfg:
+        decimation = 4
+
+    class Env:
+        cfg = Cfg()
+        _sim_step_counter = 0
+
+    monkeypatch.delenv("NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", raising=False)
+    term_type = _scheduled_drop_penalty_type(FakeIsaacTerm)
+    env = Env()
+    cfg = object()
+    term = term_type(cfg, env)
+    assert term(env, term_keys="object_dropping", full_goal_step=7200) == 2.0
+    assert calls == [(cfg, env), (env, "object_dropping")]
 
 
 def test_goal_curriculum_reaches_exact_target_and_fails_closed() -> None:

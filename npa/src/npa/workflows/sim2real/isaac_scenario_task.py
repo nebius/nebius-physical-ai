@@ -50,6 +50,7 @@ PLACEMENT_COMPLETION_REWARD_WEIGHT = 5000.0
 STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
+_DROP_PENALTY_TYPE: type | None = None
 _SCENARIO_CACHE: tuple[str, int, str, list[dict[str, Any]]] | None = None
 
 
@@ -310,25 +311,54 @@ def drop_penalty_schedule_fraction(
     return goal_curriculum_fraction(step, full_goal_step)
 
 
-def scheduled_drop_penalty(
-    env: Any,
-    *,
-    term_keys: str = "object_dropping",
-    full_goal_step: int = 1,
-) -> Any:
-    """Return the structured drop termination scaled by training phase."""
+def _scheduled_drop_penalty_type(base_type: type | None = None) -> type:
+    """Wrap Isaac's stateful structured termination term with phase scaling.
 
-    from isaaclab.envs import mdp
+    Isaac Lab 2.3 implements ``mdp.is_terminated_term`` as ``ManagerTermBase``:
+    RewardManager constructs it with ``(RewardTermCfg, env)`` and only then calls
+    the instance with ``(env, term_keys)``.  Subclassing that contract preserves
+    its resolved termination names and timeout filtering instead of incorrectly
+    invoking the class as a free function. ``base_type`` is an injection seam for
+    CPU contract tests; production always resolves the pinned Isaac class.
+    """
 
-    env_step = int(getattr(env, "_sim_step_counter", 0)) // int(env.cfg.decimation)
-    scale = drop_penalty_schedule_fraction(
-        env_step,
-        full_goal_step,
-        curriculum_enabled=(
-            os.environ.get("NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0") == "1"
-        ),
+    global _DROP_PENALTY_TYPE
+    injected = base_type is not None
+    if not injected and _DROP_PENALTY_TYPE is not None:
+        return _DROP_PENALTY_TYPE
+    if base_type is None:
+        from isaaclab.envs import mdp
+
+        base_type = mdp.is_terminated_term
+
+    base_call: Any = base_type.__call__
+
+    def scheduled_call(
+        self: Any,
+        env: Any,
+        term_keys: str | list[str] = "object_dropping",
+        full_goal_step: int = 1,
+    ) -> Any:
+        env_step = int(getattr(env, "_sim_step_counter", 0)) // int(env.cfg.decimation)
+        scale = drop_penalty_schedule_fraction(
+            env_step,
+            full_goal_step,
+            curriculum_enabled=(
+                os.environ.get("NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0") == "1"
+            ),
+        )
+        structured = base_call(self, env, term_keys=term_keys)
+        return structured * float(scale)
+
+    ScheduledDropPenalty = type(
+        "ScheduledDropPenalty",
+        (base_type,),
+        {"__call__": scheduled_call, "__module__": __name__},
     )
-    return mdp.is_terminated_term(env, term_keys=term_keys) * float(scale)
+
+    if not injected:
+        _DROP_PENALTY_TYPE = ScheduledDropPenalty
+    return ScheduledDropPenalty
 
 
 def _scenario_command_type() -> type:
@@ -657,7 +687,7 @@ def install_env_cfg(env_cfg: Any) -> bool:
     from isaaclab.envs import mdp
 
     env_cfg.rewards.object_drop_penalty = RewardTermCfg(
-        func=scheduled_drop_penalty,
+        func=_scheduled_drop_penalty_type(),
         weight=PLACEMENT_DROP_PENALTY_WEIGHT,
         params={
             "term_keys": "object_dropping",
