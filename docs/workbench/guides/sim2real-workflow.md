@@ -53,6 +53,12 @@ Configure these non-secret values in `~/.npa/config.yaml`:
 - `storage.sim2real_stock_trigger_uri`: a populated Isaac lift-cube seed prefix.
 - Kubernetes context/profile for the target cluster.
 
+An isolated launcher that must not consume shared NPA state sets
+`NPA_SIM2REAL_OPERATOR_CONFIG` to an **absolute** run-local `config.yaml` path
+and sets `KUBECONFIG` to its isolated kubeconfig. The direct-Kubernetes submit
+path reads that file instead of `~/.npa/config.yaml`; relative paths and
+non-files fail closed. Do not change `HOME` to redirect configuration.
+
 Keep S3 HMAC credentials, `HF_TOKEN`, `NGC_API_KEY`, registry credentials, and
 Token Factory credentials in `~/.npa/credentials.yaml`; never put them in YAML or
 shell history. The `default` namespace needs `npa-storage-credentials` and
@@ -119,6 +125,9 @@ BUCKET=<artifact-bucket>
 ENDPOINT=https://storage.us-central1.nebius.cloud
 REGISTRY=cr.eu-north1.nebius.cloud/<registry-id>
 TRIGGER=s3://${BUCKET}/sim2real-triggers/<batch>/isaac-lift-cube-franka/
+# Isolated launchers additionally export absolute, mode-0600 paths:
+# export NPA_SIM2REAL_OPERATOR_CONFIG=/absolute/run-local/npa/config.yaml
+# export KUBECONFIG=/absolute/run-local/kube/kubeconfig
 
 npa/.venv/bin/npa workbench workflow submit npa/workflows/sim2real.yaml \
   --run-id "${RUN}" \

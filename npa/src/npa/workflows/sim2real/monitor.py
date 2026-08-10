@@ -197,13 +197,28 @@ class OperatorConfig:
 
 
 def load_operator_config() -> OperatorConfig:
-    """Read non-secret operator settings from ``~/.npa/config.yaml``."""
+    """Read operator settings from an explicit run-local path or ``~/.npa``.
+
+    ``NPA_SIM2REAL_OPERATOR_CONFIG`` exists for isolated controllers and
+    operator launchers that must not consume shared/global NPA state.  Require
+    an absolute regular-file path so a changed working directory cannot switch
+    the tenant or cluster implicitly.
+    """
 
     from npa.deploy.images import registry_from_env
 
-    path = Path.home() / ".npa" / "config.yaml"
+    explicit = os.environ.get("NPA_SIM2REAL_OPERATOR_CONFIG", "").strip()
+    if explicit:
+        path = Path(explicit)
+        if not path.is_absolute():
+            raise ValueError("NPA_SIM2REAL_OPERATOR_CONFIG must be an absolute path")
+    else:
+        path = Path.home() / ".npa" / "config.yaml"
     if not path.exists():
-        raise ValueError("missing ~/.npa/config.yaml — run: npa configure")
+        location = str(path) if explicit else "~/.npa/config.yaml"
+        raise ValueError(f"missing operator config {location} — run: npa configure")
+    if not path.is_file():
+        raise ValueError(f"operator config is not a regular file: {path}")
     cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     storage = cfg.get("storage") or {}
     bucket = str(storage.get("bucket", "")).replace("s3://", "").split("/", 1)[0]

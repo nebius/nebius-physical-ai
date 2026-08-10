@@ -27,7 +27,10 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
 ## Procedure
 
 1. **Configure once.** `~/.npa/config.yaml` (bucket, endpoint, registry,
-   `k8s_context`) + `~/.npa/credentials.yaml` (S3 HMAC, HF/NGC tokens).
+   `k8s_context`) + `~/.npa/credentials.yaml` (S3 HMAC, HF/NGC tokens). An
+   isolated launcher instead sets `NPA_SIM2REAL_OPERATOR_CONFIG` to an absolute
+   run-local `config.yaml` and `KUBECONFIG` to its isolated kubeconfig. Relative
+   config paths fail closed; never redirect `HOME` to select a tenant.
 2. **Seed the trigger** with a task-aligned Isaac lift-cube/Franka trajectory
    prefix containing `task-dataset-manifest.json` and its referenced actions and
    camera observations, then set `storage.sim2real_stock_trigger_uri`. PushT is

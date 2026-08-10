@@ -88,6 +88,58 @@ storage:
     assert load_operator_config().registry == "registry.canonical.test/team"
 
 
+def test_operator_config_explicit_path_isolated_from_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.sim2real.monitor import load_operator_config
+
+    home = tmp_path / "home"
+    (home / ".npa").mkdir(parents=True)
+    (home / ".npa" / "config.yaml").write_text(
+        """container_registry: registry.wrong.test/team
+storage:
+  bucket: wrong-bucket
+  endpoint_url: https://storage.wrong.test
+  k8s_context: wrong-context
+""",
+        encoding="utf-8",
+    )
+    isolated = tmp_path / "launcher" / "npa" / "config.yaml"
+    isolated.parent.mkdir(parents=True)
+    isolated.write_text(
+        """container_registry: registry.isolated.test/team
+storage:
+  bucket: isolated-bucket
+  endpoint_url: https://storage.isolated.test
+  k8s_context: isolated-context
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("NPA_SIM2REAL_OPERATOR_CONFIG", str(isolated))
+    monkeypatch.delenv("NPA_REGISTRY", raising=False)
+    monkeypatch.delenv("NPA_REGISTRY_ID", raising=False)
+
+    config = load_operator_config()
+
+    assert config.bucket == "isolated-bucket"
+    assert config.endpoint_url == "https://storage.isolated.test"
+    assert config.registry == "registry.isolated.test/team"
+    assert config.k8s_context == "isolated-context"
+
+
+def test_operator_config_rejects_relative_explicit_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workflows.sim2real.monitor import load_operator_config
+
+    monkeypatch.setenv("NPA_SIM2REAL_OPERATOR_CONFIG", "relative/config.yaml")
+
+    with pytest.raises(ValueError, match="must be an absolute path"):
+        load_operator_config()
+
+
 def test_is_sim2real_runbook_accepts_only_committed_canonical_file(
     tmp_path: Path,
 ) -> None:

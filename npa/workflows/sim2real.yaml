@@ -34,6 +34,9 @@
 #
 # Where to set values:
 #   1. Persistent defaults — `npa configure` writes ~/.npa/config.yaml + credentials.yaml
+#      Isolated launchers instead set NPA_SIM2REAL_OPERATOR_CONFIG to an absolute
+#      run-local config.yaml and KUBECONFIG to an isolated file; they never
+#      redirect HOME or consume shared/global NPA configuration.
 #   2. Per-machine operator shell — ~/.npa/sim2real-operator.env (source before submit)
 #   3. One-off overrides — `npa workbench workflow submit … --var KEY=VALUE`, or
 #      source an env overlay (e.g. quickstart.env) into the shell before submit
