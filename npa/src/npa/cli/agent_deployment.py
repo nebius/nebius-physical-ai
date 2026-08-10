@@ -200,6 +200,30 @@ def _repository_slug(remote: str) -> str:
     return Path(value).name or "local-repository"
 
 
+def _normalize_branch_name(value: str, *, source: str) -> str:
+    branch = str(value or "").strip()
+    if not branch or len(branch) > 255 or any(ord(char) < 32 for char in branch):
+        raise DeploymentIdentityError(f"{source} contains an invalid branch name")
+    return branch
+
+
+def _resolve_git_branch(repo_root: Path, commit: str) -> str:
+    """Resolve branch provenance in both normal and detached CI checkouts."""
+    try:
+        return _normalize_branch_name(
+            _git(repo_root, "symbolic-ref", "--quiet", "--short", "HEAD"),
+            source="git symbolic-ref",
+        )
+    except subprocess.CalledProcessError:
+        # GitHub Actions checks out pull requests at a detached merge/head commit.
+        # GITHUB_HEAD_REF is the immutable run's source branch; GITHUB_REF_NAME is
+        # the corresponding branch name for push/manual workflows.
+        for env_name in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME"):
+            if value := os.environ.get(env_name, "").strip():
+                return _normalize_branch_name(value, source=env_name)
+        return f"detached@{commit[:12]}"
+
+
 @contextmanager
 def agent_lifecycle_lock(
     project_alias: str,
@@ -246,9 +270,9 @@ def build_deployment_manifest(
         raise DeploymentIdentityError(
             "agent source checkout is dirty; commit the exact source before deployment"
         )
-    repository = _repository_slug(_git(root, "remote", "get-url", "origin"))
-    branch = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
     commit = _git(root, "rev-parse", "HEAD")
+    repository = _repository_slug(_git(root, "remote", "get-url", "origin"))
+    branch = _resolve_git_branch(root, commit)
     source_tree = _git(root, "rev-parse", f"{commit}^{{tree}}")
     identity = "\0".join((repository, branch, project, deployment_name))
     deployment_id = "npa-agent-" + hashlib.sha256(identity.encode()).hexdigest()[:20]

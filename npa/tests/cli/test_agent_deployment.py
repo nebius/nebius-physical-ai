@@ -67,6 +67,33 @@ def test_manifest_captures_exact_immutable_git_source(source_repo: Path) -> None
     assert manifest["workspace_label"] == "Wan Workbench"
 
 
+def test_manifest_uses_ci_head_branch_in_detached_checkout(
+    source_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _git(source_repo, "checkout", "--detach", "HEAD")
+    monkeypatch.setenv("GITHUB_HEAD_REF", "codex/wan-pr261")
+    monkeypatch.setenv("GITHUB_REF_NAME", "261/merge")
+
+    manifest = _manifest(source_repo)
+
+    assert manifest["branch"] == "codex/wan-pr261"
+    assert manifest["commit"] == _git(source_repo, "rev-parse", "HEAD")
+
+
+def test_manifest_has_stable_detached_fallback_without_ci_metadata(
+    source_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commit = _git(source_repo, "rev-parse", "HEAD")
+    _git(source_repo, "checkout", "--detach", commit)
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
+    monkeypatch.delenv("GITHUB_REF_NAME", raising=False)
+
+    manifest = _manifest(source_repo)
+
+    assert manifest["branch"] == f"detached@{commit[:12]}"
+    assert manifest["deployment_id"] == _manifest(source_repo)["deployment_id"]
+
+
 def test_dirty_checkout_cannot_claim_immutable_commit(source_repo: Path) -> None:
     (source_repo / "tracked.txt").write_text("modified\n", encoding="utf-8")
     with pytest.raises(DeploymentIdentityError, match="checkout is dirty"):
@@ -161,7 +188,13 @@ def test_backend_down_still_checks_persisted_manifest(source_repo: Path) -> None
 
 
 def test_repository_manifest_redacts_remote_credentials(source_repo: Path) -> None:
-    _git(source_repo, "remote", "set-url", "origin", "https://user:secret@example.com/org/repo.git?token=private")
+    _git(
+        source_repo,
+        "remote",
+        "set-url",
+        "origin",
+        "https://user:secret@example.com/org/repo.git?token=private",
+    )
     manifest = _manifest(source_repo)
     assert manifest["repository"] == "example.com/org/repo.git"
     assert "user" not in manifest["repository"]
