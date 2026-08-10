@@ -44,11 +44,9 @@ class DeploymentIdentityError(ValueError):
 
 
 class _SshRunner(Protocol):
-    def run(self, command: str, **kwargs: Any) -> tuple[int, str, str] | None: ...
+    def run(self, command: str) -> tuple[int, str, str] | None: ...
 
-    def run_or_raise(
-        self, command: str, **kwargs: Any
-    ) -> tuple[int, str, str] | None: ...
+    def run_or_raise(self, command: str) -> tuple[int, str, str] | None: ...
 
 
 @dataclass(frozen=True)
