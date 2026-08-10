@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from npa.workflows.sim2real import byo_isaac_eval as ev
@@ -72,6 +73,27 @@ def test_build_isaac_eval_job_manifest_shape():
     assert "kit_args=os.environ.get(" in ev.ISAAC_EVAL_SCRIPT
     assert "min_speed_in_strict_basin_mps" in ev.ISAAC_EVAL_SCRIPT
     assert "max_consecutive_strict_stable_steps" in ev.ISAAC_EVAL_SCRIPT
+
+
+def test_first_episode_masks_seal_auto_reset_state():
+    completed = np.array([False, False, True], dtype=bool)
+    done = np.array([True, False, False], dtype=bool)
+
+    active, newly_terminal, next_completed = ev.first_episode_masks(completed, done)
+
+    assert active.tolist() == [True, True, False]
+    assert newly_terminal.tolist() == [True, False, False]
+    assert next_completed.tolist() == [True, False, True]
+
+
+def test_eval_runtime_freezes_terminal_metrics_and_renders():
+    script = ev.ISAAC_EVAL_SCRIPT
+    assert '"final_dist": final_dist.copy()' in script
+    assert "active, newly_terminal, completed = first_episode_masks" in script
+    assert 'final_dist[newly_terminal] = prior["final_dist"]' in script
+    assert "capture(_step, active & ~newly_terminal)" in script
+    assert "capture(STEPS, ~completed)" in script
+    assert '"terminal_snapshot": "first_episode_last_pre_reset"' in script
 
 
 def test_eval_manifest_uses_sha_pinned_s3_scenario_transport():

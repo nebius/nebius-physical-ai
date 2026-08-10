@@ -236,7 +236,9 @@ zero VLM contribution.
 
 The two thresholds are intentionally different: a single Isaac episode succeeds
 when its final distance is below `NPA_BYO_ISAAC_SUCCESS_DIST_M` and the placement
-is stable; Stage 11 promotes
+is stable. Because Isaac vector environments auto-reset inside `step()`, the
+held-out evaluator freezes the first episode's last pre-reset sample and ignores
+later reset episodes for both metrics and renders. Stage 11 promotes
 only when the fraction of successful held-out episodes reaches
 `SUCCESS_THRESHOLD`.
 

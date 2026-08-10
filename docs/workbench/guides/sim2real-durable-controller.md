@@ -278,6 +278,14 @@ held the exact stable event for nine consecutive steps, then departed before
 episode end and correctly scored zero strict success. Training now optimizes
 the missing post-success interval rather than weakening that verdict.
 
+The evaluator seals the first episode for each vector environment. Isaac resets
+a completed environment inside `step()` before returning, so the returned scene
+state can already belong to a second episode. The evaluator retains the last
+pre-step sample for every newly terminal environment, stops all subsequent
+metric updates for that index, and excludes post-reset frames from its render
+manifest. Thus terminal strict metrics and their images always describe the
+same validation or gold scenario rather than an arbitrary later auto-reset.
+
 ## Required integration ladder
 
 Before a full run, the exact image and live target must prove:

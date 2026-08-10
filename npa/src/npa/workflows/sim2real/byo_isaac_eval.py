@@ -57,6 +57,25 @@ _SCENARIO_INPUT_PROVENANCE: dict[str, Any] = {}
 # --------------------------------------------------------------------------- #
 # Pure helpers (unit-tested without a cluster)
 # --------------------------------------------------------------------------- #
+def first_episode_masks(completed: Any, done: Any) -> tuple[Any, Any, Any]:
+    """Return active/newly-terminal masks while sealing the first episode.
+
+    Isaac vector environments auto-reset an environment inside ``step`` before
+    returning control to the caller.  Consequently, state read after a true
+    ``done`` belongs to the next episode.  The live evaluator uses these masks
+    to retain the last pre-step sample for newly terminal environments and to
+    prevent every later auto-reset episode from overwriting that snapshot.
+
+    The operands intentionally use NumPy-compatible bitwise operations without
+    importing NumPy in this controller module; the baked Isaac runtime supplies
+    boolean arrays.
+    """
+
+    active = ~completed
+    newly_terminal = active & done
+    return active, newly_terminal, completed | done
+
+
 def extract_checkpoint_uri(inner_evidence: dict[str, Any]) -> str:
     """Pull the trained-policy checkpoint S3 URI from inner-loop evidence.
 
@@ -657,7 +676,7 @@ try:
                 _pc_count[name] += 1
             except Exception as e:
                 print("pc_capture_err", name, repr(e), flush=True)
-    def capture(step):
+    def capture(step, eligible=None):
         if not _have_pil:
             return
         for view in CAMERA_VIEWS:
@@ -666,6 +685,8 @@ try:
                 rgb = env.unwrapped.scene[_camera_key(view_name)].data.output["rgb"]
                 arr = rgb.detach().cpu().numpy()
                 for i in range(min(N, arr.shape[0])):
+                    if eligible is not None and not bool(eligible[i]):
+                        continue
                     d = os.path.join(rend_root, _env_id(i)); os.makedirs(d, exist_ok=True)
                     index = len(frame_names[i][view_name])
                     name = (
@@ -705,8 +726,26 @@ try:
     max_stable_place_steps = np.zeros(N, dtype=np.int64)
     min_speed_in_strict_basin = np.full(N, 1e9)
     termination = np.array(["max_steps"] * N, dtype=object)
+    completed = np.zeros(N, dtype=bool)
     initial_obj_z = None
     for _step in range(STEPS):
+        # Isaac auto-resets done environments inside env.step(). Preserve the
+        # last sample from the evaluated episode so the returned reset state can
+        # never replace terminal metrics or render lineage.
+        prior = {
+            "min_dist": min_dist.copy(),
+            "final_dist": final_dist.copy(),
+            "reach": reach.copy(),
+            "contact": contact.copy(),
+            "grasp": grasp.copy(),
+            "lift": lift.copy(),
+            "place": place.copy(),
+            "final_place": final_place.copy(),
+            "stable_grasp_steps": stable_grasp_steps.copy(),
+            "stable_place_steps": stable_place_steps.copy(),
+            "max_stable_place_steps": max_stable_place_steps.copy(),
+            "min_speed_in_strict_basin": min_speed_in_strict_basin.copy(),
+        }
         with torch.inference_mode():
             actions = policy(_batched_obs(obs))
         if _step == 0:
@@ -714,8 +753,14 @@ try:
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
         obs, _, dones, extras = env.step(actions)
+        try:
+            done_np = dones.detach().cpu().numpy().astype(bool)
+        except Exception:
+            done_np = np.zeros(N, dtype=bool)
+        from npa.workflows.sim2real.byo_isaac_eval import first_episode_masks
+        active, newly_terminal, completed = first_episode_masks(completed, done_np)
         if _step % CAPTURE_STRIDE == 0:
-            capture(_step)
+            capture(_step, active & ~newly_terminal)
         # object-to-goal distance: prefer an explicit metric, else infer.
         d = None
         log = (extras or {}).get("log") or {}
@@ -734,15 +779,15 @@ try:
                 goal = cmd[:, :3] + uenv.scene.env_origins[:, :3]
                 per_t = torch.linalg.norm(obj - goal, dim=1)
                 per = per_t.detach().cpu().numpy()
-                final_dist = per
-                min_dist = np.minimum(min_dist, per)
+                final_dist = np.where(active, per, final_dist)
+                min_dist = np.where(active, np.minimum(min_dist, per), min_dist)
                 ee = uenv.scene["ee_frame"].data.target_pos_w[..., 0, :]
                 ee_dist = torch.linalg.norm(obj - ee, dim=1).detach().cpu().numpy()
-                reach |= ee_dist < 0.05
+                reach |= active & (ee_dist < 0.05)
                 if initial_obj_z is None:
                     initial_obj_z = obj[:, 2].detach().cpu().numpy()
                 height = obj[:, 2].detach().cpu().numpy() - initial_obj_z
-                lift |= height >= 0.05
+                lift |= active & (height >= 0.05)
                 contact_now = ee_dist < 0.035
                 try:
                     forces = uenv.scene["object_contact"].data.net_forces_w_history
@@ -751,9 +796,13 @@ try:
                     ).reshape(N, -1).max(axis=1) > 1.0e-3
                 except Exception:
                     pass
-                contact |= contact_now
-                stable_grasp_steps = np.where(contact_now & (height > 0.015), stable_grasp_steps + 1, 0)
-                grasp |= stable_grasp_steps >= 3
+                contact |= active & contact_now
+                stable_grasp_steps = np.where(
+                    active,
+                    np.where(contact_now & (height > 0.015), stable_grasp_steps + 1, 0),
+                    stable_grasp_steps,
+                )
+                grasp |= active & (stable_grasp_steps >= 3)
                 try:
                     obj_speed = torch.linalg.norm(
                         uenv.scene["object"].data.root_lin_vel_w[:, :3], dim=1
@@ -762,29 +811,60 @@ try:
                     obj_speed = np.full(N, 1.0)
                 in_strict_basin = per < 0.05
                 min_speed_in_strict_basin = np.where(
-                    in_strict_basin,
+                    active & in_strict_basin,
                     np.minimum(min_speed_in_strict_basin, obj_speed),
                     min_speed_in_strict_basin,
                 )
                 stable_place_steps = np.where(
-                    in_strict_basin & (obj_speed < 0.03), stable_place_steps + 1, 0
+                    active,
+                    np.where(
+                        in_strict_basin & (obj_speed < 0.03),
+                        stable_place_steps + 1,
+                        0,
+                    ),
+                    stable_place_steps,
                 )
                 max_stable_place_steps = np.maximum(
                     max_stable_place_steps, stable_place_steps
                 )
                 final_place = stable_place_steps >= 3
-                place |= final_place
-                try:
-                    done_np = dones.detach().cpu().numpy().astype(bool)
-                    termination[(termination == "max_steps") & done_np] = "task_or_timeout"
-                except Exception:
-                    pass
+                place |= active & final_place
+                if np.any(newly_terminal):
+                    # The state above is already the reset state. Restore the
+                    # exact pre-step sample for this episode and seal it.
+                    min_dist[newly_terminal] = prior["min_dist"][newly_terminal]
+                    final_dist[newly_terminal] = prior["final_dist"][newly_terminal]
+                    reach[newly_terminal] = prior["reach"][newly_terminal]
+                    contact[newly_terminal] = prior["contact"][newly_terminal]
+                    grasp[newly_terminal] = prior["grasp"][newly_terminal]
+                    lift[newly_terminal] = prior["lift"][newly_terminal]
+                    place[newly_terminal] = prior["place"][newly_terminal]
+                    stable_grasp_steps[newly_terminal] = prior[
+                        "stable_grasp_steps"
+                    ][newly_terminal]
+                    stable_place_steps[newly_terminal] = prior[
+                        "stable_place_steps"
+                    ][newly_terminal]
+                    max_stable_place_steps[newly_terminal] = prior[
+                        "max_stable_place_steps"
+                    ][newly_terminal]
+                    min_speed_in_strict_basin[newly_terminal] = prior[
+                        "min_speed_in_strict_basin"
+                    ][newly_terminal]
+                    final_place[newly_terminal] = prior["final_place"][
+                        newly_terminal
+                    ]
+                    termination[newly_terminal] = "task_or_timeout"
                 continue
         except Exception:
             pass
         if d is not None:
-            min_dist = np.minimum(min_dist, np.full(N, d))
-    capture(STEPS)  # final frame
+            min_dist = np.where(
+                active,
+                np.minimum(min_dist, np.full(N, d)),
+                min_dist,
+            )
+    capture(STEPS, ~completed)  # final frame only for a still-live first episode
     episodes = [
         {
             "env_id": _env_id(i),
@@ -810,6 +890,7 @@ try:
                 if min_speed_in_strict_basin[i] < 1e8
                 else None
             ),
+            "terminal_snapshot": "first_episode_last_pre_reset",
             "termination_reason": (
                 "success" if final_place[i] else str(termination[i])
             ),
