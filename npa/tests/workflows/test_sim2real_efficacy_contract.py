@@ -17,6 +17,8 @@ from npa.workflows.sim2real.checkpoint_selection import (
 )
 from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_APPROACH_STD_M,
+    PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT,
+    PLACEMENT_BASIN_WIDTH_M,
     PLACEMENT_COMPLETION_REWARD_WEIGHT,
     PLACEMENT_DWELL_SCALE,
     PLACEMENT_DROP_PENALTY_WEIGHT,
@@ -39,6 +41,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     module_source,
     placement_curriculum_signal,
     placement_progress_signal,
+    strict_basin_settling_signal,
     goal_curriculum_fraction,
     read_scenarios,
 )
@@ -278,6 +281,7 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert STABLE_PLACEMENT_SPEED_MPS == 0.03
     assert PLACEMENT_MINIMAL_LIFT_M == 0.04
     assert PLACEMENT_APPROACH_STD_M == 0.35
+    assert PLACEMENT_BASIN_WIDTH_M == 0.01
     assert PLACEMENT_NEAR_STD_M == 0.08
     assert PLACEMENT_HOLD_STD_M == 0.15
     assert PLACEMENT_HOLD_REWARD_FLOOR == 0.20
@@ -290,12 +294,14 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert PLACEMENT_DROP_PENALTY_WEIGHT == -2000.0
     assert PLACEMENT_COMPLETION_REWARD_WEIGHT == 5000.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
+    assert PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT == 256.0
     assert STABLE_PLACEMENT_STEPS == 3
     source = module_source()
     assert "def stable_placement_curriculum" in source
     assert "lifted * (dense + strict)" in source
     assert "env_cfg.rewards.stable_placement_curriculum" in source
     assert "env_cfg.rewards.potential_placement_progress" in source
+    assert "env_cfg.rewards.strict_basin_settling" in source
     assert "env_cfg.rewards.object_drop_penalty" in source
     assert "env_cfg.rewards.stable_placement_completion" in source
     assert "npa_previous_placement_distance" in source
@@ -340,6 +346,19 @@ def test_signed_placement_progress_penalizes_departure_and_is_reset_safe() -> No
     assert placement_progress_signal(0.030, 0.032) == pytest.approx(-0.1)
     with pytest.raises(ValueError, match="positive"):
         placement_progress_signal(0.03, 0.02, progress_scale_m=0.0)
+
+
+def test_strict_basin_settling_is_signed_only_at_success_boundary() -> None:
+    stopped = strict_basin_settling_signal(0.03, 0.0, 0.02, tanh=math.tanh)
+    threshold = strict_basin_settling_signal(0.03, 0.03, 0.02, tanh=math.tanh)
+    fly_through = strict_basin_settling_signal(0.03, 0.20, 0.02, tanh=math.tanh)
+    transporting = strict_basin_settling_signal(0.20, 0.20, 0.02, tanh=math.tanh)
+    assert stopped > 0.5
+    assert threshold == pytest.approx(0.0)
+    assert fly_through < -0.5
+    assert abs(transporting * PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT) < 0.01
+    with pytest.raises(ValueError, match="positive"):
+        strict_basin_settling_signal(0.03, 0.0, 0.02, tanh=math.tanh, basin_width_m=0.0)
 
 
 def test_stable_placement_curriculum_does_not_suppress_transport() -> None:

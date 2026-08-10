@@ -69,6 +69,8 @@ def test_build_isaac_eval_job_manifest_shape():
     assert "per_env_distances.json" in args  # uploads measured distances
     assert "--portable-root /tmp/npa-isaac-kit" in ev.ISAAC_EVAL_SCRIPT
     assert "kit_args=os.environ.get(" in ev.ISAAC_EVAL_SCRIPT
+    assert "min_speed_in_strict_basin_mps" in ev.ISAAC_EVAL_SCRIPT
+    assert "max_consecutive_strict_stable_steps" in ev.ISAAC_EVAL_SCRIPT
 
 
 def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):

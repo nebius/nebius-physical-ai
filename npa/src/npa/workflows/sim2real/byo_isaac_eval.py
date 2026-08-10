@@ -655,6 +655,8 @@ try:
     final_place = np.zeros(N, dtype=bool)
     stable_grasp_steps = np.zeros(N, dtype=np.int64)
     stable_place_steps = np.zeros(N, dtype=np.int64)
+    max_stable_place_steps = np.zeros(N, dtype=np.int64)
+    min_speed_in_strict_basin = np.full(N, 1e9)
     termination = np.array(["max_steps"] * N, dtype=object)
     initial_obj_z = None
     for _step in range(STEPS):
@@ -711,8 +713,17 @@ try:
                     ).detach().cpu().numpy()
                 except Exception:
                     obj_speed = np.full(N, 1.0)
+                in_strict_basin = per < 0.05
+                min_speed_in_strict_basin = np.where(
+                    in_strict_basin,
+                    np.minimum(min_speed_in_strict_basin, obj_speed),
+                    min_speed_in_strict_basin,
+                )
                 stable_place_steps = np.where(
-                    (per < 0.05) & (obj_speed < 0.03), stable_place_steps + 1, 0
+                    in_strict_basin & (obj_speed < 0.03), stable_place_steps + 1, 0
+                )
+                max_stable_place_steps = np.maximum(
+                    max_stable_place_steps, stable_place_steps
                 )
                 final_place = stable_place_steps >= 3
                 place |= final_place
@@ -746,6 +757,12 @@ try:
             "reach": bool(reach[i]), "contact": bool(contact[i]),
             "stable_grasp": bool(grasp[i]), "lift": bool(lift[i]),
             "place": bool(place[i]), "placement_stable": bool(final_place[i]),
+            "max_consecutive_strict_stable_steps": int(max_stable_place_steps[i]),
+            "min_speed_in_strict_basin_mps": (
+                float(min_speed_in_strict_basin[i])
+                if min_speed_in_strict_basin[i] < 1e8
+                else None
+            ),
             "termination_reason": (
                 "success" if final_place[i] else str(termination[i])
             ),

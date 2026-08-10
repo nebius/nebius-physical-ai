@@ -38,6 +38,7 @@ PLACEMENT_HOLD_REWARD_FLOOR = 0.20
 PLACEMENT_HOLD_MAX_DISTANCE_M = 0.30
 PLACEMENT_DWELL_SCALE = 2.0
 PLACEMENT_SETTLING_SPEED_MPS = 0.20
+PLACEMENT_BASIN_WIDTH_M = 0.01
 PLACEMENT_GOAL_CURRICULUM_LIFT_M = 0.08
 PLACEMENT_PROGRESS_SCALE_M = 0.02
 PLACEMENT_PROGRESS_REWARD_WEIGHT = 512.0
@@ -50,6 +51,7 @@ PLACEMENT_PROGRESS_REWARD_WEIGHT = 512.0
 PLACEMENT_DROP_PENALTY_WEIGHT = -2000.0
 PLACEMENT_COMPLETION_REWARD_WEIGHT = 5000.0
 STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
+PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT = 256.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
 _DROP_PENALTY_TYPE: type | None = None
@@ -489,6 +491,39 @@ def placement_curriculum_signal(
     return held * (approach + float(dwell_scale) * near * braking)
 
 
+def strict_basin_settling_signal(
+    distance: Any,
+    speed: Any,
+    hold_distance: Any,
+    *,
+    tanh: Any,
+    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
+    basin_width_m: float = PLACEMENT_BASIN_WIDTH_M,
+    stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
+    hold_std_m: float = PLACEMENT_HOLD_STD_M,
+    hold_reward_floor: float = PLACEMENT_HOLD_REWARD_FLOOR,
+) -> Any:
+    """Reward braking only after reaching the unchanged strict target basin.
+
+    Exact c8a1980 validation put every scenario inside 5 cm but none below
+    0.03 m/s for three steps. This signal is effectively zero during transport,
+    crosses zero at the exact velocity threshold, penalizes a fast basin crossing,
+    and rewards settling below the boundary. The signed potential term makes
+    entering the basin more valuable than avoiding it.
+    """
+
+    if basin_width_m <= 0 or stable_speed_mps <= 0:
+        raise ValueError("basin width and stable speed must be positive")
+    basin = 0.5 * (
+        1.0 + tanh((float(success_distance_m) - distance) / float(basin_width_m))
+    )
+    held = float(hold_reward_floor) + (1.0 - float(hold_reward_floor)) * (
+        1.0 - tanh(hold_distance / float(hold_std_m))
+    )
+    speed_signal = tanh((float(stable_speed_mps) - speed) / float(stable_speed_mps))
+    return held * basin * speed_signal
+
+
 def _placement_state(
     env: Any,
     *,
@@ -584,6 +619,42 @@ def potential_placement_progress(
         torch.full_like(distance, float("inf")),
     )
     return progress
+
+
+def strict_basin_settling(
+    env: Any,
+    *,
+    command_name: str = "object_pose",
+    object_name: str = "object",
+    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
+    basin_width_m: float = PLACEMENT_BASIN_WIDTH_M,
+    stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
+    hold_std_m: float = PLACEMENT_HOLD_STD_M,
+    hold_reward_floor: float = PLACEMENT_HOLD_REWARD_FLOOR,
+    minimal_lift_m: float = PLACEMENT_MINIMAL_LIFT_M,
+) -> Any:
+    """Apply the strict-basin braking signal only after a genuine lift."""
+
+    import torch  # noqa: WPS433 - Isaac runtime dependency
+
+    obj = env.scene[object_name]
+    distance, speed, position, hold_distance = _placement_state(
+        env, command_name=command_name, object_name=object_name
+    )
+    initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
+    lifted = (position[:, 2] - initial_z >= float(minimal_lift_m)).to(position.dtype)
+    signal = strict_basin_settling_signal(
+        distance,
+        speed,
+        hold_distance,
+        tanh=torch.tanh,
+        success_distance_m=success_distance_m,
+        basin_width_m=basin_width_m,
+        stable_speed_mps=stable_speed_mps,
+        hold_std_m=hold_std_m,
+        hold_reward_floor=hold_reward_floor,
+    )
+    return lifted * signal
 
 
 def stable_placement_curriculum(
@@ -714,6 +785,20 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "ee_frame_name": "ee_frame",
             "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
             "hold_max_distance_m": PLACEMENT_HOLD_MAX_DISTANCE_M,
+            "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
+        },
+    )
+    env_cfg.rewards.strict_basin_settling = RewardTermCfg(
+        func=strict_basin_settling,
+        weight=PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT,
+        params={
+            "command_name": "object_pose",
+            "object_name": "object",
+            "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
+            "basin_width_m": PLACEMENT_BASIN_WIDTH_M,
+            "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
+            "hold_std_m": PLACEMENT_HOLD_STD_M,
+            "hold_reward_floor": PLACEMENT_HOLD_REWARD_FLOOR,
             "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
         },
     )
