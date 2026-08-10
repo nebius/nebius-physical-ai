@@ -181,7 +181,11 @@ cannot) access — see [§4e](#4e-accept-and-verify-gated-model-access):
 npa configure
 ```
 
-Storage is committed only after a cleaned write/delete probe succeeds. If a
+Storage is committed after its declared write/read capability probe succeeds.
+Delete is best-effort probe cleanup and is reported independently; it is not an
+implicit permission requirement. A required tenant `editors` grant failure stops
+before bucket or access-key creation. Newly granted credentials receive bounded,
+typed propagation retries against the same identity. If a
 provider step or the probe fails, configure prints **Setup incomplete**, keeps
 owner-only creation provenance in `~/.npa/credentials.yaml`, and prints the
 restart-safe recovery command:
@@ -209,7 +213,7 @@ npa configure --no-interactive \
 
 These are non-secret identifiers; do not pass IAM, S3, Token Factory, HF, or NGC
 secrets on the command line. The command reuses existing storage only after the
-same cleaned write/delete probe deployment uses. If none is configured, it
+same write/read capability probe deployment uses. If none is configured, it
 provisions the deterministic default bucket through the already-authenticated
 profile. Add `--no-provision` only when project-only setup is intentional.
 

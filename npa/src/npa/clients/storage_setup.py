@@ -12,7 +12,13 @@ from uuid import uuid4
 
 import yaml
 
-from npa.clients.storage_validation import StorageProbeResult, probe_storage_write
+from npa.clients.storage_validation import (
+    StorageCapabilityProfile,
+    StorageConvergencePolicy,
+    StorageProbeResult,
+    converge_storage_probe,
+    probe_storage_write,
+)
 from npa.provisioning_journal import (
     ProvisioningOperation,
     current_operation,
@@ -230,16 +236,17 @@ class StorageSetupTransaction:
         account = resources.get("service_account")
         if not isinstance(account, dict):
             return {}
+        account_name = str(account.get("name", "")).strip()
         if (
             str(account.get("created_by", "")) != "npa"
             or str(account.get("id", "")) != account_id
-            or str(account.get("name", "")) != "lerobot-training"
+            or not account_name
             or str(account.get("project_id", "")) != self.project_id
         ):
             return {}
         return {
             "service_account_id": account_id,
-            "service_account_name": "lerobot-training",
+            "service_account_name": account_name,
             "service_account_project_id": self.project_id,
             "service_account_managed_by": "npa",
         }
@@ -433,7 +440,12 @@ def provision_storage(
     project_alias: str = "",
     bucket_max_size_bytes: int = 0,
     bucket_storage_class: str = "standard",
+    service_account_name: str = "lerobot-training",
+    access_key_name: str = "lerobot-access-key",
     on_status: StatusFn | None = None,
+    convergence_policy: StorageConvergencePolicy = StorageConvergencePolicy(),
+    convergence_sleep: Callable[[float], None] | None = None,
+    convergence_random: Callable[[], float] | None = None,
 ) -> tuple[dict[str, str], StorageProbeResult]:
     """Reconcile, validate and atomically commit first-run storage."""
 
@@ -476,6 +488,11 @@ def provision_storage(
     with context:
         transaction.begin()
         try:
+            identity_name_kwargs: dict[str, str] = {}
+            if service_account_name != "lerobot-training":
+                identity_name_kwargs["service_account_name"] = service_account_name
+            if access_key_name != "lerobot-access-key":
+                identity_name_kwargs["access_key_name"] = access_key_name
             credentials = nebius.bootstrap_environment(
                 project_id,
                 tenant_id,
@@ -485,16 +502,44 @@ def provision_storage(
                 bucket_storage_class=bucket_storage_class,
                 on_status=on_status,
                 on_resource_created=transaction.record_created,
+                **identity_name_kwargs,
             )
-            probe = probe_storage_write(
-                bucket=credentials.get("s3_bucket", ""),
-                endpoint_url=credentials.get("s3_endpoint", ""),
-                access_key_id=credentials.get("nebius_api_key", ""),
-                secret_access_key=credentials.get("nebius_secret_key", ""),
-                region=region,
+            def run_probe() -> StorageProbeResult:
+                return probe_storage_write(
+                    bucket=credentials.get("s3_bucket", ""),
+                    endpoint_url=credentials.get("s3_endpoint", ""),
+                    access_key_id=credentials.get("nebius_api_key", ""),
+                    secret_access_key=credentials.get("nebius_secret_key", ""),
+                    region=region,
+                    profile=StorageCapabilityProfile.STANDARD,
+                )
+
+            convergence_kwargs: dict[str, Any] = {}
+            if convergence_sleep is not None:
+                convergence_kwargs["sleep"] = convergence_sleep
+            if convergence_random is not None:
+                convergence_kwargs["random_value"] = convergence_random
+
+            def report_retry(result: StorageProbeResult, delay: float) -> None:
+                if on_status:
+                    on_status(
+                        "Waiting for newly granted S3 credentials/IAM to converge "
+                        f"after typed {result.phase} failure (retry in {delay:.2f}s)..."
+                    )
+
+            probe = converge_storage_probe(
+                run_probe,
+                propagation_context=any(
+                    kind == "access_key" for kind, _metadata in transaction._created_this_attempt
+                ),
+                policy=convergence_policy,
+                on_retry=report_retry,
+                **convergence_kwargs,
             )
             if not probe.ok:
                 raise nebius.NebiusError(probe.summary)
+            if probe.retained_object and on_status:
+                on_status(probe.summary)
             transaction.commit(credentials, probe)
             if owns_operation:
                 operation.transition(
@@ -519,4 +564,4 @@ def provision_storage(
                 f"Storage provisioning failed: {safe_error}. Operation "
                 f"{operation.operation_id}: {operation.path}. Resume: "
                 f"{transaction.next_command}"
-            ) from None
+            ) from exc

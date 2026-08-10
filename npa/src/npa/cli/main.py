@@ -1613,8 +1613,8 @@ def _run_interactive_configure(
         }
 
     # Manual credentials are never committed merely because all four strings
-    # were entered. A write/delete probe is the boundary between partial input
-    # and usable storage, and the temporary object is cleaned before success.
+    # were entered. A typed write/read probe is the boundary between partial input
+    # and usable storage; optional cleanup is reported independently.
     if storage and storage.get("_validated") != "true":
         from npa.clients.storage_validation import probe_storage_write
 

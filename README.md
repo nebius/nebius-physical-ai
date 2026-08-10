@@ -234,7 +234,7 @@ npa workbench workflow submit "$SPEC" --project "$PROJECT" \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY --secret-env HF_TOKEN
 
-printf '%s\n' "Provisioned resources: writable S3 at $BUCKET (write/delete verified)."
+printf '%s\n' "Provisioned resources: S3 at $BUCKET (write/read verified; cleanup reported separately)."
 npa cluster status --project "$PROJECT"
 npa workbench workflow status "$RUN_ID" --project "$PROJECT"
 printf '%s\n' \
@@ -289,12 +289,18 @@ else
 fi
 ```
 
-`provision-if-absent` now reconciles and write-probes S3 before it considers
+`provision-if-absent` now reconciles and write/read-probes S3 before it considers
 Kubernetes; interrupted configuration resumes from owner-only provenance in
 `~/.npa/credentials.yaml`. It never launches the cluster while required storage
-is missing. Agent preflight separately probes the exact Terraform state object
-and a conditional sibling under its exact prefix, so a generic writable-bucket
-success cannot hide state-key `403`/list failures. Saved Object Storage HMAC
+is missing. A required tenant `editors` membership failure stops before bucket
+or access-key creation; NPA does not continue toward a later data-plane 403 or
+silently request a broader role. Newly granted HMAC/IAM access converges through
+typed, bounded retries without replacing the new identity. Agent preflight
+separately probes the exact Terraform state object and an unconditionally written,
+unique sibling under its exact prefix, so a generic writable-bucket success cannot
+hide state-key `403`/list failures or depend on conditional-header support. Probe
+cleanup is reported independently and never replaces a more important write/read
+diagnosis. Saved Object Storage HMAC
 credentials—not the Nebius CLI IAM token—are then supplied to every Terraform
 init/plan/apply/state/output/destroy process and never placed in argv or recovery
 receipts. Readiness reports Kubernetes Ready/allocatable capacity, product-label

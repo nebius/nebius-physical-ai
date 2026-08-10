@@ -58,8 +58,7 @@ class ExactBackendClient:
             return {"Body": io.BytesIO(b'{"version":4,"resources":[]}')}
         return {"Body": io.BytesIO(self.objects[Key])}
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes, IfNoneMatch: str):  # noqa: N803, ANN201
-        assert IfNoneMatch == "*"
+    def put_object(self, *, Bucket: str, Key: str, Body: bytes):  # noqa: N803, ANN201
         self.objects[Key] = Body
 
     def list_objects_v2(self, *, Bucket: str, Prefix: str, MaxKeys: int):  # noqa: N803, ANN201
@@ -104,6 +103,7 @@ def test_backend_prefix_denial_is_not_hidden_by_readable_existing_state() -> Non
 
     assert not result.ok
     assert result.code == "forbidden"
+    assert result.error.kind.value == "authorization"
     assert result.cleanup_succeeded
     assert "saved-" not in result.summary
 

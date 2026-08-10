@@ -362,6 +362,8 @@ def provision_if_absent(
             if probe.ok:
                 storage_ready = True
                 actions.append(f"s3:verified writable bucket {bucket_name}")
+                if probe.retained_object:
+                    warnings.append(probe.summary)
             else:
                 try:
                     credentials, reconciled_probe = provision_storage(

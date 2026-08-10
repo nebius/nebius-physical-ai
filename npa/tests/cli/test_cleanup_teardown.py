@@ -377,6 +377,115 @@ def test_bucket_delete_keeps_npa_ownership_proof_for_explicit_iam_teardown(
     assert saved["nebius"]["service_account_id"] == "serviceaccount-storage"
 
 
+def test_bucket_then_iam_teardown_retires_exact_setup_journal(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_cli
+    from npa.clients import credentials as credentials_module
+
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "storage": {
+                    "bucket": "s3://gone/",
+                    "aws_access_key_id": "AK",
+                    "aws_secret_access_key": "SK",
+                },
+                "storage_setup": {
+                    "version": 1,
+                    "projects": {
+                        "project-a": {
+                            "status": "complete",
+                            "resources": {
+                                "bucket": {
+                                    "name": "gone",
+                                    "project_id": "project-a",
+                                    "created_by": "npa",
+                                },
+                                "service_account": {
+                                    "id": "serviceaccount-storage",
+                                    "name": "storage-account",
+                                    "project_id": "project-a",
+                                    "created_by": "npa",
+                                },
+                                "access_keys": {
+                                    "accesskey-storage": {
+                                        "id": "accesskey-storage",
+                                        "created_by": "npa",
+                                    }
+                                },
+                            },
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+
+    storage_cli._prune_storage_credentials("gone")
+
+    after_bucket = yaml.safe_load(credentials_path.read_text(encoding="utf-8"))
+    resources = after_bucket["storage_setup"]["projects"]["project-a"]["resources"]
+    assert "bucket" not in resources
+    assert resources["service_account"]["id"] == "serviceaccount-storage"
+    assert list(resources["access_keys"]) == ["accesskey-storage"]
+
+    assert storage_cli._remove_storage_service_account_record(
+        "serviceaccount-storage"
+    )
+    assert not credentials_path.exists()
+
+
+def test_bucket_prune_retry_retires_matching_journal_without_live_credentials(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_cli
+    from npa.clients import credentials as credentials_module
+
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "storage_setup": {
+                    "version": 1,
+                    "projects": {
+                        "project-a": {
+                            "resources": {
+                                "bucket": {
+                                    "name": "gone",
+                                    "project_id": "project-a",
+                                    "created_by": "npa",
+                                }
+                            }
+                        },
+                        "project-b": {
+                            "resources": {
+                                "bucket": {
+                                    "name": "keep",
+                                    "project_id": "project-b",
+                                    "created_by": "npa",
+                                }
+                            }
+                        },
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+
+    storage_cli._prune_storage_credentials("gone")
+
+    saved = yaml.safe_load(credentials_path.read_text(encoding="utf-8"))
+    projects = saved["storage_setup"]["projects"]
+    assert set(projects) == {"project-b"}
+    assert projects["project-b"]["resources"]["bucket"]["name"] == "keep"
+
+
 def test_bucket_delete_clears_terraform_state_for_that_bucket(
     monkeypatch, tmp_path: Path
 ) -> None:

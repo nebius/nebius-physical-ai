@@ -1131,6 +1131,9 @@ def _is_permission_denied(message: str) -> bool:
         # Nebius object storage reports authorization failures as AccessDenied.
         or "accessdenied" in lowered
         or "access denied" in lowered
+        # Compatibility for pre-typed storage probe summaries. New storage
+        # callers route on StorageFailureKind instead of this text predicate.
+        or ("s3 " in lowered and " was forbidden" in lowered)
     )
 
 
@@ -2039,10 +2042,7 @@ def bootstrap_environment(
     )
 
     def _with_storage_account_ownership(payload: dict[str, str]) -> dict[str, str]:
-        if (
-            created_service_account_id == sa_id
-            and service_account_name == DEFAULT_SERVICE_ACCOUNT_NAME
-        ):
+        if created_service_account_id == sa_id:
             # This provenance is intentionally emitted only for the storage
             # account created in this call. Agent IAM has its own shared-account
             # teardown, and reused/user-managed accounts must never acquire it.
@@ -2060,20 +2060,12 @@ def bootstrap_environment(
     try:
         ensure_editors_membership(tenant_id, sa_id)
     except NebiusError as exc:
-        if not _is_permission_denied(str(exc)):
-            raise
-        # Non-fatal, but the operator must know: without the tenant `editors`
-        # role the service account (e.g. the one attached to an agent VM) can
-        # authenticate but is NOT authorized to manage Nebius AI Cloud resources
-        # (clusters, buckets, access keys, registries). Surface it instead of
-        # silently continuing.
-        _status(
-            "WARNING: could not add the service account to the tenant 'editors' "
-            f"group (permission denied). Service account {sa_id} may lack "
-            "permission to manage Nebius AI Cloud resources. Ask a tenant admin "
-            f"to add {sa_id} to the 'editors' group (or grant an equivalent "
-            "role), then re-run."
-        )
+        raise NebiusError(
+            "Required storage IAM grant failed before bucket/access-key creation: "
+            f"service account {sa_id} must be a member of tenant {tenant_id}'s "
+            "'editors' group, or the provider must prove an equivalent role with "
+            "the required bucket and access-key actions. No broader role was requested."
+        ) from exc
 
     bucket_name = bucket_name or bucket_name_for(tenant_id, project_id)
 
@@ -2490,8 +2482,8 @@ def bootstrap_agent_environment(
 
     try:
         if reuse_storage_credentials is not None:
-            # ``npa configure`` already proved these data-plane credentials can
-            # list/write/delete in the selected bucket. Agent provisioning only
+            # ``npa configure`` already proved the standard data-plane profile in
+            # the selected bucket. Agent provisioning only
             # needs the VM-attached service-account identity now; do not revisit
             # access-key inventory or create a second S3 key.
             if on_status:
@@ -2516,14 +2508,11 @@ def bootstrap_agent_environment(
             try:
                 ensure_editors_membership(tenant_id, sa_id)
             except NebiusError as exc:
-                if not _is_permission_denied(str(exc)):
-                    raise
-                if on_status:
-                    on_status(
-                        "WARNING: could not add the npa-agent service account to the "
-                        "tenant 'editors' group. Ask a tenant admin to grant the "
-                        f"required role to {sa_id}, then retry."
-                    )
+                raise NebiusError(
+                    "Required agent IAM grant failed before deploy: service account "
+                    f"{sa_id} must be a member of tenant {tenant_id}'s 'editors' "
+                    "group, or the provider must prove an equivalent role."
+                ) from exc
             result = dict(reuse_storage_credentials)
             result.update(
                 {

@@ -36,6 +36,14 @@ workflow environment variables.
 
    Real runs may ensure S3 and Kubernetes. Dry runs only resolve settings and
    print intended actions. The command must not teardown or replace resources.
+   Storage setup requires the dedicated service account's tenant `editors`
+   membership (or provider-proven equivalent capability) before creating a bucket
+   or access key. Grant failure is atomic and stops there. Newly created HMAC/IAM
+   credentials use bounded typed propagation convergence without identity/name
+   replacement. The standard profile requires PUT+GET; Terraform requires
+   HEAD+GET+PUT+LIST; append-only workflow submission requires PUT. DELETE is
+   either explicit legacy behavior or separately reported best-effort cleanup,
+   never an implicit permission expansion.
    Its canonical whole-path quota plan treats
    `compute.disk.size.network-ssd` as bytes and reports exact bytes plus GiB,
    independently of `compute.disk.count`. Unknown, missing, malformed, or

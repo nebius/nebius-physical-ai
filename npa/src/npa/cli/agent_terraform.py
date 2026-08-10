@@ -70,7 +70,7 @@ def _ensure_terraform_state_bucket(
         )
         if not probe.ok:
             raise NebiusError(
-                "Terraform backend write/read/delete probe failed immediately before "
+                "Terraform backend capability probe failed immediately before "
                 f"apply: {probe.summary}"
             )
         operation = current_operation()

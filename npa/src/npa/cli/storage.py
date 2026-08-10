@@ -201,11 +201,12 @@ def _storage_service_account_record(
             and str(recovery.get("attested_by", "") or "").strip()
             and recovery.get("provider_verified") is True
         )
+        explicitly_created = managed_by == "npa" and bool(name)
+        recovery_default = recovery_matches and name == DEFAULT_SERVICE_ACCOUNT_NAME
         if (
             managed_by in {"npa", "npa-recovery-attested"}
-            and (managed_by == "npa" or recovery_matches)
+            and (explicitly_created or recovery_default)
             and account_id
-            and name == DEFAULT_SERVICE_ACCOUNT_NAME
             and project_id
         ):
             candidates.append(
@@ -604,6 +605,7 @@ def _observe_storage_iam(
         project_id=context.project_id,
         receipt_id=context.receipt_id,
     )
+    expected_name = record.name if record is not None else DEFAULT_SERVICE_ACCOUNT_NAME
     if context.account_id and record is None:
         return _StorageIamObservation(
             outcome="verification_failed",
@@ -659,7 +661,7 @@ def _observe_storage_iam(
             candidate = str(
                 get_service_account_id_by_name(
                     context.project_id,
-                    DEFAULT_SERVICE_ACCOUNT_NAME,
+                    expected_name,
                     strict=True,
                     profile=context.profile,
                 )
@@ -672,14 +674,14 @@ def _observe_storage_iam(
                     ownership_note=ownership_note,
                     detail=(
                         "The provider authoritatively returned no exact service account "
-                        f"named {DEFAULT_SERVICE_ACCOUNT_NAME!r} in {context.project_id}."
+                        f"named {expected_name!r} in {context.project_id}."
                     ),
                 )
         identity = get_service_account_identity(
             candidate,
             project_id=context.project_id,
             tenant_id=context.tenant_id,
-            expected_name=DEFAULT_SERVICE_ACCOUNT_NAME,
+            expected_name=expected_name,
             profile=context.profile,
         )
     except NebiusError as exc:
@@ -711,7 +713,7 @@ def _observe_storage_iam(
     provider_mismatches: list[str] = []
     if identity.account_id != candidate:
         provider_mismatches.append("service-account ID")
-    if identity.name != DEFAULT_SERVICE_ACCOUNT_NAME:
+    if identity.name != expected_name:
         provider_mismatches.append("service-account name")
     if identity.project_id != context.project_id:
         provider_mismatches.append("parent project")
@@ -2313,21 +2315,57 @@ def _prune_storage_credentials(bucket_name: str) -> None:
                     break
             if saved_bucket:
                 break
-        if saved_bucket != bucket_name:
-            return data
-        for section_key in _STORAGE_SECTION_KEYS:
-            section = data.get(section_key)
-            if not isinstance(section, dict):
-                continue
-            section = dict(section)
-            for key in _STORAGE_SECRET_KEYS:
-                if section.get(key) not in (None, ""):
-                    section.pop(key, None)
-                    removed.append(key)
-            if section:
-                data[section_key] = section
+        if saved_bucket == bucket_name:
+            for section_key in _STORAGE_SECTION_KEYS:
+                section = data.get(section_key)
+                if not isinstance(section, dict):
+                    continue
+                section = dict(section)
+                for key in _STORAGE_SECRET_KEYS:
+                    if section.get(key) not in (None, ""):
+                        section.pop(key, None)
+                        removed.append(key)
+                if section:
+                    data[section_key] = section
+                else:
+                    data.pop(section_key, None)
+
+        # The setup journal is durable ownership evidence, but a provider-verified
+        # bucket deletion must retire that bucket's exact entry.  Preserve the
+        # service-account/access-key records until their separately guarded IAM
+        # teardown; once those records are gone too, no operational setup state
+        # should survive merely because the completed transaction had metadata.
+        setup = data.get("storage_setup")
+        projects = setup.get("projects") if isinstance(setup, dict) else None
+        if isinstance(setup, dict) and isinstance(projects, dict):
+            for project_id, project_record in list(projects.items()):
+                resources = (
+                    project_record.get("resources")
+                    if isinstance(project_record, dict)
+                    else None
+                )
+                bucket = resources.get("bucket") if isinstance(resources, dict) else None
+                if not (
+                    isinstance(project_record, dict)
+                    and isinstance(resources, dict)
+                    and isinstance(bucket, dict)
+                    and str(bucket.get("name", "") or "").strip() == bucket_name
+                    and str(bucket.get("project_id", "") or "").strip()
+                    == str(project_id)
+                ):
+                    continue
+                resources = dict(resources)
+                resources.pop("bucket", None)
+                if resources:
+                    project_record["resources"] = resources
+                    projects[project_id] = project_record
+                else:
+                    projects.pop(project_id, None)
+            if projects:
+                setup["projects"] = projects
+                data["storage_setup"] = setup
             else:
-                data.pop(section_key, None)
+                data.pop("storage_setup", None)
         return data
 
     # Never prune the nebius section here. Even an unproven legacy ID is useful

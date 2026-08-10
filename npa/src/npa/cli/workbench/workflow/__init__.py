@@ -1242,7 +1242,7 @@ def submit_cmd(
                         "status": "unknown",
                         "reason": (
                             "plan-only is read-only; real submit will run the cleaned "
-                            "write/delete probe before staging or submission"
+                            "append-only capability probe before staging or submission"
                         ),
                     }
                 )
@@ -2642,20 +2642,25 @@ def _submit_prerequisites(
         )
 
     if not plan_only and requires_s3 and not _is_placeholder_bucket(bucket):
-        from npa.clients.storage_validation import probe_storage_write
+        from npa.clients.storage_validation import (
+            StorageCapabilityProfile,
+            probe_storage_write,
+        )
 
         probe = probe_storage_write(
             bucket=bucket,
             endpoint_url=s3_endpoint,
             access_key_id=s3_access_key_id,
             secret_access_key=s3_secret_access_key,
+            profile=StorageCapabilityProfile.WORKFLOW_SUBMISSION,
         )
         if not probe.ok:
             missing.append(
                 (
                     f"writable S3 for this workflow ({probe.summary})",
                     "run `npa provision-if-absent --project <alias> --skip-k8s`, "
-                    "then retry; the probe object is deleted before a successful preflight",
+                    "then retry; this append-only preflight uses a unique object and "
+                    "does not require DeleteObject",
                 )
             )
 

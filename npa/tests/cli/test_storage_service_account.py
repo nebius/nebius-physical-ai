@@ -20,6 +20,7 @@ def _seed_owned_account(
     *,
     include_storage: bool = False,
     managed_by: str = "npa",
+    account_name: str = "lerobot-training",
 ) -> Path:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
@@ -42,7 +43,7 @@ def _seed_owned_account(
         "nebius": {"service_account_id": "serviceaccount-storage"},
         "storage_iam": {
             "service_account_id": "serviceaccount-storage",
-            "service_account_name": "lerobot-training",
+            "service_account_name": account_name,
             "service_account_project_id": "project-a",
             "service_account_managed_by": managed_by,
         },
@@ -62,7 +63,7 @@ def _seed_owned_account(
         "get_service_account_identity",
         lambda account_id, **_kwargs: nebius_module.ServiceAccountIdentity(
             account_id=account_id,
-            name="lerobot-training",
+            name=account_name,
             project_id="project-a",
             tenant_id="tenant-a",
             profile="",
@@ -74,6 +75,25 @@ def _seed_owned_account(
         lambda _project_id, _name, **_kwargs: "serviceaccount-storage",
     )
     return credentials_path
+
+
+def test_exact_create_provenance_supports_custom_run_scoped_storage_account_name(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_module
+
+    name = "npa-pr218-run-scoped-sa"
+    _seed_owned_account(monkeypatch, tmp_path, account_name=name)
+    record, _note = storage_module._storage_service_account_record(
+        account_id="serviceaccount-storage", project_id="project-a"
+    )
+    assert record is not None and record.name == name
+    context = storage_module._resolve_storage_iam_context(
+        project="prod", service_account_id="serviceaccount-storage"
+    )
+    observation = storage_module._observe_storage_iam(context)
+    assert observation.outcome == "present"
+    assert observation.account_name == name
 
 
 def _stub_iam(monkeypatch) -> list[str]:

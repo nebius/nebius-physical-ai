@@ -8,7 +8,14 @@ import pytest
 import yaml
 
 from npa.clients import credentials, nebius, storage_setup
-from npa.clients.storage_validation import StorageProbeResult
+from npa.clients.storage_validation import (
+    StorageConvergencePolicy,
+    StorageFailureKind,
+    StoragePhase,
+    StorageProbeError,
+    StorageProbeResult,
+    StorageRetryability,
+)
 
 OK = StorageProbeResult(
     True, "ok", "verified", cleanup_attempted=True, cleanup_succeeded=True
@@ -107,6 +114,42 @@ def test_success_records_each_creation_then_atomically_commits_private_credentia
     assert final["storage"]["aws_secret_access_key"] == "NPA_SECRET_CANARY"
     assert final["storage_iam"]["service_account_managed_by"] == "npa"
     assert stat.S_IMODE(credentials_path.stat().st_mode) == 0o600
+
+
+def test_custom_created_storage_identity_keeps_exact_name_in_cleanup_proof(
+    credentials_path, monkeypatch
+) -> None:
+    custom_name = "npa-run-scoped-storage-sa"
+
+    def bootstrap(*_args, on_resource_created, service_account_name, **_kwargs):
+        assert service_account_name == custom_name
+        on_resource_created(
+            "service_account",
+            {"id": "serviceaccount-storage", "name": service_account_name},
+        )
+        return _result() | {
+            "service_account_name": service_account_name,
+            "service_account_project_id": "project-a",
+            "service_account_managed_by": "npa",
+        }
+
+    monkeypatch.setattr(nebius, "bootstrap_environment", bootstrap)
+    monkeypatch.setattr(storage_setup, "probe_storage_write", lambda **_kwargs: OK)
+    storage_setup.provision_storage(
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-north1",
+        bucket_name="bucket-a",
+        service_account_name=custom_name,
+        access_key_name="npa-run-scoped-key",
+    )
+    data = yaml.safe_load(credentials_path.read_text())
+    assert data["storage_iam"] == {
+        "service_account_id": "serviceaccount-storage",
+        "service_account_name": custom_name,
+        "service_account_project_id": "project-a",
+        "service_account_managed_by": "npa",
+    }
 
 
 @pytest.mark.parametrize("boundary", ["service_account", "bucket", "access_key"])
@@ -363,7 +406,19 @@ def test_failed_write_probe_rolls_back_new_resources_before_credentials_commit(
     monkeypatch.setattr(
         storage_setup,
         "probe_storage_write",
-        lambda **_kwargs: StorageProbeResult(False, "forbidden", "write forbidden"),
+        lambda **_kwargs: StorageProbeResult(
+            False,
+            "forbidden",
+            "S3 write permission was denied.",
+            error=StorageProbeError(
+                StoragePhase.WRITE,
+                StorageFailureKind.AUTHORIZATION,
+                provider_code="AccessDenied",
+                status_code=403,
+                retryability=StorageRetryability.NEVER,
+                message="S3 write permission was denied.",
+            ),
+        ),
     )
     mocker.patch.object(
         nebius, "get_bucket_by_name", return_value={"metadata": {"id": "bucket-id"}}
@@ -372,7 +427,7 @@ def test_failed_write_probe_rolls_back_new_resources_before_credentials_commit(
     mocker.patch.object(nebius, "delete_access_key")
     mocker.patch.object(nebius, "delete_service_account")
 
-    with pytest.raises(nebius.NebiusError, match="write forbidden"):
+    with pytest.raises(nebius.NebiusError, match="write permission was denied"):
         storage_setup.provision_storage(
             project_id="project-a",
             tenant_id="tenant-a",
@@ -383,6 +438,81 @@ def test_failed_write_probe_rolls_back_new_resources_before_credentials_commit(
     final = yaml.safe_load(credentials_path.read_text())
     assert final["storage_setup"]["projects"]["project-a"]["status"] == "rolled_back"
     assert "storage" not in final
+
+
+def test_new_access_key_transient_403_converges_without_identity_drift_or_rollback(
+    credentials_path, monkeypatch, mocker
+) -> None:
+    identities: list[tuple[str, str, str]] = []
+
+    def bootstrap(*_args, on_resource_created, bucket_name, **_kwargs):
+        on_resource_created(
+            "service_account",
+            {"id": "serviceaccount-storage", "name": "lerobot-training"},
+        )
+        on_resource_created("bucket", {"name": bucket_name})
+        on_resource_created(
+            "access_key",
+            {
+                "id": "accesskey-storage",
+                "name": "lerobot-access-key",
+                "service_account_id": "serviceaccount-storage",
+            },
+        )
+        result = _result() | {"s3_bucket": bucket_name}
+        identities.append(
+            (
+                result["service_account_id"],
+                result["nebius_api_key"],
+                result["s3_bucket"],
+            )
+        )
+        return result
+
+    transient = StorageProbeResult(
+        False,
+        "forbidden",
+        "typed propagation candidate",
+        error=StorageProbeError(
+            StoragePhase.WRITE,
+            StorageFailureKind.AUTHORIZATION,
+            provider_code="AccessDenied",
+            status_code=403,
+            retryability=StorageRetryability.PROPAGATION,
+            message="S3 write permission was denied.",
+        ),
+    )
+    probes = iter((transient, OK))
+    monkeypatch.setattr(nebius, "bootstrap_environment", bootstrap)
+    monkeypatch.setattr(storage_setup, "probe_storage_write", lambda **_kwargs: next(probes))
+    delete_key = mocker.patch.object(nebius, "delete_access_key")
+    delete_bucket = mocker.patch.object(nebius, "delete_bucket")
+    delete_sa = mocker.patch.object(nebius, "delete_service_account")
+    sleeps: list[float] = []
+
+    credentials_result, probe = storage_setup.provision_storage(
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-north1",
+        bucket_name="bucket-stable",
+        convergence_policy=StorageConvergencePolicy(
+            max_attempts=3, initial_delay_seconds=2, jitter_ratio=0
+        ),
+        convergence_sleep=sleeps.append,
+    )
+
+    assert probe.ok and probe.attempts == 2
+    assert sleeps == [2]
+    assert identities == [
+        ("serviceaccount-storage", "NPA_ACCESS_CANARY", "bucket-stable")
+    ]
+    assert credentials_result["s3_bucket"] == "bucket-stable"
+    delete_key.assert_not_called()
+    delete_bucket.assert_not_called()
+    delete_sa.assert_not_called()
+    record = storage_setup.storage_setup_record("project-a")
+    assert record["status"] == "complete"
+    assert record["resources"]["bucket"]["name"] == "bucket-stable"
 
 
 def test_process_interruption_preserves_transaction_semantics(
