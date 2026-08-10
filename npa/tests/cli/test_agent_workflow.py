@@ -502,6 +502,15 @@ def test_vlm_rl_loop_is_reachable_when_explicitly_requested() -> None:
     )
     assert selection["template"] == "vlm-rl-loop"
 
+    slash_selection = choose_workflow_template(
+        user_text=(
+            "Draft a VLM/RL outer-loop workflow YAML with policy rollout, heldout eval, "
+            "promote_checkpoint, and loop_back."
+        ),
+        intent="create_vlm_rl_workflow",
+    )
+    assert slash_selection["template"] == "vlm-rl-loop"
+
 
 @pytest.mark.parametrize(
     ("text", "intent", "expected"),

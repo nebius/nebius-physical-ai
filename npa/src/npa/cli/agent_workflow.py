@@ -1714,8 +1714,9 @@ def choose_workflow_template(
     if str(intent or "").strip() == "create_vlm_rl_workflow":
         # Explicit VLM-RL / outer+inner loop language reaches the loop template;
         # generic Sim2Real authoring stays on the maintained staged engine.
-        if re.search(r"\bvlm[_\s-]?rl\b", text) or (
-            "outer loop" in text and "inner loop" in text
+        if re.search(r"\bvlm\s*[/_-]?\s*rl\b", text) or (
+            re.search(r"\bouter[\s-]+loop\b", text)
+            and re.search(r"\binner[\s-]+loop\b", text)
         ):
             scores["vlm-rl-loop"] += 12
         else:
