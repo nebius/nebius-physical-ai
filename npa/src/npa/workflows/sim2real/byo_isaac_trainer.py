@@ -693,6 +693,7 @@ def build_isaac_job_manifest(
         "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
     )
 
+    preflight_block = ""
     if robot_spec:
         # BYO-robot path (takes precedence over physics): run the task module and
         # post-boot wrapper baked into the exact image (it registers a Lift variant
@@ -772,13 +773,15 @@ def build_isaac_job_manifest(
                 f"--uri {shlex.quote(resume_uri)} "
                 f"--destination {shlex.quote(resume_local)}\n"
             )
-        train_block = (
+        preflight_block = (
             "mkdir -p /tmp/npa_robot\n"
             + scenario_module_block
             + scenario_data_block
             + resume_block
             + stage_block
-            + f'echo "ROBOT_INJECTION: {robot_spec.get("robot_source")} '
+        )
+        train_block = (
+            f'echo "ROBOT_INJECTION: {robot_spec.get("robot_source")} '
             f'{robot_spec.get("name")} seed={int(seed)}"\n'
             f'export NPA_ROBOT_MODULE_DIR=/opt/npa/isaac-runtime ROBOT_OUT_DIR="$OUT" '
             f"ROBOT_NUM_ENVS={num_envs} ROBOT_ITERS={iterations} "
@@ -836,8 +839,9 @@ def build_isaac_job_manifest(
     else:
         # Stage the prior-iteration checkpoint where train.py's get_checkpoint_path()
         # looks (logs/rsl_rl/<experiment>/<RESUME_RUN_DIR>/<RESUME_CKPT_NAME>, relative
-        # to the run cwd $OUT). A download failure leaves the dir empty so train.py
-        # raises on resume — loud, never a silent fresh start.
+        # to the run cwd $OUT). The download runs in fail-closed preflight before
+        # trainer exit capture, so a missing checkpoint can never become a silent
+        # fresh start.
         resume_block = ""
         if resume_uri and not physics:
             resume_dir = f"logs/rsl_rl/{experiment_name}/{RESUME_RUN_DIR}"
@@ -855,8 +859,8 @@ def build_isaac_job_manifest(
             f"{seed_arg} "
             f"agent.num_steps_per_env={steps_per_env} agent.save_interval=25 {override_str}"
         )
+        preflight_block = resume_block
         train_block = (
-            f"{resume_block}"
             f'echo "VLM_REWARD_OVERRIDES: {override_str}"\n'
             # tee the FULL training output to a file (the per-iteration Mean reward
             # curve) before tailing to stdout — `| tail -120` alone discards the
@@ -865,12 +869,13 @@ def build_isaac_job_manifest(
         )
 
     script = (
-        "set -uo pipefail\n"
+        "set -euo pipefail\n"
         "exec > >(tee -a /tmp/byo-train.log) 2>&1\n"
         "PY=/isaac-sim/python.sh\n"
         '[ -x "$PY" ] || { echo "MISSING_PINNED_ISAAC_RUNTIME"; exit 127; }\n'
         '"$PY" -m npa.workflows.sim2real.runtime_attestation\n'
         f'OUT=/workspace/isaaclab/npa-runs/{run_id}; mkdir -p "$OUT"; cd "$OUT"\n'
+        f"{preflight_block}"
         "set +e\n"
         f"{train_block}"
         "rc=${PIPESTATUS[0]}; set -e\n"

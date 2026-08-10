@@ -126,6 +126,9 @@ component failure unless Kubernetes supplies a structured disruption condition.
 Missing/malformed data, image or model failures, checkpoint load errors, and
 component contract failures are application failures and are never retried on a
 different GPU product. Isaac candidates remain RTX PRO 6000 or L40S only.
+Runtime attestation and every scenario, robot asset, and resume-checkpoint stage
+run under shell `errexit` before the trainer exit-code capture begins. A failed
+stage therefore exits the Pod and cannot silently start a fresh policy.
 
 ## Kueue scheduling
 

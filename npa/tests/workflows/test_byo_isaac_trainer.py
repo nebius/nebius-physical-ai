@@ -653,6 +653,43 @@ def test_manifest_resume_downloads_prior_checkpoint_and_passes_flags():
     assert env["NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM"] == "0"
 
 
+def test_manifest_resume_download_is_fail_closed_before_trainer_capture() -> None:
+    uri = "s3://b/o/model_latest.pt"
+    args = _manifest_script(_resume_manifest(resume_uri=uri))
+    download = args.index("npa.workflows.sim2real.isaac_job_io download")
+    trainer_capture = args.index("set +e")
+    assert args.startswith("set -euo pipefail\n")
+    assert download < trainer_capture
+
+
+def test_byo_robot_staging_is_fail_closed_before_trainer_capture() -> None:
+    args = _manifest_script(
+        byo.build_isaac_job_manifest(
+            job_name="j",
+            run_id="r",
+            image="reg/npa-isaac-lab:2.3.2.post1",
+            task="Isaac-Lift-Cube-Franka-v0",
+            num_envs=64,
+            iterations=2,
+            s3_output_uri="s3://b/o/",
+            s3_endpoint="https://s3",
+            namespace="default",
+            service_account="agent-sa",
+            gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            robot_spec={"robot_source": "stock_franka", "name": "franka"},
+            resume_uri="s3://b/o/model_latest.pt",
+            scenarios_uri="s3://b/o/train.jsonl",
+            scenarios_sha256="a" * 64,
+        )
+    )
+    resume = args.index("ROBOT_RESUME_FROM")
+    scenario = args.index("--destination /tmp/npa_robot/scenarios.jsonl")
+    trainer_capture = args.index("set +e")
+    assert args.startswith("set -euo pipefail\n")
+    assert scenario < trainer_capture
+    assert resume < trainer_capture
+
+
 def test_manifest_no_resume_keeps_default_path_unchanged():
     args = _manifest_script(_resume_manifest(resume_uri=""))
     assert "RESUME_FROM" not in args
