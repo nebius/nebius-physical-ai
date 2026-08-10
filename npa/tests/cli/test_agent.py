@@ -63,6 +63,109 @@ def test_artifact_only_live_probe_is_read_only_and_state_stable() -> None:
     assert client.paths[-1] == "/api/health"
 
 
+def test_fresh_deploy_refuses_nonempty_remote_state_before_apply(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli.agent import DeploymentIdentityError, _apply_agent_terraform
+
+    applied = False
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.prepare_working_dir", lambda *_args, **_kwargs: tmp_path
+    )
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.state_list",
+        lambda _tf_dir: ["nebius_compute_v1_instance.workbench"],
+    )
+
+    def apply(**_kwargs):
+        nonlocal applied
+        applied = True
+        return {}
+
+    monkeypatch.setattr("npa.cli.agent.provisioner.apply", apply)
+    with pytest.raises(DeploymentIdentityError, match="no matching immutable agent record"):
+        _apply_agent_terraform(
+            project="project-a",
+            name="agent-a",
+            merged_vars={},
+            env_region="us-central1",
+            require_empty_state=True,
+        )
+    assert applied is False
+
+
+def test_destroy_refuses_terraform_state_without_agent_record(monkeypatch) -> None:
+    destroyed = False
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
+    monkeypatch.setattr("npa.cli.agent._agent_terraform_state_exists", lambda *_args: True)
+
+    def destroy(*_args, **_kwargs):
+        nonlocal destroyed
+        destroyed = True
+
+    monkeypatch.setattr("npa.cli.agent._destroy_agent_terraform", destroy)
+    result = runner.invoke(
+        app, ["destroy", "--project", "project-a", "--name", "agent-a"]
+    )
+    assert result.exit_code == 1
+    assert "unknown ownership" in result.output
+    assert destroyed is False
+
+
+def test_deploy_refuses_local_state_without_agent_record(monkeypatch) -> None:
+    from npa.cli.agent import deploy_cmd
+
+    deployment = {
+        "deployment_id": "npa-agent-owner",
+        "deployment_name": "agent-a",
+        "project_alias": "project-a",
+        "runtime_namespace": "project-a/agent-a",
+        "repository": "org/repo",
+        "branch": "codex/owner",
+        "commit": "a" * 40,
+        "source_tree": "b" * 40,
+        "short_commit": "a" * 12,
+        "workspace_label": "Workspace",
+        "bootstrap_timestamp": "2026-08-10T00:00:00Z",
+    }
+    mutated = False
+    monkeypatch.setattr(
+        "npa.cli.agent.build_deployment_manifest", lambda **_kwargs: deployment
+    )
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
+    monkeypatch.setattr("npa.cli.agent._agent_terraform_state_exists", lambda *_args: True)
+
+    def store(*_args, **_kwargs):
+        nonlocal mutated
+        mutated = True
+
+    monkeypatch.setattr("npa.cli.agent._store_agent_record", store)
+    with pytest.raises(Exit):
+        deploy_cmd(
+            project="project-a",
+            name="agent-a",
+            project_id="project-id",
+            tenant_id="tenant-id",
+            region="us-central1",
+            ssh_user="ubuntu",
+            ssh_public_key_path="/unused/key.pub",
+            tf_var=[],
+            agent_port=8088,
+            backend_port=8787,
+            rerun_port=9090,
+            llm_model="model",
+            llm_models=[],
+            foxglove_embed_src="",
+            foxglove_org_slug="",
+            foxglove_live_url="",
+            no_public_https=False,
+            workspace_label="Workspace",
+            stock_demo=False,
+        )
+    assert mutated is False
+
+
 def test_status_is_unhealthy_on_live_deployment_mismatch(monkeypatch) -> None:
     deployment = {
         "deployment_id": "npa-agent-owner",

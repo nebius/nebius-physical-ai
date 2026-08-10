@@ -82,6 +82,7 @@ from npa.cli.agent_deployment import (
     record_public_https as _record_public_https,
     record_tls_verify as _record_tls_verify,
     verify_remote_deployment,
+    verify_persisted_remote_owner,
 )
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
@@ -231,6 +232,7 @@ def _apply_agent_terraform(
     name: str,
     merged_vars: dict[str, str],
     env_region: str,
+    require_empty_state: bool = False,
 ) -> dict[str, Any]:
     """Apply agent Terraform, retrying without VM SA attachment on compute IAM denial."""
     tf_dir = provisioner.prepare_working_dir(
@@ -247,6 +249,13 @@ def _apply_agent_terraform(
             "secret_key": merged_vars.get("nebius_secret_key", ""),
         },
     )
+    if require_empty_state:
+        existing_resources = provisioner.state_list(tf_dir)
+        if existing_resources:
+            raise DeploymentIdentityError(
+                "Terraform state already owns resources for this project/agent but "
+                "no matching immutable agent record exists; refusing to apply"
+            )
     tf_vars = {key: value for key, value in merged_vars.items() if key not in _AGENT_TERRAFORM_RUNTIME_ONLY_VARS}
     try:
         return provisioner.apply(tf_dir=tf_dir, tf_vars=tf_vars)
@@ -771,6 +780,40 @@ def _resolve_agent_ssh_key(
     if env_key:
         return str(Path(env_key).expanduser())
     return str(Path(default_key).expanduser())
+
+
+def _verify_agent_record_remote_owner(
+    record: dict[str, Any],
+    expected: dict[str, str],
+    *,
+    ssh_user: str = "ubuntu",
+) -> None:
+    """Fail closed unless the saved VM manifest has the record's exact owner."""
+    host = str(record.get("public_ip") or "").strip()
+    key_path = _resolve_agent_ssh_key(record)
+    if not _is_routable_public_ip(host):
+        raise DeploymentIdentityError(
+            "saved agent record has no routable VM for ownership verification"
+        )
+    if not Path(key_path).expanduser().is_file():
+        raise DeploymentIdentityError(
+            "saved agent SSH key is unavailable for ownership verification"
+        )
+    ssh = SSHClient(
+        config=resolve_ssh_config(
+            ssh_host=host,
+            ssh_user=ssh_user,
+            ssh_key=key_path,
+            project=None,
+            name=None,
+        ).ssh
+    )
+    try:
+        verify_persisted_remote_owner(ssh, expected)
+    except SSHError as exc:
+        raise DeploymentIdentityError(
+            "unable to verify persisted VM ownership before lifecycle mutation"
+        ) from exc
 
 
 def _resolve_agent_storage_credentials(
@@ -2930,7 +2973,6 @@ def _list_chat_sessions(state: dict) -> list[dict]:
         except Exception:
             pass
     state["chat_sessions"] = sessions
-    _save_state(state)
     rows = []
     for session in sessions.values():
         rows.append(public_chat_session_payload(session))
@@ -8698,6 +8740,15 @@ def deploy_cmd(
         existing = _agent_record(project, name)
         if existing:
             assert_record_ownership(existing, deployment)
+            _verify_agent_record_remote_owner(
+                existing, deployment, ssh_user=ssh_user
+            )
+        elif _agent_terraform_state_exists(project, name):
+            raise DeploymentIdentityError(
+                "Terraform state exists without an immutable agent record; "
+                "refusing to apply or adopt this namespace"
+            )
+        fresh_deployment = not bool(existing)
         claim = dict(existing)
         claim.update(
             {
@@ -8816,26 +8867,31 @@ def deploy_cmd(
             name=name,
             merged_vars=merged_vars,
             env_region=env_region,
+            require_empty_state=fresh_deployment,
         )
+    except DeploymentIdentityError as exc:
+        _fail(str(exc))
     except ProvisionerError as exc:
-        try:
-            _destroy_agent_terraform(project, name)
-        except ProvisionerError as cleanup_exc:
-            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        if fresh_deployment:
+            try:
+                _destroy_agent_terraform(project, name)
+            except ProvisionerError as cleanup_exc:
+                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"Terraform deploy failed: {exc}")
 
     public_ip = str(tf_outputs.get("vm_ip", ""))
     instance_id = str(tf_outputs.get("instance_id", ""))
     ssh_key_path = str(tf_outputs.get("ssh_key_path", "") or ssh_public_key_path.removesuffix(".pub"))
     if not _is_routable_public_ip(public_ip):
-        try:
-            _destroy_agent_terraform(
-                project,
-                name,
-                record={"instance_id": instance_id, "project_id": env_project_id, "region": env_region},
-            )
-        except ProvisionerError as cleanup_exc:
-            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        if fresh_deployment:
+            try:
+                _destroy_agent_terraform(
+                    project,
+                    name,
+                    record={"instance_id": instance_id, "project_id": env_project_id, "region": env_region},
+                )
+            except ProvisionerError as cleanup_exc:
+                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail("Terraform output did not include a routable public IP")
 
     auth_password = secrets.token_urlsafe(18)
@@ -8896,11 +8952,14 @@ def deploy_cmd(
             deployment=deployment,
             preload_stock_demo=stock_demo,
         )
+    except DeploymentIdentityError as exc:
+        _fail(f"VM ownership verification failed: {exc}")
     except (ConfigError, SSHError, ValueError) as exc:
-        try:
-            _destroy_agent_terraform(project, name, record=rollback_record)
-        except ProvisionerError as cleanup_exc:
-            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        if fresh_deployment:
+            try:
+                _destroy_agent_terraform(project, name, record=rollback_record)
+            except ProvisionerError as cleanup_exc:
+                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"VM bootstrap failed: {exc}")
 
     ingress_ports: list[int] = [agent_port, rerun_port]
@@ -8909,10 +8968,11 @@ def deploy_cmd(
     try:
         ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
     except NetworkIngressError as exc:
-        try:
-            _destroy_agent_terraform(project, name, record=rollback_record)
-        except ProvisionerError as cleanup_exc:
-            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        if fresh_deployment:
+            try:
+                _destroy_agent_terraform(project, name, record=rollback_record)
+            except ProvisionerError as cleanup_exc:
+                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"npa network ensure-ingress failed: {exc}")
 
     urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
@@ -9432,14 +9492,29 @@ def destroy_cmd(
 ) -> None:
     """Destroy agent VM/resources and remove saved config entry."""
     record = _agent_record(project, name)
-    if not record and not _agent_terraform_state_exists(project, name):
-        _fail(f"Agent config not found for {project}/{name}")
+    if not record:
+        _fail(
+            f"Immutable agent record not found for {project}/{name}; refusing to "
+            "destroy Terraform state with unknown ownership"
+        )
+    recorded = record.get("deployment")
+    if not isinstance(recorded, dict) or not recorded:
+        _fail("agent record has no immutable deployment owner; refusing to destroy")
     try:
-        _destroy_agent_terraform(project, name, record=record or None)
+        expected = build_deployment_manifest(
+            project_alias=project,
+            name=name,
+            workspace_label=recorded.get("workspace_label", ""),
+        )
+        assert_record_ownership(record, expected)
+        _verify_agent_record_remote_owner(record, expected)
+    except DeploymentIdentityError as exc:
+        _fail(str(exc))
+    try:
+        _destroy_agent_terraform(project, name, record=record)
     except ProvisionerError as exc:
         _fail(f"Terraform destroy failed: {exc}")
-    if record:
-        _remove_agent_record(project, name)
+    _remove_agent_record(project, name)
     typer.echo(f"destroyed: {project}/{name}")
 
 

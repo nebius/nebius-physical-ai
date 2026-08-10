@@ -144,6 +144,22 @@ def test_existing_remote_owner_is_checked_before_bootstrap(source_repo: Path) ->
         assert_remote_owner_if_present(FakeSsh(), expected)
 
 
+def test_backend_down_still_checks_persisted_manifest(source_repo: Path) -> None:
+    expected = _manifest(source_repo)
+    actual = dict(expected)
+    actual["branch"] = "codex/other-pr"
+
+    class FakeSsh:
+        def run(self, command: str, **_kwargs: object) -> tuple[int, str, str]:
+            if command.startswith("curl "):
+                return 7, "", "backend stopped"
+            assert "deployment.json" in command
+            return 0, json.dumps(actual), ""
+
+    with pytest.raises(DeploymentIdentityError, match="owner mismatch.*branch"):
+        assert_remote_owner_if_present(FakeSsh(), expected)
+
+
 def test_repository_manifest_redacts_remote_credentials(source_repo: Path) -> None:
     _git(source_repo, "remote", "set-url", "origin", "https://user:secret@example.com/org/repo.git?token=private")
     manifest = _manifest(source_repo)

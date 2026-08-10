@@ -203,6 +203,42 @@ def test_no_stock_demo_mode_removes_only_the_stock_history(monkeypatch, tmp_path
         sys.modules.pop(module_name, None)
 
 
+def test_session_get_does_not_rewrite_durable_state(monkeypatch, tmp_path) -> None:
+    """Hydration/listing is a GET and must keep the exact persisted bytes."""
+    import sys
+
+    module_name = "npa_rendered_read_only_session_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    module.PRELOAD_STOCK_DEMO = False
+    module.STATE_PATH = tmp_path / "session-state.json"
+    module._STATE_STORE = None
+    monkeypatch.setattr(
+        module, "_agent_s3_client_optional", lambda: (None, {"bucket": ""})
+    )
+    try:
+        state = module._default_state()
+        state["chat_sessions"] = {
+            "default": {
+                "id": "default",
+                "title": "New chat",
+                "created_at": "2026-08-10T00:00:00Z",
+                "updated_at": "2026-08-10T00:00:00Z",
+                "chat_history": [],
+                "memory_uri": "",
+            }
+        }
+        module._save_state(state)
+        before = module.STATE_PATH.read_bytes()
+        first = module.session_bootstrap()
+        second = module.session_bootstrap()
+        assert first["deployment"] == second["deployment"]
+        assert module.STATE_PATH.read_bytes() == before
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     body = _render_backend_body(monkeypatch)
     # Phase B/G: actions are shipped/imported and the /agent/act route is wired.

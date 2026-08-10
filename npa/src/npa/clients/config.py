@@ -533,12 +533,17 @@ def remove_workbench_config(
         workbenches = proj.get("workbenches", {})
         if name in workbenches:
             del workbenches[name]
-            proj["workbenches"] = workbenches
-            if not workbenches:
+            if workbenches:
+                proj["workbenches"] = workbenches
+            else:
+                proj.pop("workbenches", None)
+            if not proj:
                 del projects[project]
                 if existing.get("default_project") == project:
                     remaining = list(projects.keys())
                     existing["default_project"] = remaining[0] if remaining else "default"
+            else:
+                projects[project] = proj
             existing["projects"] = projects
             _replace_config(existing)
 

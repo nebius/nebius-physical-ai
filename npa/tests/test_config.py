@@ -709,8 +709,38 @@ def test_remove_workbench_config_updates_defaults(isolated_config: Path) -> None
 
     config.remove_workbench_config("proj-a", "wb-b")
     data = yaml.safe_load(isolated_config.read_text())
-    assert "proj-a" not in data["projects"]
-    assert data["default_project"] == "proj-b"
+    assert "workbenches" not in data["projects"]["proj-a"]
+    assert data["projects"]["proj-a"]["project_id"] == "project-1"
+    assert data["default_project"] == "proj-a"
+
+
+def test_remove_last_workbench_preserves_agent_ownership_record(
+    isolated_config: Path,
+) -> None:
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "shared": {
+                        "agents": {
+                            "wan-pr261": {
+                                "deployment": {"deployment_id": "npa-agent-owner"}
+                            }
+                        },
+                        "workbenches": {"temporary": {"endpoint": "http://vm"}},
+                    }
+                }
+            }
+        )
+    )
+    config.remove_workbench_config("shared", "temporary")
+    data = yaml.safe_load(isolated_config.read_text())
+    project = data["projects"]["shared"]
+    assert "workbenches" not in project
+    assert project["agents"]["wan-pr261"]["deployment"]["deployment_id"] == (
+        "npa-agent-owner"
+    )
 
 
 # ── workbench_type alias guard ───────────────────────────────────────────

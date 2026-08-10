@@ -363,22 +363,60 @@ def verify_remote_deployment(
 def assert_remote_owner_if_present(
     ssh: _SshRunner, expected: Mapping[str, str], *, backend_port: int = 8787
 ) -> dict[str, Any]:
-    """Reject a reachable VM backend owned by a different branch/deployment."""
-    result = ssh.run(f"curl -fsS http://127.0.0.1:{int(backend_port)}/deployment")
+    """Reject an existing VM owned by another branch, even if backend is down."""
+    found: dict[str, Any] = {}
+    probes = (
+        (
+            f"curl -fsS http://127.0.0.1:{int(backend_port)}/deployment",
+            "backend",
+        ),
+        (f"sudo cat {DEPLOYMENT_MANIFEST_PATH}", "persisted manifest"),
+    )
+    for command, label in probes:
+        result = ssh.run(command)
+        if not result:
+            continue
+        code, stdout, _ = result
+        if code != 0 or not stdout.strip():
+            continue
+        try:
+            actual = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise DeploymentIdentityError(
+                f"existing agent {label} returned invalid ownership JSON"
+            ) from exc
+        if not isinstance(actual, dict):
+            raise DeploymentIdentityError(
+                f"existing agent {label} returned non-object ownership"
+            )
+        assert_record_ownership({"deployment": actual}, expected)
+        found = actual
+    return found
+
+
+def verify_persisted_remote_owner(
+    ssh: _SshRunner, expected: Mapping[str, str]
+) -> dict[str, Any]:
+    """Require the VM's immutable on-disk manifest before apply or destroy."""
+    result = ssh.run(f"sudo cat {DEPLOYMENT_MANIFEST_PATH}")
     if not result:
-        return {}
+        raise DeploymentIdentityError(
+            "unable to read persisted deployment ownership manifest"
+        )
     code, stdout, _ = result
     if code != 0 or not stdout.strip():
-        return {}
+        raise DeploymentIdentityError(
+            "persisted deployment ownership manifest is unavailable"
+        )
     try:
         actual = json.loads(stdout)
     except json.JSONDecodeError as exc:
         raise DeploymentIdentityError(
-            "existing agent backend returned invalid deployment ownership JSON"
+            "persisted deployment ownership manifest is invalid JSON"
         ) from exc
     if not isinstance(actual, dict):
         raise DeploymentIdentityError(
-            "existing agent backend returned non-object deployment ownership"
+            "persisted deployment ownership manifest is not an object"
         )
     assert_record_ownership({"deployment": actual}, expected)
     return actual
