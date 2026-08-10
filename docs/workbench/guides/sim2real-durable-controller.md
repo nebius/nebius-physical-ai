@@ -292,8 +292,10 @@ and checkpoint 4100 held a validation object inside 5 cm below 0.03 m/s for nine
 steps, but moved again before the sealed episode terminal. Disabling success
 termination had also removed the old termination-keyed completion bonus. The
 task now always pays a one-shot bonus on the first exact three-step event without
-resetting, keeps the saturated dwell reward while stable, and applies a bounded
-post-success departure penalty until episode reset. Immediate success termination
+resetting and keeps the saturated dwell reward while stable. A bounded
+post-success departure penalty was tested as a retention aid; later live evidence
+below showed that its delayed negative return instead made the rare success
+avoidable, so it is no longer part of the task. Immediate success termination
 remains an independent diagnostic opt-in; validation and gold still require the
 unchanged stable terminal placement.
 
@@ -318,15 +320,24 @@ and every one regressed to a one-step maximum despite entering the 5 cm basin on
 up to 54/64 scenarios. The negative transition therefore taught avoidance of
 the low-speed state and is not part of the production reward.
 
-The strict dwell reward is now positive-only and quadratic over the unchanged
+Train25 removed that partial-break term and made the strict dwell reward
+positive-only and quadratic over the unchanged
 three-step counter: fractions `1/9`, `4/9`, and `1` at steps one through three,
 then `1` for every continued stable step. Weight `4096` makes the second and
 third steps materially more valuable than a fly-through while keeping the first
-step a positive waypoint; no approach or break state is negative. The separate
-post-completion departure consequence remains exact-event-gated, the one-shot
-completion bonus remains larger, and the terminal evaluator contract is
-unchanged. Placement reward, completion, and departure curves are retained in
-durable PPO telemetry for live verification.
+step a positive waypoint. Its seven-checkpoint validation64 sweep nevertheless
+scored zero decomposed placements at every checkpoint. The first saved update
+had already reduced Train21 checkpoint 4400 from a 16-step event to a one-step
+maximum. The remaining exact-event-gated `-4096` post-completion consequence had
+made all later unstable steps part of the return for reaching that rare success;
+unless the policy could already hold to timeout, successful arrival was strongly
+negative. That delayed consequence is therefore removed too. Retention is now
+positive-only: saturated dwell pays each continued strict step, the one-shot
+completion bonus remains larger, and the existing signed physical-progress term
+still penalizes actual departure. The strict terminal evaluator contract is
+unchanged. Legacy departure fields remain readable in durable PPO telemetry so
+archived attempts retain their original meaning, but production no longer emits
+or optimizes that reward term.
 
 ## Required integration ladder
 

@@ -64,21 +64,16 @@ PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT = 256.0
 # change any success threshold and remains zero outside the strict event.
 PLACEMENT_STRICT_DWELL_REWARD_WEIGHT = 4096.0
 PLACEMENT_DWELL_REWARD_EXPONENT = 2.0
-# Train17 earned nonzero dwell reward and produced a nine-step strict placement,
-# but every validation policy later drove the object away before timeout. Keep
-# the saturated positive dwell, restore the sparse completion reward that was
-# accidentally coupled to success termination, and make post-success departure
-# explicitly costly until reset. Train21 then held a validation placement for 16
-# exact steps before leaving: the old -512 consequence was only one quarter of
-# the saturated dwell reward after Isaac's common dt scaling. This stronger term
-# is still identically zero before exact completion, so unlike the rejected
-# global -5000 drop penalty it cannot suppress reach, grasp, lift, or transport.
-PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT = -4096.0
 # Train23 proved that even a transition-gated negative break consequence made
 # the exact stable state avoidable: every validation checkpoint regressed to a
 # one-step maximum. Use only positive quadratic progression for unfinished dwell.
 # The first step remains a waypoint while the second, third, and continued stable
 # steps dominate a fly-through without making approach negative anywhere.
+# Train25 then isolated the same delayed-penalty failure after completion: one
+# PPO update erased Train21's 16-step placement because all later unstable steps
+# made the return for reaching that rare success strongly negative. Retention is
+# therefore positive-only too. Saturated dwell pays every continued stable step;
+# the existing signed physical progress term still penalizes actual departure.
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
 _DROP_PENALTY_TYPE: type | None = None
@@ -727,12 +722,12 @@ def stable_placement_retention_signal(
     achieved: bool,
     *,
     required_steps: int = STABLE_PLACEMENT_STEPS,
-) -> tuple[int, float, bool, float, float]:
-    """Advance dwell and expose one-shot completion plus later departure.
+) -> tuple[int, float, bool, float]:
+    """Advance positive-only dwell and expose one-shot completion.
 
-    Returns ``(steps, dwell, achieved, completion, departure)``. Completion is
-    one only on the first exact three-step event. Departure is one whenever a
-    previously achieved episode no longer satisfies the unchanged strict event.
+    Returns ``(steps, dwell, achieved, completion)``. Completion is one only on
+    the first exact three-step event. Later unstable steps earn zero here; they
+    do not make the earlier success return negative.
     """
 
     steps, dwell = stable_placement_dwell_signal(
@@ -740,8 +735,7 @@ def stable_placement_retention_signal(
     )
     newly_achieved = bool(is_stable and steps >= required_steps and not achieved)
     achieved_now = bool(achieved or newly_achieved)
-    departure = float(achieved_now and not is_stable)
-    return steps, dwell, achieved_now, float(newly_achieved), departure
+    return steps, dwell, achieved_now, float(newly_achieved)
 
 
 def stable_placement_dwell(
@@ -804,23 +798,6 @@ def stable_placement_completion(env: Any) -> Any:
     import torch  # noqa: WPS433 - Isaac runtime dependency
 
     return env.npa_stable_placement_newly_achieved.to(dtype=torch.float32)
-
-
-def stable_placement_departure(
-    env: Any,
-    *,
-    command_name: str = "object_pose",
-    object_name: str = "object",
-    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
-    stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
-) -> Any:
-    """Mark every post-achievement step that leaves the strict event."""
-
-    distance, speed, position, _ = _placement_state(
-        env, command_name=command_name, object_name=object_name
-    )
-    stable = (distance < float(success_distance_m)) & (speed < float(stable_speed_mps))
-    return (env.npa_stable_placement_achieved & ~stable).to(position.dtype)
 
 
 def strict_basin_settling(
@@ -1025,16 +1002,6 @@ def install_env_cfg(env_cfg: Any) -> bool:
         func=stable_placement_completion,
         weight=PLACEMENT_COMPLETION_REWARD_WEIGHT,
     )
-    env_cfg.rewards.stable_placement_departure = RewardTermCfg(
-        func=stable_placement_departure,
-        weight=PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT,
-        params={
-            "command_name": "object_pose",
-            "object_name": "object",
-            "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
-            "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
-        },
-    )
 
     env_cfg.rewards.object_drop_penalty = RewardTermCfg(
         func=_scheduled_drop_penalty_type(),
@@ -1105,9 +1072,6 @@ def install_env_cfg(env_cfg: Any) -> bool:
                     "goal_curriculum_lift_m": PLACEMENT_GOAL_CURRICULUM_LIFT_M,
                     "drop_penalty_weight": PLACEMENT_DROP_PENALTY_WEIGHT,
                     "completion_reward_weight": (PLACEMENT_COMPLETION_REWARD_WEIGHT),
-                    "post_success_departure_weight": (
-                        PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT
-                    ),
                     "strict_distance_m": STABLE_PLACEMENT_DISTANCE_M,
                     "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
                     "stable_steps": STABLE_PLACEMENT_STEPS,
