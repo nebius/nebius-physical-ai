@@ -598,6 +598,7 @@ def build_isaac_job_manifest(
     init_noise_std: str = "",
     validation_interval: int = 100,
     resume_uri: str = "",
+    resume_sha256: str = "",
     experiment_name: str = DEFAULT_EXPERIMENT_NAME,
     robot_spec: dict[str, Any] | None = None,
     robot_usd_uri: str = "",
@@ -673,6 +674,11 @@ def build_isaac_job_manifest(
     # resolves it from these hydra args. The physics-variant path trains a different
     # task and is not resumed.
     resume_uri = resume_uri.strip()
+    resume_sha256 = resume_sha256.strip().lower()
+    if resume_uri and not physics and not re.fullmatch(r"[0-9a-f]{64}", resume_sha256):
+        raise ValueError("resume_uri requires its exact SHA-256 digest")
+    if resume_sha256 and not resume_uri:
+        raise ValueError("resume_sha256 requires resume_uri")
     if resume_uri and not physics:
         overrides["agent.resume"] = "true"
         overrides["agent.load_run"] = RESUME_RUN_DIR
@@ -771,7 +777,8 @@ def build_isaac_job_manifest(
                 f'echo "ROBOT_RESUME_FROM: {resume_uri}"\n'
                 '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
                 f"--uri {shlex.quote(resume_uri)} "
-                f"--destination {shlex.quote(resume_local)}\n"
+                f"--destination {shlex.quote(resume_local)} "
+                f"--sha256 {shlex.quote(resume_sha256)}\n"
             )
         preflight_block = (
             "mkdir -p /tmp/npa_robot\n"
@@ -850,7 +857,8 @@ def build_isaac_job_manifest(
                 f'mkdir -p "$OUT/{resume_dir}"\n'
                 '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
                 f"--uri {shlex.quote(resume_uri)} "
-                f'--destination "$OUT/{resume_dir}/{RESUME_CKPT_NAME}"\n'
+                f'--destination "$OUT/{resume_dir}/{RESUME_CKPT_NAME}" '
+                f"--sha256 {shlex.quote(resume_sha256)}\n"
             )
         train_line = (
             f'"$PY" {TRAIN_SCRIPT} --task {task} --num_envs {num_envs} '
@@ -1146,6 +1154,32 @@ def latest_byo_checkpoint_uri(
         return ""
 
 
+def s3_object_sha256(uri: str, *, endpoint: str = "") -> str:
+    """Hash one S3 object so a discovered resume is verified again in the GPU Pod."""
+
+    normalized = str(uri or "").strip()
+    if not normalized.startswith("s3://"):
+        raise ValueError("checkpoint URI must use s3://")
+    bucket_and_key = normalized.removeprefix("s3://")
+    if "/" not in bucket_and_key:
+        raise ValueError("checkpoint URI must include an object key")
+    bucket, key = bucket_and_key.split("/", 1)
+    if not bucket or not key:
+        raise ValueError("checkpoint URI must include a bucket and object key")
+    import boto3
+
+    body = boto3.client("s3", endpoint_url=endpoint or None).get_object(
+        Bucket=bucket, Key=key
+    )["Body"]
+    digest = hashlib.sha256()
+    try:
+        while chunk := body.read(1024 * 1024):
+            digest.update(chunk)
+    finally:
+        body.close()
+    return digest.hexdigest()
+
+
 def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     """Submit the Isaac sibling Job, wait, and return an update-result dict."""
 
@@ -1355,6 +1389,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     # so this run continues the SAME policy (stage 11B "more RL" compounds). Ignored on
     # the physics-variant path (different task) — log it so the skip is visible.
     resume_uri = _env("NPA_SIM2REAL_RESUME_CHECKPOINT_URI")
+    resume_sha256 = _env("NPA_SIM2REAL_RESUME_CHECKPOINT_SHA256").lower()
     if not resume_uri and _env("NPA_BYO_ISAAC_AUTO_RESUME", "1") != "0":
         resume_uri = latest_byo_checkpoint_uri(
             bucket,
@@ -1367,6 +1402,12 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
                 f"byo_isaac_trainer: AUTO-RESUME from latest same-run checkpoint {resume_uri}",
                 flush=True,
             )
+    if resume_sha256 and not re.fullmatch(r"[0-9a-f]{64}", resume_sha256):
+        raise RuntimeError("resume checkpoint SHA-256 must be 64 lowercase hex digits")
+    if resume_uri and not physics and not resume_sha256:
+        resume_sha256 = s3_object_sha256(resume_uri, endpoint=endpoint)
+    if resume_sha256 and not resume_uri:
+        raise RuntimeError("resume checkpoint SHA-256 provided without a URI")
     experiment_name = _env("NPA_BYO_ISAAC_EXPERIMENT_NAME", DEFAULT_EXPERIMENT_NAME)
     if resume_uri:
         if physics:
@@ -1378,7 +1419,8 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         else:
             print(
                 f"byo_isaac_trainer: RESUME from {resume_uri} "
-                f"(experiment={experiment_name}) -> continue same policy",
+                f"sha256={resume_sha256} (experiment={experiment_name}) "
+                "-> continue same policy",
                 flush=True,
             )
 
@@ -1408,6 +1450,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         init_noise_std=init_noise_std,
         validation_interval=validation_interval,
         resume_uri=resume_uri,
+        resume_sha256=resume_sha256,
         experiment_name=experiment_name,
         robot_spec=robot_spec_dict,
         robot_usd_uri=robot_usd_uri,
@@ -1517,6 +1560,8 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     result["ppo_hyperparameters"]["validation_checkpoint_interval"] = (
         validation_interval
     )
+    result["resume_checkpoint_uri"] = resume_uri if not physics else ""
+    result["resume_checkpoint_sha256"] = resume_sha256 if not physics else ""
     return result
 
 

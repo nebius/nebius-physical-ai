@@ -611,7 +611,10 @@ def test_read_generated_train_env_s3_fallback(tmp_path, monkeypatch):
 # Outer-loop RESUME wiring (stage 11B "send back for more RL" must compound)
 # --------------------------------------------------------------------------- #
 def _resume_manifest(
-    resume_uri="", physics=None, experiment_name=byo.DEFAULT_EXPERIMENT_NAME
+    resume_uri="",
+    physics=None,
+    experiment_name=byo.DEFAULT_EXPERIMENT_NAME,
+    resume_sha256="a" * 64,
 ):
     return byo.build_isaac_job_manifest(
         job_name="j",
@@ -627,6 +630,7 @@ def _resume_manifest(
         gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
         seed=42,
         resume_uri=resume_uri,
+        resume_sha256=resume_sha256 if resume_uri else "",
         physics=physics,
         experiment_name=experiment_name,
     )
@@ -639,6 +643,7 @@ def test_manifest_resume_downloads_prior_checkpoint_and_passes_flags():
     assert f"RESUME_FROM: {uri}" in args
     assert f"logs/rsl_rl/{byo.DEFAULT_EXPERIMENT_NAME}/{byo.RESUME_RUN_DIR}" in args
     assert "npa.workflows.sim2real.isaac_job_io download" in args
+    assert f"--sha256 {'a' * 64}" in args
     assert "s3.download_file" not in args
     # tells train.py to resume that exact staged run
     assert "agent.resume=true" in args
@@ -678,6 +683,7 @@ def test_byo_robot_staging_is_fail_closed_before_trainer_capture() -> None:
             gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
             robot_spec={"robot_source": "stock_franka", "name": "franka"},
             resume_uri="s3://b/o/model_latest.pt",
+            resume_sha256="a" * 64,
             scenarios_uri="s3://b/o/train.jsonl",
             scenarios_sha256="a" * 64,
         )
@@ -695,6 +701,11 @@ def test_manifest_no_resume_keeps_default_path_unchanged():
     assert "RESUME_FROM" not in args
     assert "agent.resume" not in args
     assert "s3.download_file" not in args  # only the upload tail uses boto3
+
+
+def test_manifest_resume_requires_exact_checkpoint_digest() -> None:
+    with pytest.raises(ValueError, match="resume_uri requires its exact SHA-256"):
+        _resume_manifest(resume_uri="s3://b/o/model_latest.pt", resume_sha256="")
 
 
 def test_manifest_resume_ignored_on_physics_path():
@@ -744,6 +755,32 @@ def test_artifact_tag_from_output_dir_keeps_outer_iteration(tmp_path):
     assert byo.artifact_tag("outer/02 iter 01") == "outer-02-iter-01"
 
 
+def test_s3_object_sha256_streams_exact_checkpoint_bytes(monkeypatch) -> None:
+    class Body:
+        def __init__(self) -> None:
+            self.chunks = iter((b"exact-", b"checkpoint", b""))
+
+        def read(self, _size: int) -> bytes:
+            return next(self.chunks)
+
+        def close(self) -> None:
+            return None
+
+    class S3:
+        def get_object(self, *, Bucket: str, Key: str):
+            assert Bucket == "bucket"
+            assert Key == "run/model.pt"
+            return {"Body": Body()}
+
+    import boto3
+
+    monkeypatch.setattr(boto3, "client", lambda *a, **k: S3())
+    assert (
+        byo.s3_object_sha256("s3://bucket/run/model.pt")
+        == hashlib.sha256(b"exact-checkpoint").hexdigest()
+    )
+
+
 def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     # NPA_SIM2REAL_TRAINER_TAG must make each iteration's checkpoint a DISTINCT S3
     # path (so the prior model survives for the next outer iteration to resume from
@@ -753,6 +790,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     def fake_build(*args, **kwargs):
         captured["s3_output_uri"] = kwargs["s3_output_uri"]
         captured["resume_uri"] = kwargs.get("resume_uri", "")
+        captured["resume_sha256"] = kwargs.get("resume_sha256", "")
         captured["scenarios_uri"] = kwargs.get("scenarios_uri", "")
         captured["scenarios_jsonl"] = kwargs.get("scenarios_jsonl", "")
         captured["scenarios_sha256"] = kwargs.get("scenarios_sha256", "")
@@ -827,6 +865,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     monkeypatch.setenv(
         "NPA_SIM2REAL_RESUME_CHECKPOINT_URI", "s3://bkt/prior/model_latest.pt"
     )
+    monkeypatch.setenv("NPA_SIM2REAL_RESUME_CHECKPOINT_SHA256", "b" * 64)
     monkeypatch.delenv("NPA_BYO_ISAAC_PHYSICS", raising=False)
 
     result = byo.run_isaac_training_job("myrun", signal_json="ignored")
@@ -835,12 +874,15 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     assert "byo-trainer" in captured["s3_output_uri"]
     # resume uri threaded through to the manifest builder
     assert captured["resume_uri"] == "s3://bkt/prior/model_latest.pt"
+    assert captured["resume_sha256"] == "b" * 64
     assert captured["scenarios_uri"] == "s3://bkt/myrun/envs/train/envs.jsonl"
     assert captured["scenarios_jsonl"] == ""
     assert captured["scenarios_sha256"] == hashlib.sha256(b"{}\n").hexdigest()
     assert result["scenario_distribution"]["source_uri"] == (
         "s3://bkt/myrun/envs/train/envs.jsonl"
     )
+    assert result["resume_checkpoint_uri"] == "s3://bkt/prior/model_latest.pt"
+    assert result["resume_checkpoint_sha256"] == "b" * 64
     assert (
         result["scenario_distribution"]["source_sha256"]
         == hashlib.sha256(b"{}\n").hexdigest()

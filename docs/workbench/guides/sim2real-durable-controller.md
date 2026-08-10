@@ -129,6 +129,10 @@ different GPU product. Isaac candidates remain RTX PRO 6000 or L40S only.
 Runtime attestation and every scenario, robot asset, and resume-checkpoint stage
 run under shell `errexit` before the trainer exit-code capture begins. A failed
 stage therefore exits the Pod and cannot silently start a fresh policy.
+Every resume download also carries the selected checkpoint's lowercase SHA-256.
+An auto-discovered same-run checkpoint is hashed by the controller first; the GPU
+Pod verifies those exact bytes while staging, and the update record preserves the
+URI and digest as explicit lineage.
 
 ## Kueue scheduling
 

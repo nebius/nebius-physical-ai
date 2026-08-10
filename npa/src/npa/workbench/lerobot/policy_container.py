@@ -157,6 +157,8 @@ class VlmSignalUpdateResult:
     control: bool
     loss_integration_point: str
     duration_ms: float
+    resume_checkpoint_uri: str = ""
+    resume_checkpoint_sha256: str = ""
     ppo: dict[str, Any] = field(default_factory=dict)
     ppo_telemetry: dict[str, Any] = field(default_factory=dict)
     ppo_telemetry_uri: str = ""
@@ -217,6 +219,8 @@ class VlmSignalUpdateResult:
             mean_reward=float(payload.get("mean_reward", 0.0)),
             mean_advantage=float(payload.get("mean_advantage", 0.0)),
             checkpoint_path=str(payload.get("checkpoint_path", "")),
+            resume_checkpoint_uri=str(payload.get("resume_checkpoint_uri", "")),
+            resume_checkpoint_sha256=str(payload.get("resume_checkpoint_sha256", "")),
             signal_count=int(payload.get("signal_count", 0)),
             control=bool(payload.get("control", False)),
             loss_integration_point=str(
