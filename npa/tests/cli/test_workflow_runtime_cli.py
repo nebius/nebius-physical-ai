@@ -155,6 +155,29 @@ def test_submit_rejects_malformed_per_tool_image_override() -> None:
     assert "--tool-image must be TOOL_REF=IMAGE" in result.output
 
 
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ("workbench.fiftyone.curate_augmented", "must be TOOL_REF=IMAGE"),
+        (
+            "workbench.fiftyone.curate_augmented=registry/fiftyone:test",
+            "supported only for npa.workflow/v0.0.1",
+        ),
+    ],
+)
+def test_legacy_skypilot_submit_rejects_tool_image_instead_of_ignoring_it(
+    tmp_path: Path, override: str, message: str
+) -> None:
+    legacy = tmp_path / "legacy.yaml"
+    legacy.write_text("name: legacy\nresources:\n  cloud: kubernetes\nrun: echo ok\n")
+    result = RUNNER.invoke(
+        app,
+        ["workbench", "workflow", "submit", str(legacy), "--tool-image", override],
+    )
+    assert result.exit_code == 1
+    assert message in result.output
+
+
 def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
     result = RUNNER.invoke(
         app,

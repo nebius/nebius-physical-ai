@@ -10,9 +10,12 @@ from npa.cli import agent as agent_module
 from npa.cli.agent_chat import (
     apis_for_intent,
     build_grounded_reply,
+    goal_requests_catalog_composition,
     match_chat_intent,
 )
 from npa.cli.agent_workflow import (
+    WorkflowParameterError,
+    author_workflow_from_goal,
     choose_workflow_template,
     extract_data_factory_params,
     extract_sim2real_params,
@@ -185,7 +188,7 @@ def test_two_step_sim2real_request_propagates_supported_parameters() -> None:
     spec = yaml.safe_load(draft["yaml"])
     assert spec["config"]["env_count"] == "5000"
     assert spec["config"]["envgen_seed"] == "9"
-    assert spec["resources"]["gpu"]["accelerators"] == "RTXPRO6000:2"
+    assert spec["resources"]["gpu"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:2"
 
 
 def test_create_workflow_grounded_reply_includes_yaml_fence() -> None:
@@ -256,7 +259,7 @@ def test_data_factory_yaml_reflects_requested_fanout_and_gpus() -> None:
     assert data["config"]["n_augmentations"] == "6"
     assert data["config"]["variant_parallelism"] == "6"
     assert data["config"]["augment_subject"].startswith("robot arm demos")
-    assert data["resources"]["gpu"]["accelerators"] == "RTXPRO6000:6"
+    assert data["resources"]["gpu"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:6"
     # Parallelism never exceeds the GPU count.
     capped = generate_data_factory_yaml(
         user_text="augment the clips and fan out 8 scenarios on 4 gpus"
@@ -264,7 +267,7 @@ def test_data_factory_yaml_reflects_requested_fanout_and_gpus() -> None:
     cd = yaml.safe_load(capped)
     assert cd["config"]["n_augmentations"] == "8"
     assert cd["config"]["variant_parallelism"] == "4"
-    assert cd["resources"]["gpu"]["accelerators"] == "RTXPRO6000:4"
+    assert cd["resources"]["gpu"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:4"
 
 
 def test_data_factory_subject_is_an_argv_value_not_shell_source() -> None:
@@ -358,6 +361,172 @@ def test_sim2real_chat_accepts_training_steps_and_evaluation_threshold() -> None
     assert spec["config"]["success_threshold"] == "0.8"
 
 
+def test_sim2real_named_text_and_clause_boundaries_are_exact() -> None:
+    params = extract_sim2real_params(
+        "isaac task Isaac-Lift-Cube-Franka-v0 and 5000 environments, "
+        "trigger dataset id lerobot/pusht and 3 rollouts"
+    )
+    assert params["isaac_task"] == "Isaac-Lift-Cube-Franka-v0"
+    assert params["trigger_dataset_id"] == "lerobot/pusht"
+    assert params["env_count"] == 5000
+    assert params["rollout_count"] == 3
+
+    adjacent = extract_sim2real_params(
+        "isaac task Isaac-Lift-Cube-Franka-v0 and trigger dataset id "
+        "lerobot/pusht and 3 rollouts"
+    )
+    assert adjacent["isaac_task"] == "Isaac-Lift-Cube-Franka-v0"
+    assert adjacent["trigger_dataset_id"] == "lerobot/pusht"
+    assert adjacent["rollout_count"] == 3
+
+
+@pytest.mark.parametrize(
+    ("phrase", "flag", "expected"),
+    [
+        ("isaac task Isaac-Lift-Cube-Franka-v0", "--isaac-task", "Isaac-Lift-Cube-Franka-v0"),
+        ("trigger dataset id lerobot/pusht", "--trigger-dataset-id", "lerobot/pusht"),
+        ("trigger dataset uri s3://bucket/input/", "--trigger-dataset-uri", "s3://bucket/input/"),
+        ("assets uri s3://bucket/assets/", "--assets-uri", "s3://bucket/assets/"),
+        ("scene spec uri s3://bucket/scene.json", "--scene-spec-uri", "s3://bucket/scene.json"),
+        ("cameras uri s3://bucket/cameras.json", "--cameras-uri", "s3://bucket/cameras.json"),
+        ("robot spec uri s3://bucket/robot.json", "--robot-spec-uri", "s3://bucket/robot.json"),
+        ("5 rollouts", "--rollout-count", "5"),
+        ("rollout length 3", "--steps-per-rollout", "3"),
+        ("12 held-out environments", "--heldout-env-count", "12"),
+        ("5000 environments", "--env-count", "5000"),
+        ("16 envgen shards", "--envgen-shard-count", "16"),
+        ("64 action environments", "--action-env-limit", "64"),
+        ("seed 9", "--seed", "9"),
+        ("80% success threshold", "--threshold", "0.8"),
+        ("75% train fraction", "--train-fraction", "0.75"),
+    ],
+)
+def test_each_extracted_sim2real_value_is_one_exact_argv_token(
+    phrase: str, flag: str, expected: str
+) -> None:
+    draft = generate_workflow_draft(
+        user_text=f"create sim2real workflow with {phrase}",
+        intent="create_vlm_rl_workflow",
+        bucket="bucket",
+    )
+    argv = draft["plan"]["steps"][0]["argv"]
+    assert argv[argv.index(flag) + 1] == expected
+
+
+def test_envgen_shards_do_not_set_environment_count() -> None:
+    assert extract_sim2real_params("16 envgen shards") == {"envgen_shard_count": 16}
+
+
+@pytest.mark.parametrize(
+    ("phrase", "field", "expected"),
+    [
+        ("rollout length 3", "steps_per_rollout", 3),
+        ("4 inner loop iterations", "inner_iterations", 4),
+        ("2 outer loop iterations", "outer_iterations", 2),
+        ("12 held-out environments", "heldout_env_count", 12),
+        ("80% evaluation threshold", "success_threshold", 0.8),
+        ("train fraction 75%", "train_fraction", 0.75),
+    ],
+)
+def test_documented_sim2real_parameter_phrases(phrase: str, field: str, expected: object) -> None:
+    assert extract_sim2real_params(phrase)[field] == expected
+
+
+@pytest.mark.parametrize("phrase", ["threshold of 8", "threshold 110%", "threshold -0.1"])
+def test_invalid_thresholds_fail_closed(phrase: str) -> None:
+    with pytest.raises(WorkflowParameterError):
+        extract_sim2real_params(phrase)
+    draft = generate_workflow_draft(
+        user_text=f"create sim2real workflow with {phrase}",
+        intent="create_vlm_rl_workflow",
+        bucket="bucket",
+    )
+    assert draft["runnable"] is False
+    assert any("threshold" in error for error in draft["context_errors"])
+
+
+def test_absent_sim2real_parameters_preserve_exact_defaults() -> None:
+    spec = yaml.safe_load(generate_sim2real_staged_yaml(user_text="create sim2real yaml"))
+    assert spec["config"]["rollout_count"] == "3"
+    assert spec["config"]["steps_per_rollout"] == "4"
+    assert spec["config"]["success_threshold"] == "0.75"
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["create PAIDF with 100000 variants", "create PAIDF using 5000 GPUs"],
+)
+def test_data_factory_fanout_and_gpu_ceilings_fail_closed(phrase: str) -> None:
+    with pytest.raises(WorkflowParameterError):
+        extract_data_factory_params(phrase)
+    draft = generate_workflow_draft(
+        user_text=phrase,
+        intent="create_data_factory_workflow",
+        bucket="bucket",
+    )
+    assert draft["runnable"] is False
+    assert any("ceiling" in error for error in draft["context_errors"])
+
+
+def test_unresolved_placeholder_draft_is_not_runnable() -> None:
+    draft = generate_workflow_draft(
+        user_text="create sim2real yaml",
+        intent="create_vlm_rl_workflow",
+        bucket="",
+        infrastructure={"has_infra": False, "configured": [], "local_clusters": [], "cloud_clusters": []},
+    )
+    assert draft["runnable"] is False
+    assert "<configure-s3-bucket>" in draft["yaml"]
+    assert any("unresolved configuration placeholders" in error for error in draft["context_errors"])
+
+
+def test_explicit_toolref_chain_wins_over_sim2real_blueprint_words() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    goal = (
+        "compose workbench.cosmos2.transfer -> "
+        "workbench.fiftyone.curate_augmented for my sim2real clips"
+    )
+    authored = author_workflow_from_goal(goal, tool_refs=frozenset(TOOL_CATALOG))
+    assert authored["tool_refs"] == [
+        "workbench.cosmos2.transfer",
+        "workbench.fiftyone.curate_augmented",
+    ]
+    assert goal_requests_catalog_composition(goal) is True
+
+
+def test_vlm_rl_loop_is_reachable_when_explicitly_requested() -> None:
+    selection = choose_workflow_template(
+        user_text="create a VLM-RL outer loop and inner loop workflow",
+        intent="create_vlm_rl_workflow",
+    )
+    assert selection["template"] == "vlm-rl-loop"
+
+
+@pytest.mark.parametrize(
+    ("text", "intent", "expected"),
+    [
+        ("create 2-step workflow", "create_workflow", "two-step"),
+        ("create sim2real yaml", "create_vlm_rl_workflow", "sim2real-staged"),
+        ("create loop gate workflow", "create_loop_gate_workflow", "loop-gate"),
+        ("create PAIDF yaml", "create_data_factory_workflow", "physical-ai-data-factory"),
+        ("create VLM-RL loop workflow", "create_vlm_rl_workflow", "vlm-rl-loop"),
+        ("create near sim realism yaml", "create_workflow", "two-step"),
+    ],
+)
+def test_workflow_routing_matrix_is_stable(text: str, intent: str, expected: str) -> None:
+    assert choose_workflow_template(user_text=text, intent=intent)["template"] == expected
+
+
+def test_staged_workflow_success_threshold_is_not_misrouted_to_watch() -> None:
+    prompt = (
+        "Create YAML for a staged sim2real workflow with 3 policy rollouts "
+        "and success threshold 50%."
+    )
+
+    assert match_chat_intent(prompt) == "create_vlm_rl_workflow"
+
+
 def test_workflow_draft_uses_configured_infrastructure_without_inventing() -> None:
     infra = {
         "project": "customer-project",
@@ -379,13 +548,108 @@ def test_workflow_draft_uses_configured_infrastructure_without_inventing() -> No
     assert draft["runnable"] is True
     spec = yaml.safe_load(draft["yaml"])
     assert spec["config"]["bucket"] == "customer-bucket"
-    assert spec["resources"]["gpu"]["accelerators"] == "RTXPRO6000:2"
+    assert spec["resources"]["gpu"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:2"
     assert spec["resources"]["gpu"]["deployIfAbsent"] == {
         "clusterName": "customer-cluster",
         "context": "customer-context",
         "project": "customer-project",
         "skipS3": True,
     }
+
+
+def test_infrastructure_selection_is_deterministic_and_wires_sibling_placement() -> None:
+    infra = {
+        "project": "project-alias",
+        "has_infra": True,
+        "configured": [
+            {"cluster_name": "z-cluster", "context": "z", "raw": {"gpu_accelerator": "L40S"}},
+            {
+                "cluster_name": "a-cluster",
+                "context": "a",
+                "raw": {
+                    "gpu_accelerator": "L40S",
+                    "namespace": "workflow-ns",
+                    "service_account": "workflow-sa",
+                    "image_pull_secrets": "managed-pull",
+                    "env_secret_names": "runtime-env",
+                    "envgen_image": "registry/envgen:test",
+                },
+            },
+        ],
+    }
+    draft = generate_workflow_draft(
+        user_text="create sim2real workflow with 7 rollouts",
+        intent="create_vlm_rl_workflow",
+        bucket="bucket",
+        infrastructure=infra,
+    )
+    assert draft["infrastructure"]["cluster_name"] == "a-cluster"
+    assert "2 candidate" in draft["infrastructure"]["selection_reason"]
+    spec = yaml.safe_load(draft["yaml"])
+    assert spec["resources"]["gpu"]["accelerators"] == "L40S:1"
+    assert spec["config"]["k8s_gpu_product"] == "NVIDIA-L40S"
+    argv = draft["plan"]["steps"][0]["argv"]
+    expected = {
+        "--rollout-count": "7",
+        "--k8s-namespace": "workflow-ns",
+        "--k8s-service-account": "workflow-sa",
+        "--k8s-image-pull-secrets": "managed-pull",
+        "--k8s-env-secret-names": "runtime-env",
+        "--k8s-gpu-product": "NVIDIA-L40S",
+        "--envgen-image": "registry/envgen:test",
+    }
+    for flag, value in expected.items():
+        assert argv[argv.index(flag) + 1] == value
+
+
+@pytest.mark.parametrize(
+    ("infra", "expected_source", "expected_cluster", "runnable"),
+    [
+        (
+            {
+                "has_infra": True,
+                "configured": [],
+                "local_clusters": [
+                    {"cluster_name": "cached", "context": "cached", "kubeconfig": "/tmp/k", "kubeconfig_exists": True}
+                ],
+                "cloud_clusters": [],
+            },
+            "local",
+            "cached",
+            False,
+        ),
+        (
+            {
+                "has_infra": True,
+                "configured": [],
+                "local_clusters": [],
+                "cloud_clusters": [{"name": "cloud-real", "status": "RUNNING"}],
+            },
+            "cloud",
+            "cloud-real",
+            False,
+        ),
+        (
+            {"has_infra": False, "configured": [], "local_clusters": [], "cloud_clusters": []},
+            "none",
+            "",
+            False,
+        ),
+    ],
+)
+def test_infrastructure_matrix_never_invents_identifiers(
+    infra: dict, expected_source: str, expected_cluster: str, runnable: bool
+) -> None:
+    draft = generate_workflow_draft(
+        user_text="create Isaac sim2real workflow",
+        intent="create_vlm_rl_workflow",
+        bucket="bucket",
+        infrastructure=infra,
+    )
+    assert draft["infrastructure"]["source"] == expected_source
+    assert draft["infrastructure"]["cluster_name"] == expected_cluster
+    assert draft["runnable"] is runnable
+    assert "customer-cluster" not in draft["yaml"]
 
 
 def test_workflow_draft_rejects_unavailable_or_non_rt_accelerator() -> None:
@@ -404,9 +668,45 @@ def test_workflow_draft_rejects_unavailable_or_non_rt_accelerator() -> None:
     assert any("not the configured profile" in error for error in draft["context_errors"])
 
 
+def test_cloud_inventory_prefers_project_cluster_and_rejects_unavailable_accelerator() -> None:
+    infra = {
+        "project": "rtxpro",
+        "has_infra": True,
+        "configured": [],
+        "local_clusters": [],
+        "cloud_clusters": [
+            {"name": "other-cluster", "raw": {"available_accelerators": ["L40S"]}},
+            {
+                "name": "npa-rtxpro-mk8s",
+                "raw": {
+                    "gpu_accelerator": "RTXPRO6000",
+                    "available_accelerators": ["RTXPRO6000"],
+                },
+            },
+        ],
+    }
+    selected = generate_workflow_draft(
+        user_text="create Isaac sim2real YAML on RTX PRO 6000",
+        intent="create_vlm_rl_workflow",
+        bucket="bucket",
+        infrastructure=infra,
+    )
+    assert selected["infrastructure"]["cluster_name"] == "npa-rtxpro-mk8s"
+    assert selected["runnable"] is True
+
+    unavailable = generate_workflow_draft(
+        user_text="create Isaac sim2real YAML on L40S",
+        intent="create_vlm_rl_workflow",
+        bucket="bucket",
+        infrastructure=infra,
+    )
+    assert unavailable["runnable"] is False
+    assert any("L40S is unavailable" in error for error in unavailable["context_errors"])
+
+
 def test_default_data_factory_uses_four_gpus() -> None:
     data = yaml.safe_load(generate_data_factory_yaml())
-    assert data["resources"]["gpu"]["accelerators"] == "RTXPRO6000:4"
+    assert data["resources"]["gpu"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:4"
     assert data["config"]["variant_parallelism"] == "4"
     assert data["config"]["n_augmentations"] == "4"
 
@@ -446,7 +746,7 @@ def test_data_factory_draft_from_intent_and_text_is_runnable() -> None:
     assert draft["runnable"] is True
     data = yaml.safe_load(draft["yaml"])
     assert data["config"]["n_augmentations"] == "4"
-    assert data["resources"]["gpu"]["accelerators"] == "RTXPRO6000:4"
+    assert data["resources"]["gpu"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:4"
 
 
 def test_infra_backend_intent_and_reply() -> None:

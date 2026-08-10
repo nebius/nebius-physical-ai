@@ -1938,7 +1938,12 @@ FOXGLOVE_DATA_DIR = FOXGLOVE_ROOT / "data"
 FOXGLOVE_KEEP_PUBLISHED = 3
 
 {_AGENT_STATE_EMBED}
-from npa.cli.agent_resources import build_resource_inventory, run_resource_discovery_command
+from npa.cli.agent_resources import (
+    build_resource_inventory,
+    configured_k8s_backends,
+    discover_mk8s_accelerators,
+    run_resource_discovery_command,
+)
 {_AGENT_S3_GUARD_EMBED}
 
 {_AGENT_RRD_PROXY_EMBED}
@@ -4238,18 +4243,7 @@ def _agent_k8s_backends(project: str = "") -> dict:
     project_block = projects.get(alias)
     if not isinstance(project_block, dict):
         project_block = {{}}
-    configured: list[dict] = []
-    kube_block = project_block.get("kubernetes")
-    if isinstance(kube_block, dict) and kube_block:
-        configured.append({{
-            "source": "project_config",
-            "project": alias,
-            "cluster_name": str(kube_block.get("cluster_name") or kube_block.get("name") or ""),
-            "context": str(kube_block.get("context") or kube_block.get("context_name") or ""),
-            "kubeconfig": str(kube_block.get("kubeconfig") or kube_block.get("kubeconfig_path") or ""),
-            "gpu_profile": str(kube_block.get("gpu_profile") or ""),
-            "raw": {{k: v for k, v in kube_block.items() if k not in {{"token", "secret", "password"}}}},
-        }})
+    configured = configured_k8s_backends(project_block, alias)
     clusters_root = Path.home() / ".npa" / "clusters"
     local_clusters: list[dict] = []
     if clusters_root.is_dir():
@@ -4361,12 +4355,14 @@ def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
             continue
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {{}}
         status = item.get("status") if isinstance(item.get("status"), dict) else {{}}
+        cluster_id = str(metadata.get("id") or "")
+        raw = discover_mk8s_accelerators(cluster_id, command, command_env) if cluster_id else {{}}
         clusters.append({{
             "source": "nebius_mk8s",
-            "id": str(metadata.get("id") or ""),
+            "id": cluster_id,
             "name": str(metadata.get("name") or ""),
             "status": str(status.get("state") or status.get("status") or ""),
-            "raw_status": {{k: v for k, v in status.items() if k not in {{"token", "secret", "password"}}}},
+            "raw": raw,
         }})
     return clusters
 
@@ -5250,11 +5246,11 @@ def _maybe_toolground_chat_reply(
         # (e.g. "npa yaml that uses cosmos"): compose from the LIVE catalog and
         # self-validate/plan — no hardcoded template. Fall back to the template
         # catalog for generic/simple requests or if composition is not runnable.
-        if intent == "create_workflow" and goal_requests_catalog_composition(user_text):
+        if goal_requests_catalog_composition(user_text):
             from npa.cli.agent_workflow import author_workflow_from_goal
 
             authored = author_workflow_from_goal(user_text, tool_refs=frozenset(TOOL_REFS))
-            if authored.get("runnable") and authored.get("matched_tool_refs"):
+            if authored.get("matched_tool_refs"):
                 draft = authored
         if draft is None:
             infra_context = _agent_k8s_backends()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import tempfile
+from copy import deepcopy
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -312,6 +313,21 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "envgen_shard_count": "16",
                     "action_env_limit": "256",
                     "seed": "42",
+                    # Sibling-job placement is resolved from the selected agent
+                    # backend. Empty values preserve the engine's public defaults;
+                    # generated drafts fill them only from real configuration.
+                    "k8s_namespace": "",
+                    "k8s_service_account": "",
+                    "k8s_image_pull_secrets": "",
+                    "k8s_env_secret_names": "",
+                    "k8s_gpu_product": "",
+                    "augment_image": "",
+                    "envgen_image": "",
+                    "policy_image": "",
+                    "trainer_image": "",
+                    "vlm_image": "",
+                    "eval_image": "",
+                    "isaac_image": "",
                 }
             ),
             "config_uri": OrderedDict(
@@ -1359,7 +1375,7 @@ def _data_factory_spec() -> dict[str, Any]:
                 "gpu": OrderedDict(
                     {
                         "cloud": "kubernetes",
-                        "accelerators": "RTXPRO6000:4",
+                        "accelerators": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:4",
                         "cpus": 16,
                         "memory": "128Gi",
                     }
@@ -1634,17 +1650,7 @@ def _data_factory_spec() -> dict[str, Any]:
                         ),
                         "needs": ["curate"],
                         "resources": "cpu",
-                        "run": OrderedDict(
-                            {
-                                "shell": (
-                                    "python3 -c \"import rerun\" 2>/dev/null || "
-                                    "python3 -m pip install --quiet \"rerun-sdk==0.31.4\"; "
-                                    "python3 -c \"from npa.workflows.data_factory_viz import "
-                                    "build_run_rrd; print(build_run_rrd('{{config.run_root_uri}}', "
-                                    "'{{config.rrd_uri}}'))\""
-                                )
-                            }
-                        ),
+                        "toolRef": "workbench.nurec.visualize",
                         "outputs": [
                             OrderedDict(
                                 {
@@ -1706,9 +1712,14 @@ def choose_workflow_template(
     default_template = _INTENT_DEFAULT_TEMPLATE.get(str(intent or "").strip(), "two-step")
     scores[default_template] += 3
     if str(intent or "").strip() == "create_vlm_rl_workflow":
-        # Chat must use the maintained staged engine, never the legacy graph's
-        # demo decision/finalize toolRefs.
-        scores["sim2real-staged"] += 10
+        # Explicit VLM-RL / outer+inner loop language reaches the loop template;
+        # generic Sim2Real authoring stays on the maintained staged engine.
+        if re.search(r"\bvlm[_\s-]?rl\b", text) or (
+            "outer loop" in text and "inner loop" in text
+        ):
+            scores["vlm-rl-loop"] += 12
+        else:
+            scores["sim2real-staged"] += 10
     for template, keywords in _TEMPLATE_KEYWORDS.items():
         for keyword in keywords:
             if keyword in text:
@@ -1785,7 +1796,14 @@ _DATA_FACTORY_SUBJECT_RE = re.compile(
     r"(?:\s+(?:and|to|so|then|,|;|\.|with)\b|$)",
     re.IGNORECASE,
 )
-_PERCENT_RE = r"(?:0(?:\.\d+)?|1(?:\.0+)?|\d{1,3}(?:\.\d+)?)\s*%?"
+_PERCENT_RE = r"-?(?:\d+(?:\.\d+)?)\s*%?"
+
+_DATA_FACTORY_MAX_AUGMENTATIONS = 64
+_DATA_FACTORY_MAX_GPUS = 8
+
+
+class WorkflowParameterError(ValueError):
+    """A chat parameter was explicit but unsafe or outside supported bounds."""
 
 
 def _named_number(
@@ -1797,8 +1815,8 @@ def _named_number(
 ) -> float | int | None:
     number = r"\d+" if integer else _PERCENT_RE
     patterns = (
-        rf"(?:{labels})\s*(?:of|to|=|:)?\s*({number})",
-        rf"({number})\s*(?:for\s+)?(?:{labels})",
+        rf"(?:{labels})\b\s*(?:of|to|=|:)?\s*({number})",
+        rf"({number})\s*(?:for\s+)?(?:{labels})\b",
     )
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
@@ -1808,13 +1826,22 @@ def _named_number(
         if integer:
             return int(raw)
         value = float(raw.rstrip("%"))
-        return value / 100.0 if fraction and (raw.endswith("%") or value > 1) else value
+        return value / 100.0 if fraction and raw.endswith("%") else value
     return None
 
 
 def _named_text(text: str, labels: str) -> str:
+    # Stop before a following named or numeric parameter clause. This keeps
+    # identifiers exact even when two text-valued knobs are adjacent, e.g.
+    # ``isaac task X and trigger dataset id Y and 3 rollouts``.
+    clause = (
+        r"(?=\s*(?:,\s*)?(?:(?:and|with|using|on)\s+)?(?:"
+        r"-?\d+(?:\.\d+)?%?\s+(?:environments?|envs?|rollouts?|steps?|gpus?|shards?|iterations?)"
+        r"|(?:trigger\s+)?dataset\s+id|isaac(?:\s+lab)?\s+task)\b|[,;\n]|$)"
+    )
     match = re.search(
-        rf"(?:{labels})\s*(?:is|of|to|=|:)?\s*[\"'`]?([^,;\n\"'`]+)",
+        rf"(?:{labels})\b(?:\s+(?:is|of|to)\b\s*|\s*[=:]\s*|\s+)"
+        rf"[\"'`]?(.+?)[\"'`]?{clause}",
         text,
         re.IGNORECASE,
     )
@@ -1872,6 +1899,16 @@ def extract_data_factory_params(user_text: str) -> dict[str, Any]:
         count = _first_int(_DATA_FACTORY_COUNT_RE.search(text))
     gpus = _first_int(_DATA_FACTORY_GPU_RE.search(text))
 
+    if count is not None and count > _DATA_FACTORY_MAX_AUGMENTATIONS:
+        raise WorkflowParameterError(
+            f"requested {count} augmentations exceeds the supported ceiling "
+            f"of {_DATA_FACTORY_MAX_AUGMENTATIONS}"
+        )
+    if gpus is not None and gpus > _DATA_FACTORY_MAX_GPUS:
+        raise WorkflowParameterError(
+            f"requested {gpus} GPUs exceeds the supported ceiling of {_DATA_FACTORY_MAX_GPUS}"
+        )
+
     if count is not None and count > 0:
         params["n_augmentations"] = count
     if gpus is not None and gpus > 0:
@@ -1891,7 +1928,9 @@ def extract_data_factory_params(user_text: str) -> dict[str, Any]:
         max_tokens = _first_int(re.search(r"\bmax(?:imum)?\s+(\d+)\s+tokens?\b", text, re.I))
     if isinstance(refinement, int) and refinement > 0:
         params["refinement_iterations"] = refinement
-    if isinstance(threshold, float) and 0 <= threshold <= 1:
+    if isinstance(threshold, float):
+        if not 0 <= threshold <= 1:
+            raise WorkflowParameterError("grade threshold must be between 0 and 1 (or 0% and 100%)")
         params["grade_threshold"] = threshold
     if isinstance(clip_len, (int, float)) and clip_len > 0:
         params["curator_clip_len_s"] = clip_len
@@ -1941,9 +1980,9 @@ def extract_sim2real_params(user_text: str) -> dict[str, Any]:
         "outer_iterations": r"outer(?:\s+loop)?\s+iterations?",
         "loop_of_loops_iterations": r"loop[-\s]+of[-\s]+loops?\s+iterations?",
         "rollout_count": r"(?:train\s+)?rollouts?",
-        "steps_per_rollout": r"(?:steps?\s+per\s+rollout|(?:train(?:ing)?)\s+steps?)",
+        "steps_per_rollout": r"(?:steps?\s+per\s+rollout|rollout\s+length|(?:train(?:ing)?)\s+steps?)",
         "heldout_env_count": r"held[-\s]?out\s+env(?:ironment)?s?",
-        "env_count": r"(?:generated\s+)?env(?:ironment)?s?",
+        "env_count": r"(?:generated\s+)?(?:environments?|envs?)",
         "envgen_shard_count": r"env(?:ironment)?(?:gen)?\s+shards?",
         "action_env_limit": r"action\s+env(?:ironment)?s?",
         "seed": r"(?:random\s+)?seed",
@@ -1953,12 +1992,20 @@ def extract_sim2real_params(user_text: str) -> dict[str, Any]:
         if isinstance(value, int) and (value > 0 or field == "seed"):
             params[field] = value
     threshold = _named_number(
-        text, r"(?:success|held[-\s]?out|evaluation)\s+threshold", fraction=True
+        text, r"(?:(?:success|held[-\s]?out|evaluation)\s+)?threshold", fraction=True
     )
     train_fraction = _named_number(text, r"train(?:ing)?\s+fraction", fraction=True)
-    if isinstance(threshold, float) and 0 <= threshold <= 1:
+    if isinstance(threshold, float):
+        if not 0 <= threshold <= 1:
+            raise WorkflowParameterError(
+                "success threshold must be between 0 and 1 (or 0% and 100%)"
+            )
         params["success_threshold"] = threshold
-    if isinstance(train_fraction, float) and 0 < train_fraction < 1:
+    if isinstance(train_fraction, float):
+        if not 0 < train_fraction < 1:
+            raise WorkflowParameterError(
+                "training fraction must be greater than 0 and less than 1"
+            )
         params["train_fraction"] = train_fraction
     backend = re.search(r"\b(isaac|genesis)\b(?:\s+(?:sim|backend))?", text, re.I)
     if backend:
@@ -2063,18 +2110,74 @@ def _apply_sim2real_params(config: OrderedDict[str, Any], params: dict[str, Any]
             config[key] = str(params[key])
 
 
-def resolve_workflow_infrastructure(infrastructure: dict[str, Any] | None) -> dict[str, str]:
-    """Return only non-secret workflow placement facts exposed by agent config."""
+def _infra_entry_key(
+    entry: dict[str, Any], project: str = ""
+) -> tuple[int, int, int, str, str]:
+    """Stable preference: explicit default, usable kubeconfig/context, then name."""
+    name = str(entry.get("cluster_name") or entry.get("name") or "")
+    project_match = bool(project and project.lower() in name.lower())
+    return (
+        0 if bool(entry.get("selected") or entry.get("default") or entry.get("is_default")) else 1,
+        0 if project_match else 1,
+        0 if str(entry.get("context") or entry.get("kubeconfig") or "").strip() else 1,
+        name,
+        str(entry.get("context") or ""),
+    )
+
+
+def resolve_workflow_infrastructure(infrastructure: dict[str, Any] | None) -> dict[str, Any]:
+    """Select deterministic, real, non-secret workflow placement facts.
+
+    Configured backends take precedence over locally cached kubeconfigs, which
+    take precedence over cloud discovery. Every fallback is based on an actual
+    inventory entry; this function never synthesizes a cluster identifier.
+    """
     payload = infrastructure if isinstance(infrastructure, dict) else {}
     project = str(payload.get("project") or "").strip()
     configured = payload.get("configured")
-    entries = configured if isinstance(configured, list) else []
-    entry = next((item for item in entries if isinstance(item, dict)), {})
+    entries = [item for item in configured if isinstance(item, dict)] if isinstance(configured, list) else []
+    source = "configured"
+    reason = ""
+    if entries:
+        entries.sort(key=lambda item: _infra_entry_key(item, project))
+        entry = entries[0]
+        reason = (
+            f"selected configured backend deterministically from {len(entries)} candidate(s)"
+        )
+    else:
+        local = payload.get("local_clusters")
+        local_entries = [
+            item for item in local
+            if isinstance(item, dict) and bool(item.get("kubeconfig_exists"))
+        ] if isinstance(local, list) else []
+        if local_entries:
+            local_entries.sort(key=lambda item: _infra_entry_key(item, project))
+            entry = local_entries[0]
+            source = "local"
+            reason = f"selected usable cached kubeconfig from {len(local_entries)} candidate(s)"
+        else:
+            cloud = payload.get("cloud_clusters")
+            cloud_entries = [item for item in cloud if isinstance(item, dict)] if isinstance(cloud, list) else []
+            cloud_entries.sort(key=lambda item: _infra_entry_key(item, project))
+            entry = cloud_entries[0] if cloud_entries else {}
+            source = "cloud" if entry else "none"
+            reason = (
+                "identified cloud cluster from live discovery; configure its context/kubeconfig before submit"
+                if entry else "no configured, local, or cloud Kubernetes backend is available"
+            )
     raw = entry.get("raw") if isinstance(entry.get("raw"), dict) else {}
+    available_raw = raw.get("available_accelerators")
+    available = (
+        [str(value).strip() for value in available_raw if str(value).strip()]
+        if isinstance(available_raw, list)
+        else []
+    )
+    raw_accelerators = raw.get("accelerators")
     accelerator = str(
         raw.get("gpu_accelerator")
-        or raw.get("accelerators")
+        or (raw_accelerators if isinstance(raw_accelerators, str) else "")
         or raw.get("gpu_product")
+        or (available[0] if len(available) == 1 else "")
         or ""
     ).strip()
     profile = str(entry.get("gpu_profile") or raw.get("gpu_profile") or "").strip().lower()
@@ -2082,15 +2185,45 @@ def resolve_workflow_infrastructure(infrastructure: dict[str, Any] | None) -> di
         accelerator = "RTXPRO6000"
     return {
         "project": project,
-        "cluster_name": str(entry.get("cluster_name") or "").strip(),
+        "cluster_name": str(entry.get("cluster_name") or entry.get("name") or "").strip(),
         "context": str(entry.get("context") or "").strip(),
+        "kubeconfig": str(entry.get("kubeconfig") or "").strip(),
         "accelerator": accelerator,
+        "available_accelerators": available,
         "gpu_profile": profile,
+        "source": source,
+        "selection_reason": reason,
+        "k8s_namespace": str(raw.get("namespace") or raw.get("k8s_namespace") or "").strip(),
+        "k8s_service_account": str(raw.get("service_account") or raw.get("k8s_service_account") or "").strip(),
+        "k8s_image_pull_secrets": str(raw.get("image_pull_secrets") or raw.get("k8s_image_pull_secrets") or "").strip(),
+        "k8s_env_secret_names": str(raw.get("env_secret_names") or raw.get("k8s_env_secret_names") or "").strip(),
+        "k8s_gpu_product": str(raw.get("gpu_product") or raw.get("k8s_gpu_product") or "").strip(),
+        "augment_image": str(raw.get("augment_image") or "").strip(),
+        "envgen_image": str(raw.get("envgen_image") or "").strip(),
+        "policy_image": str(raw.get("policy_image") or "").strip(),
+        "trainer_image": str(raw.get("trainer_image") or "").strip(),
+        "vlm_image": str(raw.get("vlm_image") or "").strip(),
+        "eval_image": str(raw.get("eval_image") or "").strip(),
+        "isaac_image": str(raw.get("isaac_image") or "").strip(),
     }
+
+
+def _gpu_product_for_accelerator(accelerator: str) -> str:
+    family = _accelerator_family(accelerator)
+    if family == "RTXPRO6000":
+        return "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+    if family == "L40S":
+        return "NVIDIA-L40S"
+    return ""
 
 
 def _accelerator_with_count(accelerator: str, count: int) -> str:
     base = str(accelerator or "").strip().split(":", 1)[0]
+    # SkyPilot derives this requestable name from the live NVIDIA product label;
+    # keep the compact family spelling for validation and use the discovered
+    # Kubernetes catalog spelling at the scheduling boundary.
+    if _accelerator_family(base) == "RTXPRO6000":
+        base = "RTXPRO-6000-BLACKWELL-SERVER-EDITION"
     return f"{base}:{max(1, int(count))}" if base else ""
 
 
@@ -2100,7 +2233,7 @@ def _accelerator_family(accelerator: str) -> str:
         "",
         str(accelerator or "").split(":", 1)[0],
     ).upper()
-    if "RTXPRO6000" in compact or "RTX6000BLACKWELL" in compact:
+    if compact == "RTX6000" or compact.startswith("RTXPRO6000") or "RTX6000BLACKWELL" in compact:
         return "RTXPRO6000"
     return compact
 
@@ -2193,18 +2326,43 @@ def _build_spec(
     root["kind"] = "Workflow"
     root["metadata"] = OrderedDict({"name": metadata_name, "description": description})
     root["config"] = config
-    resources = spec["resources"]
+    resources = deepcopy(spec["resources"])
     if normalized == "physical-ai-data-factory" and params:
         gpu_count = _data_factory_gpu_count(config, params)
         gpu_res = resources.get("gpu")
         if isinstance(gpu_res, dict) and gpu_count != _DATA_FACTORY_DEFAULT_GPUS:
-            gpu_res["accelerators"] = f"RTXPRO6000:{gpu_count}"
-    _apply_workflow_infrastructure(
+            gpu_res["accelerators"] = (
+                f"RTXPRO-6000-BLACKWELL-SERVER-EDITION:{gpu_count}"
+            )
+    resolved_infra = _apply_workflow_infrastructure(
         resources,
         template=normalized,
         params=params or {},
         infrastructure=infrastructure,
     )
+    if normalized == "sim2real-staged":
+        accelerator = str(
+            (params or {}).get("accelerator") or resolved_infra.get("accelerator") or ""
+        )
+        for key in (
+            "k8s_namespace",
+            "k8s_service_account",
+            "k8s_image_pull_secrets",
+            "k8s_env_secret_names",
+            "augment_image",
+            "envgen_image",
+            "policy_image",
+            "trainer_image",
+            "vlm_image",
+            "eval_image",
+            "isaac_image",
+        ):
+            if resolved_infra.get(key):
+                config[key] = resolved_infra[key]
+        config["k8s_gpu_product"] = (
+            resolved_infra.get("k8s_gpu_product")
+            or _gpu_product_for_accelerator(accelerator)
+        )
     root["resources"] = resources
     root["initial"] = spec["initial"]
     root["states"] = states
@@ -2263,21 +2421,38 @@ def generate_workflow_draft(
     else:
         selection = choose_workflow_template(user_text=user_text, intent=intent, capabilities=capabilities)
         selected_template = str(selection["template"])
-    if selected_template == "physical-ai-data-factory":
-        params = extract_data_factory_params(user_text)
-    elif selected_template in {"sim2real-staged", "two-step"}:
-        params = extract_sim2real_params(user_text)
-    else:
+    parameter_errors: list[str] = []
+    try:
+        if selected_template == "physical-ai-data-factory":
+            params = extract_data_factory_params(user_text)
+        elif selected_template in {"sim2real-staged", "two-step"}:
+            params = extract_sim2real_params(user_text)
+        else:
+            params = None
+    except WorkflowParameterError as exc:
         params = None
+        parameter_errors.append(str(exc))
     resolved_infra = resolve_workflow_infrastructure(infrastructure)
     warnings: list[str] = []
-    context_errors: list[str] = []
+    context_errors: list[str] = list(parameter_errors)
     resolved_bucket = str(bucket or "").strip()
     if not resolved_bucket:
         resolved_bucket = "<configure-s3-bucket>"
         warnings.append("No agent S3 bucket is configured; config.bucket is an explicit placeholder.")
     requested_accel = str((params or {}).get("accelerator") or "").strip()
     configured_accel = str(resolved_infra.get("accelerator") or "").strip()
+    available_accels = {
+        _accelerator_family(str(value))
+        for value in (resolved_infra.get("available_accelerators") or [])
+        if str(value).strip()
+    }
+    if requested_accel and available_accels:
+        requested_base = _accelerator_family(requested_accel)
+        if requested_base not in available_accels:
+            context_errors.append(
+                f"requested accelerator {requested_base} is unavailable on the selected "
+                f"backend (available: {', '.join(sorted(available_accels))})"
+            )
     if requested_accel and configured_accel:
         requested_base = _accelerator_family(requested_accel)
         configured_base = _accelerator_family(configured_accel)
@@ -2300,6 +2475,9 @@ def generate_workflow_draft(
             "The configured Kubernetes backend does not declare an accelerator; "
             "the generated resource uses an explicit placeholder."
         )
+    selection_reason = str(resolved_infra.get("selection_reason") or "").strip()
+    if selection_reason:
+        warnings.append(selection_reason)
     spec = _build_spec(
         selected_template,
         bucket=resolved_bucket,
@@ -2308,6 +2486,11 @@ def generate_workflow_draft(
         infrastructure=infrastructure,
     )
     yaml_text = _render_spec_yaml(spec)
+    unresolved = sorted(set(re.findall(r"<[^<>\n]+>", yaml_text)))
+    if unresolved:
+        context_errors.append(
+            "unresolved configuration placeholders: " + ", ".join(unresolved)
+        )
     validation = validate_workflow_yaml_text(yaml_text, tool_refs=tool_refs)
     plan: dict[str, Any]
     if validation.get("ok"):
@@ -2801,6 +2984,18 @@ def author_workflow_from_goal(
     catalog = frozenset(str(t) for t in (tool_refs or []))
     if not catalog:
         return {"ok": False, "runnable": False, "yaml": "", "error": "no toolRefs available in the live catalog", "tool_refs": []}
+    explicit_refs = list(
+        dict.fromkeys(re.findall(r"\bworkbench\.[A-Za-z0-9_.-]+", str(goal or "")))
+    )
+    unknown_explicit = [ref for ref in explicit_refs if ref not in catalog]
+    if unknown_explicit:
+        return {
+            "ok": False,
+            "runnable": False,
+            "yaml": "",
+            "error": "unknown explicit toolRef(s): " + ", ".join(unknown_explicit),
+            "tool_refs": explicit_refs,
+        }
     # Prefer explicit N-step / arrow / then counts. Only raise to matched-tool
     # count when the operator did not pin an explicit step count.
     n_steps = _desired_step_count(goal)
@@ -2810,7 +3005,11 @@ def author_workflow_from_goal(
     if (not explicit_step_count) and not semantic_stages and len(pre_matched) > n_steps:
         n_steps = max(1, min(len(pre_matched), 6))
     semantic_selected = _select_semantic_tool_refs(goal, catalog, n_steps)
-    if semantic_selected:
+    if explicit_refs:
+        selected = explicit_refs
+        matched = explicit_refs
+        n_steps = len(explicit_refs)
+    elif semantic_selected:
         selected = list(semantic_selected)
         matched = list(semantic_selected)
         target_steps = max(n_steps, len(selected))
@@ -2869,12 +3068,16 @@ def author_workflow_from_goal(
             break
         config_keys.extend(new_keys)
 
-    runnable = bool(validation.get("ok") and plan.get("ok"))
+    unresolved = sorted(set(re.findall(r"<[^<>\n]+>", yaml_text)))
+    runnable = bool(validation.get("ok") and plan.get("ok") and not unresolved and not padded)
     return {
         "ok": runnable,
         "runnable": runnable,
         "template": "catalog-composed",
-        "yaml": yaml_text if runnable else "",
+        # Preserve a structurally valid composed chain for operator repair even
+        # when unresolved values make it intentionally non-runnable. A spec
+        # that itself failed validation is never returned as usable YAML.
+        "yaml": yaml_text if validation.get("ok") else "",
         "validation": validation,
         "plan": plan,
         "tool_refs": selected,
@@ -2885,6 +3088,10 @@ def author_workflow_from_goal(
         "dropped_stages_note": dropped_note,
         "desired_steps": n_steps,
         "data_flow": flow_links,
+        "context_errors": (
+            (["unresolved configuration placeholders: " + ", ".join(unresolved)] if unresolved else [])
+            + (["catalog composition contains unmatched placeholder stages"] if padded else [])
+        ),
     }
 
 

@@ -61,6 +61,8 @@ CHECKED_TOOLREFS = [
     ("workbench.token_factory.generate", "npa.cli.workbench.token_factory", "generate"),
     ("workbench.token_factory.reason", "npa.cli.workbench.token_factory", "reason"),
     ("workbench.vlm_eval.run", "npa.cli.workbench.vlm_eval", "run"),
+    ("workbench.sim2real.run", "npa.cli.workbench.sim2real", "run"),
+    ("workbench.nurec.visualize", "npa.cli.nurec", "visualize"),
 ]
 
 
@@ -108,22 +110,16 @@ def test_cosmos2_transfer_uses_uri_flags_not_path() -> None:
     assert "--run-id" in flags
 
 
-def test_the_visualize_stage_pins_the_same_rerun_as_npas_viz_extra() -> None:
-    """The stage installs rerun-sdk itself, so its pin must not drift from npa's.
+def test_visualize_stage_uses_prebuilt_rerun_image_without_runtime_install() -> None:
+    import yaml
 
-    Two different rerun versions in one run means the recording is written by one and
-    read by another, which is exactly the kind of mismatch that shows up as an empty
-    viewer rather than an error.
-    """
-
-    import re
+    from npa.orchestration.npa_workflow.skypilot_render import tool_image_key
 
     repo = Path(__file__).resolve().parents[3]
-    blueprint = (repo / "workflows" / "physical-ai-data-factory.yaml").read_text(encoding="utf-8")
-    pyproject = (repo / "pyproject.toml").read_text(encoding="utf-8")
-
-    in_stage = re.search(r'"rerun-sdk==([0-9.]+)"', blueprint)
-    in_extra = re.search(r'viz = \["rerun-sdk==([0-9.]+)"\]', pyproject)
-    assert in_stage, "the visualize stage no longer installs a pinned rerun-sdk"
-    assert in_extra, "npa no longer declares a pinned rerun-sdk viz extra"
-    assert in_stage.group(1) == in_extra.group(1)
+    blueprint = yaml.safe_load(
+        (repo / "workflows" / "physical-ai-data-factory.yaml").read_text(encoding="utf-8")
+    )
+    state = blueprint["states"]["visualize"]
+    assert state["toolRef"] == "workbench.nurec.visualize"
+    assert tool_image_key(state["toolRef"]) == "rerun-viewer"
+    assert "pip install" not in str(state)

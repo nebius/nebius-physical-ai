@@ -18,6 +18,8 @@ from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
+    # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
+    "workbench.nurec.visualize": "rerun-viewer",
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the

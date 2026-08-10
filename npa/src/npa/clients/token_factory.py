@@ -253,6 +253,11 @@ class TokenFactoryClient:
                 f"Token Factory request failed ({exc.response.status_code}): "
                 f"{_truncate(exc.response.text)}"
             ) from exc
+        except httpx.RequestError as exc:
+            # Non-transport request failures (for example DecodingError and
+            # TooManyRedirects) are not safe POST retries, but they remain part
+            # of the public TokenFactoryError contract.
+            raise TokenFactoryError(f"Token Factory request failed: {exc}") from exc
         except json.JSONDecodeError as exc:  # pragma: no cover - defensive
             raise TokenFactoryError("Token Factory returned non-JSON response") from exc
         finally:

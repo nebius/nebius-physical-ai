@@ -5,11 +5,44 @@ import json
 from npa.cli.agent_resources import (
     build_resource_inventory,
     category_payload,
+    configured_k8s_backends,
+    discover_mk8s_accelerators,
     discover_nebius_categories,
     format_resource_inventory,
     inventory_summary,
     merge_configured_references,
 )
+
+
+def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(monkeypatch) -> None:
+    configured = configured_k8s_backends(
+        {
+            "k8s_context": "customer-context",
+            "container_registry": "registry.example/customer",
+        },
+        "customer",
+    )
+    assert configured[0]["context"] == "customer-context"
+    assert configured[0]["raw"] == {"container_registry": "registry.example/customer"}
+
+    class Result:
+        returncode = 0
+        stdout = json.dumps(
+            {
+                "items": [
+                    {"spec": {"template": {"resources": {"platform": "gpu-rtx6000"}}}},
+                    {"spec": {"template": {"resources": {"platform": "cpu-d3"}}}},
+                ]
+            }
+        )
+
+    monkeypatch.setattr("npa.cli.agent_resources.subprocess.run", lambda *_a, **_kw: Result())
+    discovered = discover_mk8s_accelerators("cluster-id", ["nebius"], {})
+    assert discovered == {
+        "available_accelerators": ["RTXPRO6000"],
+        "gpu_platforms": ["cpu-d3", "gpu-rtx6000"],
+        "gpu_accelerator": "RTXPRO6000",
+    }
 
 
 def test_build_inventory_prefers_metadata_profile_and_includes_local_resources() -> None:

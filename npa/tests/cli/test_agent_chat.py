@@ -455,7 +455,8 @@ def test_author_workflow_from_goal_composes_cosmos_from_live_catalog() -> None:
     result = author_workflow_from_goal(
         "write me a 2 step npa yaml that uses cosmos", tool_refs=frozenset(TOOL_CATALOG)
     )
-    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert result["runnable"] is False
+    assert result["context_errors"]
     assert len(result["states"]) == 2
     assert result["tool_refs"] and all(ref in TOOL_CATALOG for ref in result["tool_refs"])
     assert any("cosmos" in ref for ref in result["tool_refs"])
@@ -473,8 +474,9 @@ def test_author_workflow_semantically_chains_curate_train_eval() -> None:
         tool_refs=frozenset(TOOL_CATALOG),
     )
 
-    assert result["runnable"] is True, result.get("validation") or result.get("plan")
-    assert result["yaml"], "runnable authoring must return the validated YAML"
+    assert result["runnable"] is False
+    assert result["yaml"], "valid structure remains available for operator repair"
+    assert result["context_errors"]
     refs = result["tool_refs"]
     assert len(refs) == 3
     assert "curat" in refs[0]
@@ -512,7 +514,8 @@ def test_author_workflow_keeps_semantic_flow_when_requested_count_differs() -> N
         tool_refs=frozenset(TOOL_CATALOG),
     )
 
-    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert result["runnable"] is False
+    assert result["context_errors"]
     assert len(result["tool_refs"]) == 4
     assert "curat" in result["tool_refs"][0]
     assert "train" in result["tool_refs"][1]
@@ -531,7 +534,8 @@ def test_author_workflow_understands_paraphrased_semantic_flow() -> None:
         tool_refs=frozenset(TOOL_CATALOG),
     )
 
-    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert result["runnable"] is False
+    assert result["context_errors"]
     assert len(result["tool_refs"]) == 3
     assert "curat" in result["tool_refs"][0]
     assert "train" in result["tool_refs"][1]

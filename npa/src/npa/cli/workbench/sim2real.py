@@ -128,6 +128,9 @@ def run_command(
     augment_image: str = typer.Option(
         "", "--augment-image", help="BYO augmentation image."
     ),
+    envgen_image: str = typer.Option(
+        "", "--envgen-image", help="BYO environment-generation image."
+    ),
     policy_image: str = typer.Option("", "--policy-image", help="BYO policy image."),
     trainer_image: str = typer.Option(
         "", "--trainer-image", help="BYO VLM-RL trainer image."
@@ -276,6 +279,7 @@ def run_command(
         robot_source=robot_source,
         robot_preset=robot_preset,
         augment_image=augment_image,
+        envgen_image=envgen_image,
         policy_image=policy_image,
         trainer_image=trainer_image,
         vlm_image=vlm_image,

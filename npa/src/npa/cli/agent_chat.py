@@ -41,6 +41,10 @@ def goal_requests_catalog_composition(user_text: str) -> bool:
     text = str(user_text or "").strip().lower()
     if not text:
         return False
+    # An explicit toolRef chain is authoritative even when surrounding prose
+    # mentions a named blueprint (for example "... for my sim2real clips").
+    if "workbench." in text or re.search(r"\btool\s*refs?\b", text):
+        return True
     # These named blueprints have dedicated contract-aware generators. Sending
     # them through generic catalog composition can select legacy demo/stub
     # toolRefs and loses their runtime parameter schemas.
@@ -49,8 +53,6 @@ def goal_requests_catalog_composition(user_text: str) -> bool:
         text,
     ):
         return False
-    if "workbench." in text or re.search(r"\btool\s*refs?\b", text):
-        return True
     if "->" in text or "→" in text or re.search(r"\bthen\b", text):
         return True
     return bool(
@@ -655,8 +657,6 @@ def _success_gated_watch_request(lowered: str) -> bool:
             "rrd uri",
             "run id",
             "active run",
-            "stage",
-            "stage id",
         )
     )
     has_success_gate = any(

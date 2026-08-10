@@ -21,6 +21,77 @@ _INVENTORY_CACHE: dict[str, Any] = {"expires_at": 0.0, "payload": None}
 _INVENTORY_LOCK = threading.Lock()
 
 
+def configured_k8s_backends(project_block: dict[str, Any], alias: str) -> list[dict[str, Any]]:
+    """Normalize nested and legacy project Kubernetes placement configuration."""
+    kube = project_block.get("kubernetes")
+    if isinstance(kube, dict) and kube:
+        raw = {key: value for key, value in kube.items() if not _SECRET_KEY_RE.search(key)}
+        return [{
+            "source": "project_config",
+            "project": alias,
+            "cluster_name": str(kube.get("cluster_name") or kube.get("name") or ""),
+            "context": str(kube.get("context") or kube.get("context_name") or ""),
+            "kubeconfig": str(kube.get("kubeconfig") or kube.get("kubeconfig_path") or ""),
+            "gpu_profile": str(kube.get("gpu_profile") or ""),
+            "raw": raw,
+        }]
+    context = str(project_block.get("k8s_context") or "").strip()
+    cluster = str(project_block.get("cluster_name") or "").strip()
+    if not (context or cluster):
+        return []
+    placement_keys = (
+        "namespace", "service_account", "image_pull_secrets", "env_secret_names",
+        "gpu_profile", "gpu_product", "augment_image", "envgen_image", "policy_image",
+        "trainer_image", "vlm_image", "eval_image", "isaac_image", "container_registry",
+    )
+    raw = {key: project_block[key] for key in placement_keys if project_block.get(key) not in (None, "", [])}
+    return [{
+        "source": "project_config_legacy",
+        "project": alias,
+        "cluster_name": cluster or context,
+        "context": context or cluster,
+        "kubeconfig": str(project_block.get("kubeconfig") or ""),
+        "gpu_profile": str(project_block.get("gpu_profile") or ""),
+        "raw": raw,
+    }]
+
+
+def discover_mk8s_accelerators(
+    cluster_id: str, command: list[str], command_env: dict[str, str]
+) -> dict[str, Any]:
+    """Return accelerator families grounded in a cluster's live node groups."""
+    try:
+        proc = subprocess.run(
+            [*command, "mk8s", "node-group", "list", "--parent-id", cluster_id, "--format", "json"],
+            env=command_env, text=True, capture_output=True, timeout=30, check=False,
+        )
+        payload = json.loads(proc.stdout or "{}") if proc.returncode == 0 else {}
+    except Exception:
+        return {"available_accelerators": [], "gpu_platforms": []}
+    platforms: list[str] = []
+    accelerators: list[str] = []
+    for group in payload.get("items", []) if isinstance(payload, dict) else []:
+        spec = group.get("spec", {}) if isinstance(group, dict) else {}
+        template = spec.get("template", {}) if isinstance(spec, dict) else {}
+        resources = template.get("resources", {}) if isinstance(template, dict) else {}
+        platform = str(resources.get("platform") or "").strip().lower()
+        if platform:
+            platforms.append(platform)
+        mapping = {"gpu-rtx6000": "RTXPRO6000", "gpu-l40s": "L40S"}
+        if platform in mapping:
+            accelerators.append(mapping[platform])
+        elif platform.startswith("gpu-"):
+            accelerators.append(platform.removeprefix("gpu-").upper())
+    available = sorted(set(accelerators))
+    result: dict[str, Any] = {
+        "available_accelerators": available,
+        "gpu_platforms": sorted(set(platforms)),
+    }
+    if len(available) == 1:
+        result["gpu_accelerator"] = available[0]
+    return result
+
+
 def classify_discovery_error(message: str) -> tuple[str, str]:
     """Return a stable error kind and public message without echoing CLI output."""
     lowered = str(message or "").lower()

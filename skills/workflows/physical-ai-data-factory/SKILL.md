@@ -44,7 +44,7 @@ is pure composition of existing toolRefs; only add real tools with tests.
 | Pseudo-Label Augmented | `annotate-augmented` | `npa workbench token-factory caption` (run.shell) | Token Factory |
 | Curation | `cosmos-curate` | `workbench.cosmos_curate.curate` (real Cosmos Curator stages → `clips/` + `metas/v0/`) | CPU |
 | Curation review | `curate` | `workbench.fiftyone.curate_augmented` → `npa workbench fiftyone curate-augmented` (real FiftyOne Brain, merges the curator report) | CPU |
-| Visualize | `visualize` | `data_factory_viz.build_run_rrd` → `reports/sim2real.rrd` | CPU |
+| Visualize | `visualize` | `workbench.nurec.visualize` → `data_factory_viz.build_run_rrd` → `reports/sim2real.rrd` | CPU, prebuilt `npa-rerun-viewer` image |
 | Finalize | `finalize` | `data_factory_stages.finalize` (real aggregate report) | CPU |
 
 Every stage invokes a real component (enforced by `test_real_components.py` and
@@ -87,6 +87,10 @@ augmentation subject → `config.augment_subject`. The generated YAML is validat
 planned before it is returned (chat only emits runnable specs). `generate_data_factory_yaml(user_text=...)`
 is the direct entry point; `generate_workflow_draft(intent="create_data_factory_workflow", user_text=...)`
 is the chat path.
+
+Chat authoring fails closed above 64 augmented variants or 8 GPUs. These are
+generation ceilings, not workflow/job-count budgets: an operator can still edit
+and validate a larger hand-authored spec after confirming real cluster capacity.
 
 **Input conditioning (real augmentation of the caller's clip).** The managed
 `workbench.cosmos2.transfer_execute` path always conditions on the caller's real
@@ -330,6 +334,9 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   which the agent's embedded Rerun viewer renders. Browse via
   `/api/artifacts/runs?prefix=physical-ai-data-factory`. See
   `docs/workbench/guides/physical-ai-data-factory.md`.
+- **Restricted-egress visualization:** the `visualize` state uses
+  `workbench.nurec.visualize`, which the renderer pins to the prebuilt
+  `npa-rerun-viewer` image. It never performs `pip install` at task runtime.
 
 ## Testing (live-infra is a priority)
 

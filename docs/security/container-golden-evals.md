@@ -249,6 +249,12 @@ pipeline. Key safety notes are condensed below.
   is a deliberate trade: the pod user can escalate inside its own container, so
   treat the container boundary (not the user) as the trust boundary for this
   image, as for any image whose orchestrator needs in-pod package installs.
+- **`fiftyone` SkyPilot exemption** — the interactive FiftyOne image has the
+  same narrowly scoped bootstrap requirement. Its build deletes all SSH host
+  keys, disables password authentication and root login, and starts only
+  `/bin/bash`; sshd is not enabled by default. SkyPilot may generate ephemeral
+  host keys and start SSH inside a submitted task. The packaging contract must
+  record this exemption whenever a public image carries `NOPASSWD:ALL`.
 - **Runtime user** — npa-built images (`groot`, `lerobot*`, `genesis`, `cosmos`,
   `cosmos3`, `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`, `loop-eval`) run as the unprivileged `ubuntu`
   user. `isaac-lab` and `sonic` inherit `root` from the `nvcr.io/nvidia/isaac-lab`

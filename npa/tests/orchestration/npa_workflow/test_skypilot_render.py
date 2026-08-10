@@ -452,6 +452,17 @@ def test_resolve_task_image_uses_longest_tool_family_override() -> None:
     assert image == "cr.example/curate:1"
 
 
+def test_tool_image_prefix_does_not_cross_tool_boundary() -> None:
+    image = resolve_task_image(
+        "workbench.fiftyone_extra.curate",
+        {},
+        options=SkypilotRenderOptions(
+            image_overrides={"workbench.fiftyone": "cr.example/fiftyone:1"}
+        ),
+    )
+    assert image == ""
+
+
 def test_resolve_task_image_can_clear_tool_family_image() -> None:
     image = resolve_task_image(
         "workbench.cosmos_evaluator.evaluate",

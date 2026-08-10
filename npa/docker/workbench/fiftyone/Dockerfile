@@ -48,6 +48,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       sudo \
     && (apt-get install -y --no-install-recommends libcurl4t64 \
         || apt-get install -y --no-install-recommends libcurl4) \
+    && rm -f /etc/ssh/ssh_host_* \
+    && printf '%s\n' \
+      'PasswordAuthentication no' \
+      'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-container.conf \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \

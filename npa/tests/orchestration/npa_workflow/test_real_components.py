@@ -95,7 +95,8 @@ def test_agent_generated_paidf_runs_named_real_components() -> None:
     assert "--curator-report-uri" in TOOL_CATALOG[
         "workbench.fiftyone.curate_augmented"
     ].argv_template
-    assert "rerun-sdk==0.31.4" in states["visualize"]["run"]["shell"]
+    assert states["visualize"]["toolRef"] == "workbench.nurec.visualize"
+    assert "pip install" not in str(states["visualize"])
 
 
 def test_blueprint_run_shell_stages_are_real() -> None:

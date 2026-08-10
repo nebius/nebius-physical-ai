@@ -403,6 +403,11 @@ def submit_cmd(
         submit_sim2real_from_workflow_vars,
     )
 
+    is_npa_spec = is_npa_workflow_spec(yaml_path)
+    parsed_tool_images = _parse_tool_image_overrides(tool_image)
+    if tool_image and not is_npa_spec:
+        _fail("--tool-image is supported only for npa.workflow/v0.0.1 specs")
+
     if is_sim2real_runbook(yaml_path):
         try:
             result = submit_sim2real_from_workflow_vars(
@@ -436,7 +441,7 @@ def submit_cmd(
         return
 
     prepared_npa = None
-    if is_npa_workflow_spec(yaml_path):
+    if is_npa_spec:
         if deploy_if_absent:
             from npa.orchestration.npa_workflow.deploy import (
                 ensure_infra_present,
@@ -458,7 +463,7 @@ def submit_cmd(
             except NpaWorkflowError as exc:
                 _fail(str(exc))
                 return
-        image_overrides = _parse_tool_image_overrides(tool_image)
+        image_overrides = parsed_tool_images
         # ``none`` / ``default`` clears workbench image pins so tasks use the
         # SkyPilot default image (needed when registry images fail k8s apt-ssh).
         image_value = image.strip()
