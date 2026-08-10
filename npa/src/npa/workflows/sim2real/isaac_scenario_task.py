@@ -64,20 +64,25 @@ PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT = 256.0
 # change any success threshold and remains zero outside the strict event.
 PLACEMENT_STRICT_DWELL_REWARD_WEIGHT = 2048.0
 # Train17 earned nonzero dwell reward and produced a nine-step strict placement,
-# but every validation policy later drove the object away before timeout.  Keep
+# but every validation policy later drove the object away before timeout. Keep
 # the saturated positive dwell, restore the sparse completion reward that was
 # accidentally coupled to success termination, and make post-success departure
-# explicitly costly until reset.  The magnitude matches the bounded signed
-# progress term, avoiding the earlier transport-suppressing -5000 failure.
-PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT = -512.0
+# explicitly costly until reset. Train21 then held a validation placement for 16
+# exact steps before leaving: the old -512 consequence was only one quarter of
+# the saturated dwell reward after Isaac's common dt scaling. This stronger term
+# is still identically zero before exact completion, so unlike the rejected
+# global -5000 drop penalty it cannot suppress reach, grasp, lift, or transport.
+PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT = -4096.0
 # Train19 entered the unchanged 5 cm basin on 47/64 validation scenarios and
 # crossed below 0.03 m/s on several, but every unfinished event broke after one
 # stable step. Losing the future dwell bonus alone supplied no immediate credit
 # assignment for that exact failure. Penalize only the loss of a one- or two-step
 # partial dwell; transport, first arrival, completed holds, and resets remain
-# unaffected. The magnitude is half the saturated positive dwell weight so a
-# two-step approach remains net positive while completion is still dominant.
-PLACEMENT_PARTIAL_DWELL_BREAK_WEIGHT = -1024.0
+# unaffected. Train21 still broke every unfinished validation event after its
+# first step. Make the exact break cost twice the saturated dwell reward while
+# leaving the larger one-shot completion bonus dominant. Because the signal is
+# transition-gated, it cannot make the basin repulsive before a real stable step.
+PLACEMENT_PARTIAL_DWELL_BREAK_WEIGHT = -4096.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
 _DROP_PENALTY_TYPE: type | None = None

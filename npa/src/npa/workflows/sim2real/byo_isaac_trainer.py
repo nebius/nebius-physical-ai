@@ -70,7 +70,11 @@ DEFAULT_PPO_OPTIMIZER_LEARNING_RATE = "0.001"
 DEFAULT_RESUME_ENTROPY_COEF = "0.0005"
 DEFAULT_RESUME_ENTROPY_FINAL_COEF = "0.0"
 DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION = "0.2"
-DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE = "0.0005"
+# Train21's best live-validation checkpoint briefly sustained the exact event,
+# while later checkpoints moved away again. Use a smaller resumed convergence
+# step so subsequent passes consolidate that narrow-basin behavior instead of
+# repeatedly overwriting it. First-pass exploration remains unchanged.
+DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE = "0.0001"
 _STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
 # rsl_rl experiment_name for the Franka Lift task (logs/rsl_rl/<experiment_name>/).
@@ -304,6 +308,22 @@ _PPO_FIELDS = {
     "Episode_Reward/lifting_object": "lift_reward",
     "Episode_Reward/object_goal_tracking": "place_reward",
     "Episode_Reward/object_goal_tracking_fine_grained": "place_fine_reward",
+    "Episode_Reward/stable_placement_curriculum": (
+        "stable_placement_curriculum_reward"
+    ),
+    "Episode_Reward/potential_placement_progress": (
+        "potential_placement_progress_reward"
+    ),
+    "Episode_Reward/strict_basin_settling": "strict_basin_settling_reward",
+    "Episode_Reward/stable_placement_dwell": "stable_placement_dwell_reward",
+    "Episode_Reward/stable_placement_dwell_break": (
+        "stable_placement_dwell_break_reward"
+    ),
+    "Episode_Reward/stable_placement_completion": (
+        "stable_placement_completion_reward"
+    ),
+    "Episode_Reward/stable_placement_departure": ("stable_placement_departure_reward"),
+    "Episode_Reward/object_drop_penalty": "object_drop_penalty_reward",
     "Metrics/object_pose/position_error": "object_position_error",
     "Metrics/object_pose/orientation_error": "object_orientation_error",
     "Episode_Termination/time_out": "timeout_rate",

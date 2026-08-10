@@ -271,7 +271,7 @@ shortcut costly. The first PPO pass begins at the stock-like entropy coefficient
 (`0.006`) and anneals to `0.0005` after 60% of its iterations, preserving early
 grasp/lift discovery. A resumed policy has already crossed that exploration
 wall, so it instead uses a dedicated convergence phase: `0.0005` to `0.0` after
-20% of the pass with optimizer learning rate `0.0005`. All settings remain
+20% of the pass with optimizer learning rate `0.0001`. All settings remain
 operator-tunable and appear in runtime provenance. Validation-only Train16
 confirmed the need for the sustained-hold contract: an immutable checkpoint
 held the exact stable event for nine consecutive steps, then departed before
@@ -307,6 +307,21 @@ transition. It is zero during transport, before the first stable step, while a
 partial dwell continues, after completion, and after reset. The positive dwell
 and completion rewards remain larger, post-completion departure retains its
 separate consequence, and the authoritative three-step verdict is unchanged.
+
+Validation-only Train21 then trained another 12,288,000 environment steps with
+that partial-break signal and evaluated seven immutable checkpoints over all 64
+validation scenarios. Checkpoint 4400 reached the unchanged event and held it
+for 16 consecutive steps, but left before the sealed episode terminal; the
+remaining checkpoints still broke every partial event after one step. Isaac's
+common time-step scaling left the old post-success consequence at one quarter
+of the saturated dwell reward. Both exact-transition consequences are now
+`-4096`: the partial-break term fires only after a real one- or two-step event,
+and the departure term only after exact completion, so neither can suppress
+reach, grasp, lift, or transport. The one-shot completion bonus remains larger,
+the terminal evaluator contract is unchanged, and resumed PPO uses a smaller
+`0.0001` convergence learning rate to avoid overwriting the narrow stable policy
+observed at checkpoint 4400. Placement reward, break, completion, and departure
+curves are all retained in durable PPO telemetry for live verification.
 
 ## Required integration ladder
 

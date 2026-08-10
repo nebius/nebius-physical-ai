@@ -302,8 +302,8 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     assert PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT == 256.0
     assert PLACEMENT_STRICT_DWELL_REWARD_WEIGHT == 2048.0
-    assert PLACEMENT_PARTIAL_DWELL_BREAK_WEIGHT == -1024.0
-    assert PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT == -512.0
+    assert PLACEMENT_PARTIAL_DWELL_BREAK_WEIGHT == -4096.0
+    assert PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT == -4096.0
     assert STABLE_PLACEMENT_STEPS == 3
     source = module_source()
     assert "def stable_placement_curriculum" in source
@@ -668,6 +668,10 @@ Mean reward: 0.75
 Episode_Reward/reaching_object: 0.1000
 Episode_Reward/lifting_object: 0.2000
 Episode_Reward/object_goal_tracking: 0.0500
+Episode_Reward/stable_placement_dwell: 0.3750
+Episode_Reward/stable_placement_dwell_break: -0.2500
+Episode_Reward/stable_placement_completion: 0.1250
+Episode_Reward/stable_placement_departure: -0.5000
 Metrics/object_pose/position_error: 0.1800
 Episode_Termination/stable_placement_success: 0.1250
 Total timesteps: 24576
@@ -677,5 +681,9 @@ Total timesteps: 24576
     assert telemetry["final_iteration"]["value_loss"] == 0.02
     assert telemetry["final_iteration"]["total_timesteps"] == 24576
     assert telemetry["final_iteration"]["stable_placement_termination_rate"] == 0.125
+    assert telemetry["final_iteration"]["stable_placement_dwell_reward"] == 0.375
+    assert telemetry["final_iteration"]["stable_placement_dwell_break_reward"] == -0.25
+    assert telemetry["final_iteration"]["stable_placement_completion_reward"] == 0.125
+    assert telemetry["final_iteration"]["stable_placement_departure_reward"] == -0.5
     with pytest.raises(ValueError, match="no Learning iteration"):
         parse_ppo_training_log("no telemetry")
