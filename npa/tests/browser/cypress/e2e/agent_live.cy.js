@@ -469,7 +469,7 @@ describe("NPA agent UI against live infra", () => {
     });
   });
 
-  it("loads the canonical run from its exact artifact source, never stale history", function () {
+  it("loads the configured run from its exact artifact source, never stale history", function () {
     const runId = liveRunId();
     if (!runId) {
       this.skip();
@@ -494,20 +494,27 @@ describe("NPA agent UI against live infra", () => {
       expect(String(simViz.artifact_uri || "")).to.eq(String(preferred.s3_uri || ""));
       expect(String(simViz.artifact_render || "")).to.eq(String(preferred.render || ""));
       expect(String(simViz.artifact_key || "")).not.to.include("training-summary.png");
-      expect(String(simViz.artifact_render || "")).to.eq("rerun");
-      expect(String(simViz.artifact_key || "")).to.match(/\/reports\/sim2real\.rrd$/);
-      expect(String(simViz.artifact_uri || "")).to.match(/\/reports\/sim2real\.rrd$/);
-      expect(String(simViz.rrd_uri || "")).to.match(/^file:\/\//);
-      expect(simViz.rerun_ready).to.eq(true);
-      expect(String(simViz.camera || "")).to.eq("heldout-sim");
-      expect(String(simViz.preview_entity || "")).to.eq("camera");
-      expect(simViz.visualization_note || "").to.match(/held-out simulation camera|reference proxy/i);
-      expect(decodeURIComponent(String(simViz.rerun_iframe_url || ""))).to.include(
-        String(simViz.artifact_preview_url || ""),
-      );
-      expect(String(simViz.artifact_preview_url || "")).to.match(
-        /^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/,
-      );
+      if (String(simViz.artifact_render || "") === "rerun") {
+        expect(String(simViz.artifact_key || "")).to.match(/\/reports\/sim2real\.rrd$/);
+        expect(String(simViz.artifact_uri || "")).to.match(/\/reports\/sim2real\.rrd$/);
+        expect(String(simViz.rrd_uri || "")).to.match(/^file:\/\//);
+        expect(simViz.rerun_ready).to.eq(true);
+        expect(String(simViz.camera || "")).to.eq("heldout-sim");
+        expect(String(simViz.preview_entity || "")).to.eq("camera");
+        expect(simViz.visualization_note || "").to.match(/held-out simulation camera|reference proxy/i);
+        expect(decodeURIComponent(String(simViz.rerun_iframe_url || ""))).to.include(
+          String(simViz.artifact_preview_url || ""),
+        );
+        expect(String(simViz.artifact_preview_url || "")).to.match(
+          /^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/,
+        );
+      } else {
+        expect(String(simViz.artifact_render || "")).to.eq("video");
+        expect(String(simViz.artifact_key || "")).to.match(/\.mp4$/);
+        expect(String(simViz.rrd_uri || "")).to.eq("");
+        expect(Boolean(simViz.rerun_ready)).to.eq(false);
+        expect(String(simViz.artifact_preview_url || "")).to.match(/^\/api\/artifacts\/file\//);
+      }
       return simViz;
     };
 
@@ -533,8 +540,8 @@ describe("NPA agent UI against live infra", () => {
           expect(String(statusResponse.body.resolved_prefix || "")).to.eq(
             String(source.entry.resolved_prefix || ""),
           );
-          expect(String(statusResponse.body.artifact_preview_url || "")).to.match(
-            /^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/,
+          expect(String(statusResponse.body.artifact_render || "")).to.eq(
+            String(loaded.artifact_render || ""),
           );
           cy.reload();
           cy.get("#statusBar", { timeout: 30000 }).should("exist");
@@ -543,18 +550,25 @@ describe("NPA agent UI against live infra", () => {
           cy.get("#renderedDataSummary").should("contain.text", String(loaded.artifact_render));
           cy.get("#renderedDataSummary").should("not.contain.text", "training-summary.png");
           cy.get("#tabRerun").click();
-          cy.get("#rerunFrame").should(($frame) => {
-            const src = String($frame.attr("src") || "");
-            expect(decodeURIComponent(src)).to.include(
-              String(statusResponse.body.artifact_preview_url || ""),
-            );
-          });
-          const publicRecordingUrl = `${String(Cypress.env("agentBaseUrl") || Cypress.env("NPA_AGENT_BASE_URL") || Cypress.config("baseUrl") || "").replace(/\/$/, "")}${statusResponse.body.artifact_preview_url}`;
-          cy.request({ url: publicRecordingUrl, failOnStatusCode: false }).then((rrdResp) => {
-            expect(rrdResp.status).to.eq(200);
-            expect(String(rrdResp.body || "").length).to.be.greaterThan(0);
-          });
-          cy.get("#statusBar").should("not.contain.text", "Non-RRD artifact loaded");
+          if (String(loaded.artifact_render || "") === "rerun") {
+            cy.get("#rerunFrame").should(($frame) => {
+              const src = String($frame.attr("src") || "");
+              expect(decodeURIComponent(src)).to.include(
+                String(statusResponse.body.artifact_preview_url || ""),
+              );
+            });
+            const publicRecordingUrl = `${String(Cypress.env("agentBaseUrl") || Cypress.env("NPA_AGENT_BASE_URL") || Cypress.config("baseUrl") || "").replace(/\/$/, "")}${statusResponse.body.artifact_preview_url}`;
+            cy.request({ url: publicRecordingUrl, failOnStatusCode: false }).then((rrdResp) => {
+              expect(rrdResp.status).to.eq(200);
+              expect(String(rrdResp.body || "").length).to.be.greaterThan(0);
+            });
+            cy.get("#statusBar").should("not.contain.text", "Non-RRD artifact loaded");
+          } else {
+            cy.get("#renderModeVideo").should("have.class", "is-active");
+            cy.get("#artifactPreviewHost video", { timeout: 60000 })
+              .should("have.attr", "src")
+              .and("match", /^blob:/);
+          }
         });
       });
     });
