@@ -396,17 +396,18 @@ def test_staged_agent_source_is_readable_by_unprivileged_runtime(
 
 
 def _agent_source() -> str:
-    """agent.py plus the nginx site policy split out of it.
+    """agent.py plus the login and nginx policy modules split out of it.
 
-    The site body moved to ``npa/src/npa/cli/agent_site.py`` to keep the monolith
-    under its size ratchet, so source-scanning assertions must see both files.
+    These helpers moved out to keep the monolith under its size ratchet, so
+    source-scanning assertions must see all three files.
     """
     from npa.cli import agent as agent_module
+    from npa.cli import agent_login as agent_login_module
     from npa.cli import agent_site as agent_site_module
 
     return "\n".join(
         Path(module.__file__).read_text(encoding="utf-8")
-        for module in (agent_module, agent_site_module)
+        for module in (agent_module, agent_login_module, agent_site_module)
     )
 
 
@@ -1671,9 +1672,7 @@ def test_bootstrap_run_history_uses_source_qualified_index() -> None:
 
 
 def test_bootstrap_ui_strips_url_credentials() -> None:
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "location.username" in source
     assert "location.password" in source
     assert "history.replaceState" in source

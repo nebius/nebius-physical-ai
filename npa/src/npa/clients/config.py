@@ -537,7 +537,9 @@ def remove_workbench_config(
                 proj["workbenches"] = workbenches
             else:
                 proj.pop("workbenches", None)
-            if not proj:
+            agents = proj.get("agents", {}) if isinstance(proj, dict) else {}
+            preserve_agent_ownership = isinstance(agents, dict) and bool(agents)
+            if not workbenches and not preserve_agent_ownership:
                 del projects[project]
                 if existing.get("default_project") == project:
                     remaining = list(projects.keys())
