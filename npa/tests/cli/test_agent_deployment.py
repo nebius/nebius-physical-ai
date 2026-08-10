@@ -153,3 +153,4 @@ def test_runtime_manifest_and_agent_record_preserve_provenance(
         deployment=expected,
     )
     assert config.to_dict()["deployment"] == expected
+    assert config.to_dict()["preload_stock_demo"] is True

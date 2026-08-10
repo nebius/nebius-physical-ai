@@ -70,6 +70,7 @@ class AgentConfig:
     ssh_key_path: str = ""
     credentials: dict[str, str] | None = None
     deployment: dict[str, str] | None = None
+    preload_stock_demo: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -105,6 +106,7 @@ class AgentConfig:
             payload["credentials"] = dict(self.credentials)
         if self.deployment:
             payload["deployment"] = dict(self.deployment)
+        payload["preload_stock_demo"] = bool(self.preload_stock_demo)
         return payload
 
 

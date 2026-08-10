@@ -1314,6 +1314,7 @@ def _bootstrap_agent_stack(
     foxglove_org_slug: str = "",
     foxglove_live_url: str = "",
     deployment: dict[str, str] | None = None,
+    preload_stock_demo: bool = True,
 ) -> None:
     ssh = SSHClient(
         config=resolve_ssh_config(
@@ -1344,6 +1345,7 @@ def _bootstrap_agent_stack(
     )
     deployment_json = json.dumps(deployment, sort_keys=True)
     deployment_b64 = base64.b64encode(deployment_json.encode("utf-8")).decode("ascii")
+    preload_stock_demo_value = "1" if preload_stock_demo else "0"
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
     nginx_site_body = _nginx_agent_site_body(
@@ -1441,6 +1443,7 @@ sudo chmod 0644 /opt/npa-agent/deployment.json
 cat <<'ENV' | sudo tee /opt/npa-agent/public.env >/dev/null
 NPA_AGENT_PUBLIC_URL=https://{host}
 NPA_AGENT_PUBLIC_HOST={host}
+NPA_AGENT_PRELOAD_STOCK_DEMO={preload_stock_demo_value}
 ENV
 cat <<'ENV' | sudo tee /opt/npa-agent/foxglove.env >/dev/null
 NPA_FOXGLOVE_ENABLED=1
@@ -1489,6 +1492,7 @@ TOOL_CATALOG = {catalog_json}
 TOOL_REFS = sorted(TOOL_CATALOG.keys())
 STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
+PRELOAD_STOCK_DEMO = str(os.environ.get("NPA_AGENT_PRELOAD_STOCK_DEMO", "1")).strip().lower() not in {"0", "false", "no"}
 RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
 FOXGLOVE_ROOT = Path("/opt/npa-agent/foxglove")
@@ -1811,6 +1815,12 @@ def _normalize_loaded_state(data: dict | None) -> dict:
         merged["chat_sessions"] = {{}}
     if not isinstance(merged.get("active_chat_session_id"), str):
         merged["active_chat_session_id"] = "default"
+    if not PRELOAD_STOCK_DEMO:
+        merged["sim_viz_runs"].pop("franka-demo", None)
+        if str(merged["sim_viz"].get("run_id") or "") == "franka-demo":
+            merged["sim_viz"] = dict(DEFAULT_SIM_VIZ)
+        if str(merged.get("active_run_id") or "") == "franka-demo":
+            merged["active_run_id"] = ""
     return merged
 
 
@@ -6349,7 +6359,7 @@ def session_bootstrap():
     camera = str(sim_viz.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     sim_viz["camera"] = camera
     session_run_id = str(sim_viz.get("run_id") or "").strip()
-    if not sim_viz.get("rrd_uri") and session_run_id in {"", "franka-demo"} and RRD_PATH.is_file():
+    if PRELOAD_STOCK_DEMO and not sim_viz.get("rrd_uri") and session_run_id in {"", "franka-demo"} and RRD_PATH.is_file():
         sim_viz["rrd_uri"] = f"file://{{RRD_PATH}}"
     sim_viz["rerun_ready"] = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
     history = active_session.get("chat_history", [])
@@ -7383,7 +7393,7 @@ def sim_viz_rrd_blob(run_id: str = ""):
 
 @app.on_event("startup")
 def _boot_preload_sim_viz() -> None:
-    if not RRD_PATH.is_file():
+    if not PRELOAD_STOCK_DEMO or not RRD_PATH.is_file():
         return
     capability_path = _publish_rrd_recording(RRD_PATH)
     state = _load_state()
@@ -8478,6 +8488,11 @@ def deploy_cmd(
         "--workspace-label",
         help="Non-secret workspace identity displayed with immutable Git provenance.",
     ),
+    stock_demo: bool = typer.Option(
+        True,
+        "--stock-demo/--no-stock-demo",
+        help="Preload the stock Franka recording and history entry on startup.",
+    ),
 ) -> None:
     """Provision VM + bootstrap the public NPA agent stack."""
     try:
@@ -8676,6 +8691,7 @@ def deploy_cmd(
             foxglove_org_slug=foxglove_org_slug,
             foxglove_live_url=foxglove_live_url,
             deployment=deployment,
+            preload_stock_demo=stock_demo,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         try:
@@ -8723,6 +8739,7 @@ def deploy_cmd(
         service_account_id=str(creds.get("service_account_id", "")),
         credentials=agent_credentials,
         deployment=deployment,
+        preload_stock_demo=stock_demo,
     )
     _store_agent_record(project, name, record.to_dict())
     _persist_agent_project_config(
@@ -8790,6 +8807,11 @@ def fresh_setup_cmd(
         "--workspace-label",
         help="Non-secret workspace identity displayed with immutable Git provenance.",
     ),
+    stock_demo: bool = typer.Option(
+        True,
+        "--stock-demo/--no-stock-demo",
+        help="Preload the stock Franka recording and history entry on startup.",
+    ),
 ) -> None:
     """Initialize fresh project config and deploy a new agent from scratch."""
     existing = _agent_record(project, name)
@@ -8822,6 +8844,7 @@ def fresh_setup_cmd(
         llm_models=llm_models,
         no_public_https=no_public_https,
         workspace_label=workspace_label,
+        stock_demo=stock_demo,
     )
 
 
@@ -8889,6 +8912,11 @@ def bootstrap_cmd(
         "--workspace-label",
         help="Workspace identity; defaults to the identity already recorded for this deployment.",
     ),
+    stock_demo: bool | None = typer.Option(
+        None,
+        "--stock-demo/--no-stock-demo",
+        help="Override stock Franka preloading; defaults to the recorded deployment setting.",
+    ),
     adopt_legacy_identity: bool = typer.Option(
         False,
         "--adopt-legacy-identity",
@@ -8899,6 +8927,11 @@ def bootstrap_cmd(
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
+    resolved_stock_demo = (
+        bool(record.get("preload_stock_demo", True))
+        if stock_demo is None or not isinstance(stock_demo, bool)
+        else bool(stock_demo)
+    )
     recorded_deployment = record.get("deployment", {})
     recorded_label = (
         recorded_deployment.get("workspace_label", "")
@@ -9061,6 +9094,7 @@ def bootstrap_cmd(
             foxglove_org_slug=foxglove_org_slug,
             foxglove_live_url=foxglove_live_url,
             deployment=deployment,
+            preload_stock_demo=resolved_stock_demo,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         _fail(f"VM bootstrap failed: {exc}")
@@ -9088,6 +9122,7 @@ def bootstrap_cmd(
     updated["llm"] = llm_payload
     updated["ssh_key_path"] = ssh_key_path
     updated["deployment"] = deployment
+    updated["preload_stock_demo"] = resolved_stock_demo
     if service_account_id:
         updated["service_account_id"] = service_account_id
         _persist_agent_service_account_id(service_account_id)
@@ -9171,6 +9206,7 @@ def status_cmd(
         "deployment": recorded_deployment,
         "live_deployment": live_deployment,
         "deployment_matches_record": deployment_matches_record,
+        "preload_stock_demo": bool(record.get("preload_stock_demo", True)),
     }
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))

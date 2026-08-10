@@ -131,6 +131,49 @@ def test_chat_memory_is_deployment_scoped_and_rejects_legacy_tenant_state(
         sys.modules.pop(module_name, None)
 
 
+def test_no_stock_demo_mode_removes_only_the_stock_history(monkeypatch, tmp_path) -> None:
+    """Artifact-first deployments retain selected runs without the stock card."""
+    import sys
+
+    module_name = "npa_rendered_no_stock_demo_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    module.PRELOAD_STOCK_DEMO = False
+    try:
+        selected = {
+            "run_id": "customer-run",
+            "artifact_key": "nested/customer-run/output.rrd",
+            "rrd_uri": "file:///opt/npa-agent/recordings/output.rrd",
+        }
+        normalized = module._normalize_loaded_state(
+            {
+                "sim_viz": selected,
+                "active_run_id": "customer-run",
+                "sim_viz_runs": {
+                    "customer-run": selected,
+                    "franka-demo": {"run_id": "franka-demo", "stage": "demo"},
+                },
+            }
+        )
+        assert normalized["sim_viz"] == selected
+        assert normalized["active_run_id"] == "customer-run"
+        assert list(normalized["sim_viz_runs"]) == ["customer-run"]
+
+        stock_only = module._normalize_loaded_state(
+            {
+                "sim_viz": {"run_id": "franka-demo", "stage": "demo"},
+                "active_run_id": "franka-demo",
+                "sim_viz_runs": {"franka-demo": {"run_id": "franka-demo"}},
+            }
+        )
+        assert stock_only["sim_viz"]["run_id"] == ""
+        assert stock_only["active_run_id"] == ""
+        assert stock_only["sim_viz_runs"] == {}
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     body = _render_backend_body(monkeypatch)
     # Phase B/G: actions are shipped/imported and the /agent/act route is wired.

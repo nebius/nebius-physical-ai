@@ -983,6 +983,8 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert "letter-spacing: 0.22em" in source
     assert "border-bottom: 4px solid var(--brand)" in source
     assert '@app.post("/sim-viz/load-franka-demo")' in source
+    assert "NPA_AGENT_PRELOAD_STOCK_DEMO" in source
+    assert "if not PRELOAD_STOCK_DEMO or not RRD_PATH.is_file()" in source
     assert "_wire_franka_demo" in source
     assert "_generate_franka_demo_rrd" in source
     assert "_log_franka_robot_geometry" in source
