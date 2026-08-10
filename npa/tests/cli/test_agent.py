@@ -1201,7 +1201,7 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     # Backend resolves the run generically across categories (no prefix needed).
     assert "def _artifact_backed_run_details(" in source
     assert "resource_bucket: str = \"\"" in source
-    assert "find_run_artifacts(" in source
+    assert "find_run_artifacts_across_buckets(" in source
     # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui

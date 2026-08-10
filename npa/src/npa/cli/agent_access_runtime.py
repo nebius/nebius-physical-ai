@@ -401,6 +401,11 @@ def _resolve_selected_run_source(
             status_code=409,
             detail="run id is ambiguous in the selected bucket; select a resolved prefix",
         )
+    if sources and (not complete or source_errors) and not (prefix or source_selected):
+        raise HTTPException(
+            status_code=503,
+            detail="selected artifact source discovery was incomplete",
+        )
     if not sources:
         raise HTTPException(
             status_code=404 if complete and not source_errors else 503,

@@ -451,6 +451,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     class _RunPage:
         runs = []
         total_runs = 0
+        truncated = False
         discovery_complete = True
         source_errors = ()
 
@@ -493,6 +494,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     class _PagedRunPage:
         runs = indexed_runs
         total_runs = 3
+        truncated = False
         discovery_complete = True
         source_errors = ()
 
@@ -724,10 +726,34 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
 
     monkeypatch.setattr(
         module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([source], (), False),
+    )
+    incomplete_unique = module.artifacts_for_run("foreign-run-1")
+    assert incomplete_unique.status_code == 503
+    assert b'"code":"artifact_search_incomplete"' in incomplete_unique.body
+    # A fully-qualified source is still safe when unrelated candidates were
+    # truncated: the exact bucket + prefix tuple itself was server-discovered.
+    exact_incomplete_page = module.artifacts_for_run(
+        "foreign-run-1",
+        resource_bucket="bucket-test",
+        project_id="project-test",
+        resolved_prefix="foreign",
+        source_selected=True,
+    )
+    assert exact_incomplete_page["resolved_prefix"] == "foreign"
+
+    monkeypatch.setattr(
+        module,
         "_agent_s3_client",
         lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
     )
-    monkeypatch.setattr(module, "find_run_artifacts", lambda *_args, **_kwargs: artifacts)
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([source], (), True),
+    )
+    monkeypatch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: artifacts)
     details = module._sim2real_run_details(
         {
             "latest_submit": {},
@@ -786,9 +812,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "_agent_s3_client",
         lambda: (_S3(), {"bucket": "bucket-test", "prefix": ""}),
     )
-    monkeypatch.setattr(
-        module, "find_run_artifacts", lambda *_args, **_kwargs: [config_artifact]
-    )
+    monkeypatch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: [config_artifact])
     inspected = module.artifacts_stage(
         "foreign-run-1",
         stage_key="configs",
@@ -800,6 +824,40 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
     assert inspected["count"] == 1
     assert marker not in str(inspected)
     assert "visible" in str(inspected)
+
+    # A caller-known bucket and guessed prefix are not sufficient authority.
+    # Both cross-project detail surfaces must first match the exact source tuple
+    # in bounded server-side run discovery, without attempting object reads.
+    monkeypatch.setattr(
+        module,
+        "list_artifacts",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unauthorized artifact listing")
+        ),
+    )
+    for detail_loader in (
+        lambda: module.artifacts_stage(
+            "foreign-run-1",
+            stage_key="configs",
+            resource_bucket="bucket-test",
+            project_id="project-test",
+            resolved_prefix="guessed/private",
+            source_selected=True,
+        ),
+        lambda: module._artifact_backed_run_details(
+            {},
+            "foreign-run-1",
+            resource_bucket="bucket-test",
+            project_id="project-test",
+            resolved_prefix="guessed/private",
+            source_selected=True,
+        ),
+    ):
+        with pytest.raises(module.HTTPException) as unauthorized_source:
+            detail_loader()
+        assert unauthorized_source.value.status_code == 404
+
+    monkeypatch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: [config_artifact])
     with pytest.raises(module.HTTPException) as detail_exc:
         module.artifacts_stage(
             "foreign-run-1",
@@ -857,9 +915,7 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "_agent_s3_client",
         lambda: (_ManifestS3(), {"bucket": "bucket-test", "prefix": ""}),
     )
-    monkeypatch.setattr(
-        module, "find_run_artifacts", lambda *_args, **_kwargs: [manifest_artifact]
-    )
+    monkeypatch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: [manifest_artifact])
     redacted_details = module._artifact_backed_run_details(
         {},
         "foreign-run-1",

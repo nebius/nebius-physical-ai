@@ -271,6 +271,8 @@ def _without_infrastructure_roots(page: RunListPage) -> RunListPage:
         truncated=page.truncated,
         total_runs=max(0, page.total_runs - removed),
         limit=page.limit,
+        discovery_complete=page.discovery_complete,
+        source_errors=page.source_errors,
     )
 
 
@@ -889,7 +891,7 @@ def list_all_runs_across_buckets(
 
     def _runs_for_bucket(
         bucket: str,
-    ) -> "tuple[str, list[RunSummary], int, bool, dict[str, str] | None]":
+    ) -> "tuple[str, list[RunSummary], int, bool, bool, dict[str, str] | None]":
         try:
             discover = list_all_run_prefixes if lightweight else list_all_runs
             page = discover(
@@ -901,7 +903,7 @@ def list_all_runs_across_buckets(
                 s3=s3,
             )
         except (ArtifactDiscoveryError, ClientError, BotoCoreError):
-            return bucket, [], 0, False, {
+            return bucket, [], 0, False, True, {
                 "bucket": bucket,
                 "project_id": str((bucket_projects or {}).get(bucket) or ""),
                 "code": "artifact_discovery_unavailable",
@@ -915,7 +917,14 @@ def list_all_runs_across_buckets(
             )
             for run in page.runs
         ]
-        return bucket, tagged, page.total_runs, page.discovery_complete, None
+        return (
+            bucket,
+            tagged,
+            page.total_runs,
+            page.discovery_complete,
+            page.truncated,
+            None,
+        )
 
     from concurrent.futures import ThreadPoolExecutor
 
@@ -928,9 +937,20 @@ def list_all_runs_across_buckets(
 
     merged: dict[tuple[str, str, str], RunSummary] = {}
     discovery_complete = True
+    any_bucket_truncated = False
+    total = 0
     source_errors: list[dict[str, str]] = []
-    for _bucket, runs, _bucket_total, bucket_complete, source_error in results:
+    for (
+        _bucket,
+        runs,
+        bucket_total,
+        bucket_complete,
+        bucket_truncated,
+        source_error,
+    ) in results:
         discovery_complete = discovery_complete and bool(bucket_complete)
+        any_bucket_truncated = any_bucket_truncated or bool(bucket_truncated)
+        total += int(bucket_total or 0)
         if source_error is not None:
             source_errors.append(source_error)
         for run in runs:
@@ -946,8 +966,7 @@ def list_all_runs_across_buckets(
         ),
         reverse=True,
     )
-    total = len(ordered)
-    truncated = total > limit or not discovery_complete
+    truncated = any_bucket_truncated or total > limit or not discovery_complete
     if len(ordered) > limit:
         ordered = ordered[:limit]
     return RunListPage(
@@ -979,12 +998,19 @@ def list_runs_at_prefix_across_buckets(
     if not bucket_list:
         return RunListPage(runs=[], truncated=False, total_runs=0, limit=limit)
 
-    def _runs_for_bucket(bucket: str) -> "tuple[list[RunSummary], int]":
+    def _runs_for_bucket(
+        bucket: str,
+    ) -> "tuple[list[RunSummary], int, bool, bool, dict[str, str] | None]":
         try:
             discover = list_run_prefixes if lightweight else list_runs
             page = discover(bucket, prefix=prefix, limit=limit, contains=contains, s3=s3)
         except (ArtifactDiscoveryError, ClientError, BotoCoreError):
-            return [], 0
+            return [], 0, True, False, {
+                "bucket": bucket,
+                "project_id": str((bucket_projects or {}).get(bucket) or ""),
+                "code": "artifact_discovery_unavailable",
+                "message": "Run discovery is unavailable for this object storage resource.",
+            }
         tagged = [
             dataclass_replace(
                 run,
@@ -994,7 +1020,7 @@ def list_runs_at_prefix_across_buckets(
             )
             for run in page.runs
         ]
-        return tagged, page.total_runs
+        return tagged, page.total_runs, page.truncated, page.discovery_complete, None
 
     from concurrent.futures import ThreadPoolExecutor
 
@@ -1007,19 +1033,28 @@ def list_runs_at_prefix_across_buckets(
 
     merged: dict[tuple[str, str, str], RunSummary] = {}
     total = 0
-    for runs, bucket_total in results:
+    discovery_complete = True
+    any_bucket_truncated = False
+    source_errors: list[dict[str, str]] = []
+    for runs, bucket_total, bucket_truncated, bucket_complete, source_error in results:
         total += int(bucket_total or 0)
+        discovery_complete = discovery_complete and bool(bucket_complete)
+        any_bucket_truncated = any_bucket_truncated or bool(bucket_truncated)
+        if source_error is not None:
+            source_errors.append(source_error)
         for run in runs:
             merged[(run.bucket, run.resolved_prefix, run.run_id)] = run
     ordered = sorted(
         merged.values(), key=lambda item: (item.last_modified, item.run_id), reverse=True
     )
-    truncated = len(ordered) > limit
+    truncated = any_bucket_truncated or len(ordered) > limit or not discovery_complete
     return RunListPage(
         runs=ordered[:limit],
         truncated=truncated,
         total_runs=total,
         limit=limit,
+        discovery_complete=discovery_complete,
+        source_errors=tuple(source_errors),
     )
 
 
@@ -1136,6 +1171,7 @@ def find_run_artifacts_across_buckets(
     if s3 is None:
         raise ArtifactDiscoveryError("s3 client is required")
     matches: list[tuple[str, list[Artifact]]] = []
+    discovery_incomplete = False
     for bucket in buckets:
         name = str(bucket).strip()
         if not name:
@@ -1150,12 +1186,17 @@ def find_run_artifacts_across_buckets(
         except AmbiguousRunSourceError:
             raise
         except (ArtifactDiscoveryError, ClientError, BotoCoreError):
+            discovery_incomplete = True
             continue
         if artifacts:
             matches.append((name, artifacts))
     if len(matches) > 1:
         raise AmbiguousRunSourceError(
             "run id resolves to multiple artifact sources; select a project, bucket, and prefix"
+        )
+    if discovery_incomplete:
+        raise ArtifactDiscoveryError(
+            "run source discovery was incomplete; select an exact source"
         )
     return matches[0] if matches else ("", [])
 
@@ -1222,6 +1263,10 @@ def find_run_artifacts(bucket: str, *, base_prefix: str, run_id: str, s3=None) -
         contains=run_id,
         s3=s3,
     )
+    if index.truncated or not index.discovery_complete:
+        raise ArtifactDiscoveryError(
+            "run source discovery was incomplete; select an exact source"
+        )
     matches = [item for item in index.runs if item.run_id == run_id]
     if len(matches) > 1:
         raise AmbiguousRunSourceError("run id is ambiguous within this bucket")
@@ -1343,6 +1388,10 @@ def find_run_artifact_page(
         contains=run_id,
         s3=s3,
     )
+    if index.truncated or not index.discovery_complete:
+        raise ArtifactDiscoveryError(
+            "run source discovery was incomplete; select an exact source"
+        )
     candidates = sorted(
         (item for item in index.runs if item.run_id == run_id),
         key=lambda item: item.resolved_prefix,
@@ -1385,7 +1434,10 @@ def find_run_sources_across_buckets(
         (item for item in page.runs if item.run_id == run_id),
         key=lambda item: (item.project_id, item.bucket, item.resolved_prefix),
     )
-    return matches, page.source_errors, page.discovery_complete
+    # A caller-selected source is an authorization boundary. If the bounded
+    # candidate list was truncated, absence from ``matches`` is not proof that
+    # the requested source does not exist and must not become a false 404.
+    return matches, page.source_errors, page.discovery_complete and not page.truncated
 
 
 def find_run_artifact_page_across_buckets(

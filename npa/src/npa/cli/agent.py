@@ -7021,7 +7021,7 @@ def artifacts_runs(
         def _page_response(page, *, effective_prefix: str):
             end = min(offset + page_size, len(page.runs))
             visible = page.runs[offset:end]
-            has_more = end < int(page.total_runs)
+            has_more = end < len(page.runs)
             next_cursor = _artifact_run_cursor(end) if has_more else ""
             return {{
                 "ok": True,
@@ -7041,8 +7041,10 @@ def artifacts_runs(
                 "limit": page_size,
                 "cursor": cursor,
                 "next_cursor": next_cursor,
-                "truncated": bool(has_more or not page.discovery_complete),
-                "pagination_complete": bool(not has_more and page.discovery_complete),
+                "truncated": bool(has_more or page.truncated or not page.discovery_complete),
+                "pagination_complete": bool(
+                    not has_more and not page.truncated and page.discovery_complete
+                ),
                 "source_errors": [dict(item) for item in page.source_errors],
             }}
         if prefix:
@@ -7125,18 +7127,18 @@ def artifacts_for_run(
             matches = [item for item in matches if item.resolved_prefix == requested_prefix]
         elif source_selected:
             matches = [item for item in matches if not item.resolved_prefix]
+        search_complete = bool(
+            discovery_complete
+            and not source_errors
+            and (resource_bucket or _artifact_search_scope_complete(access_report))
+        )
         if not matches:
-            complete = bool(
-                discovery_complete
-                and not source_errors
-                and _artifact_search_scope_complete(access_report)
-            )
-            code = "run_not_discovered" if complete else "artifact_search_incomplete"
-            status_code = 404 if complete else 503
+            code = "run_not_discovered" if search_complete else "artifact_search_incomplete"
+            status_code = 404 if search_complete else 503
             message = (
                 "No discovered NPA workflow/artifact run has this identifier. "
                 "Identifiers under /home/ubuntu/codex-runs are Codex maintenance job IDs, not NPA run IDs."
-                if complete
+                if search_complete
                 else "The run could not be resolved because one or more tenant artifact sources are inaccessible or incomplete."
             )
             return JSONResponse(
@@ -7144,6 +7146,22 @@ def artifacts_for_run(
                 content={{
                     "ok": False,
                     "error": {{"code": code, "message": message}},
+                    "run_id": normalized_run,
+                    "namespace": "npa_workflow_artifact_run",
+                    "access": _agent_access_diagnostics(access_report),
+                    "source_errors": [dict(item) for item in source_errors],
+                }},
+            )
+        exact_selection = bool(resource_bucket and (requested_prefix or source_selected))
+        if not exact_selection and not search_complete:
+            return JSONResponse(
+                status_code=503,
+                content={{
+                    "ok": False,
+                    "error": {{
+                        "code": "artifact_search_incomplete",
+                        "message": "The run could not be selected uniquely because artifact discovery was incomplete.",
+                    }},
                     "run_id": normalized_run,
                     "namespace": "npa_workflow_artifact_run",
                     "access": _agent_access_diagnostics(access_report),
@@ -7245,26 +7263,20 @@ def artifacts_stage(
         access_report = _agent_access_report()
         bucket_projects = artifact_bucket_projects(access_report)
         if resource_bucket:
-            allowed_buckets, _selected_scope = _agent_artifact_list_scope(
-                access_report, resource_bucket, project_id
-            )
-            run_bucket = str(resource_bucket).strip()
-            if run_bucket not in allowed_buckets:
-                raise HTTPException(
-                    status_code=403,
-                    detail="artifact bucket is outside effective agent access",
-                )
-            if exact_prefix or source_selected:
-                artifacts = list_artifacts(
-                    run_bucket, normalized_run, prefix=exact_prefix, s3=s3
-                )
-            if not artifacts and not source_selected:
-                artifacts = find_run_artifacts(
-                    run_bucket,
-                    base_prefix=settings.get("prefix", ""),
-                    run_id=normalized_run,
+            run_bucket, selected_project, exact_prefix, artifacts = (
+                _load_selected_run_artifacts(
                     s3=s3,
+                    settings=settings,
+                    run_id=normalized_run,
+                    resource_bucket=resource_bucket,
+                    project_id=project_id,
+                    resolved_prefix=exact_prefix,
+                    source_selected=source_selected,
+                    exclude=_discovery_exclude_roots(),
                 )
+            )
+            if selected_project:
+                bucket_projects[run_bucket] = selected_project
         elif prefix:
             artifacts = list_artifacts(
                 settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
@@ -7278,7 +7290,7 @@ def artifacts_stage(
         wanted = str(stage_key or "").strip()
         keys = [str(item.key or "") for item in artifacts]
         marker = "/" + normalized_run + "/"
-        effective_prefix = (
+        effective_prefix = exact_prefix if resource_bucket else (
             keys[0].split(marker, 1)[0]
             if keys and marker in keys[0]
             else settings.get("prefix", "")

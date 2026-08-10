@@ -356,6 +356,51 @@ def test_cross_project_object_read_requires_exact_run_membership(monkeypatch) ->
         )
 
 
+def test_selected_run_source_requires_complete_discovery_when_unqualified(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    source = SimpleNamespace(
+        bucket="accessible-bucket",
+        project_id="project-a",
+        resolved_prefix="category",
+    )
+    monkeypatch.setattr(runtime, "HTTPException", HTTPException, raising=False)
+    monkeypatch.setattr(runtime, "validate_run_id", lambda value: value, raising=False)
+    monkeypatch.setattr(runtime, "_validated_resolved_prefix", lambda value: value)
+    monkeypatch.setattr(runtime, "_agent_access_report", lambda: object(), raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_agent_artifact_list_scope",
+        lambda *_args, **_kwargs: (["accessible-bucket"], {}),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([source], (), False),
+    )
+
+    with pytest.raises(HTTPException, match="discovery was incomplete") as exc_info:
+        runtime._resolve_selected_run_source(
+            s3=object(),
+            settings={},
+            run_id="run-a",
+            resource_bucket="accessible-bucket",
+        )
+    assert exc_info.value.status_code == 503
+
+    assert runtime._resolve_selected_run_source(
+        s3=object(),
+        settings={},
+        run_id="run-a",
+        resource_bucket="accessible-bucket",
+        resolved_prefix="category",
+        source_selected=True,
+    ) == ("accessible-bucket", "project-a", "category")
+
+
 def test_authorized_artifact_source_metadata_is_derived_from_key() -> None:
     from npa.cli import agent_access_runtime as runtime
 

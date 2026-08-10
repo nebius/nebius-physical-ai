@@ -6661,7 +6661,8 @@
             // Inline image preview so browsing a stage (e.g. Source frames) shows
             // the actual data, not just filenames. Lazy-loaded via the auth proxy.
             (render === "image" && s3uri
-              ? '<div class="artifact-thumb" data-thumb-uri="' + escapeHtml(s3uri) +
+              ? '<div class="artifact-thumb" role="button" tabindex="0" aria-label="Open artifact ' + escapeHtml(basename) +
+                '" data-thumb-uri="' + escapeHtml(s3uri) +
                 '" data-run-id="' + escapeHtml(runId) + '" data-key="' + escapeHtml(key) +
                 '"><span class="hint">&hellip;</span></div>'
               : "") +
@@ -6721,13 +6722,17 @@
               node.innerHTML = '<img alt="artifact" src="' + src + '" />';
             }).catch(() => { node.innerHTML = '<span class="hint">no preview</span>'; });
           }
-          node.addEventListener("click", (event) => {
+          const openArtifactThumbnail = (event) => {
             event.preventDefault();
             loadArtifact({
               run_id: String(node.getAttribute("data-run-id") || "").trim(),
               key: String(node.getAttribute("data-key") || "").trim(),
               s3_uri: uri,
             }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
+          };
+          node.addEventListener("click", openArtifactThumbnail);
+          node.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") openArtifactThumbnail(event);
           });
         });
         const preferredRender = String((preferred && preferred.render) || "");
@@ -7582,7 +7587,8 @@
               const render = String(a.render || "");
               const base = key.split("/").pop() || key;
               const isVideo = render === "video";
-              return '<div class="stage-thumb" data-run-id="' + escapeHtml(rid) +
+              return '<div class="stage-thumb" role="button" tabindex="0" aria-label="Open artifact ' + escapeHtml(base) +
+                '" data-run-id="' + escapeHtml(rid) +
                 '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
                 '" data-thumb-uri="' + escapeHtml(isVideo ? "" : s3uri) +
                 '" title="' + escapeHtml(base) + '">' +
@@ -7633,13 +7639,17 @@
                 if (ph) ph.textContent = "no preview";
               });
             }
-            node.addEventListener("click", (event) => {
+            const openStageThumbnail = (event) => {
               event.preventDefault();
               loadArtifact({
                 run_id: String(node.getAttribute("data-run-id") || "").trim(),
                 key: String(node.getAttribute("data-key") || "").trim(),
                 s3_uri: String(node.getAttribute("data-s3-uri") || "").trim(),
               }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
+            };
+            node.addEventListener("click", openStageThumbnail);
+            node.addEventListener("keydown", (event) => {
+              if (event.key === "Enter" || event.key === " ") openStageThumbnail(event);
             });
           });
           host.querySelectorAll("button[data-sd-action='load']").forEach((btn) => {
@@ -7724,6 +7734,7 @@
             const stageKey = String(stage.stage_key || "");
             const clickable = stageKey
               ? ' data-stage-key="' + escapeHtml(stageKey) + '" data-stage-label="' + escapeHtml(label) +
+                '" role="button" tabindex="0" aria-label="Inspect stage ' + escapeHtml(label) +
                 '" style="cursor:pointer;" title="Describe this stage and inspect its artifacts"'
               : "";
             return (
@@ -7738,7 +7749,7 @@
           // Selecting a stage in the timeline scopes the artifact browser to that
           // workflow-progress step and lists its artifacts.
           for (const node of stagesHost.querySelectorAll(".stage-item[data-stage-key]")) {
-            node.addEventListener("click", async () => {
+            const inspectStage = async () => {
               const stageKey = String(node.getAttribute("data-stage-key") || "").trim();
               const stageLabel = String(node.getAttribute("data-stage-label") || stageKey).trim();
               for (const sib of stagesHost.querySelectorAll(".stage-item")) sib.classList.remove("is-selected");
@@ -7761,6 +7772,13 @@
                 const list = document.getElementById("artifactList");
                 if (list) list.textContent = "Load stage artifacts failed: " + String((err && err.message) || err);
               }
+            };
+            node.addEventListener("click", inspectStage);
+            node.addEventListener("keydown", (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                inspectStage();
+              }
             });
           }
         }
@@ -7781,7 +7799,7 @@
         const params = new URLSearchParams();
         const resourceBucket = String(opts.resourceBucket || entry.bucket || "").trim();
         const projectId = String(opts.projectId || entry.project_id || "").trim();
-        const resolvedPrefix = String(opts.resolvedPrefix || "").trim();
+        const resolvedPrefix = String(opts.resolvedPrefix || entry.resolved_prefix || "").trim();
         const sourceSelected = Boolean(opts.sourceSelected || entry.bucket);
         if (resourceBucket) params.set("resource_bucket", resourceBucket);
         if (projectId) params.set("project_id", projectId);

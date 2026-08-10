@@ -1022,6 +1022,67 @@ def test_list_all_runs_across_buckets_merges_and_tags(monkeypatch) -> None:
     assert page.total_runs == 2
 
 
+def test_multi_bucket_run_discovery_preserves_bucket_truncation(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    def fake_light(bucket, **_kwargs):
+        return A.RunListPage(
+            runs=[A.RunSummary("run-known", "2030-01-01T00:00:00+00:00", 1, True)],
+            truncated=True,
+            total_runs=A.MAX_RUN_PARENT_CANDIDATES + 1,
+            limit=A.MAX_RUN_PARENT_CANDIDATES,
+            discovery_complete=True,
+        )
+
+    monkeypatch.setattr(A, "list_all_run_prefixes", fake_light)
+    page = A.list_all_runs_across_buckets(
+        ["bucket"],
+        base_prefix="",
+        limit=A.MAX_RUN_PARENT_CANDIDATES,
+        lightweight=True,
+        s3=object(),
+    )
+
+    assert page.total_runs == A.MAX_RUN_PARENT_CANDIDATES + 1
+    assert page.truncated is True
+    assert page.discovery_complete is True
+
+
+def test_exact_source_discovery_reports_a_truncated_candidate_set_incomplete(
+    monkeypatch,
+) -> None:
+    import npa.workflows.artifacts as A
+
+    source = A.RunSummary(
+        "run-known",
+        "2026-06-30T00:00:00+00:00",
+        1,
+        True,
+        bucket="bucket",
+        project_id="project",
+        resolved_prefix="category",
+    )
+    monkeypatch.setattr(
+        A,
+        "list_all_runs_across_buckets",
+        lambda *_args, **_kwargs: A.RunListPage(
+            runs=[source],
+            truncated=True,
+            total_runs=A.MAX_RUN_PARENT_CANDIDATES + 1,
+            limit=A.MAX_RUN_PARENT_CANDIDATES,
+            discovery_complete=True,
+        ),
+    )
+
+    matches, errors, complete = A.find_run_sources_across_buckets(
+        ["bucket"], base_prefix="", run_id="run-known", s3=object()
+    )
+
+    assert matches == [source]
+    assert errors == ()
+    assert complete is False
+
+
 def test_multi_bucket_discovery_keeps_accessible_siblings_when_one_is_denied(monkeypatch) -> None:
     import npa.workflows.artifacts as A
 

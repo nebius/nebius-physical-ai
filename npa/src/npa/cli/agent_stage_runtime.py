@@ -28,6 +28,8 @@ if __name__ == "npa.cli.agent_stage_runtime":
         _agent_s3_buckets,
         _agent_s3_client,
         _artifact_discovery_prefix,
+        _discovery_exclude_roots,
+        _load_selected_run_artifacts,
         _merge_sim2real_run_details,
         _now_iso,
         _slug,
@@ -47,7 +49,7 @@ if __name__ == "npa.cli.agent_stage_runtime":
         select_preferred_artifact,
         summarize_stage_evidence,
         validate_run_id,
-    ) = (None,) * 26
+    ) = (None,) * 28
 # NPA_EMBED_STANDALONE_END
 
 
@@ -303,29 +305,20 @@ def _artifact_backed_run_details(
         access_report = _agent_access_report()
         bucket_projects = artifact_bucket_projects(access_report)
         if resource_bucket:
-            allowed_buckets, _selected_scope = _agent_artifact_list_scope(
-                access_report, resource_bucket, project_id
+            run_bucket, selected_project, exact_prefix, artifacts = (
+                _load_selected_run_artifacts(
+                    s3=s3,
+                    settings=settings,
+                    run_id=run_id,
+                    resource_bucket=resource_bucket,
+                    project_id=project_id,
+                    resolved_prefix=exact_prefix,
+                    source_selected=source_selected,
+                    exclude=_discovery_exclude_roots(),
+                )
             )
-            run_bucket = str(resource_bucket).strip()
-            if run_bucket not in allowed_buckets:
-                raise HTTPException(
-                    status_code=403,
-                    detail="artifact bucket is outside effective agent access",
-                )
-            if exact_prefix or source_selected:
-                artifacts = list_artifacts(
-                    run_bucket,
-                    validate_run_id(run_id),
-                    prefix=exact_prefix,
-                    s3=s3,
-                )
-            if not artifacts and not source_selected:
-                artifacts = find_run_artifacts(
-                    run_bucket,
-                    base_prefix=settings.get("prefix", ""),
-                    run_id=validate_run_id(run_id),
-                    s3=s3,
-                )
+            if selected_project:
+                bucket_projects[run_bucket] = selected_project
         elif prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
             artifacts = list_artifacts(
@@ -357,7 +350,7 @@ def _artifact_backed_run_details(
         return None
     keys = [str(item.key or "") for item in artifacts]
     marker = "/" + str(run_id) + "/"
-    effective_prefix = (
+    effective_prefix = exact_prefix if resource_bucket else (
         keys[0].split(marker, 1)[0]
         if marker in keys[0]
         else settings.get("prefix", "")
