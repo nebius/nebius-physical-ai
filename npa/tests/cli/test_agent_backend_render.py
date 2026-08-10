@@ -85,6 +85,40 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert '"deployment": dict(DEPLOYMENT)' in body
 
 
+def test_session_owned_status_skips_cross_bucket_artifact_discovery(
+    monkeypatch, tmp_path
+) -> None:
+    """Default polling must stay local for a just-submitted session run."""
+    import sys
+
+    module_name = "npa_rendered_session_status_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    run_id = "agent-run-local-status"
+    details = module._default_sim2real_run_details(run_id)
+    state = {
+        "latest_submit": {"run_id": run_id},
+        "sim_viz": {},
+        "sim_viz_runs": {},
+        "sim2real_runs": {run_id: details},
+        "workflow_draft": {},
+    }
+    monkeypatch.setattr(
+        module,
+        "_artifact_backed_run_details",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("default status poll must not scan artifact buckets")
+        ),
+    )
+    try:
+        resolved = module._sim2real_run_details(state, run_id=run_id)
+        assert resolved["run_id"] == run_id
+        assert resolved["stages"]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_chat_memory_is_deployment_scoped_and_rejects_legacy_tenant_state(
     monkeypatch, tmp_path
 ) -> None:

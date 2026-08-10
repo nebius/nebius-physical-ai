@@ -509,15 +509,30 @@ def _sim2real_run_details(
             details["stages"], source="agent_session_workflow_status"
         )
         details["stage_summary"] = summarize_stage_evidence(details["stages"])
-    artifact_details = _artifact_backed_run_details(
-        state,
-        resolved_run_id,
-        prefix=prefix,
-        resource_bucket=resource_bucket,
-        project_id=project_id,
-        resolved_prefix=resolved_prefix,
-        source_selected=source_selected,
+    # A session-owned run already has its authoritative stage graph in local
+    # state. Do not turn the default status poll into an all-bucket S3 search for
+    # a just-submitted run that cannot have artifacts yet. Explicit source
+    # selection still asks for artifact evidence, and artifact-only run IDs (no
+    # local graph) continue through bounded discovery below.
+    has_session_graph = bool(
+        details
+        and isinstance(details.get("stages"), list)
+        and details.get("stages")
     )
+    explicit_artifact_source = bool(
+        prefix or resource_bucket or project_id or resolved_prefix or source_selected
+    )
+    artifact_details = None
+    if explicit_artifact_source or not has_session_graph:
+        artifact_details = _artifact_backed_run_details(
+            state,
+            resolved_run_id,
+            prefix=prefix,
+            resource_bucket=resource_bucket,
+            project_id=project_id,
+            resolved_prefix=resolved_prefix,
+            source_selected=source_selected,
+        )
     if artifact_details:
         authoritative_existing = [
             item
