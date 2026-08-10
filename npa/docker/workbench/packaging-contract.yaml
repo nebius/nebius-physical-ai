@@ -157,6 +157,7 @@ images:
   wan2-2:
     dockerfile: wan2-2/Dockerfile
     tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
     redistribution: public
     notes: >-
       Immutable Apache-2.0 Wan source plus an OSS CPU dependency base. CUDA
