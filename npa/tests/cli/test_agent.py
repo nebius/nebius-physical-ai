@@ -407,6 +407,7 @@ def _agent_source() -> str:
     from npa.cli import agent_access_runtime as agent_access_runtime_module
     from npa.cli import agent_login as agent_login_module
     from npa.cli import agent_site as agent_site_module
+    from npa.cli import agent_viewer_runtime as agent_viewer_runtime_module
 
     return "\n".join(
         Path(module.__file__).read_text(encoding="utf-8")
@@ -415,6 +416,7 @@ def _agent_source() -> str:
             agent_access_runtime_module,
             agent_login_module,
             agent_site_module,
+            agent_viewer_runtime_module,
         )
     )
 
@@ -875,9 +877,7 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
 
 
 def test_bootstrap_enables_public_https_nginx() -> None:
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "ssl_certificate /etc/nginx/ssl/npa-agent.crt" in source
     assert "DEFAULT_HTTPS_PORT" in source
     assert "Customer URL: use" in source
@@ -1635,12 +1635,10 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
     augmented-frame guidance, not the Sim2Real held-out-camera / Franka note —
     both applications write reports/sim2real.rrd.
 
-    These live inside the bootstrap template string (not importable module
-    attributes), so this is a source-text regression guard.
+    These live in the bootstrap template and its embedded viewer runtime, so
+    this is a source-text regression guard across the generated backend inputs.
     """
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # The DF recording detector is defined and keyed on the app id.
     assert "def _is_data_factory_recording(key: str) -> bool:" in source
     assert 'DATA_FACTORY_APP_ID = "physical-ai-data-factory"' in source

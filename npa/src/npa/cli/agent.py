@@ -149,6 +149,7 @@ _AGENT_STATE_EMBED = "__NPA_AGENT_STATE_EMBED__"
 _AGENT_S3_GUARD_EMBED = "__NPA_AGENT_S3_GUARD_EMBED__"
 _AGENT_STAGES_EMBED = "__NPA_AGENT_STAGES_EMBED__"
 _AGENT_STAGE_RUNTIME_EMBED = "__NPA_AGENT_STAGE_RUNTIME_EMBED__"
+_AGENT_VIEWER_RUNTIME_EMBED = "__NPA_AGENT_VIEWER_RUNTIME_EMBED__"
 _AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
@@ -157,6 +158,13 @@ def _embedded_agent_stage_runtime_source() -> str:
     """Return agent_stage_runtime.py source embedded into the backend."""
     return embedded_python_source(
         Path(__file__).with_name("agent_stage_runtime.py"), strip_standalone=True
+    )
+
+
+def _embedded_agent_viewer_runtime_source() -> str:
+    """Return agent_viewer_runtime.py source embedded into the backend."""
+    return embedded_python_source(
+        Path(__file__).with_name("agent_viewer_runtime.py"), strip_standalone=True
     )
 
 
@@ -1251,6 +1259,7 @@ def _bootstrap_agent_stack(
     agent_s3_guard_source = _embedded_agent_s3_guard_source()
     agent_stages_source = _embedded_agent_stages_source()
     agent_stage_runtime_source = _embedded_agent_stage_runtime_source()
+    agent_viewer_runtime_source = _embedded_agent_viewer_runtime_source()
     agent_provenance_source = _embedded_agent_provenance_source()
     deployment = deployment or build_deployment_manifest(
         project_alias=project_alias,
@@ -2707,105 +2716,7 @@ def _artifact_preview_url(filename: str) -> str:
     return f"/api/artifacts/file/{{filename}}"
 
 
-def _artifact_stage_key(key: str, run_id: str) -> str:
-    # Derive a run-relative stage key from an object key, mirroring the UI's
-    # client-side derivation so stage selection is consistent both ways.
-    scoped = str(key or "")
-    marker = "/" + str(run_id) + "/"
-    idx = scoped.find(marker)
-    if idx >= 0:
-        scoped = scoped[idx + len(marker):]
-    elif run_id and scoped.startswith(str(run_id) + "/"):
-        scoped = scoped[len(str(run_id)) + 1:]
-    parts = [p for p in scoped.split("/") if p]
-    first = parts[0] if parts else "artifacts"
-    if first == "reports":
-        return "reports"
-    if first == "eval" and len(parts) > 1:
-        return "eval/" + parts[1]
-    if first in ("actions", "vlm_eval", "training_signal", "envs") and len(parts) > 1:
-        return first + "/" + parts[1]
-    return first
-
-
-_STAGE_DESCRIPTIONS = {{
-    "input": (
-        "Input — the run's source clip(s) and frames that the pipeline augments "
-        "(the base footage the augment stage conditions on)."
-    ),
-    "configs": (
-        "Config Generation — samples appearance-only scenario combos "
-        "(lighting/background/surface/color) into manifest.json. Each combo drives "
-        "one Cosmos Transfer inference, so N combos become N scenario variants in "
-        "the multiply fan-out."
-    ),
-    "labeled_original": (
-        "Understand & Annotate — Token Factory VLM dense captions of the SOURCE "
-        "frames (captions.json). These are descriptive labels, NOT the quality "
-        "gate (see the grade stage for the attribute-verify / hallucination check)."
-    ),
-    "cosmos_augmented": (
-        "Augment & Multiply — real Cosmos Transfer 2.5 GPU output: one augmented "
-        "variant per sampled scenario, each under aug-<clip>/ with "
-        "augmented_video.mp4 + frames + metadata.json (the sampled appearance). "
-        "manifest.json records variant_count / multiply_mode / variant_parallelism."
-    ),
-    "grade": (
-        "Evaluate & Validate — the VLM attribute-verification / hallucination check "
-        "(vlm_eval_stub.json: score / threshold / model) plus the quality-gate "
-        "decision.json (promote_checkpoint vs loop_back). This IS the eval, not a "
-        "caption."
-    ),
-    "labeled_augmented": (
-        "Pseudo-Label Augmented — Token Factory VLM captions of the AUGMENTED clips "
-        "(captions.json) so the amplified dataset ships fully labeled."
-    ),
-    "curation": (
-        "Curation — a real dataset report over the augmented + graded set "
-        "(clip/frame counts, per-clip coverage, multiply mode) for FiftyOne / "
-        "Voxel51 review."
-    ),
-    "reports": (
-        "Visualize & Finalize — the embedded Rerun recording (sim2real.rrd) and the "
-        "aggregate final report (final.json) summarizing the whole run."
-    ),
-    "eval/heldout": "Held-out evaluation — simulation eval report for the trained checkpoint.",
-    "actions/train": "Policy rollouts — action rollouts collected on the training envs.",
-    "vlm_eval/train": "VLM eval — VLM scoring of the training rollouts.",
-    "outer_loop": "Decision / outer loop — the promote_checkpoint vs loop_back gate decision.",
-}}
-
-
-_STAGE_LABELS = {{
-    "input": "Input",
-    "configs": "Configs",
-    "labeled_original": "Labeled original",
-    "cosmos_augmented": "Cosmos augmented",
-    "grade": "Grade",
-    "labeled_augmented": "Labeled augmented",
-    "curation": "Curation",
-    "reports": "Reports / visualization",
-    "eval/heldout": "Held-out eval",
-    "actions/train": "Policy rollouts",
-    "vlm_eval/train": "VLM eval",
-    "outer_loop": "Decision / outer loop",
-}}
-
-
-def _stage_label(stage_key: str) -> str:
-    key = str(stage_key or "").strip()
-    if key in _STAGE_LABELS:
-        return _STAGE_LABELS[key]
-    cleaned = key.replace("_", " ").replace("/", " / ").replace("-", " ").strip() or "Artifacts"
-    return cleaned[:1].upper() + cleaned[1:]
-
-
-def _stage_description(stage_key: str, label: str, count: int) -> str:
-    key = str(stage_key or "").strip()
-    desc = _STAGE_DESCRIPTIONS.get(key)
-    if desc:
-        return desc
-    return f"{{label}} — {{count}} artifact(s) discovered under `{{key or 'run'}}`."
+{_AGENT_VIEWER_RUNTIME_EMBED}
 
 
 def _is_sim2real_pipeline_recording(key: str) -> bool:
@@ -2871,165 +2782,6 @@ def _foxglove_config(state: dict | None = None) -> dict:
         self_hosted_ready=_self_hosted_viewer_healthy(),
     )
 
-
-def _serialized_artifact_apply(func):
-    # Serialize shared viewer publication and refresh state inside the lock.
-    def wrapped(*args, **kwargs):
-        with _ARTIFACT_LOAD_LOCK:
-            supplied_state = kwargs.get("state")
-            if isinstance(supplied_state, dict):
-                current_state = _load_state()
-                if current_state is not supplied_state:
-                    supplied_state.clear()
-                    supplied_state.update(current_state)
-            return func(*args, **kwargs)
-    return wrapped
-
-
-@_serialized_artifact_apply
-def _apply_loaded_artifact(
-    *,
-    state: dict,
-    run_id: str,
-    key: str,
-    s3_uri: str,
-    render: str,
-    local_path: Path,
-    source_identity: tuple[str, str, str] = ("", "", ""),
-    run_ref: str = "",
-    requested_camera: str = "",
-) -> dict:
-    now = _now_iso()
-    sim_viz = dict(DEFAULT_SIM_VIZ)
-    current = state.get("sim_viz")
-    if isinstance(current, dict):
-        sim_viz.update(current)
-    # Never let a previous RRD's binding survive a later media load.
-    sim_viz.pop("served_recording_sha256", None)
-    camera = str(sim_viz.get("camera") or "workspace")
-    # Keep the data-factory exclusion on one line: npa/tests/cli/test_agent.py
-    # guards that exact expression as source text.
-    if (
-        render == "rerun"
-        and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)
-        and not is_neural_reconstruction_recording(key)
-    ):
-        camera = _sim2real_pipeline_camera_label(camera)
-    elif render == "rerun" and is_neural_reconstruction_recording(key):
-        # Do not inherit the previous run's label: the agent keeps sim_viz state
-        # across loads, so a NuRec run following a Sim2Real one would report
-        # camera="heldout-sim" while its own viewer note says the opposite.
-        camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL
-    if requested_camera:
-        camera = (
-            _sim2real_pipeline_camera_label(requested_camera)
-            if _is_sim2real_pipeline_recording(key)
-            else requested_camera
-        )
-    resource_bucket, project_id, resolved_prefix = source_identity
-    sim_viz.update(
-        {{
-            "run_id": run_id,
-            "source_type": "artifact_storage",
-            "source_label": "S3 artifacts",
-            "stage": "artifact-loaded",
-            "rrd_updated_at": now,
-            "artifact_uri": s3_uri,
-            "artifact_key": key,
-            "artifact_render": render,
-            "artifact_run_ref": str(run_ref or ""),
-            "mode": "static",
-            "camera": camera,
-            "bucket": str(resource_bucket or "").strip(),
-            "project_id": str(project_id or "").strip(),
-            "resolved_prefix": str(resolved_prefix or "").strip(),
-        }}
-    )
-    if render == "rerun":
-        capability_path = _publish_rrd_recording(local_path)
-        sim_viz["served_recording_sha256"] = hashlib.sha256(RECORDING_PATH.read_bytes()).hexdigest()
-        restarted = _restart_rerun_serve(force=True)
-        rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
-        sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
-        sim_viz["artifact_preview_url"] = capability_path
-        sim_viz["artifact_download_url"] = "/api/sim-viz/rrd-blob"
-        sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"), recording_path=capability_path)
-        sim_viz["rerun_ready"] = bool(capability_path) and rerun_ready
-        if _is_data_factory_recording(key):
-            sim_viz["preview_entity"] = "augmented"
-            sim_viz["visualization_note"] = (
-                "Physical AI Data Factory recording loaded. Entities: input/<clip> "
-                "(source frames), augmented/<clip> (Cosmos Transfer 2.5 output; the "
-                "static text label shows the sampled appearance variables), and "
-                "captions/ (Token Factory VLM pseudo-labels). Scrub the frame "
-                "timeline to compare original vs augmented."
-            )
-        elif is_neural_reconstruction_recording(key):
-            sim_viz["preview_entity"] = NEURAL_RECONSTRUCTION_PREVIEW_ENTITY
-            sim_viz["visualization_note"] = NEURAL_RECONSTRUCTION_VIEWER_NOTE
-        elif _is_sim2real_pipeline_recording(key):
-            sim_viz["preview_entity"] = "camera"
-            sim_viz["visualization_note"] = (
-                "Pipeline Sim2Real recording loaded. The primary Rerun view is the "
-                "held-out simulation camera stream; any 3D Franka/world entities are "
-                "reference proxy context, not custom hardware footage."
-            )
-    elif render == "mcap":
-        # One recording, two embedded viewers. Lichtblick (OSS, in-page) streams
-        # the same-origin copy; the official Foxglove app runs cross-origin and
-        # needs the CORS + byte-range copy. Publish both so either backend works.
-        # Only real .mcap files may take the Lichtblick slot (it is a fixed
-        # sim2real.mcap path); bags/db3/ulog are published on the Foxglove path,
-        # which keeps their real extension so the viewer picks the right reader.
-        is_mcap = key.lower().endswith(".mcap")
-        published = _publish_foxglove_recording(local_path, key)
-        sim_viz["rrd_uri"] = ""
-        sim_viz["rerun_iframe_url"] = "/rerun/"
-        sim_viz["rerun_ready"] = False
-        sim_viz["preview_entity"] = ""
-        sim_viz["foxglove_url"] = published
-        sim_viz["foxglove_ready"] = bool(published)
-        sim_viz["mcap_updated_at"] = now
-        if is_mcap:
-            _publish_mcap_recording(local_path)
-            mcap_url = _lichtblick_recording_url()
-            sim_viz["mcap_uri"] = f"file://{{MCAP_RECORDING_PATH}}"
-            sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
-            sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
-            sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
-            sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
-            sim_viz["visualization_note"] = (
-                "MCAP recording loaded: it plays in the embedded Lichtblick "
-                "(Foxglove-compatible, OSS) viewer — rollout camera, VLM critiques and "
-                "reward/advantage signals — and the same file is published on a CORS + "
-                "byte-range path for the official Foxglove app."
-            )
-        else:
-            sim_viz["lichtblick_ready"] = False
-            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(local_path, key)
-            sim_viz["artifact_download_url"] = sim_viz["artifact_preview_url"]
-            sim_viz["visualization_note"] = (
-                f"Recording loaded ({{Path(key).suffix.lower() or 'unknown'}}). Foxglove-family "
-                "viewers read it directly; the Lichtblick slot is reserved for .mcap."
-            )
-    else:
-        preview_url = _copy_artifact_preview(local_path, key)
-        sim_viz["artifact_preview_url"] = preview_url
-        sim_viz["artifact_download_url"] = preview_url
-        sim_viz["rrd_uri"] = ""
-        sim_viz["rerun_iframe_url"] = "/rerun/"
-        sim_viz["rerun_ready"] = False
-        sim_viz["preview_entity"] = ""
-        sim_viz["foxglove_ready"] = False
-        sim_viz["foxglove_url"] = ""
-        sim_viz["visualization_note"] = (
-            f"Loaded {{render}} artifact preview. Use the Video/Image/Data viewer tabs."
-        )
-    sim_viz["active_run_id"] = run_id
-    state["sim_viz"] = sim_viz
-    _record_sim_viz_run(state, sim_viz)
-    _save_state(state)
-    return sim_viz
 
 _RERUN_RESTART_MIN_INTERVAL_S = 8.0
 _last_rerun_restart_monotonic = 0.0
@@ -6810,8 +6562,9 @@ def artifacts_runs(
         # workflow's runs show without hardcoding any workflow path. Cached the same
         # way (the no-prefix walk is the slowest and the default UI view).
         base = settings.get("prefix", "")
-        # Discover across EVERY accessible bucket (not just the configured one), so
-        # a run is visible no matter which bucket its workflow wrote to.
+        # Discover across every access-report bucket (not just the configured one).
+        # Never enumerate every credential-readable bucket: the tenant access report
+        # is the bounded, policy-qualified source of artifact storage locations.
         page = list_runs_cached_multi(
             buckets,
             base_prefix=base,
@@ -8505,6 +8258,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_S3_GUARD_EMBED, agent_s3_guard_source)
         .replace(_AGENT_STAGES_EMBED, agent_stages_source)
         .replace(_AGENT_STAGE_RUNTIME_EMBED, agent_stage_runtime_source)
+        .replace(_AGENT_VIEWER_RUNTIME_EMBED, agent_viewer_runtime_source)
         .replace(_AGENT_PROVENANCE_EMBED, agent_provenance_source)
         .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
     )
