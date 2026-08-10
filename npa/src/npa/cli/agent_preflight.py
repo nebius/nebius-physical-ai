@@ -8,6 +8,8 @@ auto-roll-back a freshly provisioned VM. Re-imported into ``npa.cli.agent``.
 
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +19,13 @@ if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
     from npa.workflows.sim2real_health import CheckResult
 
 
+def _terraform_binary() -> str:
+    """Return the configured Terraform binary without importing the CLI monolith."""
+    return (
+        os.environ.get("NPA_TERRAFORM_BIN") or shutil.which("terraform") or ""
+    ).strip()
+
+
 def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[CheckResult]:
     """Cheap, side-effect-free Route C prerequisites (terraform + SSH keys).
 
@@ -24,7 +33,6 @@ def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[CheckResult]:
     missing binary or key surfaces up front instead of mid-run (after which a
     transient SSH failure would auto-roll-back a freshly provisioned VM).
     """
-    from npa.cli.agent import _terraform_binary
     from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
 
     results: list[Any] = []

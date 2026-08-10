@@ -527,8 +527,12 @@ For a validation registry containing distinct images, repeat
 resolved and attested independently and takes precedence over `--image`; pass
 immutable digest references in recorded/live acceptance commands.
 
-For the public mirror, `ok` needs no login or build. For a private registry,
-build and push what preflight reports missing (tags below track
+For the public mirror, an attested `ok` needs no login or build. Reachability
+alone is insufficient: preflight resolves the tag once, verifies the bootstrap
+contract against that immutable digest, and submits that digest. A historical
+tag that predates the contract is rejected even when `docker manifest inspect`
+succeeds. For a private registry, build and push what preflight reports missing
+or incompatible (tags below track
 `npa/src/npa/deploy/images.py`, which is what submit pulls):
 
 ```bash
@@ -554,14 +558,19 @@ docker run --rm -e HF_TOKEN="$HF_TOKEN" -v curator-weights:/config/models \
   "$REGISTRY/npa-cosmos-curate:0.1.2" fetch-models --models split-annotate
 ```
 
-Confirm all three images are pullable before spending GPU time — a missing one
-surfaces late, as a stage failure:
+The loop below is only a registry reachability diagnostic. The mandatory
+acceptance check is the `preflight-images` command above; it binds all three
+results to immutable digests and refuses a missing, stale, or wrong-digest
+bootstrap attestation before spending GPU time:
 
 ```bash
 for ref in npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z \
            npa-cosmos-evaluator:0.1.2 npa-cosmos-curate:0.1.2; do
   docker manifest inspect "$REGISTRY/$ref" >/dev/null && echo "OK   $ref" || echo "MISS $ref"
 done
+
+npa workbench workflow preflight-images npa/workflows/physical-ai-data-factory.yaml \
+  --project "$PROJECT" --registry "$REGISTRY"
 ```
 
 ---

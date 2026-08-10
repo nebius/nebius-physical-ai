@@ -50,7 +50,13 @@ def destroy_cmd(
     from npa.clients.config import resolve_environment
     from npa.clients.nebius import NebiusError, get_compute_instance_identity
     from npa.deploy.provisioner import ProvisionerError
-    from npa.provisioning_journal import list_operations, load_operation
+    from npa.provisioning_journal import (
+        ProvisioningOperation,
+        TERMINAL_PHASES,
+        list_operations,
+        load_operation,
+        operation_context,
+    )
 
     selectors = any(
         (receipt, project_id, tenant_id, region, instance_id, operation_id, profile)
@@ -182,6 +188,39 @@ def destroy_cmd(
         output_json=output_json,
         payload=identity.to_dict(),
     )
+    selected_operation = load_operation(exact_operation) if exact_operation else None
+    if selected_operation is not None and str(
+        selected_operation.read().get("phase") or ""
+    ) not in TERMINAL_PHASES:
+        # Supplying the exact nonterminal setup operation is the explicit safe
+        # recovery path: teardown resumes under that operation's project lease.
+        teardown_operation = selected_operation
+    else:
+        resume_argv = [
+            "npa",
+            "agent",
+            "destroy",
+            "--project",
+            alias,
+            "--name",
+            name,
+            "--yes",
+        ]
+        if exact_project:
+            resume_argv.extend(["--project-id", exact_project])
+        teardown_operation = ProvisioningOperation.prepare(
+            command="npa agent destroy",
+            project_alias=alias,
+            project_id=exact_project,
+            tenant_id=str(identity.get("tenant_id") or ""),
+            region=str(identity.get("region") or ""),
+            resource_type="agent-teardown",
+            requested_name=name,
+            ownership_source="agent-destroy-cli",
+            resume_command="",
+            resume_argv=resume_argv,
+            destroy_argv=resume_argv,
+        )
     agent_module._record_agent_destroy_event(
         alias,
         name,
@@ -193,25 +232,38 @@ def destroy_cmd(
         project_id=exact_project,
         identity_source=identity.source,
     )
-    try:
-        agent_module._destroy_agent_terraform(
-            alias,
-            name,
-            record=recovery_record or None,
-            operation_id=exact_operation,
-            project_id=exact_project,
-        )
-    except ProvisionerError as exc:
-        agent_module._record_agent_destroy_event(
-            alias,
-            name,
-            terminal_state="failed",
-            error=str(exc),
-            identity=identity.values,
-            project_id=exact_project,
-            identity_source=identity.source,
-        )
-        agent_module._fail(f"Terraform destroy failed: {exc}")
+    with operation_context(teardown_operation):
+        if str(teardown_operation.read().get("phase") or "") == "prepared":
+            teardown_operation.transition("mutating")
+        try:
+            agent_module._destroy_agent_terraform(
+                alias,
+                name,
+                record=recovery_record or None,
+                operation_id=exact_operation,
+                project_id=exact_project,
+            )
+        except ProvisionerError as exc:
+            teardown_operation.transition(
+                "recovery-required",
+                error=str(exc),
+                details={"error_type": type(exc).__name__},
+            )
+            agent_module._record_agent_destroy_event(
+                alias,
+                name,
+                terminal_state="failed",
+                error=str(exc),
+                identity=identity.values,
+                project_id=exact_project,
+                identity_source=identity.source,
+            )
+            agent_module._fail(f"Terraform destroy failed: {exc}")
+        phase = str(teardown_operation.read().get("phase") or "")
+        if phase in {"mutating", "resource-created"}:
+            teardown_operation.transition(
+                "state-durable", details={"terraform_graph": "destroyed"}
+            )
     terraform_noop_absence = False
     if not exact_instance:
         for operation in operations:
@@ -336,6 +388,8 @@ def destroy_cmd(
             output_json=output_json,
         )
         raise typer.Exit(code=2)
+    if str(teardown_operation.read().get("phase") or "") not in TERMINAL_PHASES:
+        teardown_operation.transition("destroyed")
     _emit(
         {
             **identity.to_dict(),

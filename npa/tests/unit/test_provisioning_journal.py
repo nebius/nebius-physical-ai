@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 from pathlib import Path
 import stat
+import subprocess
+import sys
 
 import pytest
 import yaml
@@ -365,6 +368,53 @@ def test_local_and_errored_state_survive_recovery_transition(
     assert operation.read()["phase"] == "recovery-required"
 
 
+def test_preserved_state_is_bound_to_hash_backend_and_operation(
+    journal_root: Path,
+) -> None:
+    operation = _prepare()
+    state = operation.preserve_state_bytes(b'{"version":4}', name="errored")
+    record = operation.read()["local_state_copies"][0]
+    assert record["operation_id"] == operation.operation_id
+    assert record["sha256"]
+    assert record["size_bytes"] == len(b'{"version":4}')
+    assert record["backend_identity"] == {
+        "bucket": "state-a",
+        "endpoint": "storage.example",
+    }
+    assert operation.state_copies() == [state]
+
+    state.write_bytes(b'{"version":4,"tampered":true}')
+    with pytest.raises(OperationJournalError, match="failed SHA-256 validation"):
+        operation.state_copies()
+
+
+def test_represerving_same_named_state_atomically_replaces_stale_hash(
+    journal_root: Path,
+) -> None:
+    operation = _prepare()
+    state = operation.preserve_state_bytes(b'{"serial":1}', name="verified-remote")
+    same = operation.preserve_state_bytes(b'{"serial":2}', name="verified-remote")
+
+    assert same == state
+    assert operation.state_copies() == [state]
+    records = operation.read()["local_state_copies"]
+    assert len(records) == 1
+    assert records[0]["sha256"] == hashlib.sha256(b'{"serial":2}').hexdigest()
+
+
+def test_missing_preserved_state_fails_closed_with_executable_recovery(
+    journal_root: Path,
+) -> None:
+    operation = _prepare()
+    state = operation.preserve_state_bytes(b'{"version":4}', name="errored")
+    state.unlink()
+    with pytest.raises(OperationJournalError) as exc_info:
+        operation.state_copies()
+    message = str(exc_info.value)
+    assert "is missing; no state was adopted" in message
+    assert "npa agent deploy --project prod --name agent" in message
+
+
 def test_nested_operation_uses_parent_and_rejects_cross_project_context(
     journal_root: Path,
 ) -> None:
@@ -385,6 +435,164 @@ def test_nested_operation_uses_parent_and_rejects_cross_project_context(
                 pass
 
     assert current_operation() is None
+
+
+def _context_holder(operation_id: str) -> str:
+    return "\n".join(
+        (
+            "import sys",
+            "from npa.provisioning_journal import load_operation, operation_context",
+            f"operation = load_operation({operation_id!r})",
+            "with operation_context(operation):",
+            "    operation.transition('mutating')",
+            "    print('READY', flush=True)",
+            "    sys.stdin.readline()",
+        )
+    )
+
+
+def test_project_lease_refuses_cross_process_setup_teardown_before_mutation(
+    journal_root: Path,
+) -> None:
+    setup = _prepare()
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _context_holder(setup.operation_id)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout is not None
+    assert holder.stdout.readline().strip() == "READY"
+    teardown = _prepare(
+        command="npa destroy",
+        resource_type="project",
+        requested_name="prod",
+        resume_command="npa destroy --project prod --yes",
+    )
+    try:
+        with pytest.raises(OperationJournalError) as exc_info:
+            with operation_context(teardown):
+                pytest.fail("conflicting teardown entered its mutation window")
+        message = str(exc_info.value)
+        assert setup.operation_id in message
+        assert "phase mutating" in message
+        assert "Safe recovery: npa agent deploy --project prod --name agent" in message
+
+        independent = _prepare(
+            project_alias="other",
+            project_id="project-b",
+            requested_name="other-agent",
+        )
+        with operation_context(independent):
+            independent.transition("mutating")
+            independent.transition("rolled-back")
+    finally:
+        assert holder.stdin is not None
+        holder.stdin.write("release\n")
+        holder.stdin.flush()
+        assert holder.wait() == 0
+
+
+def test_project_lease_requires_explicit_resume_after_owner_crash(
+    journal_root: Path,
+) -> None:
+    setup = _prepare()
+    crash_source = _context_holder(setup.operation_id).replace(
+        "    sys.stdin.readline()", "    __import__('os')._exit(23)"
+    )
+    crashed = subprocess.run(
+        [sys.executable, "-c", crash_source],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert crashed.returncode == 23
+    teardown = _prepare(
+        command="npa destroy",
+        resource_type="project",
+        requested_name="prod",
+        resume_command="npa destroy --project prod --yes",
+    )
+    with pytest.raises(OperationJournalError, match=setup.operation_id):
+        with operation_context(teardown):
+            pytest.fail("teardown must not adopt an interrupted setup")
+
+    resumed = _prepare()
+    assert resumed.operation_id == setup.operation_id
+    with operation_context(resumed):
+        resumed.transition("rolled-back")
+
+
+def test_project_lease_allows_only_explicit_parent_child_reentrancy(
+    journal_root: Path,
+) -> None:
+    parent = _prepare(command="npa destroy", resource_type="project-teardown")
+    child = _prepare(
+        command="npa agent destroy",
+        resource_type="agent-teardown",
+        requested_name="agent",
+    )
+    parent_script = f"""
+import os, subprocess, sys
+from npa.provisioning_journal import ProvisioningOperation, operation_context
+with operation_context(ProvisioningOperation(sys.argv[1])):
+    env = os.environ.copy()
+    env['NPA_PARENT_LIFECYCLE_OPERATION'] = sys.argv[1]
+    result = subprocess.run(
+        [sys.executable, '-c', {repr(_context_holder(child.operation_id))}],
+        input='release\\n', capture_output=True, text=True, env=env,
+    )
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    raise SystemExit(result.returncode)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", parent_script, parent.operation_id],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "READY" in completed.stdout
+
+
+def test_active_teardown_blocks_workflow_submit_for_same_project(
+    journal_root: Path,
+) -> None:
+    teardown = _prepare(
+        command="npa destroy",
+        resource_type="project-teardown",
+        requested_name="prod",
+        resume_command="npa destroy --project prod --all --yes",
+    )
+    submit = _prepare(
+        command="npa workbench workflow submit",
+        resource_type="workflow-submit",
+        requested_name="paidf-run",
+        resume_command=(
+            "npa workbench workflow submit paidf.yaml --project prod "
+            "--resume-run paidf-run"
+        ),
+    )
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _context_holder(teardown.operation_id)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout is not None
+    assert holder.stdout.readline().strip() == "READY"
+    try:
+        with pytest.raises(OperationJournalError, match=teardown.operation_id):
+            with operation_context(submit):
+                pytest.fail("workflow submit entered during project teardown")
+    finally:
+        assert holder.stdin is not None
+        holder.stdin.write("release\n")
+        holder.stdin.flush()
+        assert holder.wait() == 0
 
 
 def test_concurrent_private_store_updates_do_not_overwrite_fields(

@@ -55,6 +55,7 @@ def _agent_check_whole_path_capacity(
     fallback_region: str,
     *,
     agent_exists: bool = False,
+    include_paidf: bool = True,
 ):
     """Apply the shared VM+disk+public-IP plan before agent mutation."""
 
@@ -66,7 +67,12 @@ def _agent_check_whole_path_capacity(
     )
 
     region = (get_project_region(project_id) or str(fallback_region or "")).strip()
-    requested = resolve_topology(agent_requested=True, agent_exists=agent_exists)
+    requested = resolve_topology(
+        agent_requested=True,
+        agent_exists=agent_exists,
+        cpu_nodes=-1 if include_paidf else 0,
+        gpu_nodes=-1 if include_paidf else 0,
+    )
     cluster_name = _exact_owned_cluster_name(project_id, requested.cluster_name)
     existing = discover_existing_capacity(
         project_id=project_id,
@@ -113,6 +119,7 @@ def _agent_whole_path_capacity_result(
     fallback_region: str,
     *,
     agent_exists: bool = False,
+    include_paidf: bool = True,
 ) -> "CheckResult":
     """Render the deploy gate through the health/preflight result contract."""
 
@@ -124,6 +131,7 @@ def _agent_whole_path_capacity_result(
             tenant_id,
             fallback_region,
             agent_exists=agent_exists,
+            include_paidf=include_paidf,
         )
     except Exception as exc:  # noqa: BLE001 - same fail-closed resolver as deploy
         return CheckResult(

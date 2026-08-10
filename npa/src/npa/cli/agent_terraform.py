@@ -163,6 +163,19 @@ def _apply_agent_terraform(
         _looks_like_compute_permission_denied,
     )
 
+    def revalidate_backend() -> None:
+        _ensure_terraform_state_bucket(
+            project_id=str(merged_vars.get("nebius_project_id", "")),
+            bucket_name=str(merged_vars.get("s3_bucket", "")),
+            endpoint=str(merged_vars.get("s3_endpoint", "")),
+            access_key=str(merged_vars.get("nebius_api_key", "")),
+            secret_key=str(merged_vars.get("nebius_secret_key", "")),
+            region=env_region,
+            project_alias=project,
+            agent_name=name,
+        )
+
+    revalidate_backend()
     tf_dir = provisioner.prepare_working_dir(
         project,
         name,
@@ -190,9 +203,11 @@ def _apply_agent_terraform(
     if operation is not None:
         preserved = operation.state_copies()
         if preserved and not provisioner.state_list(tf_dir):
+            revalidate_backend()
             provisioner.state_push(preserved[0], tf_dir)
     try:
         try:
+            revalidate_backend()
             result = provisioner.apply(tf_dir=tf_dir, tf_vars=tf_vars)
         except ProvisionerError as exc:
             sa_id = str(merged_vars.get("service_account_id", "")).strip()
@@ -217,6 +232,7 @@ def _apply_agent_terraform(
             )
             retry_vars = dict(tf_vars)
             retry_vars["service_account_id"] = ""
+            revalidate_backend()
             result = provisioner.apply(tf_dir=tf_dir, tf_vars=retry_vars)
     except ProvisionerError as exc:
         if operation is not None:
@@ -252,6 +268,7 @@ def _apply_agent_terraform(
                 labels={"npa-operation-id": operation.operation_id},
             )
         try:
+            revalidate_backend()
             state = provisioner.state_pull(tf_dir)
             operation.preserve_state_bytes(state, name="verified-remote")
         except ProvisionerError as exc:
@@ -390,6 +407,14 @@ def _resolve_destroy_tf_vars(
             service_account_id = str(creds.get("service_account_id", "")).strip()
     if not service_account_id:
         service_account_id = _resolve_agent_service_account_id(project, record or {})
+    ssh_key_path = str(
+        (record or {}).get("ssh_public_key_path")
+        or (record or {}).get("ssh_key_path")
+        or "~/.ssh/id_ed25519"
+    )
+    ssh_public_key_path = (
+        ssh_key_path if ssh_key_path.endswith(".pub") else f"{ssh_key_path}.pub"
+    )
 
     iam_token = get_iam_token()
     return {
@@ -404,6 +429,7 @@ def _resolve_destroy_tf_vars(
         "gpu_preset": "8vcpu-32gb",
         "image_family": DEFAULT_AGENT_IMAGE_FAMILY,
         "enable_preemptible": "false",
+        "ssh_public_key_path": ssh_public_key_path,
         "nebius_api_key": str(
             (backend_override or {}).get("access_key")
             or getattr(state, "access_key", "")
@@ -629,6 +655,14 @@ def _destroy_agent_terraform(
                 }
             )
     recovery_record = dict(record or {})
+    commands = operation_payload.get("recovery_commands")
+    resume_argv = (
+        list(commands.get("resume_argv") or []) if isinstance(commands, dict) else []
+    )
+    if "--ssh-public-key-path" in resume_argv:
+        index = resume_argv.index("--ssh-public-key-path") + 1
+        if index < len(resume_argv):
+            recovery_record.setdefault("ssh_public_key_path", str(resume_argv[index]))
     if journal_project_id:
         recovery_record.setdefault("project_id", journal_project_id)
     recovery_record.setdefault(

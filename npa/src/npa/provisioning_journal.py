@@ -30,6 +30,7 @@ from typing import Any
 
 
 SCHEMA_VERSION = "npa.provisioning.operation.v2"
+PROJECT_LEASE_SCHEMA_VERSION = "npa.project.lifecycle-lease.v1"
 TERMINAL_PHASES = frozenset({"committed", "rolled-back", "destroyed"})
 RECOVERABLE_PHASES = frozenset(
     {
@@ -326,6 +327,201 @@ def _locked_execution(operation_id: str) -> Iterator[None]:
         raise OperationJournalError(
             f"could not serialize provisioning operation {operation_id}: {exc}"
         ) from exc
+
+
+def _project_lease_directory(project_identity: str) -> Path:
+    identity = str(project_identity or "").strip()
+    if not identity:
+        raise OperationIdentityError(
+            "project-scoped lifecycle mutation requires an exact project id or alias"
+        )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return _ensure_private_root() / ".projects" / digest
+
+
+def _read_project_lease(path: Path) -> dict[str, Any]:
+    if path.is_symlink():
+        raise OperationJournalError(f"project lifecycle lease {path} is a symlink")
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise OperationJournalError(
+            f"invalid project lifecycle lease {path}: {exc}"
+        ) from exc
+    if not isinstance(payload, dict) or payload.get("schema_version") != PROJECT_LEASE_SCHEMA_VERSION:
+        raise OperationJournalError(
+            f"invalid project lifecycle lease {path}: unsupported schema"
+        )
+    return payload
+
+
+def _lease_recovery_hint(payload: Mapping[str, Any]) -> str:
+    commands = payload.get("recovery_commands")
+    commands = commands if isinstance(commands, Mapping) else {}
+    return str(commands.get("resume") or commands.get("destroy") or "").strip()
+
+
+def _project_conflict_message(
+    *, project_identity: str, lease: Mapping[str, Any], active: bool
+) -> str:
+    operation_id = str(lease.get("operation_id") or "unknown")
+    phase = str(lease.get("phase") or "unknown")
+    owner_pid = int(lease.get("owner_pid") or 0)
+    hint = _lease_recovery_hint(lease)
+    qualifier = "active" if active else "nonterminal"
+    message = (
+        f"project {project_identity!r} has a conflicting {qualifier} lifecycle "
+        f"operation {operation_id} (phase {phase}, owner_pid {owner_pid})"
+    )
+    if hint:
+        message += f". Safe recovery: {hint}"
+    else:
+        message += (
+            f". Inspect the owner journal at "
+            f"{operation_path(operation_id)} before retrying"
+        )
+    return message
+
+
+def _lease_with_current_operation(lease: Mapping[str, Any]) -> dict[str, Any]:
+    """Overlay the lease pointer with its journal's current phase/owner evidence."""
+
+    current = dict(lease)
+    operation_id = str(current.get("operation_id") or "")
+    if not operation_id:
+        return current
+    try:
+        journal = ProvisioningOperation(operation_id).read()
+    except OperationJournalError:
+        return current
+    if journal:
+        for key in (
+            "phase",
+            "lifecycle",
+            "owner_pid",
+            "recovery_commands",
+            "project_id",
+            "project_alias",
+            "resource_type",
+            "command",
+        ):
+            if key in journal:
+                current[key] = journal[key]
+    return current
+
+
+@contextmanager
+def _locked_project_execution(
+    operation: "ProvisioningOperation",
+) -> Iterator[Path]:
+    """Own the durable mutation lease for the operation's whole project.
+
+    The kernel lock prevents concurrent processes from entering mutation, while
+    the atomically-written lease survives crashes and points to the operation
+    journal that contains the exact recovery commands and provider identity.
+    """
+
+    operation_payload = operation.read()
+    project_identity = str(
+        operation_payload.get("project_id")
+        or operation_payload.get("project_alias")
+        or (
+            "configure-bootstrap"
+            if operation_payload.get("resource_type") == "configure"
+            else ""
+        )
+        or ""
+    ).strip()
+    directory = _project_lease_directory(project_identity)
+    if directory.is_symlink():
+        raise OperationJournalError(
+            f"project lifecycle directory {directory} is a symlink"
+        )
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory.chmod(0o700)
+    lock_path = directory / ".lock"
+    lease_path = directory / "lease.json"
+    parent_operation_id = os.environ.get("NPA_PARENT_LIFECYCLE_OPERATION", "").strip()
+    inherited = _read_project_lease(lease_path)
+    if (
+        parent_operation_id
+        and inherited.get("operation_id") == parent_operation_id
+        and int(inherited.get("owner_pid") or 0) == os.getppid()
+        and _pid_is_alive(os.getppid())
+    ):
+        yield lease_path
+        return
+    if lock_path.is_symlink():
+        raise OperationJournalError(f"project lifecycle lock {lock_path} is a symlink")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        os.fchmod(lock.fileno(), 0o600)
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            lease = _lease_with_current_operation(_read_project_lease(lease_path))
+            raise OperationJournalError(
+                _project_conflict_message(
+                    project_identity=project_identity,
+                    lease=lease,
+                    active=True,
+                )
+            ) from exc
+
+        lease = _read_project_lease(lease_path)
+        prior_operation_id = str(lease.get("operation_id") or "")
+        if prior_operation_id and prior_operation_id != operation.operation_id:
+            try:
+                prior = ProvisioningOperation(prior_operation_id).reconcile_liveness()
+            except OperationJournalError:
+                prior = lease
+            prior_phase = str(prior.get("phase") or lease.get("phase") or "")
+            if prior_phase not in TERMINAL_PHASES:
+                raise OperationJournalError(
+                    _project_conflict_message(
+                        project_identity=project_identity,
+                        lease=prior,
+                        active=(
+                            str(prior.get("lifecycle") or "") == "running"
+                            and _pid_is_alive(int(prior.get("owner_pid") or 0))
+                        ),
+                    )
+                )
+
+        current = dict(operation.read())
+        _write_atomic(
+            lease_path,
+            {
+                "schema_version": PROJECT_LEASE_SCHEMA_VERSION,
+                "project_identity": project_identity,
+                "project_id": str(current.get("project_id") or ""),
+                "project_alias": str(current.get("project_alias") or ""),
+                "operation_id": operation.operation_id,
+                "command": str(current.get("command") or ""),
+                "resource_type": str(current.get("resource_type") or ""),
+                "phase": str(current.get("phase") or "prepared"),
+                "lifecycle": str(current.get("lifecycle") or "running"),
+                "owner_pid": os.getpid(),
+                "acquired_at": utc_now(),
+                "recovery_commands": dict(current.get("recovery_commands") or {}),
+            },
+        )
+        try:
+            yield lease_path
+        finally:
+            final = operation.read()
+            finished = _read_project_lease(lease_path)
+            finished.update(
+                {
+                    "phase": str(final.get("phase") or ""),
+                    "lifecycle": str(final.get("lifecycle") or ""),
+                    "owner_pid": int(final.get("owner_pid") or os.getpid()),
+                    "released_at": utc_now(),
+                    "recovery_commands": dict(final.get("recovery_commands") or {}),
+                }
+            )
+            _write_atomic(lease_path, finished)
 
 
 def _read_unlocked(path: Path) -> dict[str, Any]:
@@ -1069,7 +1265,27 @@ class ProvisioningOperation:
             payload = _read_unlocked(self.path)
             copies = payload.setdefault("local_state_copies", [])
             relative = str(path.relative_to(self.path.parent))
-            copies.append({"path": relative, "preserved_at": utc_now()})
+            copies[:] = [
+                item
+                for item in copies
+                if not isinstance(item, Mapping) or item.get("path") != relative
+            ]
+            backend = payload.get("backend")
+            backend = dict(backend) if isinstance(backend, Mapping) else {}
+            copies.append(
+                {
+                    "path": relative,
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "size_bytes": len(data),
+                    "operation_id": self.operation_id,
+                    "backend_identity": {
+                        key: str(backend.get(key) or "")
+                        for key in ("bucket", "endpoint", "key", "region")
+                        if str(backend.get(key) or "")
+                    },
+                    "preserved_at": utc_now(),
+                }
+            )
             payload["updated_at"] = utc_now()
             _write_atomic(self.path, payload)
             return path
@@ -1086,18 +1302,56 @@ class ProvisioningOperation:
     def state_copies(self) -> list[Path]:
         payload = self.read()
         paths: list[Path] = []
+        backend = payload.get("backend")
+        backend = dict(backend) if isinstance(backend, Mapping) else {}
+        expected_backend = {
+            key: str(backend.get(key) or "")
+            for key in ("bucket", "endpoint", "key", "region")
+            if str(backend.get(key) or "")
+        }
         for item in reversed(payload.get("local_state_copies") or []):
             if not isinstance(item, dict):
                 continue
             raw = str(item.get("path") or "")
             candidate = self.path.parent / raw
             try:
-                if candidate.is_file() and candidate.resolve().is_relative_to(
-                    self.path.parent.resolve()
-                ):
-                    paths.append(candidate)
-            except OSError:
-                continue
+                inside = candidate.resolve().is_relative_to(self.path.parent.resolve())
+            except OSError as exc:
+                raise OperationJournalError(
+                    f"could not verify preserved Terraform state {candidate}: {exc}; "
+                    "no state was adopted"
+                ) from exc
+            if not inside:
+                raise OperationIdentityError(
+                    f"preserved Terraform state path escapes operation "
+                    f"{self.operation_id}; no state was adopted"
+                )
+            if str(item.get("operation_id") or self.operation_id) != self.operation_id:
+                raise OperationIdentityError(
+                    "preserved Terraform state belongs to another operation; "
+                    "no state was adopted"
+                )
+            recorded_backend = item.get("backend_identity")
+            if isinstance(recorded_backend, Mapping) and dict(recorded_backend) != expected_backend:
+                raise OperationIdentityError(
+                    "preserved Terraform state backend identity no longer matches "
+                    f"operation {self.operation_id}; no state was adopted"
+                )
+            if not candidate.is_file():
+                raise OperationJournalError(
+                    f"preserved Terraform state {candidate} is missing; no state was "
+                    f"adopted. Safe recovery: {_lease_recovery_hint(payload)}"
+                )
+            expected_hash = str(item.get("sha256") or "")
+            if expected_hash:
+                actual_hash = hashlib.sha256(candidate.read_bytes()).hexdigest()
+                if actual_hash != expected_hash:
+                    raise OperationJournalError(
+                        f"preserved Terraform state {candidate} failed SHA-256 "
+                        f"validation for operation {self.operation_id}; no state was "
+                        f"adopted. Safe recovery: {_lease_recovery_hint(payload)}"
+                    )
+            paths.append(candidate)
         return list(dict.fromkeys(paths))
 
     def recovery_summary(self) -> dict[str, Any]:
@@ -1286,7 +1540,7 @@ def operation_context(
             )
         yield current
         return
-    with _locked_execution(operation.operation_id):
+    with _locked_project_execution(operation), _locked_execution(operation.operation_id):
         # A concurrent retry may have completed while this caller waited for the
         # execution lock.  Never replay a terminal transaction with stale state.
         phase = str(operation.read().get("phase") or "")

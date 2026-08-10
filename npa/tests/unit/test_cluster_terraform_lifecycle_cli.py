@@ -1079,6 +1079,7 @@ def test_up_rejects_terraform_older_than_the_vendored_modules(
     """The vendored modules need >= 1.12; an old binary must fail before init."""
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text('parent_id = "project-test"\n')
     stream_calls: list[list[str]] = []
 
     def fake_capture(args, **kwargs):
@@ -1757,6 +1758,7 @@ def test_up_pins_an_existing_ssh_public_key(monkeypatch, tmp_path: Path) -> None
     """The module rejects a key path that does not exist; ~/.ssh/id_rsa.pub often does not."""
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text('parent_id = "project-test"\n')
     key = tmp_path / "keys" / "id_ed25519.pub"
     key.parent.mkdir()
     key.write_text("ssh-ed25519 AAAAC3Nz test@example\n")
@@ -1802,6 +1804,7 @@ def test_up_keeps_an_explicit_ssh_public_key_from_tfvars(
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
     (tf_dir / "terraform.tfvars").write_text(
+        'parent_id = "project-test"\n'
         'ssh_public_key = { path = "~/.ssh/custom.pub" }\n'
     )
     stream_calls: list[list[str]] = []
@@ -1866,6 +1869,7 @@ region = "eu-north1"
 def test_up_explains_a_missing_ssh_public_key(monkeypatch, tmp_path: Path) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text('parent_id = "project-test"\n')
     monkeypatch.setenv("NPA_SSH_PUBLIC_KEY", str(tmp_path / "absent.pub"))
     stream_calls: list[list[str]] = []
 

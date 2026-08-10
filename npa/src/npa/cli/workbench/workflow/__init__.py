@@ -1458,21 +1458,75 @@ def submit_cmd(
             )
 
         def _launch() -> WorkflowResult:
-            return submit_workflow(
-                submitted_yaml_path,
-                resolved_run_id,
-                isolated_config_dir=isolated_config_dir,
-                config_path=config_path,
-                sky_bin=sky_bin or None,
-                controller_backend=controller_backend.value,
-                infra=infra,
-                secret_envs=secret_env,
-                require_controller_up=require_controller_up,
-                extra_env=extra_env,
-                timeout=submit_timeout,
-                logical_launch_id=launch_identity,
-                transaction_recorder=_record_transaction,
+            from npa.clients.config import default_project_name, resolve_environment
+            from npa.provisioning_journal import (
+                ProvisioningOperation,
+                current_operation,
+                operation_context,
             )
+
+            def submit() -> WorkflowResult:
+                return submit_workflow(
+                    submitted_yaml_path,
+                    resolved_run_id,
+                    isolated_config_dir=isolated_config_dir,
+                    config_path=config_path,
+                    sky_bin=sky_bin or None,
+                    controller_backend=controller_backend.value,
+                    infra=infra,
+                    secret_envs=secret_env,
+                    require_controller_up=require_controller_up,
+                    extra_env=extra_env,
+                    timeout=submit_timeout,
+                    logical_launch_id=launch_identity,
+                    transaction_recorder=_record_transaction,
+                )
+
+            if current_operation() is not None:
+                return submit()
+            alias = str(project or default_project_name()).strip() or "default"
+            environment = resolve_environment(alias)
+            operation = ProvisioningOperation.prepare(
+                command="npa workbench workflow submit",
+                project_alias=alias,
+                project_id=str(getattr(environment, "project_id", "") or ""),
+                tenant_id=str(getattr(environment, "tenant_id", "") or ""),
+                region=str(getattr(environment, "region", "") or ""),
+                resource_type="workflow-submit",
+                requested_name=resolved_run_id,
+                ownership_source="workflow-submit-cli",
+                resume_command="",
+                resume_argv=[
+                    "npa",
+                    "workbench",
+                    "workflow",
+                    "submit",
+                    str(yaml_path),
+                    "--project",
+                    alias,
+                    "--resume-run",
+                    resolved_run_id,
+                ],
+                destroy_argv=[
+                    "npa",
+                    "workbench",
+                    "workflow",
+                    "cancel",
+                    resolved_run_id,
+                    "--project",
+                    alias,
+                ],
+            )
+            with operation_context(operation):
+                operation.transition("mutating")
+                try:
+                    submitted = submit()
+                except BaseException as exc:
+                    operation.transition("recovery-required", error=str(exc))
+                    raise
+                operation.transition("state-durable")
+                operation.commit()
+                return submitted
 
         if prepared_npa is not None:
             from npa.orchestration.npa_workflow.submission_state import (

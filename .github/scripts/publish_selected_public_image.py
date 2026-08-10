@@ -49,7 +49,9 @@ def main() -> int:
     if args.mode == "preflight":
         return 0
 
-    copied = _crane_copy(item)
+    # Preflight returns the digest-pinned item. Never return to the mutable tag
+    # after its config/attestation and license gates have passed.
+    copied = _crane_copy(publishable[0])
     print("Copied 1 image." if copied else "Already current; copied 0 images.")
     failures = verify_public(selected)
     return 1 if failures else 0

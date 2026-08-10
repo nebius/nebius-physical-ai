@@ -12,8 +12,6 @@ from npa.workflows.artifacts import (
     artifact_data_role,
     build_fiftyone_dataset,
     download_s3_uri,
-    decode_run_ref,
-    encode_run_ref,
     find_run_artifacts,
     infer_run_id_from_artifact_key,
     list_all_runs,
@@ -22,7 +20,6 @@ from npa.workflows.artifacts import (
     list_runs,
     render_hint_for_object,
     resolve_run_artifact,
-    resolve_run_artifacts,
     select_preferred_artifact,
 )
 

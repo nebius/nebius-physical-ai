@@ -714,6 +714,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
         ),
         plan_only=True,
+        plan_only_justification=(
+            "the dedicated RTX PRO live E2E owns the large gated model run"
+        ),
         notes=(
             "BYOF Wan 2.2 TI2V-5B candidate. Plan-only in the shared matrix: "
             "the real pushed-image RTX PRO generation, decoded MP4, verified RRD, "
@@ -730,6 +733,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
         ),
         plan_only=True,
+        plan_only_justification=(
+            "the dedicated four-B200 live E2E owns the multi-GPU gated model run"
+        ),
         notes=(
             "Plan-only in the shared submit matrix: the dedicated Wan live E2E "
             "runs the four-B200 TI2V-5B torchrun path and verifies immutable-image reuse, all four NCCL "

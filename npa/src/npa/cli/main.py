@@ -2509,26 +2509,38 @@ def _transactional_configure(function):
             bool(bound.arguments.get("show")) or bool(bound.arguments.get("env_output"))
         ) and not bool(bound.arguments.get("save_env_credentials")):
             return function(*args, **kwargs)
-        if str(bound.arguments.get("forget_project") or "").strip():
-            return function(*args, **kwargs)
+        forget = str(bound.arguments.get("forget_project") or "").strip()
         alias = str(bound.arguments.get("project_alias") or "").strip()
         project_id = str(bound.arguments.get("project_id") or "").strip()
         tenant_id = str(bound.arguments.get("tenant_id") or "").strip()
         region = str(bound.arguments.get("region") or "").strip()
+        if forget:
+            from npa.clients.config import resolve_environment
+
+            environment = resolve_environment(forget)
+            alias = forget
+            if environment is not None:
+                project_id = str(environment.project_id or "")
+                tenant_id = str(environment.tenant_id or "")
+                region = str(environment.region or "")
         requested_name = alias or project_id or "interactive"
-        resume = "npa configure"
-        if all((tenant_id, project_id, region, alias)):
+        resume = (
+            f"npa configure --forget-project {forget}"
+            if forget
+            else "npa configure"
+        )
+        if not forget and all((tenant_id, project_id, region, alias)):
             resume += (
                 f" --no-interactive --tenant-id {tenant_id} --project-id {project_id}"
                 f" --region {region} --project-alias {alias}"
             )
         operation = ProvisioningOperation.prepare(
-            command="npa configure",
+            command=("npa configure --forget-project" if forget else "npa configure"),
             project_alias=alias,
             project_id=project_id,
             tenant_id=tenant_id,
             region=region,
-            resource_type="configure",
+            resource_type=("forget-project" if forget else "configure"),
             requested_name=requested_name,
             ownership_source="configure-cli",
             resume_command=resume,

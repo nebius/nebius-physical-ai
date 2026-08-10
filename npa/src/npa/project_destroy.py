@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 import re
 import subprocess
 import time
@@ -398,7 +399,7 @@ def _project_ownership_operation(project: str, project_id: str, tenant_id: str):
     from npa.provisioning_journal import list_operations
 
     matches = []
-    for operation in list_operations(project_alias=project, project_id=project_id):
+    for operation in list_operations(project_id=project_id):
         payload = operation.read()
         if str(payload.get("tenant_id") or "") != tenant_id:
             continue
@@ -528,12 +529,22 @@ def _run(command: tuple[str, ...], runner: Runner) -> subprocess.CompletedProces
         _internal_command_argv(command) if runner is subprocess.run else list(command)
     )
     try:
+        kwargs: dict[str, Any] = {}
+        if runner is subprocess.run:
+            from npa.provisioning_journal import current_operation
+
+            operation = current_operation()
+            if operation is not None:
+                child_env = os.environ.copy()
+                child_env["NPA_PARENT_LIFECYCLE_OPERATION"] = operation.operation_id
+                kwargs["env"] = child_env
         return runner(
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            **kwargs,
         )
     except OSError as exc:
         return subprocess.CompletedProcess(

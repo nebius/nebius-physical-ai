@@ -7,6 +7,25 @@ from typing import Any
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
 
+def coerce_cli_list(value: Any) -> list[str]:
+    """Return a list for a possibly-unresolved Typer option default."""
+
+    from npa.cli._typer_defaults import resolve_option_default
+
+    try:
+        value = resolve_option_default(value)
+    except TypeError:  # required option with no default
+        return []
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    try:
+        return list(value)
+    except TypeError:
+        return []
+
+
 def tool_catalog_payload() -> dict[str, dict[str, Any]]:
     """Return the stable JSON-ready tool catalog embedded in agent bootstrap."""
 
@@ -32,4 +51,4 @@ def agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
     }
 
 
-__all__ = ["agent_credentials_payload", "tool_catalog_payload"]
+__all__ = ["agent_credentials_payload", "coerce_cli_list", "tool_catalog_payload"]

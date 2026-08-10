@@ -21,7 +21,7 @@ from typing import Any
 import httpx
 import typer
 
-from npa.cli._typer_defaults import resolve_option_default, resolve_typer_defaults
+from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.cli.agent_errors import _agent_deploy_failure_hint
 from npa.cli.agent_quota import (
     _agent_check_compute_instance_quota,  # noqa: F401 - compatibility re-export
@@ -55,6 +55,7 @@ from npa.cli.agent_network import (
 )
 from npa.cli.agent_payloads import (
     agent_credentials_payload as _agent_credentials_payload,
+    coerce_cli_list as _coerce_cli_list,
     tool_catalog_payload as _tool_catalog_payload,
 )
 from npa.cli.agent_setup_convergence import (
@@ -91,7 +92,6 @@ from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT
 from npa.cli.agent_deployment import (
     assert_remote_owner_if_present,
     build_deployment_manifest,
-    verify_remote_deployment,
 )
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
@@ -713,13 +713,6 @@ def _resolve_deploy_llm_credentials() -> tuple[str, str]:
 
     creds = load_credentials()
     return creds.token_factory_api_key, DEFAULT_LLM_MODEL
-
-
-def _terraform_binary() -> str:
-    """Return the terraform binary path/name, honoring NPA_TERRAFORM_BIN."""
-    return (
-        os.environ.get("NPA_TERRAFORM_BIN") or shutil.which("terraform") or ""
-    ).strip()
 
 
 def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str]:
@@ -8606,7 +8599,6 @@ def _health(
         return False, 0
     return response.status_code == 200, response.status_code
 
-
 @app.command("preflight")
 def preflight_cmd(
     project: str = typer.Option(
@@ -8622,6 +8614,7 @@ def preflight_cmd(
     skip_nebius: bool = typer.Option(
         False, "--skip-nebius", help="Skip the live Nebius authentication check."
     ),
+    agent_only: bool = typer.Option(False, "--agent-only"),
     output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
 ) -> None:
     """Check Route C prerequisites before `npa agent deploy` / `fresh-setup`.
@@ -8648,6 +8641,7 @@ def preflight_cmd(
                 agent_exists=bool(
                     _agent_record(project_alias, DEFAULT_AGENT_NAME).get("public_ip")
                 ),
+                include_paidf=not agent_only,
             )
         )
     results.append(_agent_ssh_egress_result())
@@ -8656,28 +8650,6 @@ def preflight_cmd(
     has_fail = _render_agent_checks(results, output_json=output_json)
     if has_fail:
         raise typer.Exit(code=1)
-
-
-def _coerce_cli_list(value: Any) -> list[str]:
-    """Return a real list for a possibly-unresolved Typer option default.
-
-    Belt-and-braces: the commands below carry ``@resolve_typer_defaults``, so an
-    unresolved ``typer.models.OptionInfo`` should never reach here. This keeps
-    working for any caller that hands a command a raw option default anyway
-    (which used to blow up with ``'OptionInfo' object is not iterable``).
-    """
-    try:
-        value = resolve_option_default(value)
-    except TypeError:  # required option with no default
-        return []
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple)):
-        return list(value)
-    try:
-        return list(value)
-    except TypeError:
-        return []
 
 
 def _transactional_agent_command(command: str):
@@ -8752,6 +8724,8 @@ def _transactional_agent_command(command: str):
                 resume_argv.extend(["--tf-var", str(tf_value)])
             if bool(bound.arguments.get("no_public_https")):
                 resume_argv.append("--no-public-https")
+            if bool(bound.arguments.get("agent_only")):
+                resume_argv.append("--agent-only")
             if "wait_ssh" in bound.arguments:
                 resume_argv.append(
                     "--wait-ssh"
@@ -8871,6 +8845,7 @@ def deploy_cmd(
     tf_var: list[str] = typer.Option(
         [], "--tf-var", help="Additional Terraform var key=value."
     ),
+    agent_only: bool = typer.Option(False, "--agent-only", help="Provision agent only."),
     agent_port: int = typer.Option(
         DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."
     ),
@@ -8984,6 +8959,7 @@ def deploy_cmd(
             env_tenant_id,
             env_region,
             agent_exists=_agent_exists,
+            include_paidf=not agent_only,
         )
     except Exception as exc:
         _fail(str(exc))

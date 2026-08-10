@@ -305,6 +305,10 @@ def test_apply_failure_preserves_errored_state_and_exact_recovery(
     )
     monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
     monkeypatch.setattr(
+        "npa.cli.agent_terraform._ensure_terraform_state_bucket",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
         "npa.cli.agent.provisioner.apply",
         lambda **_kwargs: (_ for _ in ()).throw(
             BackendBucketMissingError("NoSuchBucket during state upload")
@@ -361,6 +365,10 @@ def test_retry_restores_preserved_state_before_apply(monkeypatch, tmp_path) -> N
     monkeypatch.setattr("npa.cli.agent.provisioner.state_list", lambda _path: [])
     calls: list[str] = []
     monkeypatch.setattr(
+        "npa.cli.agent_terraform._ensure_terraform_state_bucket",
+        lambda **_kwargs: calls.append("backend"),
+    )
+    monkeypatch.setattr(
         "npa.cli.agent.provisioner.state_push",
         lambda _state, _path: calls.append("state-push"),
     )
@@ -401,8 +409,71 @@ def test_retry_restores_preserved_state_before_apply(monkeypatch, tmp_path) -> N
             },
         )
 
-    assert calls == ["state-push", "apply"]
+    assert calls == [
+        "backend",
+        "backend",
+        "state-push",
+        "backend",
+        "apply",
+        "backend",
+    ]
     assert operation.read()["phase"] == "state-durable"
+
+
+def test_backend_loss_at_apply_boundary_blocks_before_remote_mutation(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli.agent import _apply_agent_terraform
+    from npa.deploy.provisioner import BackendBucketMissingError
+    from npa.provisioning_journal import ProvisioningOperation, operation_context
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    tf_dir = tmp_path / "terraform"
+    tf_dir.mkdir()
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.prepare_working_dir",
+        lambda *_args, **_kwargs: tf_dir,
+    )
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
+    validations = 0
+
+    def validate(**_kwargs) -> None:
+        nonlocal validations
+        validations += 1
+        if validations == 2:
+            raise BackendBucketMissingError("backend disappeared before apply")
+
+    monkeypatch.setattr(
+        "npa.cli.agent_terraform._ensure_terraform_state_bucket", validate
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.apply",
+        lambda **_kwargs: pytest.fail("Terraform apply must not start"),
+    )
+    operation = ProvisioningOperation.prepare(
+        command="npa agent deploy",
+        project_alias="demo",
+        project_id="project-a",
+        resource_type="agent",
+        requested_name="agent",
+        resume_command="npa agent deploy --project demo --name agent",
+    )
+    with operation_context(operation), pytest.raises(BackendBucketMissingError):
+        _apply_agent_terraform(
+            project="demo",
+            name="agent",
+            env_region="eu-north1",
+            merged_vars={
+                "s3_bucket": "state-bucket",
+                "s3_endpoint": "https://storage.example",
+                "nebius_api_key": "access",
+                "nebius_secret_key": "secret",
+                "nebius_project_id": "project-a",
+                "instance_name": "agent-demo-agent",
+            },
+        )
+    assert validations == 2
+    assert operation.read()["phase"] == "recovery-required"
 
 
 def test_write_agent_nebius_env_omits_operator_iam_token(monkeypatch) -> None:
@@ -3544,6 +3615,64 @@ def test_agent_whole_path_blocker_precedes_storage_and_terraform(
     terraform.assert_not_called()
     [journal] = (tmp_path / "operations").glob("*/journal.json")
     assert json.loads(journal.read_text(encoding="utf-8"))["phase"] == "rolled-back"
+
+
+def test_agent_only_deploy_omits_paidf_capacity_reservation(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    """The explicit lifecycle-validation mode still gates the agent VM itself."""
+    from npa.cli.agent import deploy_cmd
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *args, **kwargs: SimpleNamespace(
+            project_id="project-x", tenant_id="tenant-x", region="us-central1"
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_project_region", lambda _pid: "us-central1"
+    )
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *args, **kwargs: {})
+    capacity = mocker.patch("npa.cli.agent._agent_check_whole_path_capacity")
+    mocker.patch(
+        "npa.cli.agent._agent_hard_prereq_results",
+        return_value=[],
+    )
+    mocker.patch(
+        "npa.cli.agent._agent_storage_result",
+        return_value=SimpleNamespace(status="PASS"),
+    )
+    mocker.patch("npa.cli.agent._resolve_deploy_llm_credentials", return_value=("k", "m"))
+    mocker.patch("npa.clients.nebius.bootstrap_agent_environment", return_value={})
+    mocker.patch(
+        "npa.cli.agent._apply_agent_terraform",
+        side_effect=RuntimeError("stop after preflight"),
+    )
+
+    with pytest.raises(RuntimeError, match="stop after preflight"):
+        deploy_cmd(
+            project="fresh",
+            name="agent",
+            project_id="project-x",
+            tenant_id="tenant-x",
+            region="us-central1",
+            ssh_user="ubuntu",
+            ssh_public_key_path=str(tmp_path / "id_ed25519.pub"),
+            tf_var=[],
+            agent_only=True,
+            agent_port=8088,
+            backend_port=8787,
+            rerun_port=9090,
+            llm_model="model-a",
+            llm_models=[],
+            no_public_https=False,
+        )
+
+    assert capacity.call_args.kwargs["include_paidf"] is False
+    [journal] = (tmp_path / "operations").glob("*/journal.json")
+    commands = json.loads(journal.read_text())["recovery_commands"]
+    assert "--agent-only" in commands["resume_argv"]
 
 
 def test_agent_check_public_ip_quota_fails_when_exhausted(monkeypatch) -> None:

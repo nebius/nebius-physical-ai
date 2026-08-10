@@ -1253,6 +1253,43 @@ def test_incident_cleanup_order_continues_independent_phases_and_project_delete(
     assert statuses["delete_project"] == "completed"
 
 
+def test_project_creation_proof_survives_local_alias_change(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa import project_destroy
+    from npa.provisioning_journal import ProvisioningOperation
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    operation = ProvisioningOperation.prepare(
+        command="npa fleet deploy",
+        project_alias="fleet-created-name",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="us-central1",
+        resource_type="project",
+        requested_name="fleet-created-name",
+        ownership_source="fleet-project-create",
+        resume_command="npa fleet status",
+        destroy_command="npa destroy --all --delete-project",
+    )
+    operation.record_resource(
+        resource_type="nebius_project",
+        requested_name="fleet-created-name",
+        provider_id="project-a",
+        ownership="created_by_this_operation",
+        ownership_source="provider-create-response",
+        project_id="project-a",
+        labels={"tenant_id": "tenant-a"},
+    )
+
+    assert (
+        project_destroy._project_ownership_operation(
+            "later-configured-alias", "project-a", "tenant-a"
+        )
+        == operation
+    )
+
+
 def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receipt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

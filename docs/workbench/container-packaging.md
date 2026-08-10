@@ -257,8 +257,16 @@ python -m npa.deploy.publish_public --dry-run
 python -m npa.deploy.publish_public --target ghcr.io/<org>/<repo>
 ```
 
-The copy path is bracketed by two checks it runs itself. Before writing anything it
-reads every **source** manifest, because `crane auth login` writes a config file and
+The copy path is bracketed by checks it runs itself. Before writing anything it
+resolves every source tag once and uses only the resulting immutable digest for
+config inspection, licensing gates, bootstrap-attestation validation, and copy.
+The target tag is not exposed until all those gates pass. A missing/stale
+bootstrap label, a config/digest mismatch, or any scan failure leaves the public
+reference unchanged. The GitHub workflow serializes publishers for a target and
+does not cancel an in-progress publication because registries provide no atomic
+compare-and-swap for tags.
+
+It also reads every **source** manifest, because `crane auth login` writes a config file and
 exits 0 for any string without ever contacting the registry — so a stale credential
 would otherwise surface partway through the copy loop with some packages already
 created. Run it alone with `--preflight`. The registry's own error code says which
@@ -366,7 +374,8 @@ copies the rest. Two properties matter here:
   gets a pull failure for those tags until the image is built and the workflow re-run.
   Adding one later costs one more visibility flip.
 
-The copy itself is incremental. After the complete source preflight and licensing gates,
+The copy itself is incremental. After the complete digest-pinned source preflight,
+bootstrap attestation, and licensing gates,
 the publisher compares each source and target manifest digest. An exact match prints
 ``Already current; skipping copy`` and performs no registry write; only a missing or changed
 target runs ``crane copy``. This makes it safe to re-run the full guarded plan when one new

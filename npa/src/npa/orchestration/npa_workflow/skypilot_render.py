@@ -70,6 +70,9 @@ TOOL_REF_PIP_EXTRAS: dict[str, str] = {
     "workbench.sonic": "sonic",
 }
 
+# Declarative metadata, never a package-string passthrough.
+DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
+
 #: toolRef prefix -> third-party pip requirements the tool shells out to, with the executable
 #: that proves each is present. `cosmos fetch` runs `huggingface-cli`; the retired
 #: cosmos3-ea-fetch.yaml pip-installed `huggingface_hub[cli]` in its setup, and that one line
@@ -1186,6 +1189,14 @@ def render_setup_for_tool(
     extra = tool_pip_extra(tool_ref)
     if extra:
         parts.append(render_pip_extra_setup(extra))
+    declared_extra = str(config.get("pip_extra") or "").strip()
+    if declared_extra:
+        if declared_extra not in DECLARATIVE_PIP_EXTRAS:
+            allowed = ", ".join(sorted(DECLARATIVE_PIP_EXTRAS))
+            raise NpaWorkflowError(
+                f"config.pip_extra {declared_extra!r} is not allowed; choose: {allowed}"
+            )
+        parts.append(render_pip_extra_setup(declared_extra))
     parts.append(render_pip_requirements_setup(tool_pip_requirements(tool_ref)))
     backend = str(config.get("vlm_backend") or "").strip().lower()
     if tool_ref.startswith("workbench.vlm_eval") and backend in {
