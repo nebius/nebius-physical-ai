@@ -95,6 +95,144 @@ def test_fresh_deploy_refuses_nonempty_remote_state_before_apply(
     assert applied is False
 
 
+def _mock_fresh_deploy_until_terraform(monkeypatch, tmp_path) -> tuple[dict, list[str]]:
+    """Arrange a record-less deploy that reaches authoritative remote-state inspection."""
+    deployment = {
+        "deployment_id": "npa-agent-owner",
+        "deployment_name": "agent-a",
+        "project_alias": "project-a",
+        "runtime_namespace": "project-a/agent-a",
+        "repository": "org/repo",
+        "branch": "codex/owner",
+        "commit": "a" * 40,
+        "source_tree": "b" * 40,
+        "short_commit": "a" * 12,
+        "workspace_label": "Workspace",
+        "bootstrap_timestamp": "2026-08-10T00:00:00Z",
+    }
+    creds = {
+        "service_account_id": "sa-agent",
+        "nebius_api_key": "ak-agent",
+        "nebius_secret_key": "sk-agent",
+        "s3_bucket": "state-bucket",
+        "s3_endpoint": "https://storage.example.invalid",
+    }
+    mutations: list[str] = []
+    monkeypatch.setattr(
+        "npa.cli.agent.build_deployment_manifest", lambda **_kwargs: deployment
+    )
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_terraform_state_exists", lambda *_args: False
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.resolve_environment",
+        lambda *_args, **kwargs: SimpleNamespace(
+            project_id=kwargs.get("project_id"),
+            tenant_id=kwargs.get("tenant_id"),
+            region=kwargs.get("region"),
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._resolve_deploy_llm_credentials", lambda: ("tf-key", "model")
+    )
+    monkeypatch.setattr("npa.cli.agent._agent_hard_prereq_results", lambda _path: [])
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_token_factory_result",
+        lambda _key: SimpleNamespace(status="PASS"),
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.bootstrap_agent_environment", lambda *_args, **_kwargs: creds
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._resolve_deploy_storage_credentials", lambda **_kwargs: creds
+    )
+    monkeypatch.setattr("npa.clients.nebius.get_iam_token", lambda: "iam-token")
+    monkeypatch.setattr(
+        "npa.cli.agent._ensure_terraform_state_bucket", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._persist_agent_project_config", lambda **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._store_agent_record",
+        lambda *_args, **_kwargs: mutations.append("record"),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent._destroy_agent_terraform",
+        lambda *_args, **_kwargs: mutations.append("destroy"),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.prepare_working_dir",
+        lambda *_args, **_kwargs: tmp_path,
+    )
+    monkeypatch.setattr("npa.cli.agent.provisioner.init", lambda **_kwargs: None)
+    return deployment, mutations
+
+
+def _call_fresh_deploy() -> None:
+    from npa.cli.agent import deploy_cmd
+
+    deploy_cmd(
+        project="project-a",
+        name="agent-a",
+        project_id="project-id",
+        tenant_id="tenant-id",
+        region="us-central1",
+        ssh_user="ubuntu",
+        ssh_public_key_path="/unused/key.pub",
+        tf_var=[],
+        agent_port=8088,
+        backend_port=8787,
+        rerun_port=9090,
+        llm_model="model",
+        llm_models=[],
+        foxglove_embed_src="",
+        foxglove_org_slug="",
+        foxglove_live_url="",
+        no_public_https=False,
+        workspace_label="Workspace",
+        stock_demo=False,
+    )
+
+
+def test_fresh_deploy_state_inspection_failure_is_nondestructive(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.deploy.provisioner import ProvisionerError
+
+    _deployment, mutations = _mock_fresh_deploy_until_terraform(monkeypatch, tmp_path)
+
+    def fail_state_list(_tf_dir):
+        raise ProvisionerError("backend unavailable")
+
+    monkeypatch.setattr("npa.cli.agent.provisioner.state_list", fail_state_list)
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.apply", lambda **_kwargs: mutations.append("apply")
+    )
+
+    with pytest.raises(Exit):
+        _call_fresh_deploy()
+    assert mutations == []
+
+
+def test_fresh_deploy_remote_state_refusal_leaves_no_record(
+    monkeypatch, tmp_path
+) -> None:
+    _deployment, mutations = _mock_fresh_deploy_until_terraform(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.state_list",
+        lambda _tf_dir: ["nebius_compute_v1_instance.workbench"],
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.provisioner.apply", lambda **_kwargs: mutations.append("apply")
+    )
+
+    with pytest.raises(Exit):
+        _call_fresh_deploy()
+    assert mutations == []
+
+
 def test_destroy_refuses_terraform_state_without_agent_record(monkeypatch) -> None:
     destroyed = False
     monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
@@ -2800,7 +2938,32 @@ def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
     """Deploy aborts on a missing SSH key BEFORE any cloud IAM side effects."""
     from npa.cli.agent import deploy_cmd
 
+    stored: list[dict] = []
+    monkeypatch.setattr(
+        "npa.cli.agent.build_deployment_manifest",
+        lambda **_kwargs: {
+            "deployment_id": "npa-agent-owner",
+            "deployment_name": "agent",
+            "project_alias": "fresh",
+            "runtime_namespace": "fresh/agent",
+            "repository": "org/repo",
+            "branch": "codex/owner",
+            "commit": "a" * 40,
+            "source_tree": "b" * 40,
+            "short_commit": "a" * 12,
+            "workspace_label": "Workspace",
+            "bootstrap_timestamp": "2026-08-10T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: {})
+    monkeypatch.setattr(
+        "npa.cli.agent._agent_terraform_state_exists", lambda *_args: False
+    )
     monkeypatch.setenv("NPA_TERRAFORM_BIN", "/usr/bin/terraform")
+    monkeypatch.setattr(
+        "npa.cli.agent._store_agent_record",
+        lambda _project, _name, record: stored.append(record),
+    )
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
         lambda *a, **k: SimpleNamespace(
@@ -2836,6 +2999,41 @@ def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
             no_public_https=False,
         )
     assert exc.value.exit_code == 1
+    assert stored == []
+
+    # A failed prerequisite must not reserve the namespace: after fixing the
+    # local key, a retry proceeds to the next deployment phase.
+    (tmp_path / "missing.pub").write_text("ssh-ed25519 AAAA test\n")
+    (tmp_path / "missing").write_text("private\n")
+    reached_cloud_bootstrap = False
+
+    def _retry_reaches_cloud(*_args, **_kwargs):
+        nonlocal reached_cloud_bootstrap
+        reached_cloud_bootstrap = True
+        raise RuntimeError("retry sentinel")
+
+    monkeypatch.setattr(
+        "npa.clients.nebius.bootstrap_agent_environment", _retry_reaches_cloud
+    )
+    with pytest.raises(RuntimeError, match="retry sentinel"):
+        deploy_cmd(
+            project="fresh",
+            name="agent",
+            project_id="project-1",
+            tenant_id="tenant-1",
+            region="us-central1",
+            ssh_user="ubuntu",
+            ssh_public_key_path=str(tmp_path / "missing.pub"),
+            tf_var=[],
+            agent_port=8088,
+            backend_port=8787,
+            rerun_port=9090,
+            llm_model="model-a",
+            llm_models=[],
+            no_public_https=False,
+        )
+    assert reached_cloud_bootstrap is True
+    assert stored == []
 
 
 def test_deploy_fails_fast_on_missing_terraform(monkeypatch, tmp_path) -> None:

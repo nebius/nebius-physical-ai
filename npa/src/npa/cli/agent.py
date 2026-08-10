@@ -250,7 +250,13 @@ def _apply_agent_terraform(
         },
     )
     if require_empty_state:
-        existing_resources = provisioner.state_list(tf_dir)
+        try:
+            existing_resources = provisioner.state_list(tf_dir)
+        except ProvisionerError as exc:
+            raise DeploymentIdentityError(
+                "Unable to prove the Terraform state namespace is empty; "
+                "refusing to apply or destroy unknown resources"
+            ) from exc
         if existing_resources:
             raise DeploymentIdentityError(
                 "Terraform state already owns resources for this project/agent but "
@@ -8749,15 +8755,6 @@ def deploy_cmd(
                 "refusing to apply or adopt this namespace"
             )
         fresh_deployment = not bool(existing)
-        claim = dict(existing)
-        claim.update(
-            {
-                "deployment": deployment,
-                "lifecycle_status": "provisioning",
-                "preload_stock_demo": bool(stock_demo),
-            }
-        )
-        _store_agent_record(project, name, claim)
     except DeploymentIdentityError as exc:
         _fail(str(exc))
     profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
