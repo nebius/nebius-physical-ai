@@ -301,27 +301,32 @@ Validation-only Train19 then exercised that retention contract over another
 12,288,000 training environment steps and evaluated seven immutable checkpoints
 on all 64 validation scenarios. The last checkpoint entered the unchanged 5 cm
 basin on 47 scenarios and ended inside it on 30, but no policy sustained two
-consecutive sub-0.03 m/s steps. The task therefore records whether an unfinished
-one- or two-step dwell is broken and applies a bounded consequence at that exact
-transition. It is zero during transport, before the first stable step, while a
-partial dwell continues, after completion, and after reset. The positive dwell
-and completion rewards remain larger, post-completion departure retains its
-separate consequence, and the authoritative three-step verdict is unchanged.
+consecutive sub-0.03 m/s steps. A bounded consequence for breaking an unfinished
+one- or two-step dwell was tested next; it was zero during transport, before the
+first stable step, while a partial dwell continued, after completion, and after
+reset. This remained an experiment until live validation could distinguish
+credit assignment from target avoidance.
 
 Validation-only Train21 then trained another 12,288,000 environment steps with
 that partial-break signal and evaluated seven immutable checkpoints over all 64
 validation scenarios. Checkpoint 4400 reached the unchanged event and held it
 for 16 consecutive steps, but left before the sealed episode terminal; the
-remaining checkpoints still broke every partial event after one step. Isaac's
-common time-step scaling left the old post-success consequence at one quarter
-of the saturated dwell reward. Both exact-transition consequences are now
-`-4096`: the partial-break term fires only after a real one- or two-step event,
-and the departure term only after exact completion, so neither can suppress
-reach, grasp, lift, or transport. The one-shot completion bonus remains larger,
-the terminal evaluator contract is unchanged, and resumed PPO uses a smaller
-`0.0001` convergence learning rate to avoid overwriting the narrow stable policy
-observed at checkpoint 4400. Placement reward, break, completion, and departure
-curves are all retained in durable PPO telemetry for live verification.
+remaining checkpoints still broke every partial event after one step. A follow-up
+Train23 used the stronger event-gated consequence and a smaller `0.0001` resumed
+PPO learning rate. All seven checkpoints still scored zero strict placements,
+and every one regressed to a one-step maximum despite entering the 5 cm basin on
+up to 54/64 scenarios. The negative transition therefore taught avoidance of
+the low-speed state and is not part of the production reward.
+
+The strict dwell reward is now positive-only and quadratic over the unchanged
+three-step counter: fractions `1/9`, `4/9`, and `1` at steps one through three,
+then `1` for every continued stable step. Weight `4096` makes the second and
+third steps materially more valuable than a fly-through while keeping the first
+step a positive waypoint; no approach or break state is negative. The separate
+post-completion departure consequence remains exact-event-gated, the one-shot
+completion bonus remains larger, and the terminal evaluator contract is
+unchanged. Placement reward, completion, and departure curves are retained in
+durable PPO telemetry for live verification.
 
 ## Required integration ladder
 

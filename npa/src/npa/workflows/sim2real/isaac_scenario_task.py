@@ -62,7 +62,8 @@ PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT = 256.0
 # required steps.  Reward the exact consecutive-step event itself so PPO can
 # distinguish a transient slow sample from the required dwell.  This does not
 # change any success threshold and remains zero outside the strict event.
-PLACEMENT_STRICT_DWELL_REWARD_WEIGHT = 2048.0
+PLACEMENT_STRICT_DWELL_REWARD_WEIGHT = 4096.0
+PLACEMENT_DWELL_REWARD_EXPONENT = 2.0
 # Train17 earned nonzero dwell reward and produced a nine-step strict placement,
 # but every validation policy later drove the object away before timeout. Keep
 # the saturated positive dwell, restore the sparse completion reward that was
@@ -73,16 +74,11 @@ PLACEMENT_STRICT_DWELL_REWARD_WEIGHT = 2048.0
 # is still identically zero before exact completion, so unlike the rejected
 # global -5000 drop penalty it cannot suppress reach, grasp, lift, or transport.
 PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT = -4096.0
-# Train19 entered the unchanged 5 cm basin on 47/64 validation scenarios and
-# crossed below 0.03 m/s on several, but every unfinished event broke after one
-# stable step. Losing the future dwell bonus alone supplied no immediate credit
-# assignment for that exact failure. Penalize only the loss of a one- or two-step
-# partial dwell; transport, first arrival, completed holds, and resets remain
-# unaffected. Train21 still broke every unfinished validation event after its
-# first step. Make the exact break cost twice the saturated dwell reward while
-# leaving the larger one-shot completion bonus dominant. Because the signal is
-# transition-gated, it cannot make the basin repulsive before a real stable step.
-PLACEMENT_PARTIAL_DWELL_BREAK_WEIGHT = -4096.0
+# Train23 proved that even a transition-gated negative break consequence made
+# the exact stable state avoidable: every validation checkpoint regressed to a
+# one-step maximum. Use only positive quadratic progression for unfinished dwell.
+# The first step remains a waypoint while the second, third, and continued stable
+# steps dominate a fly-through without making approach negative anywhere.
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
 _DROP_PENALTY_TYPE: type | None = None
@@ -235,10 +231,6 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_stable_placement_newly_achieved = torch.zeros(
             env.num_envs, dtype=torch.bool, device=env.device
         )
-    if not hasattr(env, "npa_stable_placement_dwell_broken"):
-        env.npa_stable_placement_dwell_broken = torch.zeros(
-            env.num_envs, dtype=torch.bool, device=env.device
-        )
     if not hasattr(env, "npa_previous_placement_distance"):
         env.npa_previous_placement_distance = torch.full(
             (env.num_envs,), float("inf"), dtype=torch.float, device=env.device
@@ -266,7 +258,6 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
     env.npa_stable_placement_reward_steps[ids] = 0
     env.npa_stable_placement_achieved[ids] = False
     env.npa_stable_placement_newly_achieved[ids] = False
-    env.npa_stable_placement_dwell_broken[ids] = False
     env.npa_previous_placement_distance[ids] = float("inf")
     env.npa_scenario_applied_counts += torch.bincount(scenario_ids, minlength=len(rows))
     return ids, scenario_ids
@@ -717,13 +708,17 @@ def stable_placement_dwell_signal(
     previous_steps: int,
     *,
     required_steps: int = STABLE_PLACEMENT_STEPS,
+    reward_exponent: float = PLACEMENT_DWELL_REWARD_EXPONENT,
 ) -> tuple[int, float]:
-    """Advance the exact strict-event dwell counter for CPU contract tests."""
+    """Advance the exact strict-event dwell with positive-only progression."""
 
     if required_steps <= 0:
         raise ValueError("required_steps must be positive")
+    if reward_exponent <= 0:
+        raise ValueError("reward_exponent must be positive")
     steps = min(int(required_steps), int(previous_steps) + 1) if is_stable else 0
-    return steps, float(steps) / float(required_steps)
+    fraction = float(steps) / float(required_steps)
+    return steps, fraction ** float(reward_exponent)
 
 
 def stable_placement_retention_signal(
@@ -749,27 +744,6 @@ def stable_placement_retention_signal(
     return steps, dwell, achieved_now, float(newly_achieved), departure
 
 
-def stable_placement_dwell_break_signal(
-    is_stable: bool,
-    previous_steps: int,
-    achieved: bool,
-    *,
-    required_steps: int = STABLE_PLACEMENT_STEPS,
-) -> float:
-    """Return one only when an unfinished strict dwell is lost.
-
-    This is zero before the first strict step, throughout transport, after a
-    completed event, and while the partial event continues. It gives PPO an
-    immediate consequence for the exact one-step break observed in Train19
-    without changing or approximating the authoritative three-step event.
-    """
-
-    if required_steps <= 0:
-        raise ValueError("required_steps must be positive")
-    partial = 0 < int(previous_steps) < int(required_steps) and not achieved
-    return float(partial and not is_stable)
-
-
 def stable_placement_dwell(
     env: Any,
     *,
@@ -778,13 +752,16 @@ def stable_placement_dwell(
     success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
     required_steps: int = STABLE_PLACEMENT_STEPS,
+    reward_exponent: float = PLACEMENT_DWELL_REWARD_EXPONENT,
 ) -> Any:
-    """Reward consecutive strict stable-placement steps, resetting on a miss."""
+    """Reward quadratic strict dwell progression, resetting on a miss."""
 
     import torch  # noqa: WPS433 - Isaac runtime dependency
 
     if required_steps <= 0:
         raise ValueError("required_steps must be positive")
+    if reward_exponent <= 0:
+        raise ValueError("reward_exponent must be positive")
     rows = scenarios_from_env()
     _ensure_runtime_buffers(env, rows)
     distance, speed, position, _ = _placement_state(
@@ -799,12 +776,6 @@ def stable_placement_dwell(
         & (speed < float(stable_speed_mps))
     )
     previous_steps = env.npa_stable_placement_reward_steps
-    env.npa_stable_placement_dwell_broken = (
-        ~stable
-        & (previous_steps > 0)
-        & (previous_steps < int(required_steps))
-        & ~env.npa_stable_placement_achieved
-    )
     next_steps = torch.where(
         stable,
         torch.clamp(
@@ -821,9 +792,10 @@ def stable_placement_dwell(
     env.npa_stable_placement_reward_steps = next_steps
     env.npa_stable_placement_newly_achieved = newly_achieved
     env.npa_stable_placement_achieved |= newly_achieved
-    return env.npa_stable_placement_reward_steps.to(position.dtype) / float(
+    fraction = env.npa_stable_placement_reward_steps.to(position.dtype) / float(
         required_steps
     )
+    return fraction ** float(reward_exponent)
 
 
 def stable_placement_completion(env: Any) -> Any:
@@ -832,14 +804,6 @@ def stable_placement_completion(env: Any) -> Any:
     import torch  # noqa: WPS433 - Isaac runtime dependency
 
     return env.npa_stable_placement_newly_achieved.to(dtype=torch.float32)
-
-
-def stable_placement_dwell_break(env: Any) -> Any:
-    """Penalize breaking a one- or two-step strict dwell before completion."""
-
-    import torch  # noqa: WPS433 - Isaac runtime dependency
-
-    return env.npa_stable_placement_dwell_broken.to(dtype=torch.float32)
 
 
 def stable_placement_departure(
@@ -1054,11 +1018,8 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
             "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
             "required_steps": STABLE_PLACEMENT_STEPS,
+            "reward_exponent": PLACEMENT_DWELL_REWARD_EXPONENT,
         },
-    )
-    env_cfg.rewards.stable_placement_dwell_break = RewardTermCfg(
-        func=stable_placement_dwell_break,
-        weight=PLACEMENT_PARTIAL_DWELL_BREAK_WEIGHT,
     )
     env_cfg.rewards.stable_placement_completion = RewardTermCfg(
         func=stable_placement_completion,
@@ -1132,6 +1093,7 @@ def install_env_cfg(env_cfg: Any) -> bool:
                     "strict_dwell_reward_weight": (
                         PLACEMENT_STRICT_DWELL_REWARD_WEIGHT
                     ),
+                    "strict_dwell_reward_exponent": (PLACEMENT_DWELL_REWARD_EXPONENT),
                     "goal_curriculum_enabled": os.environ.get(
                         "NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0"
                     )

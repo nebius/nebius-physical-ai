@@ -20,6 +20,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT,
     PLACEMENT_BASIN_WIDTH_M,
     PLACEMENT_COMPLETION_REWARD_WEIGHT,
+    PLACEMENT_DWELL_REWARD_EXPONENT,
     PLACEMENT_DWELL_SCALE,
     PLACEMENT_DROP_PENALTY_WEIGHT,
     PLACEMENT_GOAL_CURRICULUM_LIFT_M,
@@ -27,7 +28,6 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_HOLD_REWARD_FLOOR,
     PLACEMENT_HOLD_STD_M,
     PLACEMENT_NEAR_STD_M,
-    PLACEMENT_PARTIAL_DWELL_BREAK_WEIGHT,
     PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT,
     PLACEMENT_MINIMAL_LIFT_M,
     PLACEMENT_PROGRESS_REWARD_WEIGHT,
@@ -45,7 +45,6 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     placement_curriculum_signal,
     placement_progress_signal,
     stable_placement_dwell_signal,
-    stable_placement_dwell_break_signal,
     stable_placement_retention_signal,
     strict_basin_settling_signal,
     goal_curriculum_fraction,
@@ -301,8 +300,8 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert PLACEMENT_COMPLETION_REWARD_WEIGHT == 5000.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     assert PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT == 256.0
-    assert PLACEMENT_STRICT_DWELL_REWARD_WEIGHT == 2048.0
-    assert PLACEMENT_PARTIAL_DWELL_BREAK_WEIGHT == -4096.0
+    assert PLACEMENT_STRICT_DWELL_REWARD_WEIGHT == 4096.0
+    assert PLACEMENT_DWELL_REWARD_EXPONENT == 2.0
     assert PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT == -4096.0
     assert STABLE_PLACEMENT_STEPS == 3
     source = module_source()
@@ -312,16 +311,13 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert "env_cfg.rewards.potential_placement_progress" in source
     assert "env_cfg.rewards.strict_basin_settling" in source
     assert "env_cfg.rewards.stable_placement_dwell" in source
-    assert "env_cfg.rewards.stable_placement_dwell_break" in source
+    assert "env_cfg.rewards.stable_placement_dwell_break" not in source
     assert "env_cfg.rewards.stable_placement_departure" in source
     assert "env_cfg.rewards.object_drop_penalty" in source
     assert "env_cfg.rewards.stable_placement_completion" in source
     assert "func=stable_placement_completion" in source
     assert source.index("env_cfg.rewards.stable_placement_completion") < source.index(
         "if success_termination_enabled"
-    )
-    assert source.index("env_cfg.rewards.stable_placement_dwell") < source.index(
-        "env_cfg.rewards.stable_placement_dwell_break"
     )
     assert "npa_previous_placement_distance" in source
     assert "combine_frame_transforms" in source
@@ -374,39 +370,30 @@ def test_signed_placement_progress_penalizes_departure_and_is_reset_safe() -> No
 
 def test_strict_dwell_reward_requires_three_unchanged_stable_steps() -> None:
     steps, reward = stable_placement_dwell_signal(True, 0)
-    assert (steps, reward) == (1, pytest.approx(1 / 3))
+    assert (steps, reward) == (1, pytest.approx(1 / 9))
     steps, reward = stable_placement_dwell_signal(True, steps)
-    assert (steps, reward) == (2, pytest.approx(2 / 3))
+    assert (steps, reward) == (2, pytest.approx(4 / 9))
     steps, reward = stable_placement_dwell_signal(True, steps)
     assert (steps, reward) == (3, 1.0)
     assert stable_placement_dwell_signal(True, steps) == (3, 1.0)
     assert stable_placement_dwell_signal(False, steps) == (0, 0.0)
     with pytest.raises(ValueError, match="positive"):
         stable_placement_dwell_signal(True, 0, required_steps=0)
+    with pytest.raises(ValueError, match="positive"):
+        stable_placement_dwell_signal(True, 0, reward_exponent=0)
 
 
 def test_stable_placement_retention_rewards_once_and_penalizes_departure() -> None:
     state = stable_placement_retention_signal(True, 0, False)
-    assert state == (1, pytest.approx(1 / 3), False, 0.0, 0.0)
+    assert state == (1, pytest.approx(1 / 9), False, 0.0, 0.0)
     state = stable_placement_retention_signal(True, state[0], state[2])
-    assert state == (2, pytest.approx(2 / 3), False, 0.0, 0.0)
+    assert state == (2, pytest.approx(4 / 9), False, 0.0, 0.0)
     state = stable_placement_retention_signal(True, state[0], state[2])
     assert state == (3, 1.0, True, 1.0, 0.0)
     state = stable_placement_retention_signal(True, state[0], state[2])
     assert state == (3, 1.0, True, 0.0, 0.0)
     state = stable_placement_retention_signal(False, state[0], state[2])
     assert state == (0, 0.0, True, 0.0, 1.0)
-
-
-def test_partial_strict_dwell_break_is_bounded_to_unfinished_events() -> None:
-    assert stable_placement_dwell_break_signal(False, 0, False) == 0.0
-    assert stable_placement_dwell_break_signal(True, 1, False) == 0.0
-    assert stable_placement_dwell_break_signal(False, 1, False) == 1.0
-    assert stable_placement_dwell_break_signal(False, 2, False) == 1.0
-    assert stable_placement_dwell_break_signal(False, 3, True) == 0.0
-    assert stable_placement_dwell_break_signal(False, 1, True) == 0.0
-    with pytest.raises(ValueError, match="positive"):
-        stable_placement_dwell_break_signal(False, 1, False, required_steps=0)
 
 
 def test_strict_basin_settling_rewards_braking_without_target_avoidance() -> None:
