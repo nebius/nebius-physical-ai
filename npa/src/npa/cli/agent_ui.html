@@ -7224,7 +7224,15 @@
           host.appendChild(gallery);
         }
         const diagnostics = document.createElement("details");
-        diagnostics.innerHTML = "<summary><strong>Secondary training/offline diagnostics</strong></summary><p>Training loss and offline action MSE are engineering diagnostics only. They are not used as this run’s task-performance proof.</p>";
+        const learning = summary.learning && typeof summary.learning === "object" ? summary.learning : {};
+        const horizon = learning.per_horizon_mse && typeof learning.per_horizon_mse === "object" ? learning.per_horizon_mse : {};
+        diagnostics.innerHTML = "<summary><strong>Required offline rigor and secondary training diagnostics</strong></summary>" +
+          "<p>Closed-loop outcomes remain the primary task proof. The candidate must also pass the nontrivial offline skill, repeat-noise, per-dimension, per-horizon, and robust-loss prerequisites.</p>" +
+          "<p><strong>Train-mean floor:</strong> " + Number(learning.train_mean_predictor_mse || 0).toFixed(6) +
+          " · <strong>skill:</strong> " + Number(learning.baseline_skill_score || 0).toFixed(4) + " → " + Number(learning.posttrain_skill_score || 0).toFixed(4) +
+          " · <strong>noise multiple:</strong> " + Number(learning.repeat_noise_multiple || 0).toFixed(1) + "×" +
+          " · <strong>horizons:</strong> " + String((horizon.posttrain || []).length) +
+          " · <strong>offline gate:</strong> " + String(Boolean(learning.gate_passed)).toUpperCase() + "</p>";
         host.appendChild(diagnostics);
         const actions = document.createElement("div");
         actions.className = "learning-replay-actions";
@@ -7233,6 +7241,9 @@
           ["Open task MCAP", inventory.find((item) => String(item.key || "").endsWith("/reports/task-performance.mcap")), "load"],
           ["Play labeled comparison", inventory.find((item) => String(item.key || "").endsWith("/reports/paired-task-performance.mp4")), "preview"],
           ["Open JSON report", inventory.find((item) => String(item.key || "").endsWith("/reports/task-performance-report.json")), "preview"],
+          ["Open offline rigor RRD", inventory.find((item) => String(item.key || "").endsWith("/reports/offline-learning.rrd")), "load"],
+          ["Open offline rigor MCAP", inventory.find((item) => String(item.key || "").endsWith("/reports/offline-learning.mcap")), "load"],
+          ["Open offline rigor report", inventory.find((item) => String(item.key || "").endsWith("/reports/learning-rigor-report.json")), "preview"],
         ];
         for (const [buttonLabel, item, mode] of candidates) {
           if (!item) continue;
@@ -7383,7 +7394,7 @@
         // click handlers (bindClick calls fn(event)).
         const requestedRun = (typeof explicitRunId === "string" && explicitRunId.trim())
           ? explicitRunId.trim()
-          : selectedRunIdFromUi();
+          : selectedArtifactRunIdFromUi();
         if (!requestedRun) throw new Error("Select a run or enter a run_id first");
         const selection = resolveRunSelection(requestedRun);
         const entry = (explicitEntry && typeof explicitEntry === "object")
@@ -9194,7 +9205,7 @@
         const requested = explicitSelection && typeof explicitSelection === "object" &&
           Object.prototype.hasOwnProperty.call(explicitSelection, "run_id")
           ? explicitSelection
-          : resolveRunSelection(selectedRunIdFromUi());
+          : resolveRunSelection(selectedArtifactRunIdFromUi());
         const runId = String(requested.run_id || "").trim();
         const runRef = String(requested.run_ref || "").trim();
         if (!runId) {

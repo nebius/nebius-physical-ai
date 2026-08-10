@@ -66,8 +66,8 @@ describe("GR00T closed-loop task performance (live system)", () => {
     cy.get("#taskPerformanceSeedSelector option").should("have.length", 24);
     cy.get(".paired-rollout-videos video").should("have.length", 2);
     cy.get("#artifactRunSummary details")
-      .should("contain.text", "Secondary training/offline diagnostics")
-      .and("contain.text", "not used as this run’s task-performance proof");
+      .should("contain.text", "Required offline rigor")
+      .and("contain.text", "offline gate");
     cy.get("#artifactList").should("not.be.visible");
   });
 

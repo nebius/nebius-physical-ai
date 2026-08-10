@@ -293,9 +293,10 @@ def _apply_loaded_artifact(
         capability_path = _publish_rrd_recording(local_path)
         # The systemd Rerun service opens RRD_PATH while nginx serves
         # RECORDING_PATH. Keep both atomically on the selected real artifact.
-        rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")
-        shutil.copy2(local_path, rrd_tmp)
-        rrd_tmp.replace(RRD_PATH)
+        if RRD_PATH.parent.is_dir():
+            rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")
+            shutil.copy2(local_path, rrd_tmp)
+            rrd_tmp.replace(RRD_PATH)
         sim_viz["served_recording_sha256"] = hashlib.sha256(RECORDING_PATH.read_bytes()).hexdigest()
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False

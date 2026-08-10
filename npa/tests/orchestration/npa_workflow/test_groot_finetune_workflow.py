@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
+import pytest
 import yaml
 
 from npa.orchestration.npa_workflow.interpreter import build_plan
@@ -26,10 +28,19 @@ def test_groot_workflow_retrains_selects_and_tests_closed_loop() -> None:
     plan = build_plan(spec, run_id="groot-pusht-closed-loop")
 
     assert [item.state for item in plan.steps] == [
+        "access_capacity_preflight",
         "resolve_task_contract",
         "prepare_retraining_split",
+        "evaluate_offline_baseline",
         "retrain_task_policy",
         "resolve_trained_checkpoint",
+        "probe_checkpoint_2500",
+        "probe_checkpoint_5000",
+        "probe_checkpoint_10000",
+        "select_offline_checkpoint",
+        "compare_offline_learning",
+        "emit_offline_mcap",
+        "emit_offline_rrd",
         "evaluate_validation_baseline",
         "evaluate_validation_candidate",
         "analyze_validation_outcomes",
@@ -43,10 +54,19 @@ def test_groot_workflow_retrains_selects_and_tests_closed_loop() -> None:
         "publish",
     ]
     assert [item.tool_ref for item in plan.steps] == [
+        "workflow.groot.preflight_rigor",
         "workflow.groot.resolve_task_contract",
         "workflow.groot.prepare_split",
+        "workbench.groot.baseline_eval",
         "workbench.groot.finetune",
         "workflow.groot.resolve_trained_checkpoint",
+        "workbench.groot.probe_2500_eval",
+        "workbench.groot.probe_5000_eval",
+        "workbench.groot.probe_10000_eval",
+        "workflow.groot.select_offline_checkpoint",
+        "workflow.groot.compare_learning",
+        "workflow.groot.emit_learning_mcap",
+        "workflow.groot.emit_learning_rrd",
         "workbench.groot.evaluate_baseline_closed_loop.validation",
         "workbench.groot.evaluate_trained_closed_loop.validation",
         "workflow.groot.analyze_validation_outcomes",
@@ -59,22 +79,47 @@ def test_groot_workflow_retrains_selects_and_tests_closed_loop() -> None:
         "workflow.groot.emit_task_rrd",
         "workflow.groot.publish_task_performance",
     ]
-    assert int(spec.config["max_steps"]) == 6000
-    assert int(spec.config["train_episodes"]) == 180
+    assert int(spec.config["max_steps"]) == 10000
+    assert int(spec.config["train_episodes"]) == 154
     assert int(spec.config["heldout_episodes"]) == 26
-    assert int(spec.config["validation_episodes"]) >= 20
-    assert int(spec.config["paired_episodes"]) >= 20
-    assert spec.config["validation_seed_namespace"] != spec.config["final_seed_namespace"]
-    assert _option_value(plan.steps[1].argv, "--max-steps") == "6000"
-    assert _option_value(plan.steps[2].argv, "--max-steps") == "6000"
-    assert plan.steps[2].resources_profile["accelerators"].endswith(":7")
-    for step in (plan.steps[4], plan.steps[5], plan.steps[8], plan.steps[9]):
+    assert int(spec.config["final_episodes"]) == 26
+    assert int(spec.config["validation_episodes"]) >= 24
+    assert int(spec.config["paired_episodes"]) >= 24
+    assert int(spec.config["global_batch_size"]) >= 128
+    assert int(spec.config["global_batch_size"]) == (
+        int(spec.config["gpu_count"])
+        * int(spec.config["per_device_batch_size"])
+        * int(spec.config["gradient_accumulation_steps"])
+    )
+    assert (
+        spec.config["validation_seed_namespace"] != spec.config["final_seed_namespace"]
+    )
+    assert _option_value(plan.steps[2].argv, "--max-steps") == "10000"
+    assert _option_value(plan.steps[4].argv, "--max-steps") == "10000"
+    assert plan.steps[4].resources_profile["accelerators"].endswith(":8")
+    trainer_argv = plan.steps[4].argv
+    assert _option_value(trainer_argv, "--per-device-batch-size") == "1"
+    assert _option_value(trainer_argv, "--gradient-accumulation-steps") == "16"
+    override_values = [
+        trainer_argv[index + 1]
+        for index, value in enumerate(trainer_argv[:-1])
+        if value == "--override"
+    ]
+    assert {
+        "tune-projector=true",
+        "tune-diffusion-model=true",
+    } <= set(override_values)
+    assert spec.config["action_representation"] == "ABSOLUTE"
+    assert all("denoising" not in value for step in plan.steps for value in step.argv)
+    for step in (plan.steps[13], plan.steps[14], plan.steps[17], plan.steps[18]):
         assert step.resources_profile["accelerators"].endswith(":1")
         assert _option_value(step.argv, "--episodes") == "24"
         assert _option_value(step.argv, "--horizon") == "300"
-    assert "checkpoints/baseline/" in _option_value(plan.steps[8].argv, "--checkpoint-uri")
+    assert "offline/baseline/evaluation.json" in _option_value(
+        plan.steps[17].argv, "--checkpoint-ref-uri"
+    )
     assert "selected-checkpoint.json" in _option_value(
-        plan.steps[9].argv, "--checkpoint-ref-uri"
+        plan.steps[18].argv, "--checkpoint-ref-uri"
     )
 
 
@@ -95,29 +140,77 @@ def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(monkeypatch) ->
         assert [task["name"] for task in scheduler["tasks"]] == [
             step.state for step in prepared.plan.steps
         ]
-        assert scheduler["tasks"][2]["resources"]["accelerators"].endswith(":7")
+        assert scheduler["tasks"][4]["resources"]["accelerators"].endswith(":8")
 
-        documents = [doc for doc in yaml.safe_load_all(prepared.skypilot_yaml_path.read_text()) if doc]
-        assert len(documents) == 16
+        documents = [
+            doc
+            for doc in yaml.safe_load_all(prepared.skypilot_yaml_path.read_text())
+            if doc
+        ]
+        assert len(documents) == 25
         stages = documents[1:]
-        assert "groot_task_performance resolve-task-contract" in stages[0]["run"]
-        assert "groot_learning prepare-split" in stages[1]["run"]
-        assert "workbench groot finetune" in stages[2]["run"]
-        assert "groot_task_performance resolve-trained-checkpoint" in stages[3]["run"]
-        assert "--phase baseline" in stages[4]["run"]
-        assert "--phase trained" in stages[5]["run"]
-        assert "groot_task_performance analyze-paired-outcomes" in stages[6]["run"]
-        assert "groot_task_performance select-checkpoint" in stages[7]["run"]
-        assert "groot_task_performance analyze-paired-outcomes" in stages[10]["run"]
-        assert "groot_task_performance render-task-rollouts" in stages[11]["run"]
-        assert "groot_task_performance emit-mcap" in stages[12]["run"]
-        assert "groot_task_performance emit-rrd" in stages[13]["run"]
-        assert "groot_task_performance publish" in stages[14]["run"]
-        assert "gym-pusht==0.1.6" in stages[4]["setup"]
-        assert "transformers==4.57.3" in stages[5]["setup"]
-        assert "[viz]" in stages[13]["setup"]
-        assert stages[4]["config"]["kubernetes"]["pod_config"]["spec"][
-            "securityContext"
-        ] == {"runAsUser": 0, "runAsGroup": 0}
+        by_name = {stage["name"]: stage for stage in stages}
+        assert (
+            "groot_learning preflight-rigor"
+            in by_name["access_capacity_preflight"]["run"]
+        )
+        assert (
+            "groot_task_performance resolve-task-contract"
+            in by_name["resolve_task_contract"]["run"]
+        )
+        assert (
+            "groot_learning prepare-split" in by_name["prepare_retraining_split"]["run"]
+        )
+        assert "workbench groot finetune" in by_name["retrain_task_policy"]["run"]
+        assert (
+            "groot_learning select-offline-checkpoint"
+            in by_name["select_offline_checkpoint"]["run"]
+        )
+        assert (
+            "groot_task_performance analyze-paired-outcomes"
+            in by_name["analyze_paired_outcomes"]["run"]
+        )
+        assert "groot_task_performance publish" in by_name["publish"]["run"]
+        assert "gym-pusht==0.1.6" in by_name["evaluate_validation_baseline"]["setup"]
+        assert (
+            "transformers==4.57.3" in by_name["evaluate_validation_candidate"]["setup"]
+        )
+        assert "[viz]" in by_name["emit_rrd"]["setup"]
+        assert by_name["evaluate_validation_baseline"]["config"]["kubernetes"][
+            "pod_config"
+        ]["spec"]["securityContext"] == {"runAsUser": 0, "runAsGroup": 0}
     finally:
         prepared.temp_dir.cleanup()
+
+
+@pytest.mark.parametrize(
+    ("gpu_count", "accumulation"),
+    [(1, 128), (2, 64), (8, 16)],
+)
+def test_groot_workflow_gpu_count_matrix(
+    gpu_count: int, accumulation: int
+) -> None:
+    spec = copy.deepcopy(load_spec(SPEC_PATH))
+    spec.config.update(
+        {
+            "gpu_count": str(gpu_count),
+            "per_device_batch_size": "1",
+            "gradient_accumulation_steps": str(accumulation),
+            "global_batch_size": "128",
+        }
+    )
+    plan = build_plan(spec, run_id=f"groot-gpu-matrix-{gpu_count}")
+    scheduler = build_scheduler_plan(
+        spec, plan.steps, run_id=f"groot-gpu-matrix-{gpu_count}"
+    )
+
+    trainer = plan.steps[4]
+    assert trainer.resources_profile["accelerators"] == f"RTXPRO6000:{gpu_count}"
+    assert _option_value(trainer.argv, "--num-gpus") == str(gpu_count)
+    assert _option_value(trainer.argv, "--global-batch-size") == "128"
+    assert _option_value(trainer.argv, "--gradient-accumulation-steps") == str(
+        accumulation
+    )
+    assert scheduler["tasks"][4]["resources"]["accelerators"] == (
+        f"RTXPRO6000:{gpu_count}"
+    )

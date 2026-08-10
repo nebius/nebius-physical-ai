@@ -7,8 +7,11 @@ runs real `Gr00tPolicy.get_action` outputs in live `gym_pusht/PushT-v0` physics;
 it is not offline dataset replay or action-regression scoring. Its serial graph is:
 
 ```text
-resolve_task_contract -> prepare_retraining_split -> retrain_task_policy ->
-resolve_trained_checkpoint -> evaluate_validation_baseline ->
+access_capacity_preflight -> resolve_task_contract -> prepare_retraining_split ->
+evaluate_offline_baseline -> retrain_task_policy -> resolve_trained_checkpoint ->
+probe_checkpoint_2500 -> probe_checkpoint_5000 -> probe_checkpoint_10000 ->
+select_offline_checkpoint -> compare_offline_learning -> emit_offline_mcap ->
+emit_offline_rrd -> evaluate_validation_baseline ->
 evaluate_validation_candidate -> analyze_validation_outcomes ->
 select_checkpoint -> evaluate_baseline_closed_loop ->
 evaluate_trained_closed_loop -> analyze_paired_outcomes -> render_task_rollouts ->
@@ -59,10 +62,13 @@ npa workbench workflow submit "$SPEC" \
   --plan-only
 ```
 
-The plan must show all 15 semantic phases. Retraining uses the preflighted
-`max_steps` value on seven GPUs. Validation and final evaluation each use at
-least 20 paired episodes, distinct seed namespaces, and identical conditions
-within each pair.
+The plan must show all 24 semantic phases. The default run uses eight GPUs, but
+`gpu_count` is parameterized from one to the maximum schedulable count. Keep
+`global_batch_size = gpu_count * per_device_batch_size *
+gradient_accumulation_steps`; the checked-in default is 128. Preflight also
+requires more than one epoch of train-split coverage. Validation and final
+evaluation each use at least 24 paired episodes, distinct seed namespaces, and
+identical conditions within each pair.
 
 ## Submit evaluation
 
@@ -75,11 +81,14 @@ npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
   --var bucket=<bucket> \
   --var source_data_uri=s3://<bucket>/datasets/my-groot-dataset/ \
-  --var baseline_checkpoint_uri=s3://<bucket>/checkpoints/baseline/ \
-  --var baseline_checkpoint_sha256=<identity> \
-  --var train_episodes=180 \
+  --var gpu_count=8 \
+  --var per_device_batch_size=1 \
+  --var gradient_accumulation_steps=16 \
+  --var global_batch_size=128 \
+  --var train_episodes=154 \
   --var heldout_episodes=26 \
-  --var max_steps=6000 \
+  --var final_episodes=26 \
+  --var max_steps=10000 \
   --var validation_episodes=24 \
   --var paired_episodes=24 \
   --registry cr.eu-north1.nebius.cloud/<registry-id> \
@@ -88,9 +97,10 @@ npa workbench workflow submit "$SPEC" \
   --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
-Do not reduce `paired_episodes` below 20, substitute a scripted controller, or
-change the final seeds after inspecting their results. Use separate validation
-seeds for any further training or checkpoint selection.
+Do not reduce either seed set below 24, substitute a scripted controller, or
+change the final seeds after inspecting their results. The workflow never reads
+the final split or final seed namespace until positive-skill, nontrivial-effect,
+repeat-noise, per-dimension, robust-loss, and paired validation gates pass.
 
 ## Find the run and outputs
 
@@ -109,8 +119,14 @@ With the default prefix, checkpoints and provenance are under:
 
 ```text
 s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/task-contract.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/rigor-preflight.json
 s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/split/manifest.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/offline/baseline/evaluation.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/offline/probes/checkpoint-{2500,5000,10000}.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/offline/selected-checkpoint.json
 s3://<bucket>/groot-1-7-task-performance/<run-id>/checkpoints/candidate/
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/learning-rigor-report.json
+s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/offline-learning.{mcap,rrd}
 s3://<bucket>/groot-1-7-task-performance/<run-id>/validation/report.json
 s3://<bucket>/groot-1-7-task-performance/<run-id>/reports/selected-checkpoint.json
 s3://<bucket>/groot-1-7-task-performance/<run-id>/eval/baseline/evaluation.json
@@ -129,6 +145,9 @@ object/goal pose, task progress, success, aggregate rates, paired deltas, and
 logs. Rerun opens on synchronized baseline/trained cameras, object/goal
 trajectory, coverage, success/termination, aggregate rates, paired deltas, and
 the confidence interval. Training loss and offline action MSE are secondary.
+The offline recordings additionally expose exactly one per-horizon MSE value
+for every configured action-horizon position, the checkpoint validation curve,
+real optimizer-step loss, trivial floors, repeat spread, and weight identities.
 
 The terminal `publish` stage downloads and independently parses both recording
 formats. It succeeds only after their run IDs, schemas/topics, Rerun identity,

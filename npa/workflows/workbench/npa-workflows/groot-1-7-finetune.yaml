@@ -4,31 +4,44 @@ kind: Workflow
 metadata:
   name: groot-1-7-finetune
   description: >
-    Prove canonical PushT provenance, retrain GR00T N1.7 on a leakage-free
-    cohort with seven GPUs, select only on separate paired closed-loop
-    validation seeds, then score untouched paired final seeds in live physics
-    and publish synchronized task-outcome artifacts. This is simulation and
-    makes no physical-robot claim.
+    Prove canonical PushT provenance, trivial-predictor and repeat-noise floors,
+    retrain GR00T N1.7 with a parameterized 1-to-many GPU contract, probe saved
+    checkpoints on validation-only data, and only then run paired closed-loop
+    validation and untouched final seeds in live physics. This is simulation
+    and makes no physical-robot claim.
 
 config:
   bucket: example-bucket
   prefix: "groot-1-7-task-performance/{{run.id}}"
   source_data_uri: "s3://{{config.bucket}}/groot-1-7-finetune/source/data/"
-  baseline_checkpoint_uri: "s3://{{config.bucket}}/groot-1-7-finetune/checkpoints/baseline/"
-  baseline_checkpoint_sha256: ae0edc5d0b8e8e13b7c892e18dd126d16feb9f1fb90a8dc64e7f4f55847143fb
+  baseline_checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/baseline/"
   base_model: nvidia/GR00T-N1.7-3B
   robot_embodiment: NEW_EMBODIMENT
+  action_representation: ABSOLUTE
   gpu_type: RTXPRO6000
-  gpu_count: "7"
-  global_batch_size: "7"
+  gpu_count: "8"
+  per_device_batch_size: "1"
+  gradient_accumulation_steps: "16"
+  global_batch_size: "128"
+  minimum_effective_global_batch: "128"
+  minimum_epochs: "2.0"
   nccl_transport: socket
   dataloader_num_workers: "0"
   split_seed: groot17-pusht-retrain-v2-20260808
-  train_episodes: "180"
+  train_episodes: "154"
   heldout_episodes: "26"
-  max_steps: "6000"
-  save_steps: "6000"
-  save_total_limit: "1"
+  final_episodes: "26"
+  max_steps: "10000"
+  save_steps: "2500"
+  save_total_limit: "4"
+  action_horizon: "16"
+  minimum_relative_improvement: "0.10"
+  minimum_skill_score: "0.05"
+  repeat_noise_multiple: "3.0"
+  max_dimension_regression: "0.0"
+  loss_decrease_tolerance: "0.01"
+  minimum_task_score_effect: "0.02"
+  minimum_success_rate_effect: "0.05"
   validation_episodes: "24"
   validation_seed_namespace: groot17-pusht-validation-v2-20260808
   paired_episodes: "24"
@@ -37,13 +50,33 @@ config:
   policy_batch_size: "4"
 
   task_contract_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/task-contract.json"
+  rigor_preflight_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/rigor-preflight.json"
   train_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/train/"
   heldout_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/heldout/"
+  final_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/final-untouched/"
   data_uri: "{{config.train_data_uri}}"
   split_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/split/manifest.json"
   candidate_checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/candidate/"
   checkpoint_uri: "{{config.candidate_checkpoint_uri}}"
   training_manifest_uri: "{{config.candidate_checkpoint_uri}}npa_groot_finetune_manifest.json"
+  probe_2500_checkpoint_uri: "{{config.candidate_checkpoint_uri}}checkpoint-2500/"
+  probe_5000_checkpoint_uri: "{{config.candidate_checkpoint_uri}}checkpoint-5000/"
+  probe_10000_checkpoint_uri: "{{config.candidate_checkpoint_uri}}checkpoint-10000/"
+  offline_baseline_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/baseline/evaluation.json"
+  offline_baseline_arrays_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/baseline/actions.npz"
+  probe_2500_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/probes/checkpoint-2500.json"
+  probe_2500_arrays_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/probes/checkpoint-2500.npz"
+  probe_5000_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/probes/checkpoint-5000.json"
+  probe_5000_arrays_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/probes/checkpoint-5000.npz"
+  probe_10000_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/probes/checkpoint-10000.json"
+  probe_10000_arrays_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/probes/checkpoint-10000.npz"
+  offline_candidate_eval_uri: "{{config.probe_10000_eval_uri}}"
+  offline_candidate_arrays_uri: "{{config.probe_10000_arrays_uri}}"
+  offline_selected_checkpoint_ref_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/selected-checkpoint.json"
+  learning_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/learning-rigor-report.json"
+  offline_comparison_video_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/offline-heldout-comparison.mp4"
+  offline_mcap_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/offline-learning.mcap"
+  offline_rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/offline-learning.rrd"
   candidate_checkpoint_ref_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/candidate-checkpoint.json"
   validation_baseline_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation/baseline/evaluation.json"
   validation_baseline_rollout_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/validation/baseline/rollouts/"
@@ -87,9 +120,17 @@ resources:
     cpus: 8
     memory: 32Gi
 
-initial: resolve_task_contract
+initial: access_capacity_preflight
 
 states:
+  access_capacity_preflight:
+    description: Validate the declared GPU, batch, episode, action, and training-budget contract before GPU scheduling.
+    toolRef: workflow.groot.preflight_rigor
+    resources: artifact-cpu
+    outputs:
+      - {uri: "{{config.rigor_preflight_uri}}", schema: npa.groot.rigor_preflight.v1}
+    next: resolve_task_contract
+
   resolve_task_contract:
     description: Prove dataset, task, observation/action, embodiment, and simulator provenance.
     toolRef: workflow.groot.resolve_task_contract
@@ -102,8 +143,9 @@ states:
 
   prepare_retraining_split:
     description: >
-      Materialize 180 train and 26 held-out episodes with train-only statistics;
-      derive the required optimizer budget and fail before GPU use if 6000 is insufficient.
+      Materialize disjoint 154-train, 26-validation, and 26-untouched-final
+      episodes with byte-identical train-only statistics; fail before GPU use
+      if the 10k-step, batch, or multi-epoch contract is insufficient.
     toolRef: workflow.groot.prepare_split
     resources: artifact-cpu
     inputs:
@@ -111,11 +153,24 @@ states:
     outputs:
       - {uri: "{{config.train_data_uri}}", schema: nvidia.groot.lerobot.v2.train-split}
       - {uri: "{{config.heldout_data_uri}}", schema: nvidia.groot.lerobot.v2.heldout-split}
+      - {uri: "{{config.final_data_uri}}", schema: nvidia.groot.lerobot.v2.final-untouched-split}
       - {uri: "{{config.split_manifest_uri}}", schema: npa.groot.episode_split.v1}
+    next: evaluate_offline_baseline
+
+  evaluate_offline_baseline:
+    description: Measure zero/train-mean floors and deterministic repeated baseline GR00T forwards on validation data.
+    toolRef: workbench.groot.baseline_eval
+    resources: evaluator-gpu
+    inputs:
+      - {uri: "{{config.split_manifest_uri}}", schema: npa.groot.episode_split.v1}
+    outputs:
+      - {uri: "{{config.baseline_checkpoint_uri}}", schema: nvidia.groot.n1.7.custom-embodiment-checkpoint}
+      - {uri: "{{config.offline_baseline_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.offline_baseline_arrays_uri}}", schema: numpy.npz}
     next: retrain_task_policy
 
   retrain_task_policy:
-    description: Run real GR00T N1.7 fine-tuning for the preflighted budget on seven distinct GPUs.
+    description: Run real GR00T N1.7 absolute-action fine-tuning for 10k steps with four saved checkpoints.
     toolRef: workbench.groot.finetune
     resources: trainer-gpu
     inputs:
@@ -127,7 +182,7 @@ states:
     next: resolve_trained_checkpoint
 
   resolve_trained_checkpoint:
-    description: Verify trainer completion, seven-GPU evidence, step contract, and immutable checkpoint hash.
+    description: Verify trainer completion, multi-GPU evidence, step contract, and immutable checkpoint hash.
     toolRef: workflow.groot.resolve_trained_checkpoint
     resources: artifact-cpu
     inputs:
@@ -136,6 +191,84 @@ states:
       - {uri: "{{config.candidate_checkpoint_uri}}", schema: nvidia.groot.n1.7.finetuned-checkpoint}
     outputs:
       - {uri: "{{config.candidate_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_ref.v1}
+    next: probe_checkpoint_2500
+
+  probe_checkpoint_2500:
+    description: Run seeded deterministic validation-only offline probes on checkpoint-2500.
+    toolRef: workbench.groot.probe_2500_eval
+    resources: evaluator-gpu
+    inputs:
+      - {uri: "{{config.probe_2500_checkpoint_uri}}", schema: nvidia.groot.n1.7.finetuned-checkpoint}
+    outputs:
+      - {uri: "{{config.probe_2500_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.probe_2500_arrays_uri}}", schema: numpy.npz}
+    next: probe_checkpoint_5000
+
+  probe_checkpoint_5000:
+    description: Run seeded deterministic validation-only offline probes on checkpoint-5000.
+    toolRef: workbench.groot.probe_5000_eval
+    resources: evaluator-gpu
+    inputs:
+      - {uri: "{{config.probe_5000_checkpoint_uri}}", schema: nvidia.groot.n1.7.finetuned-checkpoint}
+    outputs:
+      - {uri: "{{config.probe_5000_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.probe_5000_arrays_uri}}", schema: numpy.npz}
+    next: probe_checkpoint_10000
+
+  probe_checkpoint_10000:
+    description: Run the identical final validation-only offline probe on checkpoint-10000.
+    toolRef: workbench.groot.probe_10000_eval
+    resources: evaluator-gpu
+    inputs:
+      - {uri: "{{config.probe_10000_checkpoint_uri}}", schema: nvidia.groot.n1.7.finetuned-checkpoint}
+    outputs:
+      - {uri: "{{config.probe_10000_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.probe_10000_arrays_uri}}", schema: numpy.npz}
+    next: select_offline_checkpoint
+
+  select_offline_checkpoint:
+    description: Select the lowest-MSE checkpoint above the positive skill floor without reading final data or seeds.
+    toolRef: workflow.groot.select_offline_checkpoint
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.offline_baseline_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.probe_2500_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.probe_5000_eval_uri}}", schema: npa.groot.offline_eval.v1}
+      - {uri: "{{config.probe_10000_eval_uri}}", schema: npa.groot.offline_eval.v1}
+    outputs:
+      - {uri: "{{config.offline_selected_checkpoint_ref_uri}}", schema: npa.groot.offline_checkpoint_selection.v1}
+    next: compare_offline_learning
+
+  compare_offline_learning:
+    description: Gate selected weights on skill, nontrivial effect, repeat noise, dimensions, and robust real-step loss.
+    toolRef: workflow.groot.compare_learning
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.offline_selected_checkpoint_ref_uri}}", schema: npa.groot.offline_checkpoint_selection.v1}
+      - {uri: "{{config.training_manifest_uri}}", schema: npa.groot.finetune.v1}
+    outputs:
+      - {uri: "{{config.learning_report_uri}}", schema: npa.groot.learning.v1}
+      - {uri: "{{config.offline_comparison_video_uri}}", schema: video.mp4.offline-heldout-comparison}
+    next: emit_offline_mcap
+
+  emit_offline_mcap:
+    description: Emit validation cameras, actions, per-horizon errors, checkpoint curve, loss, and provenance on one timebase.
+    toolRef: workflow.groot.emit_learning_mcap
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.learning_report_uri}}", schema: npa.groot.learning.v1}
+    outputs:
+      - {uri: "{{config.offline_mcap_uri}}", schema: mcap.v1}
+    next: emit_offline_rrd
+
+  emit_offline_rrd:
+    description: Emit the equivalent replayable OFFLINE-labeled Rerun evidence.
+    toolRef: workflow.groot.emit_learning_rrd
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.learning_report_uri}}", schema: npa.groot.learning.v1}
+    outputs:
+      - {uri: "{{config.offline_rrd_uri}}", schema: rerun.rrd.v1}
     next: evaluate_validation_baseline
 
   evaluate_validation_baseline:
@@ -151,11 +284,11 @@ states:
     next: evaluate_validation_candidate
 
   evaluate_validation_candidate:
-    description: Run only candidate model outputs on the identical validation initial states.
+    description: Run only offline-selected candidate model outputs on identical validation initial states.
     toolRef: workbench.groot.evaluate_trained_closed_loop.validation
     resources: evaluator-gpu
     inputs:
-      - {uri: "{{config.candidate_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_ref.v1}
+      - {uri: "{{config.offline_selected_checkpoint_ref_uri}}", schema: npa.groot.offline_checkpoint_selection.v1}
     outputs:
       - {uri: "{{config.validation_candidate_eval_uri}}", schema: npa.groot.closed_loop_eval.v1}
       - {uri: "{{config.validation_candidate_rollout_prefix_uri}}", schema: npa.groot.live_rollouts.v1}
@@ -178,7 +311,7 @@ states:
     resources: artifact-cpu
     inputs:
       - {uri: "{{config.validation_report_uri}}", schema: npa.groot.task_performance.v1}
-      - {uri: "{{config.candidate_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_ref.v1}
+      - {uri: "{{config.offline_selected_checkpoint_ref_uri}}", schema: npa.groot.offline_checkpoint_selection.v1}
     outputs:
       - {uri: "{{config.selected_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_selection.v1}
     next: evaluate_baseline_closed_loop
@@ -259,6 +392,9 @@ states:
       - {uri: "{{config.comparison_video_uri}}", schema: video.mp4.closed-loop-paired-comparison}
       - {uri: "{{config.mcap_uri}}", schema: mcap.v1}
       - {uri: "{{config.rrd_uri}}", schema: rerun.rrd.v1}
+      - {uri: "{{config.learning_report_uri}}", schema: npa.groot.learning.v1}
+      - {uri: "{{config.offline_mcap_uri}}", schema: mcap.v1}
+      - {uri: "{{config.offline_rrd_uri}}", schema: rerun.rrd.v1}
       - {uri: "{{config.workflow_uri}}", schema: npa.workflow.v0.0.1}
     outputs:
       - {uri: "{{config.publish_manifest_uri}}", schema: npa.groot.task_performance_publish.v1}

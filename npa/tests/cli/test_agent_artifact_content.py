@@ -269,7 +269,8 @@ def test_ui_makes_task_performance_primary() -> None:
     assert 'id = "taskPerformanceSeedSelector"' in source
     assert "paired-rollout-videos" in source
     assert "Failure gallery" in source
-    assert "Secondary training/offline diagnostics" in source
+    assert "Required offline rigor and secondary training diagnostics" in source
+    assert "Open offline rigor RRD" in source
     assert "Show grouped raw artifacts" in source
 
 

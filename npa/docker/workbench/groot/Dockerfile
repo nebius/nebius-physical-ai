@@ -159,6 +159,20 @@ replace_once(
     f"    config.model.model_revision = \"{cosmos_revision}\"\n",
 )
 replace_once(
+    "gr00t/configs/finetune_config.py",
+    "    tune_diffusion_model: bool = True\n"
+    "    \"\"\"If True, fine-tune the diffusion-based action decoder (if present in the model).\"\"\"\n\n",
+    "    tune_diffusion_model: bool = True\n"
+    "    \"\"\"If True, fine-tune the diffusion-based action decoder (if present in the model).\"\"\"\n\n"
+    "    use_relative_action: bool = True\n"
+    "    \"\"\"Convert action groups declared RELATIVE when training and inference.\"\"\"\n\n",
+)
+replace_once(
+    "gr00t/experiment/launch_finetune.py",
+    "    config.model.use_relative_action = True\n",
+    "    config.model.use_relative_action = ft_config.use_relative_action\n",
+)
+replace_once(
     "gr00t/model/gr00t_n1d7/gr00t_n1d7.py",
     "        super().__init__(config)\n"
     "        self.config = config\n\n"

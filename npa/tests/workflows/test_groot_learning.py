@@ -33,13 +33,21 @@ def _evaluation(*, real: bool = True) -> dict:
         "episodes": 1,
         "samples": 3,
         "action_dimensions": 2,
+        "action_horizon": 2,
         "sample_alignment": [{"sample_index": index} for index in range(3)],
         "metrics": {
             "mse": 2.0,
             "mae": 1.0,
             "per_dimension_mse": [1.0, 3.0],
             "per_dimension_mae": [0.5, 1.5],
+            "per_horizon_mse": [1.0, 3.0],
+            "per_horizon_counts": [2, 1],
         },
+        "repeat_evaluation": {
+            "same_seed_deterministic": True,
+            "independent_seed_count": 3,
+        },
+        "model_config_contract": learning.GROOT_MODEL_CONFIG_CONTRACT,
     }
 
 
@@ -151,7 +159,9 @@ def test_video_inventory_requires_every_camera_for_every_episode(
 def test_custom_modality_loader_fails_closed_when_registration_is_absent(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(learning.GrootVisualizationError, match="modality config is absent"):
+    with pytest.raises(
+        learning.GrootVisualizationError, match="modality config is absent"
+    ):
         learning._load_custom_modality_config(tmp_path)
 
 
@@ -185,7 +195,9 @@ def test_rrd_squared_error_is_mean_of_squared_residuals_not_squared_mae() -> Non
     assert mse != pytest.approx(mae**2)
 
 
-def test_comparison_discloses_per_dimension_regression_and_gates_primary_metric() -> None:
+def test_comparison_discloses_per_dimension_regression_and_gates_primary_metric() -> (
+    None
+):
     improved = learning.compare_metrics(
         {"mse": 2.0, "per_dimension_mse": [1.0, 3.0]},
         {"mse": 1.5, "per_dimension_mse": [1.1, 1.9]},
@@ -210,7 +222,9 @@ def test_training_coverage_uses_factual_batch_for_maximum_free_gpu_allocation() 
         "training_examples": 3360,
         "epoch_equivalent": pytest.approx(1.0017889087656529),
     }
-    with pytest.raises(learning.GrootVisualizationError, match="complete train-set pass"):
+    with pytest.raises(
+        learning.GrootVisualizationError, match="complete train-set pass"
+    ):
         learning.calculate_training_coverage(
             optimizer_steps=479, global_batch_size=7, train_samples=3354
         )
@@ -255,7 +269,9 @@ class _Blueprint:
         return make
 
 
-def test_rrd_blueprint_has_camera_action_error_metric_loss_and_provenance_panels() -> None:
+def test_rrd_blueprint_has_camera_action_error_metric_loss_and_provenance_panels() -> (
+    None
+):
     rrb = _Blueprint()
     learning._learning_blueprint(rrb)
     origins = {str(view.get("origin")) for view in rrb.views}
@@ -294,7 +310,17 @@ def test_learning_rrd_is_closed_with_a_parseable_footer(
             "checkpoint_uri": "s3://bucket/checkpoint",
             "loss_history": [{"optimizer_step": 1, "loss": 0.5}],
         },
-        "evaluation": {"baseline_value": 2.0, "posttrain_value": 1.0},
+        "evaluation": {
+            "baseline_value": 2.0,
+            "posttrain_value": 1.0,
+            "checkpoint_selection_uri": "s3://bucket/selection.json",
+            "per_horizon_mse": {
+                "baseline": [2.0],
+                "posttrain": [1.0],
+                "counts": [2],
+                "action_horizon": 1,
+            },
+        },
         "provenance": {
             "primary_camera": "overhead",
             "heldout_source_videos": [
@@ -341,6 +367,13 @@ def test_learning_rrd_is_closed_with_a_parseable_footer(
             post_arrays,
         ),
     )
+    monkeypatch.setattr(
+        learning,
+        "_read_s3_json",
+        lambda *_args: {
+            "learning_curve": [{"optimizer_step": 1, "mse": 1.0, "skill_score": 0.1}]
+        },
+    )
     monkeypatch.setattr(learning, "_download", lambda *_args: None)
     monkeypatch.setattr(
         learning,
@@ -364,7 +397,9 @@ def test_learning_rrd_is_closed_with_a_parseable_footer(
     assert result["inspect"]["bytes"] == len(uploaded["s3://bucket/learning.rrd"])
 
 
-def test_learning_mcap_topics_use_real_camera_log_and_metric_schemas(tmp_path: Path) -> None:
+def test_learning_mcap_topics_use_real_camera_log_and_metric_schemas(
+    tmp_path: Path,
+) -> None:
     pytest.importorskip("mcap")
     image_module = pytest.importorskip("PIL.Image")
     frame = tmp_path / "000000.png"
@@ -377,12 +412,16 @@ def test_learning_mcap_topics_use_real_camera_log_and_metric_schemas(tmp_path: P
         "metrics/heldout_before",
         "metrics/heldout_after",
         "metrics/train_loss",
+        "metrics/per_horizon_error",
+        "metrics/checkpoint_curve",
     ):
         path = tmp_path / f"{name.replace('/', '_')}.json"
         path.write_text(json.dumps([{"value": 1.0}]), encoding="utf-8")
         inputs.append(MetricsInput(path=path, name=name))
     log = tmp_path / "offline.log"
-    log.write_text("Offline held-out policy evaluation; not rollout.\n", encoding="utf-8")
+    log.write_text(
+        "Offline held-out policy evaluation; not rollout.\n", encoding="utf-8"
+    )
     output = tmp_path / "learning.mcap"
     write_run_mcap(
         output=output,
@@ -411,7 +450,9 @@ def test_comparison_video_preserves_native_camera_pixels_and_truthful_label(
     pytest.importorskip("av")
     image_module = pytest.importorskip("PIL.Image")
     images = [image_module.new("RGB", (8, 6), (200, 10, 10)) for _ in range(2)]
-    monkeypatch.setattr(learning, "_decode_video", lambda *_args, **_kwargs: (images, 10.0))
+    monkeypatch.setattr(
+        learning, "_decode_video", lambda *_args, **_kwargs: (images, 10.0)
+    )
     actions = np.zeros((2, 2), dtype=np.float32)
     meta = learning._comparison_video(
         tmp_path / "ignored.mp4",
@@ -475,24 +516,17 @@ def test_training_manifest_records_real_loss_trajectory(tmp_path: Path) -> None:
     assert payload["loss_step_inference"] is None
 
 
-def test_text_loss_step_inference_is_explicit_and_never_forces_final_checkpoint() -> None:
-    evidence = parse_training_loss_evidence(
-        "{'loss': 1.2}\n{'loss': 0.8}\n{'train_loss': 0.91}\n",
-        training_step=420,
-        logging_steps=10,
-    )
-
-    assert evidence["loss_history"] == [
-        {"optimizer_step": 10, "loss": 1.2},
-        {"optimizer_step": 20, "loss": 0.8},
-    ]
-    assert evidence["aggregate_train_loss"] == pytest.approx(0.91)
-    assert evidence["loss_step_source"] == "explicit_inference"
-    assert evidence["loss_step_inference"]["logging_steps"] == 10
+def test_text_loss_never_synthesizes_optimizer_steps_from_logging_interval() -> None:
+    with pytest.raises(ValueError, match="refusing to synthesize steps"):
+        parse_training_loss_evidence(
+            "{'loss': 1.2}\n{'loss': 0.8}\n{'train_loss': 0.91}\n",
+            training_step=420,
+            logging_steps=10,
+        )
 
 
 def test_text_loss_without_steps_or_trainer_config_fails_closed() -> None:
-    with pytest.raises(ValueError, match="no validated trainer logging_steps"):
+    with pytest.raises(ValueError, match="actual optimizer/global steps"):
         parse_training_loss_evidence(
             "{'loss': 1.2}\n", training_step=420, logging_steps=None
         )
@@ -510,3 +544,191 @@ def test_learning_ui_is_replay_first_groups_frames_and_never_upscales() -> None:
     assert "width: auto" in source and "object-fit: contain" in source
     assert "Prepare leakage-free split" in source
     assert "Synchronized learning replay" in source
+
+
+def test_trivial_predictor_floor_and_positive_skill_score() -> None:
+    expert = np.asarray([[1.0], [3.0]], dtype=np.float32)
+    weak = learning.trivial_predictor_metrics(expert, np.zeros_like(expert), [2.0])
+    skilled = learning.trivial_predictor_metrics(
+        expert, np.asarray([[1.0], [2.0]]), [2.0]
+    )
+    assert weak["zero_predictor_mse"] == pytest.approx(5.0)
+    assert weak["train_mean_predictor_mse"] == pytest.approx(1.0)
+    assert weak["skill_score"] == pytest.approx(-4.0)
+    assert skilled["skill_score"] == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize(
+    ("after", "kwargs", "failure"),
+    [
+        (
+            {"mse": 0.95, "per_dimension_mse": [0.95], "skill_score": 0.2},
+            {"minimum_relative_improvement": 0.10},
+            "relative improvement",
+        ),
+        (
+            {"mse": 0.80, "per_dimension_mse": [0.80], "skill_score": 0.2},
+            {"repeat_noise_spread": 0.1, "repeat_noise_multiple": 3.0},
+            "repeat-noise",
+        ),
+        (
+            {"mse": 0.80, "per_dimension_mse": [1.1], "skill_score": 0.2},
+            {"max_dimension_regression": 0.0},
+            "per-dimension regression",
+        ),
+    ],
+)
+def test_meaningful_gate_blocks_epsilon_noise_and_dimension_regression(
+    after: dict, kwargs: dict, failure: str
+) -> None:
+    result = learning.compare_metrics(
+        {"mse": 1.0, "per_dimension_mse": [1.0]}, after, **kwargs
+    )
+    assert any(failure in item for item in result["gate_failures"])
+    with pytest.raises(learning.GrootVisualizationError, match="learning gate failed"):
+        learning.require_learning_improvement(result)
+
+
+def test_weight_only_digest_is_separate_and_checkpoint_resolution_is_exact(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "output"
+    for step, weight in ((2500, b"first"), (10000, b"final")):
+        checkpoint = root / f"checkpoint-{step}"
+        checkpoint.mkdir(parents=True)
+        (checkpoint / "model.safetensors").write_bytes(weight)
+        (checkpoint / "trainer_state.json").write_text("{}")
+    resolved, step = learning._resolve_highest_checkpoint_directory(root)
+    identity = learning._checkpoint_identity(resolved)
+    assert step == 10000
+    assert identity["sha256"] != identity["weights_sha256"]
+    assert identity["weight_objects"] == 1
+    with pytest.raises(learning.GrootVisualizationError, match="equal baseline"):
+        learning.require_distinct_trained_weights(identity, identity)
+
+
+def test_robust_loss_gate_preserves_flat_regions_and_requires_decrease() -> None:
+    flat = [{"optimizer_step": i, "loss": 1.0} for i in range(1, 11)]
+    assert learning.robust_loss_decrease(flat)["loss_decreased"] is False
+    decreasing = [
+        {"optimizer_step": i, "loss": value}
+        for i, value in enumerate([1.0, 1.0, 1.0, 0.9, 0.8, 0.7, 0.6, 0.6, 0.5, 0.5], 1)
+    ]
+    evidence = learning.robust_loss_decrease(decreasing)
+    assert evidence["loss_decreased"] is True
+    assert len(decreasing) == 10
+
+
+def test_absolute_action_configuration_contract_is_identical(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint"
+    (checkpoint / "experiment_cfg").mkdir(parents=True)
+    (checkpoint / "experiment_cfg" / "final_model_config.json").write_text(
+        json.dumps(
+            {
+                key: value
+                for key, value in learning.GROOT_MODEL_CONFIG_CONTRACT.items()
+                if key != "action_representation"
+            }
+        )
+    )
+    (checkpoint / "processor_config.json").write_text(
+        json.dumps(
+            {
+                "processor_kwargs": {
+                    "use_relative_action": False,
+                    "modality_configs": {
+                        "new_embodiment": {
+                            "action": {
+                                "action_configs": [
+                                    {"rep": "ABSOLUTE"},
+                                    {"rep": "ABSOLUTE"},
+                                ]
+                            }
+                        }
+                    },
+                }
+            }
+        )
+    )
+    assert learning.checkpoint_model_config_contract(checkpoint) == (
+        learning.GROOT_MODEL_CONFIG_CONTRACT
+    )
+    assert learning.GROOT_MODEL_CONFIG_CONTRACT["use_relative_action"] is False
+
+
+def test_expanded_split_and_real_batch_budget_contract() -> None:
+    split = learning.deterministic_experiment_split(
+        206,
+        train_episodes=154,
+        validation_episodes=26,
+        final_episodes=26,
+        seed="rigorous",
+    )
+    assert {name: len(values) for name, values in split.items()} == {
+        "validation": 26,
+        "final": 26,
+        "train": 154,
+        "excluded": 0,
+    }
+    contract = learning.derive_training_step_contract(
+        train_samples=19_000,
+        global_batch_size=224,
+        configured_max_steps=10_000,
+        minimum_epochs=2.0,
+        minimum_effective_global_batch=128,
+        gpu_count=7,
+        per_device_batch_size=8,
+        gradient_accumulation_steps=4,
+    )
+    assert contract["epoch_equivalent"] > 2
+    with pytest.raises(learning.GrootVisualizationError, match="below required"):
+        learning.derive_training_step_contract(
+            train_samples=19_000,
+            global_batch_size=7,
+            minimum_epochs=2,
+            minimum_effective_global_batch=128,
+        )
+
+
+def test_stats_emit_canonical_quantiles(tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path = tmp_path / "episode.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "action": pa.array(
+                    [[0.0], [1.0], [2.0]], type=pa.list_(pa.float32(), 1)
+                ),
+                "observation.state": pa.array(
+                    [[2.0], [3.0], [4.0]], type=pa.list_(pa.float32(), 1)
+                ),
+            }
+        ),
+        path,
+    )
+    stats = learning._write_dataset_stats([path])
+    assert {"q10", "q50", "q90"} <= set(stats["action"])
+
+
+def test_denoising_knob_is_not_exposed_when_upstream_ignores_it() -> None:
+    parser = learning.build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "posttrain-eval",
+                "--split-manifest-uri",
+                "s3://bucket/split",
+                "--checkpoint-uri",
+                "s3://bucket/checkpoint",
+                "--output-uri",
+                "s3://bucket/eval",
+                "--arrays-uri",
+                "s3://bucket/arrays",
+                "--run-id",
+                "run",
+                "--denoising-steps",
+                "4",
+            ]
+        )

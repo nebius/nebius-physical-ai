@@ -56,46 +56,30 @@ def parse_training_loss_evidence(
         if optimizer_step is None:
             missing_step.append(float(value))
         else:
-            loss_history.append({"optimizer_step": optimizer_step, "loss": float(value)})
-
-    inference: dict[str, Any] | None = None
-    if missing_step:
-        if logging_steps is None or int(logging_steps) <= 0:
-            raise ValueError(
-                "per-step loss records omit an optimizer step and no validated "
-                "trainer logging_steps value was recorded"
-            )
-        start = len(loss_history)
-        for index, value in enumerate(missing_step, start=start + 1):
             loss_history.append(
-                {
-                    "optimizer_step": min(index * int(logging_steps), int(training_step)),
-                    "loss": value,
-                }
+                {"optimizer_step": optimizer_step, "loss": float(value)}
             )
-        inference = {
-            "used": True,
-            "method": "text-record-order-times-configured-logging-steps",
-            "logging_steps": int(logging_steps),
-            "validated_against": "recorded trainer configuration",
-        }
+
+    if missing_step:
+        raise ValueError(
+            "per-step loss records omit actual optimizer/global steps; refusing "
+            "to synthesize steps from logging_steps"
+        )
 
     loss_history.sort(key=lambda item: int(item["optimizer_step"]))
     return {
         "loss_history": loss_history,
         "aggregate_train_loss": aggregate_losses[-1] if aggregate_losses else None,
         "final_step_loss": loss_history[-1]["loss"] if loss_history else None,
-        "loss_step_source": (
-            "trainer_state_or_logged_step" if inference is None else "explicit_inference"
-        ),
-        "loss_step_inference": inference,
+        "loss_step_source": ("trainer_state_or_logged_step"),
+        "loss_step_inference": None,
     }
 
 
 def render_distributed_probe(output_dir: str) -> str:
     """Return a torchrun program that proves ranks, GPUs, and an NCCL collective."""
 
-    return f'''import json
+    return f"""import json
 import os
 import subprocess
 from pathlib import Path
@@ -152,7 +136,7 @@ if rank == 0:
 if world_size > 1:
     dist.barrier()
     dist.destroy_process_group()
-'''
+"""
 
 
 def render_training_manifest_script(
@@ -170,10 +154,14 @@ def render_training_manifest_script(
     # pre-existing Typer/Click pair is incompatible.  The generated evidence
     # program needs no CLI framework at all.
     parser_source = inspect.getsource(parse_training_loss_evidence)
-    manifest_literal = "{\n" + "".join(
-        f'    "{key}": {value!r},\n' for key, value in manifest_fields.items()
-    ) + "}"
-    return f'''import ast
+    manifest_literal = (
+        "{\n"
+        + "".join(
+            f'    "{key}": {value!r},\n' for key, value in manifest_fields.items()
+        )
+        + "}"
+    )
+    return f"""import ast
 import json
 import math
 from pathlib import Path
@@ -189,12 +177,12 @@ checkpoint_steps = []
 for path in output_dir.rglob("checkpoint-*"):
     if path.is_dir() and path.name.removeprefix("checkpoint-").isdigit():
         checkpoint_steps.append(int(path.name.removeprefix("checkpoint-")))
-training_step = max(checkpoint_steps, default=0)
 checkpoint_files = [path for path in output_dir.rglob("*") if path.is_file()]
 checkpoint_bytes = sum(path.stat().st_size for path in checkpoint_files)
 checkpoint_objects = len(checkpoint_files)
 manifest = {manifest_literal}
 trainer_histories = []
+trainer_global_steps = []
 for state_path in output_dir.rglob("trainer_state.json"):
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -203,6 +191,10 @@ for state_path in output_dir.rglob("trainer_state.json"):
     history = state.get("log_history") if isinstance(state, dict) else None
     if isinstance(history, list):
         trainer_histories.append(history)
+    global_step = state.get("global_step") if isinstance(state, dict) else None
+    if isinstance(global_step, (int, float)) and int(global_step) >= 0:
+        trainer_global_steps.append(int(global_step))
+training_step = max(trainer_global_steps + checkpoint_steps, default=0)
 trainer_history = max(trainer_histories, key=len, default=[])
 loss_evidence = parse_training_loss_evidence(
     training_log,
@@ -214,6 +206,33 @@ loss_history = loss_evidence["loss_history"]
 loss = loss_evidence["final_step_loss"]
 loss_finite = loss is not None and math.isfinite(loss)
 optimizer_step_ok = training_step >= 1 and loss_finite
+loss_steps = [int(item["optimizer_step"]) for item in loss_history]
+loss_steps_real = (
+    bool(loss_steps)
+    and loss_steps == sorted(loss_steps)
+    and len(loss_steps) == len(set(loss_steps))
+    and max(loss_steps) <= training_step
+    and loss_evidence["loss_step_inference"] is None
+)
+window = min(5, len(loss_history) // 2)
+if window >= 2:
+    early_values = sorted(float(item["loss"]) for item in loss_history[:window])
+    late_values = sorted(float(item["loss"]) for item in loss_history[-window:])
+    middle = window // 2
+    if window % 2:
+        robust_early_loss = early_values[middle]
+        robust_late_loss = late_values[middle]
+    else:
+        robust_early_loss = (early_values[middle - 1] + early_values[middle]) / 2
+        robust_late_loss = (late_values[middle - 1] + late_values[middle]) / 2
+else:
+    robust_early_loss = None
+    robust_late_loss = None
+loss_decreased = (
+    robust_early_loss is not None
+    and robust_late_loss is not None
+    and robust_late_loss < robust_early_loss * 0.99
+)
 manifest.update({{
     "world_size": int(evidence.get("world_size") or 0),
     "distinct_gpu_count": int(evidence.get("distinct_gpu_count") or 0),
@@ -223,6 +242,7 @@ manifest.update({{
     "collective_expected": evidence.get("collective_expected"),
     "collective_ok": evidence.get("collective_ok") is True,
     "training_step": training_step,
+    "checkpoint_steps": sorted(set(checkpoint_steps)),
     "optimizer_step_ok": optimizer_step_ok,
     "loss": loss,
     "loss_finite": loss_finite,
@@ -231,6 +251,10 @@ manifest.update({{
     "final_step_loss": loss_evidence["final_step_loss"],
     "loss_step_source": loss_evidence["loss_step_source"],
     "loss_step_inference": loss_evidence["loss_step_inference"],
+    "loss_steps_real": loss_steps_real,
+    "robust_early_loss": robust_early_loss,
+    "robust_late_loss": robust_late_loss,
+    "loss_decreased": loss_decreased,
     "initial_loss": loss_history[0]["loss"] if loss_history else None,
     "final_loss": loss_history[-1]["loss"] if loss_history else None,
     "training_examples": training_step * int(manifest.get("global_batch_size") or 0),
@@ -242,7 +266,7 @@ target = Path({manifest_path!r})
 target.parent.mkdir(parents=True, exist_ok=True)
 target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
 print(f"NPA_GROOT_FINETUNE_MANIFEST {{target}}")
-'''
+"""
 
 
 __all__ = [

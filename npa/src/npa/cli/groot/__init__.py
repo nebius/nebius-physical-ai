@@ -28,6 +28,12 @@ from npa.cli.path_contract import (
     validate_read_path,
     validate_write_path,
 )
+from npa.cli.groot.runtime_commands import (
+    build_read_env_command,
+    build_reload_env_command,
+    build_runtime_pin_patch_command,
+    parse_env_read as _parse_env_read,
+)
 from npa.clients.config import (
     APP_STATUS_HEALTHY,
     APP_STATUS_INSTALL_FAILED,
@@ -67,7 +73,11 @@ from npa.clients.huggingface import validate_hf_access
 from npa.clients.http import HTTPClient, ServerError
 from npa.clients.network import NetworkIngressError
 from npa.clients.project_credentials import storage_env_for_project
-from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    ServerlessClient,
+    ServerlessClientError,
+)
 from npa.clients.ssh import SSHClient, SSHError
 from npa.deploy import provisioner
 from npa.deploy.configurator import (
@@ -202,7 +212,6 @@ ISAAC_LAB_VERSION = "2.3.2.post1"
 ISAAC_LAB_HOME = "/opt/isaac-lab"
 ISAAC_LAB_VENV = f"{ISAAC_LAB_HOME}/venv"
 PIP_EXTRA_INDEX_URL = "https://pypi.nvidia.com"
-
 SUPPORTED_EMBODIMENT_TAGS = (
     "OXE_DROID_RELATIVE_EEF_RELATIVE_JOINT",
     "XDOF",
@@ -743,7 +752,8 @@ def _serverless_job_env(
     storage = resolve_project_storage(project)
     shared_env = shared_credential_env(load_credentials(environ={}))
     s3_credentials = {
-        "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_access_key_id": storage.aws_access_key_id
+        or shared_env.get("AWS_ACCESS_KEY_ID", ""),
         "aws_secret_access_key": storage.aws_secret_access_key
         or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
         "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
@@ -754,7 +764,9 @@ def _serverless_job_env(
         _fail(str(exc))
     env = build_serverless_job_env(
         output_path=output_path,
-        hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
+        hf_token=shared_env.get("HF_TOKEN")
+        or shared_env.get("HUGGING_FACE_HUB_TOKEN")
+        or None,
         s3_credentials=s3_credentials,
         extra_env=extra_env,
     )
@@ -805,7 +817,7 @@ print("NPA_GROOT_SERVERLESS_INFER_DONE", os.environ.get("NPA_OUTPUT_PATH", ""), 
     body = (
         'NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"\n'
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
-        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+        f"\"$NPA_PYTHON_BIN\" <<'PY'\n{script}\nPY\n{upload}"
     )
     return _remote_bash(body)
 
@@ -844,7 +856,9 @@ def _groot_serverless_infer(
     env_cfg = resolve_environment(proj_alias)
     resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
     if not resolved_project_id:
-        _fail("GR00T infer --runtime serverless requires --project-id or a configured project.")
+        _fail(
+            "GR00T infer --runtime serverless requires --project-id or a configured project."
+        )
     name = job_name or _serverless_job_name(proj_alias, wb_name, "groot")
     out = output_path.rstrip("/") + "/"
     try:
@@ -870,8 +884,27 @@ def _groot_serverless_infer(
         existing = None
     try:
         if existing is not None:
-            info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
-            _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
+            info = (
+                existing
+                if submit_only
+                or existing.status in {"succeeded", "failed", "cancelled"}
+                else client.poll_job(
+                    existing.id,
+                    resolved_project_id,
+                    interval_s=poll_interval,
+                    ceiling_s=timeout,
+                )
+            )
+            _output(
+                {
+                    "status": "existing",
+                    "job_id": info.id,
+                    "job_name": info.name,
+                    "job_status": info.status,
+                    "output_path": out,
+                },
+                output,
+            )
             return
         info = client.create_job(
             project_id=resolved_project_id,
@@ -900,14 +933,27 @@ def _groot_serverless_infer(
             extra_env=extra_env,
         )
         if not submit_only:
-            info = client.poll_job(info.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            info = client.poll_job(
+                info.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=timeout,
+            )
     except ValueError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
         _fail(f"Serverless Job failed: {exc}")
     except TimeoutError as exc:
         _fail(str(exc))
-    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
+    _output(
+        {
+            "status": "submitted" if submit_only else info.status,
+            "job_id": info.id,
+            "job_name": info.name,
+            "output_path": out,
+        },
+        output,
+    )
 
 
 def _gpu_env_from_config(cfg: Any) -> dict[str, str]:
@@ -1125,87 +1171,10 @@ def infer(req: InferRequest) -> dict[str, Any]:
 
 
 def _build_runtime_pin_patch_command() -> str:
-    """Patch the pinned GR00T checkout so gated backbone loads are revision-stable."""
-    return f"""\
-python3.10 - <<'PY'
-from pathlib import Path
-
-repo = Path({GROOT_REPO!r})
-cosmos_model = {COSMOS_REASON_MODEL!r}
-cosmos_revision = {COSMOS_REASON_REVISION!r}
-
-
-def replace_once(rel: str, old: str, new: str) -> None:
-    path = repo / rel
-    text = path.read_text()
-    if old in text:
-        path.write_text(text.replace(old, new, 1))
-        return
-    if new in text:
-        return
-    raise RuntimeError("Could not apply GR00T runtime pin patch to " + rel)
-
-
-replace_once(
-    "gr00t/configs/model/gr00t_n1d7.py",
-    "    model_revision: str | None = None\\n",
-    "    model_revision: str | None = \\"" + cosmos_revision + "\\"\\n",
-)
-replace_once(
-    "gr00t/experiment/launch_finetune.py",
-    "    config.model.model_name = \\"" + cosmos_model + "\\"\\n",
-    "    config.model.model_name = \\"" + cosmos_model + "\\"\\n"
-    "    config.model.model_revision = \\"" + cosmos_revision + "\\"\\n",
-)
-replace_once(
-    "gr00t/model/gr00t_n1d7/gr00t_n1d7.py",
-    "        super().__init__(config)\\n"
-    "        self.config = config\\n\\n"
-    "        backbone_cls = get_backbone_cls(config)\\n",
-    "        super().__init__(config)\\n"
-    "        self.config = config\\n"
-    "        if (\\n"
-    "            getattr(config, \\"model_name\\", \\"\\") == \\"" + cosmos_model + "\\"\\n"
-    "            and not getattr(config, \\"model_revision\\", None)\\n"
-    "        ):\\n"
-    "            config.model_revision = \\"" + cosmos_revision + "\\"\\n"
-    "        if getattr(config, \\"model_revision\\", None) and \\"revision\\" not in transformers_loading_kwargs:\\n"
-    "            transformers_loading_kwargs = {{\\n"
-    "                **transformers_loading_kwargs,\\n"
-    "                \\"revision\\": config.model_revision,\\n"
-    "            }}\\n\\n"
-    "        backbone_cls = get_backbone_cls(config)\\n",
-)
-replace_once(
-    "gr00t/model/gr00t_n1d7/processing_gr00t_n1d7.py",
-    "        model_name: str = \\"" + cosmos_model + "\\",\\n"
-    "        model_type: str = \\"qwen\\",\\n",
-    "        model_name: str = \\"" + cosmos_model + "\\",\\n"
-    "        model_revision: str | None = \\"" + cosmos_revision + "\\",\\n"
-    "        model_type: str = \\"qwen\\",\\n",
-)
-replace_once(
-    "gr00t/model/gr00t_n1d7/processing_gr00t_n1d7.py",
-    "        self.model_name = model_name\\n"
-    "        self.model_type = model_type\\n\\n",
-    "        self.model_name = model_name\\n"
-    "        self.model_revision = model_revision\\n"
-    "        self.model_type = model_type\\n"
-    "        if model_revision and \\"revision\\" not in transformers_loading_kwargs:\\n"
-    "            transformers_loading_kwargs = {{\\n"
-    "                **transformers_loading_kwargs,\\n"
-    "                \\"revision\\": model_revision,\\n"
-    "            }}\\n\\n",
-)
-replace_once(
-    "gr00t/model/gr00t_n1d7/processing_gr00t_n1d7.py",
-    "        processor_kwargs.setdefault(\\"model_name\\", \\"" + cosmos_model + "\\")\\n",
-    "        processor_kwargs.setdefault(\\"model_name\\", \\"" + cosmos_model + "\\")\\n"
-    "        processor_kwargs.setdefault(\\"model_revision\\", \\"" + cosmos_revision + "\\")\\n",
-)
-print("GROOT_RUNTIME_PIN_PATCH_OK " + cosmos_revision)
-PY
-"""
+    """Patch the pinned GR00T checkout for revision and action-mode parity."""
+    return build_runtime_pin_patch_command(
+        GROOT_REPO, COSMOS_REASON_MODEL, COSMOS_REASON_REVISION
+    )
 
 
 def _build_install_command(port: int = DEFAULT_SERVER_PORT) -> str:
@@ -1350,115 +1319,24 @@ def _build_reload_env_command(
     port: int,
     restart: bool = True,
 ) -> str:
-    names_json = json.dumps(list(env_names))
-    env_assignments = " ".join(f'{name}="${{{name}:-}}"' for name in env_names)
-    restart_block = ""
-    if restart:
-        restart_block = f"""
-if [ "$mode" = "systemd" ]; then
-  sudo systemctl restart {GROOT_SERVICE}
-elif [ "$mode" = "container" ]; then
-  sudo docker restart {GROOT_CONTAINER_NAME} >/dev/null
-fi
-for i in $(seq 1 120); do
-  if curl -fsS "http://127.0.0.1:{port}/health" >/dev/null 2>/dev/null; then
-    break
-  fi
-  sleep 1
-done
-curl -fsS "http://127.0.0.1:{port}/health" >/dev/null
-"""
-    script = f"""\
-set -euo pipefail
-server_env={GROOT_ENV_FILE}
-container_env={GROOT_CONTAINER_ENV_FILE}
-env_path=""
-mode=""
-if sudo test -f "$server_env"; then
-  env_path="$server_env"
-  mode="systemd"
-elif sudo test -f "$container_env"; then
-  env_path="$container_env"
-  mode="container"
-else
-  echo "No GR00T service env file found" >&2
-  exit 2
-fi
-sudo env {env_assignments} python3 - "$env_path" {shlex.quote(names_json)} <<'PY'
-from pathlib import Path
-import json
-import os
-import sys
-
-path = Path(sys.argv[1])
-env_names = json.loads(sys.argv[2])
-updates = {{name: os.environ.get(name, "") for name in env_names if os.environ.get(name, "")}}
-if not updates:
-    raise SystemExit("No credential values were supplied")
-
-lines = path.read_text().splitlines() if path.exists() else []
-seen = set()
-out = []
-for line in lines:
-    key = line.split("=", 1)[0] if "=" in line else ""
-    if key in updates:
-        if key not in seen:
-            out.append(f"{{key}}={{updates[key]}}")
-            seen.add(key)
-        continue
-    out.append(line)
-for key, value in updates.items():
-    if key not in seen:
-        out.append(f"{{key}}={{value}}")
-path.write_text("\\n".join(out).rstrip() + "\\n")
-path.chmod(0o600)
-print("updated_keys=" + ",".join(sorted(updates)))
-PY
-{restart_block}
-echo "NPA_GROOT_RELOAD_ENV_COMPLETE env_path=$env_path mode=$mode"
-    """
-    return _remote_bash(script)
+    return build_reload_env_command(
+        env_names,
+        port=port,
+        restart=restart,
+        service_name=GROOT_SERVICE,
+        container_name=GROOT_CONTAINER_NAME,
+        server_env_path=GROOT_ENV_FILE,
+        container_env_path=GROOT_CONTAINER_ENV_FILE,
+        remote_bash=_remote_bash,
+    )
 
 
 def _build_read_env_command() -> str:
-    script = f"""\
-set -euo pipefail
-server_env={GROOT_ENV_FILE}
-container_env={GROOT_CONTAINER_ENV_FILE}
-env_path=""
-mode=""
-if sudo test -f "$server_env"; then
-  env_path="$server_env"
-  mode="systemd"
-elif sudo test -f "$container_env"; then
-  env_path="$container_env"
-  mode="container"
-else
-  echo "NPA_GROOT_ENV_READ env_path= mode=missing"
-  exit 0
-fi
-echo "NPA_GROOT_ENV_READ env_path=$env_path mode=$mode"
-sudo cat "$env_path" || true
-"""
-    return _remote_bash(script)
-
-
-def _parse_env_read(stdout: str) -> tuple[str, str, str]:
-    env_path = ""
-    mode = ""
-    body: list[str] = []
-    for line in stdout.splitlines():
-        if line.startswith("NPA_GROOT_ENV_READ "):
-            parts = dict(
-                item.split("=", 1)
-                for item in line.removeprefix("NPA_GROOT_ENV_READ ").split()
-                if "=" in item
-            )
-            env_path = parts.get("env_path", "")
-            mode = parts.get("mode", "")
-            continue
-        body.append(line)
-    return env_path, mode, "\n".join(body) + ("\n" if body else "")
+    return build_read_env_command(
+        server_env_path=GROOT_ENV_FILE,
+        container_env_path=GROOT_CONTAINER_ENV_FILE,
+        remote_bash=_remote_bash,
+    )
 
 
 def _shared_groot_env_or_fail(cfg: Any, credentials: Any) -> dict[str, str]:
@@ -1476,7 +1354,9 @@ def _shared_groot_env_or_fail(cfg: Any, credentials: Any) -> dict[str, str]:
     return credential_env
 
 
-def _read_current_env_for_dry_run(cfg: Any, credential_env: dict[str, str]) -> tuple[str, str, str]:
+def _read_current_env_for_dry_run(
+    cfg: Any, credential_env: dict[str, str]
+) -> tuple[str, str, str]:
     ssh = _ssh_client(cfg, extra_tokens=credential_env)
     try:
         _, stdout, _ = ssh.run_or_raise(_build_read_env_command(), stream=False)
@@ -1629,6 +1509,8 @@ def _build_finetune_command(
     nccl_transport: str = NcclTransport.auto.value,
     max_steps: int | None = None,
     global_batch_size: int | None = None,
+    per_device_batch_size: int | None = None,
+    gradient_accumulation_steps: int | None = None,
     dataloader_num_workers: int | None = None,
     save_steps: int | None = None,
     save_total_limit: int | None = None,
@@ -1667,7 +1549,9 @@ def _build_finetune_command(
         else output_path
     )
     upload_cmd = (
-        _remote_upload_dir_cmd(output_dir, output_path, checkpoint_endpoint_url or endpoint_url)
+        _remote_upload_dir_cmd(
+            output_dir, output_path, checkpoint_endpoint_url or endpoint_url
+        )
         if output_is_s3
         else "true"
     )
@@ -1690,11 +1574,40 @@ export NCCL_CUMEM_HOST_ENABLE=0
 uv pip install --quiet --python {GROOT_VENV}/bin/python nvidia-nccl-cu12=={GROOT_NCCL_RUNTIME_VERSION}
 echo NPA_GROOT_NCCL_TRANSPORT socket
 """
+    if (
+        global_batch_size is not None
+        and per_device_batch_size is not None
+        and gradient_accumulation_steps is not None
+    ):
+        effective_global_batch = (
+            int(num_gpus)
+            * int(per_device_batch_size)
+            * int(gradient_accumulation_steps)
+        )
+        if effective_global_batch != int(global_batch_size):
+            raise ValueError(
+                "global batch must equal num_gpus * per_device_batch_size * "
+                "gradient_accumulation_steps"
+            )
+        # The pinned vendor launcher derives per-device batch as its
+        # --global-batch-size divided by world size, then applies gradient
+        # accumulation in Transformers. Pass the pre-accumulation global batch
+        # so the actual optimizer batch is the public NPA value.
+        trainer_global_batch_size = int(num_gpus) * int(per_device_batch_size)
+    else:
+        trainer_global_batch_size = global_batch_size
     train_args = ""
     if max_steps is not None:
         train_args += f" \\\n  --max-steps {max_steps}"
-    if global_batch_size is not None:
-        train_args += f" \\\n  --global-batch-size {global_batch_size}"
+    if trainer_global_batch_size is not None:
+        train_args += f" \\\n  --global-batch-size {trainer_global_batch_size}"
+    if gradient_accumulation_steps is not None:
+        train_args += (
+            f" \\\n  --gradient-accumulation-steps {gradient_accumulation_steps}"
+        )
+    # The stock pinned launcher hard-codes relative actions. The image/runtime
+    # compatibility patch turns this into a real FinetuneConfig option.
+    train_args += " \\\n  --use-relative-action false"
     if dataloader_num_workers is not None:
         train_args += f" \\\n  --dataloader-num-workers {dataloader_num_workers}"
     if save_steps is not None:
@@ -1707,6 +1620,7 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
     if override_args:
         train_args += f" \\\n  {override_args}"
     training_env = shell_env_exports(training.env())
+    runtime_pin_patch = _build_runtime_pin_patch_command()
     model_revision = HF_MODEL_REVISIONS.get(base_model.split("@", 1)[0], "")
     manifest_path = f"{output_dir}/{GROOT_FINETUNE_MANIFEST}"
     probe_script = render_distributed_probe(output_dir)
@@ -1727,13 +1641,26 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
             "num_gpus": num_gpus,
             "nccl_transport": nccl_transport,
             "global_batch_size": global_batch_size,
-            "max_steps": max_steps,
-            "logging_steps": 10,
-            "logging_steps_source": (
-                "Isaac-GR00T@"
-                + GROOT_REPO_REF
-                + ":gr00t/configs/training/training_config.py"
+            "trainer_global_batch_size": trainer_global_batch_size,
+            "per_device_batch_size": per_device_batch_size,
+            "gradient_accumulation_steps": gradient_accumulation_steps,
+            "effective_global_batch_size": (
+                num_gpus
+                * int(per_device_batch_size or 0)
+                * int(gradient_accumulation_steps or 0)
             ),
+            "max_steps": max_steps,
+            "logging_steps": None,
+            "loss_step_contract": "actual trainer_state/global_step only; no synthetic mapping",
+            "model_config_contract": {
+                "tune_projector": True,
+                "tune_diffusion_model": True,
+                "load_bf16": False,
+                "reproject_vision": False,
+                "backbone_trainable_params_fp32": True,
+                "use_relative_action": False,
+                "action_representation": "ABSOLUTE",
+            },
             "data_path": input_path,
             "checkpoint_uri": output_path,
             "training_log_uri": output_path.rstrip("/") + "/training.log",
@@ -1764,6 +1691,7 @@ if [ "$actual_groot_ref" != {shlex.quote(GROOT_REPO_REF)} ]; then
   echo "ERROR: expected Isaac-GR00T ref {GROOT_REPO_REF}, got $actual_groot_ref" >&2
   exit 1
 fi
+{runtime_pin_patch}
 {dataset_setup}{base_setup}{config_setup}{nccl_env}modality_config_path={shlex.quote(resolved_config)}
 if [ -z "$modality_config_path" ] && [ -f {shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py ]; then
   modality_config_path={shlex.quote(dataset_dir)}/meta/npa_groot_modality_config.py
@@ -2192,7 +2120,9 @@ def _update_existing_deployment(
 
     credentials = resolve_credentials()
     credential_env = _shared_groot_env_or_fail(cfg, credentials)
-    service_port = port or int(getattr(cfg, "service_port", 0) or 0) or DEFAULT_SERVER_PORT
+    service_port = (
+        port or int(getattr(cfg, "service_port", 0) or 0) or DEFAULT_SERVER_PORT
+    )
     result = _apply_env_update(
         cfg,
         credential_env,
@@ -2293,13 +2223,19 @@ def cleanup_partial_cmd(
 
     state = classify_alias_state(proj_alias, wb_name)
     if state == "fresh":
-        typer.echo(f"No terraform state found for {proj_alias}/{wb_name}. Nothing to clean up.")
+        typer.echo(
+            f"No terraform state found for {proj_alias}/{wb_name}. Nothing to clean up."
+        )
         return
     if state == "byovm":
-        typer.echo(f"Alias {proj_alias}/{wb_name} is BYOVM. No terraform resources to clean.")
+        typer.echo(
+            f"Alias {proj_alias}/{wb_name} is BYOVM. No terraform resources to clean."
+        )
         return
     if state == "fully_deployed":
-        typer.echo(f"Alias {proj_alias}/{wb_name} appears fully deployed. Use `teardown` instead.")
+        typer.echo(
+            f"Alias {proj_alias}/{wb_name} appears fully deployed. Use `teardown` instead."
+        )
         raise typer.Exit(code=1)
 
     try:
@@ -2450,7 +2386,9 @@ def deploy_cmd(
 
     byovm = is_byovm_runtime(runtime)
     if _is_serverless_runtime(runtime):
-        _fail("GR00T deploy does not use --runtime serverless; use `npa workbench groot infer --runtime serverless`.")
+        _fail(
+            "GR00T deploy does not use --runtime serverless; use `npa workbench groot infer --runtime serverless`."
+        )
     container_runtime = runtime == WorkbenchRuntime.container
     if byovm:
         skip_infra = True
@@ -2787,7 +2725,9 @@ def deploy_cmd(
                         )
                     )
                 if plan_analysis.decision == PlanDecision.NO_CHANGES:
-                    console.print("    Terraform plan has no changes; deploy is a no-op.")
+                    console.print(
+                        "    Terraform plan has no changes; deploy is a no-op."
+                    )
                     tf_outputs = provisioner.outputs(tf_dir=resolved_tf_dir or None)
                 else:
                     tf_outputs = provisioner.apply(
@@ -3359,7 +3299,9 @@ def reload_env_cmd(
                     "port": service_port,
                     "diff": diff,
                     "commands": [
-                        f"systemctl restart {GROOT_SERVICE}" if restart else "no restart",
+                        f"systemctl restart {GROOT_SERVICE}"
+                        if restart
+                        else "no restart",
                         f"curl http://127.0.0.1:{service_port}/health",
                     ],
                 },
@@ -3467,23 +3409,39 @@ def finetune_cmd(
     input_path: str = typer.Option(
         "", "--input-path", help="Compatibility alias for --data-path."
     ),
-    data_path: str = typer.Option("", "--data-path", help="Custom GR00T LeRobot training dataset path."),
+    data_path: str = typer.Option(
+        "", "--data-path", help="Custom GR00T LeRobot training dataset path."
+    ),
     output_path: str = typer.Option(
-        "", "--output-path", help="Compatibility checkpoint output path; prefer --checkpoint-s3-uri for S3."
+        "",
+        "--output-path",
+        help="Compatibility checkpoint output path; prefer --checkpoint-s3-uri for S3.",
     ),
     override: list[str] = typer.Option(
         [],
         "--override",
         help="Generic trainer override as KEY=VALUE. Repeat for any underlying GR00T training arg.",
     ),
-    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B environment for the training run."),
+    wandb_enabled: bool = typer.Option(
+        False, "--wandb/--no-wandb", help="Enable W&B environment for the training run."
+    ),
     wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
     wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
-    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
-    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
-    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
-    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
-    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
+    wandb_mode: str = typer.Option(
+        "offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."
+    ),
+    checkpoint_s3_uri: str = typer.Option(
+        "", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."
+    ),
+    checkpoint_s3_endpoint_url: str = typer.Option(
+        "", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."
+    ),
+    checkpoint_s3_access_key_id: str = typer.Option(
+        "", "--checkpoint-s3-access-key-id", help="S3 access key ID."
+    ),
+    checkpoint_s3_secret_access_key: str = typer.Option(
+        "", "--checkpoint-s3-secret-access-key", help="S3 secret access key."
+    ),
     base_model: str = typer.Option(
         DEFAULT_MODEL, "--base-model", help="Base GR00T checkpoint ID or S3 URI."
     ),
@@ -3517,6 +3475,12 @@ def finetune_cmd(
     global_batch_size: int | None = typer.Option(
         None, "--global-batch-size", help="Override effective training batch size."
     ),
+    per_device_batch_size: int | None = typer.Option(
+        None, "--per-device-batch-size", help="Per-rank microbatch size."
+    ),
+    gradient_accumulation_steps: int | None = typer.Option(
+        None, "--gradient-accumulation-steps", help="Optimizer gradient accumulation."
+    ),
     dataloader_num_workers: int | None = typer.Option(
         None, "--dataloader-num-workers", help="Override dataloader workers."
     ),
@@ -3543,6 +3507,24 @@ def finetune_cmd(
             "--global-batch-size must be divisible by --num-gpus for the "
             f"GR00T 1.7 trainer, got {global_batch_size} and {num_gpus}"
         )
+    if per_device_batch_size is not None and per_device_batch_size <= 0:
+        _fail(f"--per-device-batch-size must be positive, got {per_device_batch_size}")
+    if gradient_accumulation_steps is not None and gradient_accumulation_steps <= 0:
+        _fail(
+            "--gradient-accumulation-steps must be positive, got "
+            f"{gradient_accumulation_steps}"
+        )
+    if (per_device_batch_size is None) != (gradient_accumulation_steps is None):
+        _fail("per-device batch and gradient accumulation must be configured together")
+    if per_device_batch_size is not None:
+        effective = (
+            num_gpus * per_device_batch_size * int(gradient_accumulation_steps or 0)
+        )
+        if global_batch_size != effective:
+            _fail(
+                "--global-batch-size must equal num_gpus * per-device-batch-size * "
+                f"gradient-accumulation-steps; expected {effective}, got {global_batch_size}"
+            )
     try:
         training_config = build_training_config(
             data_path=data_path,
@@ -3611,6 +3593,8 @@ def finetune_cmd(
         nccl_transport=nccl_transport.value,
         max_steps=max_steps,
         global_batch_size=global_batch_size,
+        per_device_batch_size=per_device_batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
         dataloader_num_workers=dataloader_num_workers,
         save_steps=save_steps,
         save_total_limit=save_total_limit,
@@ -3632,9 +3616,7 @@ def finetune_cmd(
                 cmd, stream=output != OutputFormat.json
             )
         else:
-            exit_code, stdout, stderr = ssh.run(
-                cmd, stream=output != OutputFormat.json
-            )
+            exit_code, stdout, stderr = ssh.run(cmd, stream=output != OutputFormat.json)
     except (SSHError, OSError) as exc:
         _fail(f"GR00T execution error: {exc}")
         return
@@ -3998,18 +3980,46 @@ def infer_cmd(
         "--trt-engine-path",
         help="TensorRT engine path used when --inference-mode=tensorrt.",
     ),
-    model_variant: str = typer.Option(DEFAULT_MODEL, "--model-variant", help="GR00T model variant metadata recorded by serverless inference."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime. serverless creates a Nebius AI Job."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
-    image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
-    gpu_type: str = typer.Option("h200", "--gpu-type", help="GPU type for serverless Jobs."),
-    gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count for serverless Jobs."),
-    gpu_preset: str = typer.Option("", "--gpu-preset", help="Nebius GPU preset override."),
-    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
-    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
-    submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
-    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
-    timeout: float = typer.Option(3600.0, "--timeout", help="Seconds to wait for serverless completion."),
+    model_variant: str = typer.Option(
+        DEFAULT_MODEL,
+        "--model-variant",
+        help="GR00T model variant metadata recorded by serverless inference.",
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm,
+        "--runtime",
+        help="Runtime. serverless creates a Nebius AI Job.",
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID for serverless Jobs."
+    ),
+    image: str = typer.Option(
+        "", "--image", help="Container image for the serverless Job."
+    ),
+    gpu_type: str = typer.Option(
+        "h200", "--gpu-type", help="GPU type for serverless Jobs."
+    ),
+    gpu_count: int = typer.Option(
+        1, "--gpu-count", help="GPU count for serverless Jobs."
+    ),
+    gpu_preset: str = typer.Option(
+        "", "--gpu-preset", help="Nebius GPU preset override."
+    ),
+    subnet_id: str = typer.Option(
+        "", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."
+    ),
+    job_name: str = typer.Option(
+        "", "--job-name", help="Explicit serverless Job name."
+    ),
+    submit_only: bool = typer.Option(
+        False, "--submit-only", help="Submit serverless Job and return before polling."
+    ),
+    poll_interval: float = typer.Option(
+        30.0, "--poll-interval", help="Seconds between serverless status checks."
+    ),
+    timeout: float = typer.Option(
+        3600.0, "--timeout", help="Seconds to wait for serverless completion."
+    ),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),

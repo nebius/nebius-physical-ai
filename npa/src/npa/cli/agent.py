@@ -17,7 +17,7 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 import typer
@@ -359,7 +359,7 @@ def _record_customer_url(record: dict[str, Any]) -> str:
     return str(record.get("agent_url", "")).strip()
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code=1)
 
@@ -6372,12 +6372,13 @@ def sim_viz_load_run(payload: dict | None = None):
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
-            detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
+            detail={{"error": "run_id is ambiguous; provide run_ref",
+                     "run_id": exc.run_id, "run_refs": exc.references}},
         ) from exc
     except AmbiguousRunSourceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ArtifactDiscoveryError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="invalid run artifact request") from exc
     except HTTPException:
         raise
     except (ClientError, BotoCoreError, OSError, KeyError, TypeError, ValueError):
@@ -7201,10 +7202,11 @@ def sim_viz_load_artifact(payload: dict | None = None):
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
-            detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
+            detail={{"error": "run_id is ambiguous; provide run_ref",
+                     "run_id": exc.run_id, "run_refs": exc.references}},
         ) from exc
     except ArtifactDiscoveryError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="invalid run artifact request") from exc
     except HTTPException:
         raise
     except Exception:

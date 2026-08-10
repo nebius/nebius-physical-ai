@@ -83,7 +83,9 @@ def test_initial_state_canonicalization_excludes_only_derived_coverage() -> None
 
 
 def test_paired_evidence_excludes_zero_for_consistent_improvement() -> None:
-    evidence = paired_bootstrap([0.05 + index / 10_000 for index in range(24)], samples=10_000)
+    evidence = paired_bootstrap(
+        [0.05 + index / 10_000 for index in range(24)], samples=10_000
+    )
     assert evidence["mean_delta"] > 0
     assert evidence["ci_low"] > 0
     assert evidence["p_value"] < 0.05
@@ -138,35 +140,71 @@ def test_trained_checkpoint_resolution_requires_completed_gpu_step_contract(
             "checkpoint_uri": "s3://bucket/checkpoint/",
             "optimizer_step_ok": True,
             "collective_ok": True,
+            "loss_steps_real": True,
+            "loss_decreased": True,
+            "model_config_contract": task_performance.GROOT_MODEL_CONFIG_CONTRACT,
             "num_gpus": 7,
             "world_size": 7,
             "distinct_gpu_count": 7,
-            "max_steps": 6000,
-            "training_step": 6000,
-            "global_batch_size": 7,
-            "training_examples": 42_000,
+            "max_steps": 10000,
+            "training_step": 10000,
+            "checkpoint_steps": [2500, 5000, 7500, 10000],
+            "global_batch_size": 224,
+            "per_device_batch_size": 8,
+            "gradient_accumulation_steps": 4,
+            "training_examples": 2_240_000,
         },
         "s3://bucket/split.json": {
             "schema": "npa.groot.episode_split.v1",
             "status": "prepared",
             "run_id": "run",
             "training_plan": {
-                "configured_max_steps": 6000,
-                "effective_max_steps": 6000,
-                "global_batch_size": 7,
+                "configured_max_steps": 10000,
+                "effective_max_steps": 10000,
+                "global_batch_size": 224,
+                "per_device_batch_size": 8,
+                "gradient_accumulation_steps": 4,
             },
         },
     }
     written = {}
-    monkeypatch.setattr(task_performance, "_read_s3_json", lambda _client, uri: documents[uri])
+    monkeypatch.setattr(
+        task_performance, "_read_s3_json", lambda _client, uri: documents[uri]
+    )
     monkeypatch.setattr(task_performance, "_download_prefix", lambda *_args: [])
     monkeypatch.setattr(
         task_performance,
-        "_checkpoint_identity",
-        lambda _path: {"sha256": "a" * 64, "objects": 38, "bytes": 13_000},
+        "_resolve_highest_checkpoint_directory",
+        lambda path: (path, 10000),
+    )
+    identities = iter(
+        [
+            {
+                "sha256": "a" * 64,
+                "weights_sha256": "b" * 64,
+                "objects": 38,
+                "bytes": 13_000,
+            },
+            {
+                "sha256": "c" * 64,
+                "weights_sha256": "d" * 64,
+                "objects": 38,
+                "bytes": 13_000,
+            },
+        ]
     )
     monkeypatch.setattr(
-        task_performance, "_put_json", lambda _client, uri, payload: written.update({uri: payload})
+        task_performance,
+        "_checkpoint_identity",
+        lambda _path: next(identities),
+    )
+    monkeypatch.setattr(
+        task_performance, "checkpoint_model_config_contract", lambda _path: {}
+    )
+    monkeypatch.setattr(
+        task_performance,
+        "_put_json",
+        lambda _client, uri, payload: written.update({uri: payload}),
     )
 
     result = task_performance.resolve_trained_checkpoint(
@@ -175,14 +213,15 @@ def test_trained_checkpoint_resolution_requires_completed_gpu_step_contract(
         "s3://bucket/checkpoint/",
         "s3://bucket/reference.json",
         "run",
+        baseline_checkpoint_uri="s3://bucket/baseline/",
         expected_gpu_count=7,
-        expected_max_steps=6000,
+        expected_max_steps=10000,
         s3_client=object(),
     )
     assert result["checkpoint"]["sha256"] == "a" * 64
-    assert written["s3://bucket/reference.json"]["training"]["optimizer_steps"] == 6000
+    assert written["s3://bucket/reference.json"]["training"]["optimizer_steps"] == 10000
 
-    documents["s3://bucket/training.json"]["training_step"] = 5999
+    documents["s3://bucket/training.json"]["training_step"] = 9999
     with pytest.raises(GrootVisualizationError, match="did not complete"):
         task_performance.resolve_trained_checkpoint(
             "s3://bucket/training.json",
@@ -190,13 +229,16 @@ def test_trained_checkpoint_resolution_requires_completed_gpu_step_contract(
             "s3://bucket/checkpoint/",
             "s3://bucket/reference.json",
             "run",
+            baseline_checkpoint_uri="s3://bucket/baseline/",
             expected_gpu_count=7,
-            expected_max_steps=6000,
+            expected_max_steps=10000,
             s3_client=object(),
         )
 
 
-def test_selection_requires_passed_closed_loop_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_selection_requires_passed_closed_loop_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     report = {
         "schema": task_performance.REPORT_SCHEMA,
         "status": "passed",
@@ -212,9 +254,13 @@ def test_selection_requires_passed_closed_loop_validation(monkeypatch: pytest.Mo
     }
     docs = {"s3://bucket/validation.json": report, "s3://bucket/ref.json": reference}
     written = {}
-    monkeypatch.setattr(task_performance, "_read_s3_json", lambda _client, uri: docs[uri])
     monkeypatch.setattr(
-        task_performance, "_put_json", lambda _client, uri, payload: written.update({uri: payload})
+        task_performance, "_read_s3_json", lambda _client, uri: docs[uri]
+    )
+    monkeypatch.setattr(
+        task_performance,
+        "_put_json",
+        lambda _client, uri, payload: written.update({uri: payload}),
     )
     selected = task_performance.select_checkpoint(
         "s3://bucket/validation.json",

@@ -14,6 +14,8 @@ import importlib.util
 import io
 import json
 import math
+import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -46,6 +48,7 @@ SPLIT_SCHEMA = "npa.groot.episode_split.v1"
 EVAL_SCHEMA = "npa.groot.offline_eval.v1"
 REPORT_SCHEMA = "npa.groot.learning.v1"
 PUBLISH_SCHEMA = "npa.groot.learning_publish.v1"
+PROBE_SELECTION_SCHEMA = "npa.groot.offline_checkpoint_selection.v1"
 EVALUATION_KIND = "offline held-out policy evaluation"
 TIMESTAMP_SEMANTICS = "dataset-index-at-recorded-fps"
 RERUN_APPLICATION_ID = "npa_groot_offline_learning"
@@ -68,6 +71,8 @@ REQUIRED_MCAP_TOPICS = {
     "/metrics/heldout_before": "npa.RunMetrics.metrics/heldout_before",
     "/metrics/heldout_after": "npa.RunMetrics.metrics/heldout_after",
     "/metrics/train_loss": "npa.RunMetrics.metrics/train_loss",
+    "/metrics/per_horizon_error": "npa.RunMetrics.metrics/per_horizon_error",
+    "/metrics/checkpoint_curve": "npa.RunMetrics.metrics/checkpoint_curve",
     "/log": "foxglove.Log",
 }
 REQUIRED_RRD_ENTITIES = [
@@ -80,12 +85,108 @@ REQUIRED_RRD_ENTITIES = [
     "metrics/heldout_before/mse",
     "metrics/heldout_after/mse",
     "train/loss",
+    "metrics/per_horizon/baseline_mse",
+    "metrics/per_horizon/posttrain_mse",
+    "validation/checkpoint_mse",
     "provenance",
 ]
 CUSTOM_DATASET_METADATA = (
     "npa_groot_adapter.json",
     "npa_groot_modality_config.py",
 )
+
+# Every surface that constructs or loads the PushT policy must agree on these
+# values.  In particular, PushT actions are absolute workspace targets; the
+# prior continuation accidentally enabled the global relative-action mode and
+# produced a model that was materially worse than a train-mean predictor.
+GROOT_MODEL_CONFIG_CONTRACT: dict[str, Any] = {
+    "tune_projector": True,
+    "tune_diffusion_model": True,
+    "load_bf16": False,
+    "reproject_vision": False,
+    "backbone_trainable_params_fp32": True,
+    "use_relative_action": False,
+    "action_representation": "ABSOLUTE",
+}
+
+DEFAULT_MINIMUM_SKILL_SCORE = 0.05
+DEFAULT_MINIMUM_RELATIVE_IMPROVEMENT = 0.10
+DEFAULT_REPEAT_NOISE_MULTIPLE = 3.0
+DEFAULT_MAX_DIMENSION_REGRESSION = 0.0
+DEFAULT_MINIMUM_EPOCHS = 2.0
+DEFAULT_MINIMUM_EFFECTIVE_GLOBAL_BATCH = 128
+WEIGHT_FILE_PATTERNS = (
+    re.compile(r"(?:^|/)model(?:-\d+-of-\d+)?\.safetensors$"),
+    re.compile(r"(?:^|/)pytorch_model(?:-\d+-of-\d+)?\.bin$"),
+)
+
+
+def preflight_rigor_contract(
+    output_uri: str,
+    run_id: str,
+    *,
+    gpu_type: str,
+    gpu_count: int,
+    global_batch_size: int,
+    per_device_batch_size: int,
+    gradient_accumulation_steps: int,
+    train_episodes: int,
+    validation_episodes: int,
+    final_episodes: int,
+    max_steps: int,
+    minimum_epochs: float,
+    s3_client: Any | None = None,
+) -> dict[str, Any]:
+    """Fail before GPU scheduling when the declared rigor contract is incoherent."""
+
+    effective = (
+        int(gpu_count) * int(per_device_batch_size) * int(gradient_accumulation_steps)
+    )
+    if int(gpu_count) < 1:
+        raise GrootVisualizationError("GPU count must be at least one")
+    if (
+        effective != int(global_batch_size)
+        or effective < DEFAULT_MINIMUM_EFFECTIVE_GLOBAL_BATCH
+    ):
+        raise GrootVisualizationError(
+            "declared effective global batch contract is invalid"
+        )
+    if min(int(validation_episodes), int(final_episodes)) < 24:
+        raise GrootVisualizationError(
+            "validation and final cohorts require at least 24 episodes"
+        )
+    if int(train_episodes) <= int(validation_episodes) + int(final_episodes):
+        raise GrootVisualizationError("training cohort is not substantially expanded")
+    if int(max_steps) < 10_000 or float(minimum_epochs) <= 1.0:
+        raise GrootVisualizationError(
+            "fine-tune budget must exceed one epoch and 10k steps"
+        )
+    result = {
+        "schema": "npa.groot.rigor_preflight.v1",
+        "status": "passed",
+        "run_id": run_id,
+        "gpu": {"type": gpu_type, "count": int(gpu_count)},
+        "batch": {
+            "per_device": int(per_device_batch_size),
+            "gradient_accumulation_steps": int(gradient_accumulation_steps),
+            "effective_global": effective,
+        },
+        "episodes": {
+            "train": int(train_episodes),
+            "validation": int(validation_episodes),
+            "final": int(final_episodes),
+        },
+        "max_steps": int(max_steps),
+        "minimum_epochs": float(minimum_epochs),
+        "absolute_actions": True,
+        "use_relative_action": False,
+        "control_plane_capacity": (
+            "enforced separately by workflow planner/scheduler before trainer provisioning"
+        ),
+    }
+    _put_json(_s3_client(s3_client), output_uri, result)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return result
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -106,9 +207,13 @@ def deterministic_episode_split(
     """Select a stable disjoint experiment cohort at episode granularity."""
 
     if episode_count < train_episodes + heldout_episodes:
-        raise GrootVisualizationError("dataset has too few episodes for requested split")
+        raise GrootVisualizationError(
+            "dataset has too few episodes for requested split"
+        )
     if train_episodes < 1 or heldout_episodes < 1:
-        raise GrootVisualizationError("train and held-out episode counts must be positive")
+        raise GrootVisualizationError(
+            "train and held-out episode counts must be positive"
+        )
     order = sorted(
         range(episode_count),
         key=lambda index: hashlib.sha256(f"{seed}:{index}".encode()).hexdigest(),
@@ -117,7 +222,51 @@ def deterministic_episode_split(
     train = order[heldout_episodes : heldout_episodes + train_episodes]
     if set(train) & set(heldout):
         raise GrootVisualizationError("episode leakage detected in deterministic split")
-    return {"train": train, "heldout": heldout, "excluded": order[len(train) + len(heldout) :]}
+    return {
+        "train": train,
+        "heldout": heldout,
+        "excluded": order[len(train) + len(heldout) :],
+    }
+
+
+def deterministic_experiment_split(
+    episode_count: int,
+    *,
+    train_episodes: int,
+    validation_episodes: int,
+    final_episodes: int,
+    seed: str,
+) -> dict[str, list[int]]:
+    """Create a stable train/validation/final split without episode leakage."""
+
+    requested = int(train_episodes) + int(validation_episodes) + int(final_episodes)
+    if min(train_episodes, validation_episodes, final_episodes) < 1:
+        raise GrootVisualizationError(
+            "train, validation, and final episode counts must be positive"
+        )
+    if requested > int(episode_count):
+        raise GrootVisualizationError(
+            "dataset has too few episodes for train/validation/final split"
+        )
+    order = sorted(
+        range(int(episode_count)),
+        key=lambda index: hashlib.sha256(f"{seed}:{index}".encode()).hexdigest(),
+    )
+    validation_end = int(validation_episodes)
+    final_end = validation_end + int(final_episodes)
+    train_end = final_end + int(train_episodes)
+    result = {
+        "validation": order[:validation_end],
+        "final": order[validation_end:final_end],
+        "train": order[final_end:train_end],
+        "excluded": order[train_end:],
+    }
+    selected = result["train"] + result["validation"] + result["final"]
+    if len(selected) != len(set(selected)):
+        raise GrootVisualizationError(
+            "episode leakage detected in deterministic experiment split"
+        )
+    return result
 
 
 def derive_training_step_contract(
@@ -125,14 +274,54 @@ def derive_training_step_contract(
     train_samples: int,
     global_batch_size: int,
     configured_max_steps: int | None = None,
-) -> dict[str, int | None]:
+    minimum_epochs: float = 1.0,
+    minimum_effective_global_batch: int = 1,
+    gpu_count: int | None = None,
+    per_device_batch_size: int | None = None,
+    gradient_accumulation_steps: int | None = None,
+) -> dict[str, int | float | None]:
     """Derive the billed GPU step budget from the materialized train split."""
 
     if int(train_samples) <= 0 or int(global_batch_size) <= 0:
         raise GrootVisualizationError(
             "training step derivation requires positive train samples and global batch"
         )
-    required = math.ceil(int(train_samples) / int(global_batch_size))
+    if float(minimum_epochs) <= 0:
+        raise GrootVisualizationError("minimum training epochs must be positive")
+    if int(global_batch_size) < int(minimum_effective_global_batch):
+        raise GrootVisualizationError(
+            f"effective global batch {global_batch_size} is below required "
+            f"{minimum_effective_global_batch}"
+        )
+    if (
+        gpu_count is not None
+        or per_device_batch_size is not None
+        or gradient_accumulation_steps is not None
+    ):
+        if (
+            min(
+                int(gpu_count or 0),
+                int(per_device_batch_size or 0),
+                int(gradient_accumulation_steps or 0),
+            )
+            <= 0
+        ):
+            raise GrootVisualizationError(
+                "GPU, per-device batch, and accumulation must be positive"
+            )
+        derived_global = (
+            int(gpu_count or 0)
+            * int(per_device_batch_size or 0)
+            * int(gradient_accumulation_steps or 0)
+        )
+        if derived_global != int(global_batch_size):
+            raise GrootVisualizationError(
+                "effective global batch differs from gpu_count * per_device_batch * "
+                "gradient_accumulation_steps"
+            )
+    required = math.ceil(
+        int(train_samples) * float(minimum_epochs) / int(global_batch_size)
+    )
     configured = int(configured_max_steps or 0)
     if configured < 0:
         raise GrootVisualizationError("configured max_steps cannot be negative")
@@ -149,6 +338,17 @@ def derive_training_step_contract(
         "required_optimizer_steps": required,
         "configured_max_steps": configured or None,
         "effective_max_steps": effective,
+        "minimum_epochs": float(minimum_epochs),
+        "epoch_equivalent": effective * int(global_batch_size) / int(train_samples),
+        "gpu_count": int(gpu_count) if gpu_count is not None else None,
+        "per_device_batch_size": (
+            int(per_device_batch_size) if per_device_batch_size is not None else None
+        ),
+        "gradient_accumulation_steps": (
+            int(gradient_accumulation_steps)
+            if gradient_accumulation_steps is not None
+            else None
+        ),
     }
 
 
@@ -185,7 +385,9 @@ def _camera_contract(
         cameras.append({"name": fallback, "original_key": original})
     names = [item["name"] for item in cameras]
     if len(names) != len(set(names)):
-        raise GrootVisualizationError("dataset camera metadata resolves duplicate names")
+        raise GrootVisualizationError(
+            "dataset camera metadata resolves duplicate names"
+        )
     return cameras
 
 
@@ -195,7 +397,9 @@ def _episode_timebase(
     """Build the common camera/action timebase and explicit episode boundaries."""
 
     if float(fps) <= 0 or not alignment:
-        raise GrootVisualizationError("timebase requires aligned samples at positive FPS")
+        raise GrootVisualizationError(
+            "timebase requires aligned samples at positive FPS"
+        )
     entries: list[dict[str, Any]] = []
     boundaries: list[dict[str, Any]] = []
     current_episode: int | None = None
@@ -206,7 +410,9 @@ def _episode_timebase(
         episode_index = int(row.get("episode_index", -1))
         frame_index = int(row.get("frame_index", -1))
         if episode_index < 0 or frame_index < 0:
-            raise GrootVisualizationError("sample alignment lacks episode/frame indices")
+            raise GrootVisualizationError(
+                "sample alignment lacks episode/frame indices"
+            )
         entry = {
             "sample_index": sample_index,
             "episode_index": episode_index,
@@ -263,18 +469,25 @@ def _write_dataset_stats(parquet_paths: Sequence[Path]) -> dict[str, Any]:
             columns.setdefault(name, []).extend(values)
     result: dict[str, Any] = {}
     for name, values in columns.items():
-        data = np.vstack([np.asarray(value).reshape(-1) for value in values]).astype(np.float64)
+        data = np.vstack([np.asarray(value).reshape(-1) for value in values]).astype(
+            np.float64
+        )
         result[name] = {
             "min": np.min(data, axis=0).tolist(),
             "max": np.max(data, axis=0).tolist(),
             "mean": np.mean(data, axis=0).tolist(),
             "std": np.std(data, axis=0).tolist(),
             "q01": np.quantile(data, 0.01, axis=0).tolist(),
+            "q10": np.quantile(data, 0.10, axis=0).tolist(),
+            "q50": np.quantile(data, 0.50, axis=0).tolist(),
+            "q90": np.quantile(data, 0.90, axis=0).tolist(),
             "q99": np.quantile(data, 0.99, axis=0).tolist(),
             "count": [int(data.shape[0])],
         }
     if "action" not in result or "observation.state" not in result:
-        raise GrootVisualizationError("split statistics lack required state/action tensors")
+        raise GrootVisualizationError(
+            "split statistics lack required state/action tensors"
+        )
     return result
 
 
@@ -321,6 +534,7 @@ def _materialize_split(
     selected: Sequence[int],
     split_name: str,
     root: Path,
+    action_representation: str = "source",
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     local = root / split_name
     data_pattern = str(source_info["data_path"])
@@ -379,7 +593,11 @@ def _materialize_split(
         episode_meta["source_episode_index"] = source_index
         rewritten_episodes.append(episode_meta)
         for original_video_key in video_keys:
-            camera = "front" if original_video_key == "observation.image" else original_video_key
+            camera = (
+                "front"
+                if original_video_key == "observation.image"
+                else original_video_key
+            )
             source_video_relative = video_pattern.format(
                 episode_chunk=episode_chunk,
                 episode_index=source_index,
@@ -416,10 +634,13 @@ def _materialize_split(
     info["splits"] = {"train": f"0:{len(selected)}"}
     info["chunks_size"] = max(int(source_info["chunks_size"]), len(selected))
     info["npa_split_role"] = split_name
-    info["npa_stats_source"] = "train-only" if split_name == "train" else "train-only-copied"
+    info["npa_stats_source"] = (
+        "train-only" if split_name == "train" else "train-only-copied"
+    )
     _put_json(client, _source_object_uri(output_uri, "meta/info.json"), info)
     episodes_body = b"".join(
-        (json.dumps(item, sort_keys=True) + "\n").encode() for item in rewritten_episodes
+        (json.dumps(item, sort_keys=True) + "\n").encode()
+        for item in rewritten_episodes
     )
     _put_bytes(
         client,
@@ -430,6 +651,32 @@ def _materialize_split(
     _put_json(client, _source_object_uri(output_uri, "meta/stats.json"), stats)
     for name in ("tasks.jsonl", "modality.json", *CUSTOM_DATASET_METADATA):
         payload = _read_s3_bytes(client, _source_object_uri(source_uri, f"meta/{name}"))
+        source_payload_sha256 = _sha256_bytes(payload)
+        if (
+            action_representation == "absolute"
+            and name == "npa_groot_modality_config.py"
+        ):
+            text = payload.decode("utf-8")
+            if "ActionRepresentation." not in text:
+                raise GrootVisualizationError(
+                    "generated modality config has no action representation"
+                )
+            payload = (
+                text.replace(
+                    "ActionRepresentation.RELATIVE", "ActionRepresentation.ABSOLUTE"
+                )
+                .replace(
+                    "Joint commands use relative single-arm deltas and an absolute gripper target, "
+                    "matching Isaac-GR00T's SO100 custom-embodiment contract.",
+                    "All action dimensions are absolute task-space targets; relative-action mode is disabled.",
+                )
+                .encode("utf-8")
+            )
+        elif action_representation == "absolute" and name == "npa_groot_adapter.json":
+            adapter = json.loads(payload)
+            adapter["action_representation"] = "ABSOLUTE"
+            adapter["use_relative_action"] = False
+            payload = _json_bytes(adapter)
         if name.endswith(".py"):
             content_type = "text/x-python"
         elif name.endswith("jsonl"):
@@ -447,7 +694,7 @@ def _materialize_split(
                 "kind": "metadata",
                 "name": name,
                 "source_uri": _source_object_uri(source_uri, f"meta/{name}"),
-                "source_sha256": _sha256_bytes(payload),
+                "source_sha256": source_payload_sha256,
                 "output_sha256": uploaded_metadata["sha256"],
             }
         )
@@ -468,9 +715,17 @@ def prepare_split(
     *,
     train_episodes: int = 24,
     heldout_episodes: int = 6,
+    final_uri: str = "",
+    final_episodes: int = 0,
     seed: str = "groot17-learning-v1",
     global_batch_size: int = 8,
     max_steps: int = 0,
+    minimum_epochs: float = 1.0,
+    minimum_effective_global_batch: int = 1,
+    gpu_count: int | None = None,
+    per_device_batch_size: int | None = None,
+    gradient_accumulation_steps: int | None = None,
+    action_representation: str = "source",
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
     """Materialize a deterministic train/held-out split with train-only stats."""
@@ -488,12 +743,33 @@ def prepare_split(
     count = int(info.get("total_episodes") or 0)
     if count != len(episodes):
         raise GrootVisualizationError("dataset episode metadata count mismatch")
-    split = deterministic_episode_split(
-        count,
-        train_episodes=train_episodes,
-        heldout_episodes=heldout_episodes,
-        seed=seed,
-    )
+    if action_representation not in {"source", "absolute"}:
+        raise GrootVisualizationError(
+            "action representation must be source or absolute"
+        )
+    if final_episodes:
+        if not final_uri:
+            raise GrootVisualizationError("final episode split requires a final URI")
+        experiment_split = deterministic_experiment_split(
+            count,
+            train_episodes=train_episodes,
+            validation_episodes=heldout_episodes,
+            final_episodes=final_episodes,
+            seed=seed,
+        )
+        split = {
+            "train": experiment_split["train"],
+            "heldout": experiment_split["validation"],
+            "final": experiment_split["final"],
+            "excluded": experiment_split["excluded"],
+        }
+    else:
+        split = deterministic_episode_split(
+            count,
+            train_episodes=train_episodes,
+            heldout_episodes=heldout_episodes,
+            seed=seed,
+        )
     with tempfile.TemporaryDirectory(prefix="npa-groot-split-") as tmp:
         train, train_content = _materialize_split(
             client,
@@ -504,6 +780,7 @@ def prepare_split(
             selected=split["train"],
             split_name="train",
             root=Path(tmp),
+            action_representation=action_representation,
         )
         heldout, heldout_content = _materialize_split(
             client,
@@ -514,19 +791,48 @@ def prepare_split(
             selected=split["heldout"],
             split_name="heldout",
             root=Path(tmp),
+            action_representation=action_representation,
         )
+        final: dict[str, Any] | None = None
+        final_content: list[dict[str, Any]] = []
+        if final_episodes:
+            final, final_content = _materialize_split(
+                client,
+                source_uri=source_uri,
+                output_uri=final_uri,
+                source_info=info,
+                source_episodes=episodes,
+                selected=split["final"],
+                split_name="final",
+                root=Path(tmp),
+                action_representation=action_representation,
+            )
     # Held-out normalization must come from the train split, never held-out values.
-    train_stats = _read_s3_bytes(client, _source_object_uri(train_uri, "meta/stats.json"))
+    train_stats = _read_s3_bytes(
+        client, _source_object_uri(train_uri, "meta/stats.json")
+    )
     _put_bytes(
         client,
         _source_object_uri(heldout_uri, "meta/stats.json"),
         train_stats,
         content_type="application/json",
     )
+    if final is not None:
+        _put_bytes(
+            client,
+            _source_object_uri(final_uri, "meta/stats.json"),
+            train_stats,
+            content_type="application/json",
+        )
     train["stats_sha256"] = _sha256_bytes(train_stats)
     train["stats_source"] = "train split only"
     heldout["stats_sha256"] = _sha256_bytes(train_stats)
     heldout["stats_source"] = "train split only (copied; held-out values unused)"
+    heldout["stats_byte_identical_to_train"] = True
+    if final is not None:
+        final["stats_sha256"] = _sha256_bytes(train_stats)
+        final["stats_source"] = "train split only (copied; final values unused)"
+        final["stats_byte_identical_to_train"] = True
     split_core = {
         "seed": seed,
         "source_uri": source_uri,
@@ -536,6 +842,7 @@ def prepare_split(
         "excluded_source_episode_ids": split["excluded"],
         "train_content": train_content,
         "heldout_content": heldout_content,
+        "final_content": final_content,
     }
     split_hash = _sha256_bytes(_json_bytes(split_core))
     action_shape = (info.get("features") or {}).get("action", {}).get("shape") or []
@@ -544,11 +851,18 @@ def prepare_split(
         for feature, value in (info.get("features") or {}).items()
         if isinstance(value, Mapping) and value.get("dtype") == "video"
     ]
-    resolution = (info.get("features") or {}).get(video_features[0], {}).get("shape") or []
+    resolution = (info.get("features") or {}).get(video_features[0], {}).get(
+        "shape"
+    ) or []
     step_contract = derive_training_step_contract(
         train_samples=int(train["samples"]),
         global_batch_size=int(global_batch_size),
         configured_max_steps=max_steps,
+        minimum_epochs=minimum_epochs,
+        minimum_effective_global_batch=minimum_effective_global_batch,
+        gpu_count=gpu_count,
+        per_device_batch_size=per_device_batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
     )
     optimizer_steps = int(step_contract["effective_max_steps"] or 0)
     result = {
@@ -565,11 +879,18 @@ def prepare_split(
             "fps": float(info.get("fps") or 0),
             "camera_names": [item["name"] for item in cameras],
             "cameras": cameras,
-            "source_resolution": f"{resolution[1]}x{resolution[0]}" if len(resolution) >= 2 else "unknown",
+            "source_resolution": f"{resolution[1]}x{resolution[0]}"
+            if len(resolution) >= 2
+            else "unknown",
             "action_dimensions": int(action_shape[0]) if action_shape else 0,
         },
         "train": {**train, "source_episode_ids": split["train"]},
         "heldout": {**heldout, "source_episode_ids": split["heldout"]},
+        "final": (
+            {**final, "source_episode_ids": split["final"]}
+            if final is not None
+            else None
+        ),
         "excluded": {
             "episodes": len(split["excluded"]),
             "source_episode_ids": split["excluded"],
@@ -579,6 +900,13 @@ def prepare_split(
             "episode_overlap": [],
             "leakage_free": True,
             "statistics_source": "train split only",
+            "statistics_byte_identity": (
+                {"train_equals_validation": True, "train_equals_final": True}
+                if final is not None
+                else {"train_equals_heldout": True}
+            ),
+            "final_split_untouched": final is not None,
+            "action_representation": action_representation.upper(),
             "content_hash_algorithm": "sha256",
         },
         "training_plan": {
@@ -590,8 +918,17 @@ def prepare_split(
             "configured_max_steps": step_contract["configured_max_steps"],
             "effective_max_steps": optimizer_steps,
             "training_examples": optimizer_steps * int(global_batch_size),
-            "epoch_equivalent": optimizer_steps * int(global_batch_size) / int(train["samples"]),
-            "criterion": "one complete pass over the deterministic train cohort",
+            "epoch_equivalent": optimizer_steps
+            * int(global_batch_size)
+            / int(train["samples"]),
+            "criterion": (
+                f"at least {float(step_contract['minimum_epochs'] or 0):g} complete "
+                "passes over the deterministic train cohort"
+            ),
+            "minimum_epochs": float(step_contract["minimum_epochs"] or 0),
+            "per_device_batch_size": step_contract["per_device_batch_size"],
+            "gradient_accumulation_steps": step_contract["gradient_accumulation_steps"],
+            "gpu_count": step_contract["gpu_count"],
         },
     }
     _put_json(client, output_uri, result)
@@ -611,7 +948,9 @@ def _download_prefix(client: Any, uri: str, destination: Path) -> list[Path]:
         _download(client, _object_uri(ref.bucket, item["key"]), target)
         downloaded.append(target)
     if not downloaded:
-        raise GrootVisualizationError(f"S3 prefix contains no material artifacts: {uri}")
+        raise GrootVisualizationError(
+            f"S3 prefix contains no material artifacts: {uri}"
+        )
     return downloaded
 
 
@@ -628,26 +967,32 @@ def _upload_directory(client: Any, directory: Path, uri: str) -> dict[str, Any]:
         objects.append(record)
     if not objects:
         raise GrootVisualizationError(f"checkpoint directory is empty: {directory}")
-    identity = _sha256_bytes(
-        _json_bytes(
-            {
-                "files": [
-                    {
-                        "path": item["relative_path"],
-                        "bytes": item["bytes"],
-                        "sha256": item["sha256"],
-                    }
-                    for item in objects
-                ]
-            }
-        )
-    )
+    local_identity = _checkpoint_identity(directory)
     return {
         "uri": uri,
         "objects": len(objects),
         "bytes": sum(int(item["bytes"]) for item in objects),
-        "sha256": identity,
+        **{
+            key: value
+            for key, value in local_identity.items()
+            if key
+            in {
+                "sha256",
+                "artifact_sha256",
+                "weight_objects",
+                "weight_bytes",
+                "weights_sha256",
+            }
+        },
     }
+
+
+def _checkpoint_digest(files: Sequence[Mapping[str, Any]]) -> str:
+    return _sha256_bytes(_json_bytes({"files": list(files)}))
+
+
+def _is_model_weight_path(relative_path: str) -> bool:
+    return any(pattern.search(relative_path) for pattern in WEIGHT_FILE_PATTERNS)
 
 
 def _checkpoint_identity(directory: Path) -> dict[str, Any]:
@@ -666,11 +1011,126 @@ def _checkpoint_identity(directory: Path) -> dict[str, Any]:
         )
     if not files:
         raise GrootVisualizationError("checkpoint contains no files")
+    weight_files = [item for item in files if _is_model_weight_path(str(item["path"]))]
+    if not weight_files:
+        raise GrootVisualizationError("checkpoint contains no model weight files")
     return {
         "objects": len(files),
         "bytes": sum(int(item["bytes"]) for item in files),
-        "sha256": _sha256_bytes(_json_bytes({"files": files})),
+        "sha256": _checkpoint_digest(files),
+        "artifact_sha256": _checkpoint_digest(files),
+        "weight_objects": len(weight_files),
+        "weight_bytes": sum(int(item["bytes"]) for item in weight_files),
+        "weights_sha256": _checkpoint_digest(weight_files),
     }
+
+
+def _resolve_highest_checkpoint_directory(directory: Path) -> tuple[Path, int | None]:
+    """Resolve exactly the highest valid checkpoint-N directory, never a prefix root."""
+
+    candidates: list[tuple[int, Path]] = []
+    for path in directory.rglob("checkpoint-*"):
+        if not path.is_dir():
+            continue
+        suffix = path.name.removeprefix("checkpoint-")
+        if suffix.isdigit() and any(item.is_file() for item in path.rglob("*")):
+            candidates.append((int(suffix), path))
+    if candidates:
+        step, path = max(candidates, key=lambda item: item[0])
+        return path, step
+    if any(item.is_file() for item in directory.rglob("*")):
+        return directory, None
+    raise GrootVisualizationError(
+        "checkpoint prefix contains no valid checkpoint directory"
+    )
+
+
+def require_distinct_trained_weights(
+    baseline_identity: Mapping[str, Any], candidate_identity: Mapping[str, Any]
+) -> None:
+    baseline_digest = str(baseline_identity.get("weights_sha256") or "")
+    candidate_digest = str(candidate_identity.get("weights_sha256") or "")
+    if len(baseline_digest) != 64 or len(candidate_digest) != 64:
+        raise GrootVisualizationError(
+            "baseline/candidate weight-only identity is missing"
+        )
+    if baseline_digest == candidate_digest:
+        raise GrootVisualizationError(
+            "trained checkpoint model weights equal baseline weights"
+        )
+
+
+def checkpoint_model_config_contract(directory: Path) -> dict[str, Any]:
+    """Read factual model/action settings from checkpoint artifacts."""
+
+    documents: list[Mapping[str, Any]] = []
+    for relative in (
+        "experiment_cfg/final_model_config.json",
+        "config.json",
+        "npa_baseline_checkpoint.json",
+    ):
+        path = directory / relative
+        if not path.is_file():
+            continue
+        try:
+            value = json.loads(path.read_bytes())
+        except (OSError, ValueError, TypeError):
+            continue
+        if isinstance(value, Mapping):
+            nested = value.get("model_config_contract")
+            documents.append(nested if isinstance(nested, Mapping) else value)
+    resolved: dict[str, Any] = {}
+    for key in GROOT_MODEL_CONFIG_CONTRACT:
+        if key == "action_representation":
+            continue
+        for document in documents:
+            if key in document:
+                resolved[key] = document[key]
+                break
+    processor_paths = list(directory.rglob("processor_config.json"))
+    processor_contracts: list[tuple[bool, list[str]]] = []
+    for path in processor_paths:
+        try:
+            processor = json.loads(path.read_bytes())
+        except (OSError, ValueError, TypeError):
+            continue
+        kwargs = processor.get("processor_kwargs")
+        if not isinstance(kwargs, Mapping):
+            continue
+        relative = kwargs.get("use_relative_action")
+        modalities = kwargs.get("modality_configs")
+        custom = (
+            modalities.get("new_embodiment")
+            if isinstance(modalities, Mapping)
+            else None
+        )
+        action = custom.get("action") if isinstance(custom, Mapping) else None
+        configs = action.get("action_configs") if isinstance(action, Mapping) else None
+        if not isinstance(relative, bool) or not isinstance(configs, list):
+            continue
+        reps = [
+            str(item.get("rep") or "") for item in configs if isinstance(item, Mapping)
+        ]
+        if reps and len(reps) == len(configs):
+            processor_contracts.append((relative, reps))
+    if not processor_contracts:
+        raise GrootVisualizationError(
+            "checkpoint processor omits factual custom action configuration"
+        )
+    if any(relative for relative, _ in processor_contracts):
+        resolved["use_relative_action"] = True
+    if all(
+        reps and all(rep == "ABSOLUTE" for rep in reps)
+        for _, reps in processor_contracts
+    ):
+        resolved["action_representation"] = "ABSOLUTE"
+    else:
+        resolved["action_representation"] = "MIXED_OR_RELATIVE"
+    if resolved != GROOT_MODEL_CONFIG_CONTRACT:
+        raise GrootVisualizationError(
+            f"checkpoint model/action configuration mismatch: {resolved!r}"
+        )
+    return resolved
 
 
 def _load_custom_modality_config(dataset_path: Path) -> Path:
@@ -678,13 +1138,15 @@ def _load_custom_modality_config(dataset_path: Path) -> Path:
 
     path = dataset_path / "meta" / "npa_groot_modality_config.py"
     if not path.is_file():
-        raise GrootVisualizationError(
-            f"custom GR00T modality config is absent: {path}"
-        )
-    module_name = f"_npa_groot_modality_{hashlib.sha256(path.read_bytes()).hexdigest()[:16]}"
+        raise GrootVisualizationError(f"custom GR00T modality config is absent: {path}")
+    module_name = (
+        f"_npa_groot_modality_{hashlib.sha256(path.read_bytes()).hexdigest()[:16]}"
+    )
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
-        raise GrootVisualizationError(f"could not load custom GR00T modality config: {path}")
+        raise GrootVisualizationError(
+            f"could not load custom GR00T modality config: {path}"
+        )
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
@@ -737,15 +1199,23 @@ def _initialize_baseline_checkpoint(
     config.load_config_path = None
     config.model.tune_llm = False
     config.model.tune_visual = False
-    config.model.tune_projector = True
-    config.model.tune_diffusion_model = True
+    config.model.tune_projector = bool(GROOT_MODEL_CONFIG_CONTRACT["tune_projector"])
+    config.model.tune_diffusion_model = bool(
+        GROOT_MODEL_CONFIG_CONTRACT["tune_diffusion_model"]
+    )
     config.model.state_dropout_prob = 0.0
-    config.model.load_bf16 = False
-    config.model.reproject_vision = False
+    config.model.load_bf16 = bool(GROOT_MODEL_CONFIG_CONTRACT["load_bf16"])
+    config.model.reproject_vision = bool(
+        GROOT_MODEL_CONFIG_CONTRACT["reproject_vision"]
+    )
     config.model.model_name = "nvidia/Cosmos-Reason2-2B"
     config.model.model_revision = None
-    config.model.backbone_trainable_params_fp32 = True
-    config.model.use_relative_action = True
+    config.model.backbone_trainable_params_fp32 = bool(
+        GROOT_MODEL_CONFIG_CONTRACT["backbone_trainable_params_fp32"]
+    )
+    config.model.use_relative_action = bool(
+        GROOT_MODEL_CONFIG_CONTRACT["use_relative_action"]
+    )
     config.training.start_from_checkpoint = resolved_base
     config.training.num_gpus = 1
     config.training.global_batch_size = 1
@@ -766,6 +1236,7 @@ def _initialize_baseline_checkpoint(
         "base_model_revision": base_revision,
         "embodiment": embodiment,
         "statistics_source": "train split only",
+        "model_config_contract": GROOT_MODEL_CONFIG_CONTRACT,
     }
     (output_path / "npa_baseline_checkpoint.json").write_bytes(_json_bytes(marker))
 
@@ -775,9 +1246,75 @@ def _extract_arrays(
 ) -> Any:
     import numpy as np
 
-    arrays = [np.vstack([np.asarray(item) for item in trajectory[column]]) for column in columns]
+    arrays = [
+        np.vstack([np.asarray(item) for item in trajectory[column]])
+        for column in columns
+    ]
     result = np.concatenate(arrays, axis=-1)
     return result if count is None else result[:count]
+
+
+def _seed_stochastic_sources(seed: int) -> None:
+    """Reset every stochastic source used by GR00T inference."""
+
+    import numpy as np
+    import torch
+
+    random.seed(int(seed))
+    np.random.seed(int(seed) % (2**32))
+    torch.manual_seed(int(seed))
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(int(seed))
+    if hasattr(torch, "use_deterministic_algorithms"):
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+    try:
+        from transformers import set_seed
+
+        set_seed(int(seed), deterministic=True)
+    except TypeError:
+        set_seed(int(seed))
+
+
+def _prediction_sha256(predicted: Any) -> str:
+    import numpy as np
+
+    array = np.ascontiguousarray(predicted)
+    return _sha256_bytes(array.view(np.uint8).tobytes())
+
+
+def trivial_predictor_metrics(
+    expert: Any, predicted: Any, train_action_mean: Sequence[float]
+) -> dict[str, Any]:
+    """Measure a checkpoint against zero and leakage-free train-mean floors."""
+
+    import numpy as np
+
+    expert_array = np.asarray(expert, dtype=np.float64)
+    predicted_array = np.asarray(predicted, dtype=np.float64)
+    validate_action_alignment(expert_array, predicted_array, label="trivial-floor")
+    mean = np.asarray(train_action_mean, dtype=np.float64).reshape(1, -1)
+    if mean.shape[1] != expert_array.shape[1] or not np.isfinite(mean).all():
+        raise GrootVisualizationError(
+            "train-split mean predictor shape/value is invalid"
+        )
+    model_mse = float(np.mean(np.square(expert_array - predicted_array)))
+    zero_mse = float(np.mean(np.square(expert_array)))
+    mean_mse = float(np.mean(np.square(expert_array - mean)))
+    if mean_mse <= 0 or not all(
+        math.isfinite(value) for value in (model_mse, zero_mse, mean_mse)
+    ):
+        raise GrootVisualizationError("trivial predictor MSE is invalid")
+    return {
+        "zero_predictor_mse": zero_mse,
+        "train_mean_predictor_mse": mean_mse,
+        "train_action_mean": mean.reshape(-1).tolist(),
+        "model_mse": model_mse,
+        "skill_score": 1.0 - model_mse / mean_mse,
+        "skill_score_definition": "1 - model_mse / train_mean_predictor_mse",
+    }
 
 
 def _evaluate_checkpoint(
@@ -786,7 +1323,7 @@ def _evaluate_checkpoint(
     heldout_path: Path,
     embodiment: str,
     action_horizon: int,
-    denoising_steps: int,
+    seed: int,
 ) -> dict[str, Any]:
     """Run upstream GR00T inference and retain aligned expert/predicted arrays."""
 
@@ -802,6 +1339,7 @@ def _evaluate_checkpoint(
         raise GrootVisualizationError("real GR00T evaluation requires a CUDA GPU")
     _load_custom_modality_config(heldout_path)
     tag = EmbodimentTag.resolve(embodiment)
+    _seed_stochastic_sources(seed)
     policy = Gr00tPolicy(
         embodiment_tag=tag,
         model_path=str(checkpoint_path),
@@ -816,11 +1354,14 @@ def _evaluate_checkpoint(
     )
     state_keys = list(loader.modality_configs["state"].modality_keys)
     action_keys = list(loader.modality_configs["action"].modality_keys)
-    model_modality = {key: value for key, value in loader.modality_configs.items() if key != "action"}
+    model_modality = {
+        key: value for key, value in loader.modality_configs.items() if key != "action"
+    }
     expert_parts: list[Any] = []
     predicted_parts: list[Any] = []
     state_parts: list[Any] = []
     sample_rows: list[dict[str, Any]] = []
+    horizon_parts: list[Any] = []
     episode_metrics: list[dict[str, Any]] = []
     forward_calls = 0
     offset = 0
@@ -828,6 +1369,7 @@ def _evaluate_checkpoint(
         trajectory = loader[episode_index]
         episode_steps = len(trajectory)
         predicted_rows: list[Any] = []
+        episode_horizons: list[int] = []
         for step in range(0, episode_steps, action_horizon):
             point = extract_step_data(trajectory, step, model_modality, tag)
             observation: dict[str, Any] = {}
@@ -838,15 +1380,13 @@ def _evaluate_checkpoint(
             for language_key in loader.modality_configs["language"].modality_keys:
                 observation[language_key] = point.text
             parsed = parse_observation_gr00t(observation, loader.modality_configs)
-            # This pinned upstream Gr00tPolicy documents its public ``options``
-            # argument as currently unused, so evaluation follows the upstream
-            # open-loop surface exactly and does not pretend the CLI value was
-            # applied to the model.
+            _seed_stochastic_sources(int(seed) + forward_calls)
             raw_action, _ = policy.get_action(parsed)
             action = parse_action_gr00t(raw_action)
             forward_calls += 1
             available = min(action_horizon, episode_steps - step)
             for horizon_index in range(available):
+                episode_horizons.append(horizon_index)
                 predicted_rows.append(
                     np.concatenate(
                         [
@@ -890,17 +1430,32 @@ def _evaluate_checkpoint(
         expert_parts.append(expert)
         predicted_parts.append(predicted)
         state_parts.append(states)
+        horizon_parts.append(np.asarray(episode_horizons, dtype=np.int64))
     expert_all = np.concatenate(expert_parts)
     predicted_all = np.concatenate(predicted_parts)
     states_all = np.concatenate(state_parts)
+    horizon_all = np.concatenate(horizon_parts)
     if forward_calls <= 0 or expert_all.size <= 0:
-        raise GrootVisualizationError("real evaluation emitted no model forwards or actions")
+        raise GrootVisualizationError(
+            "real evaluation emitted no model forwards or actions"
+        )
     squared = np.square(expert_all - predicted_all)
     absolute = np.abs(expert_all - predicted_all)
+    per_horizon_mse: list[float] = []
+    per_horizon_counts: list[int] = []
+    for horizon_index in range(int(action_horizon)):
+        selected = horizon_all == horizon_index
+        per_horizon_counts.append(int(np.count_nonzero(selected)))
+        if not np.any(selected):
+            raise GrootVisualizationError(
+                f"evaluation has no samples for action horizon {horizon_index}"
+            )
+        per_horizon_mse.append(float(np.mean(squared[selected])))
     return {
         "expert": expert_all,
         "predicted": predicted_all,
         "states": states_all,
+        "horizon_indices": horizon_all,
         "samples": sample_rows,
         "metrics": {
             "mse": float(np.mean(squared)),
@@ -908,6 +1463,8 @@ def _evaluate_checkpoint(
             "per_dimension_mse": np.mean(squared, axis=0).tolist(),
             "per_dimension_mae": np.mean(absolute, axis=0).tolist(),
             "per_dimension_max_abs_error": np.max(absolute, axis=0).tolist(),
+            "per_horizon_mse": per_horizon_mse,
+            "per_horizon_counts": per_horizon_counts,
         },
         "episode_metrics": episode_metrics,
         "episode_count": len(loader),
@@ -916,8 +1473,8 @@ def _evaluate_checkpoint(
         "forward_calls": forward_calls,
         "fps": float(loader.fps),
         "action_horizon": int(action_horizon),
-        "requested_denoising_steps": int(denoising_steps),
-        "denoising_steps_option_applied": False,
+        "evaluation_seed": int(seed),
+        "prediction_sha256": _prediction_sha256(predicted_all),
         "gpu_name": torch.cuda.get_device_name(0),
     }
 
@@ -933,7 +1490,7 @@ def evaluate(
     base_model: str = "",
     baseline_checkpoint_uri: str = "",
     action_horizon: int = 16,
-    denoising_steps: int = 4,
+    evaluation_seeds: Sequence[int] = (1701, 1701, 2718, 3141, 5772),
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
     """Initialize (baseline only) and evaluate a real checkpoint on held-out data."""
@@ -947,7 +1504,9 @@ def evaluate(
     if split.get("schema") != SPLIT_SCHEMA or split.get("run_id") != run_id:
         raise GrootVisualizationError("split manifest does not belong to this run")
     if split.get("integrity", {}).get("leakage_free") is not True:
-        raise GrootVisualizationError("evaluation refuses a split without leakage proof")
+        raise GrootVisualizationError(
+            "evaluation refuses a split without leakage proof"
+        )
     embodiment = str(split.get("source", {}).get("embodiment") or "")
     with tempfile.TemporaryDirectory(prefix=f"npa-groot-{phase}-eval-") as tmp:
         root = Path(tmp)
@@ -979,19 +1538,66 @@ def evaluate(
                 "uri": checkpoint_uri,
                 **_checkpoint_identity(checkpoint_path),
             }
-        raw = _evaluate_checkpoint(
-            checkpoint_path=checkpoint_path,
-            heldout_path=heldout_path,
-            embodiment=embodiment,
-            action_horizon=int(action_horizon),
-            denoising_steps=int(denoising_steps),
+        if phase == "posttrain":
+            checkpoint_path, checkpoint_step = _resolve_highest_checkpoint_directory(
+                checkpoint_path
+            )
+            if checkpoint_step is None:
+                match = re.search(r"(?:^|/)checkpoint-(\d+)/?$", checkpoint_uri)
+                checkpoint_step = int(match.group(1)) if match else None
+            checkpoint_artifact = {
+                "uri": checkpoint_uri.rstrip("/")
+                + (
+                    "/"
+                    if re.search(r"(?:^|/)checkpoint-\d+/?$", checkpoint_uri)
+                    else f"/checkpoint-{checkpoint_step}/"
+                    if checkpoint_step is not None
+                    else "/"
+                ),
+                "resolved_checkpoint_step": checkpoint_step,
+                **_checkpoint_identity(checkpoint_path),
+            }
+            resolved_checkpoint_uri = str(checkpoint_artifact["uri"])
+        resolved_model_contract = checkpoint_model_config_contract(checkpoint_path)
+        seeds = [int(value) for value in evaluation_seeds]
+        if len(seeds) < 4 or len(seeds) == len(set(seeds)):
+            raise GrootVisualizationError(
+                "evaluation requires a duplicated determinism seed and at least two independent seeds"
+            )
+        repeats = [
+            _evaluate_checkpoint(
+                checkpoint_path=checkpoint_path,
+                heldout_path=heldout_path,
+                embodiment=embodiment,
+                action_horizon=int(action_horizon),
+                seed=seed,
+            )
+            for seed in seeds
+        ]
+        raw = repeats[0]
+        same_seed = [item for item in repeats if item["evaluation_seed"] == seeds[0]]
+        deterministic = (
+            len(same_seed) >= 2
+            and len({str(item["prediction_sha256"]) for item in same_seed}) == 1
         )
+        if not deterministic:
+            raise GrootVisualizationError(
+                "identical checkpoint evaluation was not deterministic for the same seed"
+            )
+        train_stats = json.loads((train_path / "meta" / "stats.json").read_bytes())
+        action_stats = train_stats.get("action") or {}
+        floors = trivial_predictor_metrics(
+            raw["expert"], raw["predicted"], action_stats.get("mean") or []
+        )
+        repeat_mses = [float(item["metrics"]["mse"]) for item in repeats]
+        repeat_spread = max(repeat_mses) - min(repeat_mses)
         buffer = io.BytesIO()
         np.savez_compressed(
             buffer,
             expert=raw["expert"],
             predicted=raw["predicted"],
             states=raw["states"],
+            horizon_indices=raw["horizon_indices"],
         )
         arrays_artifact = _put_bytes(client, arrays_uri, buffer.getvalue())
     result = {
@@ -1014,16 +1620,30 @@ def evaluate(
         "samples": raw["sample_count"],
         "action_dimensions": raw["action_dimensions"],
         "action_horizon": raw["action_horizon"],
-        "requested_denoising_steps": raw["requested_denoising_steps"],
-        "denoising_steps_option_applied": raw["denoising_steps_option_applied"],
+        "denoising_steps_contract": (
+            "not exposed: pinned Gr00tPolicy.get_action does not consume an inference-step option"
+        ),
         "fps": raw["fps"],
-        "metrics": raw["metrics"],
+        "metrics": {**raw["metrics"], **floors},
+        "repeat_evaluation": {
+            "seeds": seeds,
+            "same_seed_deterministic": deterministic,
+            "prediction_sha256": [item["prediction_sha256"] for item in repeats],
+            "repeat_mses": repeat_mses,
+            "repeat_spread": repeat_spread,
+            "independent_seed_count": len(set(seeds)),
+            "effective_sample_unit": "model-forward/action-chunk",
+            "effective_model_forwards": sum(
+                int(item["forward_calls"]) for item in repeats
+            ),
+        },
         "episode_metrics": raw["episode_metrics"],
         "sample_alignment": raw["samples"],
         "arrays": arrays_artifact,
         "accelerator": {"gpu_count": 1, "gpu_name": raw["gpu_name"]},
         "timestamp_semantics": TIMESTAMP_SEMANTICS,
         "is_robot_capture_time": False,
+        "model_config_contract": resolved_model_contract,
     }
     _put_json(client, output_uri, result)
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -1079,7 +1699,9 @@ def validate_evaluation(payload: Mapping[str, Any], *, phase: str, run_id: str) 
     if payload.get("run_id") != run_id or payload.get("phase") != phase:
         raise GrootVisualizationError(f"{phase} evaluation identity mismatch")
     if payload.get("real_model_forward") is not True:
-        raise GrootVisualizationError(f"{phase} evaluation has no real model forward proof")
+        raise GrootVisualizationError(
+            f"{phase} evaluation has no real model forward proof"
+        )
     forwards = int(payload.get("model_forward_calls") or 0)
     episodes = int(payload.get("episodes") or 0)
     samples = int(payload.get("samples") or 0)
@@ -1088,7 +1710,9 @@ def validate_evaluation(payload: Mapping[str, Any], *, phase: str, run_id: str) 
         raise GrootVisualizationError(f"{phase} evaluation counts are empty")
     alignment = payload.get("sample_alignment") or []
     if len(alignment) != samples:
-        raise GrootVisualizationError(f"{phase} predicted/expert sample alignment is incomplete")
+        raise GrootVisualizationError(
+            f"{phase} predicted/expert sample alignment is incomplete"
+        )
     metrics = payload.get("metrics") or {}
     for name in ("mse", "mae"):
         value = float(metrics.get(name, math.nan))
@@ -1100,6 +1724,33 @@ def validate_evaluation(payload: Mapping[str, Any], *, phase: str, run_id: str) 
             math.isfinite(float(value)) for value in values
         ):
             raise GrootVisualizationError(f"{phase} metric {name} is invalid")
+    horizon = int(payload.get("action_horizon") or 0)
+    horizon_values = metrics.get("per_horizon_mse") or []
+    horizon_counts = metrics.get("per_horizon_counts") or []
+    if (
+        horizon <= 0
+        or len(horizon_values) != horizon
+        or len(horizon_counts) != horizon
+        or not all(
+            math.isfinite(float(value)) and float(value) >= 0
+            for value in horizon_values
+        )
+        or not all(int(value) > 0 for value in horizon_counts)
+    ):
+        raise GrootVisualizationError(f"{phase} per-horizon metric contract is invalid")
+    repeat = payload.get("repeat_evaluation") or {}
+    if repeat.get("same_seed_deterministic") is not True:
+        raise GrootVisualizationError(
+            f"{phase} evaluation lacks deterministic repeat proof"
+        )
+    if int(repeat.get("independent_seed_count") or 0) < 2:
+        raise GrootVisualizationError(
+            f"{phase} evaluation lacks independent repeat seeds"
+        )
+    if payload.get("model_config_contract") != GROOT_MODEL_CONFIG_CONTRACT:
+        raise GrootVisualizationError(
+            f"{phase} model/action configuration contract differs"
+        )
 
 
 def validate_action_alignment(expert: Any, predicted: Any, *, label: str) -> None:
@@ -1113,7 +1764,9 @@ def validate_action_alignment(expert: Any, predicted: Any, *, label: str) -> Non
             f"{predicted.shape} != {expert.shape}"
         )
     if not np.isfinite(expert).all() or not np.isfinite(predicted).all():
-        raise GrootVisualizationError(f"{label} action tensors contain non-finite values")
+        raise GrootVisualizationError(
+            f"{label} action tensors contain non-finite values"
+        )
 
 
 def require_learning_improvement(comparison: Mapping[str, Any]) -> None:
@@ -1121,10 +1774,21 @@ def require_learning_improvement(comparison: Mapping[str, Any]) -> None:
         raise GrootVisualizationError(
             "learning gate failed: post-training held-out action MSE did not improve"
         )
+    failures = list(comparison.get("gate_failures") or [])
+    if failures:
+        reason = "; ".join(str(item) for item in failures)
+        raise GrootVisualizationError(f"learning gate failed: {reason}")
 
 
 def compare_metrics(
-    before: Mapping[str, Any], after: Mapping[str, Any]
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    *,
+    minimum_relative_improvement: float = 0.0,
+    repeat_noise_spread: float = 0.0,
+    repeat_noise_multiple: float = 0.0,
+    minimum_skill_score: float = -math.inf,
+    max_dimension_regression: float = math.inf,
 ) -> dict[str, Any]:
     """Calculate a transparent before/after comparison and regression list."""
 
@@ -1149,15 +1813,99 @@ def compare_metrics(
         dimensions.append(item)
         if new > old:
             regressions.append(item)
+    relative_fraction = absolute / baseline if baseline > 0 else 0.0
+    candidate_skill = float(after.get("skill_score", -math.inf))
+    noise_requirement = float(repeat_noise_spread) * float(repeat_noise_multiple)
+    failures: list[str] = []
+    if relative_fraction < float(minimum_relative_improvement):
+        failures.append(
+            f"relative improvement {relative_fraction:.6f} is below "
+            f"{float(minimum_relative_improvement):.6f}"
+        )
+    if absolute <= noise_requirement:
+        failures.append(
+            f"absolute improvement {absolute:.6f} does not exceed repeat-noise "
+            f"requirement {noise_requirement:.6f}"
+        )
+    if candidate_skill < float(minimum_skill_score):
+        failures.append(
+            f"candidate skill score {candidate_skill:.6f} is below "
+            f"{float(minimum_skill_score):.6f}"
+        )
+    blocking_regressions = [
+        item
+        for item in regressions
+        if float(item["posttrain_mse"]) - float(item["baseline_mse"])
+        > float(max_dimension_regression)
+    ]
+    if blocking_regressions:
+        failures.append(
+            "per-dimension regression exceeds configured tolerance on dimensions "
+            + ",".join(str(item["dimension"]) for item in blocking_regressions)
+        )
     return {
         "metric_name": "action_mse",
         "baseline_value": baseline,
         "posttrain_value": posttrain,
         "absolute_improvement": absolute,
         "relative_improvement_percent": relative,
+        "relative_improvement": relative_fraction,
         "improved": posttrain < baseline,
         "per_dimension": dimensions,
         "regressions": regressions,
+        "blocking_regressions": blocking_regressions,
+        "candidate_skill_score": candidate_skill,
+        "gate": {
+            "minimum_relative_improvement": float(minimum_relative_improvement),
+            "repeat_noise_spread": float(repeat_noise_spread),
+            "repeat_noise_multiple": float(repeat_noise_multiple),
+            "required_absolute_improvement_over_noise": noise_requirement,
+            "minimum_skill_score": float(minimum_skill_score),
+            "max_dimension_regression": float(max_dimension_regression),
+        },
+        "gate_failures": failures,
+        "gate_passed": posttrain < baseline and not failures,
+    }
+
+
+def robust_loss_decrease(
+    loss_history: Sequence[Mapping[str, Any]],
+    *,
+    window: int = 5,
+    tolerance: float = 0.01,
+) -> dict[str, Any]:
+    """Require a robust early/late median decrease without value deduplication."""
+
+    import statistics
+
+    rows = [
+        (int(item["optimizer_step"]), float(item["loss"]))
+        for item in loss_history
+        if isinstance(item.get("optimizer_step"), (int, float))
+        and isinstance(item.get("loss"), (int, float))
+        and math.isfinite(float(item["loss"]))
+    ]
+    if len(rows) < max(4, int(window) * 2):
+        raise GrootVisualizationError(
+            "robust loss evidence has too few real step records"
+        )
+    steps = [item[0] for item in rows]
+    if steps != sorted(steps) or len(steps) != len(set(steps)):
+        raise GrootVisualizationError(
+            "loss evidence optimizer steps are not unique and ordered"
+        )
+    width = min(int(window), len(rows) // 2)
+    early = float(statistics.median(item[1] for item in rows[:width]))
+    late = float(statistics.median(item[1] for item in rows[-width:]))
+    required = early * (1.0 - float(tolerance))
+    decreased = late < required
+    return {
+        "window": width,
+        "tolerance": float(tolerance),
+        "robust_early_loss": early,
+        "robust_late_loss": late,
+        "required_late_below": required,
+        "loss_decreased": decreased,
     }
 
 
@@ -1185,7 +1933,9 @@ def _read_npz(client: Any, uri: str) -> dict[str, Any]:
     with np.load(io.BytesIO(_read_s3_bytes(client, uri))) as arrays:
         required = {"expert", "predicted", "states"}
         if not required.issubset(arrays.files):
-            raise GrootVisualizationError("evaluation arrays omit expert/predicted/state data")
+            raise GrootVisualizationError(
+                "evaluation arrays omit expert/predicted/state data"
+            )
         return {name: arrays[name].copy() for name in required}
 
 
@@ -1216,7 +1966,9 @@ def _decode_video(path: Path, *, max_frames: int = 0) -> tuple[list[Any], float]
         streams = json.loads(probe.stdout).get("streams") or []
         if not streams:
             raise GrootVisualizationError("held-out source has no video stream")
-        rate = streams[0].get("avg_frame_rate") or streams[0].get("r_frame_rate") or "0/1"
+        rate = (
+            streams[0].get("avg_frame_rate") or streams[0].get("r_frame_rate") or "0/1"
+        )
         numerator, denominator = (int(value) for value in str(rate).split("/", 1))
         fps = numerator / denominator if denominator else 0.0
         with tempfile.TemporaryDirectory(prefix="npa-groot-video-decode-") as tmp:
@@ -1325,7 +2077,9 @@ def _decode_synchronized_camera(
             )
         synchronized.append(episode_frames[frame])
     if len(synchronized) != len(alignment):
-        raise GrootVisualizationError("camera/action synchronized sample count mismatch")
+        raise GrootVisualizationError(
+            "camera/action synchronized sample count mismatch"
+        )
     return synchronized, next(iter(fps_values))
 
 
@@ -1414,27 +2168,74 @@ def _comparison_video_frames(
             draw = ImageDraw.Draw(canvas)
             native = images[index]
             canvas.paste(native, (24, 76))
-            draw.rectangle((23, 75, 24 + native.width, 76 + native.height), outline=(120, 160, 190))
-            draw.text((20, 18), "Offline held-out evaluation — not a rollout", fill=(244, 248, 252), font=font)
+            draw.rectangle(
+                (23, 75, 24 + native.width, 76 + native.height), outline=(120, 160, 190)
+            )
+            draw.text(
+                (20, 18),
+                "Offline held-out evaluation — not a rollout",
+                fill=(244, 248, 252),
+                font=font,
+            )
             draw.text(
                 (20, 40),
                 f"camera: {native.width}x{native.height} native pixels at 1:1",
                 fill=(164, 190, 214),
                 font=font,
             )
-            draw.text((152, 76), f"sample {index}   expert / baseline / posttrain", fill=(235, 240, 245), font=font)
+            draw.text(
+                (152, 76),
+                f"sample {index}   expert / baseline / posttrain",
+                fill=(235, 240, 245),
+                font=font,
+            )
             start = max(0, index - history + 1)
             plot = (154, 105, 615, 245)
             draw.rectangle(plot, outline=(70, 85, 105))
-            _draw_series(draw, expert[start : index + 1, 0].tolist(), bounds=plot, color=(90, 210, 130))
-            _draw_series(draw, baseline[start : index + 1, 0].tolist(), bounds=plot, color=(240, 110, 100))
-            _draw_series(draw, posttrain[start : index + 1, 0].tolist(), bounds=plot, color=(95, 160, 250))
+            _draw_series(
+                draw,
+                expert[start : index + 1, 0].tolist(),
+                bounds=plot,
+                color=(90, 210, 130),
+            )
+            _draw_series(
+                draw,
+                baseline[start : index + 1, 0].tolist(),
+                bounds=plot,
+                color=(240, 110, 100),
+            )
+            _draw_series(
+                draw,
+                posttrain[start : index + 1, 0].tolist(),
+                bounds=plot,
+                color=(95, 160, 250),
+            )
             error_before = float(np.mean(np.abs(expert[index] - baseline[index])))
             error_after = float(np.mean(np.abs(expert[index] - posttrain[index])))
-            draw.text((152, 265), f"expert action: {np.round(expert[index], 3).tolist()}", fill=(90, 210, 130), font=font)
-            draw.text((152, 283), f"baseline: {np.round(baseline[index], 3).tolist()}  abs err {error_before:.4f}", fill=(240, 110, 100), font=font)
-            draw.text((152, 301), f"posttrain: {np.round(posttrain[index], 3).tolist()}  abs err {error_after:.4f}", fill=(95, 160, 250), font=font)
-            draw.text((20, 332), f"held-out MSE {baseline_mse:.6f} -> {posttrain_mse:.6f}; dataset-index time at {fps:g} FPS", fill=(220, 225, 230), font=font)
+            draw.text(
+                (152, 265),
+                f"expert action: {np.round(expert[index], 3).tolist()}",
+                fill=(90, 210, 130),
+                font=font,
+            )
+            draw.text(
+                (152, 283),
+                f"baseline: {np.round(baseline[index], 3).tolist()}  abs err {error_before:.4f}",
+                fill=(240, 110, 100),
+                font=font,
+            )
+            draw.text(
+                (152, 301),
+                f"posttrain: {np.round(posttrain[index], 3).tolist()}  abs err {error_after:.4f}",
+                fill=(95, 160, 250),
+                font=font,
+            )
+            draw.text(
+                (20, 332),
+                f"held-out MSE {baseline_mse:.6f} -> {posttrain_mse:.6f}; dataset-index time at {fps:g} FPS",
+                fill=(220, 225, 230),
+                font=font,
+            )
             frame = av.VideoFrame.from_ndarray(np.asarray(canvas), format="rgb24")
             for packet in stream.encode(frame):
                 container.mux(packet)
@@ -1463,6 +2264,12 @@ def compare_learning(
     video_uri: str,
     run_id: str,
     *,
+    selection_uri: str = "",
+    minimum_relative_improvement: float = DEFAULT_MINIMUM_RELATIVE_IMPROVEMENT,
+    minimum_skill_score: float = DEFAULT_MINIMUM_SKILL_SCORE,
+    repeat_noise_multiple: float = DEFAULT_REPEAT_NOISE_MULTIPLE,
+    max_dimension_regression: float = DEFAULT_MAX_DIMENSION_REGRESSION,
+    loss_decrease_tolerance: float = 0.01,
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
     """Compare identical held-out evaluations and enforce factual improvement."""
@@ -1472,31 +2279,80 @@ def compare_learning(
     client = _s3_client(s3_client)
     split = _read_s3_json(client, split_manifest_uri)
     baseline = _read_s3_json(client, baseline_uri)
+    if selection_uri:
+        selection = _read_s3_json(client, selection_uri)
+        if (
+            selection.get("schema") != PROBE_SELECTION_SCHEMA
+            or selection.get("status") != "selected"
+            or selection.get("run_id") != run_id
+            or selection.get("final_test_consumed") is not False
+        ):
+            raise GrootVisualizationError("offline checkpoint selection is invalid")
+        selected_step = int(selection.get("selected_optimizer_step") or 0)
+        selected_rows = [
+            item
+            for item in selection.get("learning_curve") or []
+            if int(item.get("optimizer_step") or 0) == selected_step
+        ]
+        if len(selected_rows) != 1:
+            raise GrootVisualizationError(
+                "offline checkpoint selection has no unique probe"
+            )
+        posttrain_uri = str(selected_rows[0]["uri"])
     posttrain = _read_s3_json(client, posttrain_uri)
     training = _read_s3_json(client, training_manifest_uri)
     validate_evaluation(baseline, phase="baseline", run_id=run_id)
     validate_evaluation(posttrain, phase="posttrain", run_id=run_id)
-    if baseline["split_hash"] != posttrain["split_hash"] or baseline["split_hash"] != split.get("split_hash"):
+    if baseline["split_hash"] != posttrain["split_hash"] or baseline[
+        "split_hash"
+    ] != split.get("split_hash"):
         raise GrootVisualizationError("baseline/posttrain evaluation split mismatch")
     if baseline["sample_alignment"] != posttrain["sample_alignment"]:
         raise GrootVisualizationError("baseline/posttrain sample alignment mismatch")
+    if baseline.get("model_config_contract") != posttrain.get("model_config_contract"):
+        raise GrootVisualizationError("baseline/posttrain model configuration differs")
+    require_distinct_trained_weights(baseline["checkpoint"], posttrain["checkpoint"])
     before_arrays = _read_npz(client, str(baseline["arrays"]["uri"]))
     after_arrays = _read_npz(client, str(posttrain["arrays"]["uri"]))
-    if before_arrays["expert"].shape != after_arrays["expert"].shape or not np.array_equal(
-        before_arrays["expert"], after_arrays["expert"]
-    ):
-        raise GrootVisualizationError("expert action tensors differ between evaluations")
+    if before_arrays["expert"].shape != after_arrays[
+        "expert"
+    ].shape or not np.array_equal(before_arrays["expert"], after_arrays["expert"]):
+        raise GrootVisualizationError(
+            "expert action tensors differ between evaluations"
+        )
     validate_action_alignment(
         before_arrays["expert"], before_arrays["predicted"], label="baseline"
     )
     validate_action_alignment(
         after_arrays["expert"], after_arrays["predicted"], label="posttrain"
     )
-    comparison = compare_metrics(baseline["metrics"], posttrain["metrics"])
+    repeat_noise_spread = float(
+        (baseline.get("repeat_evaluation") or {}).get("repeat_spread") or 0.0
+    )
+    comparison = compare_metrics(
+        baseline["metrics"],
+        posttrain["metrics"],
+        minimum_relative_improvement=minimum_relative_improvement,
+        repeat_noise_spread=repeat_noise_spread,
+        repeat_noise_multiple=repeat_noise_multiple,
+        minimum_skill_score=minimum_skill_score,
+        max_dimension_regression=max_dimension_regression,
+    )
     require_learning_improvement(comparison)
-    if training.get("schema") != "npa.groot.finetune.v1" or training.get("status") != "completed":
-        raise GrootVisualizationError("training manifest is not a completed real GR00T run")
-    for key in ("collective_ok", "optimizer_step_ok", "loss_finite"):
+    if (
+        training.get("schema") != "npa.groot.finetune.v1"
+        or training.get("status") != "completed"
+    ):
+        raise GrootVisualizationError(
+            "training manifest is not a completed real GR00T run"
+        )
+    for key in (
+        "collective_ok",
+        "optimizer_step_ok",
+        "loss_finite",
+        "loss_steps_real",
+        "loss_decreased",
+    ):
         if training.get(key) is not True:
             raise GrootVisualizationError(f"training evidence requires {key}=true")
     expected_steps = int(split.get("training_plan", {}).get("optimizer_steps") or 0)
@@ -1512,9 +2368,19 @@ def compare_learning(
         global_batch_size=global_batch,
         train_samples=train_samples,
     )
+    minimum_epochs = float(split.get("training_plan", {}).get("minimum_epochs") or 0)
+    if minimum_epochs <= 1.0 or float(coverage["epoch_equivalent"]) < minimum_epochs:
+        raise GrootVisualizationError(
+            "training coverage did not satisfy multi-epoch contract"
+        )
     loss_history = training.get("loss_history") or []
-    if len(loss_history) < 2:
-        raise GrootVisualizationError("training manifest has no real loss trajectory")
+    loss_trend = robust_loss_decrease(
+        loss_history, tolerance=float(loss_decrease_tolerance)
+    )
+    if loss_trend["loss_decreased"] is not True:
+        raise GrootVisualizationError(
+            "training loss gate failed: robust late-window loss did not decrease"
+        )
     cameras = list(split["source"].get("cameras") or [])
     if not cameras:
         raise GrootVisualizationError("split manifest lacks derived camera metadata")
@@ -1541,7 +2407,9 @@ def compare_learning(
             root=root,
         )
         if abs(float(camera_fps) - float(split["source"]["fps"])) > 1e-6:
-            raise GrootVisualizationError("decoded camera FPS differs from dataset metadata")
+            raise GrootVisualizationError(
+                "decoded camera FPS differs from dataset metadata"
+            )
         video_meta = _comparison_video_frames(
             images,
             camera_fps,
@@ -1582,7 +2450,9 @@ def compare_learning(
             "statistics_source": "train split only",
         },
         "training": {
-            "accelerator": training.get("gpu_model") or training.get("accelerator") or "GPU",
+            "accelerator": training.get("gpu_model")
+            or training.get("accelerator")
+            or "GPU",
             "gpu_count": int(training.get("num_gpus") or 0),
             "distinct_gpu_count": int(training.get("distinct_gpu_count") or 0),
             "world_size": int(training.get("world_size") or 0),
@@ -1595,6 +2465,14 @@ def compare_learning(
             "loss_history": loss_history,
             "checkpoint_uri": posttrain["checkpoint_uri"],
             "checkpoint_sha256": posttrain["checkpoint"]["sha256"],
+            "checkpoint_weights_sha256": posttrain["checkpoint"]["weights_sha256"],
+            "baseline_weights_sha256": baseline["checkpoint"]["weights_sha256"],
+            "weights_differ": True,
+            "resolved_checkpoint_step": posttrain["checkpoint"].get(
+                "resolved_checkpoint_step"
+            ),
+            "model_config_contract": GROOT_MODEL_CONFIG_CONTRACT,
+            "loss_trend": loss_trend,
         },
         "evaluation": {
             **comparison,
@@ -1605,8 +2483,23 @@ def compare_learning(
             "posttrain_forward_calls": posttrain["model_forward_calls"],
             "baseline_mae": baseline["metrics"]["mae"],
             "posttrain_mae": posttrain["metrics"]["mae"],
+            "zero_predictor_mse": posttrain["metrics"]["zero_predictor_mse"],
+            "train_mean_predictor_mse": posttrain["metrics"][
+                "train_mean_predictor_mse"
+            ],
+            "baseline_skill_score": baseline["metrics"]["skill_score"],
+            "posttrain_skill_score": posttrain["metrics"]["skill_score"],
+            "baseline_repeat_evaluation": baseline["repeat_evaluation"],
+            "posttrain_repeat_evaluation": posttrain["repeat_evaluation"],
+            "per_horizon_mse": {
+                "baseline": baseline["metrics"]["per_horizon_mse"],
+                "posttrain": posttrain["metrics"]["per_horizon_mse"],
+                "counts": posttrain["metrics"]["per_horizon_counts"],
+                "action_horizon": posttrain["action_horizon"],
+            },
             "baseline_uri": baseline_uri,
             "posttrain_uri": posttrain_uri,
+            "checkpoint_selection_uri": selection_uri or None,
         },
         "visualizations": {
             "comparison_video": {**video_artifact, **video_meta},
@@ -1627,9 +2520,87 @@ def compare_learning(
             "synchronized_camera_samples": len(baseline["sample_alignment"]),
         },
         "limitations": [
-            "No compatible simulator or robot was established for this custom embodiment; closed-loop rollout is deferred.",
-            "Results cover the deterministic 24-train/6-held-out experiment cohort; excluded source episodes are disclosed above.",
+            "This report is offline action-matching evidence; paired PushT simulation is gated separately.",
+            "Final split episodes and final closed-loop seeds remain untouched until validation gates pass.",
         ],
+    }
+    _put_json(client, output_uri, result)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return result
+
+
+def select_offline_checkpoint(
+    baseline_uri: str,
+    candidate_uris: Sequence[str],
+    output_uri: str,
+    run_id: str,
+    *,
+    minimum_skill_score: float = DEFAULT_MINIMUM_SKILL_SCORE,
+    s3_client: Any | None = None,
+) -> dict[str, Any]:
+    """Select a saved checkpoint using validation-only offline evidence."""
+
+    client = _s3_client(s3_client)
+    baseline = _read_s3_json(client, baseline_uri)
+    validate_evaluation(baseline, phase="baseline", run_id=run_id)
+    if len(candidate_uris) < 3:
+        raise GrootVisualizationError(
+            "checkpoint selection requires at least two intermediate probes and a final probe"
+        )
+    curve: list[dict[str, Any]] = []
+    for uri in candidate_uris:
+        candidate = _read_s3_json(client, uri)
+        validate_evaluation(candidate, phase="posttrain", run_id=run_id)
+        if candidate.get("split_hash") != baseline.get("split_hash"):
+            raise GrootVisualizationError(
+                "checkpoint probes do not share one validation split"
+            )
+        step = candidate.get("checkpoint", {}).get("resolved_checkpoint_step")
+        if not isinstance(step, int) or step <= 0:
+            raise GrootVisualizationError(
+                "checkpoint probe did not resolve checkpoint-N"
+            )
+        curve.append(
+            {
+                "optimizer_step": step,
+                "uri": uri,
+                "checkpoint": candidate["checkpoint"],
+                "mse": float(candidate["metrics"]["mse"]),
+                "skill_score": float(candidate["metrics"]["skill_score"]),
+                "per_horizon_mse": candidate["metrics"]["per_horizon_mse"],
+                "same_seed_deterministic": candidate["repeat_evaluation"][
+                    "same_seed_deterministic"
+                ],
+            }
+        )
+    if len({int(item["optimizer_step"]) for item in curve}) != len(curve):
+        raise GrootVisualizationError(
+            "checkpoint probes do not represent distinct optimizer steps"
+        )
+    eligible = [
+        item
+        for item in curve
+        if float(item["skill_score"]) >= float(minimum_skill_score)
+    ]
+    if not eligible:
+        raise GrootVisualizationError(
+            "no checkpoint probe beats the configured skill floor"
+        )
+    selected = min(
+        eligible, key=lambda item: (float(item["mse"]), int(item["optimizer_step"]))
+    )
+    result = {
+        "schema": PROBE_SELECTION_SCHEMA,
+        "status": "selected",
+        "run_id": run_id,
+        "baseline_uri": baseline_uri,
+        "final_test_consumed": False,
+        "selection_split": "validation",
+        "minimum_skill_score": float(minimum_skill_score),
+        "learning_curve": sorted(curve, key=lambda item: int(item["optimizer_step"])),
+        "checkpoint": selected["checkpoint"],
+        "selected_optimizer_step": selected["optimizer_step"],
+        "selection_predicate": "lowest validation MSE among checkpoints above skill floor",
     }
     _put_json(client, output_uri, result)
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -1638,10 +2609,14 @@ def compare_learning(
 
 def _evaluation_bundle(
     client: Any, report_uri: str
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]
+]:
     report = _read_s3_json(client, report_uri)
     if report.get("schema") != REPORT_SCHEMA or report.get("status") != "passed":
-        raise GrootVisualizationError("learning report has not passed its improvement gate")
+        raise GrootVisualizationError(
+            "learning report has not passed its improvement gate"
+        )
     baseline = _read_s3_json(client, str(report["evaluation"]["baseline_uri"]))
     posttrain = _read_s3_json(client, str(report["evaluation"]["posttrain_uri"]))
     validate_evaluation(baseline, phase="baseline", run_id=str(report["run_id"]))
@@ -1678,7 +2653,9 @@ def _validate_learning_mcap(
     if metadata.get("run_id") != run_id:
         raise GrootVisualizationError("learning MCAP run identity mismatch")
     if metadata.get("evaluation_kind") != EVALUATION_KIND:
-        raise GrootVisualizationError("learning MCAP is not truthfully labelled offline")
+        raise GrootVisualizationError(
+            "learning MCAP is not truthfully labelled offline"
+        )
     if metadata.get("timestamps") != TIMESTAMP_SEMANTICS:
         raise GrootVisualizationError("learning MCAP timestamp semantics are missing")
     return info.to_dict()
@@ -1803,6 +2780,46 @@ def emit_learning_mcap(
                 }
                 for item in report["training"]["loss_history"]
             ],
+            "metrics/per_horizon_error": [
+                {
+                    "horizon_index": index,
+                    "baseline_mse": float(before),
+                    "posttrain_mse": float(after),
+                    "effective_count": int(count),
+                    "action_horizon": int(
+                        report["evaluation"]["per_horizon_mse"]["action_horizon"]
+                    ),
+                    "_timestamp_ns": timeline_origin_ns + index * 1_000_000_000,
+                    "clock_domain": "action_horizon_index",
+                }
+                for index, (before, after, count) in enumerate(
+                    zip(
+                        report["evaluation"]["per_horizon_mse"]["baseline"],
+                        report["evaluation"]["per_horizon_mse"]["posttrain"],
+                        report["evaluation"]["per_horizon_mse"]["counts"],
+                        strict=True,
+                    )
+                )
+            ],
+            "metrics/checkpoint_curve": [
+                {
+                    "optimizer_step": int(item["optimizer_step"]),
+                    "validation_mse": float(item["mse"]),
+                    "skill_score": float(item["skill_score"]),
+                    "_timestamp_ns": timeline_origin_ns
+                    + int(item["optimizer_step"]) * 1_000_000_000,
+                    "clock_domain": "optimizer_step",
+                }
+                for item in (
+                    _read_s3_json(
+                        client,
+                        str(report["evaluation"]["checkpoint_selection_uri"]),
+                    ).get("learning_curve")
+                    or []
+                    if report["evaluation"].get("checkpoint_selection_uri")
+                    else []
+                )
+            ],
         }
         metric_inputs: list[MetricsInput] = []
         for name, records in metric_documents.items():
@@ -1837,9 +2854,7 @@ def emit_learning_mcap(
                 "timestamps": TIMESTAMP_SEMANTICS,
                 "timebase_id": str(timebase["id"]),
                 "episode_boundaries_sha256": _sha256_bytes(
-                    _json_bytes(
-                        {"episode_boundaries": timebase["episode_boundaries"]}
-                    )
+                    _json_bytes({"episode_boundaries": timebase["episode_boundaries"]})
                 ),
                 "training_loss_clock": "optimizer_step-as-seconds",
                 "timeline_origin": "relative-zero-plus-1ns",
@@ -1905,6 +2920,11 @@ def _learning_blueprint(rrb: Any, camera_name: str = "front") -> Any:
                     contents="train/**",
                     name="Training loss",
                 ),
+                rrb.TimeSeriesView(
+                    origin="validation",
+                    contents="validation/**",
+                    name="Checkpoint validation curve",
+                ),
                 rrb.TextDocumentView(origin="provenance", name="Evaluation provenance"),
             ),
             column_shares=[2.1, 1.7, 1.2],
@@ -1967,7 +2987,9 @@ def emit_learning_rrd(
             f"- synchronized samples: {len(entries)}\n"
             f"- timebase: `{timebase['id']}`"
         )
-        rr.log("provenance", rr.TextDocument(provenance), static=True, recording=recording)
+        rr.log(
+            "provenance", rr.TextDocument(provenance), static=True, recording=recording
+        )
         # Training loss has its own factual optimizer-step clock.  It is logged
         # before dataset time is ever set so Rerun does not attach a fabricated,
         # compressed replay timestamp to optimizer evidence.
@@ -1975,6 +2997,36 @@ def emit_learning_rrd(
             optimizer_step = float(item["optimizer_step"])
             _set_rerun_time(rr, recording, "optimizer_step", optimizer_step)
             rr.log("train/loss", rr.Scalars(float(item["loss"])), recording=recording)
+        selection_uri = report["evaluation"].get("checkpoint_selection_uri")
+        selection = _read_s3_json(client, str(selection_uri)) if selection_uri else {}
+        for item in selection.get("learning_curve") or []:
+            _set_rerun_time(
+                rr, recording, "optimizer_step", float(item["optimizer_step"])
+            )
+            rr.log(
+                "validation/checkpoint_mse",
+                rr.Scalars(float(item["mse"])),
+                recording=recording,
+            )
+        horizon = report["evaluation"].get("per_horizon_mse") or {}
+        for index, (before, after) in enumerate(
+            zip(
+                horizon.get("baseline") or [],
+                horizon.get("posttrain") or [],
+                strict=True,
+            )
+        ):
+            _set_rerun_time(rr, recording, "action_horizon_index", float(index))
+            rr.log(
+                "metrics/per_horizon/baseline_mse",
+                rr.Scalars(float(before)),
+                recording=recording,
+            )
+            rr.log(
+                "metrics/per_horizon/posttrain_mse",
+                rr.Scalars(float(after)),
+                recording=recording,
+            )
         expert = before_arrays["expert"]
         predicted_before = before_arrays["predicted"]
         predicted_after = after_arrays["predicted"]
@@ -2045,7 +3097,9 @@ def emit_learning_rrd(
             application_id=RERUN_APPLICATION_ID,
             recording_id=run_id,
             expected_entities=[
-                entity.replace("heldout/camera/front", f"heldout/camera/{primary_camera}")
+                entity.replace(
+                    "heldout/camera/front", f"heldout/camera/{primary_camera}"
+                )
                 for entity in REQUIRED_RRD_ENTITIES
             ],
             timeline=RERUN_TIMELINE,
@@ -2076,7 +3130,10 @@ def publish_learning(
     if report.get("schema") != REPORT_SCHEMA or report.get("run_id") != run_id:
         raise GrootVisualizationError("publish report identity mismatch")
     workflow = yaml.safe_load(_read_s3_bytes(client, workflow_uri))
-    if not isinstance(workflow, dict) or workflow.get("apiVersion") != "npa.workflow/v0.0.1":
+    if (
+        not isinstance(workflow, dict)
+        or workflow.get("apiVersion") != "npa.workflow/v0.0.1"
+    ):
         raise GrootVisualizationError("submitted workflow is not v0.0.1")
     with tempfile.TemporaryDirectory(prefix="npa-groot-learning-publish-") as tmp:
         root = Path(tmp)
@@ -2122,7 +3179,10 @@ def publish_learning(
         "run_id": run_id,
         "evaluation_kind": EVALUATION_KIND,
         "closed_loop": False,
-        "workflow": {**_head_artifact(client, workflow_uri), "sha256": hashes["workflow"]},
+        "workflow": {
+            **_head_artifact(client, workflow_uri),
+            "sha256": hashes["workflow"],
+        },
         "learning_report": _head_artifact(client, report_uri),
         "artifacts": {
             "mcap": {**_head_artifact(client, mcap_uri), "sha256": hashes["mcap"]},
@@ -2144,6 +3204,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    preflight = subparsers.add_parser("preflight-rigor")
+    preflight.add_argument("--output-uri", required=True)
+    preflight.add_argument("--run-id", required=True)
+    preflight.add_argument("--gpu-type", required=True)
+    preflight.add_argument("--gpu-count", type=int, required=True)
+    preflight.add_argument("--global-batch-size", type=int, required=True)
+    preflight.add_argument("--per-device-batch-size", type=int, required=True)
+    preflight.add_argument("--gradient-accumulation-steps", type=int, required=True)
+    preflight.add_argument("--train-episodes", type=int, required=True)
+    preflight.add_argument("--validation-episodes", type=int, required=True)
+    preflight.add_argument("--final-episodes", type=int, required=True)
+    preflight.add_argument("--max-steps", type=int, required=True)
+    preflight.add_argument("--minimum-epochs", type=float, required=True)
+
     split = subparsers.add_parser("prepare-split")
     split.add_argument("--source-uri", required=True)
     split.add_argument("--train-uri", required=True)
@@ -2152,8 +3226,18 @@ def build_parser() -> argparse.ArgumentParser:
     split.add_argument("--run-id", required=True)
     split.add_argument("--train-episodes", type=int, default=24)
     split.add_argument("--heldout-episodes", type=int, default=6)
+    split.add_argument("--final-uri", default="")
+    split.add_argument("--final-episodes", type=int, default=0)
     split.add_argument("--seed", default="groot17-learning-v1")
     split.add_argument("--global-batch-size", type=int, default=8)
+    split.add_argument("--minimum-epochs", type=float, default=1.0)
+    split.add_argument("--minimum-effective-global-batch", type=int, default=1)
+    split.add_argument("--gpu-count", type=int)
+    split.add_argument("--per-device-batch-size", type=int)
+    split.add_argument("--gradient-accumulation-steps", type=int)
+    split.add_argument(
+        "--action-representation", choices=("source", "absolute"), default="source"
+    )
     split.add_argument(
         "--max-steps",
         type=int,
@@ -2169,7 +3253,6 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.add_argument("--base-model", required=True)
     baseline.add_argument("--run-id", required=True)
     baseline.add_argument("--action-horizon", type=int, default=16)
-    baseline.add_argument("--denoising-steps", type=int, default=4)
 
     posttrain = subparsers.add_parser("posttrain-eval")
     posttrain.add_argument("--split-manifest-uri", required=True)
@@ -2178,7 +3261,6 @@ def build_parser() -> argparse.ArgumentParser:
     posttrain.add_argument("--arrays-uri", required=True)
     posttrain.add_argument("--run-id", required=True)
     posttrain.add_argument("--action-horizon", type=int, default=16)
-    posttrain.add_argument("--denoising-steps", type=int, default=4)
 
     compare = subparsers.add_parser("compare-learning")
     compare.add_argument("--split-manifest-uri", required=True)
@@ -2188,6 +3270,35 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--output-uri", required=True)
     compare.add_argument("--video-uri", required=True)
     compare.add_argument("--run-id", required=True)
+    compare.add_argument("--selection-uri", default="")
+    compare.add_argument(
+        "--minimum-relative-improvement",
+        type=float,
+        default=DEFAULT_MINIMUM_RELATIVE_IMPROVEMENT,
+    )
+    compare.add_argument(
+        "--minimum-skill-score", type=float, default=DEFAULT_MINIMUM_SKILL_SCORE
+    )
+    compare.add_argument(
+        "--repeat-noise-multiple", type=float, default=DEFAULT_REPEAT_NOISE_MULTIPLE
+    )
+    compare.add_argument(
+        "--max-dimension-regression",
+        type=float,
+        default=DEFAULT_MAX_DIMENSION_REGRESSION,
+    )
+    compare.add_argument("--loss-decrease-tolerance", type=float, default=0.01)
+
+    select = subparsers.add_parser("select-offline-checkpoint")
+    select.add_argument("--baseline-uri", required=True)
+    select.add_argument(
+        "--candidate-uri", dest="candidate_uris", action="append", required=True
+    )
+    select.add_argument("--output-uri", required=True)
+    select.add_argument("--run-id", required=True)
+    select.add_argument(
+        "--minimum-skill-score", type=float, default=DEFAULT_MINIMUM_SKILL_SCORE
+    )
 
     mcap = subparsers.add_parser("emit-mcap")
     mcap.add_argument("--report-uri", required=True)
@@ -2214,7 +3325,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     values = vars(args).copy()
     command = values.pop("command")
-    if command == "prepare-split":
+    if command == "preflight-rigor":
+        preflight_rigor_contract(**values)
+    elif command == "prepare-split":
         prepare_split(**values)
     elif command == "baseline-eval":
         baseline_eval(**values)
@@ -2222,6 +3335,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         posttrain_eval(**values)
     elif command == "compare-learning":
         compare_learning(**values)
+    elif command == "select-offline-checkpoint":
+        select_offline_checkpoint(**values)
     elif command == "emit-mcap":
         emit_learning_mcap(**values)
     elif command == "emit-rrd":

@@ -22,7 +22,20 @@ from typing import Any, Mapping, Sequence
 
 from npa.workbench.foxglove.inspect import summarize_mcap
 from npa.workbench.foxglove.mcap_writer import FrameInput, LogInput, MetricsInput, write_run_mcap
-from npa.workflows.groot_learning import _checkpoint_identity, _download_prefix, _json_bytes
+from npa.workflows.groot_learning import (
+    GROOT_MODEL_CONFIG_CONTRACT,
+    REQUIRED_RRD_ENTITIES as LEARNING_REQUIRED_RRD_ENTITIES,
+    RERUN_APPLICATION_ID as LEARNING_RERUN_APPLICATION_ID,
+    RERUN_TIMELINE as LEARNING_RERUN_TIMELINE,
+    _checkpoint_identity,
+    _download_prefix,
+    _json_bytes,
+    _resolve_highest_checkpoint_directory,
+    _seed_stochastic_sources,
+    _validate_learning_mcap,
+    checkpoint_model_config_contract,
+    require_distinct_trained_weights,
+)
 from npa.workflows.groot_visualization import (
     GrootVisualizationError,
     _download,
@@ -59,10 +72,19 @@ HORIZON = 300
 FPS = 10.0
 SUCCESS_THRESHOLD = 0.95
 SEMANTIC_PHASES = [
+    "access_capacity_preflight",
     "resolve_task_contract",
     "prepare_retraining_split",
+    "evaluate_offline_baseline",
     "retrain_task_policy",
     "resolve_trained_checkpoint",
+    "probe_checkpoint_2500",
+    "probe_checkpoint_5000",
+    "probe_checkpoint_10000",
+    "select_offline_checkpoint",
+    "compare_offline_learning",
+    "emit_offline_mcap",
+    "emit_offline_rrd",
     "evaluate_validation_baseline",
     "evaluate_validation_candidate",
     "analyze_validation_outcomes",
@@ -112,8 +134,8 @@ def _sha256(payload: bytes) -> str:
 def deterministic_seeds(namespace: str, count: int) -> list[int]:
     """Derive a stable, explicit final-test seed set without global RNG state."""
 
-    if count < 20:
-        raise GrootVisualizationError("closed-loop evaluation requires at least 20 paired episodes")
+    if count < 24:
+        raise GrootVisualizationError("closed-loop evaluation requires at least 24 paired episodes")
     seeds = [
         int.from_bytes(hashlib.sha256(f"{namespace}:{index}".encode()).digest()[:4], "big")
         for index in range(count)
@@ -487,6 +509,7 @@ def resolve_trained_checkpoint(
     output_uri: str,
     run_id: str,
     *,
+    baseline_checkpoint_uri: str = "",
     expected_gpu_count: int = 7,
     expected_max_steps: int = 0,
     s3_client: Any | None = None,
@@ -503,6 +526,9 @@ def resolve_trained_checkpoint(
         or manifest.get("checkpoint_uri") != checkpoint_uri
         or manifest.get("optimizer_step_ok") is not True
         or manifest.get("collective_ok") is not True
+        or manifest.get("loss_steps_real") is not True
+        or manifest.get("loss_decreased") is not True
+        or manifest.get("model_config_contract") != GROOT_MODEL_CONFIG_CONTRACT
     ):
         raise GrootVisualizationError("trainer manifest lacks completed immutable-run evidence")
     gpu_count = int(manifest.get("num_gpus") or 0)
@@ -513,6 +539,9 @@ def resolve_trained_checkpoint(
     configured_steps = int(manifest.get("max_steps") or 0)
     completed_steps = int(manifest.get("training_step") or 0)
     training_plan = split.get("training_plan") or {}
+    per_device_batch = int(manifest.get("per_device_batch_size") or 0)
+    accumulation = int(manifest.get("gradient_accumulation_steps") or 0)
+    effective_global = gpu_count * per_device_batch * accumulation
     if (
         split.get("schema") != "npa.groot.episode_split.v1"
         or split.get("run_id") != run_id
@@ -521,22 +550,53 @@ def resolve_trained_checkpoint(
         or int(training_plan.get("effective_max_steps") or 0) != int(expected_max_steps)
         or int(training_plan.get("global_batch_size") or 0)
         != int(manifest.get("global_batch_size") or 0)
+        or int(training_plan.get("per_device_batch_size") or 0) != per_device_batch
+        or int(training_plan.get("gradient_accumulation_steps") or 0) != accumulation
+        or effective_global != int(manifest.get("global_batch_size") or 0)
+        or effective_global < 128
     ):
         raise GrootVisualizationError("trainer and split preflight step contracts differ")
     if int(expected_max_steps) <= 0 or configured_steps != int(expected_max_steps):
         raise GrootVisualizationError("trainer max_steps differs from the preflight contract")
     if completed_steps != configured_steps:
         raise GrootVisualizationError("trainer did not complete the configured optimizer steps")
+    checkpoint_steps = {int(value) for value in manifest.get("checkpoint_steps") or []}
+    if len(checkpoint_steps) < 3 or completed_steps not in checkpoint_steps:
+        raise GrootVisualizationError("trainer lacks two intermediate checkpoints plus final")
 
+    if not baseline_checkpoint_uri:
+        raise GrootVisualizationError("trained checkpoint resolution requires baseline weights")
     with tempfile.TemporaryDirectory(prefix="npa-groot-checkpoint-ref-") as tmp:
-        checkpoint_path = Path(tmp) / "checkpoint"
-        _download_prefix(client, checkpoint_uri, checkpoint_path)
+        root = Path(tmp)
+        checkpoint_root = root / "checkpoint"
+        _download_prefix(client, checkpoint_uri, checkpoint_root)
+        checkpoint_path, checkpoint_step = _resolve_highest_checkpoint_directory(
+            checkpoint_root
+        )
         identity = _checkpoint_identity(checkpoint_path)
+        checkpoint_model_config_contract(checkpoint_path)
+        baseline_path = root / "baseline"
+        _download_prefix(client, baseline_checkpoint_uri, baseline_path)
+        baseline_identity = _checkpoint_identity(baseline_path)
+        checkpoint_model_config_contract(baseline_path)
+        require_distinct_trained_weights(baseline_identity, identity)
+    if checkpoint_step is None:
+        raise GrootVisualizationError("trainer output did not resolve to checkpoint-N")
+    resolved_checkpoint_uri = (
+        checkpoint_uri.rstrip("/") + f"/checkpoint-{checkpoint_step}/"
+    )
     result = {
         "schema": CHECKPOINT_REF_SCHEMA,
         "status": "resolved",
         "run_id": run_id,
-        "checkpoint": {"uri": checkpoint_uri, **identity},
+        "checkpoint": {
+            "uri": resolved_checkpoint_uri,
+            "resolved_checkpoint_step": checkpoint_step,
+            **identity,
+        },
+        "baseline_checkpoint": {"uri": baseline_checkpoint_uri, **baseline_identity},
+        "weights_differ": True,
+        "model_config_contract": GROOT_MODEL_CONFIG_CONTRACT,
         "training_manifest_uri": training_manifest_uri,
         "split_manifest_uri": split_manifest_uri,
         "training": {
@@ -549,6 +609,10 @@ def resolve_trained_checkpoint(
             "distinct_gpu_count": distinct_gpu_count,
             "optimizer_steps": completed_steps,
             "global_batch_size": int(manifest.get("global_batch_size") or 0),
+            "per_device_batch_size": per_device_batch,
+            "gradient_accumulation_steps": accumulation,
+            "effective_global_batch_size": effective_global,
+            "checkpoint_steps": sorted(checkpoint_steps),
             "training_examples": int(manifest.get("training_examples") or 0),
             "aggregate_train_loss": manifest.get("aggregate_train_loss"),
             "final_step_loss": manifest.get("final_step_loss", manifest.get("final_loss")),
@@ -563,13 +627,17 @@ def _checkpoint_from_ref(
     client: Any, checkpoint_ref_uri: str, *, run_id: str, allow_selection: bool
 ) -> tuple[str, str]:
     reference = _read_s3_json(client, checkpoint_ref_uri)
-    permitted = {CHECKPOINT_REF_SCHEMA}
+    permitted = {
+        CHECKPOINT_REF_SCHEMA,
+        "npa.groot.offline_eval.v1",
+        "npa.groot.offline_checkpoint_selection.v1",
+    }
     if allow_selection:
         permitted.add(SELECTION_SCHEMA)
     if (
         reference.get("schema") not in permitted
         or reference.get("run_id") != run_id
-        or reference.get("status") not in {"resolved", "selected"}
+        or reference.get("status") not in {"resolved", "selected", "completed"}
     ):
         raise GrootVisualizationError("checkpoint reference does not belong to this run")
     checkpoint = reference.get("checkpoint") or {}
@@ -592,7 +660,7 @@ def evaluate_closed_loop(
     *,
     checkpoint_ref_uri: str | None = None,
     allow_selection_ref: bool = False,
-    episodes: int = 20,
+    episodes: int = 24,
     horizon: int = HORIZON,
     policy_batch_size: int = 4,
     s3_client: Any | None = None,
@@ -640,6 +708,10 @@ def evaluate_closed_loop(
         _download_prefix(client, checkpoint_uri, checkpoint_path)
         identity = _checkpoint_identity(checkpoint_path)
         _verify_checkpoint_identity(identity, checkpoint_sha256)
+        resolved_model_contract = checkpoint_model_config_contract(checkpoint_path)
+        _seed_stochastic_sources(
+            int(hashlib.sha256((seed_namespace + ":policy").encode()).hexdigest()[:8], 16)
+        )
         try:
             policy = Gr00tPolicy(
                 embodiment_tag=EmbodimentTag.resolve("NEW_EMBODIMENT"),
@@ -690,6 +762,14 @@ def evaluate_closed_loop(
                 chunk_horizon = -1
                 for start in range(0, len(active), int(policy_batch_size)):
                     group = active[start : start + int(policy_batch_size)]
+                    _seed_stochastic_sources(
+                        int(
+                            hashlib.sha256(
+                                f"{seed_namespace}:{forward_calls}".encode()
+                            ).hexdigest()[:8],
+                            16,
+                        )
+                    )
                     chunks = _policy_action_chunk(
                         policy, [observations[index] for index in group]
                     )
@@ -786,6 +866,7 @@ def evaluate_closed_loop(
         "checkpoint": {"uri": checkpoint_uri, **identity},
         "checkpoint_expected_sha256": checkpoint_sha256,
         "checkpoint_loaded": True,
+        "model_config_contract": resolved_model_contract,
         "closed_loop": True,
         "offline_replay": False,
         "physical_robot": False,
@@ -844,9 +925,10 @@ def select_checkpoint(
     ):
         raise GrootVisualizationError("candidate selection requires passed validation outcomes")
     if (
-        reference.get("schema") != CHECKPOINT_REF_SCHEMA
+        reference.get("schema")
+        not in {CHECKPOINT_REF_SCHEMA, "npa.groot.offline_checkpoint_selection.v1"}
         or reference.get("run_id") != run_id
-        or reference.get("status") != "resolved"
+        or reference.get("status") not in {"resolved", "selected"}
     ):
         raise GrootVisualizationError("candidate checkpoint reference is invalid")
     checkpoint = dict(reference.get("checkpoint") or {})
@@ -877,8 +959,8 @@ def paired_bootstrap(
     import numpy as np
 
     values = np.asarray(deltas, dtype=np.float64)
-    if values.ndim != 1 or len(values) < 20 or not np.all(np.isfinite(values)):
-        raise GrootVisualizationError("paired evidence requires at least 20 finite deltas")
+    if values.ndim != 1 or len(values) < 24 or not np.all(np.isfinite(values)):
+        raise GrootVisualizationError("paired evidence requires at least 24 finite deltas")
     rng = np.random.default_rng(seed)
     indices = rng.integers(0, len(values), size=(int(samples), len(values)))
     means = values[indices].mean(axis=1)
@@ -908,6 +990,9 @@ def analyze_paired_outcomes(
     output_uri: str,
     run_id: str,
     *,
+    offline_report_uri: str = "",
+    minimum_task_score_effect: float = 0.02,
+    minimum_success_rate_effect: float = 0.05,
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
     """Pair identical initial conditions and enforce a real outcome improvement."""
@@ -916,6 +1001,26 @@ def analyze_paired_outcomes(
     contract = _read_s3_json(client, contract_uri)
     baseline = _read_s3_json(client, baseline_uri)
     trained = _read_s3_json(client, trained_uri)
+    if not offline_report_uri:
+        raise GrootVisualizationError("closed-loop gate requires the passed offline rigor report")
+    offline = _read_s3_json(client, offline_report_uri)
+    if (
+        offline.get("schema") != "npa.groot.learning.v1"
+        or offline.get("run_id") != run_id
+        or offline.get("status") != "passed"
+        or offline.get("evaluation", {}).get("gate_passed") is not True
+        or float(offline.get("evaluation", {}).get("posttrain_skill_score", -math.inf))
+        < float(offline.get("evaluation", {}).get("gate", {}).get("minimum_skill_score", 0.0))
+    ):
+        raise GrootVisualizationError("closed-loop gate requires passed offline skill/noise evidence")
+    offline_weights = str(
+        offline.get("training", {}).get("checkpoint_weights_sha256") or ""
+    )
+    trained_weights = str(trained.get("checkpoint", {}).get("weights_sha256") or "")
+    if len(offline_weights) != 64 or trained_weights != offline_weights:
+        raise GrootVisualizationError(
+            "closed-loop trained checkpoint differs from offline-gated trained weights"
+        )
     for document, phase in ((baseline, "baseline"), (trained, "trained")):
         if (
             document.get("schema") != EVALUATION_SCHEMA
@@ -941,7 +1046,7 @@ def analyze_paired_outcomes(
         raise GrootVisualizationError("paired evaluation conditions differ")
     baseline_by_seed = {int(item["seed"]): item for item in baseline["episodes"]}
     trained_by_seed = {int(item["seed"]): item for item in trained["episodes"]}
-    if set(baseline_by_seed) != set(trained_by_seed) or len(baseline_by_seed) < 20:
+    if set(baseline_by_seed) != set(trained_by_seed) or len(baseline_by_seed) < 24:
         raise GrootVisualizationError("paired episode set is incomplete")
     paired: list[dict[str, Any]] = []
     for seed in baseline["seeds"]:
@@ -1002,12 +1107,12 @@ def analyze_paired_outcomes(
     baseline_score = sum(item["baseline_task_score"] for item in paired) / len(paired)
     trained_score = sum(item["trained_task_score"] for item in paired) / len(paired)
     success_supported = (
-        trained_success_rate > baseline_success_rate
+        trained_success_rate - baseline_success_rate >= float(minimum_success_rate_effect)
         and float(success_evidence["ci_low"]) > 0.0
         and float(success_evidence["p_value"]) < 0.05
     )
     score_supported = (
-        trained_score > baseline_score
+        trained_score - baseline_score >= float(minimum_task_score_effect)
         and float(score_evidence["ci_low"]) > 0.0
         and float(score_evidence["p_value"]) < 0.05
     )
@@ -1058,6 +1163,8 @@ def analyze_paired_outcomes(
             "primary_evidence": primary_evidence,
             "improvement_supported": improvement_supported,
             "improvement_gate_passed": improvement_supported,
+            "minimum_success_rate_effect": float(minimum_success_rate_effect),
+            "minimum_task_score_effect": float(minimum_task_score_effect),
             "conclusion": (
                 "PASS: trained checkpoint improved closed-loop PushT outcomes"
                 if improvement_supported
@@ -1075,7 +1182,8 @@ def analyze_paired_outcomes(
         },
         "semantic_phases": SEMANTIC_PHASES,
         "diagnostics": {
-            "training_and_offline_metrics": "secondary; see prior learning report",
+            "offline_rigor_report_uri": offline_report_uri,
+            "offline_skill_noise_gate_passed": True,
         },
     }
     _put_json(client, output_uri, result)
@@ -1749,6 +1857,9 @@ def publish_task_performance(
     mcap_uri: str,
     rrd_uri: str,
     workflow_uri: str,
+    learning_report_uri: str,
+    offline_mcap_uri: str,
+    offline_rrd_uri: str,
     output_uri: str,
     run_id: str,
     *,
@@ -1761,6 +1872,7 @@ def publish_task_performance(
     client = _s3_client(s3_client)
     report = _read_s3_json(client, report_uri)
     render = _read_s3_json(client, render_manifest_uri)
+    learning = _read_s3_json(client, learning_report_uri)
     if (
         report.get("schema") != REPORT_SCHEMA
         or report.get("run_id") != run_id
@@ -1770,6 +1882,10 @@ def publish_task_performance(
         or render.get("actual_rollout_frames") is not True
         or render.get("simulation_label_present") is not True
         or render.get("representative_successes_and_failures") is not True
+        or learning.get("schema") != "npa.groot.learning.v1"
+        or learning.get("run_id") != run_id
+        or learning.get("status") != "passed"
+        or learning.get("evaluation", {}).get("gate_passed") is not True
     ):
         raise GrootVisualizationError("publish refuses an incomplete task-performance truth gate")
     mcap_timebase = report.get("visualizations", {}).get("mcap", {}).get("timebase", {})
@@ -1782,7 +1898,16 @@ def publish_task_performance(
         mcap = root / "task-performance.mcap"
         rrd = root / "task-performance.rrd"
         workflow = root / "workflow.yaml"
-        for uri, path in ((video_uri, video), (mcap_uri, mcap), (rrd_uri, rrd), (workflow_uri, workflow)):
+        offline_mcap = root / "offline-learning.mcap"
+        offline_rrd = root / "offline-learning.rrd"
+        for uri, path in (
+            (video_uri, video),
+            (mcap_uri, mcap),
+            (rrd_uri, rrd),
+            (workflow_uri, workflow),
+            (offline_mcap_uri, offline_mcap),
+            (offline_rrd_uri, offline_rrd),
+        ):
             _download(client, uri, path)
         with av.open(str(video)) as container:
             stream = container.streams.video[0]
@@ -1802,6 +1927,22 @@ def publish_task_performance(
             expected_entities=REQUIRED_RRD_ENTITIES,
             timeline="rollout_time",
         )
+        offline_mcap_inspection = _validate_learning_mcap(
+            offline_mcap, run_id=run_id, camera_name=str(learning["provenance"]["primary_camera"])
+        )
+        offline_rrd_inspection = inspect_rrd(
+            offline_rrd,
+            application_id=LEARNING_RERUN_APPLICATION_ID,
+            recording_id=run_id,
+            expected_entities=[
+                entity.replace(
+                    "heldout/camera/front",
+                    f"heldout/camera/{learning['provenance']['primary_camera']}",
+                )
+                for entity in LEARNING_REQUIRED_RRD_ENTITIES
+            ],
+            timeline=LEARNING_RERUN_TIMELINE,
+        )
         workflow_text = workflow.read_text()
         for phase in SEMANTIC_PHASES:
             if f"  {phase}:" not in workflow_text:
@@ -1812,6 +1953,9 @@ def publish_task_performance(
             "mcap": _head_artifact(client, mcap_uri),
             "rrd": _head_artifact(client, rrd_uri),
             "workflow": _head_artifact(client, workflow_uri),
+            "learning_report": _head_artifact(client, learning_report_uri),
+            "offline_mcap": _head_artifact(client, offline_mcap_uri),
+            "offline_rrd": _head_artifact(client, offline_rrd_uri),
         }
     result = {
         "schema": PUBLISH_SCHEMA,
@@ -1830,6 +1974,9 @@ def publish_task_performance(
         },
         "mcap_inspection": mcap_inspection,
         "rrd_inspection": rrd_inspection,
+        "offline_mcap_inspection": offline_mcap_inspection,
+        "offline_rrd_inspection": offline_rrd_inspection,
+        "offline_rigor_gate_passed": True,
         "semantic_phases": SEMANTIC_PHASES,
     }
     _put_json(client, output_uri, result)
@@ -1857,7 +2004,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--checkpoint-sha256")
     evaluate.add_argument("--allow-selection-ref", action="store_true")
     evaluate.add_argument("--seed-namespace", required=True)
-    evaluate.add_argument("--episodes", type=int, default=20)
+    evaluate.add_argument("--episodes", type=int, default=24)
     evaluate.add_argument("--horizon", type=int, default=HORIZON)
     evaluate.add_argument("--policy-batch-size", type=int, default=4)
 
@@ -1867,6 +2014,9 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--trained-uri", required=True)
     analyze.add_argument("--output-uri", required=True)
     analyze.add_argument("--run-id", required=True)
+    analyze.add_argument("--offline-report-uri", required=True)
+    analyze.add_argument("--minimum-task-score-effect", type=float, default=0.02)
+    analyze.add_argument("--minimum-success-rate-effect", type=float, default=0.05)
 
     checkpoint = commands.add_parser("resolve-trained-checkpoint")
     checkpoint.add_argument("--training-manifest-uri", required=True)
@@ -1874,6 +2024,7 @@ def build_parser() -> argparse.ArgumentParser:
     checkpoint.add_argument("--checkpoint-uri", required=True)
     checkpoint.add_argument("--output-uri", required=True)
     checkpoint.add_argument("--run-id", required=True)
+    checkpoint.add_argument("--baseline-checkpoint-uri", required=True)
     checkpoint.add_argument("--expected-gpu-count", type=int, required=True)
     checkpoint.add_argument("--expected-max-steps", type=int, required=True)
 
@@ -1908,6 +2059,9 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--mcap-uri", required=True)
     publish.add_argument("--rrd-uri", required=True)
     publish.add_argument("--workflow-uri", required=True)
+    publish.add_argument("--learning-report-uri", required=True)
+    publish.add_argument("--offline-mcap-uri", required=True)
+    publish.add_argument("--offline-rrd-uri", required=True)
     publish.add_argument("--output-uri", required=True)
     publish.add_argument("--run-id", required=True)
     return parser

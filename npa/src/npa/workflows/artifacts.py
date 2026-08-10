@@ -353,6 +353,94 @@ class RunResolution:
         return encode_run_ref(self.bucket, self.source_prefix, self.run_id)
 
 
+def _merge_staging_resolutions(
+    matches: list[RunResolution],
+) -> list[RunResolution]:
+    """Attach input-only staging roots to one authoritative output root.
+
+    A submitted workflow can stage source and data below its workflow
+    namespace while the runner writes completed outputs at the bucket root.
+    Those are one run, not an ambiguous duplicate. Two roots that both contain
+    outputs remain separate and therefore fail closed.
+    """
+
+    authoritative = [
+        match
+        for match in matches
+        if any(artifact.role == "output" for artifact in match.artifacts)
+    ]
+    staging = [
+        match
+        for match in matches
+        if match.artifacts
+        and all(artifact.role == "input" for artifact in match.artifacts)
+    ]
+    if len(authoritative) != 1 or len(authoritative) + len(staging) != len(matches):
+        return matches
+    primary = authoritative[0]
+    artifacts = {
+        artifact.key: artifact
+        for match in (*staging, primary)
+        for artifact in match.artifacts
+    }
+    return [
+        RunResolution(
+            run_id=primary.run_id,
+            bucket=primary.bucket,
+            source_prefix=primary.source_prefix,
+            artifacts=sorted(artifacts.values(), key=lambda item: item.key),
+        )
+    ]
+
+
+def _merge_staging_summaries(runs: list[RunSummary]) -> list[RunSummary]:
+    grouped: dict[tuple[str, str], list[RunSummary]] = {}
+    for run in runs:
+        grouped.setdefault((run.bucket, run.run_id), []).append(run)
+    merged: list[RunSummary] = []
+    for same_id in grouped.values():
+        authoritative = [run for run in same_id if run.output_artifact_count > 0]
+        staging = [
+            run
+            for run in same_id
+            if run.output_artifact_count == 0 and run.input_artifact_count > 0
+        ]
+        if (
+            len(authoritative) != 1
+            or len(authoritative) + len(staging) != len(same_id)
+        ):
+            merged.extend(same_id)
+            continue
+        primary = authoritative[0]
+        merged.append(
+            dataclass_replace(
+                primary,
+                last_modified=max(run.last_modified for run in same_id),
+                started_at=min(
+                    (run.started_at for run in same_id if run.started_at),
+                    default=primary.started_at,
+                ),
+                artifact_count=sum(run.artifact_count for run in same_id),
+                has_viewable=any(run.has_viewable for run in same_id),
+                input_artifact_count=sum(
+                    run.input_artifact_count for run in same_id
+                ),
+                metadata_artifact_count=sum(
+                    run.metadata_artifact_count for run in same_id
+                ),
+                namespaces=tuple(
+                    dict.fromkeys(
+                        namespace
+                        for run in same_id
+                        for namespace in run.namespaces
+                    )
+                ),
+                canonical_score=sum(run.canonical_score for run in same_id),
+            )
+        )
+    return merged
+
+
 _RUN_REF_PREFIX = "npa1_"
 _SAFE_BUCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$")
 
@@ -827,7 +915,9 @@ def build_run_summary(
             "success_definition": str(success.get("predicate") or ""),
             "episodes": paired.get("episodes") or [],
         }
-    learning_doc = _doc("reports/learning-report.json")
+    learning_doc = _doc("reports/learning-rigor-report.json") or _doc(
+        "reports/learning-report.json"
+    )
     learning: dict[str, Any] = {}
     if learning_doc.get("schema") == "npa.groot.learning.v1":
         learning_dataset = learning_doc.get("dataset") or {}
@@ -859,6 +949,25 @@ def build_run_summary(
                 learning_eval.get("relative_improvement_percent") or 0.0
             ),
             "improved": learning_eval.get("improved") is True,
+            "gate_passed": learning_eval.get("gate_passed") is True,
+            "zero_predictor_mse": float(learning_eval.get("zero_predictor_mse") or 0.0),
+            "train_mean_predictor_mse": float(
+                learning_eval.get("train_mean_predictor_mse") or 0.0
+            ),
+            "baseline_skill_score": float(
+                learning_eval.get("baseline_skill_score") or 0.0
+            ),
+            "posttrain_skill_score": float(
+                learning_eval.get("posttrain_skill_score") or 0.0
+            ),
+            "repeat_noise_multiple": float(
+                (learning_eval.get("gate") or {}).get("repeat_noise_multiple") or 0.0
+            ),
+            "per_horizon_mse": learning_eval.get("per_horizon_mse") or {},
+            "loss_trend": learning_training.get("loss_trend") or {},
+            "checkpoint_selection_uri": str(
+                learning_eval.get("checkpoint_selection_uri") or ""
+            ),
             "per_dimension": learning_eval.get("per_dimension") or [],
             "mcap_uri": str(learning_viz.get("mcap_uri") or ""),
             "rrd_uri": str(learning_viz.get("rrd_uri") or ""),
