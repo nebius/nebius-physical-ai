@@ -325,6 +325,35 @@ containers:
       timeout_seconds: 3600
       status: gpu-gated
 
+  cosmos3-serving:
+    image: npa-cosmos3-serving
+    dockerfile: npa/docker/workbench/cosmos3-serving/Dockerfile
+    foundation: true
+    external_build: true
+    physical_ai:
+      useful: true
+      role: >-
+        Build-your-own persistent Cosmos3-Super serving runtime for repeated
+        OpenAI-compatible video-generation requests on one 8-GPU node.
+    safety:
+      runs_as: ubuntu
+      base_image: vllm/vllm-omni (digest-pinned; restricted distribution)
+      network: OpenAI-compatible service on :8000 (/v1/models, /v1/videos)
+      external_fetch: [huggingface-runtime]
+      notes: >-
+        Restricted and excluded from the public mirror because of the pinned
+        vendor base's distribution terms. No model or guardrail weights are
+        baked; the operator supplies its own Hugging Face token at runtime. The
+        build gate checks the serving stack, pin-specific Xet workaround, real
+        entrypoint argv, and absence of checkpoint files. A separate documented
+        live validation generated and decoded a real video on 8xH200.
+    golden_eval:
+      kind: build-import
+      command: python3 /opt/npa-cosmos3-serving/verify_env.py
+      gpu: none
+      timeout_seconds: 300
+      status: ready
+
   cosmos3-reason:
     image: npa-cosmos3-reason
     dockerfile: npa/docker/workbench/cosmos3-reason/Dockerfile

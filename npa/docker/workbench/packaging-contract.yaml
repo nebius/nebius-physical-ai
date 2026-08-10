@@ -195,6 +195,19 @@ images:
       the SkyPilot Kubernetes bootstrap installs its SSH runtime in-pod; see
       docs/security/container-golden-evals.md.
     redistribution: public
+  cosmos3-serving:
+    dockerfile: cosmos3-serving/Dockerfile
+    tier: service
+    ports: [8000]
+    notes: >-
+      Build-your-own only. The vLLM-Omni source is Apache-2.0 and no model or
+      guardrail weights are baked, but the pinned base image embeds NVIDIA's
+      Deep Learning Container License. Its derived-container distribution grant
+      requires material added primary functionality and downstream terms at
+      least as protective; this thin serving wrapper and anonymous GHCR do not
+      establish those conditions. Operators build into their own registry and
+      fetch gated weights at runtime with their own Hugging Face acceptance.
+    redistribution: restricted
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile
     tier: job

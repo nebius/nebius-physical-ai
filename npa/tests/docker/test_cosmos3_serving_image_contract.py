@@ -143,24 +143,15 @@ def test_healthcheck_allows_for_the_real_startup_time() -> None:
     )
 
 
-def test_the_image_is_deliberately_not_yet_a_registered_workbench_tool() -> None:
-    """Pin the choice, so registering it later is a decision rather than a drift.
-
-    Registration is one chain, not one edit: a ``packaging-contract.yaml`` entry
-    obliges a datacenter Blackwell verdict, which obliges a
-    ``CONTAINER_IMAGE_NAMES`` key and a supported-tools pin, which obliges a
-    golden-eval manifest entry backed by a real 8-GPU capability smoke. This
-    change ships the container and leaves that chain to the maintainer, and the
-    docs page says so rather than leaving the absence to look like an oversight.
-    """
-    from npa.deploy.images import CONTAINER_IMAGE_NAMES
+def test_the_image_is_contracted_restricted_and_not_publicly_resolved() -> None:
+    """The thin wrapper does not satisfy the pinned base's distribution terms."""
+    from npa.deploy.images import CONTAINER_IMAGE_NAMES, OMNIVERSE_RESTRICTED_TOOLS
 
     contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-    assert "cosmos3-serving" not in contract["images"]
+    assert contract["images"]["cosmos3-serving"]["redistribution"] == "restricted"
+    assert contract["images"]["cosmos3-serving"]["tier"] == "service"
     assert "cosmos3-serving" not in CONTAINER_IMAGE_NAMES
-
-    docs = (REPO_ROOT / "docs/workbench/cosmos3-super-serving.md").read_text(encoding="utf-8")
-    assert "not registered as a deployable workbench tool" in docs
+    assert "cosmos3-serving" in OMNIVERSE_RESTRICTED_TOOLS
 
 
 # ---------------------------------------------------------------------------

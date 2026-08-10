@@ -19,20 +19,21 @@ an OpenAI-compatible endpoint against resident weights, on one 8-GPU node.
 The image wraps NVIDIA's own `vllm/vllm-omni` serving runtime, pinned by digest,
 and adds a preflight entrypoint and a build gate.
 
-## What this is not, yet
+## Packaging and deployment surface
 
-The image is **not registered as a deployable workbench tool**. There is no
-`npa workbench cosmos3 serve` CLI verb, no SDK surface, no workflow integration,
-and no entry in the packaging contract, the datacenter Blackwell verdict
-manifest, `CONTAINER_IMAGE_NAMES`, or the golden-eval manifest.
+The image is recorded in the packaging contract as a `restricted` service and
+is intentionally excluded from `CONTAINER_IMAGE_NAMES` and the public mirror.
+Operators may build `npa-cosmos3-serving:0.1.0` into their own registry with the
+checked-in build script.
 
-That is a deliberate stopping point rather than an omission, because those
-registrations are one chain rather than four independent edits: a packaging
-contract entry obliges a Blackwell verdict, which obliges a
-`CONTAINER_IMAGE_NAMES` key and a supported-tools version pin, which obliges a
-golden-eval manifest entry backed by a real capability smoke that needs an
-8-GPU node to run. Build it as one deliberate change, with a version scheme and
-a smoke tier chosen on purpose, or not at all.
+The restriction comes from the pinned base image, not the model weights. Although
+vLLM-Omni source is Apache-2.0, the base embeds NVIDIA's Deep Learning Container
+License. Its derived-container distribution grant requires material additional
+primary functionality and downstream terms at least as protective as that
+license, and prohibits distributing the container as a standalone product. This
+thin configuration wrapper and anonymous GHCR do not establish those conditions.
+The built image therefore stays build-your-own unless legal review approves a
+different base or distribution mechanism.
 
 ## Weights are never in the image
 
