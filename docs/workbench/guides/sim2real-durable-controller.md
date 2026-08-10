@@ -297,6 +297,17 @@ post-success departure penalty until episode reset. Immediate success terminatio
 remains an independent diagnostic opt-in; validation and gold still require the
 unchanged stable terminal placement.
 
+Validation-only Train19 then exercised that retention contract over another
+12,288,000 training environment steps and evaluated seven immutable checkpoints
+on all 64 validation scenarios. The last checkpoint entered the unchanged 5 cm
+basin on 47 scenarios and ended inside it on 30, but no policy sustained two
+consecutive sub-0.03 m/s steps. The task therefore records whether an unfinished
+one- or two-step dwell is broken and applies a bounded consequence at that exact
+transition. It is zero during transport, before the first stable step, while a
+partial dwell continues, after completion, and after reset. The positive dwell
+and completion rewards remain larger, post-completion departure retains its
+separate consequence, and the authoritative three-step verdict is unchanged.
+
 ## Required integration ladder
 
 Before a full run, the exact image and live target must prove:

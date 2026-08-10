@@ -70,6 +70,14 @@ PLACEMENT_STRICT_DWELL_REWARD_WEIGHT = 2048.0
 # explicitly costly until reset.  The magnitude matches the bounded signed
 # progress term, avoiding the earlier transport-suppressing -5000 failure.
 PLACEMENT_POST_SUCCESS_DEPARTURE_WEIGHT = -512.0
+# Train19 entered the unchanged 5 cm basin on 47/64 validation scenarios and
+# crossed below 0.03 m/s on several, but every unfinished event broke after one
+# stable step. Losing the future dwell bonus alone supplied no immediate credit
+# assignment for that exact failure. Penalize only the loss of a one- or two-step
+# partial dwell; transport, first arrival, completed holds, and resets remain
+# unaffected. The magnitude is half the saturated positive dwell weight so a
+# two-step approach remains net positive while completion is still dominant.
+PLACEMENT_PARTIAL_DWELL_BREAK_WEIGHT = -1024.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
 _DROP_PENALTY_TYPE: type | None = None
@@ -222,6 +230,10 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_stable_placement_newly_achieved = torch.zeros(
             env.num_envs, dtype=torch.bool, device=env.device
         )
+    if not hasattr(env, "npa_stable_placement_dwell_broken"):
+        env.npa_stable_placement_dwell_broken = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
     if not hasattr(env, "npa_previous_placement_distance"):
         env.npa_previous_placement_distance = torch.full(
             (env.num_envs,), float("inf"), dtype=torch.float, device=env.device
@@ -249,6 +261,7 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
     env.npa_stable_placement_reward_steps[ids] = 0
     env.npa_stable_placement_achieved[ids] = False
     env.npa_stable_placement_newly_achieved[ids] = False
+    env.npa_stable_placement_dwell_broken[ids] = False
     env.npa_previous_placement_distance[ids] = float("inf")
     env.npa_scenario_applied_counts += torch.bincount(scenario_ids, minlength=len(rows))
     return ids, scenario_ids
@@ -731,6 +744,27 @@ def stable_placement_retention_signal(
     return steps, dwell, achieved_now, float(newly_achieved), departure
 
 
+def stable_placement_dwell_break_signal(
+    is_stable: bool,
+    previous_steps: int,
+    achieved: bool,
+    *,
+    required_steps: int = STABLE_PLACEMENT_STEPS,
+) -> float:
+    """Return one only when an unfinished strict dwell is lost.
+
+    This is zero before the first strict step, throughout transport, after a
+    completed event, and while the partial event continues. It gives PPO an
+    immediate consequence for the exact one-step break observed in Train19
+    without changing or approximating the authoritative three-step event.
+    """
+
+    if required_steps <= 0:
+        raise ValueError("required_steps must be positive")
+    partial = 0 < int(previous_steps) < int(required_steps) and not achieved
+    return float(partial and not is_stable)
+
+
 def stable_placement_dwell(
     env: Any,
     *,
@@ -759,13 +793,20 @@ def stable_placement_dwell(
         & (distance < float(success_distance_m))
         & (speed < float(stable_speed_mps))
     )
+    previous_steps = env.npa_stable_placement_reward_steps
+    env.npa_stable_placement_dwell_broken = (
+        ~stable
+        & (previous_steps > 0)
+        & (previous_steps < int(required_steps))
+        & ~env.npa_stable_placement_achieved
+    )
     next_steps = torch.where(
         stable,
         torch.clamp(
-            env.npa_stable_placement_reward_steps + 1,
+            previous_steps + 1,
             max=int(required_steps),
         ),
-        torch.zeros_like(env.npa_stable_placement_reward_steps),
+        torch.zeros_like(previous_steps),
     )
     newly_achieved = (
         stable
@@ -786,6 +827,14 @@ def stable_placement_completion(env: Any) -> Any:
     import torch  # noqa: WPS433 - Isaac runtime dependency
 
     return env.npa_stable_placement_newly_achieved.to(dtype=torch.float32)
+
+
+def stable_placement_dwell_break(env: Any) -> Any:
+    """Penalize breaking a one- or two-step strict dwell before completion."""
+
+    import torch  # noqa: WPS433 - Isaac runtime dependency
+
+    return env.npa_stable_placement_dwell_broken.to(dtype=torch.float32)
 
 
 def stable_placement_departure(
@@ -1001,6 +1050,10 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
             "required_steps": STABLE_PLACEMENT_STEPS,
         },
+    )
+    env_cfg.rewards.stable_placement_dwell_break = RewardTermCfg(
+        func=stable_placement_dwell_break,
+        weight=PLACEMENT_PARTIAL_DWELL_BREAK_WEIGHT,
     )
     env_cfg.rewards.stable_placement_completion = RewardTermCfg(
         func=stable_placement_completion,
