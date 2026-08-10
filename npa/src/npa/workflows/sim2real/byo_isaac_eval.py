@@ -37,12 +37,6 @@ from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.camera_views import camera_metadata, camera_views_json
 from npa.workflows.sim2real.capture import capture_settings
 from npa.workflows.sim2real.isaac_job_payload import compressed_bash_launch
-from npa.workflows.sim2real.placement_policy import (
-    SETTLE_HOLD_MINIMAL_LIFT_M,
-    SETTLE_HOLD_REQUIRED_STEPS,
-    SETTLE_HOLD_TRIGGER_DISTANCE_M,
-    SETTLE_HOLD_TRIGGER_SPEED_MPS,
-)
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
@@ -108,7 +102,7 @@ def extract_checkpoint_uri(inner_evidence: dict[str, Any]) -> str:
 def policy_inference_provenance(
     *, checkpoint_uri: str, checkpoint: dict[str, Any]
 ) -> dict[str, Any]:
-    """Describe the exact learned actor and its non-verdict post-controller."""
+    """Describe exact learned-actor inference without scripted control."""
 
     return {
         "backend": "isaac_rsl_rl_inference",
@@ -118,20 +112,9 @@ def policy_inference_provenance(
         "loaded_for_inference": bool(checkpoint),
         "stock_or_scripted_policy": False,
         "actor_is_learned": True,
-        "scripted_post_actor_controller": True,
-        "policy_composition": "learned_actor_with_post_success_retention",
-        "post_actor_controller": {
-            "type": "post_success_measured_joint_position_hold",
-            "trigger_distance_m": SETTLE_HOLD_TRIGGER_DISTANCE_M,
-            "trigger_speed_mps": SETTLE_HOLD_TRIGGER_SPEED_MPS,
-            "required_consecutive_steps": SETTLE_HOLD_REQUIRED_STEPS,
-            "minimal_lift_m": SETTLE_HOLD_MINIMAL_LIFT_M,
-            "requires_lift": True,
-            "requires_contact": True,
-            "requires_closed_gripper": True,
-            "requires_exact_stable_placement": True,
-            "declares_success": False,
-        },
+        "scripted_post_actor_controller": False,
+        "policy_composition": "learned_actor_only",
+        "post_actor_controller": None,
     }
 
 
@@ -579,14 +562,6 @@ try:
     runner = OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")
     runner.load(CKPT)
     policy = runner.get_inference_policy(device="cuda:0")
-    from npa.workflows.sim2real.placement_policy import (
-        SETTLE_HOLD_REQUIRED_STEPS,
-        SETTLE_HOLD_TRIGGER_DISTANCE_M,
-        SETTLE_HOLD_TRIGGER_SPEED_MPS,
-        advance_settle_hold,
-        joint_position_hold_action,
-        settle_hold_trigger,
-    )
     # The ACTUAL env count is the single source of truth for per-env sizing.
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     # Reset FIRST to force a fully-batched [realN, obs_dim] observation. Calling
@@ -600,32 +575,6 @@ try:
         obs, _ = env.get_observations()
     print("OBS_TYPE", type(obs).__name__, "realN", realN, flush=True)
     N = realN
-
-    action_manager = env.unwrapped.action_manager
-    action_terms = list(action_manager.active_terms)
-    action_dims = list(action_manager.action_term_dim)
-    if "arm_action" not in action_terms or "gripper_action" not in action_terms:
-        raise RuntimeError(
-            "settle-hold requires named arm_action and gripper_action terms"
-        )
-    arm_term_index = action_terms.index("arm_action")
-    gripper_term_index = action_terms.index("gripper_action")
-    arm_start = sum(action_dims[:arm_term_index])
-    arm_end = arm_start + action_dims[arm_term_index]
-    gripper_start = sum(action_dims[:gripper_term_index])
-    arm_term = action_manager.get_term("arm_action")
-    if arm_term.action_dim != arm_end - arm_start:
-        raise RuntimeError("settle-hold arm action dimensions are inconsistent")
-
-    def measured_joint_hold_actions(actor_actions):
-        hold_actions = actor_actions.detach().clone()
-        joint_position = arm_term._asset.data.joint_pos[:, arm_term._joint_ids]
-        hold_actions[:, arm_start:arm_end] = joint_position_hold_action(
-            joint_position,
-            arm_term._scale,
-            arm_term._offset,
-        )
-        return hold_actions
 
     def _to_batched(v):
         # Ensure a group tensor is [realN, feat]. A 1-D tensor is either a single
@@ -795,9 +744,6 @@ try:
     stable_place_steps = np.zeros(N, dtype=np.int64)
     max_stable_place_steps = np.zeros(N, dtype=np.int64)
     min_speed_in_strict_basin = np.full(N, 1e9)
-    settle_hold_latched = np.zeros(N, dtype=bool)
-    settle_hold_step = np.full(N, -1, dtype=np.int64)
-    settle_hold_actions = None
     termination = np.array(["max_steps"] * N, dtype=object)
     completed = np.zeros(N, dtype=bool)
     initial_obj_z = None
@@ -825,16 +771,6 @@ try:
             print("STEP0 act_shape", tuple(getattr(actions, "shape", ())), flush=True)
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
-        if settle_hold_actions is None:
-            settle_hold_actions = actions.detach().clone()
-        if np.any(settle_hold_latched):
-            hold_mask = torch.as_tensor(
-                settle_hold_latched, dtype=torch.bool, device=actions.device
-            )
-            actions = torch.where(
-                hold_mask.unsqueeze(1), settle_hold_actions, actions
-            )
-        executed_actions = actions.detach().clone()
         obs, _, dones, extras = env.step(actions)
         try:
             done_np = dones.detach().cpu().numpy().astype(bool)
@@ -880,9 +816,6 @@ try:
                 except Exception:
                     pass
                 contact |= active & contact_now
-                gripper_closed = (
-                    executed_actions[:, gripper_start].detach().cpu().numpy() < 0.0
-                )
                 stable_grasp_steps = np.where(
                     active,
                     np.where(contact_now & (height > 0.015), stable_grasp_steps + 1, 0),
@@ -895,7 +828,7 @@ try:
                     ).detach().cpu().numpy()
                 except Exception:
                     obj_speed = np.full(N, 1.0)
-                in_strict_basin = per < SETTLE_HOLD_TRIGGER_DISTANCE_M
+                in_strict_basin = per < 0.05
                 min_speed_in_strict_basin = np.where(
                     active & in_strict_basin,
                     np.minimum(min_speed_in_strict_basin, obj_speed),
@@ -904,8 +837,7 @@ try:
                 stable_place_steps = np.where(
                     active,
                     np.where(
-                        in_strict_basin
-                        & (obj_speed < SETTLE_HOLD_TRIGGER_SPEED_MPS),
+                        in_strict_basin & (obj_speed < 0.03),
                         stable_place_steps + 1,
                         0,
                     ),
@@ -914,40 +846,8 @@ try:
                 max_stable_place_steps = np.maximum(
                     max_stable_place_steps, stable_place_steps
                 )
-                final_place = stable_place_steps >= SETTLE_HOLD_REQUIRED_STEPS
+                final_place = stable_place_steps >= 3
                 place |= active & final_place
-                settle_trigger = settle_hold_trigger(
-                    per,
-                    obj_speed,
-                    stable_place_steps,
-                    height,
-                    contact_now,
-                    gripper_closed,
-                )
-                settle_hold_latched, newly_latched = advance_settle_hold(
-                    settle_hold_latched,
-                    active & ~newly_terminal & settle_trigger,
-                )
-                if np.any(newly_latched):
-                    new_mask = torch.as_tensor(
-                        newly_latched, dtype=torch.bool, device=actions.device
-                    )
-                    measured_hold = measured_joint_hold_actions(executed_actions)
-                    settle_hold_actions[new_mask] = measured_hold[new_mask]
-                    settle_hold_step[newly_latched] = _step
-                    print(
-                        "PLACEMENT_POST_SUCCESS_HOLD_LATCHED",
-                        int(np.count_nonzero(newly_latched)),
-                        "total",
-                        int(np.count_nonzero(settle_hold_latched)),
-                        "strict_distance_m",
-                        SETTLE_HOLD_TRIGGER_DISTANCE_M,
-                        "strict_speed_mps",
-                        SETTLE_HOLD_TRIGGER_SPEED_MPS,
-                        "required_steps",
-                        SETTLE_HOLD_REQUIRED_STEPS,
-                        flush=True,
-                    )
                 if np.any(newly_terminal):
                     # The state above is already the reset state. Restore the
                     # exact pre-step sample for this episode and seal it.
@@ -1004,10 +904,6 @@ try:
             "stable_grasp": bool(grasp[i]), "lift": bool(lift[i]),
             "place": bool(place[i]), "placement_stable": bool(final_place[i]),
             "max_consecutive_strict_stable_steps": int(max_stable_place_steps[i]),
-            "settle_hold_latched": bool(settle_hold_latched[i]),
-            "settle_hold_step": (
-                int(settle_hold_step[i]) if settle_hold_step[i] >= 0 else None
-            ),
             "min_speed_in_strict_basin_mps": (
                 float(min_speed_in_strict_basin[i])
                 if min_speed_in_strict_basin[i] < 1e8

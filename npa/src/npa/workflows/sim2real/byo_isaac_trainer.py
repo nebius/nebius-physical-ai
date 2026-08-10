@@ -322,6 +322,7 @@ _PPO_FIELDS = {
         "potential_placement_progress_reward"
     ),
     "Episode_Reward/strict_basin_settling": "strict_basin_settling_reward",
+    "Episode_Reward/near_goal_arm_stillness": "near_goal_arm_stillness_reward",
     "Episode_Reward/stable_placement_dwell": "stable_placement_dwell_reward",
     "Episode_Reward/stable_placement_dwell_break": (
         "stable_placement_dwell_break_reward"

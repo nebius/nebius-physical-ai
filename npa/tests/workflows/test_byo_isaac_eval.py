@@ -33,23 +33,15 @@ def test_extract_checkpoint_uri_absent_returns_empty():
     assert ev.extract_checkpoint_uri({}) == ""
 
 
-def test_policy_inference_provenance_discloses_non_verdict_controller() -> None:
+def test_policy_inference_provenance_requires_learned_actor_only() -> None:
     provenance = ev.policy_inference_provenance(
         checkpoint_uri="s3://bucket/model.pt",
         checkpoint={"sha256": "a" * 64, "size_bytes": 123},
     )
     assert provenance["actor_is_learned"] is True
-    assert provenance["scripted_post_actor_controller"] is True
-    assert provenance["post_actor_controller"]["type"] == (
-        "post_success_measured_joint_position_hold"
-    )
-    assert provenance["post_actor_controller"]["trigger_distance_m"] == 0.05
-    assert provenance["post_actor_controller"]["trigger_speed_mps"] == 0.03
-    assert provenance["post_actor_controller"]["required_consecutive_steps"] == 3
-    assert (
-        provenance["post_actor_controller"]["requires_exact_stable_placement"] is True
-    )
-    assert provenance["post_actor_controller"]["declares_success"] is False
+    assert provenance["policy_composition"] == "learned_actor_only"
+    assert provenance["scripted_post_actor_controller"] is False
+    assert provenance["post_actor_controller"] is None
 
 
 def test_per_env_from_distances_scoring():
@@ -92,9 +84,9 @@ def test_build_isaac_eval_job_manifest_shape():
     assert "kit_args=os.environ.get(" in ev.ISAAC_EVAL_SCRIPT
     assert "min_speed_in_strict_basin_mps" in ev.ISAAC_EVAL_SCRIPT
     assert "max_consecutive_strict_stable_steps" in ev.ISAAC_EVAL_SCRIPT
-    assert "PLACEMENT_POST_SUCCESS_HOLD_LATCHED" in ev.ISAAC_EVAL_SCRIPT
-    assert "settle_hold_trigger(" in ev.ISAAC_EVAL_SCRIPT
-    assert "joint_position_hold_action(" in ev.ISAAC_EVAL_SCRIPT
+    assert "PLACEMENT_POST_SUCCESS_HOLD_LATCHED" not in ev.ISAAC_EVAL_SCRIPT
+    assert "settle_hold_trigger(" not in ev.ISAAC_EVAL_SCRIPT
+    assert "joint_position_hold_action(" not in ev.ISAAC_EVAL_SCRIPT
 
 
 def test_first_episode_masks_seal_auto_reset_state():
@@ -116,7 +108,8 @@ def test_eval_runtime_freezes_terminal_metrics_and_renders():
     assert "capture(_step, active & ~newly_terminal)" in script
     assert "capture(STEPS, ~completed)" in script
     assert '"terminal_snapshot": "first_episode_last_pre_reset"' in script
-    assert "active & ~newly_terminal & settle_trigger" in script
+    assert "settle_trigger" not in script
+    assert "settle_hold_actions" not in script
 
 
 def test_eval_manifest_uses_sha_pinned_s3_scenario_transport():

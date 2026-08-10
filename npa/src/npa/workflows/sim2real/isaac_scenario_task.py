@@ -57,6 +57,13 @@ PLACEMENT_DROP_PENALTY_WEIGHT = -2000.0
 PLACEMENT_COMPLETION_REWARD_WEIGHT = 5000.0
 STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
 PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT = 256.0
+# Eval34 left 51/64 objects inside the strict distance basin but produced no
+# terminal three-step stillness. Object velocity is a delayed physical outcome;
+# near-goal arm joint speed is the directly controllable cause. Reward a stopped
+# arm only in the same positive braking envelope, without penalizing transport or
+# changing the object-space verdict.
+PLACEMENT_ARM_SETTLING_SPEED_RADPS = 0.15
+PLACEMENT_ARM_STILLNESS_REWARD_WEIGHT = 512.0
 # Train14 put 49/64 validation objects inside the unchanged 5 cm basin and left
 # 30 there, yet only two ever crossed 0.03 m/s and neither held it for the three
 # required steps.  Reward the exact consecutive-step event itself so PPO can
@@ -567,6 +574,32 @@ def strict_basin_settling_signal(
     return held * basin * speed_signal
 
 
+def near_goal_arm_stillness_signal(
+    distance: Any,
+    arm_speed: Any,
+    hold_distance: Any,
+    *,
+    tanh: Any,
+    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
+    basin_width_m: float = PLACEMENT_BASIN_WIDTH_M,
+    arm_settling_speed_radps: float = PLACEMENT_ARM_SETTLING_SPEED_RADPS,
+    hold_std_m: float = PLACEMENT_HOLD_STD_M,
+    hold_reward_floor: float = PLACEMENT_HOLD_REWARD_FLOOR,
+) -> Any:
+    """Reward a motionless arm near goal without making approach repulsive."""
+
+    if basin_width_m <= 0 or arm_settling_speed_radps <= 0:
+        raise ValueError("basin width and arm settling speed must be positive")
+    basin = 0.5 * (
+        1.0 + tanh((float(success_distance_m) - distance) / float(basin_width_m))
+    )
+    held = float(hold_reward_floor) + (1.0 - float(hold_reward_floor)) * (
+        1.0 - tanh(hold_distance / float(hold_std_m))
+    )
+    stillness = 1.0 - tanh(arm_speed / float(arm_settling_speed_radps))
+    return held * basin * stillness
+
+
 def _placement_state(
     env: Any,
     *,
@@ -838,6 +871,52 @@ def strict_basin_settling(
     return lifted * signal
 
 
+def near_goal_arm_stillness(
+    env: Any,
+    *,
+    command_name: str = "object_pose",
+    object_name: str = "object",
+    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
+    basin_width_m: float = PLACEMENT_BASIN_WIDTH_M,
+    arm_settling_speed_radps: float = PLACEMENT_ARM_SETTLING_SPEED_RADPS,
+    hold_std_m: float = PLACEMENT_HOLD_STD_M,
+    hold_reward_floor: float = PLACEMENT_HOLD_REWARD_FLOOR,
+    minimal_lift_m: float = PLACEMENT_MINIMAL_LIFT_M,
+) -> Any:
+    """Reward low RMS arm-joint speed near goal after a genuine lift."""
+
+    import torch  # noqa: WPS433 - Isaac runtime dependency
+
+    obj = env.scene[object_name]
+    distance, _, position, hold_distance = _placement_state(
+        env, command_name=command_name, object_name=object_name
+    )
+    try:
+        arm_term = env.action_manager.get_term("arm_action")
+        joint_velocity = arm_term._asset.data.joint_vel[:, arm_term._joint_ids]
+    except Exception as exc:
+        raise RuntimeError(
+            "near-goal arm stillness requires the live arm_action joint mapping"
+        ) from exc
+    if joint_velocity.ndim != 2 or joint_velocity.shape[1] <= 0:
+        raise RuntimeError("near-goal arm stillness received invalid joint velocity")
+    arm_speed = torch.sqrt(torch.mean(torch.square(joint_velocity), dim=1))
+    initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
+    lifted = (position[:, 2] - initial_z >= float(minimal_lift_m)).to(position.dtype)
+    signal = near_goal_arm_stillness_signal(
+        distance,
+        arm_speed,
+        hold_distance,
+        tanh=torch.tanh,
+        success_distance_m=success_distance_m,
+        basin_width_m=basin_width_m,
+        arm_settling_speed_radps=arm_settling_speed_radps,
+        hold_std_m=hold_std_m,
+        hold_reward_floor=hold_reward_floor,
+    )
+    return lifted * signal
+
+
 def stable_placement_curriculum(
     env: Any,
     *,
@@ -986,6 +1065,20 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
         },
     )
+    env_cfg.rewards.near_goal_arm_stillness = RewardTermCfg(
+        func=near_goal_arm_stillness,
+        weight=PLACEMENT_ARM_STILLNESS_REWARD_WEIGHT,
+        params={
+            "command_name": "object_pose",
+            "object_name": "object",
+            "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
+            "basin_width_m": PLACEMENT_BASIN_WIDTH_M,
+            "arm_settling_speed_radps": PLACEMENT_ARM_SETTLING_SPEED_RADPS,
+            "hold_std_m": PLACEMENT_HOLD_STD_M,
+            "hold_reward_floor": PLACEMENT_HOLD_REWARD_FLOOR,
+            "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
+        },
+    )
     env_cfg.rewards.stable_placement_dwell = RewardTermCfg(
         func=stable_placement_dwell,
         weight=PLACEMENT_STRICT_DWELL_REWARD_WEIGHT,
@@ -1057,6 +1150,10 @@ def install_env_cfg(env_cfg: Any) -> bool:
                     "dwell_scale": PLACEMENT_DWELL_SCALE,
                     "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
                     "progress_reward_weight": PLACEMENT_PROGRESS_REWARD_WEIGHT,
+                    "arm_settling_speed_radps": (PLACEMENT_ARM_SETTLING_SPEED_RADPS),
+                    "arm_stillness_reward_weight": (
+                        PLACEMENT_ARM_STILLNESS_REWARD_WEIGHT
+                    ),
                     "strict_dwell_reward_weight": (
                         PLACEMENT_STRICT_DWELL_REWARD_WEIGHT
                     ),

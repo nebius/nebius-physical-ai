@@ -374,16 +374,16 @@ pre-success latches eventually left the goal, with a 22.2 cm median terminal
 error. Those attempts remain non-authoritative and cannot satisfy the placement
 canary.
 
-Deployment may now retain a placement only *after* the learned actor has already
-completed the exact authoritative event: final distance below 5 cm, object speed
-below 0.03 m/s, and three consecutive strict steps while lifted, contacted, and
-held by a closed gripper. At that point the controller inverts Isaac's live
-affine arm action and holds the measured joint position. It cannot trigger on
-proximity, change a verdict, or declare success; it can only prevent a later
-actor update from erasing a result the actor independently achieved. Rollout
-action records and held-out reports expose this composition as learned actor
-plus post-success retention. The same immutable-image path runs in live rollout,
-validation, and gold Jobs; there is no evaluator-only success override.
+Eval34 then delayed measured-pose retention until the learned actor itself had
+completed the exact three-step event. The single qualifying validation row did
+latch, but later ended 19.3 cm from goal; overall 51/64 objects ended inside 5 cm
+without terminal stillness. Scripted retention is therefore removed completely.
+Inference provenance and the validation canary now require `learned_actor_only`
+and reject every post-actor controller. The remaining failure is addressed in
+training through a positive near-goal arm-stillness objective that supplies a
+directly controllable braking gradient without relaxing distance, speed, dwell,
+split, or terminal-success semantics. The same immutable learned-actor path runs
+in rollout, validation, and sealed gold Jobs.
 
 ## Required integration ladder
 

@@ -17,6 +17,8 @@ from npa.workflows.sim2real.checkpoint_selection import (
 )
 from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_APPROACH_STD_M,
+    PLACEMENT_ARM_SETTLING_SPEED_RADPS,
+    PLACEMENT_ARM_STILLNESS_REWARD_WEIGHT,
     PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT,
     PLACEMENT_BASIN_WIDTH_M,
     PLACEMENT_COMPLETION_REWARD_WEIGHT,
@@ -41,6 +43,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     _scheduled_drop_penalty_type,
     drop_penalty_schedule_fraction,
     module_source,
+    near_goal_arm_stillness_signal,
     placement_curriculum_signal,
     placement_progress_signal,
     stable_placement_dwell_signal,
@@ -299,6 +302,8 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert PLACEMENT_COMPLETION_REWARD_WEIGHT == 5000.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     assert PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT == 256.0
+    assert PLACEMENT_ARM_SETTLING_SPEED_RADPS == 0.15
+    assert PLACEMENT_ARM_STILLNESS_REWARD_WEIGHT == 512.0
     assert PLACEMENT_STRICT_DWELL_REWARD_WEIGHT == 4096.0
     assert PLACEMENT_DWELL_REWARD_EXPONENT == 2.0
     assert STABLE_PLACEMENT_STEPS == 3
@@ -308,6 +313,8 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert "env_cfg.rewards.stable_placement_curriculum" in source
     assert "env_cfg.rewards.potential_placement_progress" in source
     assert "env_cfg.rewards.strict_basin_settling" in source
+    assert "env_cfg.rewards.near_goal_arm_stillness" in source
+    assert 'env.action_manager.get_term("arm_action")' in source
     assert "env_cfg.rewards.stable_placement_dwell" in source
     assert "env_cfg.rewards.stable_placement_dwell_break" not in source
     assert "env_cfg.rewards.stable_placement_departure" not in source
@@ -350,6 +357,23 @@ def test_stable_placement_curriculum_rewards_braking_in_strict_basin() -> None:
     assert stopped > 1.5
     assert fly_through > 0.0
     assert stopped > fly_through + 0.8
+
+
+def test_near_goal_arm_stillness_rewards_directly_controllable_braking() -> None:
+    stopped = near_goal_arm_stillness_signal(0.04, 0.0, 0.02, tanh=math.tanh)
+    moving = near_goal_arm_stillness_signal(0.04, 0.50, 0.02, tanh=math.tanh)
+    far_stopped = near_goal_arm_stillness_signal(0.30, 0.0, 0.02, tanh=math.tanh)
+    assert stopped > moving + 0.4
+    assert stopped > far_stopped + 0.4
+    assert moving >= 0.0
+    with pytest.raises(ValueError, match="positive"):
+        near_goal_arm_stillness_signal(
+            0.04,
+            0.0,
+            0.02,
+            tanh=math.tanh,
+            arm_settling_speed_radps=0.0,
+        )
 
 
 def test_signed_placement_progress_penalizes_departure_and_is_reset_safe() -> None:
@@ -655,6 +679,7 @@ Mean reward: 0.75
 Episode_Reward/reaching_object: 0.1000
 Episode_Reward/lifting_object: 0.2000
 Episode_Reward/object_goal_tracking: 0.0500
+Episode_Reward/near_goal_arm_stillness: 0.6250
 Episode_Reward/stable_placement_dwell: 0.3750
 Episode_Reward/stable_placement_dwell_break: -0.2500
 Episode_Reward/stable_placement_completion: 0.1250
@@ -668,6 +693,7 @@ Total timesteps: 24576
     assert telemetry["final_iteration"]["value_loss"] == 0.02
     assert telemetry["final_iteration"]["total_timesteps"] == 24576
     assert telemetry["final_iteration"]["stable_placement_termination_rate"] == 0.125
+    assert telemetry["final_iteration"]["near_goal_arm_stillness_reward"] == 0.625
     assert telemetry["final_iteration"]["stable_placement_dwell_reward"] == 0.375
     assert telemetry["final_iteration"]["stable_placement_dwell_break_reward"] == -0.25
     assert telemetry["final_iteration"]["stable_placement_completion_reward"] == 0.125
