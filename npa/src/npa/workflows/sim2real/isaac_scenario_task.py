@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ PLACEMENT_HOLD_STD_M = 0.15
 PLACEMENT_HOLD_REWARD_FLOOR = 0.20
 PLACEMENT_HOLD_MAX_DISTANCE_M = 0.30
 PLACEMENT_DWELL_SCALE = 2.0
+PLACEMENT_SETTLING_SPEED_MPS = 0.20
 PLACEMENT_GOAL_CURRICULUM_LIFT_M = 0.08
 PLACEMENT_PROGRESS_SCALE_M = 0.02
 PLACEMENT_PROGRESS_REWARD_WEIGHT = 512.0
@@ -188,8 +190,8 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_stable_placement_steps = torch.zeros(
             env.num_envs, dtype=torch.long, device=env.device
         )
-    if not hasattr(env, "npa_best_placement_distance"):
-        env.npa_best_placement_distance = torch.full(
+    if not hasattr(env, "npa_previous_placement_distance"):
+        env.npa_previous_placement_distance = torch.full(
             (env.num_envs,), float("inf"), dtype=torch.float, device=env.device
         )
 
@@ -212,7 +214,7 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
         scenario_ids = (ids + offset) % len(rows)
     env.npa_scenario_indices[ids] = scenario_ids
     env.npa_stable_placement_steps[ids] = 0
-    env.npa_best_placement_distance[ids] = float("inf")
+    env.npa_previous_placement_distance[ids] = float("inf")
     env.npa_scenario_applied_counts += torch.bincount(scenario_ids, minlength=len(rows))
     return ids, scenario_ids
 
@@ -456,6 +458,7 @@ def placement_curriculum_signal(
     hold_std_m: float = PLACEMENT_HOLD_STD_M,
     hold_reward_floor: float = PLACEMENT_HOLD_REWARD_FLOOR,
     dwell_scale: float = PLACEMENT_DWELL_SCALE,
+    settling_speed_mps: float = PLACEMENT_SETTLING_SPEED_MPS,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
 ) -> Any:
     """Return held-object proximity plus a near-target settling objective.
@@ -467,9 +470,11 @@ def placement_curriculum_signal(
     attenuates the Train5 loophole where throwing the object earned placement
     reward before a later drop. Train8 then entered the strict 5 cm basin without
     arresting motion because fast near-target motion merely lost the positive
-    dwell bonus. The signed settling term makes that fly-through costly only in
-    the narrow basin. A bounded floor preserves grasp/lift exploration and the
-    broad approach signal remains positive during transport.
+    dwell bonus. Train9 made that basin repulsive with a negative fast-motion
+    term and regressed medium/hard transport. A smooth settling term now supplies
+    a learnable braking gradient before the exact velocity boundary. Departure is
+    penalized by the signed potential-progress term below. A bounded floor
+    preserves grasp/lift exploration and broad transport remains positive.
     ``tanh`` is injected so this contract is testable without Isaac's Torch runtime.
     """
 
@@ -478,9 +483,10 @@ def placement_curriculum_signal(
     held = float(hold_reward_floor) + (1.0 - float(hold_reward_floor)) * (
         1.0 - tanh(hold_distance / float(hold_std_m))
     )
+    settling = 1.0 - tanh(speed / float(settling_speed_mps))
     strict_stillness = 1.0 - tanh(speed / float(stable_speed_mps))
-    signed_stillness = 2.0 * strict_stillness - 1.0
-    return held * (approach + float(dwell_scale) * near * signed_stillness)
+    braking = 0.5 * settling + 0.5 * strict_stillness
+    return held * (approach + float(dwell_scale) * near * braking)
 
 
 def _placement_state(
@@ -513,7 +519,25 @@ def _placement_state(
     return distance, speed, position, hold_distance
 
 
-def monotonic_placement_progress(
+def placement_progress_signal(
+    previous_distance: float,
+    distance: float,
+    *,
+    progress_scale_m: float = PLACEMENT_PROGRESS_SCALE_M,
+) -> float:
+    """Return a bounded potential delta for the CPU-testable contract."""
+
+    if progress_scale_m <= 0:
+        raise ValueError("progress_scale_m must be positive")
+    if not math.isfinite(previous_distance):
+        return 0.0
+    return max(
+        -1.0,
+        min(1.0, (previous_distance - distance) / float(progress_scale_m)),
+    )
+
+
+def potential_placement_progress(
     env: Any,
     *,
     command_name: str = "object_pose",
@@ -523,12 +547,14 @@ def monotonic_placement_progress(
     hold_max_distance_m: float = PLACEMENT_HOLD_MAX_DISTANCE_M,
     minimal_lift_m: float = PLACEMENT_MINIMAL_LIFT_M,
 ) -> Any:
-    """Reward new held-object progress without a reset/drop exploit.
+    """Reward held-object approach and penalize departure without reset exploits.
 
-    The episode-local best distance starts at infinity and the first eligible
-    sample earns zero. Later samples earn only improvement beyond that best;
-    moving away is zero and resetting cannot synthesize a positive delta. The
-    potential is bounded by genuine held-object distance reduction.
+    The prior best-distance reward paid for reaching a new closest point but made
+    leaving that point free. Live Train8/Train9 validation repeatedly crossed the
+    5 cm basin and drifted away without three stable steps. This signed potential
+    delta makes approach positive and departure negative. The first eligible
+    sample after reset or regrasp earns zero, so reset/drop cycles cannot
+    synthesize progress. Every step is bounded.
     """
 
     import torch  # noqa: WPS433 - Isaac runtime dependency
@@ -545,19 +571,19 @@ def monotonic_placement_progress(
     initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
     lifted = position[:, 2] - initial_z >= float(minimal_lift_m)
     eligible = lifted & (hold_distance < float(hold_max_distance_m))
-    previous = env.npa_best_placement_distance
+    previous = env.npa_previous_placement_distance
     initialized = torch.isfinite(previous)
-    improvement = torch.where(
+    progress = torch.where(
         eligible & initialized,
-        torch.clamp(previous - distance, min=0.0),
+        torch.clamp((previous - distance) / float(progress_scale_m), min=-1.0, max=1.0),
         torch.zeros_like(distance),
     )
-    env.npa_best_placement_distance = torch.where(
+    env.npa_previous_placement_distance = torch.where(
         eligible,
-        torch.minimum(previous, distance),
-        previous,
+        distance,
+        torch.full_like(distance, float("inf")),
     )
-    return torch.clamp(improvement / float(progress_scale_m), max=1.0)
+    return progress
 
 
 def stable_placement_curriculum(
@@ -570,6 +596,7 @@ def stable_placement_curriculum(
     hold_std_m: float = PLACEMENT_HOLD_STD_M,
     hold_reward_floor: float = PLACEMENT_HOLD_REWARD_FLOOR,
     dwell_scale: float = PLACEMENT_DWELL_SCALE,
+    settling_speed_mps: float = PLACEMENT_SETTLING_SPEED_MPS,
     success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
     minimal_lift_m: float = PLACEMENT_MINIMAL_LIFT_M,
@@ -607,6 +634,7 @@ def stable_placement_curriculum(
         hold_std_m=hold_std_m,
         hold_reward_floor=hold_reward_floor,
         dwell_scale=dwell_scale,
+        settling_speed_mps=settling_speed_mps,
         stable_speed_mps=stable_speed_mps,
     )
     strict = (
@@ -671,13 +699,14 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "hold_std_m": PLACEMENT_HOLD_STD_M,
             "hold_reward_floor": PLACEMENT_HOLD_REWARD_FLOOR,
             "dwell_scale": PLACEMENT_DWELL_SCALE,
+            "settling_speed_mps": PLACEMENT_SETTLING_SPEED_MPS,
             "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
             "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
             "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
         },
     )
-    env_cfg.rewards.monotonic_placement_progress = RewardTermCfg(
-        func=monotonic_placement_progress,
+    env_cfg.rewards.potential_placement_progress = RewardTermCfg(
+        func=potential_placement_progress,
         weight=PLACEMENT_PROGRESS_REWARD_WEIGHT,
         params={
             "command_name": "object_pose",

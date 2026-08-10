@@ -28,6 +28,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_MINIMAL_LIFT_M,
     PLACEMENT_PROGRESS_REWARD_WEIGHT,
     PLACEMENT_PROGRESS_SCALE_M,
+    PLACEMENT_SETTLING_SPEED_MPS,
     STABLE_PLACEMENT_DISTANCE_M,
     STABLE_PLACEMENT_REWARD_WEIGHT,
     STABLE_PLACEMENT_SPEED_MPS,
@@ -37,6 +38,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     drop_penalty_schedule_fraction,
     module_source,
     placement_curriculum_signal,
+    placement_progress_signal,
     goal_curriculum_fraction,
     read_scenarios,
 )
@@ -281,6 +283,7 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert PLACEMENT_HOLD_REWARD_FLOOR == 0.20
     assert PLACEMENT_HOLD_MAX_DISTANCE_M == 0.30
     assert PLACEMENT_DWELL_SCALE == 2.0
+    assert PLACEMENT_SETTLING_SPEED_MPS == 0.20
     assert PLACEMENT_GOAL_CURRICULUM_LIFT_M == 0.08
     assert PLACEMENT_PROGRESS_SCALE_M == 0.02
     assert PLACEMENT_PROGRESS_REWARD_WEIGHT == 512.0
@@ -292,10 +295,10 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert "def stable_placement_curriculum" in source
     assert "lifted * (dense + strict)" in source
     assert "env_cfg.rewards.stable_placement_curriculum" in source
-    assert "env_cfg.rewards.monotonic_placement_progress" in source
+    assert "env_cfg.rewards.potential_placement_progress" in source
     assert "env_cfg.rewards.object_drop_penalty" in source
     assert "env_cfg.rewards.stable_placement_completion" in source
-    assert "npa_best_placement_distance" in source
+    assert "npa_previous_placement_distance" in source
     assert "combine_frame_transforms" in source
     assert "scheduled_drop_penalty" in source
     assert "mdp.is_terminated_term" in source
@@ -321,11 +324,22 @@ def test_stable_placement_curriculum_is_dense_across_live_canary_basin() -> None
     assert slow > fly_through + 0.4
 
 
-def test_stable_placement_curriculum_penalizes_strict_basin_fly_through() -> None:
+def test_stable_placement_curriculum_rewards_braking_in_strict_basin() -> None:
     stopped = placement_curriculum_signal(0.027, 0.0, 0.02, tanh=math.tanh)
     fly_through = placement_curriculum_signal(0.027, 0.20, 0.02, tanh=math.tanh)
     assert stopped > 1.5
-    assert fly_through < 0.0
+    assert fly_through > 0.0
+    assert stopped > fly_through + 0.8
+
+
+def test_signed_placement_progress_penalizes_departure_and_is_reset_safe() -> None:
+    assert placement_progress_signal(math.inf, 0.30) == 0.0
+    assert placement_progress_signal(0.30, 0.27) == 1.0
+    assert placement_progress_signal(0.027, 0.047) == pytest.approx(-1.0)
+    assert placement_progress_signal(0.047, 0.027) == pytest.approx(1.0)
+    assert placement_progress_signal(0.030, 0.032) == pytest.approx(-0.1)
+    with pytest.raises(ValueError, match="positive"):
+        placement_progress_signal(0.03, 0.02, progress_scale_m=0.0)
 
 
 def test_stable_placement_curriculum_does_not_suppress_transport() -> None:
