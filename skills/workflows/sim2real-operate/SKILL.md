@@ -21,8 +21,8 @@ map), use `sim2real-engine` instead; for generic sim-to-real workflow design use
   trigger-bucket vs artifact-bucket split, and the S3-compatible endpoint map.
 - `npa workbench workflow submit npa/workflows/sim2real.yaml`
   detects this exact file and calls the in-repo direct-K8s materializer. It
-  stages the current source and applies the one-GPU orchestrator that fans out
-  sibling Jobs (Isaac, Cosmos Transfer/Reason, PPO, eval, envgen).
+  applies the immutable, CPU-only controller image, which fans out sibling GPU
+  Jobs (Isaac, Cosmos Transfer/Reason, PPO, eval, envgen) through Kueue.
 
 ## Procedure
 
