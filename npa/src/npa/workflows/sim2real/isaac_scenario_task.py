@@ -499,6 +499,7 @@ def strict_basin_settling_signal(
     tanh: Any,
     success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
     basin_width_m: float = PLACEMENT_BASIN_WIDTH_M,
+    settling_speed_mps: float = PLACEMENT_SETTLING_SPEED_MPS,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
     hold_std_m: float = PLACEMENT_HOLD_STD_M,
     hold_reward_floor: float = PLACEMENT_HOLD_REWARD_FLOOR,
@@ -506,21 +507,24 @@ def strict_basin_settling_signal(
     """Reward braking only after reaching the unchanged strict target basin.
 
     Exact c8a1980 validation put every scenario inside 5 cm but none below
-    0.03 m/s for three steps. This signal is effectively zero during transport,
-    crosses zero at the exact velocity threshold, penalizes a fast basin crossing,
-    and rewards settling below the boundary. The signed potential term makes
-    entering the basin more valuable than avoiding it.
+    0.03 m/s for three steps. Train11 proved that a negative basin reward teaches
+    avoidance instead of braking. This signal is therefore effectively zero
+    during transport and positive in the basin, with a smooth velocity gradient
+    plus an exact-boundary-focused component. Sustained stillness earns more than
+    a fast crossing without making the target repulsive.
     """
 
-    if basin_width_m <= 0 or stable_speed_mps <= 0:
-        raise ValueError("basin width and stable speed must be positive")
+    if basin_width_m <= 0 or settling_speed_mps <= 0 or stable_speed_mps <= 0:
+        raise ValueError("basin width and settling speeds must be positive")
     basin = 0.5 * (
         1.0 + tanh((float(success_distance_m) - distance) / float(basin_width_m))
     )
     held = float(hold_reward_floor) + (1.0 - float(hold_reward_floor)) * (
         1.0 - tanh(hold_distance / float(hold_std_m))
     )
-    speed_signal = tanh((float(stable_speed_mps) - speed) / float(stable_speed_mps))
+    speed_signal = 0.5 * (1.0 - tanh(speed / float(settling_speed_mps))) + 0.5 * (
+        1.0 - tanh(speed / float(stable_speed_mps))
+    )
     return held * basin * speed_signal
 
 
@@ -628,6 +632,7 @@ def strict_basin_settling(
     object_name: str = "object",
     success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
     basin_width_m: float = PLACEMENT_BASIN_WIDTH_M,
+    settling_speed_mps: float = PLACEMENT_SETTLING_SPEED_MPS,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
     hold_std_m: float = PLACEMENT_HOLD_STD_M,
     hold_reward_floor: float = PLACEMENT_HOLD_REWARD_FLOOR,
@@ -650,6 +655,7 @@ def strict_basin_settling(
         tanh=torch.tanh,
         success_distance_m=success_distance_m,
         basin_width_m=basin_width_m,
+        settling_speed_mps=settling_speed_mps,
         stable_speed_mps=stable_speed_mps,
         hold_std_m=hold_std_m,
         hold_reward_floor=hold_reward_floor,
@@ -796,6 +802,7 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "object_name": "object",
             "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
             "basin_width_m": PLACEMENT_BASIN_WIDTH_M,
+            "settling_speed_mps": PLACEMENT_SETTLING_SPEED_MPS,
             "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
             "hold_std_m": PLACEMENT_HOLD_STD_M,
             "hold_reward_floor": PLACEMENT_HOLD_REWARD_FLOOR,

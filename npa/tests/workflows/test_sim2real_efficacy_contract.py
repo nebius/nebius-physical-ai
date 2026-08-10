@@ -348,14 +348,14 @@ def test_signed_placement_progress_penalizes_departure_and_is_reset_safe() -> No
         placement_progress_signal(0.03, 0.02, progress_scale_m=0.0)
 
 
-def test_strict_basin_settling_is_signed_only_at_success_boundary() -> None:
+def test_strict_basin_settling_rewards_braking_without_target_avoidance() -> None:
     stopped = strict_basin_settling_signal(0.03, 0.0, 0.02, tanh=math.tanh)
     threshold = strict_basin_settling_signal(0.03, 0.03, 0.02, tanh=math.tanh)
     fly_through = strict_basin_settling_signal(0.03, 0.20, 0.02, tanh=math.tanh)
     transporting = strict_basin_settling_signal(0.20, 0.20, 0.02, tanh=math.tanh)
     assert stopped > 0.5
-    assert threshold == pytest.approx(0.0)
-    assert fly_through < -0.5
+    assert stopped > threshold > fly_through > 0.0
+    assert stopped > fly_through + 0.5
     assert abs(transporting * PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT) < 0.01
     with pytest.raises(ValueError, match="positive"):
         strict_basin_settling_signal(0.03, 0.0, 0.02, tanh=math.tanh, basin_width_m=0.0)
