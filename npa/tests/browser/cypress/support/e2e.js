@@ -313,6 +313,7 @@ const STATIC_BUTTON_IDS = [
 ];
 
 const FIELD_IDS = [
+  "agentAccessProjectSelect",
   "chatSessionSelect",
   "chatModel",
   "chatLog",

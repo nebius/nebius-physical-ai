@@ -119,6 +119,94 @@ describe("NPA agent UI against live infra", () => {
     });
   });
 
+  it("selects four live project access states without duplicate or stale details", () => {
+    liveAgentRequest("/api/access?refresh=true").then((response) => {
+      expect(response.status).to.eq(200);
+      const access = response.body || {};
+      const projects = Array.isArray(access.projects) ? access.projects : [];
+      const deploymentId = String(((access.identity || {}).deployment_project_id) || "");
+      const deployment = projects.find((project) => String(project.id || "") === deploymentId);
+      const foreignWithBucket = projects.find((project) => (
+        !project.deployment_project &&
+        (project.resources || []).some((resource) => (
+          (((resource.capabilities || {}).artifact_discovery || {}).status) === "available"
+        ))
+      ));
+      const noBucket = projects.find((project) => (project.resources || []).length === 0);
+      const emptyBucket = projects.find((project) => (
+        (project.resources || []).some((resource) => {
+          const read = ((resource.capabilities || {}).artifact_read || {});
+          return read.status === "unverified" && /empty|no object/i.test(String(read.reason || ""));
+        })
+      ));
+      const representatives = [deployment, foreignWithBucket, noBucket, emptyBucket];
+      expect(representatives.every(Boolean), JSON.stringify(representatives)).to.eq(true);
+      expect(new Set(representatives.map((project) => project.id)).size).to.eq(4);
+
+      cy.get('label[for="agentAccessProjectSelect"]').should("be.visible");
+      cy.get("#agentAccessProjectSelect")
+        .should("have.prop", "tagName", "SELECT")
+        .and("be.enabled")
+        .and("have.value", deploymentId)
+        .focus()
+        .should("be.focused");
+      cy.get("#agentAccessProjectSelect option").should("have.length", projects.length).then(($options) => {
+        const optionIds = [...$options].map((option) => option.value);
+        expect(new Set(optionIds)).to.deep.equal(new Set(projects.map((project) => String(project.id || ""))));
+      });
+      cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1);
+      cy.get("#agentAccessPanel").should(($panel) => {
+        expect($panel.text()).not.to.match(/\bpartial\b/i);
+      });
+
+      let previousProject = "";
+      representatives.forEach((project) => {
+        const projectId = String(project.id || "");
+        const projectName = String(project.name || projectId);
+        const resources = Array.isArray(project.resources) ? project.resources : [];
+        cy.get("#agentAccessProjectSelect").select(projectId);
+        cy.get("#agentAccessProjects .access-project-detail")
+          .should("have.length", 1)
+          .and("have.attr", "data-project-id", projectId)
+          .and("contain.text", projectName)
+          .and("contain.text", projectId);
+        if (previousProject) {
+          cy.get("#agentAccessProjects .access-project-detail").should("not.have.attr", "data-project-id", previousProject);
+        }
+        if (!resources.length) {
+          cy.get("#agentAccessProjects").should("contain.text", "No searchable artifact bucket.");
+          cy.get("#agentAccessProjects button[data-access-action]").should("not.exist");
+        } else {
+          resources.forEach((resource) => {
+            const bucket = String(resource.name || "");
+            cy.get("#agentAccessProjects .access-project-detail").should("contain.text", bucket);
+          });
+          cy.get("#agentAccessProjects button[data-access-action]").each(($button) => {
+            expect($button.attr("data-project-id")).to.eq(projectId);
+            expect(resources.map((resource) => String(resource.name || ""))).to.include(
+              String($button.attr("data-resource-bucket") || ""),
+            );
+          });
+        }
+        previousProject = projectId;
+      });
+
+      const emptyProjectId = String(emptyBucket.id || "");
+      const emptyReason = String((((emptyBucket.resources || [])[0].capabilities || {}).artifact_read || {}).reason || "");
+      cy.get("#agentAccessProjectSelect").select(emptyProjectId);
+      cy.get("#agentAccessProjects").should("contain.text", "Read: Unverified").and("contain.text", emptyReason);
+      cy.get('#agentAccessProjects button[data-access-action="read"]').should("be.disabled");
+      cy.get("#agentAccessRefresh").click();
+      cy.get("#agentAccessStatus", { timeout: 60000 }).should("not.contain.text", "Refreshing access");
+      cy.get("#agentAccessProjectSelect", { timeout: 60000 }).should("have.value", emptyProjectId);
+      cy.reload();
+      cy.get("#agentAccessProjectSelect", { timeout: 60000 }).should("have.value", emptyProjectId);
+      cy.get("#agentAccessProjects .access-project-detail")
+        .should("have.length", 1)
+        .and("have.attr", "data-project-id", emptyProjectId);
+    });
+  });
+
   it("never shows Loading application bundle without mount latency", () => {
     cy.get("#rerunBundleCover").should("exist");
     cy.window().then((win) => {
