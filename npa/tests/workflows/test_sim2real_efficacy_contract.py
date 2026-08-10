@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -15,8 +16,10 @@ from npa.workflows.sim2real.checkpoint_selection import (
     select_best_checkpoint,
 )
 from npa.workflows.sim2real.isaac_scenario_task import (
+    PLACEMENT_APPROACH_STD_M,
     PLACEMENT_MINIMAL_LIFT_M,
     STABLE_PLACEMENT_DISTANCE_M,
+    STABLE_PLACEMENT_REWARD_WEIGHT,
     STABLE_PLACEMENT_SPEED_MPS,
     ScenarioContractError,
     module_source,
@@ -257,12 +260,22 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert STABLE_PLACEMENT_DISTANCE_M == 0.05
     assert STABLE_PLACEMENT_SPEED_MPS == 0.03
     assert PLACEMENT_MINIMAL_LIFT_M == 0.04
+    assert PLACEMENT_APPROACH_STD_M == 0.35
+    assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     source = module_source()
     assert "def stable_placement_curriculum" in source
     assert "lifted * (approach + approach * stillness + strict)" in source
     assert "env_cfg.rewards.stable_placement_curriculum" in source
     assert "distance <= float(success_distance_m)" in source
     assert "speed <= float(stable_speed_mps)" in source
+
+
+def test_stable_placement_curriculum_is_dense_across_live_canary_basin() -> None:
+    # The 20-35 cm region observed in the failed live canary must retain a
+    # meaningful approach gradient after lift; it may not collapse near zero.
+    canary_basin_approach = 1.0 - math.tanh(0.25 / PLACEMENT_APPROACH_STD_M)
+    assert canary_basin_approach > 0.2
+    assert STABLE_PLACEMENT_REWARD_WEIGHT * canary_basin_approach > 10.0
 
 
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:

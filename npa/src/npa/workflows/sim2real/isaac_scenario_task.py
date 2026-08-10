@@ -24,8 +24,13 @@ EXPECTED_SCENE_ID = "isaac://Isaac-Lift-Cube-Franka-v0/stock-table-v1"
 EXPECTED_LIGHT_INTENSITY = 3000.0
 STABLE_PLACEMENT_DISTANCE_M = 0.05
 STABLE_PLACEMENT_SPEED_MPS = 0.03
-PLACEMENT_APPROACH_STD_M = 0.15
-STABLE_PLACEMENT_REWARD_WEIGHT = 8.0
+# The first validation canary learned reach/contact and 2/3 grasp+lift, but the
+# closest goal distance remained 0.205-0.364 m.  A 0.15 m tanh scale multiplied
+# by weight 8 is effectively flat at that boundary, so lifting remains the much
+# easier dominant objective.  Keep the strict verdict at 5 cm while making the
+# curriculum genuinely dense across the observed post-lift placement basin.
+PLACEMENT_APPROACH_STD_M = 0.35
+STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
 _SCENARIO_CACHE: tuple[str, int, str, list[dict[str, Any]]] | None = None
