@@ -2630,9 +2630,21 @@ def _chat_memory_tenant() -> str:
 
 
 def _chat_memory_prefix(settings: dict[str, str] | None = None) -> str:
-    bucket = (settings or {{}}).get("bucket", "")
     tenant = _chat_memory_tenant()
-    return f"npa-agent/tenants/{{tenant}}/chat-sessions"
+    project_alias, agent_name, _session_scope = _state_scope_parts()
+    fallback = _slug(f"{{project_alias}}-{{agent_name}}", fallback="agent")
+    deployment_id = _slug(str(DEPLOYMENT.get("deployment_id") or ""), fallback=fallback)
+    return f"npa-agent/tenants/{{tenant}}/deployments/{{deployment_id}}/chat-sessions"
+
+
+def _chat_memory_uri_matches_deployment(memory_uri: str) -> bool:
+    value = str(memory_uri or "").strip()
+    if not value:
+        return True
+    remainder = value.partition("://")[2]
+    key = remainder.partition("/")[2].strip("/")
+    expected = _chat_memory_prefix().strip("/") + "/"
+    return bool(key) and key.startswith(expected)
 
 
 def _chat_session_key(session_id: str, settings: dict[str, str] | None = None) -> str:
@@ -2714,7 +2726,15 @@ def _local_chat_sessions(state: dict) -> dict[str, dict]:
     if not isinstance(sessions, dict):
         sessions = {{}}
     normalized: dict[str, dict] = {{}}
+    discarded_foreign_memory = False
     for session_id, payload in sessions.items():
+        memory_uri = str(payload.get("memory_uri") or "") if isinstance(payload, dict) else ""
+        if memory_uri and not _chat_memory_uri_matches_deployment(memory_uri):
+            # Legacy chat memory was tenant-wide, so one agent could hydrate a
+            # different deployment's history. Never migrate a source-qualified
+            # session across deployment namespaces.
+            discarded_foreign_memory = True
+            continue
         session = _normalize_chat_session(str(session_id), payload)
         normalized[session["id"]] = session
     if not normalized:
@@ -2723,7 +2743,7 @@ def _local_chat_sessions(state: dict) -> dict[str, dict]:
             {{
                 "id": "default",
                 "title": "Default chat",
-                "chat_history": state.get("chat_history", []),
+                "chat_history": [] if discarded_foreign_memory else state.get("chat_history", []),
             }},
         )
         normalized["default"] = migrated

@@ -79,6 +79,58 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     assert '"deployment": dict(DEPLOYMENT)' in body
 
 
+def test_chat_memory_is_deployment_scoped_and_rejects_legacy_tenant_state(
+    monkeypatch, tmp_path
+) -> None:
+    """A second agent in one tenant must not hydrate the first agent's chat."""
+    import sys
+
+    module_name = "npa_rendered_chat_isolation_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    monkeypatch.setenv("NEBIUS_TENANT_ID", "tenant-test")
+    monkeypatch.setenv("NPA_AGENT_PROJECT_ALIAS", "project-test")
+    monkeypatch.setenv("NPA_AGENT_NAME", "agent-test")
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_settings",
+        lambda: {"bucket": "private-bucket"},
+    )
+    try:
+        prefix = module._chat_memory_prefix()
+        assert prefix == (
+            "npa-agent/tenants/tenant-test/deployments/"
+            f"{module.DEPLOYMENT['deployment_id']}/chat-sessions"
+        )
+        assert "/tenants/tenant-test/chat-sessions" not in prefix
+
+        state = {
+            "active_chat_session_id": "default",
+            "chat_history": [{"role": "user", "content": "foreign deployment"}],
+            "chat_sessions": {
+                "default": {
+                    "id": "default",
+                    "title": "Foreign chat",
+                    "chat_history": [{"role": "user", "content": "foreign deployment"}],
+                    "memory_uri": (
+                        "s3://private-bucket/npa-agent/tenants/tenant-test/"
+                        "chat-sessions/default.json"
+                    ),
+                }
+            },
+        }
+        sessions = module._local_chat_sessions(state)
+        assert list(sessions) == ["default"]
+        assert sessions["default"]["chat_history"] == []
+        assert state["chat_history"] == []
+        assert sessions["default"]["memory_uri"].startswith(
+            f"s3://private-bucket/{prefix}/"
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
     body = _render_backend_body(monkeypatch)
     # Phase B/G: actions are shipped/imported and the /agent/act route is wired.

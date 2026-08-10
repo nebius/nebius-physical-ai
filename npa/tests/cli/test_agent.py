@@ -811,6 +811,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "activeChatSessionId" in source
     assert "/api/chat/sessions" in source
     assert "npa-agent/tenants/" in source
+    assert "/deployments/{{deployment_id}}/chat-sessions" in source
     assert "Send failed." in source
     assert "queueChatText" in source
     assert "AGENT_UI_VERSION" in source or "npa-ui-version" in source
