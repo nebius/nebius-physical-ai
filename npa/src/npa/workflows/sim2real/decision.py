@@ -109,41 +109,42 @@ def threshold_decision(
     }
     # Package real weights even below threshold; promotion remains a distinct
     # quality decision so fixed-count runs never lose candidate access.
+    candidate_payload: dict[str, Any] = {}
     if promoted or is_real_policy:
-        _write_json_artifact(
-            candidate_path,
-            {
-                "schema": "npa.sim2real.candidate_checkpoint.v1",
-                "run_id": config.run_id,
-                "source": (
-                    "isaac-rsl-rl-ppo" if is_real_policy else "vlm-rl-reference-update"
-                ),
-                "deployable_policy": bool(is_real_policy and promoted),
-                "policy_bytes_available": is_real_policy,
-                "policy_artifact_kind": (
-                    "isaac_rsl_rl_checkpoint"
-                    if is_real_policy
-                    else "reference_metadata"
-                ),
-                "policy_checkpoint_uri": real_checkpoint if is_real_policy else "",
-                **checkpoint_metadata,
-                "handoff_doc": "docs/workbench/guides/sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam",
-                "heldout_success_rate": round(success_rate, 6),
-                "threshold": config.threshold,
-                "threshold_met": promotion_gates["strict_success_threshold"],
-                "promotion_gates": promotion_gates,
-                "effective_learning_rate": config.learning_rate,
-                "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
-                "promotion_decision": (
-                    "promote_checkpoint" if promoted else "loop_back_to_inner_loop"
-                ),
-                "candidate_status": (
-                    "promoted" if promoted else "below_threshold_policy_artifact"
-                ),
-                "evaluated_at": _utc_now(),
-                "promoted_at": _utc_now() if promoted else "",
-            },
-        )
+        candidate_payload = {
+            "schema": "npa.sim2real.candidate_checkpoint.v1",
+            "run_id": config.run_id,
+            "source": (
+                "isaac-rsl-rl-ppo" if is_real_policy else "vlm-rl-reference-update"
+            ),
+            "deployable_policy": bool(is_real_policy and promoted),
+            "policy_bytes_available": is_real_policy,
+            "policy_artifact_kind": (
+                "isaac_rsl_rl_checkpoint" if is_real_policy else "reference_metadata"
+            ),
+            "policy_checkpoint_uri": real_checkpoint if is_real_policy else "",
+            **checkpoint_metadata,
+            "handoff_doc": "docs/workbench/guides/sim2real-customer-assets.md#real-world-policy-deployment-stage-12-seam",
+            "heldout_success_rate": round(success_rate, 6),
+            "threshold": config.threshold,
+            "threshold_met": promotion_gates["strict_success_threshold"],
+            "promotion_gates": promotion_gates,
+            "effective_learning_rate": config.learning_rate,
+            "learning_rate_scope": "vlm_signal_adapter_and_no_signal_control",
+            "promotion_decision": (
+                "promote_checkpoint" if promoted else "loop_back_to_inner_loop"
+            ),
+            "candidate_status": (
+                "promoted" if promoted else "below_threshold_policy_artifact"
+            ),
+            "evaluated_at": _utc_now(),
+            "promoted_at": _utc_now() if promoted else "",
+        }
+        _write_json_artifact(candidate_path, candidate_payload)
+        # The pod filesystem is disposable.  Keep the complete policy handoff
+        # in the identity-bound Stage 11 durable unit so finalization can
+        # reconstruct candidate.json after a controller restart.
+        decision["candidate"] = candidate_payload
     if not promoted:
         remaining = max(0, config.outer_iterations - outer_iteration)
         _write_json_artifact(

@@ -92,6 +92,7 @@ def test_below_threshold_real_checkpoint_remains_packaged_candidate(tmp_path):
     assert candidate["threshold_met"] is False
     assert candidate["promotion_decision"] == "loop_back_to_inner_loop"
     assert candidate["candidate_status"] == "below_threshold_policy_artifact"
+    assert decision["candidate"] == candidate
     assert candidate["promoted_at"] == ""
     loopback = json.loads((tmp_path / "outer_loop" / "loopback.json").read_text())
     assert loopback["schema"] == "npa.sim2real.loopback.v1"

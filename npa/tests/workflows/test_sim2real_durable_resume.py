@@ -10,6 +10,9 @@ import pytest
 from botocore.exceptions import ClientError
 
 import npa.workflows.sim2real.engine as engine
+from npa.workflows.sim2real.component_records import (
+    _persisted_loop_component_records,
+)
 from npa.workflows.sim2real.models import Sim2RealLoopConfig, Sim2RealLoopError
 from npa.workflows.sim2real.resume_state import ControllerIdentity, DurableStateStore
 
@@ -88,6 +91,118 @@ def test_journal_hydrates_latest_only_after_immutable_checkpoint(
     assert hydrated is not None
     assert hydrated["components"] == payload["components"]
     assert hydrated["local_artifact_dir"] == str(restarted_dir)
+
+
+def _completed_loop_records(config: Sim2RealLoopConfig) -> list[dict[str, Any]]:
+    gpu = {
+        "selected_gpu_product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        "selected_gpu_node": "node-1",
+        "image_digests": [config.isaac_image],
+    }
+    return [
+        {
+            "name": "stage_07_actions_train",
+            "tier": "WORKS",
+            "evidence": "real rollout",
+            "artifacts": {
+                **gpu,
+                "job_name": "rollout-job",
+                "image": config.isaac_image,
+                "prefix": "s3://bucket/run/actions/train/outer-01/",
+                "applied_scenario_count": 1,
+                "applied_scenario_config_digests": ["scenario-1"],
+            },
+        },
+        {
+            "name": "stage_08_vlm_eval_train",
+            "tier": "WORKS",
+            "evidence": "real reason jobs",
+            "artifacts": {
+                **gpu,
+                "job_name": "reason-jobs",
+                "image": config.vlm_image,
+                "image_digests": [config.vlm_image],
+                "signal_calibration": {"step_count": 32},
+            },
+        },
+        {
+            "name": "stage_09_training_signal",
+            "tier": "WORKS",
+            "evidence": "real PPO",
+            "artifacts": {
+                **gpu,
+                "job_name": "trainer-job",
+                "image": config.isaac_image,
+                "checkpoint": "s3://bucket/run/model_500.pt",
+                "ppo_telemetry": "s3://bucket/run/ppo-telemetry.json",
+                "applied_scenario_proof": {"coverage_rate": 1.0},
+            },
+        },
+        {
+            "name": "stage_10_eval_heldout",
+            "tier": "WORKS",
+            "evidence": "sealed gold evaluation",
+            "artifacts": {
+                **gpu,
+                "job_name": "eval-job",
+                "image": config.isaac_image,
+                "report": "s3://bucket/run/eval/gold-heldout/report.json",
+                "evaluation_split": "gold_heldout",
+                "checkpoint_sha256": "c" * 64,
+                "applied_scenario_proof": {"exact_digest_match": True},
+            },
+        },
+        {
+            "name": "stage_11_outer_loop",
+            "tier": "WORKS",
+            "evidence": "durable decision",
+            "artifacts": {
+                "job_name": config.run_id,
+                "decision": "s3://bucket/run/outer_loop/decision.json",
+            },
+        },
+    ]
+
+
+def test_finalization_adopts_content_addressed_loop_records_without_pod_files(
+    tmp_path: Path,
+) -> None:
+    """A finalization restart must not reconstruct WORKS tiers from lost files."""
+
+    config = Sim2RealLoopConfig(
+        run_id="durable-finalize",
+        output_dir=tmp_path,
+        isaac_image="registry/isaac@sha256:" + "a" * 64,
+        vlm_image="registry/reason@sha256:" + "b" * 64,
+    )
+    records = _persisted_loop_component_records(config, _completed_loop_records(config))
+    assert records is not None
+    assert [record.name for record in records] == [
+        "stage_07_actions_train",
+        "stage_08_vlm_eval_train",
+        "stage_09_training_signal",
+        "stage_10_eval_heldout",
+        "stage_11_outer_loop",
+    ]
+    assert {record.tier for record in records} == {"WORKS"}
+    assert not (tmp_path / "actions").exists()
+
+
+def test_finalization_rejects_partial_or_unproven_durable_loop_records(
+    tmp_path: Path,
+) -> None:
+    config = Sim2RealLoopConfig(
+        run_id="durable-finalize-invalid",
+        output_dir=tmp_path,
+        isaac_image="registry/isaac@sha256:" + "a" * 64,
+        vlm_image="registry/reason@sha256:" + "b" * 64,
+    )
+    records = _completed_loop_records(config)
+    with pytest.raises(Sim2RealLoopError, match="incomplete"):
+        _persisted_loop_component_records(config, records[:-1])
+    records[0]["artifacts"]["image_digests"] = []
+    with pytest.raises(Sim2RealLoopError, match="GPU/image proof"):
+        _persisted_loop_component_records(config, records)
 
 
 def test_journal_rejects_tampering_and_exact_sha_mismatch(tmp_path: Path) -> None:

@@ -1567,6 +1567,11 @@ def test_loop_component_records_require_real_kubernetes_evidence(
             }
         ],
         "final_checkpoint_uri": "s3://bucket/run/model_latest.pt",
+        "checkpoint_selection": {
+            "selection_report_uri": str(
+                tmp_path / "checkpoints" / "validation-selection" / "outer-01.json"
+            )
+        },
     }
     heldout = {
         "status": "completed",
@@ -1614,6 +1619,10 @@ def test_loop_component_records_require_real_kubernetes_evidence(
     assert {record.tier for record in records} == {"WORKS"}
     assert records[0].artifacts["job_name"].startswith("s2r-byo-isaac-roll-")
     assert records[2].artifacts["job_name"] == "exact-trainer-job"
+    assert records[2].artifacts["checkpoint_selection"] == (
+        "s3://bucket/sim2real-b/real-component-records/"
+        "checkpoints/validation-selection/outer-01.json"
+    )
     assert records[3].artifacts["job_name"] == "exact-eval-job"
     assert records[3].artifacts["report"] == (
         "s3://bucket/sim2real-b/real-component-records/"

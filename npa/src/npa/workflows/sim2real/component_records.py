@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,153 @@ from npa.workflows.sim2real.models import (
     Sim2RealLoopError,
 )
 from npa.workflows.sim2real.utils import _artifact_root_uri
+
+
+_LOOP_COMPONENT_NAMES = (
+    "stage_07_actions_train",
+    "stage_08_vlm_eval_train",
+    "stage_09_training_signal",
+    "stage_10_eval_heldout",
+    "stage_11_outer_loop",
+)
+
+
+def _persisted_loop_component_records(
+    config: Sim2RealLoopConfig,
+    components: list[dict[str, Any]],
+) -> list[ComponentRecord] | None:
+    """Validate and adopt immutable Stage 7--11 records after driver loss.
+
+    A restarted controller deliberately has no previous pod filesystem.  The
+    workflow checkpoint is identity- and digest-verified by
+    :class:`DurableStateStore`, and each ComponentRecord is also persisted at a
+    content-addressed S3 key.  Recomputing these records from vanished local
+    rollout manifests turns successful real Jobs into false ``SEAM`` records.
+
+    Return ``None`` only when no loop record has been persisted yet (the normal
+    first-pass path).  A partial or malformed set fails closed; it must never be
+    silently upgraded by looking at whatever happens to remain locally.
+    """
+
+    by_name = {
+        str(record.get("name") or ""): record
+        for record in components
+        if isinstance(record, dict)
+        and str(record.get("name") or "") in _LOOP_COMPONENT_NAMES
+    }
+    if not by_name:
+        return None
+    missing = [name for name in _LOOP_COMPONENT_NAMES if name not in by_name]
+    if missing:
+        raise Sim2RealLoopError(
+            "durable loop ComponentRecords are incomplete: " + ", ".join(missing)
+        )
+    if any(by_name[name].get("tier") != "WORKS" for name in _LOOP_COMPONENT_NAMES):
+        if os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip() == "1":
+            failed = [
+                name
+                for name in _LOOP_COMPONENT_NAMES
+                if by_name[name].get("tier") != "WORKS"
+            ]
+            raise Sim2RealLoopError(
+                "durable loop ComponentRecords are not reusable: " + ", ".join(failed)
+            )
+        # Reference-mode records may legitimately be SEAMs and can still be
+        # regenerated from the live local test fixture.
+        return None
+
+    expected_images = {
+        "stage_07_actions_train": config.isaac_image,
+        "stage_08_vlm_eval_train": config.vlm_image,
+        "stage_09_training_signal": config.isaac_image,
+        "stage_10_eval_heldout": config.isaac_image,
+    }
+    records: list[ComponentRecord] = []
+    for name in _LOOP_COMPONENT_NAMES:
+        raw = dict(by_name[name])
+        artifacts = raw.get("artifacts")
+        if not isinstance(artifacts, dict):
+            raise Sim2RealLoopError(
+                f"durable loop ComponentRecord is not reusable: {name}"
+            )
+        if not str(raw.get("evidence") or "").strip():
+            raise Sim2RealLoopError(
+                f"durable loop ComponentRecord lacks evidence: {name}"
+            )
+        if not str(artifacts.get("job_name") or "").strip():
+            raise Sim2RealLoopError(
+                f"durable loop ComponentRecord lacks Job identity: {name}"
+            )
+
+        expected_image = expected_images.get(name)
+        if expected_image:
+            image = str(artifacts.get("image") or "")
+            digests = list(artifacts.get("image_digests") or [])
+            if (
+                "@sha256:" not in image
+                or image != expected_image
+                or image not in digests
+                or not artifacts.get("selected_gpu_product")
+            ):
+                raise Sim2RealLoopError(
+                    f"durable loop ComponentRecord lacks exact GPU/image proof: {name}"
+                )
+
+        if name == "stage_07_actions_train":
+            digests = list(artifacts.get("applied_scenario_config_digests") or [])
+            if (
+                not str(artifacts.get("prefix") or "").startswith("s3://")
+                or int(artifacts.get("applied_scenario_count") or 0) < 1
+                or not all(str(value).strip() for value in digests)
+            ):
+                raise Sim2RealLoopError(
+                    "durable Stage 7 record lacks applied scenario lineage"
+                )
+        elif name == "stage_08_vlm_eval_train":
+            calibration = dict(artifacts.get("signal_calibration") or {})
+            if int(calibration.get("step_count") or 0) < 1:
+                raise Sim2RealLoopError(
+                    "durable Stage 8 record lacks non-empty temporal signal proof"
+                )
+        elif name == "stage_09_training_signal":
+            proof = dict(artifacts.get("applied_scenario_proof") or {})
+            if (
+                not str(artifacts.get("checkpoint") or "").startswith("s3://")
+                or not str(artifacts.get("checkpoint") or "").endswith(".pt")
+                or not str(artifacts.get("ppo_telemetry") or "").startswith("s3://")
+                or float(proof.get("coverage_rate") or 0.0) < 0.90
+            ):
+                raise Sim2RealLoopError(
+                    "durable Stage 9 record lacks checkpoint/training proof"
+                )
+        elif name == "stage_10_eval_heldout":
+            proof = dict(artifacts.get("applied_scenario_proof") or {})
+            checkpoint_sha = str(artifacts.get("checkpoint_sha256") or "")
+            if (
+                artifacts.get("evaluation_split") != "gold_heldout"
+                or not str(artifacts.get("report") or "").startswith("s3://")
+                or not re.fullmatch(r"[0-9a-f]{64}", checkpoint_sha)
+                or proof.get("exact_digest_match") is not True
+            ):
+                raise Sim2RealLoopError(
+                    "durable Stage 10 record lacks sealed gold/checkpoint proof"
+                )
+        elif name == "stage_11_outer_loop":
+            if not str(artifacts.get("decision") or "").startswith("s3://"):
+                raise Sim2RealLoopError(
+                    "durable Stage 11 record lacks decision artifact lineage"
+                )
+
+        records.append(
+            ComponentRecord(
+                name=name,
+                tier="WORKS",
+                evidence=str(raw["evidence"]),
+                artifacts=dict(artifacts),
+                next_action=str(raw.get("next_action") or "CONTINUE"),
+            )
+        )
+    return records
 
 
 def _placement_artifacts(invocation: dict[str, Any]) -> dict[str, Any]:
@@ -210,6 +358,16 @@ def _loop_component_records(
     report_artifact_uri = (
         f"{root}/{report_relative}" if report_relative else local_report_uri
     )
+    selection_uri = str(
+        (inner.get("checkpoint_selection") or {}).get("selection_report_uri", "")
+    )
+    try:
+        selection_relative = Path(selection_uri).relative_to(local_dir).as_posix()
+    except (TypeError, ValueError):
+        selection_relative = ""
+    selection_artifact_uri = (
+        f"{root}/{selection_relative}" if selection_relative else selection_uri
+    )
     last_update = dict((iterations[-1].get("update") or {}) if iterations else {})
     last_calibration = dict(
         (iterations[-1].get("signal_calibration") or {}) if iterations else {}
@@ -285,11 +443,7 @@ def _loop_component_records(
                 "applied_scenario_proof": dict(
                     last_update.get("applied_scenario_proof") or {}
                 ),
-                "checkpoint_selection": str(
-                    (inner.get("checkpoint_selection") or {}).get(
-                        "selection_report_uri", ""
-                    )
-                ),
+                "checkpoint_selection": selection_artifact_uri,
                 "job_name": isaac_trainer_job,
                 "image": config.isaac_image,
                 "gpu_request": {

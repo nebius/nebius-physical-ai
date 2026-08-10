@@ -61,6 +61,7 @@ from npa.workflows.sim2real.config import artifact_uris, byo_seams
 from npa.workflows.sim2real.component_records import (
     _expand_envgen_component_records,
     _loop_component_records,
+    _persisted_loop_component_records,
 )
 from npa.workflows.sim2real.capture import runtime_parameter_metadata
 from npa.workflows.sim2real.constants import (
@@ -563,16 +564,18 @@ def run_finalize(
         return dict(completed_finalize["report"])
 
     components = _expand_envgen_component_records(config, components)
-    loop_components = _loop_component_records(
-        config,
-        local_dir=local_dir,
-        outer_iteration=int(
-            final_decision.get("outer_iteration") or len(outer_history) or 1
-        ),
-        inner=final_inner,
-        heldout_report=final_eval,
-        decision=final_decision,
-    )
+    loop_components = _persisted_loop_component_records(config, components)
+    if loop_components is None:
+        loop_components = _loop_component_records(
+            config,
+            local_dir=local_dir,
+            outer_iteration=int(
+                final_decision.get("outer_iteration") or len(outer_history) or 1
+            ),
+            inner=final_inner,
+            heldout_report=final_eval,
+            decision=final_decision,
+        )
     loop_names = {component.name for component in loop_components}
     components = [
         component
@@ -754,6 +757,9 @@ def run_finalize(
     )
 
     candidate_path = local_dir / "checkpoints" / "candidate" / "candidate.json"
+    durable_candidate = final_decision.get("candidate")
+    if not candidate_path.is_file() and isinstance(durable_candidate, dict):
+        _write_json_artifact(candidate_path, durable_candidate)
     candidate_payload = (
         json.loads(candidate_path.read_text(encoding="utf-8"))
         if candidate_path.is_file()
