@@ -24,7 +24,10 @@ User secrets that are not tied to a single workbench live in
 
 from __future__ import annotations
 
+import fcntl
 import os
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -466,15 +469,56 @@ def resolve_container_registry(project: str | None = None) -> str:
 # ── Read / write ─────────────────────────────────────────────────────────
 
 
+@contextmanager
+def _config_write_lock():
+    """Hold a process-independent lock across config read/modify/replace."""
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = CONFIG_PATH.parent / ".config.yaml.lock"
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(lock_path, flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _replace_config(data: dict[str, Any]) -> Path:
+    """Atomically replace config.yaml while preserving secret permissions."""
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=CONFIG_PATH.parent,
+            prefix=".config.yaml.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = handle.name
+            yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_path, 0o600)
+        os.replace(temp_path, CONFIG_PATH)
+        CONFIG_PATH.chmod(0o600)
+        return CONFIG_PATH
+    finally:
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
+
+
 def write_config(data: dict[str, Any]) -> Path:
     """Deep-merge *data* into ``~/.npa/config.yaml`` and write."""
-    existing = _load_yaml()
-    merged = _deep_merge(existing, data)
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w") as f:
-        yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
-    CONFIG_PATH.chmod(0o600)
-    return CONFIG_PATH
+    with _config_write_lock():
+        existing = _load_yaml()
+        merged = _deep_merge(existing, data)
+        return _replace_config(merged)
 
 
 def remove_workbench_config(
@@ -482,23 +526,44 @@ def remove_workbench_config(
     name: str,
 ) -> None:
     """Remove ``projects.<project>.workbenches.<name>``."""
-    existing = _load_yaml()
-    projects = existing.get("projects", {})
-    proj = projects.get(project, {})
-    workbenches = proj.get("workbenches", {})
-    if name in workbenches:
-        del workbenches[name]
-        proj["workbenches"] = workbenches
-        if not workbenches:
-            del projects[project]
-            if existing.get("default_project") == project:
-                remaining = list(projects.keys())
-                existing["default_project"] = remaining[0] if remaining else "default"
+    with _config_write_lock():
+        existing = _load_yaml()
+        projects = existing.get("projects", {})
+        proj = projects.get(project, {})
+        workbenches = proj.get("workbenches", {})
+        if name in workbenches:
+            del workbenches[name]
+            if workbenches:
+                proj["workbenches"] = workbenches
+            else:
+                proj.pop("workbenches", None)
+            agents = proj.get("agents", {}) if isinstance(proj, dict) else {}
+            preserve_agent_ownership = isinstance(agents, dict) and bool(agents)
+            if not workbenches and not preserve_agent_ownership:
+                del projects[project]
+                if existing.get("default_project") == project:
+                    remaining = list(projects.keys())
+                    existing["default_project"] = remaining[0] if remaining else "default"
+            else:
+                projects[project] = proj
+            existing["projects"] = projects
+            _replace_config(existing)
+
+
+def remove_agent_config(project: str, name: str) -> None:
+    """Atomically remove ``projects.<project>.agents.<name>``."""
+    with _config_write_lock():
+        existing = _load_yaml()
+        projects = existing.get("projects", {})
+        proj = projects.get(project, {}) if isinstance(projects, dict) else {}
+        agents = proj.get("agents", {}) if isinstance(proj, dict) else {}
+        if not isinstance(agents, dict) or name not in agents:
+            return
+        del agents[name]
+        proj["agents"] = agents
+        projects[project] = proj
         existing["projects"] = projects
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with CONFIG_PATH.open("w") as f:
-            yaml.dump(existing, f, default_flow_style=False, sort_keys=False)
-        CONFIG_PATH.chmod(0o600)
+        _replace_config(existing)
 
 
 def workbench_entry(project: str | None, name: str | None) -> dict[str, Any]:

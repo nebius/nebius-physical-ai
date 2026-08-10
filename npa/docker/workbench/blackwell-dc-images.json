@@ -1,6 +1,6 @@
 {
   "format": "npa_blackwell_dc_image_manifest_v1",
-  "as_of": "2026-08-03T05:05:26Z",
+  "as_of": "2026-08-08T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
   "registry_note": "Resolve the registry through npa.deploy.images / npa configure. Additive tags are pushed to both the primary (eu-north1) and mirror (us-central1) registries; never hardcode a registry id here.",
   "target": {
@@ -188,6 +188,30 @@
         "sm_90",
         "sm_100",
         "sm_120"
+      ]
+    },
+    {
+      "name": "npa-wan2-2",
+      "dockerfile": "wan2-2/Dockerfile",
+      "build_script": "wan2-2/build.sh",
+      "verdict": "ready",
+      "validation": "validated",
+      "redistribution": "public",
+      "torch": "2.7.1+cu128, fetched into the operator-owned runtime volume after explicit terms acceptance",
+      "source_compiled_extensions": [],
+      "smoke": "torch.distributed.run launches an instrumentation wrapper on four B200 ranks; the wrapper executes pinned official Wan TI2V-5B generate.py as __main__ with NCCL, FULL_SHARD T5/DiT, Ulysses collectives, decoded H.264 MP4 validation, and verified Rerun evidence",
+      "notes": "The public-eligible image itself is CPU-only. The accepted runtime closure was installed only in a writable volume and passed the dedicated official four-rank TI2V-5B smoke on four physical B200s, including NCCL 2.27.7 transport, T5/DiT FULL_SHARD, Ulysses collectives, MP4 validation, and RRD verification. The separate RTX PRO 6000 path independently passed with sm_120 and native PyTorch SDPA. No GPU result is inferred from either architecture for the other. The exact candidate has 27 disclosed CRITICAL OS findings with no available fixed version and zero Trivy secret findings; publication still fails on fixed CRITICAL findings.",
+      "validation_run": "private-four-gpu-validation-record",
+      "accepted_image_manifest": "npa/src/npa/deploy/wan2_2_image_manifest.json",
+      "measured_torch": "2.7.1+cu128",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120",
+        "compute_120"
       ]
     },
     {

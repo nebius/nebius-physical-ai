@@ -63,7 +63,9 @@ def foxglove_nginx_locations(*, asset_root: str = FOXGLOVE_ASSET_ROOT) -> str:
 # the comment with a layout object is the upstream-supported self-hosting hook, so
 # the embedded viewer opens with the sim2real point cloud + camera already shown
 # (Lichtblick otherwise hides point-cloud topics and picks no image topic).
-LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER = "/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/"
+LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER = (
+    "/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/"
+)
 
 
 def _lichtblick_default_layout_json() -> str:
@@ -194,20 +196,25 @@ def nginx_agent_site_body(
     proxy_send_timeout 900s;
     client_max_body_size 32m;
   }}
-  location /rerun/recordings/ {{
+  location ~ "^/rerun/recordings/(cap-[A-Za-z0-9_-]{{43}}\\.rrd)$" {{
+    # Rerun WASM cannot attach HTTP Basic credentials to its recording fetch.
+    # The backend therefore publishes one random 256-bit, per-load capability
+    # filename and deletes the previous capability. Only that unguessable path
+    # is anonymously readable; fixed/run-derived recording names remain denied.
     auth_basic off;
-    alias /opt/npa-agent/recordings/;
+    alias /opt/npa-agent/recordings/$1;
     default_type application/octet-stream;
     add_header Cache-Control "no-cache" always;
-    add_header Access-Control-Allow-Origin * always;
-    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
-    add_header Cross-Origin-Resource-Policy "cross-origin" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
     # .rrd carries msgpack + metadata that still gzips usefully; the frame
     # payloads are now JPEG-encoded so the win is modest but the transfer is
     # smaller and TTFB unaffected (nginx streams as it compresses).
     gzip on;
     gzip_types application/octet-stream;
     gzip_min_length 1024;
+  }}
+  location /rerun/recordings/ {{
+    return 404;
   }}
 {foxglove_locations}  location ~* ^/rerun/.+\\.(wasm|js|ico|svg)$ {{
     auth_basic off;

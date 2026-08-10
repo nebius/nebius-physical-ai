@@ -21,14 +21,20 @@ from npa.workflows.artifacts import (
 )
 
 AGENT_MODULE = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent.py"
-ARTIFACTS_MODULE = Path(__file__).resolve().parents[2] / "src" / "npa" / "workflows" / "artifacts.py"
+AGENT_CONTRACTS_MODULE = AGENT_MODULE.with_name("agent_contracts.py")
+ARTIFACTS_MODULE = (
+    Path(__file__).resolve().parents[2] / "src" / "npa" / "workflows" / "artifacts.py"
+)
 
 
 def test_agent_media_preview_contract_present_in_source() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
+    contract_source = source + AGENT_CONTRACTS_MODULE.read_text(encoding="utf-8")
     assert f'AGENT_UI_VERSION = "{AGENT_UI_VERSION}"' in source
     for marker in AGENT_MEDIA_PREVIEW_CONTRACT:
-        assert marker in source, f"missing media-preview contract marker: {marker!r}"
+        assert marker in contract_source, (
+            f"missing media-preview contract marker: {marker!r}"
+        )
     # Anti-patterns that previously broke MP4 playback under basic auth.
     assert '`<video controls src="${{previewUrl}}">`' not in source
     assert 'host.innerHTML = `<video controls src="${{previewUrl}}"></video>`' not in source

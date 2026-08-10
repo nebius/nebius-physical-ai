@@ -6,14 +6,27 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = ROOT / "npa" / "scripts" / "run_byof_container_verify.py"
-YAML_PATH = ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles" / "byof-container-smoke-rtxpro.yaml"
+YAML_PATH = (
+    ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "workflows"
+    / "byof"
+    / "profiles"
+    / "byof-container-smoke-rtxpro.yaml"
+)
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("run_byof_container_verify", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "run_byof_container_verify", SCRIPT_PATH
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -26,6 +39,7 @@ def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA_TEST")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    monkeypatch.setenv("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS", "YES")
     monkeypatch.setattr(module, "_resolved_storage_env", lambda: {})
     docs = module.render_workflow(
         YAML_PATH,
@@ -44,10 +58,209 @@ def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     assert envs["BYOF_SOLUTION_NAME"] == "demo-solution"
     assert envs["BYOF_CAPABILITY_NAME"] == "demo-capability"
     assert envs["BYOF_SMOKE_ARTIFACT_NAME"] == "demo_artifact.json"
+    assert envs["BYOF_IMAGE"] == "registry.example/npa-byof:demo"
     assert envs["S3_OUTPUT_PREFIX"] == "s3://bucket/prefix/byof-demo/"
     assert envs["NPA_S3_BUCKET"] == "bucket"
     assert envs["AWS_ENDPOINT_URL"] == "https://storage.example"
-    assert envs["AWS_ACCESS_KEY_ID"] == "AKIA_TEST"
+    assert "AWS_ACCESS_KEY_ID" not in envs
+    assert "AWS_SECRET_ACCESS_KEY" not in envs
+    assert "AWS_SESSION_TOKEN" not in envs
+    assert "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS" not in envs
+    assert task["resources"]["image_id"] == "docker:registry.example/npa-byof:demo"
+
+
+def test_wan_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setenv("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS", "YES")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "probe-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "probe-secret")
+
+    assert module.resolve_secret_envs(None) == [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
+    ]
+    assert module.resolve_secret_envs(["HF_TOKEN"]) == [
+        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS"
+    ]
+
+
+def test_output_storage_preflight_writes_reads_and_deletes(monkeypatch) -> None:
+    module = _load_module()
+    calls: list[tuple[str, str, str]] = []
+
+    class FakeS3:
+        def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
+            calls.append(("list", Bucket, Prefix))
+            assert MaxKeys == 1
+            return {"Contents": []}
+
+        def put_object(self, *, Bucket, Key, **_kwargs):
+            assert _kwargs["IfNoneMatch"] == "*"
+            calls.append(("put", Bucket, Key))
+
+        def head_object(self, *, Bucket, Key):
+            calls.append(("head", Bucket, Key))
+            return {"ContentLength": 24}
+
+        def delete_object(self, *, Bucket, Key):
+            calls.append(("delete", Bucket, Key))
+
+    monkeypatch.setenv("NPA_E2E_PROJECT", "demo-project")
+    monkeypatch.setattr(
+        module,
+        "s3_client_for_project",
+        lambda project, *, allow_host_creds: (
+            FakeS3()
+            if project == "demo-project" and allow_host_creds
+            else pytest.fail("unexpected S3 credential scope")
+        ),
+    )
+
+    module.preflight_output_storage(
+        output_root="s3://bucket/prefix", run_id="byof-demo"
+    )
+
+    assert calls == [
+        ("list", "bucket", "prefix/byof-demo/"),
+        ("put", "bucket", "prefix/byof-demo/.npa-write-preflight"),
+        ("head", "bucket", "prefix/byof-demo/.npa-write-preflight"),
+        ("delete", "bucket", "prefix/byof-demo/.npa-write-preflight"),
+    ]
+
+
+def test_output_storage_preflight_fails_before_launch(monkeypatch) -> None:
+    module = _load_module()
+
+    class DeniedS3:
+        def list_objects_v2(self, **_kwargs):
+            return {"Contents": []}
+
+        def put_object(self, **_kwargs):
+            raise PermissionError("Access denied")
+
+    monkeypatch.setattr(
+        module,
+        "s3_client_for_project",
+        lambda *_args, **_kwargs: DeniedS3(),
+    )
+
+    with pytest.raises(RuntimeError, match="output storage preflight failed"):
+        module.preflight_output_storage(
+            output_root="s3://bucket/prefix", run_id="byof-demo"
+        )
+
+
+def test_output_storage_preflight_rejects_reused_run_prefix(monkeypatch) -> None:
+    module = _load_module()
+
+    class ExistingS3:
+        def list_objects_v2(self, **_kwargs):
+            return {"Contents": [{"Key": "prefix/byof-demo/result.json"}]}
+
+    monkeypatch.setattr(
+        module,
+        "s3_client_for_project",
+        lambda *_args, **_kwargs: ExistingS3(),
+    )
+
+    with pytest.raises(
+        RuntimeError, match="refusing to reuse a non-empty BYOF run prefix"
+    ):
+        module.preflight_output_storage(
+            output_root="s3://bucket/prefix", run_id="byof-demo"
+        )
+
+
+def test_wait_timeout_zero_checks_status_once(monkeypatch) -> None:
+    module = _load_module()
+    calls: list[str] = []
+    status = type("Status", (), {"status": "RUNNING"})()
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_args, **_kwargs: calls.append("status") or status,
+    )
+    monkeypatch.setattr(
+        module.time,
+        "sleep",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("slept")),
+    )
+
+    final, diagnostics = module._wait_for_terminal(
+        "run", sky_bin="sky", wait_timeout=0, poll_interval=1
+    )
+    assert final.status == "RUNNING"
+    assert calls == ["status"]
+    assert diagnostics == {
+        "mode": "immediate",
+        "polls": 1,
+        "statuses": ["RUNNING"],
+        "terminal": False,
+        "deadline_exhausted": False,
+        "stuck_state": "RUNNING",
+        "hint": "workflow is not terminal; inspect SkyPilot controller/job and pod events",
+    }
+
+
+def test_positive_wait_is_bounded_and_reports_stuck_state(monkeypatch) -> None:
+    module = _load_module()
+    clock = {"now": 100.0}
+    status = type("Status", (), {"status": "PENDING"})()
+    monkeypatch.setattr(module, "workflow_status", lambda *_args, **_kwargs: status)
+    monkeypatch.setattr(module.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(
+        module.time,
+        "sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+
+    _, diagnostics = module._wait_for_terminal(
+        "run", sky_bin="sky", wait_timeout=2, poll_interval=1
+    )
+    assert diagnostics["mode"] == "bounded"
+    assert diagnostics["polls"] == 3
+    assert diagnostics["deadline_exhausted"] is True
+    assert diagnostics["stuck_state"] == "PENDING"
+
+
+def test_negative_one_waits_until_terminal(monkeypatch) -> None:
+    module = _load_module()
+    statuses = iter(["PENDING", "RUNNING", "SUCCEEDED"])
+    monkeypatch.setattr(
+        module,
+        "workflow_status",
+        lambda *_args, **_kwargs: type("Status", (), {"status": next(statuses)})(),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    final, diagnostics = module._wait_for_terminal(
+        "run", sky_bin="sky", wait_timeout=-1, poll_interval=1
+    )
+    assert final.status == "SUCCEEDED"
+    assert diagnostics["mode"] == "indefinite"
+    assert diagnostics["statuses"] == ["PENDING", "RUNNING", "SUCCEEDED"]
+    assert diagnostics["terminal"] is True
+
+
+def test_wait_timeout_less_than_negative_one_is_rejected() -> None:
+    module = _load_module()
+    with pytest.raises(ValueError, match="must be -1"):
+        module._wait_for_terminal(
+            "run", sky_bin="sky", wait_timeout=-2, poll_interval=1
+        )
+
+
+def test_render_workflow_normalizes_docker_image_for_summary(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "_resolved_storage_env", lambda: {})
+    docs = module.render_workflow(
+        YAML_PATH,
+        run_id="byof-demo",
+        image="docker:registry.example/npa-byof:demo",
+    )
+    task = docs[1]
+    assert task["envs"]["BYOF_IMAGE"] == "registry.example/npa-byof:demo"
     assert task["resources"]["image_id"] == "docker:registry.example/npa-byof:demo"
 
 
@@ -70,8 +283,13 @@ def test_render_workflow_rejects_unresolved_endpoint_placeholder(monkeypatch) ->
 def test_normalize_output_root_strips_double_s3_prefix(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setattr(module, "_resolved_storage_env", lambda: {})
-    assert module._normalize_s3_bucket("s3://lerobot-demo/checkpoints/") == "lerobot-demo"
-    assert module._normalize_output_root("s3://s3://lerobot-demo/checkpoints/") == "s3://lerobot-demo/checkpoints"
+    assert (
+        module._normalize_s3_bucket("s3://lerobot-demo/checkpoints/") == "lerobot-demo"
+    )
+    assert (
+        module._normalize_output_root("s3://s3://lerobot-demo/checkpoints/")
+        == "s3://lerobot-demo/checkpoints"
+    )
     assert (
         module._normalize_output_root("s3://lerobot-demo/checkpoints/")
         == "s3://lerobot-demo/checkpoints"
@@ -81,7 +299,10 @@ def test_normalize_output_root_strips_double_s3_prefix(monkeypatch) -> None:
         run_id="byof-demo",
         output_root="s3://s3://lerobot-demo/checkpoints/",
     )
-    assert docs[1]["envs"]["S3_OUTPUT_PREFIX"] == "s3://lerobot-demo/checkpoints/byof-demo/"
+    assert (
+        docs[1]["envs"]["S3_OUTPUT_PREFIX"]
+        == "s3://lerobot-demo/checkpoints/byof-demo/"
+    )
     assert docs[1]["envs"]["NPA_S3_BUCKET"] == "lerobot-demo"
 
 
@@ -100,7 +321,9 @@ def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None
     def fake_run(cmd, **kwargs):
         del kwargs
         seen.append(list(cmd))
-        return subprocess.CompletedProcess(cmd, 0, stdout='{"default": {"Kubernetes": ["compute"]}}', stderr="")
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout='{"default": {"Kubernetes": ["compute"]}}', stderr=""
+        )
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     module._ensure_infra_enabled(
@@ -111,7 +334,15 @@ def test_ensure_infra_enabled_runs_sky_check_for_kubernetes(monkeypatch) -> None
 
     assert seen == [
         ["/opt/sky", "api", "stop"],
-        ["/opt/sky", "check", "kubernetes", "-o", "json", "--config", "/tmp/skypilot.yaml"],
+        [
+            "/opt/sky",
+            "check",
+            "kubernetes",
+            "-o",
+            "json",
+            "--config",
+            "/tmp/skypilot.yaml",
+        ],
     ]
 
 
@@ -131,6 +362,7 @@ def test_ensure_infra_enabled_skips_non_kubernetes(monkeypatch) -> None:
 
 def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) -> None:
     module = _load_module()
+    monkeypatch.setenv("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS", "YES")
     rendered_yaml = tmp_path / "workflow.yaml"
     rendered_yaml.write_text("name: demo\n", encoding="utf-8")
     seen: dict[str, object] = {}
@@ -149,6 +381,7 @@ def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) 
         infra="k8s/customer-mk8s",
         config_path="/tmp/skypilot.yaml",
         cleanup=True,
+        secret_envs=["NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS"],
     )
 
     assert rc == 0
@@ -165,6 +398,8 @@ def test_direct_launch_uses_sky_launch_with_down(monkeypatch, tmp_path, capsys) 
         "k8s/customer-mk8s",
         "--config",
         "/tmp/skypilot.yaml",
+        "--secret",
+        "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
         str(rendered_yaml),
     ]
     output = capsys.readouterr().out
@@ -210,7 +445,9 @@ users: []
     assert str(out) in os.environ["KUBECONFIG"]
 
 
-def test_submit_and_wait_restores_kubeconfig_after_direct_launch(monkeypatch, tmp_path) -> None:
+def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
+    monkeypatch, tmp_path
+) -> None:
     """Temp kubeconfig under TemporaryDirectory must not leak into later sky jobs."""
     module = _load_module()
     original = str(tmp_path / "original-kubeconfig")
@@ -222,17 +459,25 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(monkeypatch, tm
     monkeypatch.setattr(
         module,
         "render_workflow",
-        lambda *_a, **_k: [{"name": "meta"}, {"name": "task", "envs": {}, "resources": {}}],
+        lambda *_a, **_k: [
+            {"name": "meta"},
+            {"name": "task", "envs": {}, "resources": {}},
+        ],
     )
     monkeypatch.setattr(module, "_write_yaml_documents", lambda *_a, **_k: None)
 
     def _leak_kubeconfig(tmp: Path) -> None:
         os.environ["KUBECONFIG"] = str(tmp / "leaked")
 
-    monkeypatch.setattr(module, "_normalize_kubeconfig_current_context", _leak_kubeconfig)
+    monkeypatch.setattr(
+        module, "_normalize_kubeconfig_current_context", _leak_kubeconfig
+    )
     monkeypatch.setattr(module, "_default_infra", lambda: "k8s/demo")
-    monkeypatch.setattr(module, "_write_default_k8s_config", lambda *_a, **_k: "/tmp/skypilot.yaml")
+    monkeypatch.setattr(
+        module, "_write_default_k8s_config", lambda *_a, **_k: "/tmp/skypilot.yaml"
+    )
     monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: None)
+    monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: None)
     monkeypatch.setattr(module, "_direct_launch", lambda **_k: 0)
     seen_cmds: list[list[str]] = []
 

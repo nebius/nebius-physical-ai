@@ -19,6 +19,15 @@ except Exception:
     print("")'
 }
 
+agent_preloads_stock_demo() {
+  "${ROOT}/npa/.venv/bin/npa" agent status --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME" --json 2>/dev/null \
+    | "${ROOT}/npa/.venv/bin/python" -c 'import json,sys
+try:
+    print("1" if bool(json.load(sys.stdin).get("preload_stock_demo", True)) else "0")
+except Exception:
+    print("1")'
+}
+
 run_success() {
   npa/.venv/bin/pip install -e npa -q || return 1
   if ! NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent bootstrap --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME"; then
@@ -26,8 +35,17 @@ run_success() {
     NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent deploy --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME" || return 1
   fi
   NPA_AGENT_CHAT_LIVE=1 NPA_SSH_KEY="$NPA_SSH_KEY" npa/.venv/bin/npa agent verify-live --project "$NPA_AGENT_PROJECT" --name "$NPA_AGENT_NAME" || return 1
-  bash npa/scripts/verify_agent_franka.sh || return 1
   bash npa/scripts/verify_agent_rerun_bundle.sh || return 1
+
+  # Artifact-only deployments deliberately have no stock Franka file or chat
+  # mutation. verify-live already proved their exact durable state digest was
+  # unchanged across the live, smoke, grounded, and bundle probes.
+  if [[ "$(agent_preloads_stock_demo)" == "0" ]]; then
+    echo "artifact-only maturity gate: stock demo/chat mutation skipped"
+    return 0
+  fi
+
+  bash npa/scripts/verify_agent_franka.sh || return 1
 
   local auth_env="${NPA_AGENT_AUTH_ENV:-$HOME/.npa/agents/${NPA_AGENT_PROJECT}/${NPA_AGENT_NAME}/auth.env}"
   if [[ ! -f "$auth_env" ]]; then

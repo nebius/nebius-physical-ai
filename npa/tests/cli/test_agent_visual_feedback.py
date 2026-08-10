@@ -13,6 +13,7 @@ from npa.cli.agent import (
 )
 
 AGENT_MODULE = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent.py"
+AGENT_CONTRACTS_MODULE = AGENT_MODULE.with_name("agent_contracts.py")
 
 
 def _embedded_ui_html(source: str = "") -> str:
@@ -235,10 +236,13 @@ def test_embedded_visual_feedback_source_strips_future_import() -> None:
 
 def test_ui_and_backend_visual_feedback_contract() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
+    contract_source = source + AGENT_CONTRACTS_MODULE.read_text(encoding="utf-8")
     ui_html = _embedded_ui_html(source)
     assert f'AGENT_UI_VERSION = "{AGENT_UI_VERSION}"' in source
     for marker in AGENT_VISUAL_FEEDBACK_CONTRACT:
-        assert marker in source, f"missing contract marker in agent.py: {marker!r}"
+        assert marker in contract_source, (
+            f"missing visual-feedback contract marker: {marker!r}"
+        )
     assert 'id="describeVisual"' in ui_html
     assert "async function describeVisual" in ui_html
     assert "async function captureVisualContext" in ui_html
@@ -252,12 +256,18 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "skipUserAppend" in ui_html
     assert "Describe this — capturing" in ui_html
     # Must not gate async WebGL capture on sync blank checks alone.
-    assert "Always attempt async capture" in ui_html or "do not gate" in ui_html.lower() or "MediaStream bridge" in ui_html
+    assert (
+        "Always attempt async capture" in ui_html
+        or "do not gate" in ui_html.lower()
+        or "MediaStream bridge" in ui_html
+    )
     assert "visual_context" in ui_html
     assert "maxChars = 700000" in ui_html
-    assert "client_max_body_size 32m" in source
+    assert "client_max_body_size 32m" in contract_source
     assert "_AGENT_VISUAL_FEEDBACK_EMBED" in source
-    assert ".replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)" in source
+    assert (
+        ".replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)" in source
+    )
     # Chat path must preserve multimodal content (not str()-coerce list parts).
     assert "normalize_messages_for_llm(raw_messages)" in source
     assert "is_visual_feedback_turn(" in source

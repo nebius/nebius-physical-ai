@@ -6,9 +6,11 @@ import argparse
 
 from npa.deploy.publish_public import (
     _crane_copy,
+    _mark_copy_phase_complete,
     _preflight_or_explain,
     build_publish_plan,
     verify_public,
+    visibility_checklist,
 )
 
 
@@ -18,7 +20,9 @@ def main() -> int:
     parser.add_argument("--source-registry", default=None)
     parser.add_argument("--target", required=True)
     parser.add_argument(
-        "--mode", choices=("plan", "preflight", "publish", "verify"), required=True
+        "--mode",
+        choices=("plan", "preflight", "publish", "verify", "checklist"),
+        required=True,
     )
     args = parser.parse_args()
 
@@ -39,8 +43,10 @@ def main() -> int:
 
     if args.mode == "plan":
         return 0
-    if args.mode == "verify":
+    if args.mode in {"verify", "checklist"}:
         failures = verify_public(selected)
+        if failures and args.mode == "checklist":
+            print(visibility_checklist(failures))
         return 1 if failures else 0
 
     publishable = _preflight_or_explain(selected)
@@ -49,9 +55,13 @@ def main() -> int:
     if args.mode == "preflight":
         return 0
 
+    # Preflight returns the digest-frozen Wan item. Do not fall back to ``item`` here:
+    # that is the mutable tag-form plan entry and the copy guard correctly rejects it.
+    item = publishable[0]
     copied = _crane_copy(item)
+    _mark_copy_phase_complete()
     print("Copied 1 image." if copied else "Already current; copied 0 images.")
-    failures = verify_public(selected)
+    failures = verify_public(publishable)
     return 1 if failures else 0
 
 

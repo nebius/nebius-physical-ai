@@ -61,11 +61,22 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
 
     mp4_run_id = ""
     mp4_key = ""
+    mp4_uri = ""
     for entry in run_list[:20]:
         run_id = str((entry or {}).get("run_id") or "").strip()
         if not run_id:
             continue
-        listed = ctx.get(f"/api/artifacts/run/{run_id}")
+        source_params = {
+            "resource_bucket": str((entry or {}).get("bucket") or ""),
+            "project_id": str((entry or {}).get("project_id") or ""),
+            "resolved_prefix": str((entry or {}).get("resolved_prefix") or ""),
+            "source_selected": "1",
+        }
+        source_params = {key: value for key, value in source_params.items() if value}
+        source_query = str(httpx.QueryParams(source_params))
+        listed = ctx.get(
+            f"/api/artifacts/run/{run_id}" + (f"?{source_query}" if source_query else "")
+        )
         listed.raise_for_status()
         arts = (listed.json() or {}).get("artifacts") or []
         for art in arts:
@@ -74,6 +85,7 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
             if render == "video" or key.lower().endswith(".mp4"):
                 mp4_run_id = run_id
                 mp4_key = key
+                mp4_uri = str((art or {}).get("s3_uri") or "")
                 break
         if mp4_key:
             break
@@ -81,7 +93,7 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
     if mp4_key:
         loaded = ctx.post(
             "/api/sim-viz/load-artifact",
-            json={"run_id": mp4_run_id, "key": mp4_key},
+            json={"run_id": mp4_run_id, "s3_uri": mp4_uri},
             timeout=60.0,
         )
         loaded.raise_for_status()
@@ -114,6 +126,43 @@ def test_agent_health_and_session(ctx: AgentLiveContext) -> None:
     payload = session.json()
     assert isinstance(payload, dict)
     assert isinstance(payload.get("chat_history", []), list)
+
+
+def test_agent_effective_access_contract(ctx: AgentLiveContext) -> None:
+    response = ctx.get("/api/access?refresh=true")
+    response.raise_for_status()
+    payload = response.json()
+
+    assert payload.get("ok") is True
+    assert payload.get("apiVersion") == "npa.agent.access/v1"
+    assert payload.get("status") in {"available", "partial", "denied", "unavailable"}
+    assert payload.get("scope") in {"tenant", "partial_tenant", "single_project"}
+    assert isinstance(payload.get("identity"), dict)
+    assert isinstance(payload.get("projects"), list)
+    assert isinstance(payload.get("capabilities"), dict)
+
+    forbidden_keys = {
+        "access_key",
+        "access_key_id",
+        "auth_password",
+        "credential",
+        "iam_token",
+        "password",
+        "secret",
+        "secret_key",
+        "token",
+    }
+
+    def _assert_non_secret_shape(value: object) -> None:
+        if isinstance(value, dict):
+            assert forbidden_keys.isdisjoint(value)
+            for child in value.values():
+                _assert_non_secret_shape(child)
+        elif isinstance(value, list):
+            for child in value:
+                _assert_non_secret_shape(child)
+
+    _assert_non_secret_shape(payload)
 
 
 def test_agent_sim_assets_and_catalog(ctx: AgentLiveContext) -> None:
@@ -506,7 +555,9 @@ def test_agent_chat_complex_artifact_discovery_intent(ctx: AgentLiveContext) -> 
                 }
             ]
         },
-        timeout=30.0,
+        # This grounded intent performs tenant artifact discovery before the
+        # model response, so its live budget must cover both bounded stages.
+        timeout=60.0,
     )
     chat.raise_for_status()
     payload = chat.json()
