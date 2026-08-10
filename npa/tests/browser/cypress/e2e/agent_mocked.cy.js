@@ -891,7 +891,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     // Consolidated picker may already have mock-run selected — force list via button.
-    cy.get('#runIdSelect option[value="mock-run"][data-source-type="artifact_storage"]').then(($opt) => {
+    cy.get('#runIdSelect option[data-run-id="mock-run"][data-source-type="artifact_storage"]').then(($opt) => {
       const select = $opt[0].parentElement;
       select.selectedIndex = [...select.options].indexOf($opt[0]);
     });
@@ -1270,7 +1270,7 @@ describe("NPA agent UI with mocked APIs", () => {
       },
     }).as("evilArtifactList");
     cy.get("#tabRerun").click();
-    cy.get('#runIdSelect option[value="mock-run"][data-source-type="artifact_storage"]').then(($opt) => {
+    cy.get('#runIdSelect option[data-run-id="mock-run"][data-source-type="artifact_storage"]').then(($opt) => {
       const select = $opt[0].parentElement;
       select.selectedIndex = [...select.options].indexOf($opt[0]);
     });

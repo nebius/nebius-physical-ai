@@ -6241,17 +6241,26 @@
           String((run && run.run_id) || "").toLowerCase().includes(lowered)
         );
         if (matches.length === 1) return String(matches[0].run_ref || matches[0].run_id || "").trim();
+        if (matches.length > 1) {
+          const selectedMatch = matches.find((run) =>
+            String((run && (run.entry_key || run.run_ref || run.run_id)) || "").trim() === fallback
+          );
+          if (selectedMatch) return fallback;
+        }
         // Allow loading a pasted id that is not yet in the cached list.
         return query;
       }
       function resolveRunSelection(value) {
         const requested = String(value || "").trim();
-        const match = mergedRunsCache.find((run) =>
-          String((run && run.run_ref) || "").trim() === requested
-        );
+        const match = mergedRunsCache.find((run) => {
+          const entryKey = String((run && run.entry_key) || "").trim();
+          const runRef = String((run && run.run_ref) || "").trim();
+          return entryKey === requested || runRef === requested;
+        });
         return {
           run_id: String((match && match.run_id) || requested).trim(),
           run_ref: String((match && match.run_ref) || "").trim(),
+          entry_key: String((match && match.entry_key) || "").trim(),
         };
       }
       // Effective run timestamp for display + sort: when the run STARTED
@@ -6365,6 +6374,11 @@
       function fillRunSelectOptionsRich(select, runs, current) {
         if (!select) return;
         const previous = String(select.value || "").trim();
+        const runIdCounts = new Map();
+        for (const run of runs) {
+          const runId = String((run && run.run_id) || run || "").trim();
+          if (runId) runIdCounts.set(runId, Number(runIdCounts.get(runId) || 0) + 1);
+        }
         const placeholder = select.id === "stagesRunSelect"
           ? "(select run)"
           : "(select run — latest first)";
@@ -6374,7 +6388,11 @@
           const runId = String((run && run.run_id) || run || "").trim();
           if (!runId) continue;
           const runRef = String((run && run.run_ref) || "").trim();
-          const selector = runRef || runId;
+          const entryKey = String((run && run.entry_key) || "").trim();
+          // Legacy/history entries may not have a run_ref. When the basename is
+          // duplicated across sources, keep each option addressable with its
+          // source-qualified entry identity instead of emitting duplicate values.
+          const selector = runRef || (runIdCounts.get(runId) > 1 ? entryKey : runId) || runId;
           const opt = document.createElement("option");
           opt.value = selector;
           opt.dataset.entryKey = String((run && run.entry_key) || "");
@@ -7591,13 +7609,14 @@
           ? {
               run_id: String(supplied.run_id || "").trim(),
               run_ref: String(supplied.run_ref || "").trim(),
+              entry_key: String(supplied.entry_key || "").trim(),
             }
           : resolveRunSelection(entryOrRunId);
         const chosen = String(selection.run_id || "").trim();
         if (!chosen) {
           throw new Error("Enter or select a run_id first");
         }
-        let entry = supplied || preferredRunEntry(selection.run_ref || chosen);
+        let entry = supplied || preferredRunEntry(selection.entry_key || selection.run_ref || chosen);
         if (!entry) {
           await refreshArtifactRuns(chosen).catch(() => false);
           entry = preferredRunEntry(chosen);
