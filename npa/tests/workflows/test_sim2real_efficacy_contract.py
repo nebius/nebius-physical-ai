@@ -17,12 +17,15 @@ from npa.workflows.sim2real.checkpoint_selection import (
 )
 from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_APPROACH_STD_M,
+    PLACEMENT_APPROACH_SPEED_MPS,
     PLACEMENT_MINIMAL_LIFT_M,
     STABLE_PLACEMENT_DISTANCE_M,
     STABLE_PLACEMENT_REWARD_WEIGHT,
     STABLE_PLACEMENT_SPEED_MPS,
+    STABLE_PLACEMENT_STEPS,
     ScenarioContractError,
     module_source,
+    placement_curriculum_signal,
     read_scenarios,
 )
 from npa.workflows.sim2real.task_contract import (
@@ -261,13 +264,17 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert STABLE_PLACEMENT_SPEED_MPS == 0.03
     assert PLACEMENT_MINIMAL_LIFT_M == 0.04
     assert PLACEMENT_APPROACH_STD_M == 0.35
+    assert PLACEMENT_APPROACH_SPEED_MPS == 0.15
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
+    assert STABLE_PLACEMENT_STEPS == 3
     source = module_source()
     assert "def stable_placement_curriculum" in source
-    assert "lifted * (approach + approach * stillness + strict)" in source
+    assert "lifted * (dense + strict)" in source
     assert "env_cfg.rewards.stable_placement_curriculum" in source
-    assert "distance <= float(success_distance_m)" in source
-    assert "speed <= float(stable_speed_mps)" in source
+    assert "env_cfg.terminations.stable_placement_success" in source
+    assert 'NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION", "0"' in source
+    assert "distance < float(success_distance_m)" in source
+    assert "speed < float(stable_speed_mps)" in source
 
 
 def test_stable_placement_curriculum_is_dense_across_live_canary_basin() -> None:
@@ -276,6 +283,10 @@ def test_stable_placement_curriculum_is_dense_across_live_canary_basin() -> None
     canary_basin_approach = 1.0 - math.tanh(0.25 / PLACEMENT_APPROACH_STD_M)
     assert canary_basin_approach > 0.2
     assert STABLE_PLACEMENT_REWARD_WEIGHT * canary_basin_approach > 10.0
+    slow = placement_curriculum_signal(0.057, 0.01, tanh=math.tanh)
+    fly_through = placement_curriculum_signal(0.057, 0.20, tanh=math.tanh)
+    assert slow > 1.0
+    assert fly_through < slow * 0.15
 
 
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
@@ -399,6 +410,26 @@ def test_checkpoint_selection_uses_validation_and_prefers_earlier_exact_tie() ->
         select_best_checkpoint(candidates)
 
 
+def test_checkpoint_selection_accepts_component_native_strict_rate() -> None:
+    report = {
+        "strict_success": {"rate": 1 / 3},
+        "per_env": [{"env_id": "validation-0"}],
+        "success_summary": {"mean_object_goal_distance_m": 0.04},
+        "decomposed_metrics": {"place": {"rate": 1 / 3}},
+    }
+    selected = select_best_checkpoint(
+        [
+            {
+                "evaluation_split": "validation",
+                "training_iteration": 100,
+                "checkpoint_uri": "s3://bucket/model-100.pt",
+                "validation_report": report,
+            }
+        ]
+    )
+    assert selected["rank_key"][0] == pytest.approx(1 / 3)
+
+
 def test_eval_is_stratified_and_strict_success_requires_stability() -> None:
     rows = [
         {
@@ -442,11 +473,13 @@ Episode_Reward/reaching_object: 0.1000
 Episode_Reward/lifting_object: 0.2000
 Episode_Reward/object_goal_tracking: 0.0500
 Metrics/object_pose/position_error: 0.1800
+Episode_Termination/stable_placement_success: 0.1250
 Total timesteps: 24576
 """
     telemetry = parse_ppo_training_log(log)
     assert telemetry["configured_iterations"] == 500
     assert telemetry["final_iteration"]["value_loss"] == 0.02
     assert telemetry["final_iteration"]["total_timesteps"] == 24576
+    assert telemetry["final_iteration"]["stable_placement_termination_rate"] == 0.125
     with pytest.raises(ValueError, match="no Learning iteration"):
         parse_ppo_training_log("no telemetry")

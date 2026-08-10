@@ -205,13 +205,20 @@ credible placement signal before the full 3x3 proof is submitted.
 
 The scenario-bound Isaac task supplies a last-mile placement curriculum without
 changing that verdict. It activates after a real 4 cm lift, provides a broad
-object-to-goal approach gradient, rewards low velocity near the goal, and adds a
-bonus only at the exact 5 cm / 0.03 m/s boundary. Its 0.35 m approach scale and
-weight 32 are deliberate: the first live validation canary reached and contacted
-3/3 objects and grasped/lifted 2/3, but its closest target distances were still
-0.205--0.364 m; the earlier 0.15 m, weight-8 term was effectively flat there and
-left lift as the dominant objective. These curriculum constants change the
-training gradient, never the evaluator's strict threshold. PPO begins each pass
+object-to-goal approach gradient, velocity-gates that gradient so carrying
+through the target is not rewarded like holding it, and adds a bonus only at the
+exact 5 cm / 0.03 m/s boundary. Training terminates a successful episode after
+the same three consecutive stable steps used by evaluation; evaluation itself
+does not enable that termination and independently observes the complete event.
+Its 0.35 m approach scale and weight 32 are deliberate: the first live validation
+canary reached and contacted 3/3 objects and grasped/lifted 2/3, but its closest
+target distances were still 0.205--0.364 m; the earlier 0.15 m, weight-8 term was
+effectively flat there and left lift as the dominant objective. A follow-up
+seven-checkpoint validation ladder proved that later training learned 3/3
+reach/contact/grasp/lift and came within 0.057 m, but then moved away. The 0.15
+m/s approach gate and exact success termination address that measured fly-through
+failure. These curriculum constants change the training gradient, never the
+evaluator's strict threshold. PPO begins each pass
 at the stock-like entropy coefficient (`0.006`) and anneals to `0.0005` after
 60% of the configured iterations. This preserves early grasp/lift discovery while
 allowing the final policy to stop carrying or dropping the object; the initial

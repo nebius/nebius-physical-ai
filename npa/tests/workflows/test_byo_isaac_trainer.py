@@ -132,6 +132,8 @@ def test_build_isaac_job_manifest_shape():
     assert "npa.workflows.sim2real.isaac_job_io upload-training" in args
     assert "pip install" not in args
     assert "<<" not in args
+    env = {item["name"]: item["value"] for item in container["env"]}
+    assert env["NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION"] == "1"
 
 
 def test_dryrun_main_writes_contract_json(tmp_path, monkeypatch):

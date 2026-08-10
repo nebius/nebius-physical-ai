@@ -299,6 +299,9 @@ _PPO_FIELDS = {
     "Metrics/object_pose/orientation_error": "object_orientation_error",
     "Episode_Termination/time_out": "timeout_rate",
     "Episode_Termination/object_dropping": "drop_rate",
+    "Episode_Termination/stable_placement_success": (
+        "stable_placement_termination_rate"
+    ),
     "Total timesteps": "total_timesteps",
 }
 
@@ -948,6 +951,10 @@ def build_isaac_job_manifest(
                                 {
                                     "name": "NPA_SIM2REAL_RUNTIME_IMAGE",
                                     "value": image.removeprefix("docker:"),
+                                },
+                                {
+                                    "name": "NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION",
+                                    "value": "1",
                                 },
                                 *_isaac_eula_env_entries(),
                             ],

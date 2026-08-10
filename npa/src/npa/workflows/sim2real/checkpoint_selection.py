@@ -10,6 +10,15 @@ def _rate(report: dict[str, Any], name: str) -> float:
     return float(value.get("rate") or 0.0) if isinstance(value, dict) else 0.0
 
 
+def _strict_rate(report: dict[str, Any]) -> float:
+    """Read either normalized or component-native strict success evidence."""
+
+    if "success_rate" in report:
+        return float(report.get("success_rate") or 0.0)
+    strict = report.get("strict_success") or {}
+    return float(strict.get("rate") or 0.0) if isinstance(strict, dict) else 0.0
+
+
 def checkpoint_rank_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     """Rank strict manipulation success first, with deterministic tie breaks.
 
@@ -21,7 +30,7 @@ def checkpoint_rank_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     summary = dict(report.get("success_summary") or {})
     mean_distance = float(summary.get("mean_object_goal_distance_m") or 1.0e9)
     return (
-        float(report.get("success_rate") or 0.0),
+        _strict_rate(report),
         _rate(report, "place"),
         _rate(report, "lift"),
         _rate(report, "stable_grasp"),

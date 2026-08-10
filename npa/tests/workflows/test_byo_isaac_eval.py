@@ -490,4 +490,6 @@ def test_build_heldout_report_multi_threshold_success_summary():
     assert s["success@0.10"] == 0.50  # 0.03, 0.08
     assert s["success@0.15"] == 0.75  # 0.03, 0.08, 0.12
     assert s["min_object_goal_distance_m"] == 0.03
+    assert report["success_rate"] == 0.25
+    assert report["strict_success"]["rate"] == report["success_rate"]
     assert report["per_env"][0]["success"] is True

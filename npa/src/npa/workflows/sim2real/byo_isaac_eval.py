@@ -165,6 +165,7 @@ def build_heldout_report(
             "rate": round(strict_count / n, 6) if n else 0.0,
             "wilson_95": _wilson(strict_count, n),
         },
+        "success_rate": round(strict_count / n, 6) if n else 0.0,
         "decomposed_metrics": decomposed,
         "per_difficulty": strata,
         "per_env": per_env,

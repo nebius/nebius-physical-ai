@@ -24,12 +24,14 @@ EXPECTED_SCENE_ID = "isaac://Isaac-Lift-Cube-Franka-v0/stock-table-v1"
 EXPECTED_LIGHT_INTENSITY = 3000.0
 STABLE_PLACEMENT_DISTANCE_M = 0.05
 STABLE_PLACEMENT_SPEED_MPS = 0.03
+STABLE_PLACEMENT_STEPS = 3
 # The first validation canary learned reach/contact and 2/3 grasp+lift, but the
 # closest goal distance remained 0.205-0.364 m.  A 0.15 m tanh scale multiplied
 # by weight 8 is effectively flat at that boundary, so lifting remains the much
 # easier dominant objective.  Keep the strict verdict at 5 cm while making the
 # curriculum genuinely dense across the observed post-lift placement basin.
 PLACEMENT_APPROACH_STD_M = 0.35
+PLACEMENT_APPROACH_SPEED_MPS = 0.15
 STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
@@ -166,6 +168,10 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
             len(rows), dtype=torch.long, device=env.device
         )
         env.npa_scenario_rows = rows
+    if not hasattr(env, "npa_stable_placement_steps"):
+        env.npa_stable_placement_steps = torch.zeros(
+            env.num_envs, dtype=torch.long, device=env.device
+        )
 
 
 def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
@@ -185,6 +191,7 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
     else:
         scenario_ids = (ids + offset) % len(rows)
     env.npa_scenario_indices[ids] = scenario_ids
+    env.npa_stable_placement_steps[ids] = 0
     env.npa_scenario_applied_counts += torch.bincount(scenario_ids, minlength=len(rows))
     return ids, scenario_ids
 
@@ -297,12 +304,54 @@ def _scenario_command_type() -> type:
     return ScenarioPoseCommand
 
 
+def placement_curriculum_signal(
+    distance: Any,
+    speed: Any,
+    *,
+    tanh: Any,
+    approach_std_m: float = PLACEMENT_APPROACH_STD_M,
+    approach_speed_mps: float = PLACEMENT_APPROACH_SPEED_MPS,
+    stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
+) -> Any:
+    """Return dense approach reward only to policies that arrest near the goal.
+
+    The broad speed gate keeps a gradient while the object is moving deliberately,
+    while the strict stillness gate makes fly-through trajectories much less
+    valuable than holding the same position. ``tanh`` is injected so this contract
+    is testable with scalar math without importing Isaac's Torch runtime.
+    """
+
+    approach = 1.0 - tanh(distance / float(approach_std_m))
+    approach_stillness = 1.0 - tanh(speed / float(approach_speed_mps))
+    strict_stillness = 1.0 - tanh(speed / float(stable_speed_mps))
+    return approach * approach_stillness + approach * strict_stillness
+
+
+def _placement_state(
+    env: Any, *, command_name: str, object_name: str
+) -> tuple[Any, Any, Any]:
+    """Return object distance, linear speed, and position for placement terms."""
+
+    import torch  # noqa: WPS433 - Isaac runtime dependency
+
+    obj = env.scene[object_name]
+    position = obj.data.root_pos_w[:, :3]
+    goal = (
+        env.command_manager.get_command(command_name)[:, :3]
+        + env.scene.env_origins[:, :3]
+    )
+    distance = torch.linalg.norm(position - goal, dim=1)
+    speed = torch.linalg.norm(obj.data.root_lin_vel_w[:, :3], dim=1)
+    return distance, speed, position
+
+
 def stable_placement_curriculum(
     env: Any,
     *,
     command_name: str = "object_pose",
     object_name: str = "object",
     approach_std_m: float = PLACEMENT_APPROACH_STD_M,
+    approach_speed_mps: float = PLACEMENT_APPROACH_SPEED_MPS,
     success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
     minimal_lift_m: float = PLACEMENT_MINIMAL_LIFT_M,
@@ -325,21 +374,50 @@ def stable_placement_curriculum(
     import torch  # noqa: WPS433 - Isaac runtime dependency
 
     obj = env.scene[object_name]
-    position = obj.data.root_pos_w[:, :3]
-    goal = (
-        env.command_manager.get_command(command_name)[:, :3]
-        + env.scene.env_origins[:, :3]
+    distance, speed, position = _placement_state(
+        env, command_name=command_name, object_name=object_name
     )
-    distance = torch.linalg.norm(position - goal, dim=1)
-    speed = torch.linalg.norm(obj.data.root_lin_vel_w[:, :3], dim=1)
     initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
     lifted = (position[:, 2] - initial_z >= float(minimal_lift_m)).to(position.dtype)
-    approach = 1.0 - torch.tanh(distance / float(approach_std_m))
-    stillness = 1.0 - torch.tanh(speed / float(stable_speed_mps))
+    dense = placement_curriculum_signal(
+        distance,
+        speed,
+        tanh=torch.tanh,
+        approach_std_m=approach_std_m,
+        approach_speed_mps=approach_speed_mps,
+        stable_speed_mps=stable_speed_mps,
+    )
     strict = (
-        (distance <= float(success_distance_m)) & (speed <= float(stable_speed_mps))
+        (distance < float(success_distance_m)) & (speed < float(stable_speed_mps))
     ).to(position.dtype)
-    return lifted * (approach + approach * stillness + strict)
+    return lifted * (dense + strict)
+
+
+def stable_placement_success(
+    env: Any,
+    *,
+    command_name: str = "object_pose",
+    object_name: str = "object",
+    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
+    stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
+    required_steps: int = STABLE_PLACEMENT_STEPS,
+) -> Any:
+    """Terminate training after the evaluator's exact stable-placement event."""
+
+    import torch  # noqa: WPS433 - Isaac runtime dependency
+
+    rows = scenarios_from_env()
+    _ensure_runtime_buffers(env, rows)
+    distance, speed, _ = _placement_state(
+        env, command_name=command_name, object_name=object_name
+    )
+    stable = (distance < float(success_distance_m)) & (speed < float(stable_speed_mps))
+    env.npa_stable_placement_steps = torch.where(
+        stable,
+        env.npa_stable_placement_steps + 1,
+        torch.zeros_like(env.npa_stable_placement_steps),
+    )
+    return env.npa_stable_placement_steps >= int(required_steps)
 
 
 def install_env_cfg(env_cfg: Any) -> bool:
@@ -351,6 +429,7 @@ def install_env_cfg(env_cfg: Any) -> bool:
     from isaaclab.managers import EventTermCfg as EventTerm
     from isaaclab.managers import RewardTermCfg
     from isaaclab.managers import SceneEntityCfg
+    from isaaclab.managers import TerminationTermCfg as DoneTerm
 
     env_cfg.events.reset_object_position = EventTerm(
         func=apply_scenario_reset,
@@ -366,11 +445,26 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "command_name": "object_pose",
             "object_name": "object",
             "approach_std_m": PLACEMENT_APPROACH_STD_M,
+            "approach_speed_mps": PLACEMENT_APPROACH_SPEED_MPS,
             "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
             "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
             "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
         },
     )
+    success_termination_enabled = (
+        os.environ.get("NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION", "0") == "1"
+    )
+    if success_termination_enabled:
+        env_cfg.terminations.stable_placement_success = DoneTerm(
+            func=stable_placement_success,
+            params={
+                "command_name": "object_pose",
+                "object_name": "object",
+                "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
+                "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
+                "required_steps": STABLE_PLACEMENT_STEPS,
+            },
+        )
     # The light is global across cloned envs.  All curated records use this exact
     # value, so setting it once is an applied contract, not a per-env label.
     if hasattr(env_cfg.scene.light.spawn, "intensity"):
@@ -394,9 +488,12 @@ def install_env_cfg(env_cfg: Any) -> bool:
                 "placement_curriculum": {
                     "weight": STABLE_PLACEMENT_REWARD_WEIGHT,
                     "approach_std_m": PLACEMENT_APPROACH_STD_M,
+                    "approach_speed_mps": PLACEMENT_APPROACH_SPEED_MPS,
                     "strict_distance_m": STABLE_PLACEMENT_DISTANCE_M,
                     "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
+                    "stable_steps": STABLE_PLACEMENT_STEPS,
                     "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
+                    "success_termination_enabled": success_termination_enabled,
                 },
             },
             sort_keys=True,
