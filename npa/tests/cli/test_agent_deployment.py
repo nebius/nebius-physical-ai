@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,9 @@ from npa.cli.agent import _auth_secret_path
 from npa.cli.agent_deployment import (
     AgentConfig,
     DeploymentIdentityError,
+    agent_lifecycle_lock,
     assert_live_deployment,
+    assert_remote_owner_if_present,
     assert_record_ownership,
     build_deployment_manifest,
     load_runtime_deployment,
@@ -59,6 +62,7 @@ def test_manifest_captures_exact_immutable_git_source(source_repo: Path) -> None
     assert manifest["repository"] == "nebius/nebius-physical-ai"
     assert manifest["branch"] == "codex/wan-pr261"
     assert manifest["commit"] == _git(source_repo, "rev-parse", "HEAD")
+    assert manifest["source_tree"] == _git(source_repo, "rev-parse", "HEAD^{tree}")
     assert manifest["short_commit"] == manifest["commit"][:12]
     assert manifest["workspace_label"] == "Wan Workbench"
 
@@ -124,6 +128,61 @@ def test_remote_verifier_rejects_wrong_runtime(source_repo: Path) -> None:
 
     with pytest.raises(DeploymentIdentityError, match="deployment_id"):
         verify_remote_deployment(FakeSsh(), expected)
+
+
+def test_existing_remote_owner_is_checked_before_bootstrap(source_repo: Path) -> None:
+    expected = _manifest(source_repo)
+    actual = dict(expected)
+    actual["branch"] = "codex/other-pr"
+
+    class FakeSsh:
+        def run(self, command: str, **_kwargs: object) -> tuple[int, str, str]:
+            assert command == "curl -fsS http://127.0.0.1:8787/deployment"
+            return 0, json.dumps(actual), ""
+
+    with pytest.raises(DeploymentIdentityError, match="owner mismatch.*branch"):
+        assert_remote_owner_if_present(FakeSsh(), expected)
+
+
+def test_repository_manifest_redacts_remote_credentials(source_repo: Path) -> None:
+    _git(source_repo, "remote", "set-url", "origin", "https://user:secret@example.com/org/repo.git?token=private")
+    manifest = _manifest(source_repo)
+    assert manifest["repository"] == "example.com/org/repo.git"
+    assert "user" not in manifest["repository"]
+    assert "secret" not in manifest["repository"]
+    assert "private" not in manifest["repository"]
+
+
+def test_lifecycle_lock_serializes_same_namespace(tmp_path: Path) -> None:
+    first_entered = threading.Event()
+    second_attempting = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+
+    def first() -> None:
+        with agent_lifecycle_lock("project-a", "wan-pr261", lock_root=tmp_path):
+            first_entered.set()
+            release_first.wait()
+
+    def second() -> None:
+        first_entered.wait()
+        second_attempting.set()
+        with agent_lifecycle_lock("project-a", "wan-pr261", lock_root=tmp_path):
+            second_entered.set()
+
+    one = threading.Thread(target=first)
+    two = threading.Thread(target=second)
+    one.start()
+    two.start()
+    assert first_entered.wait(2)
+    assert second_attempting.wait(2)
+    assert not second_entered.is_set()
+    release_first.set()
+    one.join(2)
+    two.join(2)
+    assert not one.is_alive()
+    assert not two.is_alive()
+    assert second_entered.is_set()
 
 
 def test_runtime_manifest_and_agent_record_preserve_provenance(

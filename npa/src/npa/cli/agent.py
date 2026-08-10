@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import base64
+import functools
+import inspect
+import ipaddress
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
 import subprocess
-import ipaddress
-import tarfile
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -26,6 +28,7 @@ from npa.clients.config import (
     resolve_environment,
     resolve_ssh_config,
     resolve_terraform_state,
+    remove_agent_config,
     write_config,
 )
 from npa.clients.env import redact_value
@@ -67,7 +70,9 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
 from npa.cli.agent_deployment import (
     AgentConfig,
     DeploymentIdentityError,
+    agent_lifecycle_lock,
     assert_live_deployment,
+    assert_remote_owner_if_present,
     assert_record_ownership,
     build_agent_urls,
     build_deployment_manifest,
@@ -136,6 +141,24 @@ _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 def _fail(message: str) -> NoReturn:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code=1)
+
+
+def _serialized_agent_lifecycle(func):
+    """Hold the project/name ownership lock for an entire lifecycle command."""
+    signature = inspect.signature(func)
+
+    @functools.wraps(func)
+    def wrapped(*args, **kwargs):
+        bound = signature.bind_partial(*args, **kwargs)
+        project = str(bound.arguments.get("project", DEFAULT_PROJECT_ALIAS))
+        name = str(bound.arguments.get("name", DEFAULT_AGENT_NAME))
+        try:
+            with agent_lifecycle_lock(project, name):
+                return func(*args, **kwargs)
+        except DeploymentIdentityError as exc:
+            _fail(str(exc))
+
+    return wrapped
 
 
 def _looks_like_compute_permission_denied(message: str) -> bool:
@@ -260,27 +283,7 @@ def _store_agent_record(project_alias: str, name: str, payload: dict[str, Any]) 
 
 
 def _remove_agent_record(project_alias: str, name: str) -> None:
-    from npa.clients.config import CONFIG_PATH, _load_yaml
-    import yaml
-
-    data = _load_yaml()
-    projects = data.get("projects", {})
-    if not isinstance(projects, dict):
-        return
-    project = projects.get(project_alias, {})
-    if not isinstance(project, dict):
-        return
-    agents = project.get("agents", {})
-    if not isinstance(agents, dict) or name not in agents:
-        return
-    del agents[name]
-    project["agents"] = agents
-    projects[project_alias] = project
-    data["projects"] = projects
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
-    CONFIG_PATH.chmod(0o600)
+    remove_agent_config(project_alias, name)
 
 
 def _agent_extra_ingress_ports(
@@ -1032,55 +1035,44 @@ def _env_line_value(value: str) -> str:
     return " ".join(str(value or "").split()).strip()
 
 
-def _create_agent_source_archive() -> str:
-    """Package the NPA source tree needed for agent-side workflow execution."""
+def _create_agent_source_archive(commit: str) -> str:
+    """Package agent-side source from the exact declared immutable commit."""
     repo_root = Path(__file__).resolve().parents[4]
-    include_roots = [
-        repo_root / "npa",
-        repo_root / "deploy" / "cluster",
-    ]
-    for path in include_roots:
-        if not path.exists():
-            raise ConfigError(f"Required agent source path is missing: {path}")
-
-    exclude_names = {
-        ".git",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".terraform",
-        ".venv",
-        "__pycache__",
-        "node_modules",
-    }
-
+    immutable_commit = str(commit or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", immutable_commit):
+        raise ConfigError("Deployment manifest commit must be a full Git SHA")
     tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
     tmp.close()
-
-    def _filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-        parts = set(Path(info.name).parts)
-        if parts & exclude_names:
-            return None
-        if info.name.endswith((".pyc", ".pyo")):
-            return None
-        return info
-
-    with tarfile.open(tmp.name, "w:gz") as archive:
-        archive.add(repo_root / "npa", arcname="npa", filter=_filter)
-        archive.add(repo_root / "deploy" / "cluster", arcname="deploy/cluster", filter=_filter)
-        # Stage the repo-root docs/ + skills/ trees so the agent's retrieval
-        # corpus (Blueprint Phase H) can ground on them at
-        # /opt/npa-agent/npa-src/{docs,skills}. Text-only; excluded via _filter.
-        for extra in ("docs", "skills"):
-            extra_path = repo_root / extra
-            if extra_path.exists():
-                archive.add(extra_path, arcname=extra, filter=_filter)
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_root),
+            "archive",
+            "--format=tar.gz",
+            f"--output={tmp.name}",
+            immutable_commit,
+            "npa",
+            "deploy/cluster",
+            "docs",
+            "skills",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise ConfigError(
+            "Unable to archive the declared Git commit: "
+            + (result.stderr.strip() or f"git archive exited {result.returncode}")
+        )
     return tmp.name
 
 
-def _stage_agent_npa_source(ssh: SSHClient) -> None:
+def _stage_agent_npa_source(ssh: SSHClient, *, commit: str) -> None:
     """Upload NPA package source and deploy assets to the agent VM."""
-    archive_path = _create_agent_source_archive()
+    archive_path = _create_agent_source_archive(commit)
     remote_archive = f"/tmp/npa-agent-source-{secrets.token_hex(6)}.tar.gz"
     try:
         ssh.upload_file(archive_path, remote_archive)
@@ -1345,6 +1337,10 @@ def _bootstrap_agent_stack(
     )
     deployment_json = json.dumps(deployment, sort_keys=True)
     deployment_b64 = base64.b64encode(deployment_json.encode("utf-8")).decode("ascii")
+    # This check runs before staging source, writing manifests, or restarting
+    # services. A stale/missing local record cannot authorize overwriting a VM
+    # that is still advertising a different immutable owner.
+    assert_remote_owner_if_present(ssh, deployment, backend_port=backend_port)
     preload_stock_demo_value = "1" if preload_stock_demo else "0"
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
@@ -1391,6 +1387,9 @@ server {{
     nebius_profile = "cursor-sa"
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
     lichtblick_port = DEFAULT_LICHTBLICK_PORT
+    rerun_recording_arg = (
+        "/opt/npa-agent/sim2real.rrd " if preload_stock_demo else ""
+    )
     lichtblick_image = str(
         os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip() or "npa-lichtblick:1.26.0"
     )
@@ -1705,8 +1704,15 @@ def _state_s3_settings() -> dict[str, str]:
 def _state_s3_key() -> str:
     settings = _state_s3_settings()
     project_alias, agent_name, session_scope = _state_scope_parts()
+    deployment_id = _slug(
+        str(DEPLOYMENT.get("deployment_id") or ""),
+        fallback=f"{{project_alias}}-{{agent_name}}",
+    )
     prefix = settings.get("prefix", "npa-agent/session-state")
-    return f"{{prefix}}/{{project_alias}}/{{agent_name}}/{{session_scope}}.json"
+    return (
+        f"{{prefix}}/{{project_alias}}/{{agent_name}}/deployments/"
+        f"{{deployment_id}}/{{session_scope}}.json"
+    )
 
 def _state_s3_client():
     settings = _state_s3_settings()
@@ -1759,8 +1765,11 @@ def _save_state_to_s3(state: dict) -> None:
 
 def _default_state() -> dict:
     project_alias, agent_name, session_scope = _state_scope_parts()
+    selection = dict(DEFAULT_SELECTION)
+    if not PRELOAD_STOCK_DEMO:
+        selection.update({{"robot_preset": "", "sim_backend": ""}})
     return {{
-        "selection": dict(DEFAULT_SELECTION),
+        "selection": selection,
         "camera_selection": ["workspace"],
         "sim_viz": dict(DEFAULT_SIM_VIZ),
         "sim_viz_runs": {{}},
@@ -1774,7 +1783,8 @@ def _default_state() -> dict:
         "chat_sessions": {{}},
         "session_scope": session_scope,
         "agent_scope": {{"project_alias": project_alias, "name": agent_name}},
-        "state_version": 2,
+        "deployment_id": str(DEPLOYMENT.get("deployment_id") or ""),
+        "state_version": 3,
     }}
 
 _STATE_LOCK = threading.RLock()
@@ -1794,6 +1804,11 @@ def _get_state_store() -> StateStore:
 
 def _normalize_loaded_state(data: dict | None) -> dict:
     if not isinstance(data, dict):
+        return _default_state()
+    expected_deployment_id = str(DEPLOYMENT.get("deployment_id") or "")
+    if str(data.get("deployment_id") or "") != expected_deployment_id:
+        # Local files and legacy S3 keys are mutable deployment state. Never
+        # hydrate them into another deployment, even if alias/name were reused.
         return _default_state()
     merged = _default_state()
     merged.update(data)
@@ -1816,11 +1831,27 @@ def _normalize_loaded_state(data: dict | None) -> dict:
     if not isinstance(merged.get("active_chat_session_id"), str):
         merged["active_chat_session_id"] = "default"
     if not PRELOAD_STOCK_DEMO:
-        merged["sim_viz_runs"].pop("franka-demo", None)
-        if str(merged["sim_viz"].get("run_id") or "") == "franka-demo":
+        # Artifact-only workspaces preserve source-qualified S3 selections and
+        # discard stock/synthetic verifier state on every restart.
+        merged["sim_viz_runs"] = {{
+            key: value
+            for key, value in merged["sim_viz_runs"].items()
+            if isinstance(value, dict)
+            and str(value.get("artifact_uri") or "").startswith("s3://")
+        }}
+        if not str(merged["sim_viz"].get("artifact_uri") or "").startswith("s3://"):
             merged["sim_viz"] = dict(DEFAULT_SIM_VIZ)
-        if str(merged.get("active_run_id") or "") == "franka-demo":
+        if str(merged.get("active_run_id") or "") not in merged["sim_viz_runs"]:
             merged["active_run_id"] = ""
+        clean = _default_state()
+        for key in (
+            "selection",
+            "sim2real_runs",
+            "latest_submit",
+            "workflow_draft",
+            "workflow_submit",
+        ):
+            merged[key] = clean[key]
     return merged
 
 
@@ -1836,7 +1867,8 @@ def _load_state_unlocked() -> dict:
 def _save_state_unlocked(state: dict) -> None:
     # Caller must hold _STATE_LOCK / store.lock.
     state["updated_at"] = _now_iso()
-    state["state_version"] = int(state.get("state_version") or 2)
+    state["deployment_id"] = str(DEPLOYMENT.get("deployment_id") or "")
+    state["state_version"] = int(state.get("state_version") or 3)
     _get_state_store().save(state)
 
 
@@ -6333,7 +6365,16 @@ def agent_trace_analyze(payload: dict):
 
 @app.get("/health")
 def health():
-    return {{"ok": True, "tool_refs": len(TOOL_REFS), "deployment": dict(DEPLOYMENT)}}
+    state = _load_state()
+    state_sha256 = hashlib.sha256(
+        json.dumps(state, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {{
+        "ok": True,
+        "tool_refs": len(TOOL_REFS),
+        "deployment": dict(DEPLOYMENT),
+        "state_sha256": state_sha256,
+    }}
 
 @app.get("/deployment")
 def deployment_identity():
@@ -7374,7 +7415,7 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
             raise
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"Unable to fetch remote sim2real.rrd: {{exc}}") from exc
-    if RRD_PATH.is_file():
+    if PRELOAD_STOCK_DEMO and RRD_PATH.is_file():
         return FileResponse(str(RRD_PATH), media_type="application/octet-stream")
     raise HTTPException(status_code=404, detail="No sim2real.rrd file on disk yet")
 
@@ -8109,7 +8150,11 @@ _rec.parent.mkdir(parents=True, exist_ok=True)
 _shutil.copy2(target, _rec)
 PY
 sudo mkdir -p /opt/npa-agent/recordings
-sudo cp -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd || true
+if [ {preload_stock_demo_value} = 1 ]; then
+  sudo cp -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd || true
+else
+  sudo rm -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd
+fi
 # Tiny ftyp sample so live media-type checks work even when S3 has no .mp4 runs.
 sudo python3 - <<'PY'
 from pathlib import Path
@@ -8208,7 +8253,11 @@ sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
 sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml boto3 "rerun-sdk>=0.32"
 sudo /opt/npa-agent/venv/bin/pip install -e "{AGENT_SOURCE_ROOT}/npa[server,foxglove]"
-sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
+if [ {preload_stock_demo_value} = 1 ]; then
+  sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
+else
+  sudo rm -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd
+fi
 sudo systemctl restart npa-rerun || true
 cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null
 [Unit]
@@ -8233,7 +8282,7 @@ Description=NPA rerun service
 After=network.target
 [Service]
 Type=simple
-ExecStart=/opt/npa-agent/venv/bin/rerun /opt/npa-agent/sim2real.rrd --serve-web --web-viewer --bind 0.0.0.0 --web-viewer-port {rerun_port} --port 9876
+ExecStart=/opt/npa-agent/venv/bin/rerun {rerun_recording_arg}--serve-web --web-viewer --bind 0.0.0.0 --web-viewer-port {rerun_port} --port 9876
 WorkingDirectory=/opt/npa-agent
 Restart=always
 StartLimitIntervalSec=0
@@ -8319,7 +8368,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
     remote_setup_script = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
     try:
-        _stage_agent_npa_source(ssh)
+        _stage_agent_npa_source(ssh, commit=str(deployment.get("commit") or ""))
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
             handle.write(setup_script)
             local_setup_script = handle.name
@@ -8410,6 +8459,150 @@ def _health(
     return response.status_code == 200, response.status_code
 
 
+def _artifact_only_http_probe(client: httpx.Client) -> dict[str, Any]:
+    """Exercise artifact-only live APIs using GETs and prove state is unchanged."""
+
+    def get_json(path: str) -> dict[str, Any]:
+        response = client.get(path)
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise DeploymentIdentityError(f"{path} returned a non-object payload")
+        return payload
+
+    before = get_json("/api/health")
+    before_digest = str(before.get("state_sha256") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", before_digest):
+        raise DeploymentIdentityError("artifact-only health is missing state_sha256")
+    session = get_json("/api/session")
+    runs = get_json("/api/artifacts/runs?prefix=&limit=100")
+    tools = get_json("/api/tools")
+    workflow = get_json("/api/workflows/sim2real/status")
+    infra = get_json("/api/infra/k8s")
+    if not isinstance(runs.get("runs"), list):
+        raise DeploymentIdentityError("artifact discovery did not return a runs list")
+    if not isinstance(tools.get("tool_refs"), list):
+        raise DeploymentIdentityError("tool catalog did not return tool_refs")
+    after = get_json("/api/health")
+    after_digest = str(after.get("state_sha256") or "")
+    if after_digest != before_digest:
+        raise DeploymentIdentityError(
+            "artifact-only live verification mutated durable session state"
+        )
+    return {
+        "state_sha256": before_digest,
+        "run_count": len(runs["runs"]),
+        "tool_ref_count": len(tools["tool_refs"]),
+        "session": session,
+        "workflow": workflow,
+        "infra": infra,
+    }
+
+
+def _verify_artifact_only_live(
+    *,
+    record: dict[str, Any],
+    auth_user: str,
+    auth_password: str,
+    tls_verify: bool,
+    project: str,
+    name: str,
+) -> None:
+    """Run the no-stock live gate without writing chat/workflow/demo state."""
+    agent_base = str(record.get("agent_url", "")).rstrip("/")
+    try:
+        with httpx.Client(
+            base_url=agent_base,
+            auth=(auth_user, auth_password),
+            verify=tls_verify,
+            timeout=30.0,
+        ) as client:
+            result = _artifact_only_http_probe(client)
+    except (httpx.HTTPError, DeploymentIdentityError) as exc:
+        _fail(f"artifact-only read-only probe failed: {exc}")
+
+    from npa.agent_rerun_bundle_check import (
+        check_rerun_bundle_load_budget,
+        format_bundle_budget_report,
+    )
+
+    bundle_result = check_rerun_bundle_load_budget(
+        agent_base,
+        auth=(auth_user, auth_password),
+        verify=tls_verify,
+    )
+    typer.echo(format_bundle_budget_report(bundle_result))
+    if not bundle_result.ok:
+        _fail(
+            "rerun bundle load budget failed: "
+            + "; ".join(bundle_result.errors[:4])
+        )
+
+    test_env = {
+        **dict(os.environ),
+        "NPA_INTEGRATION_E2E": "1",
+        "NPA_AGENT_LIVE": "1",
+        "NPA_AGENT_PROJECT": project,
+        "NPA_AGENT_NAME": name,
+        "NPA_AGENT_VERIFY_READ_ONLY": "1",
+    }
+    suites = (
+        (
+            "smoke",
+            [
+                "npa/tests/smoke/test_agent_smoke.py",
+                "npa/tests/smoke/test_agent_chat_smoke.py",
+            ],
+        ),
+        (
+            "unit",
+            ["npa/tests/cli/test_agent.py", "npa/tests/cli/test_agent_workflow.py"],
+        ),
+        (
+            "read-only live e2e",
+            [
+                "npa/tests/e2e/test_agent_live.py",
+                "-k",
+                (
+                    "agent_ui_html_smoke or agent_health_and_session or "
+                    "agent_sim_assets_and_catalog or agent_tools_catalog or "
+                    "agent_workbench_actions or agent_rerun_iframe_reachable"
+                ),
+            ],
+        ),
+    )
+    for label, suite_args in suites:
+        proc = subprocess.run(
+            ["npa/.venv/bin/python", "-m", "pytest", *suite_args, "-q"],
+            check=False,
+            env=test_env,
+        )
+        if proc.returncode != 0:
+            _fail(f"artifact-only {label} verification failed")
+
+    # The test processes and bundle probe are read-only, too. Verify the exact
+    # persisted state digest again after every gate has completed.
+    try:
+        with httpx.Client(
+            base_url=agent_base,
+            auth=(auth_user, auth_password),
+            verify=tls_verify,
+            timeout=30.0,
+        ) as client:
+            final = client.get("/api/health")
+            final.raise_for_status()
+            final_digest = str(final.json().get("state_sha256") or "")
+    except (httpx.HTTPError, ValueError) as exc:
+        _fail(f"artifact-only final state probe failed: {exc}")
+    if final_digest != result["state_sha256"]:
+        _fail("artifact-only verification changed durable state")
+    typer.echo(
+        "artifact-only read-only gate: "
+        f"runs={result['run_count']} tool_refs={result['tool_ref_count']} "
+        f"state_sha256={result['state_sha256']}"
+    )
+
+
 @app.command("preflight")
 def preflight_cmd(
     ssh_public_key_path: str = typer.Option(
@@ -8438,6 +8631,7 @@ def preflight_cmd(
 
 
 @app.command("deploy")
+@_serialized_agent_lifecycle
 def deploy_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias to store config under."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
@@ -8504,6 +8698,15 @@ def deploy_cmd(
         existing = _agent_record(project, name)
         if existing:
             assert_record_ownership(existing, deployment)
+        claim = dict(existing)
+        claim.update(
+            {
+                "deployment": deployment,
+                "lifecycle_status": "provisioning",
+                "preload_stock_demo": bool(stock_demo),
+            }
+        )
+        _store_agent_record(project, name, claim)
     except DeploymentIdentityError as exc:
         _fail(str(exc))
     profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
@@ -8849,6 +9052,7 @@ def fresh_setup_cmd(
 
 
 @app.command("bootstrap")
+@_serialized_agent_lifecycle
 def bootstrap_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
@@ -9178,6 +9382,7 @@ def status_cmd(
     recorded_deployment = record.get("deployment", {})
     live_deployment: dict[str, Any] = {}
     deployment_matches_record = False
+    deployment_error = ""
     try:
         live_deployment = fetch_live_deployment(
             agent_url, user=auth_user, password=auth_password, verify=tls_verify
@@ -9185,8 +9390,9 @@ def status_cmd(
         if isinstance(recorded_deployment, dict) and recorded_deployment:
             assert_live_deployment(recorded_deployment, live_deployment)
             deployment_matches_record = True
-    except (httpx.HTTPError, DeploymentIdentityError):
-        pass
+    except (httpx.HTTPError, DeploymentIdentityError) as exc:
+        deployment_error = str(exc)
+    overall_health = bool(ui_ok and rerun_ok and deployment_matches_record)
     payload = {
         "project": project,
         "name": name,
@@ -9199,23 +9405,27 @@ def status_cmd(
         "sim_viz_url": sim_viz_url,
         "sim_assets_url": sim_assets_url,
         "cameras_api_url": cameras_api_url,
-        "health": bool(ui_ok and rerun_ok),
+        "health": overall_health,
         "ui_status_code": ui_code,
         "rerun_status_code": rerun_code,
         "llm": record.get("llm", {}),
         "deployment": recorded_deployment,
         "live_deployment": live_deployment,
         "deployment_matches_record": deployment_matches_record,
+        "deployment_error": deployment_error,
         "preload_stock_demo": bool(record.get("preload_stock_demo", True)),
     }
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        return
-    for key, value in payload.items():
-        typer.echo(f"{key}: {value}")
+    else:
+        for key, value in payload.items():
+            typer.echo(f"{key}: {value}")
+    if not overall_health:
+        raise typer.Exit(code=1)
 
 
 @app.command("destroy")
+@_serialized_agent_lifecycle
 def destroy_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
@@ -9351,6 +9561,18 @@ def verify_live_cmd(
     cameras = cameras_payload.get("cameras", []) if isinstance(cameras_payload, dict) else []
     if not isinstance(cameras, list) or not cameras:
         _fail("cameras endpoint returned no cameras")
+
+    if not bool(record.get("preload_stock_demo", True)):
+        _verify_artifact_only_live(
+            record=record,
+            auth_user=auth_user,
+            auth_password=auth_password,
+            tls_verify=tls_verify,
+            project=project,
+            name=name,
+        )
+        typer.echo("verify-live: ok (artifact-only, read-only)")
+        return
 
     selection_body = {
         "robot_preset": "franka",
@@ -9847,7 +10069,7 @@ def verify_live_cmd(
                         "role": "user",
                         "content": (
                             "add an open source repo, containerize, push to registry, "
-                            "and run LeIsaac on live infra"
+                            "and run its declared smoke on live infra"
                         ),
                     }
                 ]

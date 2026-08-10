@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
+import os
 import re
 import subprocess
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -27,6 +31,7 @@ _IDENTITY_FIELDS = (
 _LIVE_FIELDS = (
     *_IDENTITY_FIELDS,
     "commit",
+    "source_tree",
     "short_commit",
     "workspace_label",
     "bootstrap_timestamp",
@@ -39,6 +44,8 @@ class DeploymentIdentityError(ValueError):
 
 
 class _SshRunner(Protocol):
+    def run(self, command: str, **kwargs: Any) -> tuple[int, str, str] | None: ...
+
     def run_or_raise(
         self, command: str, **kwargs: Any
     ) -> tuple[int, str, str] | None: ...
@@ -177,11 +184,49 @@ def _git(repo_root: Path, *args: str) -> str:
 
 
 def _repository_slug(remote: str) -> str:
+    """Return a public repository identity without URL credentials or local paths."""
     value = remote.strip().removesuffix(".git")
-    for marker in ("github.com/", "github.com:"):
-        if marker in value:
-            return value.split(marker, 1)[1].strip("/")
-    return value
+    scp_like = re.fullmatch(r"(?:[^@/:]+@)?([^/:]+):(.+)", value)
+    if scp_like and "://" not in value:
+        host, path = scp_like.groups()
+        path = path.strip("/")
+        return path if host.lower() == "github.com" else f"{host}/{path}"
+    parsed = urlsplit(value)
+    if parsed.scheme and parsed.hostname:
+        host = parsed.hostname
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        path = parsed.path.strip("/")
+        return path if parsed.hostname.lower() == "github.com" else f"{host}/{path}"
+    # A local-path remote is not suitable for the non-secret live manifest.
+    return Path(value).name or "local-repository"
+
+
+@contextmanager
+def agent_lifecycle_lock(
+    project_alias: str,
+    name: str,
+    *,
+    lock_root: Path | None = None,
+):
+    """Serialize every lifecycle mutation for one project/name namespace."""
+    project = validate_namespace_segment(project_alias, field="project alias")
+    deployment_name = validate_namespace_segment(name, field="agent name")
+    root = lock_root or (Path.home() / ".npa" / "locks" / "agents")
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root.chmod(0o700)
+    lock_path = root / f"{project}.{deployment_name}.lock"
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(lock_path, flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield lock_path
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def build_deployment_manifest(
@@ -206,6 +251,7 @@ def build_deployment_manifest(
     repository = _repository_slug(_git(root, "remote", "get-url", "origin"))
     branch = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD")
     commit = _git(root, "rev-parse", "HEAD")
+    source_tree = _git(root, "rev-parse", f"{commit}^{{tree}}")
     identity = "\0".join((repository, branch, project, deployment_name))
     deployment_id = "npa-agent-" + hashlib.sha256(identity.encode()).hexdigest()[:20]
     timestamp = bootstrap_timestamp or datetime.now(timezone.utc).isoformat().replace(
@@ -220,6 +266,7 @@ def build_deployment_manifest(
         "repository": repository,
         "branch": branch,
         "commit": commit,
+        "source_tree": source_tree,
         "short_commit": commit[:12],
         "workspace_label": normalize_workspace_label(workspace_label),
         "bootstrap_timestamp": timestamp,
@@ -258,7 +305,10 @@ def assert_live_deployment(
     expected: Mapping[str, str], actual: Mapping[str, Any]
 ) -> None:
     mismatches = [
-        field for field in _LIVE_FIELDS if str(actual.get(field, "")) != expected[field]
+        field
+        for field in _LIVE_FIELDS
+        if not str(expected.get(field, "")).strip()
+        or str(actual.get(field, "")) != str(expected.get(field, ""))
     ]
     if mismatches:
         raise DeploymentIdentityError(
@@ -307,6 +357,30 @@ def verify_remote_deployment(
     if not isinstance(actual, dict):
         raise DeploymentIdentityError("live deployment endpoint returned a non-object")
     assert_live_deployment(expected, actual)
+    return actual
+
+
+def assert_remote_owner_if_present(
+    ssh: _SshRunner, expected: Mapping[str, str], *, backend_port: int = 8787
+) -> dict[str, Any]:
+    """Reject a reachable VM backend owned by a different branch/deployment."""
+    result = ssh.run(f"curl -fsS http://127.0.0.1:{int(backend_port)}/deployment")
+    if not result:
+        return {}
+    code, stdout, _ = result
+    if code != 0 or not stdout.strip():
+        return {}
+    try:
+        actual = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise DeploymentIdentityError(
+            "existing agent backend returned invalid deployment ownership JSON"
+        ) from exc
+    if not isinstance(actual, dict):
+        raise DeploymentIdentityError(
+            "existing agent backend returned non-object deployment ownership"
+        )
+    assert_record_ownership({"deployment": actual}, expected)
     return actual
 
 

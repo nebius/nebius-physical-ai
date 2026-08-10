@@ -25,6 +25,80 @@ from npa.cli.agent import (
 runner = CliRunner()
 
 
+def test_artifact_only_live_probe_is_read_only_and_state_stable() -> None:
+    from npa.cli.agent import _artifact_only_http_probe
+
+    digest = "a" * 64
+    payloads = {
+        "/api/health": {"ok": True, "state_sha256": digest},
+        "/api/session": {"chat_history": []},
+        "/api/artifacts/runs?prefix=&limit=100": {"runs": [{"run_id": "run-a"}]},
+        "/api/tools": {"tool_refs": ["dataset"]},
+        "/api/workflows/sim2real/status": {"latest_submit": {}},
+        "/api/infra/k8s": {"ok": True},
+    }
+
+    class Response:
+        def __init__(self, payload: dict) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self.payload
+
+    class GetOnlyClient:
+        paths: list[str] = []
+
+        def get(self, path: str) -> Response:
+            self.paths.append(path)
+            return Response(payloads[path])
+
+    client = GetOnlyClient()
+    result = _artifact_only_http_probe(client)  # type: ignore[arg-type]
+    assert result["state_sha256"] == digest
+    assert result["run_count"] == 1
+    assert client.paths[0] == "/api/health"
+    assert client.paths[-1] == "/api/health"
+
+
+def test_status_is_unhealthy_on_live_deployment_mismatch(monkeypatch) -> None:
+    deployment = {
+        "deployment_id": "npa-agent-owner",
+        "deployment_name": "agent",
+        "project_alias": "project-a",
+        "runtime_namespace": "project-a/agent",
+        "repository": "org/repo",
+        "branch": "codex/owner",
+        "commit": "a" * 40,
+        "source_tree": "b" * 40,
+        "short_commit": "a" * 12,
+        "workspace_label": "Workspace",
+        "bootstrap_timestamp": "2026-08-10T00:00:00Z",
+    }
+    record = {
+        "agent_url": "https://203.0.113.1/",
+        "rerun_url": "https://203.0.113.1/rerun/",
+        "auth_secret_path": "/private/auth.env",
+        "deployment": deployment,
+    }
+    live = dict(deployment)
+    live["commit"] = "c" * 40
+    monkeypatch.setattr("npa.cli.agent._agent_record", lambda *_args: record)
+    monkeypatch.setattr("npa.cli.agent._load_auth_secret", lambda _path: ("npa", "secret"))
+    monkeypatch.setattr("npa.cli.agent._health", lambda *_args, **_kwargs: (True, 200))
+    monkeypatch.setattr("npa.cli.agent.fetch_live_deployment", lambda *_args, **_kwargs: live)
+    result = runner.invoke(
+        app, ["status", "--project", "project-a", "--name", "agent", "--json"]
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["health"] is False
+    assert payload["deployment_matches_record"] is False
+    assert "commit" in payload["deployment_error"]
+
+
 def test_staged_agent_source_is_readable_by_unprivileged_runtime(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -33,7 +107,7 @@ def test_staged_agent_source_is_readable_by_unprivileged_runtime(
     archive = tmp_path / "source.tar.gz"
     archive.write_bytes(b"archive")
     monkeypatch.setattr(
-        agent_module, "_create_agent_source_archive", lambda: str(archive)
+        agent_module, "_create_agent_source_archive", lambda _commit: str(archive)
     )
 
     class FakeSSH:
@@ -50,7 +124,7 @@ def test_staged_agent_source_is_readable_by_unprivileged_runtime(
             assert command.startswith("rm -f /tmp/npa-agent-source-")
 
     ssh = FakeSSH()
-    agent_module._stage_agent_npa_source(ssh)  # type: ignore[arg-type]
+    agent_module._stage_agent_npa_source(ssh, commit="a" * 40)  # type: ignore[arg-type]
 
     assert "sudo chown -R root:root /opt/npa-agent/npa-src" in ssh.command
     assert "sudo chmod -R a+rX /opt/npa-agent/npa-src" in ssh.command
@@ -1442,6 +1516,19 @@ def test_normalize_llm_models_supports_repeated_and_csv_values() -> None:
 
 
 def test_agent_status_json(monkeypatch) -> None:
+    deployment = {
+        "deployment_id": "npa-agent-test",
+        "deployment_name": "agent",
+        "project_alias": "us-central1",
+        "runtime_namespace": "us-central1/agent",
+        "repository": "org/repo",
+        "branch": "codex/test",
+        "commit": "a" * 40,
+        "source_tree": "b" * 40,
+        "short_commit": "a" * 12,
+        "workspace_label": "Workspace",
+        "bootstrap_timestamp": "2026-08-10T00:00:00Z",
+    }
     monkeypatch.setattr(
         "npa.cli.agent._agent_record",
         lambda project, name: {
@@ -1455,6 +1542,7 @@ def test_agent_status_json(monkeypatch) -> None:
             "sim_assets_url": "https://203.0.113.50/assets/",
             "cameras_api_url": "https://203.0.113.50/assets/api/sim-assets/cameras",
             "auth_secret_path": "/tmp/agent-auth",
+            "deployment": deployment,
             "llm": {
                 "provider": "token_factory",
                 "model": "nvidia/Cosmos3-Super-Reasoner",
@@ -1465,6 +1553,9 @@ def test_agent_status_json(monkeypatch) -> None:
     monkeypatch.setattr(
         "npa.cli.agent._health",
         lambda *_args, **_kwargs: (True, 200),
+    )
+    monkeypatch.setattr(
+        "npa.cli.agent.fetch_live_deployment", lambda *_args, **_kwargs: deployment
     )
 
     result = runner.invoke(app, ["status", "--json"])
@@ -1529,6 +1620,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
         "repository": "nebius/nebius-physical-ai",
         "branch": "codex/test",
         "commit": "a" * 40,
+        "source_tree": "b" * 40,
         "short_commit": "a" * 12,
         "workspace_label": "NPA Workbench",
         "bootstrap_timestamp": "2026-08-10T00:00:00Z",

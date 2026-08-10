@@ -144,24 +144,35 @@ def test_no_stock_demo_mode_removes_only_the_stock_history(monkeypatch, tmp_path
         selected = {
             "run_id": "customer-run",
             "artifact_key": "nested/customer-run/output.rrd",
+            "artifact_uri": "s3://private-bucket/nested/customer-run/output.rrd",
             "rrd_uri": "file:///opt/npa-agent/recordings/output.rrd",
         }
         normalized = module._normalize_loaded_state(
             {
+                "deployment_id": module.DEPLOYMENT["deployment_id"],
                 "sim_viz": selected,
                 "active_run_id": "customer-run",
                 "sim_viz_runs": {
                     "customer-run": selected,
                     "franka-demo": {"run_id": "franka-demo", "stage": "demo"},
+                    "verify-run": {
+                        "run_id": "verify-run",
+                        "rrd_uri": "file:///opt/npa-agent/sim2real.rrd",
+                    },
                 },
+                "latest_submit": {"run_id": "verify-run"},
+                "sim2real_runs": {"verify-run": {"status": "completed"}},
             }
         )
         assert normalized["sim_viz"] == selected
         assert normalized["active_run_id"] == "customer-run"
         assert list(normalized["sim_viz_runs"]) == ["customer-run"]
+        assert normalized["latest_submit"] == {}
+        assert normalized["sim2real_runs"] == {}
 
         stock_only = module._normalize_loaded_state(
             {
+                "deployment_id": module.DEPLOYMENT["deployment_id"],
                 "sim_viz": {"run_id": "franka-demo", "stage": "demo"},
                 "active_run_id": "franka-demo",
                 "sim_viz_runs": {"franka-demo": {"run_id": "franka-demo"}},
@@ -170,6 +181,24 @@ def test_no_stock_demo_mode_removes_only_the_stock_history(monkeypatch, tmp_path
         assert stock_only["sim_viz"]["run_id"] == ""
         assert stock_only["active_run_id"] == ""
         assert stock_only["sim_viz_runs"] == {}
+
+        foreign = module._normalize_loaded_state(
+            {
+                "deployment_id": "npa-agent-other-owner",
+                "sim_viz": selected,
+                "sim_viz_runs": {"customer-run": selected},
+                "chat_history": [{"role": "user", "content": "foreign"}],
+            }
+        )
+        assert foreign["deployment_id"] == module.DEPLOYMENT["deployment_id"]
+        assert foreign["sim_viz_runs"] == {}
+        assert foreign["chat_history"] == []
+        assert foreign["selection"]["robot_preset"] == ""
+        assert foreign["selection"]["sim_backend"] == ""
+        assert (
+            f"/deployments/{module.DEPLOYMENT['deployment_id']}/"
+            in module._state_s3_key()
+        )
     finally:
         sys.modules.pop(module_name, None)
 
@@ -287,7 +316,7 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
     assert "class RunMemory" in body
 
 
-def _capture_setup_script(monkeypatch) -> str:
+def _capture_setup_script(monkeypatch, *, preload_stock_demo: bool = True) -> str:
     from npa.cli import agent as agent_module
 
     captured: dict[str, str] = {}
@@ -326,8 +355,25 @@ def _capture_setup_script(monkeypatch) -> str:
         tf_api_key="",
         nebius_ai_key="",
         public_https=True,
+        preload_stock_demo=preload_stock_demo,
     )
     return captured["setup_script"]
+
+
+def test_no_stock_bootstrap_has_no_default_recording_or_rrd_response(monkeypatch) -> None:
+    setup_script = _capture_setup_script(monkeypatch, preload_stock_demo=False)
+    rerun_unit = setup_script.split(
+        "cat <<'UNIT' | sudo tee /etc/systemd/system/npa-rerun.service",
+        1,
+    )[1].split("UNIT", 1)[0]
+    assert "ExecStart=/opt/npa-agent/venv/bin/rerun --serve-web" in rerun_unit
+    assert "/opt/npa-agent/venv/bin/rerun /opt/npa-agent/sim2real.rrd" not in rerun_unit
+    assert "if [ 0 = 1 ]; then\n  sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py" in setup_script
+    assert "sudo rm -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd" in setup_script
+    backend = setup_script.split(
+        "cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null\n", 1
+    )[1].split("\nPY\n", 1)[0]
+    assert "if PRELOAD_STOCK_DEMO and RRD_PATH.is_file():" in backend
 
 
 def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):

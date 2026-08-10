@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -676,6 +677,25 @@ def test_write_config_deep_merges_existing_config(isolated_config: Path) -> None
     assert wb["endpoint"] == "http://updated:8080"
     assert wb["ssh"]["host"] == "vm-a"
     assert written.stat().st_mode & 0o777 == 0o600
+
+
+def test_concurrent_config_updates_are_atomic(isolated_config: Path) -> None:
+    barrier = threading.Barrier(3)
+
+    def write(project: str) -> None:
+        barrier.wait()
+        config.write_config({"projects": {project: {"project_id": project}}})
+
+    threads = [threading.Thread(target=write, args=(name,)) for name in ("one", "two")]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(2)
+        assert not thread.is_alive()
+    data = yaml.safe_load(isolated_config.read_text())
+    assert set(data["projects"]) == {"one", "two"}
+    assert isolated_config.stat().st_mode & 0o777 == 0o600
 
 
 def test_remove_workbench_config_updates_defaults(isolated_config: Path) -> None:
