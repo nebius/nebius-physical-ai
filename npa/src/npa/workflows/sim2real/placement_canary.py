@@ -15,6 +15,8 @@ from npa.workflows.sim2real.utils import _write_json_artifact
 
 CANARY_SCHEMA = "npa.sim2real.placement_canary.v1"
 STRICT_DISTANCE_M = 0.05
+STRICT_SPEED_MPS = 0.03
+STRICT_REQUIRED_STEPS = 3
 
 
 def assess_placement_report(
@@ -39,14 +41,20 @@ def assess_placement_report(
     post_actor = dict(inference.get("post_actor_controller") or {})
     if (
         inference.get("policy_composition")
-        != "learned_actor_with_deterministic_settle_hold"
+        != "learned_actor_with_post_success_retention"
         or inference.get("actor_is_learned") is not True
         or inference.get("scripted_post_actor_controller") is not True
-        or post_actor.get("type") != "measured_joint_position_hold"
+        or post_actor.get("type") != "post_success_measured_joint_position_hold"
         or post_actor.get("declares_success") is not False
-        or float(post_actor.get("trigger_distance_m") or 0.0) >= STRICT_DISTANCE_M
+        or post_actor.get("requires_exact_stable_placement") is not True
+        or float(post_actor.get("trigger_distance_m") or 0.0) != STRICT_DISTANCE_M
+        or float(post_actor.get("trigger_speed_mps") or 0.0) != STRICT_SPEED_MPS
+        or int(post_actor.get("required_consecutive_steps") or 0)
+        != STRICT_REQUIRED_STEPS
     ):
-        raise ValueError("placement canary lacks explicit settle-hold provenance")
+        raise ValueError(
+            "placement canary lacks exact post-success retention provenance"
+        )
     rows = list(report.get("per_env") or [])
     if len(rows) != expected_scenarios:
         raise ValueError(

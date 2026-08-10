@@ -41,7 +41,13 @@ def test_policy_inference_provenance_discloses_non_verdict_controller() -> None:
     assert provenance["actor_is_learned"] is True
     assert provenance["scripted_post_actor_controller"] is True
     assert provenance["post_actor_controller"]["type"] == (
-        "measured_joint_position_hold"
+        "post_success_measured_joint_position_hold"
+    )
+    assert provenance["post_actor_controller"]["trigger_distance_m"] == 0.05
+    assert provenance["post_actor_controller"]["trigger_speed_mps"] == 0.03
+    assert provenance["post_actor_controller"]["required_consecutive_steps"] == 3
+    assert (
+        provenance["post_actor_controller"]["requires_exact_stable_placement"] is True
     )
     assert provenance["post_actor_controller"]["declares_success"] is False
 
@@ -86,7 +92,7 @@ def test_build_isaac_eval_job_manifest_shape():
     assert "kit_args=os.environ.get(" in ev.ISAAC_EVAL_SCRIPT
     assert "min_speed_in_strict_basin_mps" in ev.ISAAC_EVAL_SCRIPT
     assert "max_consecutive_strict_stable_steps" in ev.ISAAC_EVAL_SCRIPT
-    assert "PLACEMENT_SETTLE_HOLD_LATCHED" in ev.ISAAC_EVAL_SCRIPT
+    assert "PLACEMENT_POST_SUCCESS_HOLD_LATCHED" in ev.ISAAC_EVAL_SCRIPT
     assert "settle_hold_trigger(" in ev.ISAAC_EVAL_SCRIPT
     assert "joint_position_hold_action(" in ev.ISAAC_EVAL_SCRIPT
 

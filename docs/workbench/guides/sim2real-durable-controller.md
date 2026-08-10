@@ -366,20 +366,23 @@ terminal placements; the strongest checkpoint nevertheless held one object for
 therefore demonstrated the exact success state, while its unconstrained next
 joint targets remained the source of terminal failure.
 
-Deployment now composes that learned actor with an explicit deterministic
-settle-hold phase. The actor still performs reach, contact, grasp, lift, and all
-goal-directed transport. Only after a genuinely lifted, contacted object held
-by a closed gripper enters a tighter 4 cm basin does the controller invert
-Isaac's live affine action term and command the robot's measured joint position,
-allowing the position-controlled arm and object to settle. Replaying the actor's
-last normalized action is explicitly insufficient because it preserves the old
-moving target rather than the measured pose. The latch neither declares success
-nor changes the authoritative
-metric: validation and sealed gold still require final distance below 5 cm,
-object speed below 0.03 m/s for three consecutive steps, and the exact learned
-checkpoint. Rollout action records and held-out reports expose the latch state
-and identify the policy composition as a learned actor plus deterministic
-post-actor controller. This same immutable-image path runs in live rollout,
+Eval32 and Eval33 rejected proximity-triggered retention as a valid solution.
+Replaying the actor's last normalized action preserves an old moving target;
+inverting Isaac's live affine action term does command the measured pose, but
+doing so while the grasp is moving still disrupts the grasp. In Eval33 all 49
+pre-success latches eventually left the goal, with a 22.2 cm median terminal
+error. Those attempts remain non-authoritative and cannot satisfy the placement
+canary.
+
+Deployment may now retain a placement only *after* the learned actor has already
+completed the exact authoritative event: final distance below 5 cm, object speed
+below 0.03 m/s, and three consecutive strict steps while lifted, contacted, and
+held by a closed gripper. At that point the controller inverts Isaac's live
+affine arm action and holds the measured joint position. It cannot trigger on
+proximity, change a verdict, or declare success; it can only prevent a later
+actor update from erasing a result the actor independently achieved. Rollout
+action records and held-out reports expose this composition as learned actor
+plus post-success retention. The same immutable-image path runs in live rollout,
 validation, and gold Jobs; there is no evaluator-only success override.
 
 ## Required integration ladder

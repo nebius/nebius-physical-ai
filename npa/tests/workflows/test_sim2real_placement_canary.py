@@ -35,10 +35,13 @@ def _report(*, stable: bool, split: str = "validation") -> dict:
             "loaded_for_inference": True,
             "actor_is_learned": True,
             "scripted_post_actor_controller": True,
-            "policy_composition": ("learned_actor_with_deterministic_settle_hold"),
+            "policy_composition": ("learned_actor_with_post_success_retention"),
             "post_actor_controller": {
-                "type": "measured_joint_position_hold",
-                "trigger_distance_m": 0.04,
+                "type": "post_success_measured_joint_position_hold",
+                "trigger_distance_m": 0.05,
+                "trigger_speed_mps": 0.03,
+                "required_consecutive_steps": 3,
+                "requires_exact_stable_placement": True,
                 "declares_success": False,
             },
         },
@@ -115,7 +118,7 @@ def test_canary_rejects_hidden_or_success_declaring_post_actor_controller() -> N
     report["policy_inference_provenance"]["post_actor_controller"][
         "declares_success"
     ] = True
-    with pytest.raises(ValueError, match="settle-hold provenance"):
+    with pytest.raises(ValueError, match="post-success retention provenance"):
         assess_placement_report(
             report,
             checkpoint_uri=report["policy_checkpoint"],

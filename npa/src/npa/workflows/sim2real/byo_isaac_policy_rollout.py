@@ -402,7 +402,9 @@ try:
         print("ROLLOUT_UNTRAINED_POLICY (no checkpoint yet)", flush=True)
     policy = runner.get_inference_policy(device="cuda:0")
     from npa.workflows.sim2real.placement_policy import (
+        SETTLE_HOLD_REQUIRED_STEPS,
         SETTLE_HOLD_TRIGGER_DISTANCE_M,
+        SETTLE_HOLD_TRIGGER_SPEED_MPS,
         advance_settle_hold,
         joint_position_hold_action,
         settle_hold_trigger,
@@ -566,8 +568,15 @@ try:
         stable_grasp_now = contact_now & gripper_closed & (lift_m > 0.01)
         stable_grasp_steps = np.where(stable_grasp_now, stable_grasp_steps + 1, 0)
         stable_grasp_now = stable_grasp_steps >= 3
+        stable_place_now = (
+            goal_distance < SETTLE_HOLD_TRIGGER_DISTANCE_M
+        ) & (obj_velocity < SETTLE_HOLD_TRIGGER_SPEED_MPS)
+        stable_place_steps = np.where(stable_place_now, stable_place_steps + 1, 0)
+        stable_place_now = stable_place_steps >= SETTLE_HOLD_REQUIRED_STEPS
         settle_trigger = settle_hold_trigger(
             goal_distance,
+            obj_velocity,
+            stable_place_steps,
             lift_m,
             contact_now,
             gripper_closed,
@@ -584,17 +593,18 @@ try:
             settle_hold_actions[new_mask] = measured_hold[new_mask]
             settle_hold_step[newly_latched] = _step
             print(
-                "PLACEMENT_SETTLE_HOLD_LATCHED",
+                "PLACEMENT_POST_SUCCESS_HOLD_LATCHED",
                 int(np.count_nonzero(newly_latched)),
                 "total",
                 int(np.count_nonzero(settle_hold_latched)),
-                "trigger_distance_m",
+                "strict_distance_m",
                 SETTLE_HOLD_TRIGGER_DISTANCE_M,
+                "strict_speed_mps",
+                SETTLE_HOLD_TRIGGER_SPEED_MPS,
+                "required_steps",
+                SETTLE_HOLD_REQUIRED_STEPS,
                 flush=True,
             )
-        stable_place_now = (goal_distance < 0.05) & (obj_velocity < 0.03)
-        stable_place_steps = np.where(stable_place_now, stable_place_steps + 1, 0)
-        stable_place_now = stable_place_steps >= 3
         scenario_rows = getattr(uenv, "npa_scenario_rows", [])
         scenario_indices = getattr(uenv, "npa_scenario_indices", None)
         scenario_cpu = (

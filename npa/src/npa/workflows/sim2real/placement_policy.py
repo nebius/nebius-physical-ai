@@ -1,14 +1,10 @@
-"""Deterministic last-mile controller for a learned Isaac placement actor.
+"""Post-success retention for a learned Isaac placement actor.
 
-The PPO actor remains responsible for the complete reach, grasp, lift, and
-transport trajectory.  Once it brings a genuinely lifted, still-grasped object
-inside a tighter 4 cm goal basin, this controller latches the actor's current
-joint target.  Holding that target lets the position-controlled arm and object
-settle instead of allowing a later actor update to drive through the goal.
-
-The latch is deliberately stricter than the authoritative 5 cm distance
-threshold and does not declare success.  Validation and gold still require the
-unchanged object speed and consecutive-step conditions at episode end.
+The PPO actor remains responsible for reach, grasp, lift, transport, braking,
+and the complete strict placement event.  Only after the actor independently
+keeps the object below 5 cm and 0.03 m/s for three consecutive steps may this
+controller hold the measured joint position.  It preserves a learned result at
+episode end; it cannot create or declare one.
 """
 
 from __future__ import annotations
@@ -16,20 +12,26 @@ from __future__ import annotations
 from typing import Any
 
 
-SETTLE_HOLD_TRIGGER_DISTANCE_M = 0.04
+SETTLE_HOLD_TRIGGER_DISTANCE_M = 0.05
+SETTLE_HOLD_TRIGGER_SPEED_MPS = 0.03
+SETTLE_HOLD_REQUIRED_STEPS = 3
 SETTLE_HOLD_MINIMAL_LIFT_M = 0.04
 
 
 def settle_hold_trigger(
     goal_distance: Any,
+    object_speed: Any,
+    stable_steps: Any,
     lift_height: Any,
     contact: Any,
     gripper_closed: Any,
     *,
     trigger_distance_m: float = SETTLE_HOLD_TRIGGER_DISTANCE_M,
+    trigger_speed_mps: float = SETTLE_HOLD_TRIGGER_SPEED_MPS,
+    required_steps: int = SETTLE_HOLD_REQUIRED_STEPS,
     minimal_lift_m: float = SETTLE_HOLD_MINIMAL_LIFT_M,
 ) -> Any:
-    """Return the scalar or vector mask that enters the settle-hold phase.
+    """Return the mask that may retain an already-complete strict placement.
 
     NumPy and Torch arrays both implement the comparison and bitwise operations
     used here, keeping the exact live predicate directly testable on CPU.
@@ -37,10 +39,16 @@ def settle_hold_trigger(
 
     if trigger_distance_m <= 0:
         raise ValueError("settle-hold trigger distance must be positive")
+    if trigger_speed_mps <= 0:
+        raise ValueError("settle-hold trigger speed must be positive")
+    if required_steps <= 0:
+        raise ValueError("settle-hold required steps must be positive")
     if minimal_lift_m <= 0:
         raise ValueError("settle-hold minimal lift must be positive")
     return (
         (goal_distance < float(trigger_distance_m))
+        & (object_speed < float(trigger_speed_mps))
+        & (stable_steps >= int(required_steps))
         & (lift_height >= float(minimal_lift_m))
         & contact
         & gripper_closed

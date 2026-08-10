@@ -39,7 +39,9 @@ from npa.workflows.sim2real.capture import capture_settings
 from npa.workflows.sim2real.isaac_job_payload import compressed_bash_launch
 from npa.workflows.sim2real.placement_policy import (
     SETTLE_HOLD_MINIMAL_LIFT_M,
+    SETTLE_HOLD_REQUIRED_STEPS,
     SETTLE_HOLD_TRIGGER_DISTANCE_M,
+    SETTLE_HOLD_TRIGGER_SPEED_MPS,
 )
 
 DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
@@ -117,14 +119,17 @@ def policy_inference_provenance(
         "stock_or_scripted_policy": False,
         "actor_is_learned": True,
         "scripted_post_actor_controller": True,
-        "policy_composition": "learned_actor_with_deterministic_settle_hold",
+        "policy_composition": "learned_actor_with_post_success_retention",
         "post_actor_controller": {
-            "type": "measured_joint_position_hold",
+            "type": "post_success_measured_joint_position_hold",
             "trigger_distance_m": SETTLE_HOLD_TRIGGER_DISTANCE_M,
+            "trigger_speed_mps": SETTLE_HOLD_TRIGGER_SPEED_MPS,
+            "required_consecutive_steps": SETTLE_HOLD_REQUIRED_STEPS,
             "minimal_lift_m": SETTLE_HOLD_MINIMAL_LIFT_M,
             "requires_lift": True,
             "requires_contact": True,
             "requires_closed_gripper": True,
+            "requires_exact_stable_placement": True,
             "declares_success": False,
         },
     }
@@ -575,7 +580,9 @@ try:
     runner.load(CKPT)
     policy = runner.get_inference_policy(device="cuda:0")
     from npa.workflows.sim2real.placement_policy import (
+        SETTLE_HOLD_REQUIRED_STEPS,
         SETTLE_HOLD_TRIGGER_DISTANCE_M,
+        SETTLE_HOLD_TRIGGER_SPEED_MPS,
         advance_settle_hold,
         joint_position_hold_action,
         settle_hold_trigger,
@@ -888,8 +895,31 @@ try:
                     ).detach().cpu().numpy()
                 except Exception:
                     obj_speed = np.full(N, 1.0)
+                in_strict_basin = per < SETTLE_HOLD_TRIGGER_DISTANCE_M
+                min_speed_in_strict_basin = np.where(
+                    active & in_strict_basin,
+                    np.minimum(min_speed_in_strict_basin, obj_speed),
+                    min_speed_in_strict_basin,
+                )
+                stable_place_steps = np.where(
+                    active,
+                    np.where(
+                        in_strict_basin
+                        & (obj_speed < SETTLE_HOLD_TRIGGER_SPEED_MPS),
+                        stable_place_steps + 1,
+                        0,
+                    ),
+                    stable_place_steps,
+                )
+                max_stable_place_steps = np.maximum(
+                    max_stable_place_steps, stable_place_steps
+                )
+                final_place = stable_place_steps >= SETTLE_HOLD_REQUIRED_STEPS
+                place |= active & final_place
                 settle_trigger = settle_hold_trigger(
                     per,
+                    obj_speed,
+                    stable_place_steps,
                     height,
                     contact_now,
                     gripper_closed,
@@ -906,34 +936,18 @@ try:
                     settle_hold_actions[new_mask] = measured_hold[new_mask]
                     settle_hold_step[newly_latched] = _step
                     print(
-                        "PLACEMENT_SETTLE_HOLD_LATCHED",
+                        "PLACEMENT_POST_SUCCESS_HOLD_LATCHED",
                         int(np.count_nonzero(newly_latched)),
                         "total",
                         int(np.count_nonzero(settle_hold_latched)),
-                        "trigger_distance_m",
+                        "strict_distance_m",
                         SETTLE_HOLD_TRIGGER_DISTANCE_M,
+                        "strict_speed_mps",
+                        SETTLE_HOLD_TRIGGER_SPEED_MPS,
+                        "required_steps",
+                        SETTLE_HOLD_REQUIRED_STEPS,
                         flush=True,
                     )
-                in_strict_basin = per < 0.05
-                min_speed_in_strict_basin = np.where(
-                    active & in_strict_basin,
-                    np.minimum(min_speed_in_strict_basin, obj_speed),
-                    min_speed_in_strict_basin,
-                )
-                stable_place_steps = np.where(
-                    active,
-                    np.where(
-                        in_strict_basin & (obj_speed < 0.03),
-                        stable_place_steps + 1,
-                        0,
-                    ),
-                    stable_place_steps,
-                )
-                max_stable_place_steps = np.maximum(
-                    max_stable_place_steps, stable_place_steps
-                )
-                final_place = stable_place_steps >= 3
-                place |= active & final_place
                 if np.any(newly_terminal):
                     # The state above is already the reset state. Restore the
                     # exact pre-step sample for this episode and seal it.
