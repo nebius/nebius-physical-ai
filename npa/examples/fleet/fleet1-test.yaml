@@ -1,0 +1,61 @@
+# npa fleet example: 1 identical k8s-training cluster in 2 on-demand projects.
+#
+# Each project gets one cluster with 1 GPU RTX PRO 6000 node + 1 48-vCPU node.
+# The two projects are created under the tenant on demand (name = project_prefix
+# + the entry name), so this yields projects "fleet1-test-a" and "fleet1-test-b".
+#
+#   npa fleet plan   --spec examples/fleet/fleet1-test.yaml
+#   npa fleet deploy --spec examples/fleet/fleet1-test.yaml
+#   npa fleet destroy --spec examples/fleet/fleet1-test.yaml --force
+apiVersion: npa.fleet/v0.0.1
+name: fleet1-test
+
+# tenant_id / region resolve from ~/.nebius + ~/.npa when left empty.
+tenant_id: ""
+region: us-central1
+project_prefix: "fleet1-test-"
+
+# ~/.nebius profile every nebius call authenticates as; empty = the machine's
+# active profile. Set it (or pass --profile) to deploy into a tenant other than
+# the active profile's -- a service account belongs to exactly one tenant.
+profile: ""
+
+# Shared cluster profile merged under every cluster below. Because both projects
+# omit `clusters`, they each deploy exactly this profile (an "identical" fleet).
+defaults:
+  cpu_nodes:
+    count: 1
+    platform: cpu-d3
+    preset: 48vcpu-192gb
+  gpu_nodes:
+    count: 1
+    platform: gpu-rtx6000
+    preset: 1gpu-24vcpu-218gb
+    # Optional runtime-only capacity block group ID. When set, fleet renders a
+    # STRICT reservation policy and will not fall back to on-demand GPU capacity.
+    # capacity_block_group: "<capacity-block-group-id>"
+  # Shared filesystem is off by default (each one is a 1 TiB NETWORK_SSD and
+  # consumes tenant compute.filesystem quota). Uncomment to attach one + the
+  # CSI default StorageClass:
+  # enable_filestore: true
+  # filestore_disk_size_gibibytes: 1024
+  # filestore_mount_path: /mnt/data
+  # filestore_mount_tag: npa-shared-fs
+
+projects:
+  - name: a   # -> project "fleet1-test-a"
+  - name: b   # -> project "fleet1-test-b"
+
+# --- Mixing identical + custom clusters (reference) --------------------------
+# projects:
+#   - name: a                      # identical: uses the defaults profile
+#   - name: b                      # custom: overrides + a second cluster
+#     clusters:
+#       - name: train
+#         gpu_nodes: {count: 2, platform: gpu-h200-sxm, preset: 8gpu-128vcpu-1600gb}
+#         enable_gpu_cluster: true
+#         infiniband_fabric: us-central1-a
+#       - name: infer              # inherits the defaults profile
+#   - project_id: project-existing123   # deploy into an existing project by id
+#     clusters:
+#       - {}

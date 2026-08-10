@@ -188,7 +188,14 @@ def _require_bin(binary: str) -> str:
     raise typer.BadParameter(f"Required executable not found: {binary}")
 
 
-def _terraform_env(nebius_bin: str) -> dict[str, str]:
+def _terraform_env(nebius_bin: str, *, profile: str = "") -> dict[str, str]:
+    """Terraform env with a freshly minted ``TF_VAR_iam_token``.
+
+    ``profile`` selects a non-default ``~/.nebius`` profile, so a caller
+    targeting a different tenant mints the token for *that* principal instead of
+    the machine's active profile.
+    """
+
     env = os.environ.copy()
     # A stale ambient IAM token (e.g. a cloud-env token) silently shadows the
     # intended Nebius profile and mints kubeconfig/registry credentials for the
@@ -206,7 +213,10 @@ def _terraform_env(nebius_bin: str) -> dict[str, str]:
         return env
     env.pop("TF_VAR_iam_token", None)
     env.pop("NEBIUS_IAM_TOKEN", None)
-    token = _run_capture([nebius_bin, "iam", "get-access-token"], env=env).stdout.strip()
+    argv = [nebius_bin]
+    if profile:
+        argv += ["--profile", profile]
+    token = _run_capture([*argv, "iam", "get-access-token"], env=env).stdout.strip()
     env["TF_VAR_iam_token"] = token
     env["NEBIUS_IAM_TOKEN"] = token
     return env

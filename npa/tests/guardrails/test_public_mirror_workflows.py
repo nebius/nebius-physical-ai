@@ -48,6 +48,16 @@ def test_the_shared_login_script_is_executable() -> None:
     assert script.stat().st_mode & 0o111, f"{LOGIN_SCRIPT} must be executable"
 
 
+def test_scoped_branch_publication_has_dispatch_schema_fallbacks() -> None:
+    """GitHub validates dispatch inputs against the default branch, so a release branch
+    adding the selector must also support temporary repository variables until merged.
+    """
+    text = PUBLISH.read_text(encoding="utf-8")
+    assert "inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY" in text
+    assert "inputs.tool || vars.NPA_PUBLISH_TOOL" in text
+    assert "(inputs.tool || vars.NPA_PUBLISH_TOOL) == ''" in text
+
+
 @pytest.mark.parametrize("path", [PUBLISH, HEALTH], ids=lambda p: p.name)
 def test_no_workflow_reinlines_the_credential_handling(path: Path) -> None:
     """Two copies of this logic means one of them is wrong, and it is the one nobody ran."""

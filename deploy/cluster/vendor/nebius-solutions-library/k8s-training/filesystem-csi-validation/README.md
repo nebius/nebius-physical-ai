@@ -42,6 +42,11 @@ Important notes:
   Set
   `VERIFY_ALL_NODES=true` to validate every node, or `TARGET_NODE=<node-name>`
   to validate one specific node.
+- Step `01` requires the exact virtiofs tag, a writable mount, and an fstab
+  entry containing `nofail`, matching the Nebius boot-safety requirement.
+- Step `03` discovers one Ready CPU node and one Ready node with at least eight
+  allocatable GPUs, pins the two pods to those exact nodes, records the actual
+  node names/types, and verifies unique checksummed writes in both directions.
 - The smoke and RWX manifests now use workflow-specific resource names to make
   reruns and cleanup easier to understand.
 

@@ -83,7 +83,9 @@ selected through `NPA_COSMOS3_*_TOKEN_ENV`.
 | Error | Likely cause | Fix |
 | --- | --- | --- |
 | `Hugging Face auth missing` | `HF_TOKEN` or configured HF env var is unset | Set token and accept the model license upstream before fetch |
-| HF 401 or gated repo denied | Token lacks accepted license or repo access | Accept terms for the model and retry with the same token |
+| Authenticated HF 401 | The supplied token is missing, invalid, or revoked | Check the selected token env var and replace an invalid or revoked token; an anonymous 401 is not a token discriminator |
+| Authenticated HF 403 on a gated repo | The token authenticated but lacks authorization | Accept/request repo access; also check fine-grained repo scope and organization token policy |
+| Xet `Unable to parse string as hex hash value` | `huggingface_hub==1.23.0` plus `hf-xet==1.5.1` | The r2 image build rejects this pair; in custom runtimes set `HF_HUB_DISABLE_XET=1` or upgrade before retrying |
 | `git ls-remote` fails | Source URL wrong or GitHub auth missing for private fork | Check `NPA_COSMOS3_SOURCE_REPO` and selected GitHub token env var |
 | `ModuleNotFoundError: cosmos_framework` | Upstream checkout was not installed | Run `uv sync --all-extras --group=cu130-train` from the upstream checkout |
 | PyTorch `_functionalization` import error | NGC container library path conflict | Run `export LD_LIBRARY_PATH=` before Python imports |

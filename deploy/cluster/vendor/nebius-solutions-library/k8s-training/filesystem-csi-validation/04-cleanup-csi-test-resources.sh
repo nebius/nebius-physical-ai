@@ -70,8 +70,8 @@ log_pass "Required local commands for cleanup are available"
 
 log_step "Removing validation test files from mounted volumes"
 best_effort_exec "${FILESYSTEM_SMOKE_POD_NAME}" 'rm -f /data/probe.txt'
-best_effort_exec "${FILESYSTEM_RWX_WRITER_POD_NAME}" 'rm -f /data/shared.txt'
-best_effort_exec "${FILESYSTEM_RWX_READER_POD_NAME}" 'rm -f /data/shared.txt'
+best_effort_exec "${FILESYSTEM_RWX_WRITER_POD_NAME}" 'rm -f /data/cpu-to-gpu.txt /data/gpu-to-cpu.txt'
+best_effort_exec "${FILESYSTEM_RWX_READER_POD_NAME}" 'rm -f /data/cpu-to-gpu.txt /data/gpu-to-cpu.txt'
 log_pass "Validation probe files were removed or already absent"
 
 log_step "Deleting the validation manifests"

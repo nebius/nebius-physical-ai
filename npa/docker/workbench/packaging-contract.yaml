@@ -181,12 +181,16 @@ images:
     dockerfile: cosmos3/Dockerfile
     tier: job
     notes: >-
-      Cosmos 3 omni-model generation. Bakes OpenMDW-1.1 cosmos-framework SOURCE at
-      a pinned commit plus its cu130 inference venv; NO model weights. Gated
+      Cosmos 3 omni-model generation, released additively as 1.2.2-cu130-r2;
+      the immutable 1.2.2-cu130 image remains rollback provenance. Bakes
+      OpenMDW-1.1 cosmos-framework SOURCE at a pinned commit plus its cu130
+      inference venv; NO model weights. Gated
       Cosmos3 checkpoints, the Wan VAE, and the guardrail models download at
       runtime with the operator's own HF token (plus their NGC key when
       NPA_COSMOS3_REQUIRE_NGC=1), so distribution never carries weight bytes. The
-      build fails if a checkpoint file lands in a layer. Ships sudo +
+      build fails if a checkpoint file lands in a layer or if the known-bad
+      huggingface_hub 1.23.0 / hf-xet 1.5.1 pair is resolved; the compatible
+      frozen pair keeps Xet enabled. Ships sudo +
       openssh-server with a NOPASSWD grant for the non-root runtime user because
       the SkyPilot Kubernetes bootstrap installs its SSH runtime in-pod; see
       docs/security/container-golden-evals.md.

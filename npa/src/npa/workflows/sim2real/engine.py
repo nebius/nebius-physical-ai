@@ -3420,6 +3420,10 @@ def _normalize_heldout_report(
         "generated_env_ids",
         "policy_checkpoint",
         "deployable_policy_eval",
+        # Canonical Isaac evaluator evidence emitted by the Stage 10 sibling.
+        # Stage 11 still owns the threshold decision; Stage 14 still owns RRD/MCAP.
+        "isaac_eval_summary",
+        "isaac_eval_summary_uri",
     ):
         if payload.get(key):
             report[key] = payload[key]
