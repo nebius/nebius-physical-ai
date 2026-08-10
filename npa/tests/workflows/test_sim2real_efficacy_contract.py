@@ -17,7 +17,9 @@ from npa.workflows.sim2real.checkpoint_selection import (
 )
 from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_APPROACH_STD_M,
-    PLACEMENT_APPROACH_SPEED_MPS,
+    PLACEMENT_DWELL_SCALE,
+    PLACEMENT_NEAR_STD_M,
+    PLACEMENT_PROGRESS_SCALE_M,
     PLACEMENT_MINIMAL_LIFT_M,
     STABLE_PLACEMENT_DISTANCE_M,
     STABLE_PLACEMENT_REWARD_WEIGHT,
@@ -264,7 +266,9 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert STABLE_PLACEMENT_SPEED_MPS == 0.03
     assert PLACEMENT_MINIMAL_LIFT_M == 0.04
     assert PLACEMENT_APPROACH_STD_M == 0.35
-    assert PLACEMENT_APPROACH_SPEED_MPS == 0.15
+    assert PLACEMENT_NEAR_STD_M == 0.08
+    assert PLACEMENT_PROGRESS_SCALE_M == 0.02
+    assert PLACEMENT_DWELL_SCALE == 2.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     assert STABLE_PLACEMENT_STEPS == 3
     source = module_source()
@@ -283,10 +287,18 @@ def test_stable_placement_curriculum_is_dense_across_live_canary_basin() -> None
     canary_basin_approach = 1.0 - math.tanh(0.25 / PLACEMENT_APPROACH_STD_M)
     assert canary_basin_approach > 0.2
     assert STABLE_PLACEMENT_REWARD_WEIGHT * canary_basin_approach > 10.0
-    slow = placement_curriculum_signal(0.057, 0.01, tanh=math.tanh)
-    fly_through = placement_curriculum_signal(0.057, 0.20, tanh=math.tanh)
+    slow = placement_curriculum_signal(0.057, 0.01, 0.057, tanh=math.tanh)
+    fly_through = placement_curriculum_signal(0.057, 0.20, 0.057, tanh=math.tanh)
     assert slow > 1.0
-    assert fly_through < slow * 0.15
+    assert slow > fly_through + 0.4
+
+
+def test_stable_placement_curriculum_rewards_progress_not_far_stopping() -> None:
+    moving_toward = placement_curriculum_signal(0.24, 0.20, 0.25, tanh=math.tanh)
+    moving_away = placement_curriculum_signal(0.26, 0.20, 0.25, tanh=math.tanh)
+    stopped_far = placement_curriculum_signal(0.45, 0.0, 0.45, tanh=math.tanh)
+    assert moving_toward > moving_away + 0.8
+    assert STABLE_PLACEMENT_REWARD_WEIGHT * stopped_far < 5.0
 
 
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:

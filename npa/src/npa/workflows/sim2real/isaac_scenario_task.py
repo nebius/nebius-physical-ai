@@ -31,7 +31,9 @@ STABLE_PLACEMENT_STEPS = 3
 # easier dominant objective.  Keep the strict verdict at 5 cm while making the
 # curriculum genuinely dense across the observed post-lift placement basin.
 PLACEMENT_APPROACH_STD_M = 0.35
-PLACEMENT_APPROACH_SPEED_MPS = 0.15
+PLACEMENT_NEAR_STD_M = 0.08
+PLACEMENT_PROGRESS_SCALE_M = 0.02
+PLACEMENT_DWELL_SCALE = 2.0
 STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
@@ -172,6 +174,13 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_stable_placement_steps = torch.zeros(
             env.num_envs, dtype=torch.long, device=env.device
         )
+    if not hasattr(env, "npa_previous_goal_distance"):
+        env.npa_previous_goal_distance = torch.full(
+            (env.num_envs,),
+            float("nan"),
+            dtype=torch.float32,
+            device=env.device,
+        )
 
 
 def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
@@ -192,6 +201,7 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
         scenario_ids = (ids + offset) % len(rows)
     env.npa_scenario_indices[ids] = scenario_ids
     env.npa_stable_placement_steps[ids] = 0
+    env.npa_previous_goal_distance[ids] = torch.nan
     env.npa_scenario_applied_counts += torch.bincount(scenario_ids, minlength=len(rows))
     return ids, scenario_ids
 
@@ -307,24 +317,31 @@ def _scenario_command_type() -> type:
 def placement_curriculum_signal(
     distance: Any,
     speed: Any,
+    previous_distance: Any,
     *,
     tanh: Any,
     approach_std_m: float = PLACEMENT_APPROACH_STD_M,
-    approach_speed_mps: float = PLACEMENT_APPROACH_SPEED_MPS,
+    near_std_m: float = PLACEMENT_NEAR_STD_M,
+    progress_scale_m: float = PLACEMENT_PROGRESS_SCALE_M,
+    dwell_scale: float = PLACEMENT_DWELL_SCALE,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
 ) -> Any:
-    """Return dense approach reward only to policies that arrest near the goal.
+    """Return signed transport progress plus a near-target dwell incentive.
 
-    The broad speed gate keeps a gradient while the object is moving deliberately,
-    while the strict stillness gate makes fly-through trajectories much less
-    valuable than holding the same position. ``tanh`` is injected so this contract
-    is testable with scalar math without importing Isaac's Torch runtime.
+    Train3 exposed a bad incentive in the prior velocity-gated term: moving the
+    object deliberately suppressed the entire approach gradient, while stopping
+    far from the goal still earned a positive reward.  The signed potential
+    difference below rewards motion toward the goal and penalizes motion away.
+    Absolute proximity keeps the signal dense, but stillness is valuable only in
+    the narrow target basin. ``tanh`` is injected so this contract is testable with
+    scalar math without importing Isaac's Torch runtime.
     """
 
+    progress = tanh((previous_distance - distance) / float(progress_scale_m))
     approach = 1.0 - tanh(distance / float(approach_std_m))
-    approach_stillness = 1.0 - tanh(speed / float(approach_speed_mps))
+    near = 1.0 - tanh(distance / float(near_std_m))
     strict_stillness = 1.0 - tanh(speed / float(stable_speed_mps))
-    return approach * approach_stillness + approach * strict_stillness
+    return progress + approach + float(dwell_scale) * near * strict_stillness
 
 
 def _placement_state(
@@ -351,7 +368,9 @@ def stable_placement_curriculum(
     command_name: str = "object_pose",
     object_name: str = "object",
     approach_std_m: float = PLACEMENT_APPROACH_STD_M,
-    approach_speed_mps: float = PLACEMENT_APPROACH_SPEED_MPS,
+    near_std_m: float = PLACEMENT_NEAR_STD_M,
+    progress_scale_m: float = PLACEMENT_PROGRESS_SCALE_M,
+    dwell_scale: float = PLACEMENT_DWELL_SCALE,
     success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
     minimal_lift_m: float = PLACEMENT_MINIMAL_LIFT_M,
@@ -363,8 +382,8 @@ def stable_placement_curriculum(
     reach, grasp, and lift while repeatedly dropping or carrying through the
     target. This term activates only after a genuine lift and combines:
 
-    * a broad continuous approach signal;
-    * a near-goal stillness signal; and
+    * signed step-to-step progress toward the commanded goal;
+    * broad absolute proximity plus a narrow near-goal stillness signal; and
     * a sparse bonus at the exact 5 cm / 0.03 m/s stable-placement boundary.
 
     The authoritative evaluator remains the source of success and still requires
@@ -379,14 +398,23 @@ def stable_placement_curriculum(
     )
     initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
     lifted = (position[:, 2] - initial_z >= float(minimal_lift_m)).to(position.dtype)
+    previous_distance = torch.where(
+        torch.isfinite(env.npa_previous_goal_distance),
+        env.npa_previous_goal_distance.to(distance.dtype),
+        distance,
+    )
     dense = placement_curriculum_signal(
         distance,
         speed,
+        previous_distance,
         tanh=torch.tanh,
         approach_std_m=approach_std_m,
-        approach_speed_mps=approach_speed_mps,
+        near_std_m=near_std_m,
+        progress_scale_m=progress_scale_m,
+        dwell_scale=dwell_scale,
         stable_speed_mps=stable_speed_mps,
     )
+    env.npa_previous_goal_distance = distance.detach().to(torch.float32).clone()
     strict = (
         (distance < float(success_distance_m)) & (speed < float(stable_speed_mps))
     ).to(position.dtype)
@@ -445,7 +473,9 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "command_name": "object_pose",
             "object_name": "object",
             "approach_std_m": PLACEMENT_APPROACH_STD_M,
-            "approach_speed_mps": PLACEMENT_APPROACH_SPEED_MPS,
+            "near_std_m": PLACEMENT_NEAR_STD_M,
+            "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
+            "dwell_scale": PLACEMENT_DWELL_SCALE,
             "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
             "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
             "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
@@ -488,7 +518,9 @@ def install_env_cfg(env_cfg: Any) -> bool:
                 "placement_curriculum": {
                     "weight": STABLE_PLACEMENT_REWARD_WEIGHT,
                     "approach_std_m": PLACEMENT_APPROACH_STD_M,
-                    "approach_speed_mps": PLACEMENT_APPROACH_SPEED_MPS,
+                    "near_std_m": PLACEMENT_NEAR_STD_M,
+                    "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
+                    "dwell_scale": PLACEMENT_DWELL_SCALE,
                     "strict_distance_m": STABLE_PLACEMENT_DISTANCE_M,
                     "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
                     "stable_steps": STABLE_PLACEMENT_STEPS,

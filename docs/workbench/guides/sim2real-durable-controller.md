@@ -205,9 +205,11 @@ credible placement signal before the full 3x3 proof is submitted.
 
 The scenario-bound Isaac task supplies a last-mile placement curriculum without
 changing that verdict. It activates after a real 4 cm lift, provides a broad
-object-to-goal approach gradient, velocity-gates that gradient so carrying
-through the target is not rewarded like holding it, and adds a bonus only at the
-exact 5 cm / 0.03 m/s boundary. Training terminates a successful episode after
+object-to-goal approach gradient, adds signed step-to-step goal progress, limits
+the stillness incentive to the narrow target basin, and adds a bonus only at the
+exact 5 cm / 0.03 m/s boundary. Moving away is penalized instead of allowing a
+far-away stopped object to dominate the task reward. Training terminates a
+successful episode after
 the same three consecutive stable steps used by evaluation; evaluation itself
 does not enable that termination and independently observes the complete event.
 Its 0.35 m approach scale and weight 32 are deliberate: the first live validation
@@ -216,9 +218,11 @@ target distances were still 0.205--0.364 m; the earlier 0.15 m, weight-8 term wa
 effectively flat there and left lift as the dominant objective. A follow-up
 seven-checkpoint validation ladder proved that later training learned 3/3
 reach/contact/grasp/lift and came within 0.057 m, but then moved away. The 0.15
-m/s approach gate and exact success termination address that measured fly-through
-failure. These curriculum constants change the training gradient, never the
-evaluator's strict threshold. PPO begins each pass
+m/s velocity gate added in the next canary was itself rejected by live evidence:
+it suppressed reward while the object was transported and regressed validation
+to 0/3 placement and 2/3 lift. The signed 0.02 m progress term and 0.08 m dwell
+basin address both measured failure modes. These curriculum constants change the
+training gradient, never the evaluator's strict threshold. PPO begins each pass
 at the stock-like entropy coefficient (`0.006`) and anneals to `0.0005` after
 60% of the configured iterations. This preserves early grasp/lift discovery while
 allowing the final policy to stop carrying or dropping the object; the initial
