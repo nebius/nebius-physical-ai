@@ -31,6 +31,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_PROGRESS_REWARD_WEIGHT,
     PLACEMENT_PROGRESS_SCALE_M,
     PLACEMENT_SETTLING_SPEED_MPS,
+    PLACEMENT_STRICT_DWELL_REWARD_WEIGHT,
     STABLE_PLACEMENT_DISTANCE_M,
     STABLE_PLACEMENT_REWARD_WEIGHT,
     STABLE_PLACEMENT_SPEED_MPS,
@@ -41,6 +42,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     module_source,
     placement_curriculum_signal,
     placement_progress_signal,
+    stable_placement_dwell_signal,
     strict_basin_settling_signal,
     goal_curriculum_fraction,
     read_scenarios,
@@ -295,6 +297,7 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert PLACEMENT_COMPLETION_REWARD_WEIGHT == 5000.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     assert PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT == 256.0
+    assert PLACEMENT_STRICT_DWELL_REWARD_WEIGHT == 2048.0
     assert STABLE_PLACEMENT_STEPS == 3
     source = module_source()
     assert "def stable_placement_curriculum" in source
@@ -302,6 +305,7 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert "env_cfg.rewards.stable_placement_curriculum" in source
     assert "env_cfg.rewards.potential_placement_progress" in source
     assert "env_cfg.rewards.strict_basin_settling" in source
+    assert "env_cfg.rewards.stable_placement_dwell" in source
     assert "env_cfg.rewards.object_drop_penalty" in source
     assert "env_cfg.rewards.stable_placement_completion" in source
     assert "npa_previous_placement_distance" in source
@@ -342,10 +346,29 @@ def test_signed_placement_progress_penalizes_departure_and_is_reset_safe() -> No
     assert placement_progress_signal(math.inf, 0.30) == 0.0
     assert placement_progress_signal(0.30, 0.27) == 1.0
     assert placement_progress_signal(0.027, 0.047) == pytest.approx(-1.0)
-    assert placement_progress_signal(0.047, 0.027) == pytest.approx(1.0)
+    # Positive drive tapers before the exact basin and reaches zero inside it,
+    # while later departure remains fully negative.
+    assert placement_progress_signal(0.047, 0.027) == 0.0
+    assert placement_progress_signal(0.10, 0.08) == pytest.approx(0.6)
+    assert placement_progress_signal(0.12, 0.10) == pytest.approx(1.0)
     assert placement_progress_signal(0.030, 0.032) == pytest.approx(-0.1)
     with pytest.raises(ValueError, match="positive"):
         placement_progress_signal(0.03, 0.02, progress_scale_m=0.0)
+    with pytest.raises(ValueError, match="positive"):
+        placement_progress_signal(0.03, 0.02, braking_width_m=0.0)
+
+
+def test_strict_dwell_reward_requires_three_unchanged_stable_steps() -> None:
+    steps, reward = stable_placement_dwell_signal(True, 0)
+    assert (steps, reward) == (1, pytest.approx(1 / 3))
+    steps, reward = stable_placement_dwell_signal(True, steps)
+    assert (steps, reward) == (2, pytest.approx(2 / 3))
+    steps, reward = stable_placement_dwell_signal(True, steps)
+    assert (steps, reward) == (3, 1.0)
+    assert stable_placement_dwell_signal(True, steps) == (3, 1.0)
+    assert stable_placement_dwell_signal(False, steps) == (0, 0.0)
+    with pytest.raises(ValueError, match="positive"):
+        stable_placement_dwell_signal(True, 0, required_steps=0)
 
 
 def test_strict_basin_settling_rewards_braking_without_target_avoidance() -> None:

@@ -57,6 +57,12 @@ PLACEMENT_DROP_PENALTY_WEIGHT = -2000.0
 PLACEMENT_COMPLETION_REWARD_WEIGHT = 5000.0
 STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
 PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT = 256.0
+# Train14 put 49/64 validation objects inside the unchanged 5 cm basin and left
+# 30 there, yet only two ever crossed 0.03 m/s and neither held it for the three
+# required steps.  Reward the exact consecutive-step event itself so PPO can
+# distinguish a transient slow sample from the required dwell.  This does not
+# change any success threshold and remains zero outside the strict event.
+PLACEMENT_STRICT_DWELL_REWARD_WEIGHT = 2048.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
 _DROP_PENALTY_TYPE: type | None = None
@@ -197,6 +203,10 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_stable_placement_steps = torch.zeros(
             env.num_envs, dtype=torch.long, device=env.device
         )
+    if not hasattr(env, "npa_stable_placement_reward_steps"):
+        env.npa_stable_placement_reward_steps = torch.zeros(
+            env.num_envs, dtype=torch.long, device=env.device
+        )
     if not hasattr(env, "npa_previous_placement_distance"):
         env.npa_previous_placement_distance = torch.full(
             (env.num_envs,), float("inf"), dtype=torch.float, device=env.device
@@ -221,6 +231,7 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
         scenario_ids = (ids + offset) % len(rows)
     env.npa_scenario_indices[ids] = scenario_ids
     env.npa_stable_placement_steps[ids] = 0
+    env.npa_stable_placement_reward_steps[ids] = 0
     env.npa_previous_placement_distance[ids] = float("inf")
     env.npa_scenario_applied_counts += torch.bincount(scenario_ids, minlength=len(rows))
     return ids, scenario_ids
@@ -570,17 +581,34 @@ def placement_progress_signal(
     distance: float,
     *,
     progress_scale_m: float = PLACEMENT_PROGRESS_SCALE_M,
+    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
+    braking_width_m: float = PLACEMENT_BASIN_WIDTH_M,
 ) -> float:
-    """Return a bounded potential delta for the CPU-testable contract."""
+    """Return signed progress with positive drive tapered before the goal.
 
-    if progress_scale_m <= 0:
-        raise ValueError("progress_scale_m must be positive")
+    Negative departure remains fully penalized. Positive approach falls to zero
+    at the strict-distance boundary so discounted PPO cannot profit from flying
+    through the target before paying the later departure penalty.
+    """
+
+    if progress_scale_m <= 0 or braking_width_m <= 0:
+        raise ValueError("progress scale and braking width must be positive")
     if not math.isfinite(previous_distance):
         return 0.0
-    return max(
+    progress = max(
         -1.0,
         min(1.0, (previous_distance - distance) / float(progress_scale_m)),
     )
+    if progress <= 0:
+        return progress
+    approach_scale = max(
+        0.0,
+        min(
+            1.0,
+            (distance - float(success_distance_m)) / float(braking_width_m),
+        ),
+    )
+    return progress * approach_scale
 
 
 def potential_placement_progress(
@@ -590,6 +618,8 @@ def potential_placement_progress(
     object_name: str = "object",
     ee_frame_name: str = "ee_frame",
     progress_scale_m: float = PLACEMENT_PROGRESS_SCALE_M,
+    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
+    braking_width_m: float = PLACEMENT_BASIN_WIDTH_M,
     hold_max_distance_m: float = PLACEMENT_HOLD_MAX_DISTANCE_M,
     minimal_lift_m: float = PLACEMENT_MINIMAL_LIFT_M,
 ) -> Any:
@@ -598,9 +628,12 @@ def potential_placement_progress(
     The prior best-distance reward paid for reaching a new closest point but made
     leaving that point free. Live Train8/Train9 validation repeatedly crossed the
     5 cm basin and drifted away without three stable steps. This signed potential
-    delta makes approach positive and departure negative. The first eligible
-    sample after reset or regrasp earns zero, so reset/drop cycles cannot
-    synthesize progress. Every step is bounded.
+    delta makes approach positive and departure negative. Train14 then showed the
+    full positive drive still encouraged high-speed crossings in 49/64 validation
+    cases. Positive progress now tapers over the pre-arrival braking envelope and
+    reaches zero at the unchanged strict boundary; negative departure remains
+    full strength. The first eligible sample after reset or regrasp earns zero,
+    so reset/drop cycles cannot synthesize progress. Every step is bounded.
     """
 
     import torch  # noqa: WPS433 - Isaac runtime dependency
@@ -619,10 +652,22 @@ def potential_placement_progress(
     eligible = lifted & (hold_distance < float(hold_max_distance_m))
     previous = env.npa_previous_placement_distance
     initialized = torch.isfinite(previous)
-    progress = torch.where(
+    raw_progress = torch.where(
         eligible & initialized,
         torch.clamp((previous - distance) / float(progress_scale_m), min=-1.0, max=1.0),
         torch.zeros_like(distance),
+    )
+    if braking_width_m <= 0:
+        raise ValueError("braking_width_m must be positive")
+    approach_scale = torch.clamp(
+        (distance - float(success_distance_m)) / float(braking_width_m),
+        min=0.0,
+        max=1.0,
+    )
+    progress = torch.where(
+        raw_progress > 0,
+        raw_progress * approach_scale,
+        raw_progress,
     )
     env.npa_previous_placement_distance = torch.where(
         eligible,
@@ -630,6 +675,61 @@ def potential_placement_progress(
         torch.full_like(distance, float("inf")),
     )
     return progress
+
+
+def stable_placement_dwell_signal(
+    is_stable: bool,
+    previous_steps: int,
+    *,
+    required_steps: int = STABLE_PLACEMENT_STEPS,
+) -> tuple[int, float]:
+    """Advance the exact strict-event dwell counter for CPU contract tests."""
+
+    if required_steps <= 0:
+        raise ValueError("required_steps must be positive")
+    steps = min(int(required_steps), int(previous_steps) + 1) if is_stable else 0
+    return steps, float(steps) / float(required_steps)
+
+
+def stable_placement_dwell(
+    env: Any,
+    *,
+    command_name: str = "object_pose",
+    object_name: str = "object",
+    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
+    stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
+    required_steps: int = STABLE_PLACEMENT_STEPS,
+) -> Any:
+    """Reward consecutive strict stable-placement steps, resetting on a miss."""
+
+    import torch  # noqa: WPS433 - Isaac runtime dependency
+
+    if required_steps <= 0:
+        raise ValueError("required_steps must be positive")
+    rows = scenarios_from_env()
+    _ensure_runtime_buffers(env, rows)
+    distance, speed, position, _ = _placement_state(
+        env, command_name=command_name, object_name=object_name
+    )
+    obj = env.scene[object_name]
+    initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
+    lifted = position[:, 2] - initial_z >= float(PLACEMENT_MINIMAL_LIFT_M)
+    stable = (
+        lifted
+        & (distance < float(success_distance_m))
+        & (speed < float(stable_speed_mps))
+    )
+    env.npa_stable_placement_reward_steps = torch.where(
+        stable,
+        torch.clamp(
+            env.npa_stable_placement_reward_steps + 1,
+            max=int(required_steps),
+        ),
+        torch.zeros_like(env.npa_stable_placement_reward_steps),
+    )
+    return env.npa_stable_placement_reward_steps.to(position.dtype) / float(
+        required_steps
+    )
 
 
 def strict_basin_settling(
@@ -797,6 +897,8 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "object_name": "object",
             "ee_frame_name": "ee_frame",
             "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
+            "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
+            "braking_width_m": PLACEMENT_BASIN_WIDTH_M,
             "hold_max_distance_m": PLACEMENT_HOLD_MAX_DISTANCE_M,
             "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
         },
@@ -814,6 +916,17 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "hold_std_m": PLACEMENT_HOLD_STD_M,
             "hold_reward_floor": PLACEMENT_HOLD_REWARD_FLOOR,
             "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
+        },
+    )
+    env_cfg.rewards.stable_placement_dwell = RewardTermCfg(
+        func=stable_placement_dwell,
+        weight=PLACEMENT_STRICT_DWELL_REWARD_WEIGHT,
+        params={
+            "command_name": "object_pose",
+            "object_name": "object",
+            "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
+            "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
+            "required_steps": STABLE_PLACEMENT_STEPS,
         },
     )
     from isaaclab.envs import mdp
@@ -877,6 +990,9 @@ def install_env_cfg(env_cfg: Any) -> bool:
                     "dwell_scale": PLACEMENT_DWELL_SCALE,
                     "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
                     "progress_reward_weight": PLACEMENT_PROGRESS_REWARD_WEIGHT,
+                    "strict_dwell_reward_weight": (
+                        PLACEMENT_STRICT_DWELL_REWARD_WEIGHT
+                    ),
                     "goal_curriculum_enabled": os.environ.get(
                         "NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0"
                     )
