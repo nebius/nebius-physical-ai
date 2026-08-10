@@ -8607,7 +8607,8 @@ def preflight_cmd(
         )
     results.append(_agent_ssh_egress_result())
     results.append(_agent_storage_result(project))
-    results.append(_agent_token_factory_result())
+    tf_key, _ = _resolve_deploy_llm_credentials()
+    results.append(_agent_token_factory_result(tf_key))
     has_fail = _render_agent_checks(results, output_json=output_json)
     if has_fail:
         raise typer.Exit(code=1)
