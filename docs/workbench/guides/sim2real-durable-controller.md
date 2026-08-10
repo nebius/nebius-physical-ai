@@ -205,10 +205,13 @@ credible placement signal before the full 3x3 proof is submitted.
 
 The scenario-bound Isaac task supplies a last-mile placement curriculum without
 changing that verdict. It activates after a real 4 cm lift, provides a broad
-object-to-goal approach gradient, adds signed step-to-step goal progress, limits
-the stillness incentive to the narrow target basin, and adds a bonus only at the
-exact 5 cm / 0.03 m/s boundary. Moving away is penalized instead of allowing a
-far-away stopped object to dominate the task reward. Training terminates a
+object-to-goal approach gradient even while the object moves, limits the
+stillness incentive to the narrow target basin, penalizes the exact
+`object_dropping` termination, and adds a bonus only at the exact 5 cm / 0.03
+m/s boundary. The first pass interpolates each applied scenario from an 8 cm
+lift directly above its real object pose to the exact recorded goal by 60% of
+the configured steps; the remaining 40% and every resumed pass use only the
+unmodified scenario goal. Training terminates a
 successful episode after
 the same three consecutive stable steps used by evaluation; evaluation itself
 does not enable that termination and independently observes the complete event.
@@ -220,9 +223,11 @@ seven-checkpoint validation ladder proved that later training learned 3/3
 reach/contact/grasp/lift and came within 0.057 m, but then moved away. The 0.15
 m/s velocity gate added in the next canary was itself rejected by live evidence:
 it suppressed reward while the object was transported and regressed validation
-to 0/3 placement and 2/3 lift. The signed 0.02 m progress term and 0.08 m dwell
-basin address both measured failure modes. These curriculum constants change the
-training gradient, never the evaluator's strict threshold. PPO begins each pass
+to 0/3 placement and 2/3 lift. A signed step-progress follow-up was also rejected:
+drop/reset cycles exploited it, late training drop rate rose to 0.7866, and
+validation regressed to 0/3 grasp and 1/3 lift. The explicit goal curriculum and
+drop penalty address those measured failure modes without changing the final
+target or strict evaluator. PPO begins each pass
 at the stock-like entropy coefficient (`0.006`) and anneals to `0.0005` after
 60% of the configured iterations. This preserves early grasp/lift discovery while
 allowing the final policy to stop carrying or dropping the object; the initial

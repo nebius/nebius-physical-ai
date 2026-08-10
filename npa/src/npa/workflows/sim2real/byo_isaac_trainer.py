@@ -677,6 +677,8 @@ def build_isaac_job_manifest(
         overrides["agent.resume"] = "true"
         overrides["agent.load_run"] = RESUME_RUN_DIR
         overrides["agent.load_checkpoint"] = RESUME_CKPT_NAME
+    goal_curriculum_enabled = not resume_uri and not physics
+    goal_curriculum_full_step = max(1, int(iterations * steps_per_env * 0.60))
     # shlex.quote each value: scale tuples "(0.8, 0.8, 0.8)" and URLs contain shell
     # metacharacters (parens, spaces) that otherwise break the bash train command.
     override_str = " ".join(
@@ -955,6 +957,14 @@ def build_isaac_job_manifest(
                                 {
                                     "name": "NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION",
                                     "value": "1",
+                                },
+                                {
+                                    "name": "NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM",
+                                    "value": "1" if goal_curriculum_enabled else "0",
+                                },
+                                {
+                                    "name": "NPA_SIM2REAL_GOAL_CURRICULUM_FULL_STEP",
+                                    "value": str(goal_curriculum_full_step),
                                 },
                                 *_isaac_eula_env_entries(),
                             ],

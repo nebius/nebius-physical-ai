@@ -18,8 +18,9 @@ from npa.workflows.sim2real.checkpoint_selection import (
 from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_APPROACH_STD_M,
     PLACEMENT_DWELL_SCALE,
+    PLACEMENT_DROP_PENALTY_WEIGHT,
+    PLACEMENT_GOAL_CURRICULUM_LIFT_M,
     PLACEMENT_NEAR_STD_M,
-    PLACEMENT_PROGRESS_SCALE_M,
     PLACEMENT_MINIMAL_LIFT_M,
     STABLE_PLACEMENT_DISTANCE_M,
     STABLE_PLACEMENT_REWARD_WEIGHT,
@@ -28,6 +29,7 @@ from npa.workflows.sim2real.isaac_scenario_task import (
     ScenarioContractError,
     module_source,
     placement_curriculum_signal,
+    goal_curriculum_fraction,
     read_scenarios,
 )
 from npa.workflows.sim2real.task_contract import (
@@ -267,15 +269,20 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert PLACEMENT_MINIMAL_LIFT_M == 0.04
     assert PLACEMENT_APPROACH_STD_M == 0.35
     assert PLACEMENT_NEAR_STD_M == 0.08
-    assert PLACEMENT_PROGRESS_SCALE_M == 0.02
     assert PLACEMENT_DWELL_SCALE == 2.0
+    assert PLACEMENT_GOAL_CURRICULUM_LIFT_M == 0.08
+    assert PLACEMENT_DROP_PENALTY_WEIGHT == -50.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     assert STABLE_PLACEMENT_STEPS == 3
     source = module_source()
     assert "def stable_placement_curriculum" in source
     assert "lifted * (dense + strict)" in source
     assert "env_cfg.rewards.stable_placement_curriculum" in source
+    assert "env_cfg.rewards.object_drop_penalty" in source
+    assert "mdp.is_terminated_term" in source
     assert "env_cfg.terminations.stable_placement_success" in source
+    assert "NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM" in source
+    assert "npa_goal_curriculum_true_assignments" in source
     assert 'NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION", "0"' in source
     assert "distance < float(success_distance_m)" in source
     assert "speed < float(stable_speed_mps)" in source
@@ -287,18 +294,26 @@ def test_stable_placement_curriculum_is_dense_across_live_canary_basin() -> None
     canary_basin_approach = 1.0 - math.tanh(0.25 / PLACEMENT_APPROACH_STD_M)
     assert canary_basin_approach > 0.2
     assert STABLE_PLACEMENT_REWARD_WEIGHT * canary_basin_approach > 10.0
-    slow = placement_curriculum_signal(0.057, 0.01, 0.057, tanh=math.tanh)
-    fly_through = placement_curriculum_signal(0.057, 0.20, 0.057, tanh=math.tanh)
+    slow = placement_curriculum_signal(0.057, 0.01, tanh=math.tanh)
+    fly_through = placement_curriculum_signal(0.057, 0.20, tanh=math.tanh)
     assert slow > 1.0
     assert slow > fly_through + 0.4
 
 
-def test_stable_placement_curriculum_rewards_progress_not_far_stopping() -> None:
-    moving_toward = placement_curriculum_signal(0.24, 0.20, 0.25, tanh=math.tanh)
-    moving_away = placement_curriculum_signal(0.26, 0.20, 0.25, tanh=math.tanh)
-    stopped_far = placement_curriculum_signal(0.45, 0.0, 0.45, tanh=math.tanh)
-    assert moving_toward > moving_away + 0.8
+def test_stable_placement_curriculum_does_not_suppress_transport() -> None:
+    transporting_far = placement_curriculum_signal(0.45, 0.20, tanh=math.tanh)
+    stopped_far = placement_curriculum_signal(0.45, 0.0, tanh=math.tanh)
+    assert STABLE_PLACEMENT_REWARD_WEIGHT * transporting_far > 4.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT * stopped_far < 5.0
+
+
+def test_goal_curriculum_reaches_exact_target_and_fails_closed() -> None:
+    assert goal_curriculum_fraction(0, 7200) == 0.0
+    assert goal_curriculum_fraction(3600, 7200) == 0.5
+    assert goal_curriculum_fraction(7200, 7200) == 1.0
+    assert goal_curriculum_fraction(9000, 7200) == 1.0
+    with pytest.raises(ScenarioContractError, match="positive"):
+        goal_curriculum_fraction(1, 0)
 
 
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:

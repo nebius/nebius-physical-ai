@@ -134,6 +134,8 @@ def test_build_isaac_job_manifest_shape():
     assert "<<" not in args
     env = {item["name"]: item["value"] for item in container["env"]}
     assert env["NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION"] == "1"
+    assert env["NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM"] == "1"
+    assert env["NPA_SIM2REAL_GOAL_CURRICULUM_FULL_STEP"] == "2160"
 
 
 def test_dryrun_main_writes_contract_json(tmp_path, monkeypatch):
@@ -642,6 +644,13 @@ def test_manifest_resume_downloads_prior_checkpoint_and_passes_flags():
     assert "agent.resume=true" in args
     assert f"agent.load_run={byo.RESUME_RUN_DIR}" in args
     assert f"agent.load_checkpoint={byo.RESUME_CKPT_NAME}" in args
+    env = {
+        item["name"]: item["value"]
+        for item in _resume_manifest(resume_uri=uri)["spec"]["template"]["spec"][
+            "containers"
+        ][0]["env"]
+    }
+    assert env["NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM"] == "0"
 
 
 def test_manifest_no_resume_keeps_default_path_unchanged():

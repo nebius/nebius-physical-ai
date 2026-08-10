@@ -32,8 +32,9 @@ STABLE_PLACEMENT_STEPS = 3
 # curriculum genuinely dense across the observed post-lift placement basin.
 PLACEMENT_APPROACH_STD_M = 0.35
 PLACEMENT_NEAR_STD_M = 0.08
-PLACEMENT_PROGRESS_SCALE_M = 0.02
 PLACEMENT_DWELL_SCALE = 2.0
+PLACEMENT_GOAL_CURRICULUM_LIFT_M = 0.08
+PLACEMENT_DROP_PENALTY_WEIGHT = -50.0
 STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
@@ -174,13 +175,6 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_stable_placement_steps = torch.zeros(
             env.num_envs, dtype=torch.long, device=env.device
         )
-    if not hasattr(env, "npa_previous_goal_distance"):
-        env.npa_previous_goal_distance = torch.full(
-            (env.num_envs,),
-            float("nan"),
-            dtype=torch.float32,
-            device=env.device,
-        )
 
 
 def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
@@ -201,7 +195,6 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
         scenario_ids = (ids + offset) % len(rows)
     env.npa_scenario_indices[ids] = scenario_ids
     env.npa_stable_placement_steps[ids] = 0
-    env.npa_previous_goal_distance[ids] = torch.nan
     env.npa_scenario_applied_counts += torch.bincount(scenario_ids, minlength=len(rows))
     return ids, scenario_ids
 
@@ -277,6 +270,14 @@ def apply_scenario_reset(env: Any, env_ids: Any, asset_cfg: Any) -> None:
         env.npa_scenario_first_reset_logged = True
 
 
+def goal_curriculum_fraction(step: int, full_goal_step: int) -> float:
+    """Return the bounded easy-to-exact scenario-goal curriculum fraction."""
+
+    if full_goal_step <= 0:
+        raise ScenarioContractError("goal curriculum full step must be positive")
+    return min(1.0, max(0.0, float(step) / float(full_goal_step)))
+
+
 def _scenario_command_type() -> type:
     global _COMMAND_TYPE
     if _COMMAND_TYPE is not None:
@@ -306,6 +307,53 @@ def _scenario_command_type() -> type:
                 dtype=self.pose_command_b.dtype,
                 device=self.device,
             )
+            curriculum_enabled = (
+                os.environ.get("NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0") == "1"
+            )
+            full_goal_step = int(
+                os.environ.get("NPA_SIM2REAL_GOAL_CURRICULUM_FULL_STEP", "1") or 1
+            )
+            env_step = int(getattr(self._env, "_sim_step_counter", 0)) // int(
+                self._env.cfg.decimation
+            )
+            fraction = (
+                goal_curriculum_fraction(env_step, full_goal_step)
+                if curriculum_enabled
+                else 1.0
+            )
+            if fraction < 1.0:
+                object_offsets = torch.tensor(
+                    [
+                        [
+                            float(row["object_placement"]["x"]),
+                            float(row["object_placement"]["y"]),
+                            float(row["object_placement"]["z"]),
+                        ]
+                        for row in selected
+                    ],
+                    dtype=goals.dtype,
+                    device=self.device,
+                )
+                object_default = (
+                    self._env.scene["object"]
+                    .data.default_root_state[ids, :3]
+                    .to(goals.dtype)
+                )
+                easy_goals = object_default + object_offsets
+                easy_goals[:, 2] += PLACEMENT_GOAL_CURRICULUM_LIFT_M
+                goals = easy_goals + fraction * (goals - easy_goals)
+            assignment_count = int(ids.numel())
+            self._env.npa_goal_curriculum_assignment_count = (
+                int(getattr(self._env, "npa_goal_curriculum_assignment_count", 0))
+                + assignment_count
+            )
+            self._env.npa_goal_curriculum_true_assignments = int(
+                getattr(self._env, "npa_goal_curriculum_true_assignments", 0)
+            ) + (assignment_count if fraction >= 1.0 else 0)
+            self._env.npa_goal_curriculum_max_fraction = max(
+                float(getattr(self._env, "npa_goal_curriculum_max_fraction", 0.0)),
+                fraction,
+            )
             self.pose_command_b[ids, :3] = goals
             self.pose_command_b[ids, 3:] = 0.0
             self.pose_command_b[ids, 3] = 1.0
@@ -317,31 +365,27 @@ def _scenario_command_type() -> type:
 def placement_curriculum_signal(
     distance: Any,
     speed: Any,
-    previous_distance: Any,
     *,
     tanh: Any,
     approach_std_m: float = PLACEMENT_APPROACH_STD_M,
     near_std_m: float = PLACEMENT_NEAR_STD_M,
-    progress_scale_m: float = PLACEMENT_PROGRESS_SCALE_M,
     dwell_scale: float = PLACEMENT_DWELL_SCALE,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
 ) -> Any:
-    """Return signed transport progress plus a near-target dwell incentive.
+    """Return unsuppressed proximity plus a near-target dwell incentive.
 
-    Train3 exposed a bad incentive in the prior velocity-gated term: moving the
-    object deliberately suppressed the entire approach gradient, while stopping
-    far from the goal still earned a positive reward.  The signed potential
-    difference below rewards motion toward the goal and penalizes motion away.
-    Absolute proximity keeps the signal dense, but stillness is valuable only in
-    the narrow target basin. ``tanh`` is injected so this contract is testable with
+    Train3 exposed that velocity-gating the whole approach signal suppresses
+    deliberate transport. Train4 then showed that a signed step delta is
+    exploitable through drop/reset cycles. Absolute proximity is therefore kept
+    dense and independent of velocity, while stillness is valuable only in the
+    narrow target basin. ``tanh`` is injected so this contract is testable with
     scalar math without importing Isaac's Torch runtime.
     """
 
-    progress = tanh((previous_distance - distance) / float(progress_scale_m))
     approach = 1.0 - tanh(distance / float(approach_std_m))
     near = 1.0 - tanh(distance / float(near_std_m))
     strict_stillness = 1.0 - tanh(speed / float(stable_speed_mps))
-    return progress + approach + float(dwell_scale) * near * strict_stillness
+    return approach + float(dwell_scale) * near * strict_stillness
 
 
 def _placement_state(
@@ -369,7 +413,6 @@ def stable_placement_curriculum(
     object_name: str = "object",
     approach_std_m: float = PLACEMENT_APPROACH_STD_M,
     near_std_m: float = PLACEMENT_NEAR_STD_M,
-    progress_scale_m: float = PLACEMENT_PROGRESS_SCALE_M,
     dwell_scale: float = PLACEMENT_DWELL_SCALE,
     success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
@@ -382,8 +425,8 @@ def stable_placement_curriculum(
     reach, grasp, and lift while repeatedly dropping or carrying through the
     target. This term activates only after a genuine lift and combines:
 
-    * signed step-to-step progress toward the commanded goal;
-    * broad absolute proximity plus a narrow near-goal stillness signal; and
+    * broad absolute proximity that remains active during transport;
+    * a narrow near-goal stillness signal; and
     * a sparse bonus at the exact 5 cm / 0.03 m/s stable-placement boundary.
 
     The authoritative evaluator remains the source of success and still requires
@@ -398,23 +441,15 @@ def stable_placement_curriculum(
     )
     initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
     lifted = (position[:, 2] - initial_z >= float(minimal_lift_m)).to(position.dtype)
-    previous_distance = torch.where(
-        torch.isfinite(env.npa_previous_goal_distance),
-        env.npa_previous_goal_distance.to(distance.dtype),
-        distance,
-    )
     dense = placement_curriculum_signal(
         distance,
         speed,
-        previous_distance,
         tanh=torch.tanh,
         approach_std_m=approach_std_m,
         near_std_m=near_std_m,
-        progress_scale_m=progress_scale_m,
         dwell_scale=dwell_scale,
         stable_speed_mps=stable_speed_mps,
     )
-    env.npa_previous_goal_distance = distance.detach().to(torch.float32).clone()
     strict = (
         (distance < float(success_distance_m)) & (speed < float(stable_speed_mps))
     ).to(position.dtype)
@@ -474,12 +509,18 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "object_name": "object",
             "approach_std_m": PLACEMENT_APPROACH_STD_M,
             "near_std_m": PLACEMENT_NEAR_STD_M,
-            "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
             "dwell_scale": PLACEMENT_DWELL_SCALE,
             "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
             "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
             "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
         },
+    )
+    from isaaclab.envs import mdp
+
+    env_cfg.rewards.object_drop_penalty = RewardTermCfg(
+        func=mdp.is_terminated_term,
+        weight=PLACEMENT_DROP_PENALTY_WEIGHT,
+        params={"term_keys": "object_dropping"},
     )
     success_termination_enabled = (
         os.environ.get("NPA_SIM2REAL_ENABLE_SUCCESS_TERMINATION", "0") == "1"
@@ -519,8 +560,17 @@ def install_env_cfg(env_cfg: Any) -> bool:
                     "weight": STABLE_PLACEMENT_REWARD_WEIGHT,
                     "approach_std_m": PLACEMENT_APPROACH_STD_M,
                     "near_std_m": PLACEMENT_NEAR_STD_M,
-                    "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
                     "dwell_scale": PLACEMENT_DWELL_SCALE,
+                    "goal_curriculum_enabled": os.environ.get(
+                        "NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0"
+                    )
+                    == "1",
+                    "goal_curriculum_full_step": int(
+                        os.environ.get("NPA_SIM2REAL_GOAL_CURRICULUM_FULL_STEP", "1")
+                        or 1
+                    ),
+                    "goal_curriculum_lift_m": PLACEMENT_GOAL_CURRICULUM_LIFT_M,
+                    "drop_penalty_weight": PLACEMENT_DROP_PENALTY_WEIGHT,
                     "strict_distance_m": STABLE_PLACEMENT_DISTANCE_M,
                     "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
                     "stable_steps": STABLE_PLACEMENT_STEPS,
@@ -578,6 +628,22 @@ def runtime_audit(env: Any) -> dict[str, Any]:
         "applied_unique_config_digests": seen,
         "coverage_rate": round(seen / len(rows), 6) if rows else 0.0,
         "total_reset_assignments": sum(int(count) for count in counts),
+        "goal_curriculum": {
+            "enabled": os.environ.get("NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0")
+            == "1",
+            "full_goal_step": int(
+                os.environ.get("NPA_SIM2REAL_GOAL_CURRICULUM_FULL_STEP", "1") or 1
+            ),
+            "assignment_count": int(
+                getattr(env, "npa_goal_curriculum_assignment_count", 0)
+            ),
+            "true_goal_assignments": int(
+                getattr(env, "npa_goal_curriculum_true_assignments", 0)
+            ),
+            "max_fraction": round(
+                float(getattr(env, "npa_goal_curriculum_max_fraction", 0.0)), 6
+            ),
+        },
         "records": [
             {
                 "env_id": row["env_id"],
