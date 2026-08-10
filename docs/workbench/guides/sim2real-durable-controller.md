@@ -204,11 +204,16 @@ grasp, and lift are diagnostics only. A validation-only canary must show a
 credible placement signal before the full 3x3 proof is submitted.
 
 The scenario-bound Isaac task supplies a last-mile placement curriculum without
-changing that verdict. It activates after a real 4 cm lift, provides a broad
-object-to-goal approach gradient even while the object moves, limits the
-stillness incentive to the narrow target basin, penalizes the exact
-`object_dropping` termination, and adds a bonus only at the exact 5 cm / 0.03
-m/s boundary. The first pass interpolates each applied scenario from an 8 cm
+changing that verdict. It activates after a real 4 cm lift, transforms the
+base-frame goal through the robot root exactly as Isaac's stock reward does,
+provides an object-to-goal approach gradient only while the end effector remains
+near the object, and limits the stillness incentive to the narrow target basin.
+An episode-local best-distance potential rewards only new held-object progress;
+its first eligible sample is zero and reset returns it to infinity, so a drop or
+reset cannot manufacture progress. The exact `object_dropping` termination has
+a time-step-scaled terminal penalty, while the unchanged 5 cm / 0.03 m/s success
+termination has the matching positive completion reward. The first pass
+interpolates each applied scenario from an 8 cm
 lift directly above its real object pose to the exact recorded goal by 60% of
 the configured steps; the remaining 40% and every resumed pass use only the
 unmodified scenario goal. Training terminates a
@@ -226,8 +231,14 @@ it suppressed reward while the object was transported and regressed validation
 to 0/3 placement and 2/3 lift. A signed step-progress follow-up was also rejected:
 drop/reset cycles exploited it, late training drop rate rose to 0.7866, and
 validation regressed to 0/3 grasp and 1/3 lift. The explicit goal curriculum and
-drop penalty address those measured failure modes without changing the final
-target or strict evaluator. PPO begins each pass
+an unscaled drop penalty were then tested exactly at 500 iterations: the goal
+curriculum reached fraction 1.0 with 35,412 true-goal assignments, but late drop
+rate still reached 0.8269 and validation remained 0/3. Isaac's reward manager
+multiplies every weight by the environment time step; the old weight `-50`
+therefore contributed only about `-0.16` to late episode summaries and did not
+counter the throw/drop shortcut. Held-object gating, reset-safe monotonic
+progress, and symmetric terminal success/drop weights close that measured
+loophole without changing the final target or strict evaluator. PPO begins each pass
 at the stock-like entropy coefficient (`0.006`) and anneals to `0.0005` after
 60% of the configured iterations. This preserves early grasp/lift discovery while
 allowing the final policy to stop carrying or dropping the object; the initial

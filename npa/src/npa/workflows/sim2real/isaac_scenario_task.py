@@ -32,9 +32,17 @@ STABLE_PLACEMENT_STEPS = 3
 # curriculum genuinely dense across the observed post-lift placement basin.
 PLACEMENT_APPROACH_STD_M = 0.35
 PLACEMENT_NEAR_STD_M = 0.08
+PLACEMENT_HOLD_STD_M = 0.15
 PLACEMENT_DWELL_SCALE = 2.0
 PLACEMENT_GOAL_CURRICULUM_LIFT_M = 0.08
-PLACEMENT_DROP_PENALTY_WEIGHT = -50.0
+PLACEMENT_PROGRESS_SCALE_M = 0.02
+PLACEMENT_PROGRESS_REWARD_WEIGHT = 128.0
+# Isaac RewardManager multiplies every weight by the environment dt.  Train5's
+# nominal -50 terminal weight contributed only about -0.16 to late episode
+# summaries while throw/drop returns exceeded 18, so terminal consequences must
+# be expressed on that time-scaled basis.  Success and drop remain symmetric.
+PLACEMENT_DROP_PENALTY_WEIGHT = -5000.0
+PLACEMENT_COMPLETION_REWARD_WEIGHT = 5000.0
 STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
 PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
@@ -175,6 +183,10 @@ def _ensure_runtime_buffers(env: Any, rows: list[dict[str, Any]]) -> None:
         env.npa_stable_placement_steps = torch.zeros(
             env.num_envs, dtype=torch.long, device=env.device
         )
+    if not hasattr(env, "npa_best_placement_distance"):
+        env.npa_best_placement_distance = torch.full(
+            (env.num_envs,), float("inf"), dtype=torch.float, device=env.device
+        )
 
 
 def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
@@ -195,6 +207,7 @@ def _assign(env: Any, env_ids: Any, rows: list[dict[str, Any]]) -> Any:
         scenario_ids = (ids + offset) % len(rows)
     env.npa_scenario_indices[ids] = scenario_ids
     env.npa_stable_placement_steps[ids] = 0
+    env.npa_best_placement_distance[ids] = float("inf")
     env.npa_scenario_applied_counts += torch.bincount(scenario_ids, minlength=len(rows))
     return ids, scenario_ids
 
@@ -365,45 +378,108 @@ def _scenario_command_type() -> type:
 def placement_curriculum_signal(
     distance: Any,
     speed: Any,
+    hold_distance: Any,
     *,
     tanh: Any,
     approach_std_m: float = PLACEMENT_APPROACH_STD_M,
     near_std_m: float = PLACEMENT_NEAR_STD_M,
+    hold_std_m: float = PLACEMENT_HOLD_STD_M,
     dwell_scale: float = PLACEMENT_DWELL_SCALE,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
 ) -> Any:
-    """Return unsuppressed proximity plus a near-target dwell incentive.
+    """Return held-object proximity plus a near-target dwell incentive.
 
     Train3 exposed that velocity-gating the whole approach signal suppresses
     deliberate transport. Train4 then showed that a signed step delta is
-    exploitable through drop/reset cycles. Absolute proximity is therefore kept
-    dense and independent of velocity, while stillness is valuable only in the
-    narrow target basin. ``tanh`` is injected so this contract is testable with
-    scalar math without importing Isaac's Torch runtime.
+    exploitable through drop/reset cycles. Absolute proximity therefore remains
+    independent of velocity but is gated by end-effector/object proximity. This
+    closes the Train5 loophole where throwing the object earned placement reward
+    before a later drop. Stillness is valuable only in the narrow target basin.
+    ``tanh`` is injected so this contract is testable without Isaac's Torch runtime.
     """
 
     approach = 1.0 - tanh(distance / float(approach_std_m))
     near = 1.0 - tanh(distance / float(near_std_m))
+    held = 1.0 - tanh(hold_distance / float(hold_std_m))
     strict_stillness = 1.0 - tanh(speed / float(stable_speed_mps))
-    return approach + float(dwell_scale) * near * strict_stillness
+    return held * (approach + float(dwell_scale) * near * strict_stillness)
 
 
 def _placement_state(
-    env: Any, *, command_name: str, object_name: str
-) -> tuple[Any, Any, Any]:
-    """Return object distance, linear speed, and position for placement terms."""
+    env: Any,
+    *,
+    command_name: str,
+    object_name: str,
+    robot_name: str = "robot",
+    ee_frame_name: str = "ee_frame",
+) -> tuple[Any, Any, Any, Any]:
+    """Return goal distance, speed, position, and end-effector hold distance."""
 
     import torch  # noqa: WPS433 - Isaac runtime dependency
 
     obj = env.scene[object_name]
+    robot = env.scene[robot_name]
     position = obj.data.root_pos_w[:, :3]
-    goal = (
-        env.command_manager.get_command(command_name)[:, :3]
-        + env.scene.env_origins[:, :3]
+    command = env.command_manager.get_command(command_name)
+    from isaaclab.utils.math import combine_frame_transforms
+
+    goal, _ = combine_frame_transforms(
+        robot.data.root_pos_w,
+        robot.data.root_quat_w,
+        command[:, :3],
     )
     distance = torch.linalg.norm(position - goal, dim=1)
     speed = torch.linalg.norm(obj.data.root_lin_vel_w[:, :3], dim=1)
-    return distance, speed, position
+    ee_position = env.scene[ee_frame_name].data.target_pos_w[..., 0, :]
+    hold_distance = torch.linalg.norm(position - ee_position, dim=1)
+    return distance, speed, position, hold_distance
+
+
+def monotonic_placement_progress(
+    env: Any,
+    *,
+    command_name: str = "object_pose",
+    object_name: str = "object",
+    ee_frame_name: str = "ee_frame",
+    progress_scale_m: float = PLACEMENT_PROGRESS_SCALE_M,
+    hold_std_m: float = PLACEMENT_HOLD_STD_M,
+    minimal_lift_m: float = PLACEMENT_MINIMAL_LIFT_M,
+) -> Any:
+    """Reward new held-object progress without a reset/drop exploit.
+
+    The episode-local best distance starts at infinity and the first eligible
+    sample earns zero. Later samples earn only improvement beyond that best;
+    moving away is zero and resetting cannot synthesize a positive delta. The
+    potential is bounded by genuine held-object distance reduction.
+    """
+
+    import torch  # noqa: WPS433 - Isaac runtime dependency
+
+    rows = scenarios_from_env()
+    _ensure_runtime_buffers(env, rows)
+    obj = env.scene[object_name]
+    distance, _, position, hold_distance = _placement_state(
+        env,
+        command_name=command_name,
+        object_name=object_name,
+        ee_frame_name=ee_frame_name,
+    )
+    initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
+    lifted = position[:, 2] - initial_z >= float(minimal_lift_m)
+    eligible = lifted & (hold_distance < float(hold_std_m))
+    previous = env.npa_best_placement_distance
+    initialized = torch.isfinite(previous)
+    improvement = torch.where(
+        eligible & initialized,
+        torch.clamp(previous - distance, min=0.0),
+        torch.zeros_like(distance),
+    )
+    env.npa_best_placement_distance = torch.where(
+        eligible,
+        torch.minimum(previous, distance),
+        previous,
+    )
+    return torch.clamp(improvement / float(progress_scale_m), max=1.0)
 
 
 def stable_placement_curriculum(
@@ -413,6 +489,7 @@ def stable_placement_curriculum(
     object_name: str = "object",
     approach_std_m: float = PLACEMENT_APPROACH_STD_M,
     near_std_m: float = PLACEMENT_NEAR_STD_M,
+    hold_std_m: float = PLACEMENT_HOLD_STD_M,
     dwell_scale: float = PLACEMENT_DWELL_SCALE,
     success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
     stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
@@ -436,7 +513,7 @@ def stable_placement_curriculum(
     import torch  # noqa: WPS433 - Isaac runtime dependency
 
     obj = env.scene[object_name]
-    distance, speed, position = _placement_state(
+    distance, speed, position, hold_distance = _placement_state(
         env, command_name=command_name, object_name=object_name
     )
     initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
@@ -444,9 +521,11 @@ def stable_placement_curriculum(
     dense = placement_curriculum_signal(
         distance,
         speed,
+        hold_distance,
         tanh=torch.tanh,
         approach_std_m=approach_std_m,
         near_std_m=near_std_m,
+        hold_std_m=hold_std_m,
         dwell_scale=dwell_scale,
         stable_speed_mps=stable_speed_mps,
     )
@@ -471,7 +550,7 @@ def stable_placement_success(
 
     rows = scenarios_from_env()
     _ensure_runtime_buffers(env, rows)
-    distance, speed, _ = _placement_state(
+    distance, speed, _, _ = _placement_state(
         env, command_name=command_name, object_name=object_name
     )
     stable = (distance < float(success_distance_m)) & (speed < float(stable_speed_mps))
@@ -509,9 +588,22 @@ def install_env_cfg(env_cfg: Any) -> bool:
             "object_name": "object",
             "approach_std_m": PLACEMENT_APPROACH_STD_M,
             "near_std_m": PLACEMENT_NEAR_STD_M,
+            "hold_std_m": PLACEMENT_HOLD_STD_M,
             "dwell_scale": PLACEMENT_DWELL_SCALE,
             "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
             "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
+            "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
+        },
+    )
+    env_cfg.rewards.monotonic_placement_progress = RewardTermCfg(
+        func=monotonic_placement_progress,
+        weight=PLACEMENT_PROGRESS_REWARD_WEIGHT,
+        params={
+            "command_name": "object_pose",
+            "object_name": "object",
+            "ee_frame_name": "ee_frame",
+            "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
+            "hold_std_m": PLACEMENT_HOLD_STD_M,
             "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
         },
     )
@@ -535,6 +627,11 @@ def install_env_cfg(env_cfg: Any) -> bool:
                 "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
                 "required_steps": STABLE_PLACEMENT_STEPS,
             },
+        )
+        env_cfg.rewards.stable_placement_completion = RewardTermCfg(
+            func=mdp.is_terminated_term,
+            weight=PLACEMENT_COMPLETION_REWARD_WEIGHT,
+            params={"term_keys": "stable_placement_success"},
         )
     # The light is global across cloned envs.  All curated records use this exact
     # value, so setting it once is an applied contract, not a per-env label.
@@ -560,7 +657,10 @@ def install_env_cfg(env_cfg: Any) -> bool:
                     "weight": STABLE_PLACEMENT_REWARD_WEIGHT,
                     "approach_std_m": PLACEMENT_APPROACH_STD_M,
                     "near_std_m": PLACEMENT_NEAR_STD_M,
+                    "hold_std_m": PLACEMENT_HOLD_STD_M,
                     "dwell_scale": PLACEMENT_DWELL_SCALE,
+                    "progress_scale_m": PLACEMENT_PROGRESS_SCALE_M,
+                    "progress_reward_weight": PLACEMENT_PROGRESS_REWARD_WEIGHT,
                     "goal_curriculum_enabled": os.environ.get(
                         "NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0"
                     )
@@ -571,6 +671,7 @@ def install_env_cfg(env_cfg: Any) -> bool:
                     ),
                     "goal_curriculum_lift_m": PLACEMENT_GOAL_CURRICULUM_LIFT_M,
                     "drop_penalty_weight": PLACEMENT_DROP_PENALTY_WEIGHT,
+                    "completion_reward_weight": (PLACEMENT_COMPLETION_REWARD_WEIGHT),
                     "strict_distance_m": STABLE_PLACEMENT_DISTANCE_M,
                     "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
                     "stable_steps": STABLE_PLACEMENT_STEPS,

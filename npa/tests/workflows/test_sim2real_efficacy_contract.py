@@ -17,11 +17,15 @@ from npa.workflows.sim2real.checkpoint_selection import (
 )
 from npa.workflows.sim2real.isaac_scenario_task import (
     PLACEMENT_APPROACH_STD_M,
+    PLACEMENT_COMPLETION_REWARD_WEIGHT,
     PLACEMENT_DWELL_SCALE,
     PLACEMENT_DROP_PENALTY_WEIGHT,
     PLACEMENT_GOAL_CURRICULUM_LIFT_M,
+    PLACEMENT_HOLD_STD_M,
     PLACEMENT_NEAR_STD_M,
     PLACEMENT_MINIMAL_LIFT_M,
+    PLACEMENT_PROGRESS_REWARD_WEIGHT,
+    PLACEMENT_PROGRESS_SCALE_M,
     STABLE_PLACEMENT_DISTANCE_M,
     STABLE_PLACEMENT_REWARD_WEIGHT,
     STABLE_PLACEMENT_SPEED_MPS,
@@ -269,16 +273,24 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert PLACEMENT_MINIMAL_LIFT_M == 0.04
     assert PLACEMENT_APPROACH_STD_M == 0.35
     assert PLACEMENT_NEAR_STD_M == 0.08
+    assert PLACEMENT_HOLD_STD_M == 0.15
     assert PLACEMENT_DWELL_SCALE == 2.0
     assert PLACEMENT_GOAL_CURRICULUM_LIFT_M == 0.08
-    assert PLACEMENT_DROP_PENALTY_WEIGHT == -50.0
+    assert PLACEMENT_PROGRESS_SCALE_M == 0.02
+    assert PLACEMENT_PROGRESS_REWARD_WEIGHT == 128.0
+    assert PLACEMENT_DROP_PENALTY_WEIGHT == -5000.0
+    assert PLACEMENT_COMPLETION_REWARD_WEIGHT == 5000.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     assert STABLE_PLACEMENT_STEPS == 3
     source = module_source()
     assert "def stable_placement_curriculum" in source
     assert "lifted * (dense + strict)" in source
     assert "env_cfg.rewards.stable_placement_curriculum" in source
+    assert "env_cfg.rewards.monotonic_placement_progress" in source
     assert "env_cfg.rewards.object_drop_penalty" in source
+    assert "env_cfg.rewards.stable_placement_completion" in source
+    assert "npa_best_placement_distance" in source
+    assert "combine_frame_transforms" in source
     assert "mdp.is_terminated_term" in source
     assert "env_cfg.terminations.stable_placement_success" in source
     assert "NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM" in source
@@ -294,17 +306,23 @@ def test_stable_placement_curriculum_is_dense_across_live_canary_basin() -> None
     canary_basin_approach = 1.0 - math.tanh(0.25 / PLACEMENT_APPROACH_STD_M)
     assert canary_basin_approach > 0.2
     assert STABLE_PLACEMENT_REWARD_WEIGHT * canary_basin_approach > 10.0
-    slow = placement_curriculum_signal(0.057, 0.01, tanh=math.tanh)
-    fly_through = placement_curriculum_signal(0.057, 0.20, tanh=math.tanh)
+    slow = placement_curriculum_signal(0.057, 0.01, 0.02, tanh=math.tanh)
+    fly_through = placement_curriculum_signal(0.057, 0.20, 0.02, tanh=math.tanh)
     assert slow > 1.0
     assert slow > fly_through + 0.4
 
 
 def test_stable_placement_curriculum_does_not_suppress_transport() -> None:
-    transporting_far = placement_curriculum_signal(0.45, 0.20, tanh=math.tanh)
-    stopped_far = placement_curriculum_signal(0.45, 0.0, tanh=math.tanh)
+    transporting_far = placement_curriculum_signal(0.35, 0.20, 0.02, tanh=math.tanh)
+    stopped_far = placement_curriculum_signal(0.45, 0.0, 0.02, tanh=math.tanh)
     assert STABLE_PLACEMENT_REWARD_WEIGHT * transporting_far > 4.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT * stopped_far < 5.0
+
+
+def test_stable_placement_curriculum_rejects_thrown_object_reward() -> None:
+    held = placement_curriculum_signal(0.20, 0.20, 0.02, tanh=math.tanh)
+    thrown = placement_curriculum_signal(0.20, 0.20, 0.50, tanh=math.tanh)
+    assert held > thrown * 100
 
 
 def test_goal_curriculum_reaches_exact_target_and_fails_closed() -> None:
