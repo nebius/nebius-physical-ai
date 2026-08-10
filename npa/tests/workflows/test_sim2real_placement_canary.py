@@ -37,6 +37,14 @@ def _report(*, stable: bool, split: str = "validation") -> dict:
         "component_invocation": {
             "gpu_provenance": {"image_digests": ["registry/isaac@sha256:" + "b" * 64]}
         },
+        "scenario_input_provenance": {
+            "uri": "s3://bucket/scenario-input/" + "c" * 64 + ".jsonl",
+            "sha256": "c" * 64,
+            "size_bytes": 4096,
+            "scenario_count": 2,
+            "transport": "s3_sha256",
+            "content_addressed": True,
+        },
         "per_env": rows,
     }
 
@@ -76,6 +84,17 @@ def test_canary_rejects_gold_or_distance_only_success() -> None:
     report["per_env"][0]["success"] = True
     report["per_env"][0]["details"]["object_goal_distance_m"] = 0.01
     with pytest.raises(ValueError, match="strict success"):
+        assess_placement_report(
+            report,
+            checkpoint_uri=report["policy_checkpoint"],
+            expected_scenarios=2,
+        )
+
+
+def test_canary_rejects_unpinned_scenario_transport() -> None:
+    report = _report(stable=True)
+    report["scenario_input_provenance"]["sha256"] = ""
+    with pytest.raises(ValueError, match="content-addressed scenario"):
         assess_placement_report(
             report,
             checkpoint_uri=report["policy_checkpoint"],

@@ -73,6 +73,21 @@ def assess_placement_report(
     provenance = dict(invocation.get("gpu_provenance") or {})
     if not provenance.get("image_digests"):
         raise ValueError("placement canary lacks immutable runtime image provenance")
+    scenario_input = dict(report.get("scenario_input_provenance") or {})
+    scenario_digest = str(scenario_input.get("sha256") or "")
+    if (
+        scenario_input.get("transport") != "s3_sha256"
+        or not scenario_input.get("content_addressed")
+        or int(scenario_input.get("scenario_count") or 0) != expected_scenarios
+        or int(scenario_input.get("size_bytes") or 0) <= 0
+        or not str(scenario_input.get("uri") or "").endswith(
+            f"/{scenario_digest}.jsonl"
+        )
+        or len(scenario_digest) != 64
+    ):
+        raise ValueError(
+            "placement canary lacks content-addressed scenario input provenance"
+        )
     return {
         "schema": CANARY_SCHEMA,
         "evaluation_split": "validation",
@@ -86,6 +101,7 @@ def assess_placement_report(
         "decomposed_success_counts": stages,
         "credible_placement_signal": bool(strict_rows),
         "gpu_provenance": provenance,
+        "scenario_input_provenance": scenario_input,
     }
 
 
@@ -143,6 +159,7 @@ def run_validation_canary(
     isaac_eval._CHECKPOINT_PROVENANCE = {}
     isaac_eval._APPLIED_SCENARIO_AUDIT = {}
     isaac_eval._RENDER_MANIFEST = {}
+    isaac_eval._SCENARIO_INPUT_PROVENANCE = {}
     isaac_eval._RENDERS_LOCAL_DIR = str(output_json.parent / "renders")
     per_env = isaac_eval.run_isaac_eval_job(
         run_id,
@@ -189,6 +206,7 @@ def run_validation_canary(
                 "stock_or_scripted_policy": False,
             },
             "applied_scenario_proof": isaac_eval._APPLIED_SCENARIO_AUDIT,
+            "scenario_input_provenance": isaac_eval._SCENARIO_INPUT_PROVENANCE,
         }
     )
     if isaac_eval._RENDER_MANIFEST.get("episodes"):

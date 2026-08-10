@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -73,6 +74,90 @@ def test_build_isaac_eval_job_manifest_shape():
     assert "max_consecutive_strict_stable_steps" in ev.ISAAC_EVAL_SCRIPT
 
 
+def test_eval_manifest_uses_sha_pinned_s3_scenario_transport():
+    digest = "a" * 64
+    uri = f"s3://b/run/scenario-input/{digest}.jsonl"
+    manifest = ev.build_isaac_eval_job_manifest(
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab@sha256:" + "b" * 64,
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=64,
+        checkpoint_uri="s3://b/model.pt",
+        per_env_s3_uri="s3://b/out.json",
+        s3_endpoint="https://s3.example",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        scenarios_uri=uri,
+        scenarios_sha256=digest,
+    )
+    script = _manifest_script(manifest)
+    assert f"--uri {uri}" in script
+    assert f"--sha256 {digest}" in script
+    assert "--destination /tmp/evalwork/scenarios.jsonl" in script
+    assert "NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/evalwork/scenarios.jsonl" in script
+    assert "write-base64" not in script
+    assert manifest["metadata"]["annotations"] == {
+        "sim2real.npa.dev/scenarios-uri": uri,
+        "sim2real.npa.dev/scenarios-sha256": digest,
+    }
+
+
+def test_eval_manifest_rejects_oversized_embedded_scenarios():
+    with pytest.raises(ValueError, match="require scenarios_uri"):
+        ev.build_isaac_eval_job_manifest(
+            job_name="j",
+            run_id="r",
+            image="reg/npa-isaac-lab:tag",
+            task="Isaac-Lift-Cube-Franka-v0",
+            num_envs=64,
+            checkpoint_uri="s3://b/model.pt",
+            per_env_s3_uri="s3://b/out.json",
+            s3_endpoint="https://s3.example",
+            namespace="default",
+            service_account="agent-sa",
+            gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+            scenarios_jsonl="x" * (ev._MAX_EMBEDDED_SCENARIOS_BYTES + 1),
+        )
+
+
+def test_publish_eval_scenarios_is_content_addressed():
+    rows = [
+        {
+            "env_id": "validation-easy",
+            "seed": 7,
+            "difficulty": "easy",
+            "scenario_config_digest": "cfg-easy",
+        }
+    ]
+    uploaded: dict[str, object] = {}
+
+    class FakeStorage:
+        def upload_file(self, source: str, uri: str) -> str:
+            uploaded["bytes"] = Path(source).read_bytes()
+            uploaded["uri"] = uri
+            return uri
+
+    provenance = ev.publish_eval_scenarios(
+        rows,
+        destination_prefix="s3://bucket/run/scenario-input",
+        storage=FakeStorage(),  # type: ignore[arg-type]
+    )
+    expected = uploaded["bytes"]
+    assert isinstance(expected, bytes)
+    digest = hashlib.sha256(expected).hexdigest()
+    assert provenance == {
+        "uri": f"s3://bucket/run/scenario-input/{digest}.jsonl",
+        "sha256": digest,
+        "size_bytes": len(expected),
+        "scenario_count": 1,
+        "transport": "s3_sha256",
+        "content_addressed": True,
+    }
+    assert uploaded["uri"] == provenance["uri"]
+
+
 def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
     captured: dict[str, str] = {}
 
@@ -80,9 +165,23 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
         captured["job_name"] = kwargs["job_name"]
         captured["per_env_s3_uri"] = kwargs["per_env_s3_uri"]
         captured["renders_s3_prefix"] = kwargs["renders_s3_prefix"]
+        captured["scenarios_uri"] = kwargs["scenarios_uri"]
+        captured["scenarios_sha256"] = kwargs["scenarios_sha256"]
         return {"kind": "Job"}
 
     monkeypatch.setattr(ev, "build_isaac_eval_job_manifest", fake_build)
+    monkeypatch.setattr(
+        ev,
+        "publish_eval_scenarios",
+        lambda *args, **kwargs: {
+            "uri": "s3://bkt/scenario-input/" + "c" * 64 + ".jsonl",
+            "sha256": "c" * 64,
+            "size_bytes": 123,
+            "scenario_count": 1,
+            "transport": "s3_sha256",
+            "content_addressed": True,
+        },
+    )
     monkeypatch.setattr(
         "npa.workflows.sim2real.k8s_client.KubernetesJobClient.from_environment",
         lambda **kwargs: object(),
@@ -139,6 +238,11 @@ def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
     )
     assert captured["renders_s3_prefix"].endswith(
         "/byo-eval/s2r-byo-isaac-eval-myrun-outer-02/renders"
+    )
+    assert captured["scenarios_uri"].endswith("/" + "c" * 64 + ".jsonl")
+    assert captured["scenarios_sha256"] == "c" * 64
+    assert ev._APPLIED_SCENARIO_AUDIT["scenario_input_provenance"] == (
+        ev._SCENARIO_INPUT_PROVENANCE
     )
 
 

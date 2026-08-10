@@ -27,7 +27,9 @@ import copy
 import hashlib
 import json
 import os
+import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,7 @@ DEFAULT_ISAAC_TASK = "Isaac-Lift-Cube-Franka-v0"
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 # Object-to-goal distance (metres) under which a Lift episode counts as success.
 DEFAULT_SUCCESS_DIST_M = 0.05
+_MAX_EMBEDDED_SCENARIOS_BYTES = 32_000
 
 # Set by main() so run_isaac_eval_job can sync rendered frames to the heldout
 # renders dir + surface the render manifest into the report (for Rerun viz).
@@ -48,6 +51,7 @@ _RENDER_MANIFEST: dict[str, Any] = {}
 _LAST_GPU_PROVENANCE: dict[str, Any] = {}
 _CHECKPOINT_PROVENANCE: dict[str, Any] = {}
 _APPLIED_SCENARIO_AUDIT: dict[str, Any] = {}
+_SCENARIO_INPUT_PROVENANCE: dict[str, Any] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -223,6 +227,49 @@ def read_durable_generated_envs(
     if not rows:
         raise ValueError(f"durable scenario-record object is empty: {envs_uri}")
     return rows
+
+
+def publish_eval_scenarios(
+    rows: list[dict[str, Any]],
+    *,
+    destination_prefix: str,
+    storage: StorageClient | None = None,
+) -> dict[str, Any]:
+    """Publish the exact selected eval set under its content digest.
+
+    The Isaac process must not receive scenario distributions as command-line
+    arguments: Linux limits each argument independently, so a moderately sized
+    held-out set can fail before Python starts.  The content-addressed object is
+    restart-safe, and the Isaac sibling verifies its bytes before evaluation.
+    """
+
+    if not rows:
+        raise ValueError("evaluation scenario distribution must not be empty")
+    if not destination_prefix.startswith("s3://"):
+        raise ValueError("evaluation scenario destination must be an s3:// prefix")
+    payload = (
+        "\n".join(
+            json.dumps(row, sort_keys=True, separators=(",", ":")) for row in rows
+        )
+        + "\n"
+    ).encode("utf-8")
+    digest = hashlib.sha256(payload).hexdigest()
+    uri = f"{destination_prefix.rstrip('/')}/{digest}.jsonl"
+    resolved_storage = storage or StorageClient.from_environment(
+        endpoint_url=_env("AWS_ENDPOINT_URL") or _env("S3_ENDPOINT_URL")
+    )
+    with tempfile.TemporaryDirectory(prefix="npa-eval-scenarios-") as directory:
+        path = Path(directory) / f"{digest}.jsonl"
+        path.write_bytes(payload)
+        resolved_storage.upload_file(str(path), uri)
+    return {
+        "uri": uri,
+        "sha256": digest,
+        "size_bytes": len(payload),
+        "scenario_count": len(rows),
+        "transport": "s3_sha256",
+        "content_addressed": True,
+    }
 
 
 def select_stratified_eval_envs(
@@ -848,6 +895,8 @@ def build_isaac_eval_job_manifest(
     camera_views: str = "",
     capture: dict[str, Any] | None = None,
     scenarios_jsonl: str = "",
+    scenarios_uri: str = "",
+    scenarios_sha256: str = "",
 ) -> dict[str, Any]:
     """Isaac eval Job: download checkpoint, roll trained policy, upload distances.
 
@@ -862,6 +911,22 @@ def build_isaac_eval_job_manifest(
     import json as _json
 
     capture = dict(capture or capture_settings({}))
+    scenarios_uri = scenarios_uri.strip()
+    scenarios_sha256 = scenarios_sha256.strip().lower()
+    if scenarios_uri and scenarios_jsonl:
+        raise ValueError("provide scenarios_uri or scenarios_jsonl, not both")
+    if scenarios_uri and not scenarios_uri.startswith("s3://"):
+        raise ValueError("scenarios_uri must be an s3:// URI")
+    if scenarios_uri and not re.fullmatch(r"[0-9a-f]{64}", scenarios_sha256):
+        raise ValueError("scenarios_uri requires its exact SHA-256 digest")
+    if (
+        scenarios_jsonl
+        and len(scenarios_jsonl.encode("utf-8")) > _MAX_EMBEDDED_SCENARIOS_BYTES
+    ):
+        raise ValueError(
+            "large evaluation scenario distributions require scenarios_uri; "
+            "refusing an oversized process argument"
+        )
 
     # Opt-in BYO-robot eval uses the module baked into the exact Isaac image and
     # passes the spec via NPA_BYO_ROBOT_SPEC_JSON.
@@ -896,12 +961,23 @@ def build_isaac_eval_job_manifest(
             + "\n"
             + task_cfg_export
         )
-    if scenarios_jsonl:
+    scenario_block = ""
+    if scenarios_uri:
+        scenario_block = (
+            '"$PY" -m npa.workflows.sim2real.isaac_job_io download '
+            f"--uri {_shlex.quote(scenarios_uri)} "
+            "--destination /tmp/evalwork/scenarios.jsonl "
+            f"--sha256 {_shlex.quote(scenarios_sha256)}\n"
+        )
+    elif scenarios_jsonl:
         encoded_scenarios = base64.b64encode(scenarios_jsonl.encode()).decode()
-        robot_block += (
+        scenario_block = (
             '"$PY" -m npa.workflows.sim2real.isaac_job_io write-base64 '
             f"--payload {_shlex.quote(encoded_scenarios)} "
             "--destination /tmp/evalwork/scenarios.jsonl\n"
+        )
+    if scenario_block:
+        scenario_block += (
             "export NPA_SIM2REAL_SCENARIOS_JSONL=/tmp/evalwork/scenarios.jsonl\n"
             "export NPA_SIM2REAL_TASK_CONTRACT_DIGEST="
             + _shlex.quote(_env("NPA_SIM2REAL_TASK_CONTRACT_DIGEST"))
@@ -941,6 +1017,7 @@ def build_isaac_eval_job_manifest(
         f"--uri {_shlex.quote(checkpoint_uri)} "
         "--destination /tmp/evalwork/policy.pt\n"
         + robot_block
+        + scenario_block
         + '"$PY" /opt/npa/isaac-runtime/isaac_eval.py\n'
         '"$PY" -m npa.workflows.sim2real.isaac_job_io upload '
         "--source /tmp/evalwork/per_env_distances.json "
@@ -956,6 +1033,12 @@ def build_isaac_eval_job_manifest(
             "name": job_name,
             "namespace": namespace,
             "labels": {"app": "sim2real-byo-isaac-eval", "run-id": run_id},
+            "annotations": {
+                "sim2real.npa.dev/scenarios-uri": scenarios_uri,
+                "sim2real.npa.dev/scenarios-sha256": scenarios_sha256,
+            }
+            if scenarios_uri
+            else {},
         },
         "spec": {
             "backoffLimit": 1,
@@ -1047,6 +1130,8 @@ def run_isaac_eval_job(
     num_envs: int,
     generated_envs: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    global _SCENARIO_INPUT_PROVENANCE
+
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
     from npa.workflows.sim2real.engine import _image_pull_policy
@@ -1085,7 +1170,12 @@ def run_isaac_eval_job(
     digests = [str(row.get("scenario_config_digest") or "") for row in gen]
     if not all(digests) or len(set(digests)) != len(digests):
         raise RuntimeError("evaluation scenarios lack unique config digests")
-    scenarios_jsonl = "\n".join(json.dumps(row, sort_keys=True) for row in gen) + "\n"
+    _SCENARIO_INPUT_PROVENANCE = publish_eval_scenarios(
+        gen,
+        destination_prefix=(
+            f"s3://{bucket}/{s3_prefix}/{run_id}/byo-eval/{job_name}/scenario-input"
+        ),
+    )
     # Eval must spawn the SAME manipuland the policy trained on (default: the
     # proven rigid-ready USD, not the stock primitive cube).
     from npa.workflows.sim2real.byo_isaac_trainer import resolve_object_usd
@@ -1164,7 +1254,8 @@ def run_isaac_eval_job(
             separators=(",", ":"),
         ),
         capture=capture,
-        scenarios_jsonl=scenarios_jsonl,
+        scenarios_uri=str(_SCENARIO_INPUT_PROVENANCE["uri"]),
+        scenarios_sha256=str(_SCENARIO_INPUT_PROVENANCE["sha256"]),
     )
     from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 
@@ -1242,6 +1333,7 @@ def run_isaac_eval_job(
         "expected_config_digests": digests,
         "exact_digest_match": True,
         "applied_record_count": len(applied_records),
+        "scenario_input_provenance": _SCENARIO_INPUT_PROVENANCE,
     }
     # Pull the rendered frames of the (custom) object down to the local heldout
     # renders dir so stage-14 Rerun viz logs them under heldout/camera/**.
@@ -1323,11 +1415,13 @@ def main() -> int:
         _APPLIED_SCENARIO_AUDIT, \
         _CHECKPOINT_PROVENANCE, \
         _LAST_GPU_PROVENANCE, \
-        _RENDER_MANIFEST
+        _RENDER_MANIFEST, \
+        _SCENARIO_INPUT_PROVENANCE
     _LAST_GPU_PROVENANCE = {}
     _CHECKPOINT_PROVENANCE = {}
     _APPLIED_SCENARIO_AUDIT = {}
     _RENDER_MANIFEST = {}
+    _SCENARIO_INPUT_PROVENANCE = {}
     output_json = _env("NPA_SIM2REAL_OUTPUT_JSON")
     if not output_json:
         print("byo_isaac_eval: NPA_SIM2REAL_OUTPUT_JSON not set", file=sys.stderr)
@@ -1437,6 +1531,7 @@ def main() -> int:
         "stock_or_scripted_policy": False,
     }
     report["applied_scenario_proof"] = _APPLIED_SCENARIO_AUDIT
+    report["scenario_input_provenance"] = _SCENARIO_INPUT_PROVENANCE
     if _RENDER_MANIFEST.get("episodes"):
         report["render_manifest"] = _RENDER_MANIFEST
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
