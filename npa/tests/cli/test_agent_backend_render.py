@@ -1671,3 +1671,35 @@ def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None
 
     assert '@app.api_route("/sim-viz/rrd-blob", methods=["GET", "HEAD"])' in body
     assert '@app.get("/sim-viz/rrd-blob")' not in body
+
+
+def test_rendered_backend_skips_unreadable_ssh_key_candidates(
+    monkeypatch, tmp_path
+) -> None:
+    """Unreadable root-owned SSH paths must not break request-time inventory."""
+    import sys
+
+    module_name = "npa_rendered_unreadable_ssh_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    real_isfile = module.os.path.isfile
+    real_access = module.os.access
+    monkeypatch.delenv("TF_VAR_ssh_public_key", raising=False)
+    monkeypatch.setattr(
+        module.os.path,
+        "isfile",
+        lambda value: True if "/.ssh/" in str(value) else real_isfile(value),
+    )
+    monkeypatch.setattr(
+        module.os,
+        "access",
+        lambda value, mode: False
+        if "/.ssh/" in str(value)
+        else real_access(value, mode),
+    )
+    try:
+        env = module._agent_command_env()
+        assert "TF_VAR_ssh_public_key" not in env
+    finally:
+        sys.modules.pop(module_name, None)

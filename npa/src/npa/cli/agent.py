@@ -3507,13 +3507,13 @@ def _agent_command_env() -> dict:
     env.setdefault("NPA_NEBIUS_BIN", shutil.which("nebius") or "nebius")
     if not env.get("TF_VAR_ssh_public_key"):
         for candidate in ("/home/ubuntu/.ssh/id_ed25519.pub", "/root/.ssh/id_ed25519.pub"):
-            if Path(candidate).is_file():
+            if os.path.isfile(candidate) and os.access(candidate, os.R_OK):
                 env["TF_VAR_ssh_public_key"] = json.dumps({{"path": candidate}})
                 break
         if not env.get("TF_VAR_ssh_public_key"):
             for candidate in ("/home/ubuntu/.ssh/authorized_keys", "/root/.ssh/authorized_keys"):
                 path = Path(candidate)
-                if not path.is_file():
+                if not os.path.isfile(candidate) or not os.access(candidate, os.R_OK):
                     continue
                 for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
                     value = line.strip()
