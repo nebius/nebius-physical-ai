@@ -319,8 +319,8 @@ def test_status_is_unhealthy_on_live_deployment_mismatch(monkeypatch) -> None:
         "bootstrap_timestamp": "2026-08-10T00:00:00Z",
     }
     record = {
-        "agent_url": "https://203.0.113.1/",
-        "rerun_url": "https://203.0.113.1/rerun/",
+        "agent_url": "https://203.0.113.50/",
+        "rerun_url": "https://203.0.113.50/rerun/",
         "auth_secret_path": "/private/auth.env",
         "deployment": deployment,
     }
