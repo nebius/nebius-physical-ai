@@ -302,7 +302,7 @@ def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
     assert PLACEMENT_COMPLETION_REWARD_WEIGHT == 5000.0
     assert STABLE_PLACEMENT_REWARD_WEIGHT == 32.0
     assert PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT == 256.0
-    assert PLACEMENT_ARM_SETTLING_SPEED_RADPS == 0.15
+    assert PLACEMENT_ARM_SETTLING_SPEED_RADPS == 1.0
     assert PLACEMENT_ARM_STILLNESS_REWARD_WEIGHT == 512.0
     assert PLACEMENT_STRICT_DWELL_REWARD_WEIGHT == 4096.0
     assert PLACEMENT_DWELL_REWARD_EXPONENT == 2.0
@@ -362,8 +362,14 @@ def test_stable_placement_curriculum_rewards_braking_in_strict_basin() -> None:
 def test_near_goal_arm_stillness_rewards_directly_controllable_braking() -> None:
     stopped = near_goal_arm_stillness_signal(0.04, 0.0, 0.02, tanh=math.tanh)
     moving = near_goal_arm_stillness_signal(0.04, 0.50, 0.02, tanh=math.tanh)
+    fast = near_goal_arm_stillness_signal(0.04, 3.0, 0.02, tanh=math.tanh)
     far_stopped = near_goal_arm_stillness_signal(0.30, 0.0, 0.02, tanh=math.tanh)
-    assert stopped > moving + 0.4
+    # The live Train32 scale must not saturate the signal to zero at ordinary
+    # arm speed; PPO needs a dense distinction between moving and braking.
+    assert moving > 0.20
+    assert moving > fast + 0.20
+    assert stopped > moving + 0.20
+    assert stopped > fast + 0.50
     assert stopped > far_stopped + 0.4
     assert moving >= 0.0
     with pytest.raises(ValueError, match="positive"):

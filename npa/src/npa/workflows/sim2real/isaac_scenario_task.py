@@ -59,10 +59,13 @@ STABLE_PLACEMENT_REWARD_WEIGHT = 32.0
 PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT = 256.0
 # Eval34 left 51/64 objects inside the strict distance basin but produced no
 # terminal three-step stillness. Object velocity is a delayed physical outcome;
-# near-goal arm joint speed is the directly controllable cause. Reward a stopped
-# arm only in the same positive braking envelope, without penalizing transport or
-# changing the object-space verdict.
-PLACEMENT_ARM_SETTLING_SPEED_RADPS = 0.15
+# near-goal arm joint speed is the directly controllable cause. Train32 proved
+# that a 0.15 rad/s tanh scale saturates at ordinary arm speed: its aggregate
+# arm-stillness reward stayed effectively zero and only checkpoint 5300 reached
+# one actor-only strict validation success. Keep this positive-only and confined
+# to the same braking envelope, but expose a gradient over normal joint motion.
+# This scale is curriculum, not the unchanged object-space success threshold.
+PLACEMENT_ARM_SETTLING_SPEED_RADPS = 1.0
 PLACEMENT_ARM_STILLNESS_REWARD_WEIGHT = 512.0
 # Train14 put 49/64 validation objects inside the unchanged 5 cm basin and left
 # 30 there, yet only two ever crossed 0.03 m/s and neither held it for the three

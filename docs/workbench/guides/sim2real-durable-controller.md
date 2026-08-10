@@ -385,6 +385,18 @@ directly controllable braking gradient without relaxing distance, speed, dwell,
 split, or terminal-success semantics. The same immutable learned-actor path runs
 in rollout, validation, and sealed gold Jobs.
 
+Train32 then tested that objective from an independently hashed checkpoint for
+500 PPO iterations (12.288 million environment steps) across all 512 training
+scenario digests. The initial 0.15 rad/s `tanh` scale saturated at normal joint
+motion: aggregate arm-stillness reward remained effectively zero. Even so,
+actor-only checkpoint 5300 produced the first genuine validation placement:
+one of 64 sealed-validation scenarios ended 5.7 mm from goal after 152
+consecutive strict steps. The other six periodic checkpoints remained 0/64, so
+that result is a valid signal, not sufficient efficacy. The scale is therefore
+1.0 rad/s for the next training pass, retaining a positive-only gradient over
+ordinary arm motion while leaving the 5 cm, 0.03 m/s, three-step verdict and
+terminal evaluation semantics unchanged.
+
 ## Required integration ladder
 
 Before a full run, the exact image and live target must prove:
