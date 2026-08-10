@@ -249,6 +249,20 @@ def _public_workflow_command(argv) -> str:
     return " ".join(public)[:2000]
 
 
+def _public_url_without_credentials(value: str) -> str:
+    return re.sub(
+        r"(?i)(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@",
+        r"\g<scheme><redacted>@",
+        str(value or ""),
+    )
+
+
+def _public_workflow_output_uri(value: str) -> str:
+    """Remove URL credentials and secret-bearing suffixes from public evidence."""
+    public = _public_url_without_credentials(value).split("?", 1)[0].split("#", 1)[0]
+    return _redact_inline_workflow_secret(public)
+
+
 def _workflow_run_steps(documents: list) -> list:
     # Project the npa.workflow run manifest into a backward-compatible execution
     # log surface. Stage cards themselves come from parse_stage_evidence_documents.
@@ -271,7 +285,7 @@ def _workflow_run_steps(documents: list) -> list:
         outputs = step.get("outputs") or []
         output_uri = ""
         if isinstance(outputs, list) and outputs and isinstance(outputs[0], dict):
-            output_uri = str(outputs[0].get("uri") or "").split("?", 1)[0].split("#", 1)[0]
+            output_uri = _public_workflow_output_uri(outputs[0].get("uri") or "")
         out.append(
             {
                 "stage": str(step.get("state") or ""),

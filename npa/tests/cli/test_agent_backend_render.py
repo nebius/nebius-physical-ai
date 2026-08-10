@@ -923,7 +923,7 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
 
-    command_secrets = [secrets.token_urlsafe(32) for _index in range(5)]
+    command_secrets = [secrets.token_urlsafe(32) for _index in range(6)]
     public_steps = module._workflow_run_steps(
         [
             {
@@ -947,7 +947,9 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
                             ],
                             "outputs": [
                                 {
-                                    "uri": "https://objects.example/result?token="
+                                    "uri": "https://reader:"
+                                    + command_secrets[5]
+                                    + "@objects.example/result?token="
                                     + command_secrets[0]
                                 }
                             ],
@@ -961,7 +963,12 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
     assert "<redacted>" in public_steps[0]["command"]
     assert "--keep useful" in public_steps[0]["command"]
     assert "--output s3://safe-bucket/result.json" in public_steps[0]["command"]
-    assert public_steps[0]["output_uri"] == "https://objects.example/result"
+    assert public_steps[0]["output_uri"] == "https://<redacted>@objects.example/result"
+    public_info = module._public_artifact_info(
+        {"endpoint": "https://reader:" + command_secrets[5] + "@objects.example/result"}
+    )
+    assert command_secrets[5] not in str(public_info)
+    assert public_info["endpoint"] == "https://<redacted>@objects.example/result"
 
     report = module.discover_agent_access(
         tenant_id="tenant-test",

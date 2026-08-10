@@ -6746,8 +6746,9 @@ def _public_artifact_info(value, depth: int = 0):
         }}
     if isinstance(value, list):
         return [_public_artifact_info(item, depth + 1) for item in value[:100]]
-    if isinstance(value, str) and _SENSITIVE_ARTIFACT_INFO_VALUE.search(value):
-        return "<redacted>"
+    if isinstance(value, str):
+        public = _public_url_without_credentials(value)
+        return "<redacted>" if _SENSITIVE_ARTIFACT_INFO_VALUE.search(public) else public
     return value
 
 
