@@ -70,8 +70,11 @@ prefix and Kubernetes Job base name. Re-entering an incomplete Stage 8 therefore
 adopts the existing Job and exact output object instead of generating a new
 attempt suffix. Stage 8 output can survive a controller restart and feed Stage 9
 without repeating the model Job. Finalization resumes after its last committed
-stage and never pairs metrics with a render directory from another split or
-checkpoint.
+stage. In particular, it adopts the complete digest-verified Stage 7--11
+ComponentRecord set instead of reconstructing those records from a prior Pod's
+filesystem, and the Stage 11 durable unit embeds the candidate-checkpoint
+handoff needed to recreate `candidate.json`. It never pairs metrics with a
+render directory from another split or checkpoint.
 
 ## Kubernetes reconciliation
 
@@ -199,6 +202,16 @@ Gold remains sealed until the final configured Stage 10. Placement success is a
 stable final placement strictly inside 5 cm; closest distance, reach, contact,
 grasp, and lift are diagnostics only. A validation-only canary must show a
 credible placement signal before the full 3x3 proof is submitted.
+
+The scenario-bound Isaac task supplies a last-mile placement curriculum without
+changing that verdict. It activates after a real 4 cm lift, provides a broad
+object-to-goal approach gradient, rewards low velocity near the goal, and adds a
+bonus only at the exact 5 cm / 0.03 m/s boundary. PPO begins each pass at the
+stock-like entropy coefficient (`0.006`) and anneals to `0.0005` after 60% of
+the configured iterations. This preserves early grasp/lift discovery while
+allowing the final policy to stop carrying or dropping the object; the initial
+coefficient, final coefficient, and transition fraction remain explicit
+operator settings in runtime provenance.
 
 ## Required integration ladder
 

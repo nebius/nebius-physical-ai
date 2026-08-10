@@ -332,6 +332,8 @@ def test_train_wrapper_enforces_boot_before_isaac_imports():
     # trains via the rsl_rl runner and emits the done/ckpt markers
     assert "OnPolicyRunner" in s and "runner.learn" in s
     assert "ROBOT_TRAIN_DONE" in s
+    assert "ROBOT_ENTROPY_ANNEALED" in s
+    assert "runner.alg.entropy_coef = float(ENT_FINAL)" in s
     # A resumed run must name its explicit final checkpoint with the runner's
     # absolute iteration rather than overwrite model_<added iterations>.pt.
     assert 'getattr(runner, "current_learning_iteration", ITERS)' in s

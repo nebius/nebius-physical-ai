@@ -242,7 +242,9 @@ def test_scenario_wrapper_consumes_reward_and_native_ppo_contract() -> None:
             service_account="agent-sa",
             gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
             reward_overrides={"env.rewards.lifting_object.weight": 21.0},
-            entropy_coef="0.01",
+            entropy_coef="0.006",
+            entropy_final_coef="0.0005",
+            entropy_anneal_fraction="0.6",
             ppo_optimizer_learning_rate="0.001",
             init_noise_std="1.2",
             validation_interval=100,
@@ -254,6 +256,9 @@ def test_scenario_wrapper_consumes_reward_and_native_ppo_contract() -> None:
     assert "ROBOT_REWARD_OVERRIDES_JSON=" in args
     assert "lifting_object.weight" in args
     assert "ROBOT_PPO_LEARNING_RATE=0.001" in args
+    assert "ROBOT_ENTROPY_COEF=0.006" in args
+    assert "ROBOT_ENTROPY_FINAL_COEF=0.0005" in args
+    assert "ROBOT_ENTROPY_ANNEAL_FRACTION=0.6" in args
     assert "ROBOT_INIT_NOISE_STD=1.2" in args
     assert "ROBOT_VALIDATION_INTERVAL=100" in args
     assert "ROBOT_OBJECT_USD=https://assets.example/cube.usd" in args
@@ -264,7 +269,44 @@ def test_scenario_wrapper_consumes_reward_and_native_ppo_contract() -> None:
 
     assert "ROBOT_REWARD_OVERRIDES_APPLIED" in TRAIN_WRAPPER_SCRIPT
     assert "ROBOT_PPO_SETTINGS_APPLIED" in TRAIN_WRAPPER_SCRIPT
+    assert "ROBOT_ENTROPY_ANNEALED" in TRAIN_WRAPPER_SCRIPT
     assert "ROBOT_REWARD_OVERRIDES_APPLIED" not in args
+
+
+def test_entropy_curriculum_validation_fails_closed() -> None:
+    common = dict(
+        job_name="j",
+        run_id="r",
+        image="reg/npa-isaac-lab:2.3.2.post1",
+        task="Isaac-Lift-Cube-Franka-v0",
+        num_envs=1024,
+        iterations=500,
+        s3_output_uri="s3://b/o/",
+        s3_endpoint="https://s3",
+        namespace="default",
+        service_account="agent-sa",
+        gpu_product="NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    )
+    with pytest.raises(ValueError, match="initial entropy"):
+        byo.build_isaac_job_manifest(
+            **common,
+            entropy_final_coef="0.0005",
+            entropy_anneal_fraction="0.6",
+        )
+    with pytest.raises(ValueError, match="between zero and entropy"):
+        byo.build_isaac_job_manifest(
+            **common,
+            entropy_coef="0.006",
+            entropy_final_coef="0.01",
+            entropy_anneal_fraction="0.6",
+        )
+    with pytest.raises(ValueError, match="between zero and one"):
+        byo.build_isaac_job_manifest(
+            **common,
+            entropy_coef="0.006",
+            entropy_final_coef="0.0005",
+            entropy_anneal_fraction="1.0",
+        )
 
 
 def test_manifest_downloads_sha_pinned_scenario_distribution_without_embedding() -> (

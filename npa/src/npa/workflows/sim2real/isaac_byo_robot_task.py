@@ -1301,10 +1301,9 @@ try:
     validation_interval = max(1, int(os.environ.get("ROBOT_VALIDATION_INTERVAL", "100") or 100))
     acfg["save_interval"] = min(validation_interval, ITERS)
     acfg["seed"] = SEED
-    # Keep PPO exploring through the grasp bottleneck (same fix as the Franka
-    # default path): without this the action-noise std collapses early and the
-    # swapped arm locks into a reach-and-hover local optimum (the flat-reward
-    # Kinova failure). ROBOT_ENTROPY_COEF="" / "stock" keeps the task default.
+    # Begin with enough entropy to cross the grasp/lift bottleneck. The trainer
+    # can then anneal it within this pass so stable placement is not defeated by
+    # a permanently high action-noise floor.
     algo = acfg.get("algorithm")
     policy_cfg = acfg.get("policy")
     if not isinstance(algo, dict) or not isinstance(policy_cfg, dict):
@@ -1312,6 +1311,18 @@ try:
     ENT = os.environ.get("ROBOT_ENTROPY_COEF", "").strip()
     if ENT and ENT.lower() not in ("stock", "default", "none"):
         algo["entropy_coef"] = float(ENT)
+    ENT_FINAL = os.environ.get("ROBOT_ENTROPY_FINAL_COEF", "").strip()
+    ENT_FRACTION = os.environ.get("ROBOT_ENTROPY_ANNEAL_FRACTION", "").strip()
+    if bool(ENT_FINAL) != bool(ENT_FRACTION):
+        raise RuntimeError("entropy schedule requires both final coefficient and fraction")
+    if ENT_FINAL:
+        ent_initial = float(algo["entropy_coef"])
+        ent_final = float(ENT_FINAL)
+        ent_fraction = float(ENT_FRACTION)
+        if not 0.0 <= ent_final <= ent_initial:
+            raise RuntimeError("final entropy must be between zero and initial entropy")
+        if not 0.0 < ent_fraction < 1.0:
+            raise RuntimeError("entropy anneal fraction must be between zero and one")
     ppo_lr = os.environ.get("ROBOT_PPO_LEARNING_RATE", "").strip()
     if ppo_lr:
         algo["learning_rate"] = float(ppo_lr)
@@ -1321,6 +1332,8 @@ try:
     print("ROBOT_PPO_SETTINGS_APPLIED", json.dumps({
         "learning_rate": algo.get("learning_rate"),
         "entropy_coef": algo.get("entropy_coef"),
+        "entropy_final_coef": float(ENT_FINAL) if ENT_FINAL else None,
+        "entropy_anneal_fraction": float(ENT_FRACTION) if ENT_FRACTION else None,
         "init_noise_std": policy_cfg.get("init_noise_std"),
         "save_interval": acfg["save_interval"],
     }, sort_keys=True), flush=True)
@@ -1353,7 +1366,27 @@ try:
     if resume_ckpt and os.path.isfile(resume_ckpt):
         runner.load(resume_ckpt)
         print("ROBOT_RESUME_LOADED", resume_ckpt, flush=True)
-    runner.learn(num_learning_iterations=ITERS, init_at_random_ep_len=True)
+    if ENT_FINAL and ITERS > 1:
+        exploration_iterations = max(1, min(ITERS - 1, int(round(ITERS * float(ENT_FRACTION)))))
+        convergence_iterations = ITERS - exploration_iterations
+        runner.learn(
+            num_learning_iterations=exploration_iterations,
+            init_at_random_ep_len=True,
+        )
+        if not hasattr(runner.alg, "entropy_coef"):
+            raise RuntimeError("RSL-RL algorithm cannot apply the entropy curriculum")
+        runner.alg.entropy_coef = float(ENT_FINAL)
+        print(
+            "ROBOT_ENTROPY_ANNEALED initial=%s final=%s explore_iterations=%d convergence_iterations=%d"
+            % (ENT, ENT_FINAL, exploration_iterations, convergence_iterations),
+            flush=True,
+        )
+        runner.learn(
+            num_learning_iterations=convergence_iterations,
+            init_at_random_ep_len=False,
+        )
+    else:
+        runner.learn(num_learning_iterations=ITERS, init_at_random_ep_len=True)
     # Defensive explicit save (learn saves at save_interval; ensure one exists).
     try:
         final_iteration = max(

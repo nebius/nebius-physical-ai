@@ -52,14 +52,15 @@ DEFAULT_NUM_ENVS = DEFAULT_PPO_NUM_ENVS
 DEFAULT_ITERATIONS = DEFAULT_PPO_ITERATIONS
 DEFAULT_STEPS_PER_ENV = DEFAULT_PPO_STEPS_PER_ENV
 DEFAULT_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
-# Default PPO entropy coefficient for the Franka Lift run. The stock Isaac Lift
-# cfg uses ~0.006, which lets the action-noise std collapse by ~iter 400-600;
-# on an unlucky generated seed the policy then locks into a reach-and-hover
-# local optimum and never discovers the grasp (a learning failure observed in
-# sim2real-e2e-20260626t234808z). 0.01 keeps exploration alive through the grasp
-# bottleneck so learning is reliable across seeds. Override via
-# NPA_BYO_ISAAC_ENTROPY_COEF (set to "" or "stock" to keep the task default).
-DEFAULT_ENTROPY_COEF = "0.01"
+# Start at the stock-like exploration level, then anneal after the grasp/lift
+# discovery phase. Live evidence showed that a fixed 0.01 coefficient kept the
+# action-noise standard deviation above 1.5 after 500 iterations: the policy
+# learned reach/grasp/lift but dropped or carried through the placement target.
+# The final low coefficient lets the placement curriculum converge on a stable
+# hold without removing early exploration. All three values are operator-tunable.
+DEFAULT_ENTROPY_COEF = "0.006"
+DEFAULT_ENTROPY_FINAL_COEF = "0.0005"
+DEFAULT_ENTROPY_ANNEAL_FRACTION = "0.6"
 DEFAULT_PPO_OPTIMIZER_LEARNING_RATE = "0.001"
 _STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
@@ -588,6 +589,8 @@ def build_isaac_job_manifest(
     seed: int = 0,
     physics: dict[str, float] | None = None,
     entropy_coef: str = "",
+    entropy_final_coef: str = "",
+    entropy_anneal_fraction: str = "",
     ppo_optimizer_learning_rate: str = "",
     init_noise_std: str = "",
     validation_interval: int = 100,
@@ -631,6 +634,16 @@ def build_isaac_job_manifest(
             "large curated scenario distributions require scenarios_uri; "
             "refusing an oversized Kubernetes Job manifest"
         )
+    if entropy_final_coef or entropy_anneal_fraction:
+        if not entropy_coef:
+            raise ValueError("entropy annealing requires an initial entropy_coef")
+        initial_entropy = float(entropy_coef)
+        final_entropy = float(entropy_final_coef)
+        anneal_fraction = float(entropy_anneal_fraction)
+        if not 0.0 <= final_entropy <= initial_entropy:
+            raise ValueError("entropy_final_coef must be between zero and entropy_coef")
+        if not 0.0 < anneal_fraction < 1.0:
+            raise ValueError("entropy_anneal_fraction must be between zero and one")
 
     overrides: dict[str, Any] = dict(reward_overrides or {})
     if object_usd:
@@ -724,6 +737,15 @@ def build_isaac_job_manifest(
             ent_block = (
                 "export ROBOT_ENTROPY_COEF=" + shlex.quote(str(entropy_coef)) + "\n"
             )
+        entropy_schedule_block = ""
+        if entropy_final_coef and entropy_anneal_fraction:
+            entropy_schedule_block = (
+                "export ROBOT_ENTROPY_FINAL_COEF="
+                + shlex.quote(str(entropy_final_coef))
+                + "\nexport ROBOT_ENTROPY_ANNEAL_FRACTION="
+                + shlex.quote(str(entropy_anneal_fraction))
+                + "\n"
+            )
         usd_dest = str(robot_spec.get("usd_path") or "").strip()
         stage_block = ""
         if robot_usd_uri and usd_dest:
@@ -764,6 +786,7 @@ def build_isaac_job_manifest(
             + "\n"
             + task_cfg_block
             + ent_block
+            + entropy_schedule_block
             + "export ROBOT_REWARD_OVERRIDES_JSON="
             + shlex.quote(json.dumps(reward_overrides or {}, sort_keys=True))
             + "\n"
@@ -1156,10 +1179,21 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     print(f"byo_isaac_trainer: VLM reward overrides -> {reward_overrides}", flush=True)
     object_usd = resolve_object_usd(_env("NPA_BYO_ISAAC_OBJECT_USD"))
     object_scale = _env("NPA_BYO_ISAAC_OBJECT_SCALE")
-    # Exploration: keep the policy exploring through the grasp bottleneck so the
-    # Lift run learns reliably regardless of the generated seed (see DEFAULT_ENTROPY_COEF).
+    # Exploration curriculum: discover grasp/lift with stock-like entropy, then
+    # anneal so placement can become motion-stable instead of preserving the high
+    # action noise that caused the 500-iteration drop/overshoot failure.
     raw_ent = _env("NPA_BYO_ISAAC_ENTROPY_COEF", DEFAULT_ENTROPY_COEF)
     entropy_coef = "" if raw_ent.lower() in _STOCK_ENTROPY_SENTINELS else raw_ent
+    entropy_final_coef = _env(
+        "NPA_BYO_ISAAC_ENTROPY_FINAL_COEF", DEFAULT_ENTROPY_FINAL_COEF
+    )
+    entropy_anneal_fraction = _env(
+        "NPA_BYO_ISAAC_ENTROPY_ANNEAL_FRACTION",
+        DEFAULT_ENTROPY_ANNEAL_FRACTION,
+    )
+    if not entropy_coef:
+        entropy_final_coef = ""
+        entropy_anneal_fraction = ""
     init_noise_std = _env("NPA_BYO_ISAAC_INIT_NOISE_STD")
     ppo_optimizer_learning_rate = _env(
         "NPA_BYO_ISAAC_PPO_LEARNING_RATE",
@@ -1167,8 +1201,9 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     )
     if entropy_coef:
         print(
-            f"byo_isaac_trainer: PPO entropy_coef -> {entropy_coef} "
-            f"(exploration floor; stock ~0.006)",
+            "byo_isaac_trainer: PPO entropy curriculum -> "
+            f"{entropy_coef} then {entropy_final_coef} after "
+            f"{entropy_anneal_fraction} of each pass",
             flush=True,
         )
     print(
@@ -1345,6 +1380,8 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         seed=gen_seed,
         physics=physics,
         entropy_coef=entropy_coef,
+        entropy_final_coef=entropy_final_coef,
+        entropy_anneal_fraction=entropy_anneal_fraction,
         ppo_optimizer_learning_rate=ppo_optimizer_learning_rate,
         init_noise_std=init_noise_std,
         validation_interval=validation_interval,
@@ -1436,6 +1473,14 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         "ppo_optimizer_initial_learning_rate": float(ppo_optimizer_learning_rate),
         "ppo_optimizer_schedule": "task_registry_adaptive_schedule",
         "entropy_coef": float(entropy_coef) if entropy_coef else "task_default",
+        "entropy_final_coef": (
+            float(entropy_final_coef) if entropy_final_coef else "task_default"
+        ),
+        "entropy_anneal_fraction": (
+            float(entropy_anneal_fraction)
+            if entropy_anneal_fraction
+            else "task_default"
+        ),
         "init_noise_std": float(init_noise_std) if init_noise_std else "task_default",
         "reward_weights": reward_overrides,
         "iterations": iterations,

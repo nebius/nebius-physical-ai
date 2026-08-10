@@ -22,6 +22,11 @@ SCENARIO_TASK_ID = "NPA-Lift-Cube-Franka-Scenarios-v0"
 STOCK_TASK_ID = "Isaac-Lift-Cube-Franka-v0"
 EXPECTED_SCENE_ID = "isaac://Isaac-Lift-Cube-Franka-v0/stock-table-v1"
 EXPECTED_LIGHT_INTENSITY = 3000.0
+STABLE_PLACEMENT_DISTANCE_M = 0.05
+STABLE_PLACEMENT_SPEED_MPS = 0.03
+PLACEMENT_APPROACH_STD_M = 0.15
+STABLE_PLACEMENT_REWARD_WEIGHT = 8.0
+PLACEMENT_MINIMAL_LIFT_M = 0.04
 _COMMAND_TYPE: type | None = None
 _SCENARIO_CACHE: tuple[str, int, str, list[dict[str, Any]]] | None = None
 
@@ -287,6 +292,51 @@ def _scenario_command_type() -> type:
     return ScenarioPoseCommand
 
 
+def stable_placement_curriculum(
+    env: Any,
+    *,
+    command_name: str = "object_pose",
+    object_name: str = "object",
+    approach_std_m: float = PLACEMENT_APPROACH_STD_M,
+    success_distance_m: float = STABLE_PLACEMENT_DISTANCE_M,
+    stable_speed_mps: float = STABLE_PLACEMENT_SPEED_MPS,
+    minimal_lift_m: float = PLACEMENT_MINIMAL_LIFT_M,
+) -> Any:
+    """Shape the last mile without changing the strict placement verdict.
+
+    The stock Lift task rewards proximity to the goal but does not explicitly
+    reward arresting object motion. Real attempt evidence consequently learned
+    reach, grasp, and lift while repeatedly dropping or carrying through the
+    target. This term activates only after a genuine lift and combines:
+
+    * a broad continuous approach signal;
+    * a near-goal stillness signal; and
+    * a sparse bonus at the exact 5 cm / 0.03 m/s stable-placement boundary.
+
+    The authoritative evaluator remains the source of success and still requires
+    three consecutive stable steps; this is curriculum, not a relaxed metric.
+    """
+
+    import torch  # noqa: WPS433 - Isaac runtime dependency
+
+    obj = env.scene[object_name]
+    position = obj.data.root_pos_w[:, :3]
+    goal = (
+        env.command_manager.get_command(command_name)[:, :3]
+        + env.scene.env_origins[:, :3]
+    )
+    distance = torch.linalg.norm(position - goal, dim=1)
+    speed = torch.linalg.norm(obj.data.root_lin_vel_w[:, :3], dim=1)
+    initial_z = obj.data.default_root_state[:, 2] + env.scene.env_origins[:, 2]
+    lifted = (position[:, 2] - initial_z >= float(minimal_lift_m)).to(position.dtype)
+    approach = 1.0 - torch.tanh(distance / float(approach_std_m))
+    stillness = 1.0 - torch.tanh(speed / float(stable_speed_mps))
+    strict = (
+        (distance <= float(success_distance_m)) & (speed <= float(stable_speed_mps))
+    ).to(position.dtype)
+    return lifted * (approach + approach * stillness + strict)
+
+
 def install_env_cfg(env_cfg: Any) -> bool:
     """Install exact scenario reset/goal terms into a Lift env config."""
 
@@ -294,6 +344,7 @@ def install_env_cfg(env_cfg: Any) -> bool:
     if not rows:
         return False
     from isaaclab.managers import EventTermCfg as EventTerm
+    from isaaclab.managers import RewardTermCfg
     from isaaclab.managers import SceneEntityCfg
 
     env_cfg.events.reset_object_position = EventTerm(
@@ -303,6 +354,18 @@ def install_env_cfg(env_cfg: Any) -> bool:
     )
     env_cfg.commands.object_pose.class_type = _scenario_command_type()
     env_cfg.commands.object_pose.resampling_time_range = (1.0e9, 1.0e9)
+    env_cfg.rewards.stable_placement_curriculum = RewardTermCfg(
+        func=stable_placement_curriculum,
+        weight=STABLE_PLACEMENT_REWARD_WEIGHT,
+        params={
+            "command_name": "object_pose",
+            "object_name": "object",
+            "approach_std_m": PLACEMENT_APPROACH_STD_M,
+            "success_distance_m": STABLE_PLACEMENT_DISTANCE_M,
+            "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
+            "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
+        },
+    )
     # The light is global across cloned envs.  All curated records use this exact
     # value, so setting it once is an applied contract, not a per-env label.
     if hasattr(env_cfg.scene.light.spawn, "intensity"):
@@ -320,7 +383,19 @@ def install_env_cfg(env_cfg: Any) -> bool:
         print("SCENARIO_CONTACT_SENSOR_SKIP", repr(exc), flush=True)
     print(
         "SCENARIO_CFG_INSTALLED",
-        json.dumps(scenario_contract_summary(rows)),
+        json.dumps(
+            {
+                **scenario_contract_summary(rows),
+                "placement_curriculum": {
+                    "weight": STABLE_PLACEMENT_REWARD_WEIGHT,
+                    "approach_std_m": PLACEMENT_APPROACH_STD_M,
+                    "strict_distance_m": STABLE_PLACEMENT_DISTANCE_M,
+                    "stable_speed_mps": STABLE_PLACEMENT_SPEED_MPS,
+                    "minimal_lift_m": PLACEMENT_MINIMAL_LIFT_M,
+                },
+            },
+            sort_keys=True,
+        ),
         flush=True,
     )
     return True

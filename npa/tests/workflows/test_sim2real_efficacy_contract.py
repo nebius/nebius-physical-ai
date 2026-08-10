@@ -15,7 +15,11 @@ from npa.workflows.sim2real.checkpoint_selection import (
     select_best_checkpoint,
 )
 from npa.workflows.sim2real.isaac_scenario_task import (
+    PLACEMENT_MINIMAL_LIFT_M,
+    STABLE_PLACEMENT_DISTANCE_M,
+    STABLE_PLACEMENT_SPEED_MPS,
     ScenarioContractError,
+    module_source,
     read_scenarios,
 )
 from npa.workflows.sim2real.task_contract import (
@@ -247,6 +251,18 @@ def test_isaac_scenario_split_matches_authoritative_task_contract(
         "NPA_SIM2REAL_TASK_CONTRACT_DIGEST", contract["task_contract_digest"]
     )
     assert len(read_scenarios(str(scenario_path))) == 3
+
+
+def test_scenario_task_ships_strict_stable_placement_curriculum() -> None:
+    assert STABLE_PLACEMENT_DISTANCE_M == 0.05
+    assert STABLE_PLACEMENT_SPEED_MPS == 0.03
+    assert PLACEMENT_MINIMAL_LIFT_M == 0.04
+    source = module_source()
+    assert "def stable_placement_curriculum" in source
+    assert "lifted * (approach + approach * stillness + strict)" in source
+    assert "env_cfg.rewards.stable_placement_curriculum" in source
+    assert "distance <= float(success_distance_m)" in source
+    assert "speed <= float(stable_speed_mps)" in source
 
 
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
