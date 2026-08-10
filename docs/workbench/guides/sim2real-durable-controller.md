@@ -402,9 +402,14 @@ weighted contribution rose to about 10.0, 57/64 validation objects ended inside
 5 cm, and 11/64 entered the strict speed basin. Checkpoint 5400 produced a
 second genuine actor-only terminal placement on a different validation
 scenario, but the canary rate remained only 1/64. The arm term was still weaker
-than each broader placement contribution (about 28), so its positive-only
-weight now matches the `4096` strict-dwell weight. This changes curriculum
-salience only; it does not change the policy action path or any success rule.
+than each broader placement contribution (about 28), so Train34 tested matching
+its weight to the `4096` strict-dwell term. That setting made arm stillness
+dominate at about 70 reward, regressed broad object-position error, and all
+seven validation checkpoints fell to 0/64. The rejected run is preserved. The
+final balance therefore retains weight `512`: it is the only tested setting
+that both preserves transport and has repeatedly produced genuine actor-only
+strict validation placements. This changes no policy action path or success
+rule.
 
 ## Required integration ladder
 

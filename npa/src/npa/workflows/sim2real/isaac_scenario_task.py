@@ -67,11 +67,11 @@ PLACEMENT_BASIN_SETTLING_REWARD_WEIGHT = 256.0
 # This scale is curriculum, not the unchanged object-space success threshold.
 PLACEMENT_ARM_SETTLING_SPEED_RADPS = 1.0
 # Train33 made the widened signal observable (about 10 reward at the final
-# iteration), put 57/64 validation objects inside 5 cm, and brought 11/64 below
-# 0.03 m/s at least once, but only one held terminal stability. The broader
-# placement terms each still contributed about 28 reward. Match the exact-dwell
-# scale so directly controllable braking is no longer a secondary objective.
-PLACEMENT_ARM_STILLNESS_REWARD_WEIGHT = 4096.0
+# iteration), put 57/64 validation objects inside 5 cm, and produced a genuine
+# actor-only terminal placement. Train34 tested weight 4096; the term dominated
+# at about 70 reward, regressed transport, and all seven validation checkpoints
+# fell to 0/64. Retain the last empirically credible balanced weight.
+PLACEMENT_ARM_STILLNESS_REWARD_WEIGHT = 512.0
 # Train14 put 49/64 validation objects inside the unchanged 5 cm basin and left
 # 30 there, yet only two ever crossed 0.03 m/s and neither held it for the three
 # required steps.  Reward the exact consecutive-step event itself so PPO can
