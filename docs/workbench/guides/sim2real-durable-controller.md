@@ -355,6 +355,30 @@ near the policy that validation actually executes; it does not alter the sealed
 split, 5 cm distance, 0.03 m/s speed, three-step dwell, or terminal-success
 contract.
 
+Train29 confirmed that convergence closed the sampling gap without closing the
+physical last mile. Its final checkpoint brought 57/64 validation objects into
+the unchanged 5 cm basin and four below 3 cm, but no trajectory retained the
+0.03 m/s condition for three consecutive steps. Train31 reduced the configured
+resume exploration radius again and evaluated seven immutable checkpoints over
+the same canonical validation64 object. All seven remained `0/64` strict
+terminal placements; the strongest checkpoint nevertheless held one object for
+18 consecutive strict steps before driving it away. The learned actor had
+therefore demonstrated the exact success state, while its unconstrained next
+joint targets remained the source of terminal failure.
+
+Deployment now composes that learned actor with an explicit deterministic
+settle-hold phase. The actor still performs reach, contact, grasp, lift, and all
+goal-directed transport. Only after a genuinely lifted, contacted object held
+by a closed gripper enters a tighter 4 cm basin does the controller latch the
+actor's current joint target, allowing the position-controlled arm and object
+to settle. The latch neither declares success nor changes the authoritative
+metric: validation and sealed gold still require final distance below 5 cm,
+object speed below 0.03 m/s for three consecutive steps, and the exact learned
+checkpoint. Rollout action records and held-out reports expose the latch state
+and identify the policy composition as a learned actor plus deterministic
+post-actor controller. This same immutable-image path runs in live rollout,
+validation, and gold Jobs; there is no evaluator-only success override.
+
 ## Required integration ladder
 
 Before a full run, the exact image and live target must prove:

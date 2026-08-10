@@ -36,6 +36,17 @@ def assess_placement_report(
         or not inference.get("checkpoint_sha256")
     ):
         raise ValueError("placement canary lacks loaded checkpoint byte provenance")
+    post_actor = dict(inference.get("post_actor_controller") or {})
+    if (
+        inference.get("policy_composition")
+        != "learned_actor_with_deterministic_settle_hold"
+        or inference.get("actor_is_learned") is not True
+        or inference.get("scripted_post_actor_controller") is not True
+        or post_actor.get("type") != "latched_joint_target_hold"
+        or post_actor.get("declares_success") is not False
+        or float(post_actor.get("trigger_distance_m") or 0.0) >= STRICT_DISTANCE_M
+    ):
+        raise ValueError("placement canary lacks explicit settle-hold provenance")
     rows = list(report.get("per_env") or [])
     if len(rows) != expected_scenarios:
         raise ValueError(
@@ -93,6 +104,7 @@ def assess_placement_report(
         "evaluation_split": "validation",
         "checkpoint_uri": checkpoint_uri,
         "checkpoint_sha256": inference["checkpoint_sha256"],
+        "policy_inference_provenance": inference,
         "scenario_count": len(rows),
         "scenario_config_digests": digests,
         "strict_distance_m": STRICT_DISTANCE_M,

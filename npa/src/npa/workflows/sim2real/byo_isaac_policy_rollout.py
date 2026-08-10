@@ -401,6 +401,11 @@ try:
     else:
         print("ROLLOUT_UNTRAINED_POLICY (no checkpoint yet)", flush=True)
     policy = runner.get_inference_policy(device="cuda:0")
+    from npa.workflows.sim2real.placement_policy import (
+        SETTLE_HOLD_TRIGGER_DISTANCE_M,
+        advance_settle_hold,
+        settle_hold_trigger,
+    )
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     try:
         reset_out = env.reset()
@@ -450,6 +455,9 @@ try:
     initial_object_z = None
     stable_grasp_steps = np.zeros(N, dtype=np.int64)
     stable_place_steps = np.zeros(N, dtype=np.int64)
+    settle_hold_latched = np.zeros(N, dtype=bool)
+    settle_hold_step = np.full(N, -1, dtype=np.int64)
+    settle_hold_actions = None
     def capture(step):
         if not _have_pil:
             return
@@ -493,10 +501,20 @@ try:
             print("STEP0 act_shape", tuple(getattr(actions, "shape", ())), flush=True)
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
+        if settle_hold_actions is None:
+            settle_hold_actions = actions.detach().clone()
+        if np.any(settle_hold_latched):
+            hold_mask = torch.as_tensor(
+                settle_hold_latched, dtype=torch.bool, device=actions.device
+            )
+            actions = torch.where(
+                hold_mask.unsqueeze(1), settle_hold_actions, actions
+            )
         if _step in SAMPLE_INDEX:
             capture(_step)
         a_np = actions.detach().cpu().numpy()
         obs, _, dones, extras = env.step(actions)
+        done_np = dones.detach().cpu().numpy().astype(bool)
         obj = uenv.scene["object"].data.root_pos_w[:, :3]
         cmd = uenv.command_manager.get_command("object_pose")
         goal = cmd[:, :3] + uenv.scene.env_origins[:, :3]
@@ -522,10 +540,34 @@ try:
         stable_grasp_now = contact_now & gripper_closed & (lift_m > 0.01)
         stable_grasp_steps = np.where(stable_grasp_now, stable_grasp_steps + 1, 0)
         stable_grasp_now = stable_grasp_steps >= 3
-        stable_place_now = (goal_distance <= 0.05) & (obj_velocity <= 0.05)
+        settle_trigger = settle_hold_trigger(
+            goal_distance,
+            lift_m,
+            contact_now,
+            gripper_closed,
+        )
+        settle_hold_latched, newly_latched = advance_settle_hold(
+            settle_hold_latched,
+            settle_trigger & ~done_np,
+        )
+        if np.any(newly_latched):
+            new_mask = torch.as_tensor(
+                newly_latched, dtype=torch.bool, device=actions.device
+            )
+            settle_hold_actions[new_mask] = actions.detach()[new_mask]
+            settle_hold_step[newly_latched] = _step
+            print(
+                "PLACEMENT_SETTLE_HOLD_LATCHED",
+                int(np.count_nonzero(newly_latched)),
+                "total",
+                int(np.count_nonzero(settle_hold_latched)),
+                "trigger_distance_m",
+                SETTLE_HOLD_TRIGGER_DISTANCE_M,
+                flush=True,
+            )
+        stable_place_now = (goal_distance < 0.05) & (obj_velocity < 0.03)
         stable_place_steps = np.where(stable_place_now, stable_place_steps + 1, 0)
         stable_place_now = stable_place_steps >= 3
-        done_np = dones.detach().cpu().numpy().astype(bool)
         scenario_rows = getattr(uenv, "npa_scenario_rows", [])
         scenario_indices = getattr(uenv, "npa_scenario_indices", None)
         scenario_cpu = (
@@ -564,6 +606,12 @@ try:
                     "object_height_m": round(float(obj[i, 2].item()), 6),
                     "object_lift_m": round(float(lift_m[i]), 6),
                     "placement_stable": bool(stable_place_now[i]),
+                    "settle_hold_latched": bool(settle_hold_latched[i]),
+                    "settle_hold_step": (
+                        int(settle_hold_step[i])
+                        if settle_hold_step[i] >= 0
+                        else None
+                    ),
                     "terminated": bool(done_np[i]),
                     "termination_reason": "success" if stable_place_now[i] else (
                         "task_or_timeout" if done_np[i] else "running"
@@ -573,6 +621,8 @@ try:
             })
         previous_goal_distance = goal_distance.copy()
         previous_ee_distance = ee_distance.copy()
+        settle_hold_latched[done_np] = False
+        settle_hold_step[done_np] = -1
     capture(HORIZON_STEPS)
     scenario_rows = getattr(uenv, "npa_scenario_rows", [])
     scenario_indices = getattr(uenv, "npa_scenario_indices", None)

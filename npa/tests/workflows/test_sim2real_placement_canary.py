@@ -33,6 +33,14 @@ def _report(*, stable: bool, split: str = "validation") -> dict:
             "checkpoint_uri": checkpoint,
             "checkpoint_sha256": "a" * 64,
             "loaded_for_inference": True,
+            "actor_is_learned": True,
+            "scripted_post_actor_controller": True,
+            "policy_composition": ("learned_actor_with_deterministic_settle_hold"),
+            "post_actor_controller": {
+                "type": "latched_joint_target_hold",
+                "trigger_distance_m": 0.04,
+                "declares_success": False,
+            },
         },
         "component_invocation": {
             "gpu_provenance": {"image_digests": ["registry/isaac@sha256:" + "b" * 64]}
@@ -95,6 +103,19 @@ def test_canary_rejects_unpinned_scenario_transport() -> None:
     report = _report(stable=True)
     report["scenario_input_provenance"]["sha256"] = ""
     with pytest.raises(ValueError, match="content-addressed scenario"):
+        assess_placement_report(
+            report,
+            checkpoint_uri=report["policy_checkpoint"],
+            expected_scenarios=2,
+        )
+
+
+def test_canary_rejects_hidden_or_success_declaring_post_actor_controller() -> None:
+    report = _report(stable=True)
+    report["policy_inference_provenance"]["post_actor_controller"][
+        "declares_success"
+    ] = True
+    with pytest.raises(ValueError, match="settle-hold provenance"):
         assess_placement_report(
             report,
             checkpoint_uri=report["policy_checkpoint"],

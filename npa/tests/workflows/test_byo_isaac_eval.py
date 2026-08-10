@@ -73,6 +73,8 @@ def test_build_isaac_eval_job_manifest_shape():
     assert "kit_args=os.environ.get(" in ev.ISAAC_EVAL_SCRIPT
     assert "min_speed_in_strict_basin_mps" in ev.ISAAC_EVAL_SCRIPT
     assert "max_consecutive_strict_stable_steps" in ev.ISAAC_EVAL_SCRIPT
+    assert "PLACEMENT_SETTLE_HOLD_LATCHED" in ev.ISAAC_EVAL_SCRIPT
+    assert "settle_hold_trigger(" in ev.ISAAC_EVAL_SCRIPT
 
 
 def test_first_episode_masks_seal_auto_reset_state():
@@ -94,6 +96,7 @@ def test_eval_runtime_freezes_terminal_metrics_and_renders():
     assert "capture(_step, active & ~newly_terminal)" in script
     assert "capture(STEPS, ~completed)" in script
     assert '"terminal_snapshot": "first_episode_last_pre_reset"' in script
+    assert "active & ~newly_terminal & settle_trigger" in script
 
 
 def test_eval_manifest_uses_sha_pinned_s3_scenario_transport():
