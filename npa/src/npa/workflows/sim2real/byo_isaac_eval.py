@@ -26,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -38,11 +39,28 @@ DEFAULT_SUCCESS_DIST_M = 0.05
 # renders dir + surface the render manifest into the report (for Rerun viz).
 _RENDERS_LOCAL_DIR = ""
 _RENDER_MANIFEST: dict[str, Any] = {}
+_ISAAC_EVAL_SUMMARY: dict[str, Any] = {}
+_ISAAC_EVAL_SUMMARY_URI = ""
 
 
 # --------------------------------------------------------------------------- #
 # Pure helpers (unit-tested without a cluster)
 # --------------------------------------------------------------------------- #
+def _success_threshold_from_env() -> float:
+    raw = _env("NPA_SIM2REAL_THRESHOLD", "0.0") or "0.0"
+    try:
+        threshold = float(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"NPA_SIM2REAL_THRESHOLD must be a number in [0, 1], got {raw!r}"
+        ) from exc
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(
+            f"NPA_SIM2REAL_THRESHOLD must be in [0, 1], got {threshold}"
+        )
+    return threshold
+
+
 def extract_checkpoint_uri(inner_evidence: dict[str, Any]) -> str:
     """Pull the trained-policy checkpoint S3 URI from inner-loop evidence.
 
@@ -65,6 +83,8 @@ def build_heldout_report(
     isaac_task: str,
     checkpoint_uri: str,
     source: str,
+    isaac_eval_summary: dict[str, Any] | None = None,
+    isaac_eval_summary_uri: str = "",
 ) -> dict[str, Any]:
     """Build the payload _normalize_heldout_report consumes (per_env list)."""
 
@@ -86,7 +106,7 @@ def build_heldout_report(
         success_summary["mean_object_goal_distance_m"] = round(sum(dists) / len(dists), 6)
         success_summary["min_object_goal_distance_m"] = round(min(dists), 6)
 
-    return {
+    report = {
         "schema": "npa.sim2real.heldout_eval.v1",
         "source": source,
         "sim_backend": "isaac",
@@ -96,6 +116,11 @@ def build_heldout_report(
         "success_summary": success_summary,
         "per_env": per_env,
     }
+    if isaac_eval_summary:
+        report["isaac_eval_summary"] = isaac_eval_summary
+    if isaac_eval_summary_uri:
+        report["isaac_eval_summary_uri"] = isaac_eval_summary_uri
+    return report
 
 
 def read_generated_envs(envs_dir: str, *, limit: int = 0) -> list[dict[str, Any]]:
@@ -140,7 +165,7 @@ def per_env_from_distances(
 ) -> list[dict[str, Any]]:
     """Convert per-env final object-to-goal distances into scored per-env rows.
 
-    score = clamp(1 - dist/(2*success_dist), 0, 1); success = dist < threshold.
+    score = clamp(1 - dist/(2*success_dist), 0, 1); success = dist <= threshold.
     A genuine measurement of the trained policy, grounded in the task metric.
     When provided, rows are labelled by the GENERATED env_id/seed they came from.
     """
@@ -156,7 +181,7 @@ def per_env_from_distances(
         rows.append(
             {
                 "env_id": env_id,
-                "success": bool(d < success_dist_m),
+                "success": bool(d <= success_dist_m),
                 "score": round(score, 6),
                 "details": details,
             }
@@ -164,25 +189,45 @@ def per_env_from_distances(
     return rows
 
 
-# In-Isaac rollout script (runs in the sibling Job). Defensive: tries the
-# standard Isaac Lab + rsl_rl play API, derives per-env final object-to-goal
-# distance, and writes per_env_distances.json. Verbose so the first run reveals
-# the exact API if anything mismatches.
+# In-Isaac rollout adapter (runs in the sibling Job). It keeps the Sim2Real-only
+# vectorized generated-environment and camera behavior, while importing policy
+# loading, metric resolution, summary schema, and fail-closed reporting from the
+# same eval_runner.py used by ``npa workbench isaac-lab eval``.
 ISAAC_EVAL_SCRIPT = r'''
-import json, os, sys, traceback
+import json, os, sys, time, traceback
+from pathlib import Path
 import numpy as np
+from isaac_eval_runner import (
+    EvalConfig,
+    load_rsl_rl_policy,
+    write_eval_summary,
+    write_failure_summary,
+)
 N = int(os.environ.get("EVAL_NUM_ENVS", "4"))
 STEPS = int(os.environ.get("EVAL_MAX_STEPS", "300"))
 TASK = os.environ["EVAL_TASK"]
 CKPT = os.environ["EVAL_CKPT_LOCAL"]
 OUT = os.environ["EVAL_OUT_JSON"]
 SEED = int(os.environ.get("EVAL_SEED", "0"))  # generated-env seed (envgen envs.jsonl)
-def dump(distances, note, episodes=None):
-    json.dump({"object_goal_distances": list(distances), "note": note,
-               "render_episodes": episodes or []},
-              open(OUT, "w"))
-    print("EVAL_WROTE", OUT, note, "episodes", len(episodes or []), flush=True)
+CONFIG = EvalConfig(
+    task=TASK,
+    checkpoint=Path(CKPT),
+    num_episodes=N,
+    output_dir=Path(OUT).parent,
+    success_metric="goal-distance",
+    success_distance_m=float(os.environ.get("EVAL_SUCCESS_DISTANCE_M", "0.05")),
+    min_success_rate=float(os.environ.get("EVAL_MIN_SUCCESS_RATE", "0.0")),
+    max_steps_per_episode=STEPS,
+    seed=SEED,
+)
+STARTED = time.time()
+stage = "runtime_start"
+exit_code = 0
+def persist(summary):
+    Path(OUT).write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print("EVAL_WROTE", OUT, summary.get("status"), flush=True)
 try:
+    CONFIG.validate()
     from isaaclab.app import AppLauncher
     app = AppLauncher(headless=True, enable_cameras=True).app
     import gymnasium as gym, torch
@@ -206,11 +251,7 @@ try:
     from isaaclab_tasks.utils import parse_env_cfg
     import isaaclab.sim as sim_utils
     from isaaclab.sensors import TiledCameraCfg
-    try:
-        from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
-    except Exception:
-        from omni.isaac.lab_rl.rsl_rl import RslRlVecEnvWrapper  # older layout
-    from rsl_rl.runners import OnPolicyRunner
+    stage = "environment_config"
     env_cfg = parse_env_cfg(TASK, device="cuda:0", num_envs=N)
     # CUSTOM asset: override the manipuland USD so eval scores the policy on the
     # same custom object it trained on (physically simulated, not the stock cube).
@@ -230,8 +271,8 @@ try:
             print("could not set env_cfg.seed:", repr(e), flush=True)
         try:
             torch.manual_seed(SEED); np.random.seed(SEED % (2**32))
-        except Exception:
-            pass
+        except Exception as e:
+            print("could not seed torch/numpy:", repr(e), flush=True)
         print("EVAL_SEED_APPLIED", SEED, flush=True)
     # Add a workspace camera so we can RENDER the robot/object interaction for
     # Rerun viz. Isaac Lab's "world" convention camera looks along +X; place it
@@ -249,26 +290,13 @@ try:
         height=256,
         spawn=sim_utils.PinholeCameraCfg(focal_length=24.0, clipping_range=(0.05, 20.0)),
     )
+    stage = "environment_create"
     env = gym.make(TASK, cfg=env_cfg)
-    env = RslRlVecEnvWrapper(env)
-    # Load the COMPLETE rsl_rl agent cfg from the task registry (has save_interval,
-    # network dims, etc.) — a hand-built cfg is missing keys OnPolicyRunner needs.
-    agent_cfg = None
-    for loader in ("isaaclab_tasks.utils", "omni.isaac.lab_tasks.utils"):
-        try:
-            mod = __import__(loader, fromlist=["load_cfg_from_registry"])
-            agent_cfg = mod.load_cfg_from_registry(TASK, "rsl_rl_cfg_entry_point")
-            print("loaded agent cfg via", loader, flush=True)
-            break
-        except Exception as e:
-            print("cfg loader", loader, "failed:", repr(e), flush=True)
-    if agent_cfg is None:
-        raise RuntimeError("could not load rsl_rl_cfg_entry_point for task")
-    acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
-    print("AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
-    runner = OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")
-    runner.load(CKPT)
-    policy = runner.get_inference_policy(device="cuda:0")
+    stage = "policy_load"
+    env, policy = load_rsl_rl_policy(
+        env, task=TASK, checkpoint_file=Path(CKPT), device="cuda:0"
+    )
+    print("ISAAC_LAB_EVAL_POLICY_LOADED", flush=True)
     # The ACTUAL env count is the single source of truth for per-env sizing.
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     # Reset FIRST to force a fully-batched [realN, obs_dim] observation. Calling
@@ -278,7 +306,8 @@ try:
     try:
         reset_out = env.reset()
         obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
-    except Exception:
+    except Exception as e:
+        print("reset failed; falling back to get_observations:", repr(e), flush=True)
         obs, _ = env.get_observations()
     print("OBS_TYPE", type(obs).__name__, "realN", realN, flush=True)
     N = realN
@@ -300,8 +329,8 @@ try:
         try:
             for k in list(o.keys()):
                 o[k] = _to_batched(o[k])
-        except Exception:
-            pass
+        except Exception as e:
+            print("could not normalize batched observations:", repr(e), flush=True)
         return o
     def _policy_tensor(o):
         if torch.is_tensor(o):
@@ -405,7 +434,10 @@ try:
         except Exception as e:
             print("capture_err", repr(e), flush=True)
         capture_pointcloud()
+    stage = "rollout"
     min_dist = np.full(N, 1e9)
+    reward_sum = np.zeros(N, dtype=np.float64)
+    reward_available = True
     for _step in range(STEPS):
         with torch.inference_mode():
             actions = policy(_batched_obs(obs))
@@ -413,7 +445,23 @@ try:
             print("STEP0 act_shape", tuple(getattr(actions, "shape", ())), flush=True)
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
-        obs, _, dones, extras = env.step(actions)
+        obs, rewards, dones, extras = env.step(actions)
+        if reward_available:
+            try:
+                reward_values = (
+                    torch.as_tensor(rewards).detach().cpu().numpy().reshape(-1)
+                )
+                if reward_values.size != N:
+                    raise ValueError(
+                        "reward batch does not match environment count: "
+                        f"rewards={reward_values.size} envs={N}"
+                    )
+                if not np.isfinite(reward_values).all():
+                    raise ValueError("reward batch contains non-finite values")
+                reward_sum += reward_values
+            except Exception as e:
+                reward_available = False
+                print("reward_metric_unavailable", repr(e), flush=True)
         if _step % CAP_EVERY == 0:
             capture(_step)
         # object-to-goal distance: prefer an explicit metric, else infer.
@@ -435,16 +483,66 @@ try:
                 per = torch.linalg.norm(obj - goal, dim=1).detach().cpu().numpy()
                 min_dist = np.minimum(min_dist, per);
                 continue
-        except Exception:
-            pass
+        except Exception as e:
+            if _step == 0:
+                print("object_pose_distance_unavailable", repr(e), flush=True)
         if d is not None:
             min_dist = np.minimum(min_dist, np.full(N, d))
     capture(STEPS)  # final frame
-    episodes = [{"env_id": _env_id(i), "frames": frame_names[i]} for i in range(N) if frame_names[i]]
-    dump([float(x if x < 1e8 else 0.5) for x in min_dist], "rollout_ok", episodes)
+    render_episodes = [
+        {"env_id": _env_id(i), "frames": frame_names[i]}
+        for i in range(N) if frame_names[i]
+    ]
+    distances = [float(x) for x in min_dist]
+    if any(not np.isfinite(x) or x >= 1e8 for x in distances):
+        raise RuntimeError("object_pose goal distance was unavailable for one or more environments")
+    episode_results = [
+        {
+            "episode": i + 1,
+            "env_id": _env_id(i),
+            "steps": STEPS,
+            "reward": float(reward_sum[i]) if reward_available else None,
+            "mean_reward_per_step": (
+                float(reward_sum[i]) / max(1, STEPS)
+                if reward_available
+                else None
+            ),
+            "min_goal_distance_m": distances[i],
+            "goal_distance_source": "object_pose",
+            "terminated": False,
+            "timed_out": True,
+            "native_success": None,
+        }
+        for i in range(N)
+    ]
+    stage = "metric_resolution"
+    summary = write_eval_summary(
+        CONFIG,
+        episode_results=episode_results,
+        checkpoint_file=Path(CKPT),
+        checkpoint_format="rsl_rl_checkpoint",
+        device="cuda:0",
+        started=STARTED,
+        extra={
+            "sim2real_stage": 10,
+            "object_goal_distances": distances,
+            "render_episodes": render_episodes,
+            "note": "rollout_ok",
+        },
+    )
+    persist(summary)
+    print("ISAAC_LAB_EVAL_COMPLETE", flush=True)
 except Exception as e:
     traceback.print_exc()
-    dump([0.5]*N, "rollout_failed:%s" % e)
+    summary = write_failure_summary(
+        CONFIG,
+        stage=stage,
+        error=e,
+        started=STARTED,
+        resolved_checkpoint=CKPT if Path(CKPT).is_file() else "",
+    )
+    persist(summary)
+    exit_code = 1
 # With enable_cameras the Isaac app hangs on exit (even app.close() blocks), so the
 # post-script bash upload never runs. Upload distances + renders HERE from boto3,
 # then hard-exit the process so nothing hangs.
@@ -468,8 +566,9 @@ try:
     print("BYO_EVAL_DONE", flush=True)
 except Exception as _e:
     print("inproc_upload_err", repr(_e), flush=True)
+    exit_code = 1
 sys.stdout.flush(); sys.stderr.flush()
-os._exit(0)
+os._exit(exit_code)
 '''
 
 
@@ -507,10 +606,13 @@ def build_isaac_eval_job_manifest(
     service_account: str,
     gpu_product: str,
     gpu_resource: str = "nvidia.com/gpu",
+    image_pull_policy: str = "Always",
     seed: int = 0,
     object_usd: str = "",
     env_ids_json: str = "[]",
     renders_s3_prefix: str = "",
+    success_dist_m: float = DEFAULT_SUCCESS_DIST_M,
+    min_success_rate: float = 0.0,
     robot_spec: dict[str, Any] | None = None,
     robot_usd_uri: str = "",
     task_config: dict[str, Any] | None = None,
@@ -526,6 +628,10 @@ def build_isaac_eval_job_manifest(
 
     import shlex as _shlex
     import json as _json
+
+    from npa.cli.isaac_lab import eval_runner as _eval_runner
+
+    shared_eval_source = Path(_eval_runner.__file__).read_text(encoding="utf-8")
 
     # Opt-in BYO-robot eval: ship the isaac_byo_robot_task module + stage the
     # customer robot USD, and pass the spec via NPA_BYO_ROBOT_SPEC_JSON. The
@@ -571,24 +677,8 @@ def build_isaac_eval_job_manifest(
             + task_cfg_export
         )
 
-    render_upload = ""
-    if renders_s3_prefix:
-        render_upload = (
-            'RENDERS_URI=' + _shlex.quote(renders_s3_prefix) + ' "$PY" - <<\'RLEOF\'\n'
-            "import os, boto3, glob\n"
-            "from urllib.parse import urlparse\n"
-            "u = urlparse(os.environ['RENDERS_URI'])\n"
-            "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-            "base = u.path.lstrip('/').rstrip('/')\n"
-            "n = 0\n"
-            "for p in glob.glob('/tmp/evalwork/renders/**/*.png', recursive=True):\n"
-            "    rel = os.path.relpath(p, '/tmp/evalwork/renders')\n"
-            "    s3.upload_file(p, u.netloc, base + '/' + rel); n += 1\n"
-            "print('UPLOADED_RENDERS', n, os.environ['RENDERS_URI'])\n"
-            "RLEOF\n"
-        )
     script = (
-        "set -uo pipefail\n"
+        "set -euo pipefail\n"
         'exec > >(tee -a /tmp/byo-eval.log) 2>&1\n'
         'if [ -x /isaac-sim/python.sh ]; then\n'
         '  PY=/isaac-sim/python.sh\n'
@@ -607,6 +697,8 @@ def build_isaac_eval_job_manifest(
         "mkdir -p /tmp/evalwork/renders; cd /tmp/evalwork\n"
         f'export EVAL_TASK="{task}" EVAL_NUM_ENVS="{num_envs}" EVAL_SEED="{seed}" '
         f'EVAL_OBJECT_USD="{object_usd}" EVAL_ENV_IDS={_shlex.quote(env_ids_json)} '
+        f'EVAL_SUCCESS_DISTANCE_M={_shlex.quote(str(success_dist_m))} '
+        f'EVAL_MIN_SUCCESS_RATE={_shlex.quote(str(min_success_rate))} '
         f'EVAL_OUT_S3={_shlex.quote(per_env_s3_uri)} '
         f'EVAL_RENDERS_S3={_shlex.quote(renders_s3_prefix)} '
         'EVAL_RENDERS_DIR=/tmp/evalwork/renders '
@@ -621,19 +713,13 @@ def build_isaac_eval_job_manifest(
         "print('DOWNLOADED_CKPT', os.environ['CKPT_URI'])\n"
         "DLEOF\n"
         + robot_block
+        + "cat > /tmp/evalwork/isaac_eval_runner.py <<'EVALRUNNEREOF'\n"
+        + shared_eval_source
+        + "\nEVALRUNNEREOF\n"
         + 'cat > /tmp/evalwork/eval_rollout.py <<\'PYEOF\'\n'
         f"{ISAAC_EVAL_SCRIPT}\n"
         "PYEOF\n"
-        '"$PY" /tmp/evalwork/eval_rollout.py || echo "EVAL_SCRIPT_RC=$?"\n'
-        'OUT_URI="' + per_env_s3_uri + '" "$PY" - <<\'ULEOF\'\n'
-        "import os, boto3\n"
-        "from urllib.parse import urlparse\n"
-        "u = urlparse(os.environ['OUT_URI'])\n"
-        "s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL') or None)\n"
-        "s3.upload_file('/tmp/evalwork/per_env_distances.json', u.netloc, u.path.lstrip('/'))\n"
-        "print('UPLOADED_DISTANCES', os.environ['OUT_URI'])\n"
-        "ULEOF\n"
-        + render_upload
+        '"$PY" /tmp/evalwork/eval_rollout.py\n'
         + 'echo "BYO_EVAL_DONE"\n'
     )
     return {
@@ -675,7 +761,10 @@ def build_isaac_eval_job_manifest(
                         {
                             "name": "eval",
                             "image": image,
-                            "imagePullPolicy": "Always",
+                            # The shared Sim2Real policy honors the operator
+                            # override and image provenance (tag versus digest).
+                            # Train, rollout, and eval all use the same decision.
+                            "imagePullPolicy": image_pull_policy,
                             # Isaac Lab images launch through /isaac-sim/isaaclab.sh and
                             # write under the prebuilt workspace; current RTX PRO runtime
                             # requires root for that path. Keep this scoped to BYO Isaac jobs.
@@ -685,7 +774,15 @@ def build_isaac_eval_job_manifest(
                                 "requests": {gpu_resource: "1"},
                             },
                             "envFrom": [
-                                {"secretRef": {"name": "hf-ngc-tokens"}},
+                                # Isaac bootstrap and artifact I/O do not require
+                                # NGC/HF credentials. Keep customer override tokens
+                                # optional while storage credentials remain required.
+                                {
+                                    "secretRef": {
+                                        "name": "hf-ngc-tokens",
+                                        "optional": True,
+                                    }
+                                },
                                 {"secretRef": {"name": "npa-storage-credentials"}},
                             ],
                             "env": [{"name": "AWS_ENDPOINT_URL", "value": s3_endpoint}]
@@ -724,6 +821,71 @@ def _download_json(uri: str) -> dict[str, Any]:
     return json.loads(Path(local).read_text())
 
 
+def _refresh_registry_pull_secret(image: str, *, namespace: str) -> None:
+    """Best-effort refresh for the short-lived Nebius registry credential."""
+
+    if _env("NPA_SIM2REAL_SKIP_REGISTRY_REFRESH") == "1":
+        return
+    try:
+        from npa.workflows.sim2real.registry_auth import (
+            ensure_registry_pull_secret_for_images,
+        )
+
+        ensure_registry_pull_secret_for_images(
+            image,
+            namespace=namespace,
+            kubeconfig=_env("KUBECONFIG"),
+        )
+        print("byo_isaac_eval: refreshed registry pull secret", flush=True)
+    except Exception as exc:
+        # The pod may still pull through another configured secret or a cached
+        # image. Preserve that fallback, but make the refresh failure visible.
+        print(
+            f"byo_isaac_eval: registry pull-secret refresh skipped: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def _wait_for_job_terminal(
+    job_name: str,
+    *,
+    namespace: str,
+    timeout_s: int,
+) -> tuple[bool, str]:
+    """Return promptly for either Complete or Failed Kubernetes Job state."""
+
+    deadline = time.monotonic() + timeout_s
+    last_detail = ""
+    while time.monotonic() < deadline:
+        probe = _kubectl(
+            ["get", "job", job_name, "-n", namespace, "-o", "json"],
+            timeout=120,
+        )
+        if probe.returncode == 0:
+            try:
+                payload = json.loads(probe.stdout)
+            except (TypeError, json.JSONDecodeError):
+                last_detail = "job status response was not valid JSON"
+            else:
+                for condition in payload.get("status", {}).get("conditions", []):
+                    if str(condition.get("status")).lower() != "true":
+                        continue
+                    condition_type = str(condition.get("type") or "")
+                    detail = str(
+                        condition.get("message")
+                        or condition.get("reason")
+                        or condition_type
+                    )
+                    if condition_type == "Complete":
+                        return True, detail
+                    if condition_type == "Failed":
+                        return False, detail
+        else:
+            last_detail = probe.stderr.strip() or probe.stdout.strip()
+        time.sleep(5)
+    return False, last_detail or f"timed out after {timeout_s}s"
+
 def run_isaac_eval_job(
     run_id: str,
     *,
@@ -738,8 +900,10 @@ def run_isaac_eval_job(
     sa = _env("NPA_SIM2REAL_K8S_SERVICE_ACCOUNT", "agent-sa")
     gpu_product = _env("NPA_SIM2REAL_K8S_GPU_PRODUCT", DEFAULT_GPU_PRODUCT)
     success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)
+    min_success_rate = _success_threshold_from_env()
     timeout_s = int(_env("NPA_BYO_ISAAC_JOB_TIMEOUT_S", "5400") or 5400)
     from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+    from npa.workflows.sim2real.engine import _image_pull_policy
 
     eval_tag = artifact_tag(_env("NPA_SIM2REAL_EVAL_TAG"))
     job_name = k8s_job_name("s2r-byo-isaac-eval", run_id, eval_tag)
@@ -794,21 +958,62 @@ def run_isaac_eval_job(
         s3_endpoint=_env("AWS_ENDPOINT_URL"), namespace=namespace,
         service_account=sa, gpu_product=gpu_product, seed=seed, object_usd=object_usd,
         env_ids_json=json.dumps([e["env_id"] for e in gen]), renders_s3_prefix=renders_prefix,
+        success_dist_m=success_dist, min_success_rate=min_success_rate,
+        image_pull_policy=_image_pull_policy(image),
         robot_spec=robot_spec_dict, robot_usd_uri=robot_usd_uri, task_config=task_config_dict,
     )
+    _refresh_registry_pull_secret(image, namespace=namespace)
     _kubectl(["delete", "job", job_name, "-n", namespace, "--ignore-not-found"], timeout=60)
     apply = _kubectl(["apply", "-f", "-"], stdin=json.dumps(manifest), timeout=120)
     if apply.returncode != 0:
         raise SystemExit(f"byo_isaac_eval: kubectl apply failed: {apply.stderr}")
     print(f"byo_isaac_eval: applied {job_name} (seed={seed}, generated_envs={len(gen)}); "
           f"waiting up to {timeout_s}s", flush=True)
-    wait = _kubectl(["wait", f"job/{job_name}", "-n", namespace,
-                     "--for=condition=complete", f"--timeout={timeout_s}s"], timeout=timeout_s + 60)
-    if wait.returncode != 0:
+    completed, terminal_detail = _wait_for_job_terminal(
+        job_name,
+        namespace=namespace,
+        timeout_s=timeout_s,
+    )
+    if not completed:
         logs = _kubectl(["logs", f"job/{job_name}", "-n", namespace, "--tail=80"], timeout=120)
-        raise SystemExit(f"byo_isaac_eval: eval job {job_name} did not complete: {wait.stderr}\n{logs.stdout}")
+        failure_detail = ""
+        try:
+            failed_summary = _download_json(per_env_uri)
+            failure_detail = "\nsummary=" + json.dumps(failed_summary, sort_keys=True)
+        except Exception as summary_exc:
+            print(
+                "byo_isaac_eval: failed sibling summary was unavailable: "
+                f"{summary_exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+        raise SystemExit(
+            f"byo_isaac_eval: eval job {job_name} failed: {terminal_detail}"
+            f"{failure_detail}\n{logs.stdout}"
+        )
     out = _download_json(per_env_uri)
+    if (
+        out.get("format") != "npa.isaac_lab.eval.v1"
+        or out.get("status") != "success"
+        or out.get("policy_loaded") is not True
+    ):
+        raise RuntimeError(
+            "byo_isaac_eval: sibling did not produce a successful learned-policy "
+            f"summary: format={out.get('format')} status={out.get('status')} "
+            f"policy_loaded={out.get('policy_loaded')}"
+        )
     distances = out.get("object_goal_distances", [])
+    if len(distances) != num_envs:
+        raise RuntimeError(
+            "byo_isaac_eval: sibling summary distance count does not match "
+            f"requested environments: expected={num_envs} actual={len(distances)}"
+        )
+    global _ISAAC_EVAL_SUMMARY, _ISAAC_EVAL_SUMMARY_URI
+    _ISAAC_EVAL_SUMMARY = out
+    _ISAAC_EVAL_SUMMARY_URI = per_env_uri
+    if _RENDERS_LOCAL_DIR:
+        summary_path = Path(_RENDERS_LOCAL_DIR).parent / "isaac-eval-summary.json"
+        summary_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
     # Pull the rendered frames of the (custom) object down to the local heldout
     # renders dir so stage-14 Rerun viz logs them under heldout/camera/**.
     episodes = out.get("render_episodes") or []
@@ -831,10 +1036,25 @@ def run_isaac_eval_job(
     global _RENDER_MANIFEST
     _RENDER_MANIFEST = {"schema": "npa.sim2real.heldout_renders.v1", "sim_backend": "isaac",
                         "isaac_task": task, "episodes": episodes}
-    return per_env_from_distances(distances, success_dist_m=success_dist, env_ids=env_ids, seeds=seeds)
+    successes = [bool(item.get("success")) for item in out.get("episodes", [])]
+    rows = per_env_from_distances(
+        distances,
+        success_dist_m=success_dist,
+        env_ids=env_ids,
+        seeds=seeds,
+    )
+    if len(successes) == len(rows):
+        for row, success in zip(rows, successes):
+            row["success"] = success
+    return rows
 
 
 def main() -> int:
+    global _RENDERS_LOCAL_DIR, _RENDER_MANIFEST
+    global _ISAAC_EVAL_SUMMARY, _ISAAC_EVAL_SUMMARY_URI
+    _RENDER_MANIFEST = {}
+    _ISAAC_EVAL_SUMMARY = {}
+    _ISAAC_EVAL_SUMMARY_URI = ""
     output_json = _env("NPA_SIM2REAL_OUTPUT_JSON")
     if not output_json:
         print("byo_isaac_eval: NPA_SIM2REAL_OUTPUT_JSON not set", file=sys.stderr)
@@ -842,8 +1062,12 @@ def main() -> int:
     run_id = _env("NPA_SIM2REAL_RUN_ID") or _env("RUN_ID") or "byo-isaac"
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     num_envs = int(_env("NPA_SIM2REAL_HELDOUT_ENV_COUNT", "4") or 4)
+    try:
+        _success_threshold_from_env()
+    except ValueError as exc:
+        print(f"byo_isaac_eval: {exc}", file=sys.stderr)
+        return 2
     # Heldout renders live next to the report so stage-14 viz finds them.
-    global _RENDERS_LOCAL_DIR
     _RENDERS_LOCAL_DIR = str(Path(output_json).parent / "renders")
     success_dist = float(_env("NPA_BYO_ISAAC_SUCCESS_DIST_M", str(DEFAULT_SUCCESS_DIST_M)) or DEFAULT_SUCCESS_DIST_M)
 
@@ -878,6 +1102,8 @@ def main() -> int:
     report = build_heldout_report(
         per_env, isaac_task=task, checkpoint_uri=checkpoint_uri,
         source="byo_isaac_eval_dryrun" if _env("NPA_BYO_ISAAC_DRYRUN") == "1" else "byo_isaac_eval",
+        isaac_eval_summary=_ISAAC_EVAL_SUMMARY or None,
+        isaac_eval_summary_uri=_ISAAC_EVAL_SUMMARY_URI,
     )
     report["generated_envs_tested"] = len(generated_envs)
     report["generated_env_ids"] = [e["env_id"] for e in generated_envs]

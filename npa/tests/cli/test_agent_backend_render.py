@@ -74,6 +74,169 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     tree = ast.parse(body)
     assert tree is not None
     compile(body, "backend.py", "exec")
+    assert 'DEPLOYMENT = {"bootstrap_timestamp":' in body
+    assert '@app.get("/deployment")' in body
+    assert '"deployment": dict(DEPLOYMENT)' in body
+
+
+def test_chat_memory_is_deployment_scoped_and_rejects_legacy_tenant_state(
+    monkeypatch, tmp_path
+) -> None:
+    """A second agent in one tenant must not hydrate the first agent's chat."""
+    import sys
+
+    module_name = "npa_rendered_chat_isolation_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    monkeypatch.setenv("NEBIUS_TENANT_ID", "tenant-test")
+    monkeypatch.setenv("NPA_AGENT_PROJECT_ALIAS", "project-test")
+    monkeypatch.setenv("NPA_AGENT_NAME", "agent-test")
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_settings",
+        lambda: {"bucket": "private-bucket"},
+    )
+    try:
+        prefix = module._chat_memory_prefix()
+        assert prefix == (
+            "npa-agent/tenants/tenant-test/deployments/"
+            f"{module.DEPLOYMENT['deployment_id']}/chat-sessions"
+        )
+        assert "/tenants/tenant-test/chat-sessions" not in prefix
+
+        state = {
+            "active_chat_session_id": "default",
+            "chat_history": [{"role": "user", "content": "foreign deployment"}],
+            "chat_sessions": {
+                "default": {
+                    "id": "default",
+                    "title": "Foreign chat",
+                    "chat_history": [{"role": "user", "content": "foreign deployment"}],
+                    "memory_uri": (
+                        "s3://private-bucket/npa-agent/tenants/tenant-test/"
+                        "chat-sessions/default.json"
+                    ),
+                }
+            },
+        }
+        sessions = module._local_chat_sessions(state)
+        assert list(sessions) == ["default"]
+        assert sessions["default"]["chat_history"] == []
+        assert state["chat_history"] == []
+        assert sessions["default"]["memory_uri"].startswith(
+            f"s3://private-bucket/{prefix}/"
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_no_stock_demo_mode_removes_only_the_stock_history(monkeypatch, tmp_path) -> None:
+    """Artifact-first deployments retain selected runs without the stock card."""
+    import sys
+
+    module_name = "npa_rendered_no_stock_demo_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    module.PRELOAD_STOCK_DEMO = False
+    try:
+        selected = {
+            "run_id": "customer-run",
+            "artifact_key": "nested/customer-run/output.rrd",
+            "artifact_uri": "s3://private-bucket/nested/customer-run/output.rrd",
+            "rrd_uri": "file:///opt/npa-agent/recordings/output.rrd",
+        }
+        normalized = module._normalize_loaded_state(
+            {
+                "deployment_id": module.DEPLOYMENT["deployment_id"],
+                "sim_viz": selected,
+                "active_run_id": "customer-run",
+                "sim_viz_runs": {
+                    "customer-run": selected,
+                    "franka-demo": {"run_id": "franka-demo", "stage": "demo"},
+                    "verify-run": {
+                        "run_id": "verify-run",
+                        "rrd_uri": "file:///opt/npa-agent/sim2real.rrd",
+                    },
+                },
+                "latest_submit": {"run_id": "verify-run"},
+                "sim2real_runs": {"verify-run": {"status": "completed"}},
+            }
+        )
+        assert normalized["sim_viz"] == selected
+        assert normalized["active_run_id"] == "customer-run"
+        assert list(normalized["sim_viz_runs"]) == ["customer-run"]
+        assert normalized["latest_submit"] == {}
+        assert normalized["sim2real_runs"] == {}
+
+        stock_only = module._normalize_loaded_state(
+            {
+                "deployment_id": module.DEPLOYMENT["deployment_id"],
+                "sim_viz": {"run_id": "franka-demo", "stage": "demo"},
+                "active_run_id": "franka-demo",
+                "sim_viz_runs": {"franka-demo": {"run_id": "franka-demo"}},
+            }
+        )
+        assert stock_only["sim_viz"]["run_id"] == ""
+        assert stock_only["active_run_id"] == ""
+        assert stock_only["sim_viz_runs"] == {}
+
+        foreign = module._normalize_loaded_state(
+            {
+                "deployment_id": "npa-agent-other-owner",
+                "sim_viz": selected,
+                "sim_viz_runs": {"customer-run": selected},
+                "chat_history": [{"role": "user", "content": "foreign"}],
+            }
+        )
+        assert foreign["deployment_id"] == module.DEPLOYMENT["deployment_id"]
+        assert foreign["sim_viz_runs"] == {}
+        assert foreign["chat_history"] == []
+        assert foreign["selection"]["robot_preset"] == ""
+        assert foreign["selection"]["sim_backend"] == ""
+        assert (
+            f"/deployments/{module.DEPLOYMENT['deployment_id']}/"
+            in module._state_s3_key()
+        )
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_session_get_does_not_rewrite_durable_state(monkeypatch, tmp_path) -> None:
+    """Hydration/listing is a GET and must keep the exact persisted bytes."""
+    import sys
+
+    module_name = "npa_rendered_read_only_session_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    module.PRELOAD_STOCK_DEMO = False
+    module.STATE_PATH = tmp_path / "session-state.json"
+    module._STATE_STORE = None
+    monkeypatch.setattr(
+        module, "_agent_s3_client_optional", lambda: (None, {"bucket": ""})
+    )
+    try:
+        state = module._default_state()
+        state["chat_sessions"] = {
+            "default": {
+                "id": "default",
+                "title": "New chat",
+                "created_at": "2026-08-10T00:00:00Z",
+                "updated_at": "2026-08-10T00:00:00Z",
+                "chat_history": [],
+                "memory_uri": "",
+            }
+        }
+        module._save_state(state)
+        before = module.STATE_PATH.read_bytes()
+        first = module.session_bootstrap()
+        second = module.session_bootstrap()
+        assert first["deployment"] == second["deployment"]
+        assert module.STATE_PATH.read_bytes() == before
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def test_rendered_backend_wires_action_loop_and_route(monkeypatch) -> None:
@@ -189,7 +352,7 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
     assert "class RunMemory" in body
 
 
-def _capture_setup_script(monkeypatch) -> str:
+def _capture_setup_script(monkeypatch, *, preload_stock_demo: bool = True) -> str:
     from npa.cli import agent as agent_module
 
     captured: dict[str, str] = {}
@@ -228,8 +391,71 @@ def _capture_setup_script(monkeypatch) -> str:
         tf_api_key="",
         nebius_ai_key="",
         public_https=True,
+        preload_stock_demo=preload_stock_demo,
     )
     return captured["setup_script"]
+
+
+def test_no_stock_bootstrap_has_no_default_recording_or_rrd_response(monkeypatch) -> None:
+    setup_script = _capture_setup_script(monkeypatch, preload_stock_demo=False)
+    rerun_unit = setup_script.split(
+        "cat <<'UNIT' | sudo tee /etc/systemd/system/npa-rerun.service",
+        1,
+    )[1].split("UNIT", 1)[0]
+    assert "ExecStart=/opt/npa-agent/venv/bin/rerun --serve-web" in rerun_unit
+    assert "/opt/npa-agent/venv/bin/rerun /opt/npa-agent/sim2real.rrd" not in rerun_unit
+    assert "if [ 0 = 1 ]; then\n  sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py" in setup_script
+    assert "sudo rm -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd" in setup_script
+    backend = setup_script.split(
+        "cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null\n", 1
+    )[1].split("\nPY\n", 1)[0]
+    assert "if PRELOAD_STOCK_DEMO and RRD_PATH.is_file():" in backend
+
+
+def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
+    """Import the emitted backend and its shipped helper package for route tests."""
+    import importlib.util
+
+    setup_script = _capture_setup_script(monkeypatch)
+
+    def _extract(remote_path: str) -> str:
+        match = re.search(
+            r"cat <<'PY' \| sudo tee "
+            + re.escape(remote_path)
+            + r" >/dev/null\n(.*?)\nPY\n",
+            setup_script,
+            flags=re.DOTALL,
+        )
+        assert match, f"bootstrap does not write {remote_path}"
+        return match.group(1)
+
+    package = tmp_path / "agent_backend"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    for name in (
+        "memory",
+        "actions",
+        "semantic_router",
+        "sim2real_loop",
+        "retrieval",
+        "trace",
+        "foxglove",
+        "foxglove_routes",
+    ):
+        (package / f"{name}.py").write_text(
+            _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
+        )
+    backend_path = tmp_path / "backend.py"
+    backend_path.write_text(
+        _extract("/opt/npa-agent/backend.py"), encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    spec = importlib.util.spec_from_file_location(module_name, backend_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.mark.parametrize(
@@ -312,6 +538,263 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         spec.loader.exec_module(module)
     finally:
         sys.modules.pop("npa_rendered_backend", None)
+
+
+def test_source_qualified_rrd_loads_keep_independent_history(
+    monkeypatch, tmp_path
+) -> None:
+    """Each exact run selection loads its own bytes and retains its own snapshot."""
+    import hashlib
+    import shutil
+    import sys
+
+    module_name = "npa_rendered_artifact_history_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    recordings = tmp_path / "recordings"
+    recordings.mkdir()
+    module.RECORDINGS_DIR = recordings
+    module.RECORDING_PATH = recordings / "active.rrd"
+    state: dict = {}
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda _state: None)
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (
+            object(),
+            {"bucket": "artifact-bucket", "prefix": "nested/root"},
+        ),
+    )
+    monkeypatch.setattr(
+        module, "_agent_s3_buckets", lambda _s3, _settings: ["artifact-bucket"]
+    )
+    selections = {
+        "npa1_source_one": (
+            "run-one",
+            "nested/root/category-one",
+            b"first recording bytes",
+        ),
+        "npa1_source_two": (
+            "run-two",
+            "nested/root/category-two",
+            b"second, different recording bytes",
+        ),
+    }
+
+    def _resolve(_buckets, *, base_prefix, run_ref_or_id, s3):
+        assert base_prefix == "nested/root"
+        selection = selections.get(run_ref_or_id)
+        if selection is None:
+            selection = next(
+                candidate
+                for candidate in selections.values()
+                if module.encode_run_ref(
+                    "artifact-bucket", candidate[1], candidate[0]
+                )
+                == run_ref_or_id
+            )
+        run_id, source_prefix, _body = selection
+        key = f"{source_prefix}/{run_id}/reports/run.rrd"
+        artifact = module.Artifact(
+            run_id,
+            key,
+            f"s3://artifact-bucket/{key}",
+            32,
+            "2026-08-01T00:00:00+00:00",
+            "rerun",
+            True,
+        )
+        return module.RunResolution(
+            run_id, "artifact-bucket", source_prefix, [artifact]
+        )
+
+    def _download(s3_uri, destination, *, s3):
+        body = next(
+            body
+            for run_id, source_prefix, body in selections.values()
+            if f"/{source_prefix}/{run_id}/" in s3_uri
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(body)
+        return destination
+
+    published_capabilities = []
+
+    def _publish(source):
+        shutil.copy2(source, module.RECORDING_PATH)
+        capability = (
+            "/rerun/recordings/cap-"
+            + chr(ord("a") + len(published_capabilities)) * 43
+            + ".rrd"
+        )
+        published_capabilities.append(capability)
+        return capability
+
+    monkeypatch.setattr(module, "resolve_run_artifacts", _resolve)
+    monkeypatch.setattr(module, "download_s3_uri", _download)
+    monkeypatch.setattr(module, "_publish_rrd_recording", _publish)
+    monkeypatch.setattr(module, "_rerun_service_active", lambda: True)
+    monkeypatch.setattr(module, "_rerun_web_viewer_healthy", lambda: True)
+    monkeypatch.setattr(module, "_restart_rerun_serve", lambda **_kwargs: True)
+    monkeypatch.setattr(module, "_wait_rerun_web_viewer_healthy", lambda: True)
+
+    try:
+        responses = []
+        for run_ref, (run_id, source_prefix, _body) in selections.items():
+            key = f"{source_prefix}/{run_id}/reports/run.rrd"
+            responses.append(
+                module.sim_viz_load_artifact(
+                    {"run_id": run_id, "run_ref": run_ref, "key": key}
+                )
+            )
+
+        assert [item["sim_viz"]["run_id"] for item in responses] == [
+            "run-one",
+            "run-two",
+        ]
+        snapshots = state["sim_viz_runs"]
+        ref_one = module.encode_run_ref(
+            "artifact-bucket", "nested/root/category-one", "run-one"
+        )
+        ref_two = module.encode_run_ref(
+            "artifact-bucket", "nested/root/category-two", "run-two"
+        )
+        assert set(snapshots) == {ref_one, ref_two}
+        assert snapshots[ref_one]["artifact_key"].endswith(
+            "category-one/run-one/reports/run.rrd"
+        )
+        assert snapshots[ref_two]["artifact_key"].endswith(
+            "category-two/run-two/reports/run.rrd"
+        )
+        assert snapshots[ref_one]["served_recording_sha256"] == (
+            hashlib.sha256(selections["npa1_source_one"][2]).hexdigest()
+        )
+        assert snapshots[ref_two]["served_recording_sha256"] == (
+            hashlib.sha256(selections["npa1_source_two"][2]).hexdigest()
+        )
+        assert (
+            snapshots[ref_one]["served_recording_sha256"]
+            != snapshots[ref_two]["served_recording_sha256"]
+        )
+        load_response = module._sim_viz_load_response(
+            state, responses[-1]["sim_viz"], run_id="run-two"
+        )
+        available_refs = {item["run_ref"] for item in load_response["available_runs"]}
+        assert available_refs == {ref_one, ref_two}
+
+        # History selection must reload A's exact S3 bytes after B was active,
+        # publish a fresh capability, and keep the two source identities separate.
+        assert module.RECORDING_PATH.read_bytes() == selections["npa1_source_two"][2]
+        selected_one = module.sim_viz_select_run(
+            {"run_id": "run-one", "run_ref": ref_one}
+        )["sim_viz"]
+        assert module.RECORDING_PATH.read_bytes() == selections["npa1_source_one"][2]
+        assert selected_one["run_id"] == "run-one"
+        assert selected_one["artifact_run_ref"] == ref_one
+        assert selected_one["artifact_key"].endswith(
+            "category-one/run-one/reports/run.rrd"
+        )
+        assert selected_one["artifact_uri"].endswith(
+            "category-one/run-one/reports/run.rrd"
+        )
+        assert selected_one["served_recording_sha256"] == hashlib.sha256(
+            selections["npa1_source_one"][2]
+        ).hexdigest()
+        assert selected_one["artifact_preview_url"] == published_capabilities[-1]
+        assert selected_one["artifact_preview_url"] != responses[0]["sim_viz"][
+            "artifact_preview_url"
+        ]
+        assert selected_one["rerun_ready"] is True
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
+    monkeypatch, tmp_path
+) -> None:
+    """Caller-controlled buckets and path-like object keys fail before download."""
+    import sys
+
+    module_name = "npa_rendered_artifact_security_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_s3_client",
+        lambda: (
+            object(),
+            {"bucket": "configured-bucket", "prefix": "nested/root"},
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "download_s3_uri",
+        lambda *_args, **_kwargs: pytest.fail("rejected requests must not download"),
+    )
+    try:
+        for key in ("../secret", "folder/../secret", "folder\\secret", "bad\x00key"):
+            with pytest.raises(module.HTTPException) as exc_info:
+                module._safe_artifact_key(key)
+            assert exc_info.value.status_code == 400
+
+        with pytest.raises(module.HTTPException) as exc_info:
+            module.artifacts_download(key="safe.bin", bucket="foreign-bucket")
+        assert exc_info.value.status_code == 400
+
+        with pytest.raises(module.HTTPException) as exc_info:
+            module.artifacts_download(
+                s3_uri="s3://configured-bucket/../secret.bin"
+            )
+        assert exc_info.value.status_code == 400
+
+        allowed_key = "nested/root/category/run-one/reports/run.rrd"
+        allowed_artifact = module.Artifact(
+            "run-one",
+            allowed_key,
+            f"s3://configured-bucket/{allowed_key}",
+            12,
+            "2026-08-01T00:00:00+00:00",
+            "rerun",
+            True,
+        )
+        monkeypatch.setattr(
+            module,
+            "_agent_s3_buckets",
+            lambda _s3, _settings: ["configured-bucket"],
+        )
+        monkeypatch.setattr(
+            module,
+            "resolve_run_artifacts",
+            lambda *_args, **_kwargs: module.RunResolution(
+                "run-one",
+                "configured-bucket",
+                "nested/root/category",
+                [allowed_artifact],
+            ),
+        )
+        with pytest.raises(module.HTTPException) as exc_info:
+            module.sim_viz_load_run(
+                {
+                    "run_id": "run-one",
+                    "run_ref": "npa1_exact",
+                    "rrd_uri": "s3://configured-bucket/another/run.rrd",
+                }
+            )
+        assert exc_info.value.status_code == 400
+        with pytest.raises(module.HTTPException) as exc_info:
+            module.sim_viz_load_run(
+                {
+                    "run_id": "run-one",
+                    "run_ref": "npa1_exact",
+                    "rrd_uri": "s3://configured-bucket/nested/root/category/run-one/movie.mp4",
+                }
+            )
+        assert exc_info.value.status_code == 400
+    finally:
+        sys.modules.pop(module_name, None)
 
     paths = {getattr(route, "path", "") for route in module.app.routes}
     for expected in (

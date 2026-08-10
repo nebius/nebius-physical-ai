@@ -16,6 +16,9 @@
 # Applied By:
 #   ./03-run-csi-rwx-cross-node-test.sh
 #
+# The script replaces __CPU_NODE__ and __GPU_NODE__ with nodes selected from
+# their live allocatable GPU counts before applying this manifest.
+#
 # Created By: Aaron Fagan
 # Created On: 2026-03-17
 # Version: 0.1.0
@@ -43,16 +46,8 @@ metadata:
     app.kubernetes.io/part-of: filesystem-csi-validation
     app.kubernetes.io/component: rwx-writer
 spec:
-  affinity:
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchExpressions:
-              - key: app
-                operator: In
-                values:
-                  - filesystem-csi-rwx-check
-          topologyKey: kubernetes.io/hostname
+  nodeSelector:
+    kubernetes.io/hostname: __CPU_NODE__
   containers:
     - name: writer
       image: busybox
@@ -84,16 +79,12 @@ metadata:
     app.kubernetes.io/part-of: filesystem-csi-validation
     app.kubernetes.io/component: rwx-reader
 spec:
-  affinity:
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchExpressions:
-              - key: app
-                operator: In
-                values:
-                  - filesystem-csi-rwx-check
-          topologyKey: kubernetes.io/hostname
+  nodeSelector:
+    kubernetes.io/hostname: __GPU_NODE__
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
   containers:
     - name: reader
       image: busybox
@@ -102,9 +93,11 @@ spec:
         requests:
           cpu: 50m
           memory: 64Mi
+          nvidia.com/gpu: 1
         limits:
           cpu: 100m
           memory: 128Mi
+          nvidia.com/gpu: 1
       securityContext:
         allowPrivilegeEscalation: false
         privileged: false

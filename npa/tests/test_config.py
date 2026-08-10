@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -678,6 +679,25 @@ def test_write_config_deep_merges_existing_config(isolated_config: Path) -> None
     assert written.stat().st_mode & 0o777 == 0o600
 
 
+def test_concurrent_config_updates_are_atomic(isolated_config: Path) -> None:
+    barrier = threading.Barrier(3)
+
+    def write(project: str) -> None:
+        barrier.wait()
+        config.write_config({"projects": {project: {"project_id": project}}})
+
+    threads = [threading.Thread(target=write, args=(name,)) for name in ("one", "two")]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(2)
+        assert not thread.is_alive()
+    data = yaml.safe_load(isolated_config.read_text())
+    assert set(data["projects"]) == {"one", "two"}
+    assert isolated_config.stat().st_mode & 0o777 == 0o600
+
+
 def test_remove_workbench_config_updates_defaults(isolated_config: Path) -> None:
     _write_full_config(isolated_config)
 
@@ -691,6 +711,35 @@ def test_remove_workbench_config_updates_defaults(isolated_config: Path) -> None
     data = yaml.safe_load(isolated_config.read_text())
     assert "proj-a" not in data["projects"]
     assert data["default_project"] == "proj-b"
+
+
+def test_remove_last_workbench_preserves_agent_ownership_record(
+    isolated_config: Path,
+) -> None:
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "shared": {
+                        "agents": {
+                            "wan-pr261": {
+                                "deployment": {"deployment_id": "npa-agent-owner"}
+                            }
+                        },
+                        "workbenches": {"temporary": {"endpoint": "http://vm"}},
+                    }
+                }
+            }
+        )
+    )
+    config.remove_workbench_config("shared", "temporary")
+    data = yaml.safe_load(isolated_config.read_text())
+    project = data["projects"]["shared"]
+    assert "workbenches" not in project
+    assert project["agents"]["wan-pr261"]["deployment"]["deployment_id"] == (
+        "npa-agent-owner"
+    )
 
 
 # ── workbench_type alias guard ───────────────────────────────────────────

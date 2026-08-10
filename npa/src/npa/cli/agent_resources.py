@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Any
 
 DiscoveryRunner = Callable[[list[str]], tuple[int, str, str]]
@@ -54,6 +55,54 @@ def configured_k8s_backends(project_block: dict[str, Any], alias: str) -> list[d
         "gpu_profile": str(project_block.get("gpu_profile") or ""),
         "raw": raw,
     }]
+
+
+def assemble_k8s_backend_inventory(
+    *, config: dict[str, Any], alias: str, clusters_root: Path,
+    cloud_clusters: list[dict[str, Any]], npa_ready: bool, npa_error: str,
+    terraform_dir: Path,
+) -> dict[str, Any]:
+    """Combine configured, operator-local, and live cloud Kubernetes backends."""
+    projects = config.get("projects") if isinstance(config.get("projects"), dict) else {}
+    project_block = projects.get(alias) if isinstance(projects.get(alias), dict) else {}
+    configured = configured_k8s_backends(project_block, alias)
+    local_clusters: list[dict[str, Any]] = []
+    if clusters_root.is_dir():
+        for item in sorted(clusters_root.iterdir()):
+            if item.is_dir():
+                kubeconfig, state_path = item / "kubeconfig", item / "state.json"
+                local_clusters.append({
+                    "source": "local_state", "cluster_name": item.name, "context": item.name,
+                    "kubeconfig": str(kubeconfig), "kubeconfig_exists": kubeconfig.is_file(),
+                    "state_exists": state_path.is_file(),
+                })
+    return {
+        "ok": True, "project": alias, "configured": configured,
+        "local_clusters": local_clusters, "cloud_clusters": cloud_clusters,
+        "has_infra": bool(configured or any(x.get("kubeconfig_exists") for x in local_clusters) or cloud_clusters),
+        "agent_npa_ready": npa_ready, "agent_npa_error": npa_error,
+        "terraform_dir": str(terraform_dir),
+        "options": [
+            "POST /api/infra/provision to let the agent create the minimal Kubernetes backend.",
+            "Add projects.<alias>.kubernetes to ~/.npa/config.yaml on the agent to use an existing backend.",
+            "Pass project/cluster_name in the workflow submit payload to target a known backend.",
+        ],
+    }
+
+
+def validate_resource_inventory(payload: Any) -> dict[str, Any]:
+    """Validate the live inventory contract and require at least one real reference."""
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        raise ValueError("tenant resource inventory endpoint did not return ok=true")
+    categories = payload.get("categories")
+    if not isinstance(categories, list) or not categories:
+        raise ValueError("tenant resource inventory endpoint returned no categories")
+    if not any(isinstance(x, dict) and (int(x.get("discovered_count") or 0) > 0 or int(x.get("configured_count") or 0) > 0) for x in categories):
+        raise ValueError("tenant resource inventory has no configured or discovered resources")
+    states = {"discovered", "configured", "empty", "error"}
+    if any(not isinstance(x, dict) or str(x.get("status") or "") not in states for x in categories):
+        raise ValueError("tenant resource inventory returned an invalid category state")
+    return payload
 
 
 def discover_mk8s_accelerators(

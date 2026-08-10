@@ -16,8 +16,13 @@ from typing import Any
 
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
-from npa.deploy.images import container_image_for_tool
+from npa.deploy.images import container_image_for_tool, wan_accepted_image_manifest
 from npa.workflows.byof.live import resolve_byof_kubernetes_target
+from npa.workflows.byof.postprocess import (
+    PostprocessContext,
+    has_registered_postprocess,
+    run_registered_postprocess,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
@@ -28,7 +33,7 @@ BYOF_REPO_MOUNT = "/opt/byof"
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_REPO_REF = "main"
 DEFAULT_UBUNTU_BASE_IMAGE = "ubuntu:22.04"
-BASE_PROFILES = frozenset({"ubuntu", "isaac-lab"})
+BASE_PROFILES = frozenset({"ubuntu", "isaac-lab", "prebuilt"})
 PLACEHOLDER_VALUES = frozenset(
     {
         "",
@@ -41,6 +46,20 @@ PLACEHOLDER_VALUES = frozenset(
         "<base-profile>",
     }
 )
+WAN_POSTPROCESS_CONTRACTS = {
+    "wan2.2_ti2v_5b_text_to_video": (
+        "wan2.2",
+        "wan2_2_ti2v_5b_text_to_video.json",
+    ),
+    "wan2.2_ti2v_5b_image_to_video": (
+        "wan2.2",
+        "wan2_2_ti2v_5b_image_to_video.json",
+    ),
+    "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses": (
+        "wan2.2-multigpu",
+        "wan2_2_ti2v_5b_multigpu.json",
+    ),
+}
 
 
 def _utc_stamp() -> str:
@@ -52,6 +71,65 @@ def _normalize_optional(value: str) -> str:
     if cleaned in PLACEHOLDER_VALUES:
         return ""
     return cleaned
+
+
+def _image_repository_name(image_ref: str) -> str:
+    ref = image_ref.removeprefix("docker:").split("@", 1)[0]
+    return ref.rsplit("/", 1)[-1].split(":", 1)[0]
+
+
+def _required_postprocess_key(
+    args: argparse.Namespace, *, base_image: str, base_profile: str
+) -> str | None:
+    """Resolve mandatory postprocessing from the immutable workload contract.
+
+    A caller-provided solution label may select an ordinary registered
+    postprocessor, but it may not turn postprocessing off for a Wan image.  The
+    accepted Wan path is bound independently to its prebuilt digest, capability,
+    and artifact contract so an empty or misspelled label fails before launch.
+    """
+
+    if args.workload != "solution-smoke":
+        return None
+    requested = args.solution_name.strip().lower()
+    capability = args.capability_name.strip()
+    artifact = args.smoke_artifact_name.strip()
+    base_is_wan = _image_repository_name(base_image) == "npa-wan2-2"
+    wan_signaled = (
+        base_is_wan
+        or requested in {"wan2.2", "wan2.2-multigpu"}
+        or capability.startswith("wan2.2_")
+        or artifact.startswith("wan2_2_")
+    )
+    if not wan_signaled:
+        return requested if has_registered_postprocess(requested) else None
+
+    accepted_digest = str(wan_accepted_image_manifest()["oci_digest"])
+    if (
+        not base_is_wan
+        or base_profile != "prebuilt"
+        or not base_image.endswith(f"@{accepted_digest}")
+    ):
+        raise ValueError(
+            "Wan solution-smoke requires the exact GPU-accepted prebuilt image digest "
+            f"{accepted_digest}"
+        )
+    contract = WAN_POSTPROCESS_CONTRACTS.get(capability)
+    if contract is None:
+        raise ValueError(
+            f"Wan solution-smoke capability {capability!r} has no mandatory postprocess contract"
+        )
+    expected_key, expected_artifact = contract
+    if artifact != expected_artifact:
+        raise ValueError(
+            f"Wan capability {capability!r} requires smoke artifact {expected_artifact!r}"
+        )
+    if requested != expected_key:
+        raise ValueError(
+            f"Wan capability {capability!r} requires solution name {expected_key!r}; "
+            "the label cannot disable verified RRD postprocessing"
+        )
+    return expected_key
 
 
 def _run(
@@ -130,7 +208,8 @@ def _live_runner_env(project: str) -> dict[str, str]:
             section = _resolve_project_section(yml, project or None) if project else {}
             storage = section.get("storage") if isinstance(section, dict) else {}
             if not isinstance(storage, dict):
-                storage = yml.get("storage") if isinstance(yml.get("storage"), dict) else {}
+                root_storage = yml.get("storage") if isinstance(yml, dict) else None
+                storage = root_storage if isinstance(root_storage, dict) else {}
             bare = _bare_s3_bucket(
                 str(
                     storage.get("checkpoint_bucket")
@@ -153,7 +232,9 @@ def _refresh_registry_pull_secrets(image: str, project: str) -> None:
     if "nebius.cloud" not in registry_server:
         return
     try:
-        from npa.workflows.sim2real.registry_auth import ensure_nebius_registry_pull_secret
+        from npa.workflows.sim2real.registry_auth import (
+            ensure_nebius_registry_pull_secret,
+        )
 
         target = resolve_byof_kubernetes_target(project or None)
         namespaces = {target.namespace or "default", "default"}
@@ -194,7 +275,11 @@ def _docker_login_nebius(server: str, *, env: dict[str, str] | None = None) -> N
     token = token_proc.stdout.strip()
     if not token:
         raise RuntimeError("nebius iam get-access-token returned empty token")
-    _run(["docker", "login", "-u", "iam", "--password-stdin", server], stdin=token, env=env)
+    _run(
+        ["docker", "login", "-u", "iam", "--password-stdin", server],
+        stdin=token,
+        env=env,
+    )
 
 
 def _dockerfile_text() -> str:
@@ -212,19 +297,19 @@ def _dockerfile_text() -> str:
         "RUN echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
         "  && chmod 440 /etc/sudoers.d/ubuntu\n"
         "RUN mkdir -p /workspace && chown ubuntu:ubuntu /workspace\n"
-        f"RUN git clone --depth 1 --branch \"${{OSS_REPO_REF}}\" \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT} \\\n"
+        f'RUN git clone --depth 1 --branch "${{OSS_REPO_REF}}" "${{OSS_REPO_URL}}" {BYOF_REPO_MOUNT} \\\n'
         f"  || (rm -rf {BYOF_REPO_MOUNT} \\\n"
-        f"    && git clone \"${{OSS_REPO_URL}}\" {BYOF_REPO_MOUNT} \\\n"
+        f'    && git clone "${{OSS_REPO_URL}}" {BYOF_REPO_MOUNT} \\\n'
         f"    && cd {BYOF_REPO_MOUNT} \\\n"
-        "    && git checkout \"${OSS_REPO_REF}\") \\\n"
+        '    && git checkout "${OSS_REPO_REF}") \\\n'
         f"  && chown -R ubuntu:ubuntu {BYOF_REPO_MOUNT}\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
-        "RUN if [ -n \"${BYOF_BUILD_COMMAND}\" ]; then /bin/sh -lc \"${BYOF_BUILD_COMMAND}\"; fi\n"
-        f"RUN printf '{{\\n  \"source\": \"oss-byof\",\\n  \"repo\": \"%s\",\\n  \"ref\": \"%s\"\\n}}\\n' \\\n"
-        f"  \"${{OSS_REPO_URL}}\" \"${{OSS_REPO_REF}}\" > {BYOF_REPO_MOUNT}/npa_source_metadata.json \\\n"
+        'RUN if [ -n "${BYOF_BUILD_COMMAND}" ]; then /bin/sh -lc "${BYOF_BUILD_COMMAND}"; fi\n'
+        f'RUN printf \'{{\\n  "source": "oss-byof",\\n  "repo": "%s",\\n  "ref": "%s"\\n}}\\n\' \\\n'
+        f'  "${{OSS_REPO_URL}}" "${{OSS_REPO_REF}}" > {BYOF_REPO_MOUNT}/npa_source_metadata.json \\\n'
         f"  && chown ubuntu:ubuntu {BYOF_REPO_MOUNT}/npa_source_metadata.json\n"
-        "LABEL npa.byof.repo=\"${OSS_REPO_URL}\" npa.byof.ref=\"${OSS_REPO_REF}\" "
-        "npa.packaging.tier=\"interactive\"\n"
+        'LABEL npa.byof.repo="${OSS_REPO_URL}" npa.byof.ref="${OSS_REPO_REF}" '
+        'npa.packaging.tier="interactive"\n'
         "USER ubuntu\n"
         f"WORKDIR {BYOF_REPO_MOUNT}\n"
     )
@@ -236,14 +321,18 @@ def _parse_last_json(text: str) -> dict[str, Any] | None:
         if not line.startswith("{"):
             continue
         try:
-            return json.loads(line)
+            payload = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(payload, dict):
+            return payload
     return None
 
 
 def _ubuntu_base_image_candidates() -> list[str]:
-    configured = os.environ.get("NPA_BYOF_UBUNTU_BASE_IMAGE", DEFAULT_UBUNTU_BASE_IMAGE).strip()
+    configured = os.environ.get(
+        "NPA_BYOF_UBUNTU_BASE_IMAGE", DEFAULT_UBUNTU_BASE_IMAGE
+    ).strip()
     return [configured or DEFAULT_UBUNTU_BASE_IMAGE]
 
 
@@ -257,10 +346,15 @@ def _isaac_lab_base_image_candidates(*, image: str, registry: str) -> list[str]:
     except TypeError:
         pass
     for candidate_registry in (registry, derived_registry):
-        candidate = str(container_image_for_tool("isaac-lab", registry=candidate_registry)).strip()
+        candidate = str(
+            container_image_for_tool("isaac-lab", registry=candidate_registry)
+        ).strip()
         if candidate and candidate not in candidates:
             candidates.append(candidate)
-    for public_candidate in ("nvcr.io/nvidia/isaac-lab:2.3.2", "nvcr.io/nvidia/isaac-sim:4.5.0"):
+    for public_candidate in (
+        "nvcr.io/nvidia/isaac-lab:2.3.2",
+        "nvcr.io/nvidia/isaac-sim:4.5.0",
+    ):
         if public_candidate not in candidates:
             candidates.append(public_candidate)
     return candidates
@@ -273,11 +367,30 @@ def _base_image_candidates(
     registry: str,
     explicit_base: str,
 ) -> list[str]:
+    if explicit_base.startswith("tool://"):
+        tool = explicit_base.removeprefix("tool://").strip()
+        if not tool:
+            raise ValueError("tool:// base image must name a registered image tool")
+        resolved = container_image_for_tool(tool, registry=registry)
+        if tool == "wan2-2":
+            slash = resolved.rfind("/")
+            colon = resolved.rfind(":")
+            repository = resolved[:colon] if colon > slash else resolved
+            resolved = (
+                repository
+                + "@"
+                + str(wan_accepted_image_manifest()["oci_digest"])
+            )
+        return [resolved]
     if explicit_base:
         return [explicit_base]
     normalized_profile = profile if profile in BASE_PROFILES else "ubuntu"
     if normalized_profile == "isaac-lab":
         return _isaac_lab_base_image_candidates(image=image, registry=registry)
+    if normalized_profile == "prebuilt":
+        raise ValueError(
+            "prebuilt profile requires --base-image tool://<registered-tool>"
+        )
     return _ubuntu_base_image_candidates()
 
 
@@ -285,14 +398,20 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-url", default=DEFAULT_REPO_URL)
     parser.add_argument("--repo-ref", default=DEFAULT_REPO_REF)
-    parser.add_argument("--project", default="", help="Project alias used for container-registry resolution.")
+    parser.add_argument(
+        "--project",
+        default="",
+        help="Project alias used for container-registry resolution.",
+    )
     parser.add_argument("--registry", default="", help="Override registry host/path.")
-    parser.add_argument("--image", default="", help="Fully-qualified image ref to build/push and run.")
+    parser.add_argument(
+        "--image", default="", help="Fully-qualified image ref to build/push and run."
+    )
     parser.add_argument(
         "--base-profile",
         choices=sorted(BASE_PROFILES),
         default=os.environ.get("NPA_BYOF_BASE_PROFILE", "ubuntu"),
-        help="Base image family: ubuntu (generic) or isaac-lab (sim workloads).",
+        help="Base family: ubuntu, isaac-lab, or prebuilt with tool://<registered-tool>.",
     )
     parser.add_argument(
         "--base-image",
@@ -316,20 +435,46 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=os.environ.get("NPA_BYOF_SMOKE_COMMAND", ""),
         help="Optional documented shell command run during solution-smoke from /opt/byof.",
     )
-    parser.add_argument("--solution-name", default=os.environ.get("NPA_BYOF_SOLUTION_NAME", ""))
-    parser.add_argument("--capability-name", default=os.environ.get("NPA_BYOF_CAPABILITY_NAME", ""))
-    parser.add_argument("--smoke-artifact-name", default=os.environ.get("NPA_BYOF_SMOKE_ARTIFACT_NAME", ""))
-    parser.add_argument("--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload).")
-    parser.add_argument("--num-demos", type=int, default=4, help="Demonstrations to record (datagen workload).")
+    parser.add_argument(
+        "--solution-name", default=os.environ.get("NPA_BYOF_SOLUTION_NAME", "")
+    )
+    parser.add_argument(
+        "--capability-name", default=os.environ.get("NPA_BYOF_CAPABILITY_NAME", "")
+    )
+    parser.add_argument(
+        "--smoke-artifact-name",
+        default=os.environ.get("NPA_BYOF_SMOKE_ARTIFACT_NAME", ""),
+    )
+    parser.add_argument(
+        "--num-envs", type=int, default=4, help="Parallel sim envs (datagen workload)."
+    )
+    parser.add_argument(
+        "--num-demos",
+        type=int,
+        default=4,
+        help="Demonstrations to record (datagen workload).",
+    )
     parser.add_argument("--task", default="Isaac-Cartpole-v0")
     parser.add_argument("--iterations", type=int, default=1)
-    parser.add_argument("--yaml", default="", help="Optional SkyPilot YAML override for the selected workload.")
-    parser.add_argument("--output-root", default="", help="Override workload output root.")
+    parser.add_argument(
+        "--yaml",
+        default="",
+        help="Optional SkyPilot YAML override for the selected workload.",
+    )
+    parser.add_argument(
+        "--output-root", default="", help="Override workload output root."
+    )
     parser.add_argument("--wait-timeout", type=int, default=21600)
     parser.add_argument("--poll-interval", type=int, default=60)
     parser.add_argument("--sky-bin", default="")
-    parser.add_argument("--config-path", default="", help="SkyPilot global config YAML for kubernetes pod_config.")
-    parser.add_argument("--cleanup", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--config-path",
+        default="",
+        help="SkyPilot global config YAML for kubernetes pod_config.",
+    )
+    parser.add_argument(
+        "--cleanup", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--skip-push", action="store_true")
     parser.add_argument("--skip-run", action="store_true")
@@ -351,6 +496,14 @@ def main(argv: list[str] | None = None) -> int:
     if not base_candidates:
         raise RuntimeError("unable to resolve a BYOF base image candidate")
     base_image = base_candidates[0]
+    if base_profile == "prebuilt":
+        if args.build_command.strip():
+            raise ValueError(
+                "prebuilt profile forbids --build-command; image bytes are immutable"
+            )
+        image = base_image
+    skip_build = args.skip_build or base_profile == "prebuilt"
+    skip_push = args.skip_push or base_profile == "prebuilt"
     base_registry = _registry_path(base_image) or (_registry_path(image) or registry)
 
     summary: dict[str, Any] = {
@@ -374,19 +527,36 @@ def main(argv: list[str] | None = None) -> int:
     docker_config_dir: str | None = None
     docker_env: dict[str, str] = {}
     try:
-        if not args.skip_build:
-            if not args.skip_push:
+        postprocess_key = _required_postprocess_key(
+            args, base_image=base_image, base_profile=base_profile
+        )
+        if postprocess_key is not None and not args.output_root.strip():
+            raise ValueError(
+                f"registered solution {postprocess_key!r} requires --output-root "
+                "so its verified postprocess cannot be skipped"
+            )
+        if postprocess_key is not None and args.skip_run:
+            raise ValueError(
+                f"registered solution {postprocess_key!r} cannot use --skip-run "
+                "because verified postprocessing is mandatory"
+            )
+        if not skip_build:
+            if not skip_push:
                 docker_config_dir = tempfile.mkdtemp(prefix="npa-docker-auth-")
                 docker_env = {"DOCKER_CONFIG": docker_config_dir}
                 _docker_login_nebius(_registry_server(image), env=docker_env)
             with tempfile.TemporaryDirectory(prefix="npa-byof-build-") as tmp:
                 context = Path(tmp)
-                (context / "Dockerfile").write_text(_dockerfile_text(), encoding="utf-8")
+                (context / "Dockerfile").write_text(
+                    _dockerfile_text(), encoding="utf-8"
+                )
                 last_build_error: Exception | None = None
                 for idx, candidate_base in enumerate(base_candidates):
                     base_image = candidate_base
                     summary["base_image"] = base_image
-                    summary["base_registry"] = _registry_path(base_image) or (_registry_path(image) or registry)
+                    summary["base_registry"] = _registry_path(base_image) or (
+                        _registry_path(image) or registry
+                    )
                     try:
                         _run(
                             [
@@ -425,17 +595,22 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     assert last_build_error is not None
                     raise last_build_error
-            if not args.skip_push:
-                push_proc = _run(["docker", "push", image], env=docker_env or None, capture=True)
+            if not skip_push:
+                push_proc = _run(
+                    ["docker", "push", image], env=docker_env or None, capture=True
+                )
                 if push_proc.stdout:
                     sys.stdout.write(push_proc.stdout)
                 if push_proc.stderr:
                     sys.stderr.write(push_proc.stderr)
                 try:
-                    _run(["docker", "buildx", "imagetools", "inspect", image], env=docker_env or None)
+                    _run(
+                        ["docker", "buildx", "imagetools", "inspect", image],
+                        env=docker_env or None,
+                    )
                 except Exception:
                     pass
-            summary["build"] = {"ok": True, "pushed": not args.skip_push}
+            summary["build"] = {"ok": True, "pushed": not skip_push}
         else:
             summary["build"] = {"ok": True, "skipped": True}
 
@@ -470,7 +645,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--run-id",
                     args.run_id,
                     "--wait-timeout",
-                    str(min(args.wait_timeout, 3600)),
+                    str(args.wait_timeout),
                     "--poll-interval",
                     str(args.poll_interval),
                     "--repo-root",
@@ -517,7 +692,23 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(run_proc.stdout)
             if run_proc.stderr:
                 sys.stderr.write(run_proc.stderr)
-            summary["run"] = _parse_last_json(run_proc.stdout) or {"status": "submitted"}
+            summary["run"] = _parse_last_json(run_proc.stdout) or {
+                "status": "submitted"
+            }
+            if postprocess_key is not None:
+                postprocess = run_registered_postprocess(
+                    postprocess_key,
+                    PostprocessContext(
+                        run_prefix_uri=f"{args.output_root.rstrip('/')}/{args.run_id}/",
+                        project=args.project or None,
+                    ),
+                )
+                if postprocess is None:
+                    raise RuntimeError(
+                        f"registered solution {postprocess_key!r} returned no "
+                        "verified postprocess result"
+                    )
+                summary["postprocess"] = postprocess
         else:
             summary["run"] = {"skipped": True}
         summary["status"] = "ok"
@@ -527,7 +718,9 @@ def main(argv: list[str] | None = None) -> int:
         message = str(exc)
         summary["status"] = "failed"
         summary["error"] = message
-        if "403 Forbidden" in message and ("BYOF_BASE_IMAGE" in message or "ISAAC_BASE_IMAGE" in message):
+        if "403 Forbidden" in message and (
+            "BYOF_BASE_IMAGE" in message or "ISAAC_BASE_IMAGE" in message
+        ):
             summary["hint"] = (
                 "Registry pull for the base image was denied. "
                 "Pass --base-image from an accessible registry (e.g. ubuntu:22.04), "

@@ -5,6 +5,7 @@
   "scripts": {
     "cy:mock": "cypress run --spec cypress/e2e/agent_mocked.cy.js,cypress/e2e/agent_foxglove.cy.js",
     "cy:live": "cypress run --spec cypress/e2e/agent_live.cy.js",
+    "cy:live-rrd": "cypress run --spec cypress/e2e/agent_live_rrd_artifact.cy.js",
     "cy:foxglove": "cypress run --spec cypress/e2e/agent_foxglove.cy.js"
   },
   "devDependencies": {

@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import base64
+import functools
+import inspect
+import ipaddress
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
 import subprocess
-import ipaddress
-import tarfile
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
     from npa.workflows.sim2real_health import CheckResult
@@ -27,6 +28,7 @@ from npa.clients.config import (
     resolve_environment,
     resolve_ssh_config,
     resolve_terraform_state,
+    remove_agent_config,
     write_config,
 )
 from npa.clients.env import redact_value
@@ -37,7 +39,57 @@ from npa.clients.network import (
 )
 from npa.clients.ssh import SSHClient, SSHError
 from npa.agent_backend.shipping import render_shipped_backend_install
+from npa.cli import agent_resources
+from npa.cli.agent_artifact_storage import (
+    _resolve_artifact_project_storage,
+    _resolve_deploy_storage_credentials,
+    _validate_artifact_prefix,
+)
+from npa.cli.agent_login import (
+    agent_mobile_login_help_html as _agent_mobile_login_help_html,
+    agent_public_login_form_html as _agent_public_login_form_html,
+    agent_strip_url_credentials_js as _agent_strip_url_credentials_js,
+)
 from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
+from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility exports
+    AGENT_CHAT_QUEUE_CONTRACT,
+    AGENT_FOXGLOVE_CONTRACT,
+    AGENT_MEDIA_PREVIEW_CONTRACT,
+    AGENT_READABLE_COLOR_CONTRACT,
+    AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT,
+    AGENT_STAGES_RUN_PICKER_CONTRACT,
+    AGENT_VIEWER_CHAT_DRAWER_CONTRACT,
+    AGENT_VISUAL_FEEDBACK_CONTRACT,
+    _embedded_agent_artifacts_source,
+    _embedded_agent_chat_source,
+    _embedded_agent_provenance_source,
+    _embedded_agent_recordings_source,
+    _embedded_agent_routing_source,
+    _embedded_agent_rrd_proxy_source,
+    _embedded_agent_s3_guard_source,
+    _embedded_agent_stages_source,
+    _embedded_agent_state_source,
+    _embedded_agent_visual_feedback_source,
+    _embedded_agent_workflow_source,
+    rendered_agent_ui_html,
+)
+from npa.cli.agent_deployment import (
+    AgentConfig,
+    DeploymentIdentityError,
+    agent_lifecycle_lock,
+    assert_live_deployment,
+    assert_remote_owner_if_present,
+    assert_record_ownership,
+    build_agent_urls,
+    build_deployment_manifest,
+    fetch_live_deployment,
+    normalize_workspace_label,
+    record_customer_url as _record_customer_url,
+    record_public_https as _record_public_https,
+    record_tls_verify as _record_tls_verify,
+    verify_remote_deployment,
+    verify_persisted_remote_owner,
+)
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
 from npa.deploy.provisioner import ProvisionerError
@@ -62,187 +114,19 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-# Cost-ordered ladder (cheapest-capable first). Per-turn cost-tier routing
-# (see agent_routing.build_model_ladder) reorders this for each request, but the
-# default configured order still surfaces the cheap workhorse ahead of the
-# branded reasoner so no-routing paths and the /models picker default cheap.
+# Cost-ordered ladder; per-turn routing reorders it, while no-routing paths and
+# the model picker retain the cheap workhorse as their default.
 DEFAULT_LLM_MODELS = (
     "Qwen/Qwen3-32B",
     "meta-llama/Llama-3.3-70B-Instruct",
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026080901"
+AGENT_UI_VERSION = "2026081001"
+ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
 _AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
-
-# Contract markers that must stay in the embedded agent UI/backend. verify-live,
-# smoke, and unit tests share this list so media-preview regressions cannot
-# silently disappear after a bootstrap drift or template edit.
-AGENT_MEDIA_PREVIEW_CONTRACT = (
-    "authenticatedPreviewObjectUrl",
-    "Loading video preview…",
-    'data-preview-url="',
-    "Keep the Rerun iframe mounted under the media pane",
-    'id="renderModeVideo"',
-    'id="artifactPreviewHost"',
-    'id="viewerPaneMedia"',
-    "URL.createObjectURL(blob)",
-    '@app.api_route("/artifacts/file/{{filename}}", methods=["GET", "HEAD"])',
-    "artifact_media_type(",
-)
-
-# Rerun wasm splash must never be user-visible. Cover the iframe until past
-# "Loading application bundle", and fully warm assets before first reveal.
-AGENT_RERUN_NO_BUNDLE_SPLASH_CONTRACT = (
-    'id="rerunBundleCover"',
-    "waitUntilRerunPastBundleSplash",
-    "showRerunBundleCover",
-    "hideRerunBundleCover",
-    "safeHideRerunBundleCover",
-    "Warm Rerun assets before revealing the iframe",
-    "Preparing viewer…",
-    # Cover may stay up, but mount/boot must not await long splash polls (latency).
-    "Uncover without blocking mount latency",
-    # Canvas-painted splash is not DOM text — require non-blank pixels before uncover.
-    "non-blank canvas",
-    # Run switches must soft-swap recordings without remounting wasm.
-    "swapRerunRecordingInPlace",
-    "add_receiver",
-)
-
-# Describe-this visual feedback: capture current viewer frame → vision tier chat.
-AGENT_VISUAL_FEEDBACK_CONTRACT = (
-    'id="describeVisual"',
-    "captureVisualContext",
-    "describeVisual",
-    "[npa-visual-feedback]",
-    "visual_context",
-    "normalize_messages_for_llm",
-    "infer_visual_domain_hints",
-    "frameLooksBlank",
-    "sampleFrameStats",
-    "captureCanvasDataUrl",
-    "ensureRerunCaptureBridge",
-    "grabFromRerunCaptureBridge",
-    "pickBestIframeCanvas",
-    "probeRerunCanvasContent",
-    "waitForQualityRerunFrame",
-    "skipUserAppend",
-    "Describe this — capturing",
-    "client_max_body_size 32m",
-    "maxChars = 700000",
-    # Grounded original-input ("what was the original input image") resolution.
-    "_maybe_origin_reply",
-    "build_run_origin",
-    "Grounded origin facts for this run",
-)
-
-# Embedded Foxglove viewer: the real @foxglove/embed SDK, loaded on demand from
-# same-origin assets, mounted into its own viewer pane, and fed by /api/foxglove/*.
-AGENT_FOXGLOVE_CONTRACT = (
-    'id="renderModeFoxglove"',
-    'id="viewerPaneFoxglove"',
-    'id="foxgloveHost"',
-    'id="foxgloveStatus"',
-    "ensureFoxgloveViewer",
-    "setFoxgloveDataSource",
-    "refreshFoxgloveViewer",
-    "mountFoxgloveViewer",
-    "/api/foxglove/config",
-    "captureFoxgloveContext",
-    "convertRunToMcap",
-    "/api/foxglove/convert-run",
-    # Two backends behind one pane: the official app (SDK) and the self-hosted
-    # OSS viewer that renders MCAP without a Foxglove account.
-    "mountSelfHostedViewer",
-    "self-hosted",
-    # Cross-origin embed: never claim a captured frame for the official app.
-    "cross-origin iframe",
-)
-
-AGENT_CHAT_QUEUE_CONTRACT = (
-    "chatQueue",
-    "enqueueChatJob",
-    "processChatQueue",
-    "queueChatText",
-)
-
-AGENT_VIEWER_CHAT_DRAWER_CONTRACT = (
-    "viewer-focus",
-    "chat-drawer-open",
-    'id="chatDrawerToggle"',
-    "openChatDrawer",
-    "openFullChatTab",
-    "setChatDrawerOpen",
-    'id="openFullChatTab"',
-    'id="chatDrawerClose"',
-    "chat-fab",
-    "transform-origin: bottom right",
-)
-
-AGENT_STAGES_RUN_PICKER_CONTRACT = (
-    'id="stagesRunSelect"',
-    'id="stagesRunInput"',
-    'id="stagesLoadRun"',
-    "stages-run-picker",
-    "loadSelectedRun",
-    "syncRunChooserFields",
-    "filterStagesRunSelect",
-    "Search or paste run ID",
-)
-
-AGENT_READABLE_COLOR_CONTRACT = (
-    "--ink-strong",
-    "thinking-ellipsis",
-    "Color contrast rules",
-)
-
-
-def _embedded_agent_workflow_source() -> str:
-    """Return agent_workflow.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_workflow.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_routing_source() -> str:
-    """Return agent_routing.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_routing.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_chat_source() -> str:
-    """Return agent_chat.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_chat.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_recordings_source() -> str:
-    """Return agent_recordings.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_recordings.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
 
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
@@ -259,207 +143,27 @@ _AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
 
 
-def _embedded_agent_stages_source() -> str:
-    """Return agent_stages.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_stages.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def rendered_agent_ui_html() -> str:
-    """Return the agent UI HTML with bootstrap placeholders substituted.
-
-    The UI lives in ``agent_ui.html`` (outside the bootstrap f-string) so JS can
-    use normal braces and ``agent.py`` stays under the monolith size ratchet.
-    """
-    path = Path(__file__).with_name("agent_ui.html")
-    raw = path.read_text(encoding="utf-8")
-    return raw.replace("{AGENT_UI_VERSION}", AGENT_UI_VERSION).replace(
-        "{DEFAULT_AGENT_USER}", DEFAULT_AGENT_USER
-    )
-
-
-def _embedded_agent_visual_feedback_source() -> str:
-    """Return agent_visual_feedback.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_visual_feedback.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_rrd_proxy_source() -> str:
-    """Return agent_rrd_proxy.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_rrd_proxy.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_state_source() -> str:
-    """Return agent_state.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_state.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_s3_guard_source() -> str:
-    """Return agent_s3_guard.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).with_name("agent_s3_guard.py")
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_artifacts_source() -> str:
-    """Return workflows/artifacts.py source embedded into the remote agent backend."""
-    import re
-
-    path = Path(__file__).resolve().parents[1] / "workflows" / "artifacts.py"
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-def _embedded_agent_provenance_source() -> str:
-    """Return workflows/data_factory_provenance.py source embedded into the backend."""
-    import re
-
-    path = Path(__file__).resolve().parents[1] / "workflows" / "data_factory_provenance.py"
-    raw = path.read_text(encoding="utf-8")
-    raw = re.sub(r'^""".*?"""\s*\n', "", raw, count=1, flags=re.DOTALL)
-    raw = re.sub(r"^from __future__ import annotations\s*\n", "", raw)
-    return raw
-
-
-@dataclass(frozen=True)
-class AgentConfig:
-    project_alias: str
-    name: str
-    project_id: str
-    tenant_id: str
-    region: str
-    public_ip: str
-    instance_id: str
-    agent_url: str
-    rerun_url: str
-    sim_viz_url: str
-    sim_assets_url: str
-    cameras_api_url: str
-    auth_user: str
-    auth_secret_path: str
-    llm_provider: str
-    llm_model: str
-    service_account_id: str = ""
-    llm_models: tuple[str, ...] = ()
-    public_url: str = ""
-    public_https: bool = True
-    direct_url: str = ""
-    ssh_key_path: str = ""
-    credentials: dict[str, str] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "project_id": self.project_id,
-            "tenant_id": self.tenant_id,
-            "region": self.region,
-            "public_ip": self.public_ip,
-            "instance_id": self.instance_id,
-            "service_account_id": self.service_account_id,
-            "agent_url": self.agent_url,
-            "rerun_url": self.rerun_url,
-            "sim_viz_url": self.sim_viz_url,
-            "sim_assets_url": self.sim_assets_url,
-            "cameras_api_url": self.cameras_api_url,
-            "auth_user": self.auth_user,
-            "auth_secret_path": self.auth_secret_path,
-            "llm": {
-                "provider": self.llm_provider,
-                "model": self.llm_model,
-                "models": list(self.llm_models or (self.llm_model,)),
-            },
-        }
-        if self.public_url:
-            payload["public_url"] = self.public_url
-        if self.public_https:
-            payload["public_https"] = True
-        if self.direct_url:
-            payload["direct_url"] = self.direct_url
-        if self.ssh_key_path:
-            payload["ssh_key_path"] = self.ssh_key_path
-        if self.service_account_id:
-            payload["service_account_id"] = self.service_account_id
-        if self.credentials:
-            payload["credentials"] = dict(self.credentials)
-        return payload
-
-
-def build_agent_urls(
-    public_ip: str,
-    *,
-    agent_port: int = DEFAULT_AGENT_PORT,
-    public_https: bool = True,
-) -> dict[str, str]:
-    """Return customer-facing and operator-direct URLs for an agent VM."""
-    direct = f"http://{public_ip}:{agent_port}/"
-    if public_https:
-        base = f"https://{public_ip}/"
-    else:
-        base = direct
-    root = base.rstrip("/")
-    return {
-        "public_url": base,
-        "agent_url": base,
-        "rerun_url": f"{root}/rerun/",
-        "sim_viz_url": f"{root}/rerun/",
-        "sim_assets_url": f"{root}/assets/",
-        "cameras_api_url": f"{root}/assets/api/sim-assets/cameras",
-        "direct_url": direct,
-    }
-
-
-def _record_public_https(record: dict[str, Any]) -> bool:
-    if "public_https" in record:
-        return bool(record.get("public_https"))
-    public_url = str(record.get("public_url", "")).strip()
-    if public_url.startswith("https://"):
-        return True
-    agent_url = str(record.get("agent_url", "")).strip()
-    return agent_url.startswith("https://")
-
-
-def _record_tls_verify(record: dict[str, Any]) -> bool:
-    """Self-signed HTTPS on the VM public IP is expected; skip CA verification."""
-    return not _record_public_https(record)
-
-
-def _record_customer_url(record: dict[str, Any]) -> str:
-    public_url = str(record.get("public_url", "")).strip()
-    if public_url:
-        return public_url
-    return str(record.get("agent_url", "")).strip()
-
-
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code=1)
+
+
+def _serialized_agent_lifecycle(func):
+    """Hold the project/name ownership lock for an entire lifecycle command."""
+    signature = inspect.signature(func)
+
+    @functools.wraps(func)
+    def wrapped(*args, **kwargs):
+        bound = signature.bind_partial(*args, **kwargs)
+        project = str(bound.arguments.get("project", DEFAULT_PROJECT_ALIAS))
+        name = str(bound.arguments.get("name", DEFAULT_AGENT_NAME))
+        try:
+            with agent_lifecycle_lock(project, name):
+                return func(*args, **kwargs)
+        except DeploymentIdentityError as exc:
+            _fail(str(exc))
+
+    return wrapped
 
 
 def _looks_like_compute_permission_denied(message: str) -> bool:
@@ -532,6 +236,7 @@ def _apply_agent_terraform(
     name: str,
     merged_vars: dict[str, str],
     env_region: str,
+    require_empty_state: bool = False,
 ) -> dict[str, Any]:
     """Apply agent Terraform, retrying without VM SA attachment on compute IAM denial."""
     tf_dir = provisioner.prepare_working_dir(
@@ -541,13 +246,34 @@ def _apply_agent_terraform(
         region=env_region,
         endpoint=merged_vars.get("s3_endpoint", ""),
     )
-    provisioner.init(
-        tf_dir=tf_dir,
-        backend_config={
-            "access_key": merged_vars.get("nebius_api_key", ""),
-            "secret_key": merged_vars.get("nebius_secret_key", ""),
-        },
-    )
+    try:
+        provisioner.init(
+            tf_dir=tf_dir,
+            backend_config={
+                "access_key": merged_vars.get("nebius_api_key", ""),
+                "secret_key": merged_vars.get("nebius_secret_key", ""),
+            },
+        )
+    except ProvisionerError as exc:
+        if require_empty_state:
+            raise DeploymentIdentityError(
+                "Unable to initialize and inspect the Terraform state namespace; "
+                "refusing to apply or destroy unknown resources"
+            ) from exc
+        raise
+    if require_empty_state:
+        try:
+            existing_resources = provisioner.state_list(tf_dir)
+        except ProvisionerError as exc:
+            raise DeploymentIdentityError(
+                "Unable to prove the Terraform state namespace is empty; "
+                "refusing to apply or destroy unknown resources"
+            ) from exc
+        if existing_resources:
+            raise DeploymentIdentityError(
+                "Terraform state already owns resources for this project/agent but "
+                "no matching immutable agent record exists; refusing to apply"
+            )
     tf_vars = {key: value for key, value in merged_vars.items() if key not in _AGENT_TERRAFORM_RUNTIME_ONLY_VARS}
     try:
         return provisioner.apply(tf_dir=tf_dir, tf_vars=tf_vars)
@@ -584,27 +310,7 @@ def _store_agent_record(project_alias: str, name: str, payload: dict[str, Any]) 
 
 
 def _remove_agent_record(project_alias: str, name: str) -> None:
-    from npa.clients.config import CONFIG_PATH, _load_yaml
-    import yaml
-
-    data = _load_yaml()
-    projects = data.get("projects", {})
-    if not isinstance(projects, dict):
-        return
-    project = projects.get(project_alias, {})
-    if not isinstance(project, dict):
-        return
-    agents = project.get("agents", {})
-    if not isinstance(agents, dict) or name not in agents:
-        return
-    del agents[name]
-    project["agents"] = agents
-    projects[project_alias] = project
-    data["projects"] = projects
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w", encoding="utf-8") as handle:
-        yaml.safe_dump(data, handle, default_flow_style=False, sort_keys=False)
-    CONFIG_PATH.chmod(0o600)
+    remove_agent_config(project_alias, name)
 
 
 def _agent_extra_ingress_ports(
@@ -996,127 +702,6 @@ def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
     }
 
 
-def _storage_credentials_allow_writes(
-    *,
-    bucket: str,
-    endpoint: str,
-    access_key: str,
-    secret_key: str,
-    region: str,
-    prefix: str = "",
-) -> bool:
-    """Return True when credentials can list, write, and delete in the bucket."""
-    bucket_name = str(bucket or "").strip()
-    if not bucket_name:
-        return False
-    endpoint_url = str(endpoint or "").strip()
-    if not endpoint_url:
-        endpoint_url = f"https://storage.{str(region or '').strip() or 'eu-north1'}.nebius.cloud"
-    try:
-        import boto3
-    except Exception:
-        return False
-    client_kwargs = {
-        "endpoint_url": endpoint_url,
-        "aws_access_key_id": str(access_key or "").strip(),
-        "region_name": str(region or "").strip() or None,
-        "aws_" "secret_access_key": str(secret_key or "").strip(),
-    }
-    client = boto3.client("s3", **client_kwargs)
-    normalized_prefix = str(prefix or "").strip().strip("/")
-    probe_base = "/".join(part for part in (normalized_prefix, "npa-agent/probe") if part)
-    probe_key = f"{probe_base}/{secrets.token_hex(8)}.txt"
-    try:
-        client.list_objects_v2(Bucket=bucket_name, Prefix=(probe_base + "/") if probe_base else "", MaxKeys=1)
-        client.put_object(Bucket=bucket_name, Key=probe_key, Body=b"ok")
-        client.delete_object(Bucket=bucket_name, Key=probe_key)
-        return True
-    except Exception:
-        return False
-
-
-def _resolve_deploy_storage_credentials(
-    *,
-    region: str,
-    bootstrap_creds: dict[str, str],
-    project_alias: str = "",
-) -> dict[str, str]:
-    """Prefer configured artifact storage keys; fall back to bootstrap keys when needed."""
-    candidate = dict(bootstrap_creds)
-    from npa.clients.credentials import load_credentials
-
-    shared = load_credentials(environ={})
-    shared_bucket = str(shared.s3_bucket or "").strip()
-    shared_prefix = ""
-    if shared_bucket.startswith("s3://"):
-        rest = shared_bucket[len("s3://"):]
-        shared_bucket, _sep, shared_prefix = rest.partition("/")
-        shared_prefix = shared_prefix.strip("/")
-    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
-    shared_access_key = str(shared.s3_access_key_id or "").strip()
-    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
-    if shared_bucket and _storage_credentials_allow_writes(
-        bucket=shared_bucket,
-        endpoint=shared_endpoint,
-        access_key=shared_access_key,
-        secret_key=shared_secret_key,
-        region=region,
-        prefix=shared_prefix,
-    ):
-        typer.echo("  Using shared configured artifact storage credentials for the agent.")
-        candidate["s3_bucket"] = shared_bucket
-        candidate["s3_prefix"] = shared_prefix
-        candidate["s3_endpoint"] = shared_endpoint
-        candidate["nebius_api_key"] = shared_access_key
-        candidate["nebius_secret_key"] = shared_secret_key
-        return candidate
-
-    bucket = str(candidate.get("s3_bucket", "")).strip()
-    endpoint = str(candidate.get("s3_endpoint", "")).strip()
-    access_key = str(candidate.get("nebius_api_key", "")).strip()
-    secret_key = str(candidate.get("nebius_secret_key", "")).strip()
-    if _storage_credentials_allow_writes(
-        bucket=bucket,
-        endpoint=endpoint,
-        access_key=access_key,
-        secret_key=secret_key,
-        region=region,
-        prefix=str(candidate.get("s3_prefix", "")),
-    ):
-        return candidate
-    project_name = str(project_alias or "").strip()
-    if project_name:
-        try:
-            saved_state = resolve_terraform_state(project_name)
-        except ConfigError:
-            saved_state = None
-        if saved_state is not None:
-            saved_bucket = str(getattr(saved_state, "bucket", "") or "").strip()
-            saved_endpoint = str(getattr(saved_state, "endpoint", "") or "").strip()
-            saved_access_key = str(getattr(saved_state, "access_key", "") or "").strip()
-            saved_secret_key = str(getattr(saved_state, "secret_key", "") or "").strip()
-            if _storage_credentials_allow_writes(
-                bucket=saved_bucket,
-                endpoint=saved_endpoint,
-                access_key=saved_access_key,
-                secret_key=saved_secret_key,
-                region=region,
-            ):
-                typer.echo(
-                    "  Bootstrap S3 key has no data-plane access; "
-                    "falling back to saved project terraform_state credentials."
-                )
-                candidate["s3_bucket"] = saved_bucket
-                candidate["s3_endpoint"] = saved_endpoint
-                candidate["nebius_api_key"] = saved_access_key
-                candidate["nebius_secret_key"] = saved_secret_key
-                return candidate
-    _fail(
-        "unable to verify writable S3 credentials for deploy; "
-        "configure object-storage credentials with data-plane access before deploying the agent"
-    )
-
-
 def _resolve_agent_service_account_id(
     project_alias: str,
     record: dict[str, Any],
@@ -1213,6 +798,40 @@ def _resolve_agent_ssh_key(
     if env_key:
         return str(Path(env_key).expanduser())
     return str(Path(default_key).expanduser())
+
+
+def _verify_agent_record_remote_owner(
+    record: dict[str, Any],
+    expected: dict[str, str],
+    *,
+    ssh_user: str = "ubuntu",
+) -> None:
+    """Fail closed unless the saved VM manifest has the record's exact owner."""
+    host = str(record.get("public_ip") or "").strip()
+    key_path = _resolve_agent_ssh_key(record)
+    if not _is_routable_public_ip(host):
+        raise DeploymentIdentityError(
+            "saved agent record has no routable VM for ownership verification"
+        )
+    if not Path(key_path).expanduser().is_file():
+        raise DeploymentIdentityError(
+            "saved agent SSH key is unavailable for ownership verification"
+        )
+    ssh = SSHClient(
+        config=resolve_ssh_config(
+            ssh_host=host,
+            ssh_user=ssh_user,
+            ssh_key=key_path,
+            project=None,
+            name=None,
+        ).ssh
+    )
+    try:
+        verify_persisted_remote_owner(ssh, expected)
+    except SSHError as exc:
+        raise DeploymentIdentityError(
+            "unable to verify persisted VM ownership before lifecycle mutation"
+        ) from exc
 
 
 def _resolve_agent_storage_credentials(
@@ -1477,55 +1096,44 @@ def _env_line_value(value: str) -> str:
     return " ".join(str(value or "").split()).strip()
 
 
-def _create_agent_source_archive() -> str:
-    """Package the NPA source tree needed for agent-side workflow execution."""
+def _create_agent_source_archive(commit: str) -> str:
+    """Package agent-side source from the exact declared immutable commit."""
     repo_root = Path(__file__).resolve().parents[4]
-    include_roots = [
-        repo_root / "npa",
-        repo_root / "deploy" / "cluster",
-    ]
-    for path in include_roots:
-        if not path.exists():
-            raise ConfigError(f"Required agent source path is missing: {path}")
-
-    exclude_names = {
-        ".git",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".terraform",
-        ".venv",
-        "__pycache__",
-        "node_modules",
-    }
-
+    immutable_commit = str(commit or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", immutable_commit):
+        raise ConfigError("Deployment manifest commit must be a full Git SHA")
     tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
     tmp.close()
-
-    def _filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-        parts = set(Path(info.name).parts)
-        if parts & exclude_names:
-            return None
-        if info.name.endswith((".pyc", ".pyo")):
-            return None
-        return info
-
-    with tarfile.open(tmp.name, "w:gz") as archive:
-        archive.add(repo_root / "npa", arcname="npa", filter=_filter)
-        archive.add(repo_root / "deploy" / "cluster", arcname="deploy/cluster", filter=_filter)
-        # Stage the repo-root docs/ + skills/ trees so the agent's retrieval
-        # corpus (Blueprint Phase H) can ground on them at
-        # /opt/npa-agent/npa-src/{docs,skills}. Text-only; excluded via _filter.
-        for extra in ("docs", "skills"):
-            extra_path = repo_root / extra
-            if extra_path.exists():
-                archive.add(extra_path, arcname=extra, filter=_filter)
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo_root),
+            "archive",
+            "--format=tar.gz",
+            f"--output={tmp.name}",
+            immutable_commit,
+            "npa",
+            "deploy/cluster",
+            "docs",
+            "skills",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise ConfigError(
+            "Unable to archive the declared Git commit: "
+            + (result.stderr.strip() or f"git archive exited {result.returncode}")
+        )
     return tmp.name
 
 
-def _stage_agent_npa_source(ssh: SSHClient) -> None:
+def _stage_agent_npa_source(ssh: SSHClient, *, commit: str) -> None:
     """Upload NPA package source and deploy assets to the agent VM."""
-    archive_path = _create_agent_source_archive()
+    archive_path = _create_agent_source_archive(commit)
     remote_archive = f"/tmp/npa-agent-source-{secrets.token_hex(6)}.tar.gz"
     try:
         ssh.upload_file(archive_path, remote_archive)
@@ -1559,156 +1167,6 @@ def _is_routable_public_ip(value: str) -> bool:
     if ip.is_loopback or ip.is_private or ip.is_unspecified or ip.is_link_local:
         return False
     return True
-
-
-def _agent_strip_url_credentials_js() -> str:
-    """JS to strip user:pass@ from the URL bar while keeping HTTP Basic auth session."""
-    return """    <script>
-    (function stripUrlCredentials() {
-      try {
-        if (location.username || location.password) {
-          const clean = location.protocol + "//" + location.host + location.pathname + location.search + location.hash;
-          history.replaceState(null, "", clean);
-        }
-      } catch (_err) { /* best-effort */ }
-    })();
-    </script>"""
-
-
-def _agent_mobile_login_help_html() -> str:
-    """Mobile certificate + sign-in troubleshooting (public pages)."""
-    return """    <details class="mobile-help" style="margin:20px 0;padding:12px 16px;border:1px solid #e0e0e0;border-radius:8px;background:#fffbeb;">
-      <summary style="font-weight:600;cursor:pointer;">Phone / tablet login help</summary>
-      <ol style="margin:12px 0 0;padding-left:20px;line-height:1.55;">
-        <li><strong>Accept the certificate first.</strong> Open <a href="/healthz">/healthz</a> (no login). If Safari/Chrome warns the connection is not private, tap <em>Show Details</em> → <em>visit this website</em> / <em>Proceed</em>.</li>
-        <li>Return here and use the sign-in form (mobile browsers block password-in-URL redirects).</li>
-        <li>If sign-in still fails, try <strong>Chrome on Android</strong> or use a desktop browser.</li>
-        <li>Username is prefilled; password is in your operator <code>auth.env</code> file.</li>
-      </ol>
-    </details>"""
-
-
-def _agent_public_login_form_html(auth_user: str) -> str:
-    """Shared Sign in form for public welcome/login-help pages (mobile-safe basic auth)."""
-    return f"""    <section class="sign-in-panel" aria-labelledby="sign-in-heading">
-      <h2 id="sign-in-heading">Sign in</h2>
-      <p class="muted">Use the form if your browser does not show an HTTP Basic Auth dialog.</p>
-      <form id="npa-sign-in" class="sign-in" autocomplete="on">
-        <label for="npa-user">Username</label>
-        <input id="npa-user" name="username" type="text" value="{auth_user}" autocomplete="username" required>
-        <label for="npa-pass">Password</label>
-        <input id="npa-pass" name="password" type="password" autocomplete="current-password" required>
-        <button type="submit" id="npa-sign-in-btn">Sign in</button>
-        <p id="npa-sign-in-status" class="muted" role="status" aria-live="polite"></p>
-      </form>
-      <p class="muted note">Credentials are not left in the address bar after sign-in.</p>
-    </section>
-    <script>
-    (function () {{
-      try {{
-        if (location.username || location.password) {{
-          const clean = location.protocol + "//" + location.host + location.pathname + location.search + location.hash;
-          history.replaceState(null, "", clean);
-        }}
-      }} catch (_err) {{ /* best-effort */ }}
-      var form = document.getElementById("npa-sign-in");
-      var statusEl = document.getElementById("npa-sign-in-status");
-      var btn = document.getElementById("npa-sign-in-btn");
-      if (!form) return;
-
-      function setStatus(msg, isError) {{
-        if (!statusEl) return;
-        statusEl.textContent = msg || "";
-        statusEl.style.color = isError ? "#991b1b" : "#5f6573";
-      }}
-
-      function isMobileUa() {{
-        return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
-      }}
-
-      function destPath() {{
-        var rawPath = String(location.pathname || "/");
-        var normalizedPath = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
-        return (normalizedPath === "/login-help.html" || normalizedPath === "/welcome") ? "/" : normalizedPath;
-      }}
-
-      function basicAuthHeader(user, pass) {{
-        return "Basic " + btoa(unescape(encodeURIComponent(user + ":" + pass)));
-      }}
-
-      function persistBasicAuth(user, pass) {{
-        try {{
-          sessionStorage.setItem("npa_agent_basic_auth", basicAuthHeader(user, pass));
-        }} catch (_err) {{ /* sessionStorage may be unavailable */ }}
-      }}
-
-      function xhrSignIn(user, pass, dest) {{
-        return new Promise(function (resolve, reject) {{
-          var xhr = new XMLHttpRequest();
-          xhr.open("GET", dest, true, user, pass);
-          xhr.onload = function () {{
-            if (xhr.status >= 200 && xhr.status < 400) {{
-              resolve();
-              return;
-            }}
-            if (xhr.status === 401) {{
-              reject(new Error("Invalid username or password."));
-              return;
-            }}
-            reject(new Error("Sign-in failed (HTTP " + xhr.status + ")."));
-          }};
-          xhr.onerror = function () {{
-            reject(new Error("Network error — open /healthz first and accept the certificate warning."));
-          }};
-          xhr.send();
-        }});
-      }}
-
-      function fetchSignIn(user, pass, dest) {{
-        return fetch(dest, {{
-          method: "GET",
-          headers: {{ "Authorization": basicAuthHeader(user, pass) }},
-          credentials: "omit",
-          cache: "no-store",
-        }}).then(function (resp) {{
-          if (!resp.ok) {{
-            throw new Error(resp.status === 401 ? "Invalid username or password." : "Sign-in failed (HTTP " + resp.status + ").");
-          }}
-        }});
-      }}
-
-      function urlEmbedSignIn(user, pass, dest) {{
-        var u = encodeURIComponent(user);
-        var p = encodeURIComponent(pass);
-        location.href = location.protocol + "//" + u + ":" + p + "@" + location.host + dest;
-      }}
-
-      form.addEventListener("submit", function (ev) {{
-        ev.preventDefault();
-        var user = document.getElementById("npa-user").value;
-        var pass = document.getElementById("npa-pass").value;
-        var dest = destPath();
-        setStatus("Signing in…", false);
-        if (btn) btn.disabled = true;
-
-        xhrSignIn(user, pass, dest)
-          .catch(function () {{ return fetchSignIn(user, pass, dest); }})
-          .then(function () {{
-            persistBasicAuth(user, pass);
-            window.location.href = dest;
-          }})
-          .catch(function (err) {{
-            if (!isMobileUa()) {{
-              persistBasicAuth(user, pass);
-              urlEmbedSignIn(user, pass, dest);
-              return;
-            }}
-            setStatus((err && err.message) ? err.message : "Sign-in failed on this device.", true);
-            if (btn) btn.disabled = false;
-          }});
-      }});
-    }})();
-    </script>"""
 
 
 def _nginx_agent_site_body(
@@ -1758,6 +1216,8 @@ def _bootstrap_agent_stack(
     foxglove_embed_src: str = "",
     foxglove_org_slug: str = "",
     foxglove_live_url: str = "",
+    deployment: dict[str, str] | None = None,
+    preload_stock_demo: bool = True,
 ) -> None:
     ssh = SSHClient(
         config=resolve_ssh_config(
@@ -1781,14 +1241,23 @@ def _bootstrap_agent_stack(
     agent_s3_guard_source = _embedded_agent_s3_guard_source()
     agent_stages_source = _embedded_agent_stages_source()
     agent_provenance_source = _embedded_agent_provenance_source()
+    deployment = deployment or build_deployment_manifest(
+        project_alias=project_alias,
+        name=agent_name,
+        require_clean=False,
+    )
+    deployment_json = json.dumps(deployment, sort_keys=True)
+    deployment_b64 = base64.b64encode(deployment_json.encode("utf-8")).decode("ascii")
+    # This check runs before staging source, writing manifests, or restarting
+    # services. A stale/missing local record cannot authorize overwriting a VM
+    # that is still advertising a different immutable owner.
+    assert_remote_owner_if_present(ssh, deployment, backend_port=backend_port)
+    preload_stock_demo_value = "1" if preload_stock_demo else "0"
     llm_models = _normalize_llm_models(list(llm_models))
     default_llm_models_json = json.dumps(llm_models)
-    nginx_site_body = _nginx_agent_site_body(backend_port=backend_port, rerun_port=rerun_port)
-    # Foxglove embedded-viewer settings (no secrets). CLI flag wins, then the
-    # operator environment, then the SDK's documented default embed host.
-    # Left empty unless the operator configured one: the Foxglove-hosted app needs
-    # an account, so a stock deploy renders MCAP with the self-hosted OSS viewer
-    # instead of showing a sign-in wall.
+    nginx_site_body = _nginx_agent_site_body(
+        backend_port=backend_port, rerun_port=rerun_port
+    )
     foxglove_embed_src_value = _env_line_value(
         foxglove_embed_src or os.environ.get("NPA_FOXGLOVE_EMBED_SRC", "")
     )
@@ -1829,6 +1298,9 @@ server {{
     nebius_profile = "cursor-sa"
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
     lichtblick_port = DEFAULT_LICHTBLICK_PORT
+    rerun_recording_arg = (
+        "/opt/npa-agent/sim2real.rrd " if preload_stock_demo else ""
+    )
     lichtblick_image = str(
         os.environ.get("NPA_AGENT_LICHTBLICK_IMAGE", "").strip() or "npa-lichtblick:1.26.0"
     )
@@ -1879,9 +1351,12 @@ if [ -s /mnt/cloud-metadata/token ]; then
     sudo "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
 fi
 sudo mkdir -p /opt/npa-agent
+printf '%s' {shlex.quote(deployment_b64)} | base64 -d | sudo tee /opt/npa-agent/deployment.json >/dev/null
+sudo chmod 0644 /opt/npa-agent/deployment.json
 cat <<'ENV' | sudo tee /opt/npa-agent/public.env >/dev/null
 NPA_AGENT_PUBLIC_URL=https://{host}
 NPA_AGENT_PUBLIC_HOST={host}
+NPA_AGENT_PRELOAD_STOCK_DEMO={preload_stock_demo_value}
 ENV
 cat <<'ENV' | sudo tee /opt/npa-agent/foxglove.env >/dev/null
 NPA_FOXGLOVE_ENABLED=1
@@ -1906,6 +1381,7 @@ sudo cp {AGENT_SOURCE_ROOT}/npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js
 sudo chmod -R a+rX /opt/npa-agent/foxglove
 {_AGENT_BACKEND_SHIP}
 cat <<'PY' | sudo tee /opt/npa-agent/backend.py >/dev/null
+import hashlib
 import json
 import os
 import re
@@ -1924,10 +1400,12 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 app = FastAPI(title="npa-agent")
+DEPLOYMENT = {deployment_json}
 TOOL_CATALOG = {catalog_json}
 TOOL_REFS = sorted(TOOL_CATALOG.keys())
 STATE_PATH = Path("/opt/npa-agent/session_state.json")
 RRD_PATH = Path("/opt/npa-agent/sim2real.rrd")
+PRELOAD_STOCK_DEMO = str(os.environ.get("NPA_AGENT_PRELOAD_STOCK_DEMO", "1")).strip().lower() not in {"0", "false", "no"}
 RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.rrd")
 RECORDINGS_DIR = Path("/opt/npa-agent/recordings")
 FOXGLOVE_ROOT = Path("/opt/npa-agent/foxglove")
@@ -1939,8 +1417,8 @@ FOXGLOVE_KEEP_PUBLISHED = 3
 
 {_AGENT_STATE_EMBED}
 from npa.cli.agent_resources import (
+    assemble_k8s_backend_inventory,
     build_resource_inventory,
-    configured_k8s_backends,
     discover_mk8s_accelerators,
     run_resource_discovery_command,
 )
@@ -1959,7 +1437,7 @@ from agent_backend.foxglove import (
 )
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
 
-RERUN_RECORDING_HTTP_PATH = "/rerun/recordings/sim2real.rrd"
+RERUN_CAPABILITY_NAME_RE = re.compile(r"cap-[A-Za-z0-9_-]{{43}}\\.rrd")
 MCAP_RECORDING_PATH = Path("/opt/npa-agent/recordings/sim2real.mcap")
 LICHTBLICK_RECORDING_HTTP_PATH = "/lichtblick/recordings/sim2real.mcap"
 
@@ -1976,9 +1454,12 @@ def _agent_public_origin() -> str:
     return ""
 
 
-def _rerun_recording_url(*, cache_bust: bool = False) -> str:
+def _rerun_recording_url(recording_path: str = "", *, cache_bust: bool = False) -> str:
     origin = _agent_public_origin()
-    path = RERUN_RECORDING_HTTP_PATH
+    path = str(recording_path or "").strip()
+    name = path.removeprefix("/rerun/recordings/")
+    if not RERUN_CAPABILITY_NAME_RE.fullmatch(name): return ""
+    path = f"/rerun/recordings/{{name}}"
     if origin:
         url = f"{{origin}}{{path}}"
     else:
@@ -1988,11 +1469,12 @@ def _rerun_recording_url(*, cache_bust: bool = False) -> str:
     return url
 
 
-def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "") -> str:
+def _rerun_iframe_url(camera: str = "workspace", *, live_url: str = "", recording_path: str = "") -> str:
     cam = (camera or "workspace").strip() or "workspace"
     if live_url:
         return f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
-    recording = _rerun_recording_url()
+    recording = _rerun_recording_url(recording_path)
+    if not recording: return "/rerun/"
     # Rerun web viewer treats path-only values like `/rerun/...` as host `rerun`.
     return f"/rerun/?url={{quote(recording, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
 
@@ -2141,8 +1623,15 @@ def _state_s3_settings() -> dict[str, str]:
 def _state_s3_key() -> str:
     settings = _state_s3_settings()
     project_alias, agent_name, session_scope = _state_scope_parts()
+    deployment_id = _slug(
+        str(DEPLOYMENT.get("deployment_id") or ""),
+        fallback=f"{{project_alias}}-{{agent_name}}",
+    )
     prefix = settings.get("prefix", "npa-agent/session-state")
-    return f"{{prefix}}/{{project_alias}}/{{agent_name}}/{{session_scope}}.json"
+    return (
+        f"{{prefix}}/{{project_alias}}/{{agent_name}}/deployments/"
+        f"{{deployment_id}}/{{session_scope}}.json"
+    )
 
 def _state_s3_client():
     settings = _state_s3_settings()
@@ -2195,8 +1684,11 @@ def _save_state_to_s3(state: dict) -> None:
 
 def _default_state() -> dict:
     project_alias, agent_name, session_scope = _state_scope_parts()
+    selection = dict(DEFAULT_SELECTION)
+    if not PRELOAD_STOCK_DEMO:
+        selection.update({{"robot_preset": "", "sim_backend": ""}})
     return {{
-        "selection": dict(DEFAULT_SELECTION),
+        "selection": selection,
         "camera_selection": ["workspace"],
         "sim_viz": dict(DEFAULT_SIM_VIZ),
         "sim_viz_runs": {{}},
@@ -2210,7 +1702,8 @@ def _default_state() -> dict:
         "chat_sessions": {{}},
         "session_scope": session_scope,
         "agent_scope": {{"project_alias": project_alias, "name": agent_name}},
-        "state_version": 2,
+        "deployment_id": str(DEPLOYMENT.get("deployment_id") or ""),
+        "state_version": 3,
     }}
 
 _STATE_LOCK = threading.RLock()
@@ -2230,6 +1723,11 @@ def _get_state_store() -> StateStore:
 
 def _normalize_loaded_state(data: dict | None) -> dict:
     if not isinstance(data, dict):
+        return _default_state()
+    expected_deployment_id = str(DEPLOYMENT.get("deployment_id") or "")
+    if str(data.get("deployment_id") or "") != expected_deployment_id:
+        # Local files and legacy S3 keys are mutable deployment state. Never
+        # hydrate them into another deployment, even if alias/name were reused.
         return _default_state()
     merged = _default_state()
     merged.update(data)
@@ -2251,6 +1749,28 @@ def _normalize_loaded_state(data: dict | None) -> dict:
         merged["chat_sessions"] = {{}}
     if not isinstance(merged.get("active_chat_session_id"), str):
         merged["active_chat_session_id"] = "default"
+    if not PRELOAD_STOCK_DEMO:
+        # Artifact-only workspaces preserve source-qualified S3 selections and
+        # discard stock/synthetic verifier state on every restart.
+        merged["sim_viz_runs"] = {{
+            key: value
+            for key, value in merged["sim_viz_runs"].items()
+            if isinstance(value, dict)
+            and str(value.get("artifact_uri") or "").startswith("s3://")
+        }}
+        if not str(merged["sim_viz"].get("artifact_uri") or "").startswith("s3://"):
+            merged["sim_viz"] = dict(DEFAULT_SIM_VIZ)
+        if str(merged.get("active_run_id") or "") not in merged["sim_viz_runs"]:
+            merged["active_run_id"] = ""
+        clean = _default_state()
+        for key in (
+            "selection",
+            "sim2real_runs",
+            "latest_submit",
+            "workflow_draft",
+            "workflow_submit",
+        ):
+            merged[key] = clean[key]
     return merged
 
 
@@ -2266,7 +1786,8 @@ def _load_state_unlocked() -> dict:
 def _save_state_unlocked(state: dict) -> None:
     # Caller must hold _STATE_LOCK / store.lock.
     state["updated_at"] = _now_iso()
-    state["state_version"] = int(state.get("state_version") or 2)
+    state["deployment_id"] = str(DEPLOYMENT.get("deployment_id") or "")
+    state["state_version"] = int(state.get("state_version") or 3)
     _get_state_store().save(state)
 
 
@@ -2300,7 +1821,9 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
     runs = state.get("sim_viz_runs")
     if not isinstance(runs, dict):
         runs = {{}}
-    existing = runs.get(run_id) if isinstance(runs.get(run_id), dict) else {{}}
+    run_ref = str(payload.get("artifact_run_ref") or "").strip()
+    history_key = run_ref or run_id
+    existing = runs.get(history_key) if isinstance(runs.get(history_key), dict) else {{}}
     snapshot = dict(DEFAULT_SIM_VIZ)
     if isinstance(existing, dict):
         snapshot.update(existing)
@@ -2342,9 +1865,10 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
                 snapshot[key] = existing[key]
         if not payload.get("foxglove_ready") and existing.get("foxglove_ready") and str(snapshot.get("foxglove_url") or "").strip():
             snapshot["foxglove_ready"] = True
-    runs[run_id] = snapshot
+    runs[history_key] = snapshot
     state["sim_viz_runs"] = runs
     state["active_run_id"] = run_id
+    state["active_run_ref"] = run_ref
 
 
 def _default_sim2real_run_details(run_id: str, *, submitted_at: str = "", selection: dict | None = None) -> dict:
@@ -2628,8 +2152,21 @@ def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
     payload = dict(DEFAULT_SIM_VIZ)
     runs = state.get("sim_viz_runs")
     target = str(run_id or state.get("active_run_id") or "").strip()
-    if isinstance(runs, dict) and target and isinstance(runs.get(target), dict):
-        payload.update(runs[target])
+    direct = runs.get(target) if isinstance(runs, dict) and target else None
+    if isinstance(direct, dict):
+        payload.update(direct)
+    elif isinstance(runs, dict) and target:
+        matches = [
+            item
+            for item in runs.values()
+            if isinstance(item, dict)
+            and str(item.get("run_id") or "").strip() == target
+        ]
+        # A plain basename is safe only when it names one historical source.
+        if len(matches) == 1:
+            payload.update(matches[0])
+        elif run_id:
+            payload["run_id"] = target
     elif run_id:
         payload["run_id"] = target
     else:
@@ -2898,23 +2435,32 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
         )
     rr.log("demo/active_camera", rr.TextLog(active))
     rr.save(str(target))
-    _publish_rrd_recording(target)
     return target
 
-def _publish_rrd_recording(source: Path) -> Path:
-    if not source.is_file():
-        return RECORDING_PATH
+def _publish_rrd_recording(source: Path) -> str:
+    if not source.is_file(): return ""
     RECORDING_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = RECORDING_PATH.with_suffix(".rrd.tmp")
     shutil.copy2(source, tmp)
     tmp.replace(RECORDING_PATH)
-    return RECORDING_PATH
+    capability_name = f"cap-{{secrets.token_urlsafe(32)}}.rrd"
+    if not RERUN_CAPABILITY_NAME_RE.fullmatch(capability_name): raise RuntimeError("generated Rerun capability filename is invalid")
+    capability_path = RECORDINGS_DIR / capability_name
+    capability_tmp = capability_path.with_suffix(".rrd.tmp")
+    shutil.copy2(RECORDING_PATH, capability_tmp)
+    capability_tmp.replace(capability_path)
+    for stale in RECORDINGS_DIR.glob("cap-*.rrd"):
+        if stale != capability_path and RERUN_CAPABILITY_NAME_RE.fullmatch(stale.name):
+            stale.unlink(missing_ok=True)
+    return f"/rerun/recordings/{{capability_name}}"
 
 
 def _safe_artifact_key(key: str) -> str:
     value = str(key or "").strip().lstrip("/")
     if not value:
         raise HTTPException(status_code=400, detail="artifact key is required")
+    if "\\\\" in value or any(ord(ch) < 32 for ch in value):
+        raise HTTPException(status_code=400, detail="artifact key contains unsupported characters")
     parts = value.split("/")
     if any(part in {{"", ".", ".."}} for part in parts):
         raise HTTPException(status_code=400, detail="artifact key traversal is not allowed")
@@ -2958,11 +2504,14 @@ def _agent_insights_settings() -> dict[str, str]:
 
 
 def _artifact_discovery_prefix(settings: dict[str, str], user_prefix: str = "") -> str:
-    requested = str(user_prefix or "").strip().strip("/")
-    base = str(settings.get("prefix") or "").strip().strip("/")
+    try:
+        requested = _validate_source_prefix(str(user_prefix or ""))
+        base = _validate_source_prefix(str(settings.get("prefix") or ""))
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if requested:
         return _join_agent_s3_prefix(base, requested)
-    return _join_agent_s3_prefix(base, "sim2real-b")
+    return base
 
 def _discovery_exclude_roots() -> set:
     # Bucket-root prefixes that hold the agent's own state/chat-memory, not runs.
@@ -3000,19 +2549,13 @@ def _agent_s3_client():
 
 
 def _agent_s3_buckets(s3, settings) -> list:
-    # Every bucket the agent can access — so runs are discoverable regardless of
-    # which bucket a workflow wrote to (never rely on copying runs into one
-    # bucket). Primary (configured) bucket first, then optional configured extras
-    # (NPA_AGENT_S3_BUCKETS), then everything ListBuckets returns.
-    # NOTE: use only for discovery. Operator-supplied s3_uri must use
-    # _configured_agent_s3_buckets / _assert_s3_uri_in_agent_bucket instead.
+    # Discovery is limited to the configured primary bucket plus explicit extras.
+    # Never enumerate every credential-readable bucket: that is slow, can surface
+    # unrelated storage, and makes the default UI scope non-deterministic.
     primary = str(settings.get("bucket") or "")
     override = str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip()
     extra = [b.strip() for b in override.split(",") if b.strip()] if override else []
-    try:
-        buckets = list_accessible_buckets(s3, primary=primary, extra=extra)
-    except Exception:
-        buckets = [primary] if primary else []
+    buckets = list_accessible_buckets(s3, primary=primary, extra=extra)
     return buckets or ([primary] if primary else [])
 
 
@@ -3048,9 +2591,21 @@ def _chat_memory_tenant() -> str:
 
 
 def _chat_memory_prefix(settings: dict[str, str] | None = None) -> str:
-    bucket = (settings or {{}}).get("bucket", "")
     tenant = _chat_memory_tenant()
-    return f"npa-agent/tenants/{{tenant}}/chat-sessions"
+    project_alias, agent_name, _session_scope = _state_scope_parts()
+    fallback = _slug(f"{{project_alias}}-{{agent_name}}", fallback="agent")
+    deployment_id = _slug(str(DEPLOYMENT.get("deployment_id") or ""), fallback=fallback)
+    return f"npa-agent/tenants/{{tenant}}/deployments/{{deployment_id}}/chat-sessions"
+
+
+def _chat_memory_uri_matches_deployment(memory_uri: str) -> bool:
+    value = str(memory_uri or "").strip()
+    if not value:
+        return True
+    remainder = value.partition("://")[2]
+    key = remainder.partition("/")[2].strip("/")
+    expected = _chat_memory_prefix().strip("/") + "/"
+    return bool(key) and key.startswith(expected)
 
 
 def _chat_session_key(session_id: str, settings: dict[str, str] | None = None) -> str:
@@ -3132,7 +2687,15 @@ def _local_chat_sessions(state: dict) -> dict[str, dict]:
     if not isinstance(sessions, dict):
         sessions = {{}}
     normalized: dict[str, dict] = {{}}
+    discarded_foreign_memory = False
     for session_id, payload in sessions.items():
+        memory_uri = str(payload.get("memory_uri") or "") if isinstance(payload, dict) else ""
+        if memory_uri and not _chat_memory_uri_matches_deployment(memory_uri):
+            # Legacy chat memory was tenant-wide, so one agent could hydrate a
+            # different deployment's history. Never migrate a source-qualified
+            # session across deployment namespaces.
+            discarded_foreign_memory = True
+            continue
         session = _normalize_chat_session(str(session_id), payload)
         normalized[session["id"]] = session
     if not normalized:
@@ -3141,7 +2704,7 @@ def _local_chat_sessions(state: dict) -> dict[str, dict]:
             {{
                 "id": "default",
                 "title": "Default chat",
-                "chat_history": state.get("chat_history", []),
+                "chat_history": [] if discarded_foreign_memory else state.get("chat_history", []),
             }},
         )
         normalized["default"] = migrated
@@ -3286,7 +2849,6 @@ def _list_chat_sessions(state: dict) -> list[dict]:
         except Exception:
             pass
     state["chat_sessions"] = sessions
-    _save_state(state)
     rows = []
     for session in sessions.values():
         rows.append(public_chat_session_payload(session))
@@ -3478,12 +3040,15 @@ def _apply_loaded_artifact(
     s3_uri: str,
     render: str,
     local_path: Path,
+    run_ref: str = "",
 ) -> dict:
     now = _now_iso()
     sim_viz = dict(DEFAULT_SIM_VIZ)
     current = state.get("sim_viz")
     if isinstance(current, dict):
         sim_viz.update(current)
+    # Never let a previous RRD's binding survive a later media load.
+    sim_viz.pop("served_recording_sha256", None)
     camera = str(sim_viz.get("camera") or "workspace")
     # Keep the data-factory exclusion on one line: npa/tests/cli/test_agent.py
     # guards that exact expression as source text.
@@ -3506,19 +3071,21 @@ def _apply_loaded_artifact(
             "artifact_uri": s3_uri,
             "artifact_key": key,
             "artifact_render": render,
+            "artifact_run_ref": str(run_ref or ""),
             "mode": "static",
             "camera": camera,
         }}
     )
     if render == "rerun":
-        _publish_rrd_recording(local_path)
+        capability_path = _publish_rrd_recording(local_path)
+        sim_viz["served_recording_sha256"] = hashlib.sha256(RECORDING_PATH.read_bytes()).hexdigest()
         restarted = _restart_rerun_serve(force=True)
         rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
         sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
-        sim_viz["artifact_preview_url"] = "/rerun/recordings/sim2real.rrd"
-        sim_viz["artifact_download_url"] = "/rerun/recordings/sim2real.rrd"
-        sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"))
-        sim_viz["rerun_ready"] = RECORDING_PATH.is_file() and rerun_ready
+        sim_viz["artifact_preview_url"] = capability_path
+        sim_viz["artifact_download_url"] = "/api/sim-viz/rrd-blob"
+        sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"), recording_path=capability_path)
+        sim_viz["rerun_ready"] = bool(capability_path) and rerun_ready
         if _is_data_factory_recording(key):
             sim_viz["preview_entity"] = "augmented"
             sim_viz["visualization_note"] = (
@@ -3701,7 +3268,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
             shutil.copy2(source, run_rec)
         except Exception:
             pass
-    _publish_rrd_recording(run_rec if run_rec.is_file() else source)
+    capability_path = _publish_rrd_recording(run_rec if run_rec.is_file() else source)
     if RECORDING_PATH.is_file():
         RRD_PATH.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(RECORDING_PATH, RRD_PATH)
@@ -3715,7 +3282,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     iframe_url = (
         f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{cam}}"
         if live_url
-        else _rerun_iframe_url(cam)
+        else _rerun_iframe_url(cam, recording_path=capability_path)
     )
     viz = {{
         "run_id": run_id,
@@ -3725,7 +3292,7 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
         "artifact_uri": str(current.get("artifact_uri") or latest.get("rrd_uri") or ""),
         "artifact_key": str(current.get("artifact_key") or ""),
         "artifact_render": "rerun",
-        "artifact_preview_url": "/rerun/recordings/sim2real.rrd",
+        "artifact_preview_url": capability_path,
         "artifact_download_url": "/api/sim-viz/rrd-blob",
         "live_grpc_url": live_url,
         "mode": "live" if live_url else "static",
@@ -3763,6 +3330,7 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     cam = (camera or "workspace").strip() or "workspace"
     state["camera_selection"] = [cam]
     target = _generate_franka_demo_rrd(camera=cam)
+    capability_path = _publish_rrd_recording(target)
     restarted = _restart_rerun_serve()
     viewer_ready = _wait_for_rerun_web_viewer() if restarted else False
     now = _now_iso()
@@ -3778,12 +3346,12 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
-        "rerun_iframe_url": _rerun_iframe_url(cam),
+        "rerun_iframe_url": _rerun_iframe_url(cam, recording_path=capability_path),
         "artifact_render": "rerun",
         "artifact_key": "",
         "artifact_uri": "",
-        "artifact_preview_url": "/rerun/recordings/sim2real.rrd",
-        "artifact_download_url": "/rerun/recordings/sim2real.rrd",
+        "artifact_preview_url": capability_path,
+        "artifact_download_url": "/api/sim-viz/rrd-blob",
         "visualization_note": "",
     }}
     state["sim_viz"] = viz
@@ -3796,6 +3364,7 @@ def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "works
     cam = (camera or "workspace").strip() or "workspace"
     state["camera_selection"] = [cam]
     target = _generate_franka_demo_rrd(camera=cam)
+    capability_path = _publish_rrd_recording(target)
     restarted = _restart_rerun_serve()
     viewer_ready = _wait_for_rerun_web_viewer() if restarted else False
     now = _now_iso()
@@ -3810,7 +3379,9 @@ def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "works
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": target.is_file() and viewer_ready,
-        "rerun_iframe_url": _rerun_iframe_url(cam),
+        "rerun_iframe_url": _rerun_iframe_url(cam, recording_path=capability_path),
+        "artifact_preview_url": capability_path,
+        "artifact_download_url": "/api/sim-viz/rrd-blob",
         "submit_mode": "sim2real",
         "workflow_name": "sim2real",
         "pipeline_visualization": True,
@@ -4196,8 +3767,7 @@ def _sim_viz_runs(state: dict) -> list[dict]:
     )
 
 def _resolve_workflow_yaml(payload: dict) -> str:
-    # Do not fall back to the shared stored draft — empty/omitted yaml must 400
-    # so validate/plan cannot leak another tab's draft.
+    # Empty/omitted YAML must 400 so validate/plan cannot leak another tab's draft.
     return str(payload.get("yaml") or "").strip()
 
 def _agent_npa_ready() -> tuple[bool, str]:
@@ -4237,51 +3807,12 @@ def _agent_project_alias(requested: str = "") -> str:
 def _agent_k8s_backends(project: str = "") -> dict:
     config = _load_agent_config_yaml()
     alias = _agent_project_alias(project)
-    projects = config.get("projects")
-    if not isinstance(projects, dict):
-        projects = {{}}
-    project_block = projects.get(alias)
-    if not isinstance(project_block, dict):
-        project_block = {{}}
-    configured = configured_k8s_backends(project_block, alias)
-    clusters_root = Path.home() / ".npa" / "clusters"
-    local_clusters: list[dict] = []
-    if clusters_root.is_dir():
-        for item in sorted(clusters_root.iterdir()):
-            if not item.is_dir():
-                continue
-            kubeconfig = item / "kubeconfig"
-            state_path = item / "state.json"
-            local_clusters.append({{
-                "source": "local_state",
-                "cluster_name": item.name,
-                "context": item.name,
-                "kubeconfig": str(kubeconfig),
-                "kubeconfig_exists": kubeconfig.is_file(),
-                "state_exists": state_path.is_file(),
-            }})
     ready, reason = _agent_npa_ready()
-    cloud_clusters = _agent_cloud_mk8s_clusters(alias)
-    return {{
-        "ok": True,
-        "project": alias,
-        "configured": configured,
-        "local_clusters": local_clusters,
-        "cloud_clusters": cloud_clusters,
-        "has_infra": bool(
-            configured
-            or any(item.get("kubeconfig_exists") for item in local_clusters)
-            or cloud_clusters
-        ),
-        "agent_npa_ready": ready,
-        "agent_npa_error": reason,
-        "terraform_dir": str(NPA_CLUSTER_TERRAFORM_DIR),
-        "options": [
-            "POST /api/infra/provision to let the agent create the minimal Kubernetes backend.",
-            "Add projects.<alias>.kubernetes to ~/.npa/config.yaml on the agent to use an existing backend.",
-            "Pass project/cluster_name in the workflow submit payload to target a known backend.",
-        ],
-    }}
+    return assemble_k8s_backend_inventory(
+        config=config, alias=alias, clusters_root=Path.home() / ".npa" / "clusters",
+        cloud_clusters=_agent_cloud_mk8s_clusters(alias), npa_ready=ready,
+        npa_error=reason, terraform_dir=NPA_CLUSTER_TERRAFORM_DIR,
+    )
 
 
 def _agent_command_env() -> dict:
@@ -4732,6 +4263,7 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
             _run_specific = False
         run_rec = RECORDINGS_DIR / run_recording_basename(run_id)
         recording_uri = f"file://{{run_rec}}" if run_rec.is_file() else ""
+        capability_path = _publish_rrd_recording(rrd_path) if _run_specific else ""
         # rerun_ready / rrd_uri only when the recording is genuinely run-specific.
         sim_viz.update(
             {{
@@ -4741,9 +4273,9 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
                 "recording_uri": recording_uri,
                 "rrd_updated_at": _now_iso(),
                 "rerun_ready": bool(_run_specific and RECORDING_PATH.is_file() and _rerun_web_viewer_healthy()),
-                "rerun_iframe_url": (
-                    _rerun_iframe_url(str(sim_viz.get("camera") or "workspace")) if _run_specific else ""
-                ),
+                "rerun_iframe_url": _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"), recording_path=capability_path) if _run_specific else "",
+                "artifact_preview_url": capability_path,
+                "artifact_download_url": "/api/sim-viz/rrd-blob" if _run_specific else "",
                 "camera": str(sim_viz.get("camera") or "workspace"),
             }}
         )
@@ -5242,10 +4774,8 @@ def _maybe_toolground_chat_reply(
         "create_data_factory_workflow",
     }}:
         draft = None
-        # Prefer catalog-composed authoring when the goal names a real tool
-        # (e.g. "npa yaml that uses cosmos"): compose from the LIVE catalog and
-        # self-validate/plan — no hardcoded template. Fall back to the template
-        # catalog for generic/simple requests or if composition is not runnable.
+        # Prefer catalog composition when a goal names a real tool; otherwise
+        # fall back to the intent-specific templates.
         if goal_requests_catalog_composition(user_text):
             from npa.cli.agent_workflow import author_workflow_from_goal
 
@@ -6736,7 +6266,20 @@ def agent_trace_analyze(payload: dict):
 
 @app.get("/health")
 def health():
-    return {{"ok": True, "tool_refs": len(TOOL_REFS)}}
+    state = _load_state()
+    state_sha256 = hashlib.sha256(
+        json.dumps(state, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {{
+        "ok": True,
+        "tool_refs": len(TOOL_REFS),
+        "deployment": dict(DEPLOYMENT),
+        "state_sha256": state_sha256,
+    }}
+
+@app.get("/deployment")
+def deployment_identity():
+    return dict(DEPLOYMENT)
 
 @app.get("/models")
 def models(refresh: bool = False):
@@ -6758,13 +6301,14 @@ def session_bootstrap():
     camera = str(sim_viz.get("camera") or (selected[0] if isinstance(selected, list) and selected else "workspace"))
     sim_viz["camera"] = camera
     session_run_id = str(sim_viz.get("run_id") or "").strip()
-    if not sim_viz.get("rrd_uri") and session_run_id in {"", "franka-demo"} and RRD_PATH.is_file():
+    if PRELOAD_STOCK_DEMO and not sim_viz.get("rrd_uri") and session_run_id in {"", "franka-demo"} and RRD_PATH.is_file():
         sim_viz["rrd_uri"] = f"file://{{RRD_PATH}}"
     sim_viz["rerun_ready"] = _rerun_ready_state(rrd_uri=str(sim_viz.get("rrd_uri") or ""))
     history = active_session.get("chat_history", [])
     if not isinstance(history, list):
         history = []
     return {{
+        "deployment": dict(DEPLOYMENT),
         "selection": state.get("selection", dict(DEFAULT_SELECTION)),
         "sim_viz": sim_viz,
         "latest_submit": state.get("latest_submit", {{}}),
@@ -6852,7 +6396,15 @@ def tool(tool_ref: str):
 
 def _served_recording_is_run_specific() -> bool:
     try:
-        return RECORDING_PATH.is_file() and recording_has_run_entities(RECORDING_PATH.read_bytes())
+        if not RECORDING_PATH.is_file(): return False
+        recording_bytes = RECORDING_PATH.read_bytes()
+        sim_viz = _load_state().get("sim_viz")
+        if isinstance(sim_viz, dict):
+            bound_sha256 = str(sim_viz.get("served_recording_sha256") or "").strip().lower()
+            if re.fullmatch(r"[0-9a-f]{{64}}", bound_sha256):
+                return hashlib.sha256(recording_bytes).hexdigest() == bound_sha256
+        # Compatibility for recordings wired by the legacy Sim2Real path.
+        return recording_has_run_entities(recording_bytes)
     except Exception:
         return False
 
@@ -6924,7 +6476,7 @@ def sim_viz_status(run_id: str = ""):
                 f"/rerun/?url={{quote(live_url, safe='')}}&hide_welcome_screen=1&theme=dark&camera={{camera}}"
             )
         else:
-            payload["rerun_iframe_url"] = _rerun_iframe_url(camera)
+            payload["rerun_iframe_url"] = _rerun_iframe_url(camera, recording_path=str(payload.get("artifact_preview_url") or ""))
     else:
         payload["rerun_iframe_url"] = ""
     if not payload.get("rrd_uri") and may_use_default_recording and RRD_PATH.is_file():
@@ -6947,6 +6499,7 @@ def sim_viz_status(run_id: str = ""):
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
+            "run_ref": str(item.get("artifact_run_ref") or "").strip(),
             # activity_at is when this run was last loaded/visualized in the agent
             # (rrd_updated_at), NOT when its artifacts were produced. It is exposed
             # separately so the client never relabels a days-old run as recent just
@@ -6988,25 +6541,42 @@ def sim_viz_runs():
 def sim_viz_select_run(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
     requested_run = str(body.get("run_id") or "").strip()
+    requested_ref = str(body.get("run_ref") or "").strip()
     if not requested_run:
         raise HTTPException(status_code=400, detail="run_id is required")
     state = _load_state()
     runs = _sim_viz_runs(state)
-    selected = next((item for item in runs if str(item.get("run_id") or "").strip() == requested_run), None)
+    matches = [
+        item
+        for item in runs
+        if (requested_ref and str(item.get("artifact_run_ref") or "").strip() == requested_ref)
+        or (not requested_ref and str(item.get("run_id") or "").strip() == requested_run)
+    ]
+    if len(matches) > 1:
+        raise HTTPException(status_code=409, detail="run_id is ambiguous in viewer history; provide run_ref")
+    selected = matches[0] if matches else None
     if not isinstance(selected, dict):
         raise HTTPException(status_code=404, detail=f"run_id not found: {{requested_run}}")
+    selected_run = str(selected.get("run_id") or "").strip()
+    if selected_run and selected_run != requested_run:
+        raise HTTPException(status_code=400, detail="run_ref does not identify run_id")
+    selected_ref = str(selected.get("artifact_run_ref") or "").strip()
+    selected_render = str(selected.get("artifact_render") or "").strip().lower()
+    if selected_ref and selected_render == "rerun":
+        # Re-resolve source-qualified history because every load replaces the
+        # shared active recording; metadata alone cannot restore exact bytes.
+        selected_uri = str(selected.get("artifact_uri") or "").strip()
+        if not selected_uri.startswith("s3://"):
+            raise HTTPException(status_code=409, detail="source-qualified Rerun history is missing its S3 artifact URI")
+        reload_request = {{"run_id": requested_run, "run_ref": selected_ref, "rrd_uri": selected_uri}}
+        reload_request["camera"] = str(selected.get("camera") or "").strip()
+        loaded = sim_viz_load_run(reload_request)
+        return {{"ok": True, "sim_viz": loaded["sim_viz"], "selected": selected}}
     sim_viz = dict(DEFAULT_SIM_VIZ)
     if isinstance(state.get("sim_viz"), dict):
         sim_viz.update(state["sim_viz"])
-    sim_viz.update(
-        {{
-            "run_id": requested_run,
-            "stage": str(selected.get("stage") or sim_viz.get("stage") or "submitted"),
-            "rrd_uri": str(selected.get("rrd_uri") or sim_viz.get("rrd_uri") or ""),
-            "rrd_updated_at": str(selected.get("rrd_updated_at") or sim_viz.get("rrd_updated_at") or ""),
-            "camera": str(selected.get("camera") or sim_viz.get("camera") or "workspace"),
-        }}
-    )
+    sim_viz.update(selected)
+    sim_viz["run_id"] = requested_run
     state["sim_viz"] = sim_viz
     state["latest_submit"] = {{
         "run_id": requested_run,
@@ -7015,7 +6585,6 @@ def sim_viz_select_run(payload: dict | None = None):
     }}
     _save_state(state)
     return {{"ok": True, "sim_viz": sim_viz_status(), "selected": selected}}
-
 def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     # Echo the just-applied snapshot. Do not re-enter sim_viz_status here:
     # concurrent UI polls can rewrite state mid-load and return the wrong run.
@@ -7031,6 +6600,7 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     payload["available_runs"] = [
         {{
             "run_id": str(item.get("run_id") or "").strip(),
+            "run_ref": str(item.get("artifact_run_ref") or "").strip(),
             # See sim_viz_status: activity_at is viewer-load time, not artifact
             # recency; last_modified stays blank so S3 discovery owns the date.
             "activity_at": str(
@@ -7056,9 +6626,8 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     else:
         payload["rerun_ready"] = _rerun_ready_state(rrd_uri=str(payload.get("rrd_uri") or ""))
         if not payload.get("rerun_iframe_url"):
-            payload["rerun_iframe_url"] = _rerun_iframe_url(str(payload.get("camera") or "workspace"))
+            payload["rerun_iframe_url"] = _rerun_iframe_url(str(payload.get("camera") or "workspace"), recording_path=str(payload.get("artifact_preview_url") or ""))
     return payload
-
 
 @app.post("/sim-viz/load-run")
 def sim_viz_load_run(payload: dict | None = None):
@@ -7066,9 +6635,13 @@ def sim_viz_load_run(payload: dict | None = None):
     run_id = str(body.get("run_id") or "").strip()
     if not run_id:
         raise HTTPException(status_code=400, detail="run_id is required")
+    try: run_id = _validate_run_basename(run_id)
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     requested_camera = str(body.get("camera") or "").strip()
     camera = requested_camera or "workspace"
     requested_rrd_uri = str(body.get("rrd_uri") or "").strip()
+    requested_run_ref = str(body.get("run_ref") or "").strip()
 
     # Prefer a run-scoped Rerun recording over stale history entries. History can
     # contain JSON artifacts from prior clicks, which otherwise makes Load Run
@@ -7077,6 +6650,22 @@ def sim_viz_load_run(payload: dict | None = None):
         s3, _settings = _agent_s3_client()
         _assert_s3_uri_in_agent_bucket(requested_rrd_uri, _settings)
         bucket, key = parse_s3_uri(requested_rrd_uri)
+        key = _safe_artifact_key(key)
+        if render_hint_for_object(key=key) != "rerun":
+            raise HTTPException(status_code=400, detail="rrd_uri must identify an RRD artifact")
+        resolution = resolve_run_artifacts(
+            _agent_s3_buckets(s3, _settings),
+            base_prefix=_settings.get("prefix", ""),
+            run_ref_or_id=requested_run_ref or run_id,
+            s3=s3,
+        )
+        if resolution is None or not any(
+            item.key == key and item.s3_uri == requested_rrd_uri
+            for item in resolution.artifacts
+        ):
+            raise HTTPException(status_code=400, detail="RRD URI is outside the selected run")
+        run_id = resolution.run_id
+        requested_run_ref = resolution.run_ref
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
         download_s3_uri(requested_rrd_uri, local_path, s3=s3)
@@ -7086,8 +6675,9 @@ def sim_viz_load_run(payload: dict | None = None):
             run_id=validate_run_id(run_id),
             key=key,
             s3_uri=requested_rrd_uri,
-            render=render_hint_for_object(key=key),
+            render="rerun",
             local_path=local_path,
+            run_ref=requested_run_ref,
         )
         if requested_camera:
             sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(key) else camera
@@ -7099,32 +6689,34 @@ def sim_viz_load_run(payload: dict | None = None):
     try:
         s3, settings = _agent_s3_client()
         requested_prefix = str(body.get("prefix") or "")
+        resolution = None
         artifacts = []
         if requested_prefix:
             effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
             artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
-        # Generic fallback: find the run across all category folders under the run
-        # root so a mismatched/absent prefix does not hide a mountable .rrd.
         if not artifacts:
-            artifacts = find_run_artifacts(
-                settings["bucket"],
+            resolution = resolve_run_artifacts(
+                _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
-                run_id=validate_run_id(run_id),
+                run_ref_or_id=requested_run_ref or run_id,
                 s3=s3,
             )
+            artifacts = resolution.artifacts if resolution is not None else []
         preferred = select_preferred_artifact(artifacts)
         if preferred and preferred.render == "rerun":
+            resolved_run_id = resolution.run_id if resolution is not None else run_id
             local_name = _artifact_filename(preferred.key)
             local_path = RECORDINGS_DIR / local_name
             download_s3_uri(preferred.s3_uri, local_path, s3=s3)
             state = _load_state()
             sim_viz = _apply_loaded_artifact(
                 state=state,
-                run_id=run_id,
+                run_id=resolved_run_id,
                 key=preferred.key,
                 s3_uri=preferred.s3_uri,
                 render=preferred.render,
                 local_path=local_path,
+                run_ref=(resolution.run_ref if resolution is not None else requested_run_ref),
             )
             if requested_camera:
                 sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(preferred.key) else camera
@@ -7133,9 +6725,18 @@ def sim_viz_load_run(payload: dict | None = None):
                 _save_state(state)
             return {{
                 "ok": True,
-                "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id),
+                "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=resolved_run_id),
                 "preferred": preferred.to_dict(),
             }}
+    except AmbiguousRunError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
+        ) from exc
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception:
         # Fall back to the historical in-memory run selector below; callers still
         # get a useful 404 if the run has never been seen.
@@ -7145,7 +6746,21 @@ def sim_viz_load_run(payload: dict | None = None):
     runs = state.get("sim_viz_runs")
     if not isinstance(runs, dict):
         runs = {{}}
-    selected = runs.get(run_id)
+    history_key = requested_run_ref or run_id
+    selected = runs.get(history_key)
+    if not isinstance(selected, dict) and not requested_run_ref:
+        matches = [
+            item
+            for item in runs.values()
+            if isinstance(item, dict)
+            and str(item.get("run_id") or "").strip() == run_id
+        ]
+        if len(matches) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail="run_id is ambiguous in viewer history; provide run_ref",
+            )
+        selected = matches[0] if matches else None
     sim2real_runs = state.get("sim2real_runs") if isinstance(state.get("sim2real_runs"), dict) else {{}}
     # Never invent phantom run ids — require a known sim-viz or sim2real run.
     if not isinstance(selected, dict) or not selected:
@@ -7224,8 +6839,8 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
                 contains=query,
                 s3=s3,
             )
-            return {{"ok": True, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, **page.to_dict()}}
-        # No user prefix: discover runs generically across ALL bucket roots.
+            return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, **page.to_dict()}}
+        # No user prefix: discover runs generically across configured bucket roots.
         # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
         # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
         # (e.g. scenario-gen-smoke/..., physical-ai-data-factory/...). list_all_runs
@@ -7233,8 +6848,7 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
         # workflow's runs show without hardcoding any workflow path. Cached the same
         # way (the no-prefix walk is the slowest and the default UI view).
         base = settings.get("prefix", "")
-        # Discover across EVERY accessible bucket (not just the configured one), so
-        # a run is visible no matter which bucket its workflow wrote to.
+        # Scan the primary + explicitly configured extra buckets only.
         buckets = _agent_s3_buckets(s3, settings)
         page = list_runs_cached_multi(
             buckets,
@@ -7244,7 +6858,7 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
             contains=query,
             s3=s3,
         )
-        return {{"ok": True, "bucket": settings["bucket"], "buckets": buckets, "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
+        return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "bucket": settings["bucket"], "buckets": buckets, "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
     except HTTPException:
         raise
     except Exception as exc:
@@ -7254,38 +6868,51 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
 @app.get("/artifacts/run/{{run_id:path}}")
 def artifacts_for_run(run_id: str, prefix: str = ""):
     try:
-        normalized_run = validate_run_id(run_id)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
         s3, settings = _agent_s3_client()
         effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        artifacts = []
-        run_bucket = settings["bucket"]
+        resolution = None
         if prefix:
-            artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3)
-        # Generic fallback: locate the run across EVERY accessible bucket and its
-        # category folders (no hardcoded workflow path, no single-bucket assumption).
-        if not artifacts:
-            run_bucket, artifacts = find_run_artifacts_across_buckets(
+            normalized_run = _validate_run_basename(run_id)
+            artifacts = list_artifacts(
+                settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3
+            )
+            if artifacts:
+                resolution = RunResolution(
+                    normalized_run, settings["bucket"], effective_prefix, artifacts
+                )
+        else:
+            resolution = resolve_run_artifacts(
                 _agent_s3_buckets(s3, settings),
                 base_prefix=settings.get("prefix", ""),
-                run_id=normalized_run,
+                run_ref_or_id=run_id,
                 s3=s3,
             )
-            if not run_bucket:
-                run_bucket = settings["bucket"]
+        normalized_run = resolution.run_id if resolution is not None else (
+            decode_run_ref(run_id)[2] if str(run_id).startswith("npa1_") else _validate_run_basename(run_id)
+        )
+        artifacts = resolution.artifacts if resolution is not None else []
+        run_bucket = resolution.bucket if resolution is not None else settings["bucket"]
+        source_prefix = resolution.source_prefix if resolution is not None else effective_prefix
         preferred = select_preferred_artifact(artifacts)
         return {{
             "ok": True,
+            "contract": ARTIFACT_DISCOVERY_CONTRACT,
             "bucket": run_bucket,
-            "prefix": effective_prefix,
+            "prefix": source_prefix,
             "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
+            "run_ref": resolution.run_ref if resolution is not None else "",
             "count": len(artifacts),
             "artifacts": [item.to_dict() for item in artifacts],
             "preferred": preferred.to_dict() if preferred else None,
         }}
+    except AmbiguousRunError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
+        ) from exc
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -7475,6 +7102,7 @@ def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket
         s3, settings = _agent_s3_client()
         if requested_uri:
             obj_bucket, obj_key = parse_s3_uri(requested_uri)
+            obj_key = _safe_artifact_key(obj_key)
             # Restrict caller-supplied URIs to the configured agent bucket(s) only
             # (never ListBuckets / every credential-readable bucket).
             _assert_s3_uri_in_agent_bucket(requested_uri, settings)
@@ -7483,18 +7111,19 @@ def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket
             obj_key = _safe_artifact_key(requested_key)
             obj_bucket = requested_bucket or settings["bucket"]
             if not requested_bucket and str(run_id or "").strip():
-                try:
-                    rb, _arts = find_run_artifacts_across_buckets(
-                        _agent_s3_buckets(s3, settings),
-                        base_prefix=settings.get("prefix", ""),
-                        run_id=validate_run_id(run_id),
-                        s3=s3,
-                    )
-                    if rb:
-                        obj_bucket = rb
-                except Exception:
-                    pass
+                resolution = resolve_run_artifacts(
+                    _agent_s3_buckets(s3, settings),
+                    base_prefix=settings.get("prefix", ""),
+                    run_ref_or_id=run_id,
+                    s3=s3,
+                )
+                if resolution is None:
+                    raise HTTPException(status_code=404, detail="run_id not found")
+                if obj_key not in {{item.key for item in resolution.artifacts}}:
+                    raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
+                obj_bucket = resolution.bucket
             uri = f"s3://{{obj_bucket}}/{{obj_key}}"
+        _assert_s3_uri_in_agent_bucket(uri, settings)
         local_path = RECORDINGS_DIR / _artifact_filename(obj_key)
         download_s3_uri(uri, local_path, s3=s3)
         leaf = Path(obj_key).name or "artifact.bin"
@@ -7514,6 +7143,7 @@ def sim_viz_load_artifact(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
     requested_uri = str(body.get("s3_uri") or "").strip()
     requested_run = str(body.get("run_id") or "").strip()
+    requested_run_ref = str(body.get("run_ref") or "").strip()
     requested_key = str(body.get("key") or "").strip()
     if not requested_uri and not (requested_run and requested_key):
         raise HTTPException(status_code=400, detail="Provide either s3_uri or run_id + key")
@@ -7521,28 +7151,42 @@ def sim_viz_load_artifact(payload: dict | None = None):
         s3, settings = _agent_s3_client()
         if requested_uri:
             bucket, key = parse_s3_uri(requested_uri)
+            key = _safe_artifact_key(key)
             # Configured agent bucket only — blocks arbitrary-bucket exfil.
             _assert_s3_uri_in_agent_bucket(requested_uri, settings)
             run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
             run_id = validate_run_id(run_guess) if run_guess else "artifact"
             s3_uri = requested_uri
-        else:
-            run_id = validate_run_id(requested_run)
-            key = _safe_artifact_key(requested_key)
-            # Resolve the run's bucket across all accessible buckets so a run in a
-            # non-primary bucket still loads (no copy required).
-            bucket = settings["bucket"]
-            try:
-                rb, _arts = find_run_artifacts_across_buckets(
+            resolved_ref = ""
+            if requested_run_ref:
+                resolution = resolve_run_artifacts(
                     _agent_s3_buckets(s3, settings),
                     base_prefix=settings.get("prefix", ""),
-                    run_id=run_id,
+                    run_ref_or_id=requested_run_ref,
                     s3=s3,
                 )
-                if rb:
-                    bucket = rb
-            except Exception:
-                pass
+                if resolution is None or not any(
+                    item.key == key and item.s3_uri == requested_uri
+                    for item in resolution.artifacts
+                ):
+                    raise HTTPException(status_code=400, detail="artifact URI is outside the selected run")
+                run_id = resolution.run_id
+                resolved_ref = resolution.run_ref
+        else:
+            key = _safe_artifact_key(requested_key)
+            resolution = resolve_run_artifacts(
+                _agent_s3_buckets(s3, settings),
+                base_prefix=settings.get("prefix", ""),
+                run_ref_or_id=requested_run_ref or requested_run,
+                s3=s3,
+            )
+            if resolution is None:
+                raise HTTPException(status_code=404, detail="run_id not found")
+            if key not in {{item.key for item in resolution.artifacts}}:
+                raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
+            run_id = resolution.run_id
+            bucket = resolution.bucket
+            resolved_ref = resolution.run_ref
             s3_uri = f"s3://{{bucket}}/{{key}}"
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
@@ -7556,8 +7200,16 @@ def sim_viz_load_artifact(payload: dict | None = None):
             s3_uri=s3_uri,
             render=render,
             local_path=local_path,
+            run_ref=resolved_ref,
         )
-        return {{"ok": True, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri}}
+        return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri, "run_ref": resolved_ref}}
+    except AmbiguousRunError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
+        ) from exc
+    except ArtifactDiscoveryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -7664,7 +7316,7 @@ def _sim_viz_rrd_file_response(run_id: str = ""):
             raise
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"Unable to fetch remote sim2real.rrd: {{exc}}") from exc
-    if RRD_PATH.is_file():
+    if PRELOAD_STOCK_DEMO and RRD_PATH.is_file():
         return FileResponse(str(RRD_PATH), media_type="application/octet-stream")
     raise HTTPException(status_code=404, detail="No sim2real.rrd file on disk yet")
 
@@ -7683,14 +7335,20 @@ def sim_viz_rrd_blob(run_id: str = ""):
 
 @app.on_event("startup")
 def _boot_preload_sim_viz() -> None:
-    if not RRD_PATH.is_file():
+    if not PRELOAD_STOCK_DEMO or not RRD_PATH.is_file():
         return
-    _publish_rrd_recording(RRD_PATH)
+    capability_path = _publish_rrd_recording(RRD_PATH)
     state = _load_state()
     sim_viz = state.get("sim_viz", {{}})
     if not isinstance(sim_viz, dict):
         sim_viz = {{}}
     if str(sim_viz.get("rrd_uri") or "").strip():
+        sim_viz["artifact_preview_url"] = capability_path
+        sim_viz["artifact_download_url"] = "/api/sim-viz/rrd-blob"
+        sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"), recording_path=capability_path)
+        state["sim_viz"] = sim_viz
+        _record_sim_viz_run(state, sim_viz)
+        _save_state(state)
         return
     selected = state.get("camera_selection", ["workspace"])
     cam = str(selected[0] if isinstance(selected, list) and selected else "workspace")
@@ -7707,7 +7365,9 @@ def _boot_preload_sim_viz() -> None:
         "preview_camera": cam,
         "preview_entity": f"world/camera_frustums/{{cam}}/frustum",
         "rerun_ready": _rerun_ready_state(rrd_uri=f"file://{{RRD_PATH}}"),
-        "rerun_iframe_url": _rerun_iframe_url(cam),
+        "rerun_iframe_url": _rerun_iframe_url(cam, recording_path=capability_path),
+        "artifact_preview_url": capability_path,
+        "artifact_download_url": "/api/sim-viz/rrd-blob",
     }}
     _record_sim_viz_run(state, state["sim_viz"])
     _save_state(state)
@@ -8397,7 +8057,11 @@ _rec.parent.mkdir(parents=True, exist_ok=True)
 _shutil.copy2(target, _rec)
 PY
 sudo mkdir -p /opt/npa-agent/recordings
-sudo cp -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd || true
+if [ {preload_stock_demo_value} = 1 ]; then
+  sudo cp -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd || true
+else
+  sudo rm -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd
+fi
 # Tiny ftyp sample so live media-type checks work even when S3 has no .mp4 runs.
 sudo python3 - <<'PY'
 from pathlib import Path
@@ -8496,7 +8160,11 @@ sudo python3 -m venv /opt/npa-agent/venv
 sudo /opt/npa-agent/venv/bin/pip install --upgrade pip
 sudo /opt/npa-agent/venv/bin/pip install fastapi uvicorn httpx pyyaml boto3 "rerun-sdk>=0.32"
 sudo /opt/npa-agent/venv/bin/pip install -e "{AGENT_SOURCE_ROOT}/npa[server,foxglove]"
-sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
+if [ {preload_stock_demo_value} = 1 ]; then
+  sudo /opt/npa-agent/venv/bin/python /opt/npa-agent/bootstrap_rrd.py
+else
+  sudo rm -f /opt/npa-agent/sim2real.rrd /opt/npa-agent/recordings/sim2real.rrd
+fi
 sudo systemctl restart npa-rerun || true
 cat <<'UNIT' | sudo tee /etc/systemd/system/npa-agent-backend.service >/dev/null
 [Unit]
@@ -8521,7 +8189,7 @@ Description=NPA rerun service
 After=network.target
 [Service]
 Type=simple
-ExecStart=/opt/npa-agent/venv/bin/rerun /opt/npa-agent/sim2real.rrd --serve-web --web-viewer --bind 0.0.0.0 --web-viewer-port {rerun_port} --port 9876
+ExecStart=/opt/npa-agent/venv/bin/rerun {rerun_recording_arg}--serve-web --web-viewer --bind 0.0.0.0 --web-viewer-port {rerun_port} --port 9876
 WorkingDirectory=/opt/npa-agent
 Restart=always
 StartLimitIntervalSec=0
@@ -8607,7 +8275,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
     remote_setup_script = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
     try:
-        _stage_agent_npa_source(ssh)
+        _stage_agent_npa_source(ssh, commit=str(deployment.get("commit") or ""))
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
             handle.write(setup_script)
             local_setup_script = handle.name
@@ -8680,6 +8348,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
             "sudo systemctl reset-failed npa-agent-backend || true; "
             "sudo systemctl restart npa-agent-backend"
         )
+    verify_remote_deployment(ssh, deployment, backend_port=backend_port)
 
 
 def _health(
@@ -8695,6 +8364,150 @@ def _health(
     except httpx.HTTPError:
         return False, 0
     return response.status_code == 200, response.status_code
+
+
+def _artifact_only_http_probe(client: httpx.Client) -> dict[str, Any]:
+    """Exercise artifact-only live APIs using GETs and prove state is unchanged."""
+
+    def get_json(path: str) -> dict[str, Any]:
+        response = client.get(path)
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise DeploymentIdentityError(f"{path} returned a non-object payload")
+        return payload
+
+    before = get_json("/api/health")
+    before_digest = str(before.get("state_sha256") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", before_digest):
+        raise DeploymentIdentityError("artifact-only health is missing state_sha256")
+    session = get_json("/api/session")
+    runs = get_json("/api/artifacts/runs?prefix=&limit=100")
+    tools = get_json("/api/tools")
+    workflow = get_json("/api/workflows/sim2real/status")
+    infra = get_json("/api/infra/k8s")
+    if not isinstance(runs.get("runs"), list):
+        raise DeploymentIdentityError("artifact discovery did not return a runs list")
+    if not isinstance(tools.get("tool_refs"), list):
+        raise DeploymentIdentityError("tool catalog did not return tool_refs")
+    after = get_json("/api/health")
+    after_digest = str(after.get("state_sha256") or "")
+    if after_digest != before_digest:
+        raise DeploymentIdentityError(
+            "artifact-only live verification mutated durable session state"
+        )
+    return {
+        "state_sha256": before_digest,
+        "run_count": len(runs["runs"]),
+        "tool_ref_count": len(tools["tool_refs"]),
+        "session": session,
+        "workflow": workflow,
+        "infra": infra,
+    }
+
+
+def _verify_artifact_only_live(
+    *,
+    record: dict[str, Any],
+    auth_user: str,
+    auth_password: str,
+    tls_verify: bool,
+    project: str,
+    name: str,
+) -> None:
+    """Run the no-stock live gate without writing chat/workflow/demo state."""
+    agent_base = str(record.get("agent_url", "")).rstrip("/")
+    try:
+        with httpx.Client(
+            base_url=agent_base,
+            auth=(auth_user, auth_password),
+            verify=tls_verify,
+            timeout=30.0,
+        ) as client:
+            result = _artifact_only_http_probe(client)
+    except (httpx.HTTPError, DeploymentIdentityError) as exc:
+        _fail(f"artifact-only read-only probe failed: {exc}")
+
+    from npa.agent_rerun_bundle_check import (
+        check_rerun_bundle_load_budget,
+        format_bundle_budget_report,
+    )
+
+    bundle_result = check_rerun_bundle_load_budget(
+        agent_base,
+        auth=(auth_user, auth_password),
+        verify=tls_verify,
+    )
+    typer.echo(format_bundle_budget_report(bundle_result))
+    if not bundle_result.ok:
+        _fail(
+            "rerun bundle load budget failed: "
+            + "; ".join(bundle_result.errors[:4])
+        )
+
+    test_env = {
+        **dict(os.environ),
+        "NPA_INTEGRATION_E2E": "1",
+        "NPA_AGENT_LIVE": "1",
+        "NPA_AGENT_PROJECT": project,
+        "NPA_AGENT_NAME": name,
+        "NPA_AGENT_VERIFY_READ_ONLY": "1",
+    }
+    suites = (
+        (
+            "smoke",
+            [
+                "npa/tests/smoke/test_agent_smoke.py",
+                "npa/tests/smoke/test_agent_chat_smoke.py",
+            ],
+        ),
+        (
+            "unit",
+            ["npa/tests/cli/test_agent.py", "npa/tests/cli/test_agent_workflow.py"],
+        ),
+        (
+            "read-only live e2e",
+            [
+                "npa/tests/e2e/test_agent_live.py",
+                "-k",
+                (
+                    "agent_ui_html_smoke or agent_health_and_session or "
+                    "agent_sim_assets_and_catalog or agent_tools_catalog or "
+                    "agent_workbench_actions or agent_rerun_iframe_reachable"
+                ),
+            ],
+        ),
+    )
+    for label, suite_args in suites:
+        proc = subprocess.run(
+            ["npa/.venv/bin/python", "-m", "pytest", *suite_args, "-q"],
+            check=False,
+            env=test_env,
+        )
+        if proc.returncode != 0:
+            _fail(f"artifact-only {label} verification failed")
+
+    # The test processes and bundle probe are read-only, too. Verify the exact
+    # persisted state digest again after every gate has completed.
+    try:
+        with httpx.Client(
+            base_url=agent_base,
+            auth=(auth_user, auth_password),
+            verify=tls_verify,
+            timeout=30.0,
+        ) as client:
+            final = client.get("/api/health")
+            final.raise_for_status()
+            final_digest = str(final.json().get("state_sha256") or "")
+    except (httpx.HTTPError, ValueError) as exc:
+        _fail(f"artifact-only final state probe failed: {exc}")
+    if final_digest != result["state_sha256"]:
+        _fail("artifact-only verification changed durable state")
+    typer.echo(
+        "artifact-only read-only gate: "
+        f"runs={result['run_count']} tool_refs={result['tool_ref_count']} "
+        f"state_sha256={result['state_sha256']}"
+    )
 
 
 @app.command("preflight")
@@ -8725,6 +8538,7 @@ def preflight_cmd(
 
 
 @app.command("deploy")
+@_serialized_agent_lifecycle
 def deploy_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias to store config under."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
@@ -8770,8 +8584,38 @@ def deploy_cmd(
         "--no-public-https",
         help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
     ),
+    workspace_label: str = typer.Option(
+        "NPA Workbench",
+        "--workspace-label",
+        help="Non-secret workspace identity displayed with immutable Git provenance.",
+    ),
+    stock_demo: bool = typer.Option(
+        True,
+        "--stock-demo/--no-stock-demo",
+        help="Preload the stock Franka recording and history entry on startup.",
+    ),
 ) -> None:
     """Provision VM + bootstrap the public NPA agent stack."""
+    try:
+        deployment = build_deployment_manifest(
+            project_alias=project,
+            name=name,
+            workspace_label=normalize_workspace_label(workspace_label),
+        )
+        existing = _agent_record(project, name)
+        if existing:
+            assert_record_ownership(existing, deployment)
+            _verify_agent_record_remote_owner(
+                existing, deployment, ssh_user=ssh_user
+            )
+        elif _agent_terraform_state_exists(project, name):
+            raise DeploymentIdentityError(
+                "Terraform state exists without an immutable agent record; "
+                "refusing to apply or adopt this namespace"
+            )
+        fresh_deployment = not bool(existing)
+    except DeploymentIdentityError as exc:
+        _fail(str(exc))
     profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
     if profile and shutil.which("nebius"):
         subprocess.run(["nebius", "profile", "activate", profile], check=False)
@@ -8879,26 +8723,31 @@ def deploy_cmd(
             name=name,
             merged_vars=merged_vars,
             env_region=env_region,
+            require_empty_state=fresh_deployment,
         )
+    except DeploymentIdentityError as exc:
+        _fail(str(exc))
     except ProvisionerError as exc:
-        try:
-            _destroy_agent_terraform(project, name)
-        except ProvisionerError as cleanup_exc:
-            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        if fresh_deployment:
+            try:
+                _destroy_agent_terraform(project, name)
+            except ProvisionerError as cleanup_exc:
+                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"Terraform deploy failed: {exc}")
 
     public_ip = str(tf_outputs.get("vm_ip", ""))
     instance_id = str(tf_outputs.get("instance_id", ""))
     ssh_key_path = str(tf_outputs.get("ssh_key_path", "") or ssh_public_key_path.removesuffix(".pub"))
     if not _is_routable_public_ip(public_ip):
-        try:
-            _destroy_agent_terraform(
-                project,
-                name,
-                record={"instance_id": instance_id, "project_id": env_project_id, "region": env_region},
-            )
-        except ProvisionerError as cleanup_exc:
-            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        if fresh_deployment:
+            try:
+                _destroy_agent_terraform(
+                    project,
+                    name,
+                    record={"instance_id": instance_id, "project_id": env_project_id, "region": env_region},
+                )
+            except ProvisionerError as cleanup_exc:
+                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail("Terraform output did not include a routable public IP")
 
     auth_password = secrets.token_urlsafe(18)
@@ -8956,12 +8805,17 @@ def deploy_cmd(
             foxglove_embed_src=foxglove_embed_src,
             foxglove_org_slug=foxglove_org_slug,
             foxglove_live_url=foxglove_live_url,
+            deployment=deployment,
+            preload_stock_demo=stock_demo,
         )
+    except DeploymentIdentityError as exc:
+        _fail(f"VM ownership verification failed: {exc}")
     except (ConfigError, SSHError, ValueError) as exc:
-        try:
-            _destroy_agent_terraform(project, name, record=rollback_record)
-        except ProvisionerError as cleanup_exc:
-            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        if fresh_deployment:
+            try:
+                _destroy_agent_terraform(project, name, record=rollback_record)
+            except ProvisionerError as cleanup_exc:
+                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"VM bootstrap failed: {exc}")
 
     ingress_ports: list[int] = [agent_port, rerun_port]
@@ -8970,10 +8824,11 @@ def deploy_cmd(
     try:
         ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
     except NetworkIngressError as exc:
-        try:
-            _destroy_agent_terraform(project, name, record=rollback_record)
-        except ProvisionerError as cleanup_exc:
-            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        if fresh_deployment:
+            try:
+                _destroy_agent_terraform(project, name, record=rollback_record)
+            except ProvisionerError as cleanup_exc:
+                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"npa network ensure-ingress failed: {exc}")
 
     urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
@@ -9002,6 +8857,8 @@ def deploy_cmd(
         ssh_key_path=ssh_key_path,
         service_account_id=str(creds.get("service_account_id", "")),
         credentials=agent_credentials,
+        deployment=deployment,
+        preload_stock_demo=stock_demo,
     )
     _store_agent_record(project, name, record.to_dict())
     _persist_agent_project_config(
@@ -9064,6 +8921,16 @@ def fresh_setup_cmd(
         "--replace",
         help="Destroy an existing agent with the same project/name before fresh deploy.",
     ),
+    workspace_label: str = typer.Option(
+        "NPA Workbench",
+        "--workspace-label",
+        help="Non-secret workspace identity displayed with immutable Git provenance.",
+    ),
+    stock_demo: bool = typer.Option(
+        True,
+        "--stock-demo/--no-stock-demo",
+        help="Preload the stock Franka recording and history entry on startup.",
+    ),
 ) -> None:
     """Initialize fresh project config and deploy a new agent from scratch."""
     existing = _agent_record(project, name)
@@ -9095,10 +8962,13 @@ def fresh_setup_cmd(
         llm_model=llm_model,
         llm_models=llm_models,
         no_public_https=no_public_https,
+        workspace_label=workspace_label,
+        stock_demo=stock_demo,
     )
 
 
 @app.command("bootstrap")
+@_serialized_agent_lifecycle
 def bootstrap_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
@@ -9117,6 +8987,22 @@ def bootstrap_cmd(
         False,
         "--refresh-credentials",
         help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
+    ),
+    artifact_project: str = typer.Option(
+        "",
+        "--artifact-project",
+        help=(
+            "Use artifact-storage credentials from this configured NPA project alias. "
+            "The selected credentials persist on the agent record."
+        ),
+    ),
+    artifact_prefix: str = typer.Option(
+        "",
+        "--artifact-prefix",
+        help=(
+            "Override the S3 namespace root used for run discovery (for example a "
+            "shared workflows root); persisted with the agent credentials."
+        ),
     ),
     foxglove_embed_src: str = typer.Option(
         "",
@@ -9141,11 +9027,46 @@ def bootstrap_cmd(
         "--no-public-https",
         help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
     ),
+    workspace_label: str = typer.Option(
+        "",
+        "--workspace-label",
+        help="Workspace identity; defaults to the identity already recorded for this deployment.",
+    ),
+    stock_demo: bool | None = typer.Option(
+        None,
+        "--stock-demo/--no-stock-demo",
+        help="Override stock Franka preloading; defaults to the recorded deployment setting.",
+    ),
+    adopt_legacy_identity: bool = typer.Option(
+        False,
+        "--adopt-legacy-identity",
+        help="Explicitly claim a legacy record that has no immutable deployment owner.",
+    ),
 ) -> None:
     """Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform)."""
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
+    resolved_stock_demo = (
+        bool(record.get("preload_stock_demo", True))
+        if stock_demo is None or not isinstance(stock_demo, bool)
+        else bool(stock_demo)
+    )
+    recorded_deployment = record.get("deployment", {})
+    recorded_label = (
+        recorded_deployment.get("workspace_label", "")
+        if isinstance(recorded_deployment, dict)
+        else ""
+    )
+    try:
+        deployment = build_deployment_manifest(
+            project_alias=project,
+            name=name,
+            workspace_label=workspace_label or recorded_label,
+        )
+        assert_record_ownership(record, deployment, allow_legacy=adopt_legacy_identity)
+    except DeploymentIdentityError as exc:
+        _fail(str(exc))
     public_ip = str(record.get("public_ip", "")).strip()
     if not _is_routable_public_ip(public_ip):
         _fail("agent VM does not have a routable public IP")
@@ -9240,6 +9161,26 @@ def bootstrap_cmd(
                     }
                 }
             )
+    if str(artifact_project or "").strip():
+        try:
+            (
+                s3_bucket,
+                project_artifact_prefix,
+                s3_endpoint,
+                s3_access_key,
+                s3_secret_key,
+            ) = _resolve_artifact_project_storage(
+                str(artifact_project).strip(), region=region
+            )
+        except ConfigError as exc:
+            _fail(f"unable to resolve artifact project storage: {exc}")
+        s3_prefix = project_artifact_prefix
+        typer.echo("  Using explicitly selected project artifact storage for the agent.")
+    if str(artifact_prefix or "").strip():
+        try:
+            s3_prefix = _validate_artifact_prefix(str(artifact_prefix))
+        except ValueError as exc:
+            _fail(str(exc))
     try:
         _bootstrap_agent_stack(
             host=public_ip,
@@ -9272,6 +9213,8 @@ def bootstrap_cmd(
             foxglove_embed_src=foxglove_embed_src,
             foxglove_org_slug=foxglove_org_slug,
             foxglove_live_url=foxglove_live_url,
+            deployment=deployment,
+            preload_stock_demo=resolved_stock_demo,
         )
     except (ConfigError, SSHError, ValueError) as exc:
         _fail(f"VM bootstrap failed: {exc}")
@@ -9298,6 +9241,8 @@ def bootstrap_cmd(
     llm_payload["models"] = list(resolved_llm_models)
     updated["llm"] = llm_payload
     updated["ssh_key_path"] = ssh_key_path
+    updated["deployment"] = deployment
+    updated["preload_stock_demo"] = resolved_stock_demo
     if service_account_id:
         updated["service_account_id"] = service_account_id
         _persist_agent_service_account_id(service_account_id)
@@ -9338,12 +9283,32 @@ def status_cmd(
     sim_viz_url = str(record.get("sim_viz_url", rerun_url))
     sim_assets_url = str(record.get("sim_assets_url", agent_url))
     cameras_api_url = str(
-        record.get("cameras_api_url", f"{agent_url.rstrip('/')}/assets/api/sim-assets/cameras")
+        record.get(
+            "cameras_api_url", f"{agent_url.rstrip('/')}/assets/api/sim-assets/cameras"
+        )
     )
     public_url = _record_customer_url(record)
     tls_verify = _record_tls_verify(record)
-    ui_ok, ui_code = _health(agent_url, user=auth_user, password=auth_password, verify=tls_verify)
-    rerun_ok, rerun_code = _health(sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify)
+    ui_ok, ui_code = _health(
+        agent_url, user=auth_user, password=auth_password, verify=tls_verify
+    )
+    rerun_ok, rerun_code = _health(
+        sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify
+    )
+    recorded_deployment = record.get("deployment", {})
+    live_deployment: dict[str, Any] = {}
+    deployment_matches_record = False
+    deployment_error = ""
+    try:
+        live_deployment = fetch_live_deployment(
+            agent_url, user=auth_user, password=auth_password, verify=tls_verify
+        )
+        if isinstance(recorded_deployment, dict) and recorded_deployment:
+            assert_live_deployment(recorded_deployment, live_deployment)
+            deployment_matches_record = True
+    except (httpx.HTTPError, DeploymentIdentityError) as exc:
+        deployment_error = str(exc)
+    overall_health = bool(ui_ok and rerun_ok and deployment_matches_record)
     payload = {
         "project": project,
         "name": name,
@@ -9356,33 +9321,56 @@ def status_cmd(
         "sim_viz_url": sim_viz_url,
         "sim_assets_url": sim_assets_url,
         "cameras_api_url": cameras_api_url,
-        "health": bool(ui_ok and rerun_ok),
+        "health": overall_health,
         "ui_status_code": ui_code,
         "rerun_status_code": rerun_code,
         "llm": record.get("llm", {}),
+        "deployment": recorded_deployment,
+        "live_deployment": live_deployment,
+        "deployment_matches_record": deployment_matches_record,
+        "deployment_error": deployment_error,
+        "preload_stock_demo": bool(record.get("preload_stock_demo", True)),
     }
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        return
-    for key, value in payload.items():
-        typer.echo(f"{key}: {value}")
+    else:
+        for key, value in payload.items():
+            typer.echo(f"{key}: {value}")
+    if not overall_health:
+        raise typer.Exit(code=1)
 
 
 @app.command("destroy")
+@_serialized_agent_lifecycle
 def destroy_cmd(
     project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
     name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
 ) -> None:
     """Destroy agent VM/resources and remove saved config entry."""
     record = _agent_record(project, name)
-    if not record and not _agent_terraform_state_exists(project, name):
-        _fail(f"Agent config not found for {project}/{name}")
+    if not record:
+        _fail(
+            f"Immutable agent record not found for {project}/{name}; refusing to "
+            "destroy Terraform state with unknown ownership"
+        )
+    recorded = record.get("deployment")
+    if not isinstance(recorded, dict) or not recorded:
+        _fail("agent record has no immutable deployment owner; refusing to destroy")
     try:
-        _destroy_agent_terraform(project, name, record=record or None)
+        expected = build_deployment_manifest(
+            project_alias=project,
+            name=name,
+            workspace_label=recorded.get("workspace_label", ""),
+        )
+        assert_record_ownership(record, expected)
+        _verify_agent_record_remote_owner(record, expected)
+    except DeploymentIdentityError as exc:
+        _fail(str(exc))
+    try:
+        _destroy_agent_terraform(project, name, record=record)
     except ProvisionerError as exc:
         _fail(f"Terraform destroy failed: {exc}")
-    if record:
-        _remove_agent_record(project, name)
+    _remove_agent_record(project, name)
     typer.echo(f"destroyed: {project}/{name}")
 
 
@@ -9410,6 +9398,19 @@ def verify_live_cmd(
 
     customer_url = _record_customer_url(record)
     tls_verify = _record_tls_verify(record)
+    recorded_deployment = record.get("deployment", {})
+    if not isinstance(recorded_deployment, dict) or not recorded_deployment:
+        _fail("agent record is missing immutable deployment provenance")
+    try:
+        live_deployment = fetch_live_deployment(
+            str(record.get("agent_url", "")),
+            user=auth_user,
+            password=auth_password,
+            verify=tls_verify,
+        )
+        assert_live_deployment(recorded_deployment, live_deployment)
+    except (httpx.HTTPError, DeploymentIdentityError) as exc:
+        _fail(f"deployment provenance verification failed: {exc}")
     if customer_url:
         try:
             welcome_resp = httpx.get(
@@ -9491,6 +9492,18 @@ def verify_live_cmd(
     cameras = cameras_payload.get("cameras", []) if isinstance(cameras_payload, dict) else []
     if not isinstance(cameras, list) or not cameras:
         _fail("cameras endpoint returned no cameras")
+
+    if not bool(record.get("preload_stock_demo", True)):
+        _verify_artifact_only_live(
+            record=record,
+            auth_user=auth_user,
+            auth_password=auth_password,
+            tls_verify=tls_verify,
+            project=project,
+            name=name,
+        )
+        typer.echo("verify-live: ok (artifact-only, read-only)")
+        return
 
     selection_body = {
         "robot_preset": "franka",
@@ -9970,19 +9983,10 @@ def verify_live_cmd(
         resources_payload = resources_resp.json()
     except Exception as exc:  # noqa: BLE001
         _fail(f"tenant resource inventory endpoint failed: {exc}")
-    if not isinstance(resources_payload, dict) or not resources_payload.get("ok"):
-        _fail("tenant resource inventory endpoint did not return ok=true")
-    categories = resources_payload.get("categories")
-    if not isinstance(categories, list) or not categories:
-        _fail("tenant resource inventory endpoint returned no categories")
-    if not any(
-        isinstance(item, dict)
-        and (int(item.get("discovered_count") or 0) > 0 or int(item.get("configured_count") or 0) > 0)
-        for item in categories
-    ):
-        _fail("tenant resource inventory has no configured or discovered resources")
-    if any(str((item or {}).get("status") or "") not in {"discovered", "configured", "empty", "error"} for item in categories):
-        _fail("tenant resource inventory returned an invalid category state")
+    try:
+        agent_resources.validate_resource_inventory(resources_payload)
+    except ValueError as exc:
+        _fail(str(exc))
     try:
         wf_submit = httpx.post(
             f"{agent_base}/api/workflows/submit",
@@ -10018,7 +10022,7 @@ def verify_live_cmd(
                         "role": "user",
                         "content": (
                             "add an open source repo, containerize, push to registry, "
-                            "and run LeIsaac on live infra"
+                            "and run its declared smoke on live infra"
                         ),
                     }
                 ]

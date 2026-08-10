@@ -22,6 +22,8 @@ unique and must be tested with its own upstream-named capabilities.
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | `policy_config_materialization` | `openpi_pi05_droid_config.json` | `byof-openpi.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
+| Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
+| Alibaba Wan 2.2 TI2V-5B (**4-GPU distributed**) | same pinned source/checkpoint | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | multi-GPU capability JSON + rank topology + runtime inventory + MP4 | `byof-wan2.2-multigpu.yaml` |
 
 ## Live capability results
 
@@ -49,6 +51,11 @@ unique and must be tested with its own upstream-named capabilities.
 | Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 15000 steps on the Minecraft latents) |
 | Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; dream maintains coherent Minecraft scenery across the 32-frame horizon; dream PSNR 17.3 dB) |
 | Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (21 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 10 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
+| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **accepted** | private validation record: pulled the accepted runtime-fetch candidate; native TI2V-5B generation on RTX PRO 6000 Blackwell (`sm_120`) |
+| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` | **accepted** | Same run: 2,923,858-byte H.264 MP4, 1280x704, 17 frames at 24 fps; full decode and non-uniform-content gates passed |
+| Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | **accepted** | private validation record: one node, 4×B200 (`sm_100`), world size 4, loaded NCCL 2.27.7 + T5/DiT FULL_SHARD FSDP + Ulysses size 4; `torch.distributed.run` launches the instrumentation wrapper, which executes pinned official `generate.py` as `__main__` |
+| Wan 2.2 TI2V-5B | `wan2.2_distributed_rank_topology_validation` | **accepted** | Same run: four unique GPU hashes/ranks 0–3, NCCL sum 10/10 per rank, 480 distributed-attention and 1,920 all-to-all calls per rank, three barriers, final barrier, and process-group teardown |
+| Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` (distributed run) | **accepted** | Same run: 2,809,770-byte H.264 MP4, 1280x704, 17 frames at 24 fps; spatial stddev 71.9485, pixel range 255, temporal delta 9.714725, SHA-256 `9574f79c…94865` |
 
 ## Native Capabilities Per Container
 
@@ -123,6 +130,57 @@ run time. Actions parse to the real 27-binary / 121-categorical VPT layout that
 `train_dynamics.py` asserts. Dream fidelity scales with the tokenizer/dynamics
 training budget (`OD_TOK_STEPS`/`OD_DYN_STEPS`; upstream trains ~200k). LPIPS is
 left off (no HF download); FVD/I3D scoring (`eval_fvd.py`) remains a follow-up.
+
+### Alibaba Wan 2.2 TI2V-5B
+
+Official Alibaba generative-video baseline, pinned to
+`Wan-Video/Wan2.2@42bf4cfaa384bc21833865abc2f9e6c0e67233dc` with the
+official `Wan-AI/Wan2.2-TI2V-5B` checkpoint pinned to
+`921dbaf3f1674a56f47e83fb80a34bac8a8f203e`. Checkpoint and tokenizer files are
+fetched at run time; they are not baked into the canonical `npa-wan2-2` image.
+CUDA-enabled PyTorch and its `nvidia-*` closure are likewise installed only in
+an operator-owned volume after explicit terms acceptance; the image contains
+the pinned source and OSS CPU dependency base. The checked-in
+single-GPU profile targets one RTX PRO 6000 Blackwell (`sm_120`) and the
+upstream PyTorch SDPA fallback. The separate distributed profile requests four
+B200s in one pod. `torch.distributed.run` launches an instrumentation wrapper
+on the four ranks, and the wrapper executes pinned official `generate.py` as
+`__main__` with `--dit_fsdp --t5_fsdp --ulysses_size 4`; the 24 attention heads divide evenly
+across the four Ulysses ranks. The distributed smoke fails unless the CUDA 12.8
+PyTorch wheel contains `sm_100`, every observed device is compute capability
+10.0, NCCL connects all four unique devices, both T5 and WanModel use
+FULL_SHARD FSDP, and Ulysses performs real distributed attention/all-to-all
+collectives during the shared generation.
+
+| Capability | Status | Upstream basis / NPA evidence |
+| --- | --- | --- |
+| `wan2.2_ti2v_5b_text_to_video` | accepted (live validated) | private validation record: native `wan.WanTI2V.generate` at 1280x704 on RTX PRO 6000 Blackwell (`sm_120`) |
+| `wan2.2_decoded_mp4_validation` | accepted (live validated) | same run: all 17 frames decoded at 24 fps; 2,923,858 bytes, spatial stddev 78.0124, pixel range 255, mean temporal delta 11.7294 |
+| `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | accepted (live validated) | private validation record: `torch.distributed.run` launches four wrapper ranks on one 4×B200 node; each wrapper executes pinned official `generate.py` as `__main__`; loaded NCCL 2.27.7, T5/DiT FULL_SHARD FSDP, Ulysses size 4 |
+| `wan2.2_distributed_rank_topology_validation` | accepted (live validated) | same run: ranks/local ranks 0–3 mapped to four unique GPU hashes; each rank recorded NCCL sum 10/10, 480 Ulysses attention calls, 1,920 all-to-all calls, three barriers, the observed final barrier, and teardown |
+| `wan2.2_decoded_mp4_validation` (distributed run) | accepted (live validated) | same run: all 17 H.264 frames decoded at 24 fps; 2,809,770 bytes, spatial stddev 71.9485, pixel range 255, mean temporal delta 9.714725, SHA-256 `9574f79c…94865` |
+| `wan2.2_verified_rerun_recording` | accepted (live artifact verified) | fresh four-GPU evidence produced a 2,948,508-byte RRD (`5a4f7746…0606`) with local/remote parse and identity checks; the fresh 3,045,269-byte single-GPU RRD (`49a57f5b…fb10`) was also served byte-identically and visibly rendered by the live agent |
+| `wan2.2_ti2v_5b_image_to_video` | deferred | official unified-model capability and a real optional S3-image code path exist, but no separate live input/output evidence |
+| `wan2.2_t2v_a14b` / `wan2.2_i2v_a14b` | deferred | separate MoE checkpoints and materially different GPU contract; not in this image gate |
+| `wan2.2_s2v_14b` | deferred | separate speech/audio inputs and checkpoint |
+| `wan2.2_animate_14b` | deferred | separate character-animation inputs and checkpoint |
+| `wan2.2_fine_tuning` | deferred | pinned official source does not expose a TI2V training entrypoint |
+| stock Wan action prediction | rejected | action prediction is not an upstream Wan 2.2 capability |
+
+The single-GPU primary JSON is `wan2_2_ti2v_5b_text_to_video.json`. The
+distributed workflow emits `wan2_2_ti2v_5b_multigpu.json`,
+`wan2_2_multigpu_topology.json`, four per-rank JSON files,
+`wan2_2_multigpu_runtime_inventory.json`, and
+`wan2_2_ti2v_5b_multigpu.mp4`. The successful BYOF path then publishes
+`wan2_2_ti2v_5b_multigpu.rrd` and its verified manifest. The recording embeds
+the exact MP4 and exposes the real run evidence in the NPA agent's Rerun viewer.
+The accepted single- and distributed runs use the same immutable runtime-fetch
+candidate; CUDA Python distributions and model/tokenizer bytes remain in
+operator-owned runtime volumes. A historical private image that baked CUDA
+Python distributions remains excluded from publication. Live capability results
+do not by themselves authorize public image publication. See
+[`wan2.2.md`](wan2.2.md) for the workflow, RRD, licensing, and validation
+contracts.
 
 ## First-class Workbench tools (not BYOF)
 

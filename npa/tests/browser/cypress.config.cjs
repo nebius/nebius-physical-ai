@@ -88,9 +88,14 @@ function startMockServer(port) {
       res.end(Buffer.from([0x00, 0x61, 0x73, 0x6d]));
       return;
     }
-    if (url.pathname === "/rerun/recordings/sim2real.rrd") {
+    if (/^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/.test(url.pathname)) {
       res.writeHead(200, { "content-type": "application/octet-stream" });
       res.end(Buffer.alloc(128, 1));
+      return;
+    }
+    if (url.pathname === "/rerun/recordings/sim2real.rrd") {
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("recording capability required");
       return;
     }
     // Foxglove embed assets: the REAL @foxglove/embed npm build (devDependency),

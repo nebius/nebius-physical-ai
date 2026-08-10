@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import tempfile
+from importlib import metadata
 from pathlib import Path
 
 # Generation is inference: upstream's own switch for making the training
@@ -33,6 +34,7 @@ MODES = ("text2image", "image2image", "text2video", "image2video", "video2video"
 VISION_MODES = {"image2image", "image2video", "video2video"}
 WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pth", ".pt")
 WEIGHT_MIN_BYTES = 50 * 1024 * 1024
+XET_KNOWN_BAD_PAIR = ("1.23.0", "1.5.1")
 
 failures: list[str] = []
 
@@ -66,6 +68,19 @@ def check_torch_stack() -> str:
         f"torch={torch.__version__} cuda={torch.version.cuda} "
         f"flash_attn={flash_attn.__version__}"
     )
+
+
+def check_hf_transfer_pair() -> str:
+    """Reject the frozen Hugging Face pair known to corrupt gated Xet downloads."""
+
+    hub = metadata.version("huggingface_hub")
+    xet = metadata.version("hf-xet")
+    if (hub, xet) == XET_KNOWN_BAD_PAIR:
+        raise RuntimeError(
+            "known-bad gated-download pair baked into image: "
+            f"huggingface_hub={hub} hf-xet={xet} (huggingface/xet-core#895)"
+        )
+    return f"huggingface_hub={hub} hf-xet={xet} (Xet enabled)"
 
 
 def check_inference_entrypoint() -> str:
@@ -154,6 +169,7 @@ def check_no_baked_weights() -> str:
 def main() -> int:
     step("flags", check_flags)
     step("torch + flash-attn", check_torch_stack)
+    step("Hugging Face transfer pair", check_hf_transfer_pair)
     step("scripts.inference import", check_inference_entrypoint)
     step("inference.model import", check_model_module)
     step("guardrail import", check_guardrail)
