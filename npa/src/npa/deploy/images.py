@@ -14,7 +14,9 @@ from typing import Any
 # IAM token, which are never committed. Operators can override it with NPA_REGISTRY
 # or `container_registry` in ~/.npa/config.yaml.
 DEFAULT_CONTAINER_REGISTRY_ID = "e00cm0vc6t09m0z5gw"
-DEFAULT_CONTAINER_REGISTRY = f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
+DEFAULT_CONTAINER_REGISTRY = (
+    f"cr.eu-north1.nebius.cloud/{DEFAULT_CONTAINER_REGISTRY_ID}"
+)
 # Mirror registry (us-central1) used for region-agnostic failover: every tool
 # image is mirrored to both this and the primary (eu-north1) registry, so a pull
 # succeeds regardless of the caller's region — e.g. an in-cluster us-central1 pull
@@ -24,6 +26,7 @@ BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/u00j7q4jjkahvsx0jy"
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
+WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
     "lerobot": "npa-lerobot",
@@ -49,6 +52,7 @@ CONTAINER_IMAGE_NAMES = {
     "lichtblick": "npa-lichtblick",
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
+    "wan2-2": "npa-wan2-2",
 }
 
 # Tools whose built image may NOT be published to a public/anonymous registry,
@@ -146,6 +150,8 @@ SUPPORTED_TOOL_VERSIONS = {
     "lichtblick": "1.26.0",
     "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
+    # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
+    "wan2-2": "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7",
     "nebius-cli": "0.12.192",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
@@ -156,10 +162,14 @@ SUPPORTED_TOOL_VERSIONS = {
 def sonic_image_manifest() -> dict[str, Any]:
     """Return the packaged SONIC image compatibility manifest."""
 
-    text = resources.files(__package__).joinpath(SONIC_IMAGE_MANIFEST_RESOURCE).read_text(
-        encoding="utf-8"
+    text = (
+        resources.files(__package__)
+        .joinpath(SONIC_IMAGE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
     )
     payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise RuntimeError("SONIC image manifest must be a JSON object")
     if payload.get("format") != "npa_sonic_image_manifest_v1":
         raise RuntimeError("Unsupported SONIC image manifest format")
     return payload
@@ -176,6 +186,27 @@ def sonic_image_variants() -> dict[str, dict[str, Any]]:
         if variant_id:
             variants[variant_id] = item
     return variants
+
+
+@lru_cache(maxsize=1)
+def wan_accepted_image_manifest() -> dict[str, Any]:
+    """Return the immutable image/runtime/GPU proof tuple allowed for publication."""
+
+    text = (
+        resources.files(__package__)
+        .joinpath(WAN_IMAGE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise RuntimeError("Wan accepted image manifest must be a JSON object")
+    if payload.get("format") != "npa_wan_accepted_image_manifest_v1":
+        raise RuntimeError("Unsupported Wan accepted image manifest format")
+    if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["wan2-2"]:
+        raise RuntimeError(
+            "Wan accepted image manifest tag drifted from the supported tag"
+        )
+    return payload
 
 
 def supported_tool_version(tool: str) -> str:
@@ -196,13 +227,17 @@ def supported_tool_version(tool: str) -> str:
     try:
         return SUPPORTED_TOOL_VERSIONS[tool]
     except KeyError as exc:
-        raise RuntimeError(f"Could not find supported version for tool: {tool}") from exc
+        raise RuntimeError(
+            f"Could not find supported version for tool: {tool}"
+        ) from exc
 
 
 def supported_lerobot_versions() -> tuple[str, ...]:
     """Return LeRobot versions supported by the workbench (default first)."""
 
-    from npa.workbench.lerobot.version_compat import supported_lerobot_versions as _versions
+    from npa.workbench.lerobot.version_compat import (
+        supported_lerobot_versions as _versions,
+    )
 
     return _versions()
 
@@ -250,7 +285,9 @@ def sonic_image_entry(
         return variants[resolved]
     except KeyError as exc:
         choices = ", ".join(sorted(variants))
-        raise ValueError(f"Unknown SONIC image variant {resolved!r}; choose one of: {choices}") from exc
+        raise ValueError(
+            f"Unknown SONIC image variant {resolved!r}; choose one of: {choices}"
+        ) from exc
 
 
 def container_image_for_tool(
@@ -268,7 +305,9 @@ def container_image_for_tool(
         resolved_tag = tag or str(entry["tag"])
     else:
         if image_variant:
-            raise ValueError(f"Image variants are only defined for SONIC, got tool={tool!r}")
+            raise ValueError(
+                f"Image variants are only defined for SONIC, got tool={tool!r}"
+            )
         image_name = CONTAINER_IMAGE_NAMES[tool]
         resolved_tag = tag or supported_tool_version(tool)
     resolved_registry = registry or _primary_registry()
@@ -313,7 +352,9 @@ _primary_registry = primary_container_registry
 
 def backup_container_registry() -> str:
     """Resolve the backup registry override, or the committed default."""
-    return os.environ.get("NPA_BACKUP_REGISTRY", "").strip() or BACKUP_CONTAINER_REGISTRY
+    return (
+        os.environ.get("NPA_BACKUP_REGISTRY", "").strip() or BACKUP_CONTAINER_REGISTRY
+    )
 
 
 def container_image_candidates(
@@ -335,13 +376,21 @@ def container_image_candidates(
     is tried first, avoiding a guaranteed-denied cross-region attempt.
     """
     primary = container_image_for_tool(
-        tool, registry=registry, tag=tag, gpu_target=gpu_target, image_variant=image_variant
+        tool,
+        registry=registry,
+        tag=tag,
+        gpu_target=gpu_target,
+        image_variant=image_variant,
     )
     candidates = [primary]
     backup_registry = backup_container_registry()
     if backup_registry:
         backup = container_image_for_tool(
-            tool, registry=backup_registry, tag=tag, gpu_target=gpu_target, image_variant=image_variant
+            tool,
+            registry=backup_registry,
+            tag=tag,
+            gpu_target=gpu_target,
+            image_variant=image_variant,
         )
         if backup != primary:
             candidates.append(backup)
@@ -403,7 +452,9 @@ def publicly_publishable_tools() -> list[str]:
     operator's own EULA acceptance rather than baking it, so every workbench tool
     is publishable. See that set's comment for why the exclusion mechanism is kept.
     """
-    return sorted(tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool))
+    return sorted(
+        tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)
+    )
 
 
 def default_vlm_image(*, registry: str | None = None) -> str:
@@ -425,14 +476,18 @@ def default_workbench_image(*, registry: str | None = None) -> str:
 
 
 def _default_sonic_image() -> dict[str, Any]:
-    return sonic_image_entry(image_variant=str(sonic_image_manifest().get("default_variant", "")))
+    return sonic_image_entry(
+        image_variant=str(sonic_image_manifest().get("default_variant", ""))
+    )
 
 
 def _normalize_gpu_target(gpu_target: str | None) -> str:
     return (gpu_target or "").strip().lower().replace("_", "-")
 
 
-def _normalize_sonic_variant(image_variant: str, variants: dict[str, dict[str, Any]]) -> str:
+def _normalize_sonic_variant(
+    image_variant: str, variants: dict[str, dict[str, Any]]
+) -> str:
     normalized = image_variant.strip().lower().replace("_", "-")
     aliases = {
         "baked": "sonic-l40s-baked",
@@ -455,5 +510,7 @@ def _normalize_sonic_variant(image_variant: str, variants: dict[str, dict[str, A
     resolved = aliases.get(normalized, normalized)
     if resolved not in variants:
         choices = ", ".join(sorted(variants))
-        raise ValueError(f"Unknown SONIC image variant {image_variant!r}; choose one of: {choices}")
+        raise ValueError(
+            f"Unknown SONIC image variant {image_variant!r}; choose one of: {choices}"
+        )
     return resolved

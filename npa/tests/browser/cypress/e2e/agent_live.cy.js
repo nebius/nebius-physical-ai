@@ -45,6 +45,7 @@ function artifactSourceQuery(entry) {
 function sourceAwareLoadRunBody(runId, entry) {
   return {
     run_id: runId,
+    run_ref: String((entry && entry.run_ref) || ""),
     camera: "workspace",
     resource_bucket: String((entry && entry.bucket) || ""),
     project_id: String((entry && entry.project_id) || ""),
@@ -493,6 +494,20 @@ describe("NPA agent UI against live infra", () => {
       expect(String(simViz.artifact_uri || "")).to.eq(String(preferred.s3_uri || ""));
       expect(String(simViz.artifact_render || "")).to.eq(String(preferred.render || ""));
       expect(String(simViz.artifact_key || "")).not.to.include("training-summary.png");
+      expect(String(simViz.artifact_render || "")).to.eq("rerun");
+      expect(String(simViz.artifact_key || "")).to.match(/\/reports\/sim2real\.rrd$/);
+      expect(String(simViz.artifact_uri || "")).to.match(/\/reports\/sim2real\.rrd$/);
+      expect(String(simViz.rrd_uri || "")).to.match(/^file:\/\//);
+      expect(simViz.rerun_ready).to.eq(true);
+      expect(String(simViz.camera || "")).to.eq("heldout-sim");
+      expect(String(simViz.preview_entity || "")).to.eq("camera");
+      expect(simViz.visualization_note || "").to.match(/held-out simulation camera|reference proxy/i);
+      expect(decodeURIComponent(String(simViz.rerun_iframe_url || ""))).to.include(
+        String(simViz.artifact_preview_url || ""),
+      );
+      expect(String(simViz.artifact_preview_url || "")).to.match(
+        /^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/,
+      );
       return simViz;
     };
 
@@ -518,11 +533,28 @@ describe("NPA agent UI against live infra", () => {
           expect(String(statusResponse.body.resolved_prefix || "")).to.eq(
             String(source.entry.resolved_prefix || ""),
           );
+          expect(String(statusResponse.body.artifact_preview_url || "")).to.match(
+            /^\/rerun\/recordings\/cap-[A-Za-z0-9_-]{43}\.rrd$/,
+          );
           cy.reload();
           cy.get("#statusBar", { timeout: 30000 }).should("exist");
+          cy.get("#rerunBundleCover", { timeout: 60000 }).should("have.attr", "hidden");
           cy.get("#simRunId", { timeout: 30000 }).should("contain.text", runId);
           cy.get("#renderedDataSummary").should("contain.text", String(loaded.artifact_render));
           cy.get("#renderedDataSummary").should("not.contain.text", "training-summary.png");
+          cy.get("#tabRerun").click();
+          cy.get("#rerunFrame").should(($frame) => {
+            const src = String($frame.attr("src") || "");
+            expect(decodeURIComponent(src)).to.include(
+              String(statusResponse.body.artifact_preview_url || ""),
+            );
+          });
+          const publicRecordingUrl = `${String(Cypress.env("agentBaseUrl") || Cypress.env("NPA_AGENT_BASE_URL") || Cypress.config("baseUrl") || "").replace(/\/$/, "")}${statusResponse.body.artifact_preview_url}`;
+          cy.request({ url: publicRecordingUrl, failOnStatusCode: false }).then((rrdResp) => {
+            expect(rrdResp.status).to.eq(200);
+            expect(String(rrdResp.body || "").length).to.be.greaterThan(0);
+          });
+          cy.get("#statusBar").should("not.contain.text", "Non-RRD artifact loaded");
         });
       });
     });
@@ -684,7 +716,7 @@ describe("NPA agent UI against live infra", () => {
       const { runId, s3Uri, entry } = found;
       return liveAgentRequest("/api/sim-viz/load-artifact", {
         method: "POST",
-        body: { run_id: runId, s3_uri: s3Uri },
+        body: { run_id: runId, run_ref: String(entry.run_ref || ""), s3_uri: s3Uri },
         timeout: 120000,
       }).then((loadResp) => {
         expect(loadResp.status).to.eq(200);
@@ -704,7 +736,8 @@ describe("NPA agent UI against live infra", () => {
         cy.get("#runIdSelect", { timeout: 30000 }).then(($select) => {
           const options = [...$select[0].options];
           const sourceIndex = options.findIndex((option) =>
-            option.value === runId &&
+            String(option.dataset.runId || "") === runId &&
+            (!entry.run_ref || option.value === String(entry.run_ref)) &&
             String(option.dataset.bucket || "") === String(entry.bucket || "") &&
             String(option.dataset.resolvedPrefix || "") === String(entry.resolved_prefix || "")
           );
@@ -776,16 +809,16 @@ describe("NPA agent UI against live infra", () => {
         cy.get("#tabRerun").click();
         cy.get("#artifactPrefix", { timeout: 30000 }).clear().type(fragment, { delay: 0 });
         cy.get("#runIdSelect option", { timeout: 30000 }).should(($opts) => {
-          const values = [...$opts].map((o) => o.value).filter(Boolean);
-          expect(values, "Rerun picker surfaces the searched run").to.include(targetRunId);
+          const runIds = [...$opts].map((o) => String(o.dataset.runId || "")).filter(Boolean);
+          expect(runIds, "Rerun picker surfaces the searched run").to.include(targetRunId);
         });
 
         // Stages-tab picker: same server-search path must populate the select.
         cy.get("#tabMain").click();
         cy.get("#stagesRunInput", { timeout: 30000 }).clear().type(fragment, { delay: 0 });
         cy.get("#stagesRunSelect option", { timeout: 30000 }).should(($opts) => {
-          const values = [...$opts].map((o) => o.value).filter(Boolean);
-          expect(values, "Stages picker surfaces the searched run").to.include(targetRunId);
+          const runIds = [...$opts].map((o) => String(o.dataset.runId || "")).filter(Boolean);
+          expect(runIds, "Stages picker surfaces the searched run").to.include(targetRunId);
         });
       });
     });

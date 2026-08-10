@@ -1,0 +1,635 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: byof-wan2-2-multigpu
+  description: >
+    Honest four-GPU Wan 2.2 TI2V-5B generation through the pinned upstream
+    code path: torch.distributed.run launches an instrumentation wrapper on
+    four ranks, and that wrapper executes official generate.py as __main__.
+    Every rank participates in one generation using
+    NCCL, FULL_SHARD FSDP for T5 and DiT, and DeepSpeed Ulysses sequence
+    parallelism. Rank zero writes the MP4 only after the shared generation;
+    all ranks then cross the upstream final barrier and emit sanitized
+    topology evidence. The successful BYOF path then publishes a verified Rerun
+    recording that embeds the exact MP4 with the real summary, topology,
+    runtime, and per-rank evidence. CUDA PyTorch and weights remain runtime-fetched
+    into writable volumes and are never baked.
+
+config:
+  bucket: example-bucket
+  prompt: "A red sailboat crosses a sunlit ocean while seabirds circle above, cinematic wide shot."
+
+  repo_url: "https://github.com/Wan-Video/Wan2.2.git"
+  repo_ref: "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
+  base_profile: prebuilt
+  base_image: "tool://wan2-2"
+  build_command: ""
+  pip_extra: viz
+  workload: solution-smoke
+  smoke_command: |
+    set -euo pipefail
+    # User-provided prompt crosses the shell boundary only as base64 data.
+    export WAN22_PROMPT_B64="{{config.prompt|base64}}"
+    export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
+    export WAN22_EXPECTED_WORLD_SIZE="4"
+    export WAN22_OUTPUT_NAME="wan2_2_ti2v_5b_multigpu.mp4"
+    # The runtime pins NCCL 2.27.7: the formerly pinned 2.26.2 initialized all
+    # four B200 ranks but hung on the first all-reduce, while the same isolated
+    # probe passed on every rank after the 2.27.7 correction. Keep the supported
+    # legacy device allocator and shared-memory host fallback used by that probe.
+    export NCCL_CUMEM_ENABLE="0"
+    export NCCL_CUMEM_HOST_ENABLE="0"
+    # The eight-B200 host exposes NVSwitch, but an unprivileged four-GPU
+    # subset cannot reliably allocate NVLink SHARP resources on every rank.
+    # Disable only the NVLS offload; NCCL still uses the NVLink P2P topology.
+    export NCCL_NVLS_ENABLE="0"
+    # The Kubernetes pod exposes eth0 together with host InfiniBand HCAs. Pin
+    # bootstrap to the pod's routable IPv4 interface and bypass IB verbs for
+    # this single-node run. GPU payload traffic still uses NVLink P2P; the
+    # socket path is only the safe fallback when a peer transport is needed.
+    export NCCL_SOCKET_IFNAME="=eth0"
+    export NCCL_SOCKET_FAMILY="AF_INET"
+    export NCCL_IB_DISABLE="1"
+    # PyTorch 2.7 supports NCCL's asynchronous communicator initialization.
+    # Use it to avoid blocking ncclCommInitRank on this containerized B200
+    # driver/runtime combination while keeping async errors fail-closed.
+    export TORCH_NCCL_USE_COMM_NONBLOCKING="1"
+    export NCCL_DEBUG="INFO"
+    export NCCL_DEBUG_SUBSYS="INIT,COLL,ENV"
+    # The wrapper replaces this with one deterministic filename per rank before
+    # process-group initialization so the logs can enter verified RRD lineage.
+    export NCCL_DEBUG_FILE="${NPA_SMOKE_OUTPUT_DIR}/wan2_2_multigpu_nccl_unbound.%p.log"
+    wan-runtime ensure
+    OUT_DIR="${NPA_SMOKE_OUTPUT_DIR}"
+    CHECKPOINT_FILE="${OUT_DIR}/checkpoint_dir.txt"
+    WRAPPER="${OUT_DIR}/wan22_distributed_wrapper.py"
+
+    # Fetch immutable public weights/tokenizer at run time and build the
+    # directory layout expected by upstream generate.py without copying bytes.
+    /opt/byof/.venv/bin/python - <<'PY'
+    from pathlib import Path
+    import os
+    from huggingface_hub import snapshot_download
+
+    model = Path(snapshot_download(
+        repo_id="Wan-AI/Wan2.2-TI2V-5B",
+        revision="921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+        cache_dir=os.path.join(os.environ["WAN22_CACHE_DIR"], "huggingface"),
+        token=os.environ.get("HF_TOKEN") or None,
+    ))
+    tokenizer = Path(snapshot_download(
+        repo_id="google/umt5-xxl",
+        revision="66cb9e7e85526fe440a945569e42c72fb6cbc0ad",
+        cache_dir=os.path.join(os.environ["WAN22_CACHE_DIR"], "huggingface"),
+        allow_patterns=["*.json", "spiece.model", "tokenizer*", "special_tokens_map.json"],
+        token=os.environ.get("HF_TOKEN") or None,
+    ))
+    overlay = Path(os.environ["WAN22_CACHE_DIR"]) / "checkpoint-overlay"
+    overlay.mkdir(parents=True, exist_ok=True)
+    for source in model.iterdir():
+        target = overlay / source.name
+        if not target.exists():
+            target.symlink_to(source, target_is_directory=source.is_dir())
+    google = overlay / "google"
+    google.mkdir(exist_ok=True)
+    umt5 = google / "umt5-xxl"
+    if not umt5.exists():
+        umt5.symlink_to(tokenizer, target_is_directory=True)
+    (Path(os.environ["NPA_SMOKE_OUTPUT_DIR"]) / "checkpoint_dir.txt").write_text(
+        str(overlay) + "\n", encoding="utf-8"
+    )
+    PY
+    CHECKPOINT_DIR="$(tr -d '\n' < "${CHECKPOINT_FILE}")"
+    export WAN22_PROMPT="$(/opt/wan-base/bin/python - <<'PY'
+    import base64
+    import os
+    import sys
+
+    prompt = base64.b64decode(
+        os.environ.get("WAN22_PROMPT_B64", ""), validate=True
+    ).decode("utf-8").strip()
+    if not prompt or "\x00" in prompt:
+        raise SystemExit("decoded Wan prompt is empty or contains NUL")
+    sys.stdout.write(prompt)
+    PY
+    )"
+
+    cat > "${WRAPPER}" <<'PY'
+    from __future__ import annotations
+
+    import ctypes
+    import ctypes.util
+    import hashlib
+    import json
+    import os
+    import runpy
+    import socket
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    import torch
+    import torch.distributed as dist
+    from torch.distributed.fsdp import FullyShardedDataParallel, ShardingStrategy
+
+    # torch.distributed.run executes this generated wrapper by path, which puts
+    # the run directory (not the immutable checkout) at sys.path[0].
+    sys.path.insert(0, "/opt/byof")
+
+    expected = int(os.environ["WAN22_EXPECTED_WORLD_SIZE"])
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    out_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    if expected != 4 or world_size != expected:
+        raise SystemExit(f"required WORLD_SIZE=4, observed {world_size}")
+
+    progress_path = out_dir / f"wan2_2_multigpu_progress_rank_{rank}.json"
+    nccl_log_path = out_dir / f"wan2_2_multigpu_nccl_rank_{rank}.log"
+    os.environ["NCCL_DEBUG_FILE"] = str(nccl_log_path)
+
+    def record_progress(stage: str) -> None:
+        progress_path.write_text(
+            json.dumps(
+                {
+                    "rank": rank,
+                    "local_rank": local_rank,
+                    "world_size": world_size,
+                    "stage": stage,
+                    "time_ns": time.time_ns(),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    record_progress("wrapper_started")
+
+    evidence = {
+        "rank": rank,
+        "local_rank": local_rank,
+        "world_size": world_size,
+        "hostname_sha256": hashlib.sha256(socket.gethostname().encode()).hexdigest(),
+        "process_group_initialized": False,
+        "backend": None,
+        "nccl_all_reduce": None,
+        "fsdp_wrappers": [],
+        "ulysses_distributed_attention_calls": 0,
+        "ulysses_all_to_all_calls": 0,
+        "barrier_calls": 0,
+        "observer_final_barrier": False,
+        "nccl_cumem_enable": os.environ.get("NCCL_CUMEM_ENABLE"),
+        "nccl_cumem_host_enable": os.environ.get("NCCL_CUMEM_HOST_ENABLE"),
+        "nccl_nvls_enable": os.environ.get("NCCL_NVLS_ENABLE"),
+        "nccl_socket_ifname": os.environ.get("NCCL_SOCKET_IFNAME"),
+        "nccl_socket_family": os.environ.get("NCCL_SOCKET_FAMILY"),
+        "nccl_ib_disable": os.environ.get("NCCL_IB_DISABLE"),
+        "torch_nccl_use_comm_nonblocking": os.environ.get("TORCH_NCCL_USE_COMM_NONBLOCKING"),
+    }
+
+    original_init = dist.init_process_group
+    original_barrier = dist.barrier
+    original_destroy = dist.destroy_process_group
+
+    def loaded_nccl_evidence() -> dict:
+        library_name = ctypes.util.find_library("nccl") or "libnccl.so.2"
+        library = ctypes.CDLL(library_name)
+        version_code = ctypes.c_int()
+        result = int(library.ncclGetVersion(ctypes.byref(version_code)))
+        if result != 0:
+            raise RuntimeError(f"ncclGetVersion failed with code {result}")
+        value = int(version_code.value)
+        version = f"{value // 10000}.{(value // 100) % 100}.{value % 100}"
+        if version != "2.27.7":
+            raise RuntimeError(f"loaded NCCL version is {version}, not 2.27.7")
+        mapped = sorted({
+            line.rsplit(None, 1)[-1]
+            for line in Path("/proc/self/maps").read_text(encoding="utf-8").splitlines()
+            if "libnccl.so" in line and "/" in line
+        })
+        if not mapped or not Path(mapped[0]).name.startswith("libnccl.so.2"):
+            raise RuntimeError(f"cannot identify loaded NCCL library: {mapped}")
+        return {
+            "version": version,
+            "version_code": value,
+            "library_basename": Path(mapped[0]).name,
+            "mapped_path_sha256": hashlib.sha256(mapped[0].encode()).hexdigest(),
+        }
+
+    def instrumented_init(*args, **kwargs):
+        record_progress("process_group_init_started")
+        result = original_init(*args, **kwargs)
+        record_progress("process_group_initialized")
+        if dist.get_world_size() != expected or dist.get_rank() != rank:
+            raise RuntimeError("NCCL process-group rank/world mismatch")
+        probe = torch.tensor(float(rank + 1), device=f"cuda:{local_rank}")
+        record_progress("nccl_probe_started")
+        dist.all_reduce(probe)
+        wanted = expected * (expected + 1) / 2
+        finite = bool(torch.isfinite(probe).item())
+        observed = float(probe.item())
+        if not finite or observed != wanted:
+            raise RuntimeError(f"NCCL all-reduce failed: {observed} != {wanted}")
+        evidence["process_group_initialized"] = True
+        evidence["backend"] = str(dist.get_backend())
+        evidence["nccl_all_reduce"] = {"finite": finite, "observed_sum": observed, "expected_sum": wanted}
+        evidence["loaded_nccl"] = loaded_nccl_evidence()
+        record_progress("nccl_probe_completed")
+        return result
+
+    def instrumented_barrier(*args, **kwargs):
+        result = original_barrier(*args, **kwargs)
+        evidence["barrier_calls"] += 1
+        return result
+
+    dist.init_process_group = instrumented_init
+    dist.barrier = instrumented_barrier
+
+    # Wrap the exact bindings used by WanTI2V rather than substituting another
+    # execution path. Wan's package initializer eagerly imports Ulysses, so
+    # replace the Ulysses module global directly after import. Its
+    # distributed_attention function resolves this global on every call.
+    import wan.distributed.sequence_parallel as sequence_parallel
+    import wan.distributed.ulysses as ulysses
+    import wan.textimage2video as textimage2video
+    from wan.modules import attention as attention_module
+
+    record_progress("upstream_modules_imported")
+
+    ulysses.flash_attention = attention_module.attention
+    attention_binding = ulysses.flash_attention
+    if attention_binding is not attention_module.attention:
+        raise RuntimeError("Ulysses is not bound to Wan native PyTorch SDPA")
+
+    original_distributed_attention = sequence_parallel.distributed_attention
+    def instrumented_distributed_attention(*args, **kwargs):
+        evidence["ulysses_distributed_attention_calls"] += 1
+        return original_distributed_attention(*args, **kwargs)
+    sequence_parallel.distributed_attention = instrumented_distributed_attention
+
+    original_all_to_all = ulysses.all_to_all
+    def instrumented_all_to_all(*args, **kwargs):
+        evidence["ulysses_all_to_all_calls"] += 1
+        return original_all_to_all(*args, **kwargs)
+    ulysses.all_to_all = instrumented_all_to_all
+
+    original_shard = textimage2video.shard_model
+    def instrumented_shard(model, *args, **kwargs):
+        source_class = type(model).__name__
+        sp_active = False
+        if source_class == "WanModel":
+            sp_active = (
+                getattr(model.forward, "__func__", None) is sequence_parallel.sp_dit_forward
+                and all(
+                    getattr(block.self_attn.forward, "__func__", None)
+                    is sequence_parallel.sp_attn_forward
+                    for block in model.blocks
+                )
+            )
+            if not sp_active:
+                raise RuntimeError("Wan DiT sequence-parallel method bindings are inactive before FSDP")
+        wrapped = original_shard(model, *args, **kwargs)
+        if not isinstance(wrapped, FullyShardedDataParallel):
+            raise RuntimeError(f"{source_class} was not wrapped by FSDP")
+        strategy = wrapped.sharding_strategy
+        if strategy != ShardingStrategy.FULL_SHARD:
+            raise RuntimeError(f"{source_class} FSDP strategy is {strategy}, not FULL_SHARD")
+        evidence["fsdp_wrappers"].append({
+            "source_class": source_class,
+            "wrapper_class": type(wrapped).__name__,
+            "sharding_strategy": str(strategy),
+            "sequence_parallel_active_before_wrap": sp_active,
+        })
+        return wrapped
+    textimage2video.shard_model = instrumented_shard
+
+    def uuid_hash() -> str:
+        query = subprocess.run(
+            ["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader,nounits"],
+            check=True, capture_output=True, text=True,
+        )
+        visible = [line.strip() for line in query.stdout.splitlines() if line.strip()]
+        if len(visible) != expected:
+            raise RuntimeError(f"expected {expected} visible GPU UUIDs, observed {len(visible)}")
+        value = visible[local_rank]
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    def instrumented_destroy(*args, **kwargs):
+        # generate.py calls this immediately after rank zero saves the MP4 and
+        # every rank completes its final barrier.
+        original_barrier()
+        evidence["observer_final_barrier"] = True
+        props = torch.cuda.get_device_properties(local_rank)
+        evidence["device"] = {
+            "cuda_index": local_rank,
+            "name": props.name,
+            "compute_capability": list(torch.cuda.get_device_capability(local_rank)),
+            "total_memory_bytes": props.total_memory,
+            "uuid_sha256": uuid_hash(),
+        }
+        evidence["current_cuda_device"] = torch.cuda.current_device()
+        evidence["torch"] = torch.__version__
+        evidence["torch_cuda"] = torch.version.cuda
+        evidence["torch_cuda_arch_list"] = torch.cuda.get_arch_list()
+        evidence["nccl_build_api_version"] = list(torch.cuda.nccl.version())
+        (out_dir / f"wan2_2_multigpu_rank_{rank}.json").write_text(
+            json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        gathered = [None for _ in range(expected)]
+        dist.all_gather_object(gathered, evidence)
+        validation_error = [None]
+        if rank == 0:
+            try:
+                ranks = sorted(item["rank"] for item in gathered)
+                local_ranks = sorted(item["local_rank"] for item in gathered)
+                uuid_hashes = {item["device"]["uuid_sha256"] for item in gathered}
+                host_hashes = {item["hostname_sha256"] for item in gathered}
+                for item in gathered:
+                    wrappers = item["fsdp_wrappers"]
+                    wrapper_sources = {wrapper["source_class"] for wrapper in wrappers}
+                    if (
+                        not item["process_group_initialized"]
+                        or item["backend"] != "nccl"
+                        or not item["nccl_all_reduce"]["finite"]
+                        or item["ulysses_distributed_attention_calls"] <= 0
+                        or item["ulysses_all_to_all_calls"] <= 0
+                        or item["barrier_calls"] <= 0
+                        or not item["observer_final_barrier"]
+                        or item["nccl_cumem_enable"] != "0"
+                        or item["nccl_cumem_host_enable"] != "0"
+                        or item["nccl_nvls_enable"] != "0"
+                        or item["nccl_socket_ifname"] != "=eth0"
+                        or item["nccl_socket_family"] != "AF_INET"
+                        or item["nccl_ib_disable"] != "1"
+                        or item["torch_nccl_use_comm_nonblocking"] != "1"
+                        or item["loaded_nccl"]["version"] != "2.27.7"
+                        or item["loaded_nccl"]["version_code"] != 22707
+                        or len(wrappers) != 2
+                        or "WanModel" not in wrapper_sources
+                        or not any(wrapper["sequence_parallel_active_before_wrap"] for wrapper in wrappers)
+                        or item["device"]["compute_capability"] != [10, 0]
+                        or "sm_100" not in item["torch_cuda_arch_list"]
+                    ):
+                        raise RuntimeError(f"rank evidence failed closed: rank={item['rank']}")
+                if ranks != list(range(expected)) or local_ranks != list(range(expected)):
+                    raise RuntimeError(f"rank topology mismatch: ranks={ranks}, local_ranks={local_ranks}")
+                if len(uuid_hashes) != expected or len(host_hashes) != 1:
+                    raise RuntimeError(
+                        f"required four unique GPUs on one node: GPUs={len(uuid_hashes)}, nodes={len(host_hashes)}"
+                    )
+                topology = {
+                    "schema": "npa.workbench.byof.wan2_2_multigpu_topology.v1",
+                    "world_size": expected,
+                    "local_world_size": expected,
+                    "node_count": 1,
+                    "distributed_backend": "nccl",
+                    "fsdp": {"enabled": True, "sharding_strategy": "FULL_SHARD", "t5": True, "dit": True},
+                    "ulysses": {"enabled": True, "size": expected, "num_attention_heads": 24},
+                    "rank_evidence": gathered,
+                }
+                (out_dir / "wan2_2_multigpu_topology.json").write_text(
+                    json.dumps(topology, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+                )
+            except Exception as exc:
+                validation_error[0] = f"{type(exc).__name__}: {exc}"
+        dist.broadcast_object_list(validation_error, src=0)
+        original_barrier()
+        result = original_destroy(*args, **kwargs)
+        if validation_error[0]:
+            raise RuntimeError(f"distributed evidence validation failed: {validation_error[0]}")
+        record_progress("process_group_destroyed")
+        return result
+
+    dist.destroy_process_group = instrumented_destroy
+    runpy.run_path("/opt/byof/generate.py", run_name="__main__")
+    PY
+
+    # Invoke the launcher as a module so its interpreter is the accepted
+    # runtime environment. Console-script shebangs are not relocatable when
+    # that environment is copied from the runtime cache into the work pod.
+    /opt/byof/.venv/bin/python -m torch.distributed.run \
+      --standalone --nnodes=1 --nproc_per_node=4 \
+      "${WRAPPER}" \
+      --task ti2v-5B \
+      --size '1280*704' \
+      --ckpt_dir "${CHECKPOINT_DIR}" \
+      --dit_fsdp --t5_fsdp --ulysses_size 4 \
+      --prompt "${WAN22_PROMPT}" \
+      --frame_num 17 --sample_steps 8 --base_seed 42 \
+      --save_file "${OUT_DIR}/${WAN22_OUTPUT_NAME}"
+
+    /opt/byof/.venv/bin/python - <<'PY'
+    from __future__ import annotations
+
+    import hashlib
+    import importlib.metadata
+    import json
+    import os
+    import subprocess
+    from pathlib import Path
+
+    import cv2
+    import numpy as np
+    import torch
+
+    out = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    video = out / os.environ["WAN22_OUTPUT_NAME"]
+    topology = json.loads((out / "wan2_2_multigpu_topology.json").read_text(encoding="utf-8"))
+    expected = int(os.environ["WAN22_EXPECTED_WORLD_SIZE"])
+    if topology["world_size"] != expected or len(topology["rank_evidence"]) != expected:
+        raise SystemExit("topology artifact does not contain every expected rank")
+    progress = []
+    rank_logs = []
+    for rank in range(expected):
+        progress_path = out / f"wan2_2_multigpu_progress_rank_{rank}.json"
+        marker = json.loads(progress_path.read_text(encoding="utf-8"))
+        if (
+            marker.get("rank") != rank
+            or marker.get("local_rank") != rank
+            or marker.get("world_size") != expected
+            or marker.get("stage") != "process_group_destroyed"
+        ):
+            raise SystemExit(f"rank {rank} lacks a valid process-group teardown marker")
+        progress.append(marker)
+        log_path = out / f"wan2_2_multigpu_nccl_rank_{rank}.log"
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        version_observed = "NCCL version 2.27.7" in log_text
+        init_observed = "Init COMPLETE" in log_text
+        if not version_observed or not init_observed:
+            raise SystemExit(f"rank {rank} NCCL log lacks version/init evidence")
+        rank_logs.append({
+            "rank": rank,
+            "filename": log_path.name,
+            "size_bytes": log_path.stat().st_size,
+            "sha256": hashlib.sha256(log_path.read_bytes()).hexdigest(),
+            "version_line_observed": version_observed,
+            "init_complete_observed": init_observed,
+        })
+    loaded_versions = {
+        item["loaded_nccl"]["version"] for item in topology["rank_evidence"]
+    }
+    if loaded_versions != {"2.27.7"}:
+        raise SystemExit(f"rank loaded NCCL versions disagree: {loaded_versions}")
+    nccl_summary = {
+        "schema": "npa.workbench.byof.wan2_2_multigpu_nccl_summary.v1",
+        "loaded_version": "2.27.7",
+        "process_group_destroyed_on_all_ranks": True,
+        "rank_logs": rank_logs,
+    }
+    (out / "wan2_2_multigpu_nccl_summary.json").write_text(
+        json.dumps(nccl_summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    capture = cv2.VideoCapture(str(video))
+    if not capture.isOpened():
+        raise SystemExit("generated MP4 cannot be opened")
+    frames = []
+    while True:
+        ok, frame = capture.read()
+        if not ok:
+            break
+        frames.append(frame)
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    capture.release()
+    if len(frames) != 17 or fps <= 0:
+        raise SystemExit(f"decoded video gate failed: frames={len(frames)}, fps={fps}")
+    shapes = {tuple(frame.shape) for frame in frames}
+    if shapes != {(704, 1280, 3)}:
+        raise SystemExit(f"decoded dimensions gate failed: {shapes}")
+    size = video.stat().st_size
+    if size < 4096:
+        raise SystemExit(f"MP4 is implausibly small: {size}")
+    spatial_std = max(float(np.std(frame)) for frame in frames)
+    pixel_range = int(max(int(frame.max()) for frame in frames) - min(int(frame.min()) for frame in frames))
+    temporal_delta = float(np.mean([
+        np.mean(np.abs(frames[index].astype(np.float32) - frames[index - 1].astype(np.float32)))
+        for index in range(1, len(frames))
+    ]))
+    if spatial_std < 1.0 or pixel_range < 4 or temporal_delta <= 0.001:
+        raise SystemExit(
+            f"non-uniform content gate failed: std={spatial_std}, range={pixel_range}, delta={temporal_delta}"
+        )
+    ffprobe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", str(video)],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    if ffprobe != "h264":
+        raise SystemExit(f"expected H.264 video stream, observed {ffprobe!r}")
+    digest = hashlib.sha256(video.read_bytes()).hexdigest()
+    driver = subprocess.run(
+        ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader,nounits"],
+        check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    capabilities = [
+        "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
+        "wan2.2_distributed_rank_topology_validation",
+        "wan2.2_decoded_mp4_validation",
+    ]
+    result = {
+        "schema": "npa.workbench.byof.wan2_2_ti2v_5b_multigpu.v1",
+        "solution": "wan2.2",
+        "capability": capabilities[0],
+        "upstream": {
+            "repo": "https://github.com/Wan-Video/Wan2.2.git",
+            "ref": "42bf4cfaa384bc21833865abc2f9e6c0e67233dc",
+            "entrypoint": "python -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node=4 wan22_distributed_wrapper.py",
+            "wrapper_execution": "runpy.run_path('/opt/byof/generate.py', run_name='__main__')",
+        },
+        "model": {"id": "Wan-AI/Wan2.2-TI2V-5B", "ref": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e", "weights_baked": False},
+        "tokenizer": {"id": "google/umt5-xxl", "ref": "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"},
+        "distributed": {
+            "world_size": expected, "local_world_size": expected, "node_count": 1,
+            "backend": "nccl", "fsdp": topology["fsdp"], "ulysses": topology["ulysses"],
+            "topology_filename": "wan2_2_multigpu_topology.json",
+        },
+        "generation": {"prompt": os.environ["WAN22_PROMPT"], "seed": 42, "width": 1280, "height": 704, "frames": 17, "fps": 24.0, "steps": 8},
+        "observed": {"width": 1280, "height": 704, "channels": 3, "frame_count": len(frames), "fps": fps, "codec": ffprobe, "max_spatial_std": spatial_std, "pixel_range": pixel_range, "mean_temporal_abs_delta": temporal_delta},
+        "output": {"filename": video.name, "size_bytes": size, "sha256": digest},
+        "runtime": {"torch": torch.__version__, "torch_cuda": torch.version.cuda, "torch_cuda_arch_list": torch.cuda.get_arch_list(), "driver_versions": sorted(set(value.strip() for value in driver if value.strip())), "nccl_build_api_version": topology["rank_evidence"][0]["nccl_build_api_version"], "nccl_loaded_version": "2.27.7"},
+        "capabilities_exercised": capabilities,
+        "deferred": [],
+        "not_claimed": ["wan2.2_ti2v_5b_image_to_video", "wan2.2_action_prediction", "wan2.2_training"],
+    }
+    required = set(capabilities)
+    if required != set(result["capabilities_exercised"]) or result["deferred"]:
+        raise SystemExit("multi-GPU capability hard gate failed")
+    (out / "wan2_2_ti2v_5b_multigpu.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    inventory = {
+        "schema": "npa.workbench.byof.wan2_2_multigpu_runtime_inventory.v1",
+        "non_root": os.getuid() != 0,
+        "source_ref": result["upstream"]["ref"],
+        "weights_baked": False,
+        "customer_data_in_image": False,
+        "runtime": result["runtime"],
+        "devices": [item["device"] for item in topology["rank_evidence"]],
+        "package_versions": {name: importlib.metadata.version(name) for name in ("torch", "torchvision", "transformers", "diffusers", "opencv-python-headless", "nvidia-nccl-cu12")},
+    }
+    if not inventory["non_root"]:
+        raise SystemExit("Wan multi-GPU image must execute as non-root")
+    (out / "wan2_2_multigpu_runtime_inventory.json").write_text(
+        json.dumps(inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+    PY
+  solution_name: "wan2.2-multigpu"
+  capability_name: "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses"
+  smoke_artifact_name: "wan2_2_ti2v_5b_multigpu.json"
+  resource_profile_yaml: "byof-solution-smoke-wan22-b200-4gpu"
+  task: "ti2v-5B"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  # Explicit indefinite wait: zero is the generic immediate-status behavior.
+  wait_timeout: "-1"
+  poll_interval: "60"
+  output_root: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu"
+  summary_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/npa_byof_summary.json"
+  artifact_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_ti2v_5b_multigpu.json"
+  topology_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_multigpu_topology.json"
+  inventory_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_multigpu_runtime_inventory.json"
+  video_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_ti2v_5b_multigpu.mp4"
+  rrd_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_ti2v_5b_multigpu.rrd"
+  rrd_manifest_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2-multigpu/{{run.id}}/wan2_2_ti2v_5b_multigpu_rrd_manifest.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:4
+    cpus: 32
+    memory: 256Gi
+    disk_size: 200
+
+initial: generate
+
+states:
+  generate:
+    description: >
+      Launch an instrumentation wrapper on four B200 ranks with
+      torch.distributed.run; have that wrapper execute pinned official
+      generate.py as __main__ with NCCL, FULL_SHARD FSDP for T5 and DiT, and
+      Ulysses size four; validate all rank, topology, barrier, MP4, and content
+      hard gates.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.artifact_uri}}"
+        schema: npa.workbench.byof.wan2_2_ti2v_5b_multigpu.v1
+      - uri: "{{config.topology_uri}}"
+        schema: npa.workbench.byof.wan2_2_multigpu_topology.v1
+      - uri: "{{config.inventory_uri}}"
+        schema: npa.workbench.byof.wan2_2_multigpu_runtime_inventory.v1
+      - uri: "{{config.video_uri}}"
+        schema: video/mp4
+      - uri: "{{config.rrd_uri}}"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.rrd_manifest_uri}}"
+        schema: npa.workbench.wan2_2.rerun_manifest.v1
+    terminal: true

@@ -70,6 +70,11 @@ TOOL_REF_PIP_EXTRAS: dict[str, str] = {
     "workbench.sonic": "sonic",
 }
 
+# Spec-selectable extras are a deliberately closed set. This is declarative
+# metadata, not a package string passthrough, so a workflow cannot install an
+# arbitrary dependency from configuration.
+DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
+
 #: toolRef prefix -> third-party pip requirements the tool shells out to, with the executable
 #: that proves each is present. `cosmos fetch` runs `huggingface-cli`; the retired
 #: cosmos3-ea-fetch.yaml pip-installed `huggingface_hub[cli]` in its setup, and that one line
@@ -136,7 +141,9 @@ def tool_vendor_interpreters(tool_ref: str) -> tuple[str, ...]:
         return TOOL_REF_VENDOR_INTERPRETERS[tool_ref]
     best = ""
     for prefix in TOOL_REF_VENDOR_INTERPRETERS:
-        if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(prefix) > len(best):
+        if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(
+            prefix
+        ) > len(best):
             best = prefix
     return TOOL_REF_VENDOR_INTERPRETERS.get(best, ())
 
@@ -168,7 +175,7 @@ def render_vendor_interpreter_setup(candidates: Sequence[str]) -> str:
     install_block = ""
     for flags, why in attempts:
         install_block += (
-            f'    if ! "$npa_vendor_python" -c \'import npa.workbench\' >/dev/null 2>&1; then\n'
+            f"    if ! \"$npa_vendor_python\" -c 'import npa.workbench' >/dev/null 2>&1; then\n"
             f'      echo "installing npa into $npa_vendor_python {why}" >&2\n'
             f'      "$npa_vendor_python" -m pip install -q {flags}-e "$npa_vendor_src" \\\n'
             f'        || "$npa_vendor_python" -m pip install -q {flags}-e "$npa_vendor_src" '
@@ -312,7 +319,9 @@ def tool_pip_requirements(tool_ref: str) -> tuple[tuple[str, str], ...]:
         return TOOL_REF_PIP_REQUIREMENTS[tool_ref]
     best = ""
     for prefix in TOOL_REF_PIP_REQUIREMENTS:
-        if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(prefix) > len(best):
+        if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(
+            prefix
+        ) > len(best):
             best = prefix
     return TOOL_REF_PIP_REQUIREMENTS.get(best, ())
 
@@ -332,7 +341,7 @@ def render_pip_requirements_setup(requirements: Sequence[tuple[str, str]]) -> st
         "# the stage will actually run (the vendor one when setup switched to it).\n"
         "npa_req_python=python3\n"
         "if [ -s /tmp/npa-python ]; then\n"
-        "  npa_req_python=\"$(cat /tmp/npa-python)\"\n"
+        '  npa_req_python="$(cat /tmp/npa-python)"\n'
         "fi\n"
     ]
     for probe, requirement in requirements:
@@ -368,26 +377,28 @@ def render_pip_extra_setup(extra: str) -> str:
         return ""
     return (
         f"# Stage needs the npa[{extra}] optional dependency group.\n"
-        "npa_src_root=\"\"\n"
+        'npa_src_root=""\n'
         "if [ -s /tmp/npa-src-root ]; then\n"
-        "  npa_src_root=\"$(cat /tmp/npa-src-root)\"\n"
+        '  npa_src_root="$(cat /tmp/npa-src-root)"\n'
         "elif [ -d /opt/nebius-physical-ai/npa ]; then\n"
         "  npa_src_root=/opt/nebius-physical-ai/npa\n"
         "elif [ -d /tmp/npa-src ]; then\n"
         "  npa_src_root=/tmp/npa-src\n"
         "fi\n"
-        "if [ -n \"$npa_src_root\" ]; then\n"
-        f"  echo \"installing npa[{extra}] from $npa_src_root\" >&2\n"
+        'if [ -n "$npa_src_root" ]; then\n'
+        f'  echo "installing npa[{extra}] from $npa_src_root" >&2\n'
         # Compose with printf, never "${var}[extra]": braced expansions are what the
         # rendered-YAML placeholder guard (assert_no_unresolved_placeholders) rejects,
         # because SkyPilot would leave a literal ${NAME} in the document.
-        f"  npa_extra_target=\"$(printf '%s[{extra}]' \"$npa_src_root\")\"\n"
-        "  npa_pip_install -e \"$npa_extra_target\"\n"
+        f'  npa_extra_target="$(printf \'%s[{extra}]\' "$npa_src_root")"\n'
+        '  npa_pip_install -e "$npa_extra_target"\n'
         "else\n"
         f"  echo 'cannot locate the npa source tree to install npa[{extra}]' >&2\n"
         "  exit 1\n"
         "fi\n"
     )
+
+
 #: Task-level SkyPilot config fields an npa.workflow resource profile may carry.
 #: SkyPilot 0.12 accepts these inside a task's ``config:`` block, and it APPENDS
 #: (rather than replaces) lists inside ``kubernetes.pod_config`` -- so a spec can
@@ -508,7 +519,9 @@ def render_self_hosted_vlm_preamble(config: Mapping[str, Any]) -> str:
     trust_flag = " --trust-remote-code" if trust_remote_code else ""
     interval = VLM_SERVER_POLL_INTERVAL_SECONDS
     try:
-        ready_seconds = int(config.get("vlm_serve_ready_seconds") or DEFAULT_VLM_SERVER_READY_SECONDS)
+        ready_seconds = int(
+            config.get("vlm_serve_ready_seconds") or DEFAULT_VLM_SERVER_READY_SECONDS
+        )
     except (TypeError, ValueError) as exc:
         raise NpaWorkflowRenderError(
             f"config.vlm_serve_ready_seconds must be an integer number of seconds, "
@@ -521,7 +534,8 @@ def render_self_hosted_vlm_preamble(config: Mapping[str, Any]) -> str:
     attempts = ready_seconds // interval
     flashinfer_sampler = (
         "1"
-        if str(config.get("vlm_use_flashinfer_sampler") or "0").strip() in {"1", "true", "True"}
+        if str(config.get("vlm_use_flashinfer_sampler") or "0").strip()
+        in {"1", "true", "True"}
         else "0"
     )
     return (
@@ -559,32 +573,32 @@ def render_self_hosted_vlm_preamble(config: Mapping[str, Any]) -> str:
         "        break\n"
         "PY\n"
         "  )\n"
-        "  if [ -n \"$npa_cuda_home\" ]; then\n"
+        '  if [ -n "$npa_cuda_home" ]; then\n'
         "    export CUDA_HOME=$npa_cuda_home\n"
         "    export PATH=$npa_cuda_home/bin:$PATH\n"
-        "    echo \"using pip CUDA toolkit at $npa_cuda_home\" >&2\n"
+        '    echo "using pip CUDA toolkit at $npa_cuda_home" >&2\n'
         "  fi\n"
         "fi\n"
         # Belt and braces: the sampler that wants the JIT has a pure-PyTorch equivalent, so
         # a task image without a compiler must not be able to break server startup at all.
         # Set config.vlm_use_flashinfer_sampler=1 to opt back in.
         f"export VLLM_USE_FLASHINFER_SAMPLER={flashinfer_sampler}\n"
-        "echo \"starting vLLM for $npa_vlm_model on port $npa_vlm_port\" >&2\n"
+        'echo "starting vLLM for $npa_vlm_model on port $npa_vlm_port" >&2\n'
         # vLLM 0.26 removed the executable ``__main__`` block from
         # ``vllm.entrypoints.openai.api_server``.  Importing that module with
         # ``python -m`` can therefore leave no OpenAI server behind while an
         # unrelated process on the same port still makes a /health-only probe
         # look ready.  ``vllm serve`` is the supported, versioned CLI entrypoint.
-        "vllm serve \"$npa_vlm_model\" --host 0.0.0.0 "
-        "--port \"$npa_vlm_port\" "
-        f"--served-model-name \"$npa_vlm_model\"{trust_flag} "
-        "> \"$npa_vlm_log\" 2>&1 &\n"
+        'vllm serve "$npa_vlm_model" --host 0.0.0.0 '
+        '--port "$npa_vlm_port" '
+        f'--served-model-name "$npa_vlm_model"{trust_flag} '
+        '> "$npa_vlm_log" 2>&1 &\n'
         "npa_vlm_pid=$!\n"
         # Never leave a server (and its GPU memory) behind, on success or failure.
         "trap 'kill \"$npa_vlm_pid\" 2>/dev/null || true' EXIT\n"
         # Health-wait in python3, not curl: curl is not guaranteed in every task image,
         # and python3 is (setup records an interpreter and the shim puts it on PATH).
-        "python3 - \"$npa_vlm_pid\" \"$npa_vlm_port\" \"$npa_vlm_log\" "
+        'python3 - "$npa_vlm_pid" "$npa_vlm_port" "$npa_vlm_log" '
         "\"$npa_vlm_model\" <<'PY'\n"
         "import os\n"
         "import sys\n"
@@ -681,7 +695,7 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
     return (
         "set -euo pipefail\n"
         # Use unbraced $HOME/$PATH so SkyPilot placeholder lint stays clean.
-        "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+        'export PATH="$HOME/.local/bin:$PATH"\n'
         # Interpreter-independent import path for npa. `pip install -e` binds npa to
         # whichever python ran pip, and the command below runs through `bash -lc`,
         # whose login profile can resolve a DIFFERENT python3 (observed on SkyPilot's
@@ -694,7 +708,7 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         "set +u\n"
         "if [ -d /etc/profile.d ]; then\n"
         "  for profile in /etc/profile.d/*.sh; do\n"
-        "    [ -r \"$profile\" ] && . \"$profile\" || true\n"
+        '    [ -r "$profile" ] && . "$profile" || true\n'
         "  done\n"
         "fi\n"
         # Make `python3` mean "the interpreter npa is installed in" for this stage.
@@ -716,19 +730,19 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # Written without ${...} so the rendered YAML stays free of anything SkyPilot
         # would read as one of its own placeholders.
         "if [ -d /tmp/npa-src-overlay/src ]; then\n"
-        "  if [ -n \"$PYTHONPATH\" ]; then\n"
-        "    PYTHONPATH=\"/tmp/npa-src-overlay/src:$PYTHONPATH\"\n"
+        '  if [ -n "$PYTHONPATH" ]; then\n'
+        '    PYTHONPATH="/tmp/npa-src-overlay/src:$PYTHONPATH"\n'
         "  else\n"
         "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
         "  fi\n"
         "  export PYTHONPATH\n"
         "fi\n"
-        "npa_python=\"\"\n"
+        'npa_python=""\n'
         "if [ -s /tmp/npa-python ]; then\n"
-        "  npa_python=\"$(cat /tmp/npa-python)\"\n"
-        "  if [ ! -x \"$npa_python\" ]; then\n"
-        "    echo \"recorded npa interpreter is not executable: $npa_python\" >&2\n"
-        "    npa_python=\"\"\n"
+        '  npa_python="$(cat /tmp/npa-python)"\n'
+        '  if [ ! -x "$npa_python" ]; then\n'
+        '    echo "recorded npa interpreter is not executable: $npa_python" >&2\n'
+        '    npa_python=""\n'
         "  fi\n"
         "fi\n"
         # A vendor image can bake a STALE npa source tree on PYTHONPATH, which shadows every
@@ -738,21 +752,21 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # do this (lerobot was job 250), so the engine handles it rather than each image.
         # Prepending the recorded source is a no-op wherever the install already wins.
         # (no ${...} expansions here: the renderer's placeholder guard rejects them)
-        "if [ -s /tmp/npa-src-root ] && [ -d \"$(cat /tmp/npa-src-root)/src\" ]; then\n"
-        "  npa_src_path=\"$(cat /tmp/npa-src-root)/src\"\n"
-        "  if [ -z \"$PYTHONPATH\" ]; then\n"
-        "    export PYTHONPATH=\"$npa_src_path\"\n"
+        'if [ -s /tmp/npa-src-root ] && [ -d "$(cat /tmp/npa-src-root)/src" ]; then\n'
+        '  npa_src_path="$(cat /tmp/npa-src-root)/src"\n'
+        '  if [ -z "$PYTHONPATH" ]; then\n'
+        '    export PYTHONPATH="$npa_src_path"\n'
         "  else\n"
-        "    case \":$PYTHONPATH:\" in\n"
-        "      *\":$npa_src_path:\"*) : ;;\n"
-        "      *) export PYTHONPATH=\"$npa_src_path:$PYTHONPATH\" ;;\n"
+        '    case ":$PYTHONPATH:" in\n'
+        '      *":$npa_src_path:"*) : ;;\n'
+        '      *) export PYTHONPATH="$npa_src_path:$PYTHONPATH" ;;\n'
         "    esac\n"
         "  fi\n"
-        "  echo \"npa source path: $npa_src_path\" >&2\n"
+        '  echo "npa source path: $npa_src_path" >&2\n'
         "fi\n"
-        "if [ -n \"$npa_python\" ]; then\n"
+        'if [ -n "$npa_python" ]; then\n'
         "  mkdir -p /tmp/npa-shim\n"
-        "  printf '#!/bin/sh\\nexec \"%s\" \"$@\"\\n' \"$npa_python\" "
+        '  printf \'#!/bin/sh\\nexec "%s" "$@"\\n\' "$npa_python" '
         "> /tmp/npa-shim/python3\n"
         "  chmod +x /tmp/npa-shim/python3\n"
         # ... and `npa` must mean the SAME install. A vendor image can bake its own older npa
@@ -760,22 +774,22 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # succeeds), the overlay lands in the vendor interpreter, and the stage runs the stale
         # CLI. Live job 284: `No such command 'cosmos2'. Did you mean 'cosmos'?` — from an npa
         # predating the subcommand, while the recorded interpreter had the current one.
-        "  printf '#!/bin/sh\\nexec \"%s\" -c \"from npa.cli.main import app_entry; "
-        "app_entry()\" \"$@\"\\n' \"$npa_python\" > /tmp/npa-shim/npa\n"
+        '  printf \'#!/bin/sh\\nexec "%s" -c "from npa.cli.main import app_entry; '
+        'app_entry()" "$@"\\n\' "$npa_python" > /tmp/npa-shim/npa\n'
         "  chmod +x /tmp/npa-shim/npa\n"
-        "  export PATH=\"/tmp/npa-shim:$PATH\"\n"
+        '  export PATH="/tmp/npa-shim:$PATH"\n'
         # Console scripts installed next to that interpreter must be resolvable by
         # name too, which is the same gap the `npa` symlink in setup works around.
         # Live: vLLM's FlashInfer JIT shells out to `ninja`, which ships as a vLLM
         # dependency in the interpreter's bin dir — a directory that is not on the
         # stage shell's PATH, which is the whole reason the shim above exists.
         # Appended, not prepended, so it cannot shadow a system tool.
-        "  npa_scripts=\"$(\"$npa_python\" -c 'import sysconfig; "
-        "print(sysconfig.get_path(\"scripts\"))' 2>/dev/null || true)\"\n"
-        "  if [ -n \"$npa_scripts\" ] && [ -d \"$npa_scripts\" ]; then\n"
-        "    export PATH=\"$PATH:$npa_scripts\"\n"
+        '  npa_scripts="$("$npa_python" -c \'import sysconfig; '
+        'print(sysconfig.get_path("scripts"))\' 2>/dev/null || true)"\n'
+        '  if [ -n "$npa_scripts" ] && [ -d "$npa_scripts" ]; then\n'
+        '    export PATH="$PATH:$npa_scripts"\n'
         "  fi\n"
-        "  echo \"using npa interpreter $npa_python for this stage\" >&2\n"
+        '  echo "using npa interpreter $npa_python for this stage" >&2\n'
         "fi\n"
         "python3 -c 'import npa' >/dev/null 2>&1 || "
         "echo 'warning: python3 in this shell cannot import npa' >&2\n"
@@ -847,7 +861,7 @@ def default_npa_setup() -> str:
 
     return (
         "set -e\n"
-        "export PATH=\"$HOME/.local/bin:$PATH\"\n"
+        'export PATH="$HOME/.local/bin:$PATH"\n'
         # Record where npa was installed from so a per-tool extra (see
         # TOOL_REF_PIP_EXTRAS) can be layered on top of the SAME source tree.
         "npa_record_src_root() { printf '%s' \"$1\" > /tmp/npa-src-root; }\n"
@@ -858,18 +872,18 @@ def default_npa_setup() -> str:
         # this is what the Isaac Lab image hit once its system python3 came first on
         # PATH, and any Ubuntu 24.04 based image would hit it too.
         "npa_pip_install() {\n"
-        "  target=\"$1\"\n"
+        '  target="$1"\n'
         "  shift\n"
-        "  python3 -m pip install -q \"$target\" \"$@\" \\\n"
-        "    || python3 -m pip install -q \"$target\" \"$@\" --break-system-packages \\\n"
-        "    || python3 -m pip install -q \"$target\" \"$@\" --user\n"
+        '  python3 -m pip install -q "$target" "$@" \\\n'
+        '    || python3 -m pip install -q "$target" "$@" --break-system-packages \\\n'
+        '    || python3 -m pip install -q "$target" "$@" --user\n'
         "}\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
         "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
         "    npa_pip_install -e /opt/nebius-physical-ai/npa\n"
         "    npa_record_src_root /opt/nebius-physical-ai/npa\n"
         "  else\n"
-        "    if [ ! -d /tmp/npa-src ] && [ -n \"$NPA_SRC_S3_URI\" ]; then\n"
+        '    if [ ! -d /tmp/npa-src ] && [ -n "$NPA_SRC_S3_URI" ]; then\n'
         "      npa_pip_install boto3\n"
         "      python3 - <<'PY'\n"
         "import os, pathlib\n"
@@ -917,7 +931,7 @@ def default_npa_setup() -> str:
         # Opt-in branch overlay: reinstall npa from NPA_SRC_S3_URI on TOP of a
         # baked workbench image so branch code (e.g. a new augment prompt path)
         # actually runs on GPU without rebuilding the image. Default off (no-op).
-        "if [ \"$NPA_SRC_OVERLAY\" = \"1\" ] && [ -n \"$NPA_SRC_S3_URI\" ]; then\n"
+        'if [ "$NPA_SRC_OVERLAY" = "1" ] && [ -n "$NPA_SRC_S3_URI" ]; then\n'
         "  npa_pip_install boto3\n"
         "  python3 - <<'PY'\n"
         "import os, pathlib\n"
@@ -971,8 +985,8 @@ def default_npa_setup() -> str:
         # Same reason as the stage preamble: the install alone is not enough to
         # displace a baked npa, so make the overlay explicit for the rest of setup too
         # (the interpreter recorded below is checked with `import npa`).
-        "  if [ -n \"$PYTHONPATH\" ]; then\n"
-        "    PYTHONPATH=\"/tmp/npa-src-overlay/src:$PYTHONPATH\"\n"
+        '  if [ -n "$PYTHONPATH" ]; then\n'
+        '    PYTHONPATH="/tmp/npa-src-overlay/src:$PYTHONPATH"\n'
         "  else\n"
         "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
         "  fi\n"
@@ -994,21 +1008,21 @@ def default_npa_setup() -> str:
         #   3. `type -P python3` - the PATH binary, ignoring any alias.
         "python3 -c 'import npa' >/dev/null 2>&1 || "
         "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
-        "npa_python=\"\"\n"
-        "alias_target=\"$(alias python3 2>/dev/null | sed -e \"s/^alias python3=//\" "
-        "-e \"s/^'//\" -e \"s/'$//\")\"\n"
+        'npa_python=""\n'
+        'alias_target="$(alias python3 2>/dev/null | sed -e "s/^alias python3=//" '
+        '-e "s/^\'//" -e "s/\'$//")"\n'
         "for candidate in \"$(python3 -c 'import sys; print(sys.executable)' "
-        "2>/dev/null || true)\" \"$alias_target\" \"$(type -P python3 2>/dev/null "
-        "|| true)\"; do\n"
-        "  if [ -n \"$candidate\" ] && [ -x \"$candidate\" ] && "
+        '2>/dev/null || true)" "$alias_target" "$(type -P python3 2>/dev/null '
+        '|| true)"; do\n'
+        '  if [ -n "$candidate" ] && [ -x "$candidate" ] && '
         "\"$candidate\" -c 'import npa' >/dev/null 2>&1; then\n"
-        "    npa_python=\"$candidate\"\n"
+        '    npa_python="$candidate"\n'
         "    break\n"
         "  fi\n"
         "done\n"
-        "if [ -n \"$npa_python\" ]; then\n"
-        "  echo \"$npa_python\" > /tmp/npa-python\n"
-        "  echo \"npa interpreter recorded: $npa_python\" >&2\n"
+        'if [ -n "$npa_python" ]; then\n'
+        '  echo "$npa_python" > /tmp/npa-python\n'
+        '  echo "npa interpreter recorded: $npa_python" >&2\n'
         "else\n"
         "  echo 'warning: no python command outside this shell could import npa' >&2\n"
         "fi\n"
@@ -1021,14 +1035,14 @@ def default_npa_setup() -> str:
         # scripts dir — the judge stage died with `bash: npa: command not found` on an image
         # where that fallback fired (live job 260).
         "  for scripts_dir in "
-        "\"$(python3 -c 'import sysconfig; print(sysconfig.get_path(\"scripts\"))' "
-        "2>/dev/null || true)\" "
+        '"$(python3 -c \'import sysconfig; print(sysconfig.get_path("scripts"))\' '
+        '2>/dev/null || true)" '
         "\"$(python3 -c 'import sysconfig; "
-        "print(sysconfig.get_path(\"scripts\", scheme=\"posix_user\"))' 2>/dev/null || true)\" "
-        "\"$HOME/.local/bin\"; do\n"
-        "    if [ -n \"$scripts_dir\" ] && [ -x \"$scripts_dir/npa\" ]; then\n"
-        "      ln -sf \"$scripts_dir/npa\" /usr/local/bin/npa 2>/dev/null || "
-        "sudo -n ln -sf \"$scripts_dir/npa\" /usr/local/bin/npa 2>/dev/null || true\n"
+        'print(sysconfig.get_path("scripts", scheme="posix_user"))\' 2>/dev/null || true)" '
+        '"$HOME/.local/bin"; do\n'
+        '    if [ -n "$scripts_dir" ] && [ -x "$scripts_dir/npa" ]; then\n'
+        '      ln -sf "$scripts_dir/npa" /usr/local/bin/npa 2>/dev/null || '
+        'sudo -n ln -sf "$scripts_dir/npa" /usr/local/bin/npa 2>/dev/null || true\n'
         "      break\n"
         "    fi\n"
         "  done\n"
@@ -1150,16 +1164,27 @@ def render_setup_for_tool(
     extra = tool_pip_extra(tool_ref)
     if extra:
         parts.append(render_pip_extra_setup(extra))
+    declared_extra = str(config.get("pip_extra") or "").strip()
+    if declared_extra:
+        if declared_extra not in DECLARATIVE_PIP_EXTRAS:
+            allowed = ", ".join(sorted(DECLARATIVE_PIP_EXTRAS))
+            raise NpaWorkflowError(
+                f"config.pip_extra {declared_extra!r} is not allowed; choose: {allowed}"
+            )
+        parts.append(render_pip_extra_setup(declared_extra))
     parts.append(render_pip_requirements_setup(tool_pip_requirements(tool_ref)))
     backend = str(config.get("vlm_backend") or "").strip().lower()
-    if tool_ref.startswith("workbench.vlm_eval") and backend in {"self-hosted", "self_hosted"}:
+    if tool_ref.startswith("workbench.vlm_eval") and backend in {
+        "self-hosted",
+        "self_hosted",
+    }:
         parts.append(_vllm_install_setup(self_hosted_vlm_model(config)))
     if tool_ref.startswith("workbench.sonic"):
         parts.append(_sonic_deps_setup())
     if tool_ref.startswith("workbench.token_factory"):
         # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
         parts.append(
-            "if [[ -z \"$NEBIUS_TOKEN_FACTORY_KEY\" ]]; then\n"
+            'if [[ -z "$NEBIUS_TOKEN_FACTORY_KEY" ]]; then\n'
             "  echo 'NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with --secret-env "
             "NEBIUS_TOKEN_FACTORY_KEY' >&2\n"
             "  exit 1\n"
@@ -1182,18 +1207,18 @@ def render_setup_for_tool(
             "  apt-get install -y -qq --no-install-recommends ffmpeg || true\n"
             "fi\n"
             "npa_nurec_py=python3\n"
-            "if [ -s /tmp/npa-python ]; then npa_nurec_py=\"$(cat /tmp/npa-python)\"; fi\n"
+            'if [ -s /tmp/npa-python ]; then npa_nurec_py="$(cat /tmp/npa-python)"; fi\n'
             # --break-system-packages FIRST: the NRE image is Ubuntu 24.04, whose
             # interpreter is externally managed (PEP 668), so the plain form always
             # fails there and only adds a confusing "error:
             # externally-managed-environment" to the logs before the fallback wins.
             "npa_nurec_pip() {\n"
-            "  \"$npa_nurec_py\" -m pip install -q \"$@\" --break-system-packages \\\n"
-            "    || \"$npa_nurec_py\" -m pip install -q \"$@\" \\\n"
-            "    || \"$npa_nurec_py\" -m pip install -q \"$@\" --user\n"
+            '  "$npa_nurec_py" -m pip install -q "$@" --break-system-packages \\\n'
+            '    || "$npa_nurec_py" -m pip install -q "$@" \\\n'
+            '    || "$npa_nurec_py" -m pip install -q "$@" --user\n'
             "}\n"
             f"npa_nurec_pip 'huggingface_hub>=0.30' 'nvidia-ncore' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
-            "\"$npa_nurec_py\" -c 'import ncore, rerun; print(\"nurec runtime deps ready\")'\n"
+            '"$npa_nurec_py" -c \'import ncore, rerun; print("nurec runtime deps ready")\'\n'
         )
     return "".join(parts)
 
@@ -1211,6 +1236,13 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
                     if name not in seen:
                         seen.add(name)
                         hints.append(name)
+        if tool_ref == "workbench.byof.repo" and any(
+            value.startswith("byof-solution-smoke-wan22-") for value in step.argv
+        ):
+            for name in ("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS", "HF_TOKEN"):
+                if name not in seen:
+                    seen.add(name)
+                    hints.append(name)
     return tuple(hints)
 
 
@@ -1231,7 +1263,9 @@ def build_skypilot_task_doc(
         options=options,
     )
     if image:
-        resources["image_id"] = f"docker:{image}" if not image.startswith("docker:") else image
+        resources["image_id"] = (
+            f"docker:{image}" if not image.startswith("docker:") else image
+        )
 
     command = list(scheduler_task.get("command") or [])
     if not command:
@@ -1296,7 +1330,9 @@ def build_skypilot_task_doc(
     import os
 
     src_uri = (
-        os.environ.get("NPA_SRC_S3_URI") or os.environ.get("NPA_E2E_NPA_SRC_S3_URI") or ""
+        os.environ.get("NPA_SRC_S3_URI")
+        or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
+        or ""
     ).strip()
     if not image:
         if not src_uri:
@@ -1321,7 +1357,11 @@ def build_skypilot_task_doc(
             doc["envs"] = envs
         # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
         # used to run un-imaged branch code on GPU without rebuilding the image.
-        if str(os.environ.get("NPA_SRC_OVERLAY") or "").strip() in {"1", "true", "True"} and src_uri:
+        if (
+            str(os.environ.get("NPA_SRC_OVERLAY") or "").strip()
+            in {"1", "true", "True"}
+            and src_uri
+        ):
             envs["NPA_SRC_OVERLAY"] = "1"
             doc["envs"] = envs
     _inject_nebius_registry_docker_secrets(
@@ -1360,7 +1400,9 @@ def _inject_nebius_registry_docker_secrets(
     image_id = str(resources.get("image_id") or "").strip()
     # Nebius VMs need SKYPILOT_DOCKER_* for private pulls; k8s uses imagePullSecrets
     # but still benefits from secrets when the controller falls back to docker login.
-    if cloud not in {"nebius", "kubernetes", "k8s"} or not _is_nebius_registry_image(image_id):
+    if cloud not in {"nebius", "kubernetes", "k8s"} or not _is_nebius_registry_image(
+        image_id
+    ):
         return
 
     server = image_id.removeprefix("docker:").split("/", 1)[0]
@@ -1394,7 +1436,9 @@ def _inject_nebius_registry_docker_secrets(
         )
         if not password:
             try:
-                from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
+                from npa.workflows.sim2real.registry_auth import (
+                    mint_nebius_registry_token,
+                )
 
                 password = mint_nebius_registry_token()
             except Exception as exc:  # noqa: BLE001
@@ -1434,7 +1478,9 @@ def render_skypilot_yaml(
         )
     if not plan.steps:
         raise NpaWorkflowRenderError(f"workflow {spec.name!r} planned zero steps")
-    return _render_docs(spec, plan.steps, run_id=run_id, options=opts, execution="serial")
+    return _render_docs(
+        spec, plan.steps, run_id=run_id, options=opts, execution="serial"
+    )
 
 
 def render_skypilot_job_group_yaml(
@@ -1498,7 +1544,12 @@ def render_skypilot_steps_yaml(
     if not steps:
         raise NpaWorkflowRenderError(f"workflow {spec.name!r} planned zero steps")
     return _render_docs(
-        spec, steps, run_id=run_id, options=opts, execution="serial", name=name or spec.name
+        spec,
+        steps,
+        run_id=run_id,
+        options=opts,
+        execution="serial",
+        name=name or spec.name,
     )
 
 

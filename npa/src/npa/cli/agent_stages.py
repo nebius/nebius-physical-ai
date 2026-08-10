@@ -282,6 +282,7 @@ def build_available_sim_viz_runs(runs: list[dict[str, Any]]) -> list[dict[str, s
             "bucket": str(item.get("bucket") or "").strip(),
             "project_id": str(item.get("project_id") or "").strip(),
             "resolved_prefix": str(item.get("resolved_prefix") or "").strip(),
+            "run_ref": str(item.get("artifact_run_ref") or "").strip(),
         }
         for item in runs
         if str(item.get("run_id") or "").strip()

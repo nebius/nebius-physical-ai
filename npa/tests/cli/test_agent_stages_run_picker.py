@@ -54,7 +54,7 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     assert 'entry.source_type === "local_demo"' in load_fn
     assert 'entry.source_type === "artifact_storage"' in load_fn
     assert "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })" in load_fn
-    assert "loadWorkflowHistoryRun(chosen)" in load_fn
+    assert "loadWorkflowHistoryRun(chosen, activeArtifactRunRef)" in load_fn
 
 
 def test_failed_exact_search_is_separate_from_currently_loaded_run() -> None:
@@ -65,6 +65,26 @@ def test_failed_exact_search_is_separate_from_currently_loaded_run() -> None:
     assert "until lookup succeeds" in ui
     assert "Exact NPA run lookup failed" in ui
     assert 'clearVisibleRunState("Search changed.' not in ui
+
+
+def test_selected_run_capability_is_installed_before_rerun_mount() -> None:
+    """A newly selected recording must not mount through the Basic-Auth blob fallback."""
+    ui = _embedded_ui_html()
+    assert "function syncRerunRecordingCapability(simViz)" in ui
+
+    load_run = ui.split("async function loadWorkflowHistoryRun")[1].split(
+        "async function selectCamera"
+    )[0]
+    assert load_run.index("syncRerunRecordingCapability(data && data.sim_viz)") < load_run.index(
+        "bestEffortMountRerun"
+    )
+
+    load_artifact = ui.split("async function loadArtifact(payload)")[1].split(
+        "async function loadVoxelDataset"
+    )[0]
+    assert load_artifact.index("syncRerunRecordingCapability(simViz)") < load_artifact.index(
+        "swapRerunRecordingInPlace"
+    )
 
 
 def test_artifact_backed_stages_skip_unrelated_draft_overlay() -> None:

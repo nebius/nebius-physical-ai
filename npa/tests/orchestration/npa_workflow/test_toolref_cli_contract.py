@@ -118,7 +118,7 @@ def test_the_visualize_stage_pins_the_same_rerun_as_npas_viz_extra() -> None:
     pyproject = (repo / "pyproject.toml").read_text(encoding="utf-8")
 
     in_stage = re.search(r'"rerun-sdk==([0-9.]+)"', blueprint)
-    in_extra = re.search(r'viz = \["rerun-sdk==([0-9.]+)"\]', pyproject)
+    in_extra = re.search(r'viz = \[[^\]]*"rerun-sdk==([0-9.]+)"', pyproject)
     assert in_stage, "the visualize stage no longer installs a pinned rerun-sdk"
     assert in_extra, "npa no longer declares a pinned rerun-sdk viz extra"
     assert in_stage.group(1) == in_extra.group(1)

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
@@ -92,7 +93,39 @@ def test_setup_for_an_unrelated_tool_ref_has_no_extra() -> None:
     assert "[sonic]" not in setup
 
 
-@pytest.mark.parametrize("spec_name", ["sonic-export.yaml", "sonic-eval.yaml", "sonic-train.yaml"])
+def test_setup_installs_declarative_allowlisted_viz_extra() -> None:
+    setup = render_setup_for_tool(
+        "workbench.byof.repo",
+        config={"solution_name": "any-solution", "pip_extra": "viz"},
+        options=SkypilotRenderOptions(),
+    )
+
+    assert "npa[viz]" in setup
+    assert_no_unresolved_placeholders(setup)
+
+
+def test_setup_for_other_byof_does_not_install_viz_extra() -> None:
+    setup = render_setup_for_tool(
+        "workbench.byof.repo",
+        config={"solution_name": "open-dreamer"},
+        options=SkypilotRenderOptions(),
+    )
+
+    assert "npa[viz]" not in setup
+
+
+def test_declarative_extra_rejects_untrusted_package_strings() -> None:
+    with pytest.raises(NpaWorkflowError, match="is not allowed"):
+        render_setup_for_tool(
+            "workbench.byof.repo",
+            config={"pip_extra": "viz @ https://example.invalid/payload.whl"},
+            options=SkypilotRenderOptions(),
+        )
+
+
+@pytest.mark.parametrize(
+    "spec_name", ["sonic-export.yaml", "sonic-eval.yaml", "sonic-train.yaml"]
+)
 def test_shipped_sonic_specs_render_with_the_extra_and_no_placeholders(
     spec_name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

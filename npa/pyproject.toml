@@ -27,6 +27,8 @@ dependencies = [
     "pillow>=10.0",
     # MCAP writer for the lichtblick viewer's frames->MCAP export (pure-Python).
     "mcap>=1.1",
+    # Recursive legal byte scanning must inspect modern Debian data.tar.zst payloads.
+    "zstandard>=0.19",
     "pydantic>=2.0",
     "tomli>=2.0.0; python_version < '3.11'",
 ]
@@ -46,8 +48,9 @@ lancedb = [
     "lancedb==0.30.2",
     "pandas>=2.0",
 ]
-# Rerun viewer/recording integration (`npa rerun`, sim-viz adapters).
-viz = ["rerun-sdk==0.31.4"]
+# Rerun viewer/recording integration (`npa rerun`, sim-viz adapters). PyAV
+# makes Wan's MP4 verification independent of host ffmpeg/ffprobe packages.
+viz = ["rerun-sdk==0.31.4", "av==17.1.0"]
 # Foxglove embedded viewer: MCAP read/write for `npa workbench foxglove`
 # (pure-python; the browser SDK itself is fetched at build/bootstrap time).
 # Upper bound is deliberate: mcap 1.4.0 trips mypy module discovery (see the
@@ -147,6 +150,7 @@ foxglove-embed = "0.58.0"
 lichtblick = "1.26.0"
 lancedb = "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 detection-training = "bdd100k-golden-eval-smoke-20260614T210000Z"
+wan2-2 = "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7"
 nebius-cli = "0.12.192"
 terraform = "~> 0.5.201"
 terraform-cli = "1.13.3"
@@ -173,6 +177,7 @@ packages = ["src/npa"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
+"src/npa/deploy/wan2_2_image_manifest.json" = "npa/deploy/wan2_2_image_manifest.json"
 "src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
 "src/npa/cli/agent_ui.html" = "npa/cli/agent_ui.html"

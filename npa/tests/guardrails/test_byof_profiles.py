@@ -24,6 +24,8 @@ EXPECTED_PROFILES = frozenset(
     {
         "byof-container-smoke-rtxpro.yaml",
         "byof-datagen-rtxpro-smoke.yaml",
+        "byof-solution-smoke-wan22-rtxpro-gpu.yaml",
+        "byof-solution-smoke-wan22-b200-4gpu.yaml",
         "byof-solution-smoke-rtxpro-2gpu.yaml",
         "byof-solution-smoke-rtxpro-gpu.yaml",
         "isaac-lab-rl-train.yaml",
@@ -50,6 +52,13 @@ def test_profile_set_is_pinned() -> None:
     )
 
 
+def test_global_config_contains_only_skypilot_config_fields() -> None:
+    config = yaml.safe_load((PROFILES / GLOBAL_CONFIG).read_text(encoding="utf-8"))
+
+    assert set(config) == {"kubernetes"}
+    assert config["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"]
+
+
 @pytest.mark.parametrize("path", _task_profiles(), ids=lambda p: p.name)
 def test_profile_is_a_single_task(path: Path) -> None:
     """One pod shape per profile. Chaining stages means it should be a spec."""
@@ -69,7 +78,12 @@ def test_profile_is_a_single_task(path: Path) -> None:
 def test_the_readme_explains_the_boundary() -> None:
     text = (PROFILES / "README.md").read_text(encoding="utf-8")
 
-    for token in ("resource profiles", "byof.yaml", "workbench.byof.repo", "npa.workflow"):
+    for token in (
+        "resource profiles",
+        "byof.yaml",
+        "workbench.byof.repo",
+        "npa.workflow",
+    ):
         assert token in text, f"profiles README should mention {token!r}"
 
 
@@ -104,7 +118,9 @@ def test_runner_defaults_point_at_the_profiles_directory() -> None:
     }
     for name, profile in scripts.items():
         text = (REPO_ROOT / "npa" / "scripts" / name).read_text(encoding="utf-8")
-        assert '"profiles"' in text, f"{name} should resolve DEFAULT_YAML under profiles/"
+        assert '"profiles"' in text, (
+            f"{name} should resolve DEFAULT_YAML under profiles/"
+        )
         assert profile in text, f"{name} should still name {profile}"
         assert '"skypilot"' not in text, (
             f"{name} still resolves a path under the retiring skypilot catalog"

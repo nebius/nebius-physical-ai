@@ -293,6 +293,55 @@ action layout (27 binary / 121 categorical) required by `train_dynamics.py`.
 Follow-up: FVD evaluation (`scripts/eval_fvd.py`, needs I3D weights) and a
 larger training budget / dataset for a sharper, longer-horizon dream.
 
+### Alibaba Wan 2.2 (`byof-wan2.2.yaml`, `byof-wan2.2-multigpu.yaml`)
+
+Pinned official source:
+`Wan-Video/Wan2.2@42bf4cfaa384bc21833865abc2f9e6c0e67233dc`; official
+TI2V-5B checkpoint:
+`Wan-AI/Wan2.2-TI2V-5B@921dbaf3f1674a56f47e83fb80a34bac8a8f203e`.
+The candidate uses one RTX PRO 6000 Blackwell (`sm_120`), native
+`wan.WanTI2V.generate`, the official PyTorch 2.7.1 CUDA 12.8 wheel line with
+an explicit `sm_120` architecture check, and run-time model acquisition. No
+weights are baked, and the upstream native PyTorch SDPA fallback is used.
+
+Accepted live hard-gate capabilities, validated by
+A private validation record on one RTX PRO 6000 Blackwell (`sm_120`):
+
+- `wan2.2_ti2v_5b_text_to_video` (real 1280x704 MP4)
+- `wan2.2_decoded_mp4_validation` (decode all frames; dimensions/count/fps and
+  conservative non-uniform-content checks)
+
+Accepted distributed hard-gate capabilities, validated by
+A private validation record on one node with four B200s
+(`sm_100`, world/local world size 4):
+
+- `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses`
+  (`torch.distributed.run` launches an instrumentation wrapper on four ranks;
+  the wrapper executes pinned official `generate.py` as `__main__` with NCCL,
+  T5 and DiT FULL_SHARD FSDP, and Ulysses size 4)
+- `wan2.2_distributed_rank_topology_validation` (four unique GPU hashes;
+  ranks/local ranks 0–3; NCCL sum 10/10; 480 distributed-attention and 1,920
+  all-to-all calls per rank; upstream and observer final barriers)
+- `wan2.2_decoded_mp4_validation` (2,809,770-byte H.264 MP4; 1280x704,
+  17 frames, 24 fps; spatial stddev 71.9485, pixel range 255, temporal delta
+  9.714725, SHA-256 `9574f79c…94865`)
+
+The primary artifact is `wan2_2_ti2v_5b_text_to_video.json`; the MP4 is
+`wan2_2_ti2v_5b.mp4`, and the actual pulled image emits
+`wan2_2_runtime_inventory.json` with installed package/license metadata and a
+baked-checkpoint scan. All three are present in S3 for the acceptance run; its
+2,923,858-byte H.264 MP4 (SHA-256 `60001084…92328`) decoded as 17 1280x704
+frames at 24 fps and passed the non-uniform-content gates. Kubernetes observed
+the immutable accepted image digest as the running `imageID` in both fresh
+single- and four-GPU proofs; each fresh RRD embeds the exact generated MP4.
+
+Deferred: TI2V image-to-video until its own live input/output evidence; T2V and
+I2V A14B, S2V-14B, Animate-14B, and official training as separate contracts.
+Stock Wan action prediction is rejected as an upstream claim. Successful Wan
+runs are postprocessed into a verified Rerun recording that embeds the exact
+MP4 alongside static run evidence; see `skills/tools/wan2-2/SKILL.md` and
+`docs/workbench/wan2.2.md`.
+
 ### Multi-GPU solutions
 
 When a solution's accepted capability is only meaningful across multiple GPUs
@@ -301,6 +350,10 @@ When a solution's accepted capability is only meaningful across multiple GPUs
 (`byof-solution-smoke-rtxpro-2gpu.yaml`) and make a "device mesh sees N GPUs"
 check a hard gate so a single-GPU scheduling fallback cannot masquerade as a
 passing multi-GPU run. Open Dreamer is the reference example.
+Wan 2.2 is the inference reference: the dedicated `B200:4` profile must prove
+that all ranks participate in one official generation through sharding and
+sequence parallelism; four scheduled/visible GPUs or four replica outputs are
+not evidence.
 
 ## Capability Discovery Procedure
 

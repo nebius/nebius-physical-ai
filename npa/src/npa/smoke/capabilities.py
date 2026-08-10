@@ -107,6 +107,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "/health",
         "/system-info",
     ],
+    "wan2-2": [
+        "pinned Wan source import with OSS CPU dependency base",
+        "machine-readable runtime health/version contract",
+        "CUDA runtime fetch refuses before operator terms acceptance",
+    ],
     "envgen": [
         "raw env generation (JSONL contract)",
         "Genesis CUDA env step (mocked in unit gate)",
@@ -139,4 +144,6 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
 def capability_rows() -> list[tuple[str, str]]:
     """Return (container, semicolon-separated capabilities) for tabular output."""
 
-    return [(name, "; ".join(checks)) for name, checks in GOLDEN_EVAL_CAPABILITIES.items()]
+    return [
+        (name, "; ".join(checks)) for name, checks in GOLDEN_EVAL_CAPABILITIES.items()
+    ]
