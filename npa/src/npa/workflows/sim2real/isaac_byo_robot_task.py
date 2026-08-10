@@ -25,6 +25,7 @@ articulation.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from collections.abc import Mapping
@@ -1199,6 +1200,67 @@ def module_source() -> str:
     return Path(__file__).read_text(encoding="utf-8")
 
 
+def configure_convergence_action_noise(
+    policy: Any,
+    *,
+    target_std: float,
+    freeze: bool = True,
+) -> dict[str, Any]:
+    """Make resumed PPO sample near the deterministic inference policy.
+
+    RSL-RL validation calls ``act_inference`` and therefore executes the actor
+    mean.  Its training rollout calls ``act`` and samples the policy
+    distribution.  Resume convergence must not claim progress from rare noisy
+    trajectories while leaving that mean untrained.  The canonical Franka
+    policy has a state-independent scalar or log standard deviation; update it
+    exactly after checkpoint load and fail closed for any different policy
+    representation.
+    """
+
+    target = float(target_std)
+    if not math.isfinite(target) or not 0.0 < target <= 1.0:
+        raise ValueError("target_std must be finite and between zero and one")
+    if bool(getattr(policy, "state_dependent_std", False)):
+        raise RuntimeError(
+            "resume convergence does not support state-dependent action noise"
+        )
+    noise_std_type = str(getattr(policy, "noise_std_type", ""))
+    if noise_std_type == "scalar":
+        parameter_name = "std"
+        stored_value = target
+    elif noise_std_type == "log":
+        parameter_name = "log_std"
+        stored_value = math.log(target)
+    else:
+        raise RuntimeError(f"unsupported RSL-RL noise_std_type: {noise_std_type!r}")
+    parameter = getattr(policy, parameter_name, None)
+    if parameter is None or not hasattr(parameter, "detach"):
+        raise RuntimeError(
+            f"RSL-RL policy lacks mutable {parameter_name} action-noise parameter"
+        )
+    detached = parameter.detach()
+    detached.fill_(stored_value)
+    parameter.requires_grad_(not freeze)
+    raw_values = detached.reshape(-1).tolist()
+    if not isinstance(raw_values, list):
+        raw_values = [raw_values]
+    actual_values = [
+        math.exp(float(value)) if noise_std_type == "log" else float(value)
+        for value in raw_values
+    ]
+    if not actual_values or any(
+        not math.isclose(value, target, rel_tol=1.0e-6, abs_tol=1.0e-7)
+        for value in actual_values
+    ):
+        raise RuntimeError("RSL-RL action-noise convergence update did not persist")
+    return {
+        "noise_std_type": noise_std_type,
+        "target_std": target,
+        "parameter_count": len(actual_values),
+        "frozen": bool(freeze),
+    }
+
+
 # Post-boot train wrapper (runs INSIDE the Isaac-Lab container). Same hard
 # constraint as the physics variant: isaaclab.sim / the franka lift cfg / gym.spec
 # of the stock task pull USD ``pxr``, which only exists AFTER ``AppLauncher`` boots
@@ -1313,6 +1375,7 @@ try:
         algo["entropy_coef"] = float(ENT)
     ENT_FINAL = os.environ.get("ROBOT_ENTROPY_FINAL_COEF", "").strip()
     ENT_FRACTION = os.environ.get("ROBOT_ENTROPY_ANNEAL_FRACTION", "").strip()
+    CONVERGENCE_STD = os.environ.get("ROBOT_CONVERGENCE_ACTION_NOISE_STD", "").strip()
     if bool(ENT_FINAL) != bool(ENT_FRACTION):
         raise RuntimeError("entropy schedule requires both final coefficient and fraction")
     if ENT_FINAL:
@@ -1376,6 +1439,17 @@ try:
         if not hasattr(runner.alg, "entropy_coef"):
             raise RuntimeError("RSL-RL algorithm cannot apply the entropy curriculum")
         runner.alg.entropy_coef = float(ENT_FINAL)
+        if CONVERGENCE_STD:
+            noise_audit = robotmod.configure_convergence_action_noise(
+                runner.alg.policy,
+                target_std=float(CONVERGENCE_STD),
+                freeze=True,
+            )
+            print(
+                "ROBOT_ACTION_NOISE_CONVERGENCE "
+                + json.dumps(noise_audit, sort_keys=True),
+                flush=True,
+            )
         print(
             "ROBOT_ENTROPY_ANNEALED initial=%s final=%s explore_iterations=%d convergence_iterations=%d"
             % (ENT, ENT_FINAL, exploration_iterations, convergence_iterations),

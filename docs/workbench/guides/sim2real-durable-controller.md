@@ -339,6 +339,22 @@ unchanged. Legacy departure fields remain readable in durable PPO telemetry so
 archived attempts retain their original meaning, but production no longer emits
 or optimizes that reward term.
 
+Train27 then isolated a different sampled-policy/served-policy gap. After the
+positive-only retention change, exact PPO telemetry contained repeated
+three-step completions, but the learned mean action-noise standard deviation
+was still about `0.41`. RSL-RL samples that distribution during training while
+validation and deployment execute the deterministic actor mean. Seven
+validation64 checkpoints therefore still scored `0/64` strict terminal
+placements (one checkpoint recorded a nonterminal placement event), despite
+the stochastic completion samples. Resumed training now keeps its short
+exploration segment, then sets and freezes the state-independent action noise
+at the operator-tunable convergence value (default `0.05`) before the final PPO
+segment. The exact update is verified at runtime and fails closed for an
+unsupported policy representation. This makes the convergence rollouts train
+near the policy that validation actually executes; it does not alter the sealed
+split, 5 cm distance, 0.03 m/s speed, three-step dwell, or terminal-success
+contract.
+
 ## Required integration ladder
 
 Before a full run, the exact image and live target must prove:

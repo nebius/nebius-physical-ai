@@ -75,6 +75,13 @@ DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION = "0.2"
 # step so subsequent passes consolidate that narrow-basin behavior instead of
 # repeatedly overwriting it. First-pass exploration remains unchanged.
 DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE = "0.0001"
+# Validation executes RSL-RL's deterministic actor mean.  A resumed policy can
+# therefore report sparse sampled successes while its mean still misses the
+# stable-placement event if the learned action standard deviation remains high.
+# After the short resumed exploration segment, train close to the policy that
+# validation actually executes.  The baked Isaac wrapper applies and verifies
+# this value only after loading the exact resume checkpoint.
+DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD = "0.05"
 _STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
 TRAIN_SCRIPT = "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py"
 # rsl_rl experiment_name for the Franka Lift task (logs/rsl_rl/<experiment_name>/).
@@ -625,6 +632,7 @@ def build_isaac_job_manifest(
     entropy_anneal_fraction: str = "",
     ppo_optimizer_learning_rate: str = "",
     init_noise_std: str = "",
+    convergence_action_noise_std: str = "",
     success_termination_enabled: bool = False,
     validation_interval: int = 100,
     resume_uri: str = "",
@@ -678,6 +686,17 @@ def build_isaac_job_manifest(
             raise ValueError("entropy_final_coef must be between zero and entropy_coef")
         if not 0.0 < anneal_fraction < 1.0:
             raise ValueError("entropy_anneal_fraction must be between zero and one")
+    if convergence_action_noise_std:
+        convergence_std = float(convergence_action_noise_std)
+        if not 0.0 < convergence_std <= 1.0:
+            raise ValueError(
+                "convergence_action_noise_std must be between zero and one"
+            )
+        if not entropy_final_coef or not entropy_anneal_fraction:
+            raise ValueError(
+                "convergence action noise requires the explicit two-phase "
+                "entropy curriculum"
+            )
 
     overrides: dict[str, Any] = dict(reward_overrides or {})
     if object_usd:
@@ -840,6 +859,9 @@ def build_isaac_job_manifest(
             + "\n"
             + "export ROBOT_INIT_NOISE_STD="
             + shlex.quote(str(init_noise_std or ""))
+            + "\n"
+            + "export ROBOT_CONVERGENCE_ACTION_NOISE_STD="
+            + shlex.quote(str(convergence_action_noise_std or ""))
             + "\n"
             + "export ROBOT_VALIDATION_INTERVAL="
             + shlex.quote(str(max(1, int(validation_interval))))
@@ -1467,9 +1489,21 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             "NPA_BYO_ISAAC_RESUME_PPO_LEARNING_RATE",
             DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE,
         )
+        raw_convergence_std = _env(
+            "NPA_BYO_ISAAC_RESUME_CONVERGENCE_ACTION_NOISE_STD",
+            DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD,
+        )
+        convergence_action_noise_std = (
+            ""
+            if raw_convergence_std.lower() in _STOCK_ENTROPY_SENTINELS
+            else raw_convergence_std
+        )
         if not entropy_coef:
             entropy_final_coef = ""
             entropy_anneal_fraction = ""
+            convergence_action_noise_std = ""
+    else:
+        convergence_action_noise_std = ""
 
     raw_success_termination = _env("NPA_BYO_ISAAC_ENABLE_SUCCESS_TERMINATION", "0")
     if raw_success_termination not in {"0", "1"}:
@@ -1515,6 +1549,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         entropy_anneal_fraction=entropy_anneal_fraction,
         ppo_optimizer_learning_rate=ppo_optimizer_learning_rate,
         init_noise_std=init_noise_std,
+        convergence_action_noise_std=convergence_action_noise_std,
         success_termination_enabled=success_termination_enabled,
         validation_interval=validation_interval,
         resume_uri=resume_uri,
@@ -1615,6 +1650,12 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             else "task_default"
         ),
         "init_noise_std": float(init_noise_std) if init_noise_std else "task_default",
+        "convergence_action_noise_std": (
+            float(convergence_action_noise_std)
+            if convergence_action_noise_std
+            else "task_default"
+        ),
+        "convergence_action_noise_frozen": bool(convergence_action_noise_std),
         "training_phase": (
             "resume_convergence" if resume_uri and not physics else "exploration"
         ),

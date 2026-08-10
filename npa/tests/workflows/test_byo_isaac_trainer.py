@@ -14,6 +14,9 @@ import subprocess
 import pytest
 
 from npa.workflows.sim2real import byo_isaac_trainer as byo
+from npa.workflows.sim2real.isaac_byo_robot_task import (
+    configure_convergence_action_noise,
+)
 from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
 
 
@@ -42,6 +45,67 @@ def _write_signal(tmp_path):
         encoding="utf-8",
     )
     return path
+
+
+class _FakeNoiseParameter:
+    def __init__(self, values: list[float]) -> None:
+        self.values = values
+        self.requires_grad = True
+
+    def detach(self):
+        return self
+
+    def fill_(self, value: float):
+        self.values = [float(value) for _ in self.values]
+        return self
+
+    def requires_grad_(self, enabled: bool):
+        self.requires_grad = enabled
+        return self
+
+    def reshape(self, *_shape):
+        return self
+
+    def tolist(self):
+        return list(self.values)
+
+
+def test_resume_convergence_noise_matches_deterministic_policy_contract() -> None:
+    class Policy:
+        state_dependent_std = False
+        noise_std_type = "scalar"
+        std = _FakeNoiseParameter([0.41] * 7)
+
+    audit = configure_convergence_action_noise(Policy(), target_std=0.05)
+
+    assert audit == {
+        "noise_std_type": "scalar",
+        "target_std": 0.05,
+        "parameter_count": 7,
+        "frozen": True,
+    }
+    assert Policy.std.values == pytest.approx([0.05] * 7)
+    assert Policy.std.requires_grad is False
+
+
+def test_resume_convergence_noise_supports_log_std_and_fails_closed() -> None:
+    class LogPolicy:
+        state_dependent_std = False
+        noise_std_type = "log"
+        log_std = _FakeNoiseParameter([0.0, 0.0])
+
+    audit = configure_convergence_action_noise(LogPolicy(), target_std=0.1)
+    assert audit["parameter_count"] == 2
+    assert LogPolicy.log_std.values == pytest.approx([-2.302585093] * 2)
+
+    class StateDependentPolicy:
+        state_dependent_std = True
+        noise_std_type = "scalar"
+
+    with pytest.raises(RuntimeError, match="state-dependent"):
+        configure_convergence_action_noise(StateDependentPolicy(), target_std=0.05)
+    with pytest.raises(ValueError, match="finite"):
+        configure_convergence_action_noise(LogPolicy(), target_std=float("nan"))
 
 
 def test_read_signal_stats(tmp_path):
@@ -274,6 +338,7 @@ def test_scenario_wrapper_consumes_reward_and_native_ppo_contract() -> None:
             entropy_anneal_fraction="0.6",
             ppo_optimizer_learning_rate="0.001",
             init_noise_std="1.2",
+            convergence_action_noise_std="0.05",
             validation_interval=100,
             object_usd="https://assets.example/cube.usd",
             scenarios_jsonl='{"scenario_config_digest":"digest"}\n',
@@ -287,6 +352,7 @@ def test_scenario_wrapper_consumes_reward_and_native_ppo_contract() -> None:
     assert "ROBOT_ENTROPY_FINAL_COEF=0.0005" in args
     assert "ROBOT_ENTROPY_ANNEAL_FRACTION=0.6" in args
     assert "ROBOT_INIT_NOISE_STD=1.2" in args
+    assert "ROBOT_CONVERGENCE_ACTION_NOISE_STD=0.05" in args
     assert "ROBOT_VALIDATION_INTERVAL=100" in args
     assert "ROBOT_OBJECT_USD=https://assets.example/cube.usd" in args
     assert "/opt/npa/isaac-runtime/isaac_robot_train.py" in args
@@ -297,6 +363,7 @@ def test_scenario_wrapper_consumes_reward_and_native_ppo_contract() -> None:
     assert "ROBOT_REWARD_OVERRIDES_APPLIED" in TRAIN_WRAPPER_SCRIPT
     assert "ROBOT_PPO_SETTINGS_APPLIED" in TRAIN_WRAPPER_SCRIPT
     assert "ROBOT_ENTROPY_ANNEALED" in TRAIN_WRAPPER_SCRIPT
+    assert "ROBOT_ACTION_NOISE_CONVERGENCE" in TRAIN_WRAPPER_SCRIPT
     assert "ROBOT_REWARD_OVERRIDES_APPLIED" not in args
 
 
@@ -333,6 +400,19 @@ def test_entropy_curriculum_validation_fails_closed() -> None:
             entropy_coef="0.006",
             entropy_final_coef="0.0005",
             entropy_anneal_fraction="1.0",
+        )
+    with pytest.raises(ValueError, match="between zero and one"):
+        byo.build_isaac_job_manifest(
+            **common,
+            entropy_coef="0.006",
+            entropy_final_coef="0.0005",
+            entropy_anneal_fraction="0.6",
+            convergence_action_noise_std="1.1",
+        )
+    with pytest.raises(ValueError, match="two-phase"):
+        byo.build_isaac_job_manifest(
+            **common,
+            convergence_action_noise_std="0.05",
         )
 
 
@@ -823,6 +903,9 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
         captured["ppo_optimizer_learning_rate"] = kwargs.get(
             "ppo_optimizer_learning_rate", ""
         )
+        captured["convergence_action_noise_std"] = kwargs.get(
+            "convergence_action_noise_std", ""
+        )
         captured["success_termination_enabled"] = kwargs.get(
             "success_termination_enabled"
         )
@@ -916,6 +999,10 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch):
     assert (
         captured["ppo_optimizer_learning_rate"]
         == byo.DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE
+    )
+    assert (
+        captured["convergence_action_noise_std"]
+        == byo.DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD
     )
     assert captured["success_termination_enabled"] is False
     assert captured["scenarios_uri"] == "s3://bkt/myrun/envs/train/envs.jsonl"
