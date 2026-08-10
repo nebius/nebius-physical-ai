@@ -1,0 +1,536 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: byof-wan2-2
+  description: >
+    BYOF registry-candidate workflow for Alibaba Wan 2.2 TI2V-5B. The image
+    contains pinned official source and OSS CPU dependencies, but no NVIDIA
+    CUDA Python packages or model weights. After explicit operator acceptance,
+    it fetches the pinned CUDA/PyTorch runtime into a writable volume, then the immutable Wan-AI model and
+    tokenizer revisions, calls the real upstream WanTI2V generator on one RTX
+    PRO 6000 Blackwell,
+    writes an MP4, decodes every frame, rejects corrupt or uniform output, and
+    publishes the video plus machine-readable evidence to the run's S3 prefix.
+    After the GPU smoke succeeds, the BYOF runner builds and verifies a Rerun
+    recording containing the exact MP4 and the real run evidence.
+    The hard gate is stock text-to-video only; image conditioning has a real
+    optional code path but remains pending its own live input/output evidence.
+
+config:
+  bucket: example-bucket
+  prompt: "A red sailboat crosses a sunlit ocean while seabirds circle above, cinematic wide shot."
+  # Non-empty input selects image-to-video and therefore MUST be paired with
+  # capability_name=wan2.2_ti2v_5b_image_to_video and
+  # smoke_artifact_name=wan2_2_ti2v_5b_image_to_video.json. The smoke fails
+  # closed when those configuration surfaces disagree.
+  context_image_uri: ""
+
+  repo_url: "https://github.com/Wan-Video/Wan2.2.git"
+  # Reviewed official upstream commit from 2026-03-17 (immutable, not main).
+  repo_ref: "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
+  base_profile: prebuilt
+  base_image: "tool://wan2-2"
+  build_command: ""
+  pip_extra: viz
+  workload: solution-smoke
+  smoke_command: |
+    set -euo pipefail
+    # Default audited contract: wan2.2_ti2v_5b_text_to_video emits
+    # wan2_2_ti2v_5b_text_to_video.json. The solution-scoped resolver below
+    # switches both fields together for the optional I2V configuration:
+    # wan2.2_ti2v_5b_image_to_video emits wan2_2_ti2v_5b_image_to_video.json.
+    # User-provided text crosses the shell boundary only as base64 data. The
+    # Python consumers decode it without evaluating it as shell syntax.
+    export WAN22_PROMPT_B64="{{config.prompt|base64}}"
+    export WAN22_CONTEXT_IMAGE_URI_B64="{{config.context_image_uri|base64}}"
+    export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
+    # Validate the config-facing input/capability/artifact contract before the
+    # accepted CUDA runtime fetch can create a cache or contact a package index.
+    /opt/wan-base/bin/python - <<'PY'
+    import base64
+    import os
+
+    from npa_wan_input_contract import WanInputContractError, resolve_wan_input_contract
+
+    try:
+        resolve_wan_input_contract(
+            context_image_uri=base64.b64decode(
+                os.environ.get("WAN22_CONTEXT_IMAGE_URI_B64", ""), validate=True
+            ).decode("utf-8"),
+            declared_capability=os.environ.get("BYOF_CAPABILITY_NAME", ""),
+            declared_artifact=os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
+        )
+    except WanInputContractError as exc:
+        raise SystemExit(str(exc)) from exc
+    PY
+    wan-runtime ensure
+    /opt/byof/.venv/bin/python - <<'PY'
+    from __future__ import annotations
+
+    import base64
+    import copy
+    import hashlib
+    import importlib.metadata
+    import json
+    import os
+    import subprocess
+    from pathlib import Path
+    from urllib.parse import urlparse
+
+    import boto3
+    import cv2
+    import numpy as np
+    import torch
+    from botocore.config import Config as BotoConfig
+    from huggingface_hub import snapshot_download
+    from PIL import Image
+
+    import wan
+    from npa_wan_input_contract import resolve_wan_input_contract
+    from wan.configs import WAN_CONFIGS
+    from wan.utils.utils import save_video
+
+    SOURCE_REPO = "https://github.com/Wan-Video/Wan2.2.git"
+    SOURCE_REF = "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
+    MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B"
+    MODEL_REF = "921dbaf3f1674a56f47e83fb80a34bac8a8f203e"
+    TOKENIZER_ID = "google/umt5-xxl"
+    UMT5_REVISION = "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"
+    OUTPUT_NAME = "wan2_2_ti2v_5b.mp4"
+    INVENTORY_NAME = "wan2_2_runtime_inventory.json"
+    VALIDATION_CAPABILITY = "wan2.2_decoded_mp4_validation"
+
+    out_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = Path(os.environ.get("WAN22_CACHE_DIR", "/workspace/model-cache/wan2.2"))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    prompt = base64.b64decode(
+        os.environ.get("WAN22_PROMPT_B64", ""), validate=True
+    ).decode("utf-8").strip()
+    if not prompt:
+        raise SystemExit("WAN22_PROMPT must be non-empty")
+
+    if not torch.cuda.is_available():
+        raise SystemExit("Wan 2.2 capability smoke requires CUDA")
+    device_count = torch.cuda.device_count()
+    devices = []
+    for index in range(device_count):
+        properties = torch.cuda.get_device_properties(index)
+        devices.append(
+            {
+                "index": index,
+                "name": properties.name,
+                "compute_capability": list(torch.cuda.get_device_capability(index)),
+                "total_memory_bytes": properties.total_memory,
+            }
+        )
+    if device_count != 1 or devices[0]["compute_capability"] != [12, 0]:
+        raise SystemExit(
+            "Wan RTX PRO profile requires exactly one compute-capability 12.0 GPU: "
+            f"{devices}"
+        )
+    torch_cuda_arch_list = torch.cuda.get_arch_list()
+    if "sm_120" not in torch_cuda_arch_list:
+        raise SystemExit(
+            f"installed PyTorch wheel does not contain sm_120 support: {torch_cuda_arch_list}"
+        )
+    driver_query = subprocess.run(
+        ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader,nounits"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    driver_versions = [line.strip() for line in driver_query.stdout.splitlines() if line.strip()]
+    if driver_query.returncode != 0 or len(driver_versions) != device_count:
+        raise SystemExit(
+            "cannot inventory NVIDIA driver for every CUDA device: "
+            f"returncode={driver_query.returncode}, stderr={driver_query.stderr.strip()}"
+        )
+    try:
+        import flash_attn  # type: ignore[import-not-found]  # noqa: F401
+    except ModuleNotFoundError:
+        flash_attn_installed = False
+    else:
+        flash_attn_installed = True
+    if flash_attn_installed:
+        raise SystemExit("Wan RTX PRO baseline must use native PyTorch SDPA, not FlashAttention")
+    wan_attention = importlib.import_module("wan.modules.attention")
+    wan_model = importlib.import_module("wan.modules.model")
+    sdpa_source_binding = wan_model.flash_attention is wan_attention.attention
+    if not sdpa_source_binding:
+        raise SystemExit(
+            "pinned Wan model.py is not bound to its native PyTorch SDPA wrapper"
+        )
+    q = torch.randn((1, 4, 32, 64), device="cuda", dtype=torch.bfloat16)
+    sdpa_probe = torch.nn.functional.scaled_dot_product_attention(q, q, q)
+    torch.cuda.synchronize()
+    sdpa_probe_result = {
+        "dtype": str(sdpa_probe.dtype),
+        "shape": list(sdpa_probe.shape),
+        "finite": bool(torch.isfinite(sdpa_probe).all().item()),
+    }
+    if not sdpa_probe_result["finite"]:
+        raise SystemExit(f"native PyTorch SDPA probe was non-finite: {sdpa_probe_result}")
+    del q, sdpa_probe
+
+    # The runtime venv deliberately exposes base-image site packages. Resolve one
+    # active distribution per normalized project name through this interpreter's
+    # sys.path ordering so shadowed baked metadata (for example CPU Torch) cannot
+    # overwrite the CUDA runtime that actually executed inference.
+    python_package_names = {}
+    for discovered in importlib.metadata.distributions():
+        discovered_name = discovered.metadata.get("Name") or discovered.name
+        python_package_names.setdefault(discovered_name.lower(), discovered_name)
+    python_packages = []
+    for package_name in sorted(python_package_names.values(), key=str.lower):
+        distribution = importlib.metadata.distribution(package_name)
+        metadata = distribution.metadata
+        license_classifiers = [
+            value.removeprefix("License :: ")
+            for value in (metadata.get_all("Classifier") or [])
+            if value.startswith("License :: ")
+        ]
+        python_packages.append(
+            {
+                "name": metadata.get("Name") or distribution.name,
+                "version": distribution.version,
+                "license": (metadata.get("License") or "").strip()[:300],
+                "license_classifiers": license_classifiers,
+            }
+        )
+    dpkg = subprocess.run(
+        ["dpkg-query", "-W", "-f=${Package}\t${Version}\t${Architecture}\n"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if dpkg.returncode != 0:
+        raise SystemExit(f"cannot inventory baked OS packages: {dpkg.stderr.strip()}")
+    os_packages = [
+        {"name": name, "version": version, "architecture": architecture}
+        for line in dpkg.stdout.splitlines()
+        for name, version, architecture in [line.split("\t", 2)]
+    ]
+    weight_suffixes = {".pt", ".pth", ".safetensors", ".ckpt", ".onnx", ".gguf"}
+    baked_weight_candidates = sorted(
+        str(path.relative_to("/opt/byof"))
+        for path in Path("/opt/byof").rglob("*")
+        if path.is_file() and path.suffix.lower() in weight_suffixes and path.stat().st_size >= 1_000_000
+    )
+    runtime_inventory = {
+        "schema": "npa.workbench.byof.wan2_2_runtime_inventory.v1",
+        "solution": "wan2.2",
+        "source": {"repo": SOURCE_REPO, "ref": SOURCE_REF, "declared_license": "Apache-2.0"},
+        "baked_runtime": {
+            "uid": os.getuid(),
+            "non_root": os.getuid() != 0,
+            "venv": "/opt/byof/.venv",
+            "venv_readable": os.access("/opt/byof/.venv", os.R_OK | os.X_OK),
+            "interpreter_accessible": os.access(
+                "/opt/byof/.venv/bin/python", os.R_OK | os.X_OK
+            ),
+            "python_packages": python_packages,
+            "os_packages": sorted(os_packages, key=lambda item: item["name"]),
+            "large_checkpoint_shaped_files": baked_weight_candidates,
+        },
+        "runtime_stack": {
+            "devices": devices,
+            "driver_versions": driver_versions,
+            "torch": torch.__version__,
+            "torch_cuda": torch.version.cuda,
+            "torch_cuda_arch_list": torch_cuda_arch_list,
+            "attention_backend": "torch.nn.functional.scaled_dot_product_attention",
+            "flash_attention_installed": flash_attn_installed,
+            "sdpa_source_binding": sdpa_source_binding,
+            "sdpa_probe": sdpa_probe_result,
+        },
+        "runtime_acquisition": {
+            "model": {"id": MODEL_ID, "ref": MODEL_REF, "declared_license": "Apache-2.0"},
+            "tokenizer": {"id": TOKENIZER_ID, "ref": UMT5_REVISION, "declared_license": "Apache-2.0"},
+            "weights_baked": False,
+        },
+        "data": {"baked": False, "customer_data_in_image": False},
+    }
+    (out_dir / INVENTORY_NAME).write_text(
+        json.dumps(runtime_inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    if (
+        os.getuid() == 0
+        or not runtime_inventory["baked_runtime"]["venv_readable"]
+        or not runtime_inventory["baked_runtime"]["interpreter_accessible"]
+    ):
+        raise SystemExit("Wan image runtime must be non-root with an accessible /opt/byof/.venv interpreter")
+    if baked_weight_candidates:
+        raise SystemExit(f"checkpoint-shaped files were baked into /opt/byof: {baked_weight_candidates}")
+
+    hf_token = os.environ.get("HF_TOKEN") or None
+    checkpoint_dir = snapshot_download(
+        repo_id=MODEL_ID,
+        revision=MODEL_REF,
+        cache_dir=str(cache_dir / "huggingface"),
+        token=hf_token,
+    )
+    tokenizer_dir = snapshot_download(
+        repo_id=TOKENIZER_ID,
+        revision=UMT5_REVISION,
+        cache_dir=str(cache_dir / "huggingface"),
+        allow_patterns=["*.json", "spiece.model", "tokenizer*", "special_tokens_map.json"],
+        token=hf_token,
+    )
+
+    def s3_client():
+        endpoint = (os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or "").strip() or None
+        return boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            region_name=os.environ.get("AWS_DEFAULT_REGION", "eu-north1"),
+            config=BotoConfig(s3={"addressing_style": "path"}),
+        )
+
+    def materialize_context(uri: str) -> Path | None:
+        uri = uri.strip()
+        if not uri:
+            return None
+        parsed = urlparse(uri)
+        if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.lstrip("/"):
+            raise ValueError("context_image_uri must be an s3:// object URI")
+        target = out_dir / "wan2_2_context_image"
+        s3_client().download_file(parsed.netloc, parsed.path.lstrip("/"), str(target))
+        return target
+
+    context_uri = base64.b64decode(
+        os.environ.get("WAN22_CONTEXT_IMAGE_URI_B64", ""), validate=True
+    ).decode("utf-8")
+    selected_contract = resolve_wan_input_contract(
+        context_image_uri=context_uri,
+        declared_capability=os.environ.get("BYOF_CAPABILITY_NAME", ""),
+        declared_artifact=os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
+    )
+    context_path = materialize_context(context_uri)
+    context_image = Image.open(context_path).convert("RGB") if context_path else None
+    task = selected_contract.task
+    capability = selected_contract.capability_name
+    artifact_name = selected_contract.artifact_name
+    # 1280x704 is the official TI2V-5B 720P CLI size. Frame count and sampling
+    # steps are intentionally reduced for a capability smoke, but the spatial
+    # claim is not weakened to an undocumented resolution.
+    requested_width = int(os.environ.get("WAN22_WIDTH", "1280"))
+    requested_height = int(os.environ.get("WAN22_HEIGHT", "704"))
+    requested_frames = int(os.environ.get("WAN22_FRAMES", "17"))
+    requested_steps = int(os.environ.get("WAN22_STEPS", "8"))
+    requested_fps = 24.0
+    seed = int(os.environ.get("WAN22_SEED", "42"))
+    if requested_frames < 5 or (requested_frames - 1) % 4:
+        raise ValueError("WAN22_FRAMES must be 4n+1 and at least 5")
+    if requested_width % 32 or requested_height % 32:
+        raise ValueError("WAN22_WIDTH and WAN22_HEIGHT must be divisible by 32")
+
+    cfg = copy.deepcopy(WAN_CONFIGS["ti2v-5B"])
+    cfg.t5_tokenizer = str(tokenizer_dir)
+    generator = wan.WanTI2V(
+        config=cfg,
+        checkpoint_dir=str(checkpoint_dir),
+        device_id=0,
+        rank=0,
+        t5_fsdp=False,
+        dit_fsdp=False,
+        use_sp=False,
+        t5_cpu=True,
+        convert_model_dtype=True,
+    )
+    video = generator.generate(
+        prompt,
+        img=context_image,
+        size=(requested_width, requested_height),
+        max_area=requested_width * requested_height,
+        frame_num=requested_frames,
+        shift=5.0,
+        sample_solver="unipc",
+        sampling_steps=requested_steps,
+        guide_scale=5.0,
+        seed=seed,
+        offload_model=True,
+    )
+    output_path = out_dir / OUTPUT_NAME
+    save_video(
+        tensor=video[None],
+        save_file=str(output_path),
+        fps=requested_fps,
+        nrow=1,
+        normalize=True,
+        value_range=(-1, 1),
+    )
+    del video, generator
+    torch.cuda.empty_cache()
+
+    capture = cv2.VideoCapture(str(output_path))
+    if not capture.isOpened():
+        raise SystemExit("generated MP4 cannot be opened")
+    decoded = []
+    while True:
+        ok, frame = capture.read()
+        if not ok:
+            break
+        decoded.append(frame)
+    observed_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    capture.release()
+    if not decoded:
+        raise SystemExit("generated MP4 has no decodable frames")
+    shapes = {tuple(frame.shape) for frame in decoded}
+    if len(shapes) != 1:
+        raise SystemExit(f"generated MP4 frame shapes vary: {sorted(shapes)}")
+    observed_height, observed_width, observed_channels = decoded[0].shape
+    if task == "text-to-video" and (observed_width, observed_height) != (requested_width, requested_height):
+        raise SystemExit(
+            f"generated MP4 dimensions {(observed_width, observed_height)} != requested {(requested_width, requested_height)}"
+        )
+    if len(decoded) != requested_frames:
+        raise SystemExit(f"generated MP4 decoded {len(decoded)} frames, expected {requested_frames}")
+    if observed_fps <= 0:
+        raise SystemExit(f"generated MP4 reported invalid fps: {observed_fps}")
+    output_size = output_path.stat().st_size
+    if output_size < 4096:
+        raise SystemExit(f"generated MP4 is implausibly small: {output_size} bytes")
+
+    spatial_std = [float(np.std(frame)) for frame in decoded]
+    pixel_range = int(max(int(frame.max()) for frame in decoded) - min(int(frame.min()) for frame in decoded))
+    temporal_delta = (
+        float(np.mean([np.mean(np.abs(decoded[i].astype(np.float32) - decoded[i - 1].astype(np.float32))) for i in range(1, len(decoded))]))
+        if len(decoded) > 1
+        else 0.0
+    )
+    if max(spatial_std) < 1.0 or pixel_range < 4:
+        raise SystemExit(
+            f"generated MP4 is uniform or blank: max_spatial_std={max(spatial_std):.4f}, pixel_range={pixel_range}"
+        )
+    if temporal_delta <= 0.001:
+        raise SystemExit(f"generated MP4 frames are temporally uniform: mean_abs_delta={temporal_delta:.6f}")
+
+    capabilities_exercised = [capability, VALIDATION_CAPABILITY]
+    result = {
+        "schema": "npa.workbench.byof.wan2_2_ti2v_5b.v1",
+        "solution": "wan2.2",
+        "capability": capability,
+        "upstream_repo": SOURCE_REPO,
+        "upstream_ref": SOURCE_REF,
+        "model_id": MODEL_ID,
+        "model_ref": MODEL_REF,
+        "tokenizer_id": TOKENIZER_ID,
+        "tokenizer_ref": UMT5_REVISION,
+        "weights_baked": False,
+        "checkpoint_acquisition": "runtime Hugging Face snapshot_download into WAN22_CACHE_DIR",
+        "task": task,
+        "prompt": prompt,
+        "seed": seed,
+        "context_image_uri": context_uri,
+        "requested": {
+            "width": requested_width,
+            "height": requested_height,
+            "frame_count": requested_frames,
+            "fps": requested_fps,
+            "inference_steps": requested_steps,
+        },
+        "observed": {
+            "width": observed_width,
+            "height": observed_height,
+            "channels": observed_channels,
+            "frame_count": len(decoded),
+            "fps": observed_fps,
+            "max_spatial_std": max(spatial_std),
+            "pixel_range": pixel_range,
+            "mean_temporal_abs_delta": temporal_delta,
+        },
+        "device_topology": {
+            "cuda_device_count": device_count,
+            "devices": devices,
+            "torch": torch.__version__,
+            "torch_cuda": torch.version.cuda,
+            "torch_cuda_arch_list": torch_cuda_arch_list,
+            "driver_versions": driver_versions,
+            "attention_backend": "torch.nn.functional.scaled_dot_product_attention",
+            "flash_attention_installed": flash_attn_installed,
+            "sdpa_source_binding": sdpa_source_binding,
+            "sdpa_probe": sdpa_probe_result,
+        },
+        "runtime_versions": {
+            name: importlib.metadata.version(name)
+            for name in ("wan", "torch", "torchvision", "transformers", "diffusers", "opencv-python-headless")
+        },
+        "runtime_inventory_filename": INVENTORY_NAME,
+        "output_filename": OUTPUT_NAME,
+        "output_size_bytes": output_size,
+        "output_sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(),
+        "capabilities_exercised": capabilities_exercised,
+        "deferred": [],
+        "not_claimed": [
+            "wan2.2_ti2v_5b_image_to_video (pending separate live input/output evidence)" if task == "text-to-video" else "wan2.2_ti2v_5b_text_to_video (not exercised in this image-conditioned run)",
+            "wan2.2_t2v_a14b",
+            "wan2.2_i2v_a14b",
+            "wan2.2_s2v_14b",
+            "wan2.2_animate_14b",
+            "wan2.2_fine_tuning",
+            "wan2.2_action_prediction",
+        ],
+    }
+    (out_dir / artifact_name).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps(result, indent=2, sort_keys=True))
+
+    required = {capability, VALIDATION_CAPABILITY}
+    missing = required.difference(capabilities_exercised)
+    if missing or result["deferred"]:
+        raise SystemExit(f"Wan 2.2 capability hard gate failed: missing={sorted(missing)}, deferred={result['deferred']}")
+    PY
+  solution_name: "wan2.2"
+  capability_name: "wan2.2_ti2v_5b_text_to_video"
+  smoke_artifact_name: "wan2_2_ti2v_5b_text_to_video.json"
+  resource_profile_yaml: "byof-solution-smoke-wan22-rtxpro-gpu"
+  task: "ti2v-5B"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  # Explicit negative sentinel means wait until terminal. Zero retains the
+  # generic immediate-status behavior; Wan has no artificial job deadline.
+  wait_timeout: "-1"
+  poll_interval: "60"
+  output_root: "s3://{{config.bucket}}/oss-solutions/wan2.2"
+  summary_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/npa_byof_summary.json"
+  artifact_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/{{config.smoke_artifact_name}}"
+  inventory_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_runtime_inventory.json"
+  video_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_ti2v_5b.mp4"
+  rrd_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_ti2v_5b.rrd"
+  rrd_manifest_uri: "s3://{{config.bucket}}/oss-solutions/wan2.2/{{run.id}}/wan2_2_ti2v_5b_rrd_manifest.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 16
+    memory: 128Gi
+    disk_size: 200
+
+initial: generate
+
+states:
+  generate:
+    description: >
+      Resolve the immutable accepted Wan 2.2 image, fetch pinned TI2V-5B weights
+      at run time, execute real upstream generation on RTX PRO 6000 Blackwell,
+      validate the decoded MP4, and upload all evidence through the BYOF S3
+      runner.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.artifact_uri}}"
+        schema: npa.workbench.byof.wan2_2_ti2v_5b.v1
+      - uri: "{{config.inventory_uri}}"
+        schema: npa.workbench.byof.wan2_2_runtime_inventory.v1
+      - uri: "{{config.video_uri}}"
+        schema: video/mp4
+      - uri: "{{config.rrd_uri}}"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.rrd_manifest_uri}}"
+        schema: npa.workbench.wan2_2.rerun_manifest.v1
+    terminal: true

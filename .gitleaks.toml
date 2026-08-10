@@ -48,6 +48,9 @@ regexes = [
     # pinned in the base-image CVE scan matrix. nebius-generic-id matches it only
     # because the hex happens to start with "e07".
     '''e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01''',
+    # Public content-addressable digest of the pinned SymPy 1.14.0 wheel. The
+    # custom Nebius identifier rule matches it only because the hash starts e09.
+    '''e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5''',
 ]
 paths = [
     '''SECURITY\.md''',

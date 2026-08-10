@@ -12,6 +12,8 @@ from npa.workflows.artifacts import (
     artifact_data_role,
     build_fiftyone_dataset,
     download_s3_uri,
+    decode_run_ref,
+    encode_run_ref,
     find_run_artifacts,
     infer_run_id_from_artifact_key,
     list_all_runs,
@@ -20,6 +22,7 @@ from npa.workflows.artifacts import (
     list_runs,
     render_hint_for_object,
     resolve_run_artifact,
+    resolve_run_artifacts,
     select_preferred_artifact,
 )
 
@@ -692,12 +695,12 @@ def test_list_accessible_buckets_primary_first_deduped() -> None:
 
     class _S3:
         def list_buckets(self):
-            return {"Buckets": [{"Name": "b2"}, {"Name": "primary"}, {"Name": "b3"}]}
+            raise AssertionError("discovery must not enumerate unrelated buckets")
 
     got = A.list_accessible_buckets(_S3(), primary="primary", extra=["b2"])
     assert got[0] == "primary"
     assert got.count("primary") == 1 and got.count("b2") == 1
-    assert set(got) == {"primary", "b2", "b3"}
+    assert set(got) == {"primary", "b2"}
 
 
 def test_list_accessible_buckets_survives_no_listbuckets_permission() -> None:
@@ -711,7 +714,7 @@ def test_list_accessible_buckets_survives_no_listbuckets_permission() -> None:
     assert got == ["primary", "x"]  # falls back to primary/extras only
 
 
-def test_find_run_artifacts_across_buckets_returns_first_match(monkeypatch) -> None:
+def test_find_run_artifacts_across_buckets_returns_unique_match(monkeypatch) -> None:
     import npa.workflows.artifacts as A
 
     scanned: list[str] = []
@@ -719,14 +722,23 @@ def test_find_run_artifacts_across_buckets_returns_first_match(monkeypatch) -> N
     def fake_find(bucket, *, base_prefix, run_id, s3):
         scanned.append(bucket)
         if bucket == "b2":
-            return [A.Artifact(run_id, f"byof/{run_id}/x.json", f"s3://b2/byof/{run_id}/x.json", 1, "t", "json", False)]
+            artifact = A.Artifact(
+                run_id,
+                f"byof/{run_id}/x.json",
+                f"s3://b2/byof/{run_id}/x.json",
+                1,
+                "t",
+                "json",
+                False,
+            )
+            return [A.RunResolution(run_id, "b2", f"b2:{run_id}", [artifact])]
         return []
 
-    monkeypatch.setattr(A, "find_run_artifacts", fake_find)
+    monkeypatch.setattr(A, "find_run_artifact_matches", fake_find)
     bkt, arts = A.find_run_artifacts_across_buckets(["b1", "b2", "b3"], base_prefix="", run_id="run-x", s3=object())
     assert bkt == "b2" and len(arts) == 1
     assert arts[0].s3_uri == "s3://b2/byof/run-x/x.json"
-    assert scanned == ["b1", "b2"]  # stops at first match
+    assert scanned == ["b1", "b2", "b3"]  # all configured buckets prove uniqueness
 
 
 def test_list_all_runs_across_buckets_merges_and_tags(monkeypatch) -> None:

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import re
 from typing import Any, Mapping
 
 _TOKEN_RE = re.compile(
-    r"\{\{\s*(config|run|state)\.([a-zA-Z0-9_.-]+)\s*\}\}"
+    r"\{\{\s*(config|run|state)\.([a-zA-Z0-9_.-]+)"
+    r"(?:\|([a-zA-Z0-9_-]+))?\s*\}\}"
 )
 
 
@@ -26,22 +28,28 @@ def resolve_tokens(
     outputs = state_outputs or {}
 
     def _replace(match: re.Match[str]) -> str:
-        scope, key = match.group(1), match.group(2)
+        scope, key, transform = match.group(1), match.group(2), match.group(3)
         if scope == "config":
             if key not in config:
                 raise TokenError(f"unknown config token: config.{key}")
-            return str(config[key])
-        if scope == "run":
+            resolved = str(config[key])
+        elif scope == "run":
             if key not in run:
                 raise TokenError(f"unknown run token: run.{key}")
-            return str(run[key])
-        if scope == "state":
+            resolved = str(run[key])
+        elif scope == "state":
             state_name, _, output_key = key.partition(".")
             state_map = outputs.get(state_name)
             if not state_map or output_key not in state_map:
                 raise TokenError(f"unknown state token: state.{key}")
-            return str(state_map[output_key])
-        raise TokenError(f"unsupported token scope: {scope}")
+            resolved = str(state_map[output_key])
+        else:  # pragma: no cover - constrained by _TOKEN_RE
+            raise TokenError(f"unsupported token scope: {scope}")
+        if transform is None:
+            return resolved
+        if transform == "base64":
+            return base64.b64encode(resolved.encode("utf-8")).decode("ascii")
+        raise TokenError(f"unsupported token transform: {transform}")
 
     return _TOKEN_RE.sub(_replace, value)
 

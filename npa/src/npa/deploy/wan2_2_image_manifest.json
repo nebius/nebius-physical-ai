@@ -1,0 +1,61 @@
+{
+  "format": "npa_wan_accepted_image_manifest_v1",
+  "tag": "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7",
+  "oci_digest": "sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13",
+  "amd64_manifest": "sha256:e3d9e30aa38f0909f6f39d5ba8fb5460d77ca6cd4c2549a44510bb338e9cfdd1",
+  "runtime_requirements_sha256": "5ee34ad0ec406cfbe0c8071d41faf791dbceeb44defb6ed8b24422ba6022098f",
+  "source": {
+    "repository": "https://github.com/Wan-Video/Wan2.2.git",
+    "revision": "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
+  },
+  "model": {
+    "id": "Wan-AI/Wan2.2-TI2V-5B",
+    "revision": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e"
+  },
+  "tokenizer": {
+    "id": "google/umt5-xxl",
+    "revision": "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"
+  },
+  "runtime_acceptance": {
+    "manifest_sha256": "d941b538a6db722b794cd6758a4b90a2453078a263003669ffa0114d10360bf8",
+    "image_immutable_after_install": true,
+    "runtime_and_weights_outside_image": true
+  },
+  "single_gpu_proof": {
+    "run_id": "private-single-gpu-validation-record",
+    "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "gpu_count": 1,
+    "observed_image_id_digest": "sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13",
+    "mp4_sha256": "60001084033f0f9d88f8b7b3dcca0fd59884efaca1a8f23fee7299c809392328",
+    "rrd_sha256": "49a57f5b5233a83dbde4fb43aa4eeab8d289e045d09f3ce9971ff654c4dcfb10",
+    "rrd_manifest_sha256": "6718fe2aa731d3c6f64ed3ccca8247301e7d3aa9a2bcc588bae6e7e8480cb8fd"
+  },
+  "distributed_proof": {
+    "run_id": "private-four-gpu-validation-record",
+    "gpu_model": "NVIDIA B200",
+    "gpu_count": 4,
+    "world_size": 4,
+    "observed_image_id_digest": "sha256:1baa4e2e89999ea26df81891ac786fa99c7498cbf173e5c5abad54c6f1dd1d13",
+    "mp4_sha256": "9574f79ca01ddd4f0e34945e6f3c309813c924da425daa5a4198b2cdaf894865",
+    "rrd_sha256": "5a4f77461f0877e72c3543508df20edd3a12d0e1fb6bf3f9cfd7215b0dfe0606",
+    "rrd_manifest_sha256": "1f256009e149100c5dfb06c200861537e41e89dc11d11a5923b4615fb14bc308"
+  },
+  "payload_scan": {
+    "report_sha256": "f0f5a4b04bffc31370e8ae5b1dfd0c6d774beccae43e71d98468644e5d9221c6",
+    "archives_scanned": 20,
+    "findings": 0
+  },
+  "vulnerability_scan": {
+    "report_sha256": "8bcc7203ee46f441d06028177d70a67d5720fd106f9c052239a49df7199f9b96",
+    "critical_total": 27,
+    "critical_with_fix": 0,
+    "critical_statuses": {
+      "affected": 16,
+      "end_of_life": 1,
+      "fix_deferred": 9,
+      "will_not_fix": 1
+    },
+    "secrets": 0,
+    "policy": "Unfixed findings are disclosed residual risk; publication fails on fixed CRITICAL findings."
+  }
+}

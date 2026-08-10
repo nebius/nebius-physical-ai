@@ -24,6 +24,7 @@ BACKUP_CONTAINER_REGISTRY = "cr.us-central1.nebius.cloud/u00j7q4jjkahvsx0jy"
 DEFAULT_VLM_IMAGE_ENV = "NPA_VLM_IMAGE"
 DEFAULT_WORKBENCH_IMAGE_ENV = "NPA_WORKBENCH_IMAGE"
 SONIC_IMAGE_MANIFEST_RESOURCE = "sonic_image_manifest.json"
+WAN_IMAGE_MANIFEST_RESOURCE = "wan2_2_image_manifest.json"
 
 CONTAINER_IMAGE_NAMES = {
     "lerobot": "npa-lerobot",
@@ -49,6 +50,7 @@ CONTAINER_IMAGE_NAMES = {
     "lichtblick": "npa-lichtblick",
     "lancedb": "npa-lancedb",
     "detection-training": "npa-detection-training",
+    "wan2-2": "npa-wan2-2",
 }
 
 # Tools whose built image may NOT be published to a public/anonymous registry,
@@ -146,6 +148,8 @@ SUPPORTED_TOOL_VERSIONS = {
     "lichtblick": "1.26.0",
     "lancedb": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z",
     "detection-training": "bdd100k-golden-eval-smoke-20260614T210000Z",
+    # Public-eligible Wan source/CPU base; CUDA torch is operator-gated runtime fetch.
+    "wan2-2": "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
@@ -162,6 +166,27 @@ def sonic_image_manifest() -> dict[str, Any]:
     payload = json.loads(text)
     if payload.get("format") != "npa_sonic_image_manifest_v1":
         raise RuntimeError("Unsupported SONIC image manifest format")
+    return payload
+
+
+@lru_cache(maxsize=1)
+def wan_accepted_image_manifest() -> dict[str, Any]:
+    """Return the immutable image/runtime/GPU proof tuple allowed for publication."""
+
+    text = (
+        resources.files(__package__)
+        .joinpath(WAN_IMAGE_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise RuntimeError("Wan accepted image manifest must be a JSON object")
+    if payload.get("format") != "npa_wan_accepted_image_manifest_v1":
+        raise RuntimeError("Unsupported Wan accepted image manifest format")
+    if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["wan2-2"]:
+        raise RuntimeError(
+            "Wan accepted image manifest tag drifted from the supported tag"
+        )
     return payload
 
 

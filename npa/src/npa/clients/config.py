@@ -898,20 +898,53 @@ def remove_workbench_config(
     name: str,
 ) -> None:
     """Remove ``projects.<project>.workbenches.<name>``."""
-    existing = _load_yaml()
-    projects = existing.get("projects", {})
-    proj = projects.get(project, {})
-    workbenches = proj.get("workbenches", {})
-    if name in workbenches:
+    def remove(existing: dict[str, Any]) -> dict[str, Any]:
+        projects = existing.get("projects", {})
+        proj = projects.get(project, {}) if isinstance(projects, dict) else {}
+        workbenches = proj.get("workbenches", {}) if isinstance(proj, dict) else {}
+        if not isinstance(workbenches, dict) or name not in workbenches:
+            return existing
         del workbenches[name]
-        proj["workbenches"] = workbenches
-        if not workbenches:
+        if workbenches:
+            proj["workbenches"] = workbenches
+        else:
+            proj.pop("workbenches", None)
+        agents = proj.get("agents", {}) if isinstance(proj, dict) else {}
+        if not workbenches and not (isinstance(agents, dict) and agents):
             del projects[project]
             if existing.get("default_project") == project:
                 remaining = list(projects.keys())
-                existing["default_project"] = remaining[0] if remaining else "default"
+                if remaining:
+                    existing["default_project"] = remaining[0]
+                else:
+                    existing.pop("default_project", None)
+        else:
+            projects[project] = proj
         existing["projects"] = projects
-        _write_config_replace(existing)
+        return existing
+
+    update_config_document(remove)
+
+
+def remove_agent_config(project: str, name: str) -> None:
+    """Atomically remove one agent while preserving its project ownership stanza."""
+
+    def remove(existing: dict[str, Any]) -> dict[str, Any]:
+        projects = existing.get("projects", {})
+        proj = projects.get(project, {}) if isinstance(projects, dict) else {}
+        agents = proj.get("agents", {}) if isinstance(proj, dict) else {}
+        if not isinstance(agents, dict) or name not in agents:
+            return existing
+        del agents[name]
+        if agents:
+            proj["agents"] = agents
+        else:
+            proj.pop("agents", None)
+        projects[project] = proj
+        existing["projects"] = projects
+        return existing
+
+    update_config_document(remove)
 
 
 def workbench_entry(project: str | None, name: str | None) -> dict[str, Any]:

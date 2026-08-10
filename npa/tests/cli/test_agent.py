@@ -1411,8 +1411,8 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "data_role_label" in source
     # Loading by run-relative key resolves a discovered object and exact S3 keys
     # infer the full run id instead of truncating it to the top-level workflow name.
-    assert "resolve_run_artifact(artifacts, run_id=run_id" in source
-    assert "infer_run_id_from_artifact_key(key)" in source
+    assert "resolve_run_artifacts(" in source
+    assert '_run_id_for_key(key, "")' in source
     assert "allow_default=may_use_default_recording" in source
     # Regression: #panelVoxel must be a SIBLING of #panelRerun, not nested inside
     # it. If nested, panelRerun.is-inactive (opacity:0) makes the whole Voxel tab
@@ -1552,8 +1552,9 @@ def test_bootstrap_run_history_uses_run_id_index() -> None:
     source = _agent_source()
     assert '"sim_viz_runs": []' not in source
     assert "if not isinstance(runs, dict):" in source
-    assert "runs[run_id] = snapshot" in source
+    assert "runs[history_key] = snapshot" in source
     assert 'state["active_run_id"] = run_id' in source
+    assert 'state["active_run_ref"] = run_ref' in source
     assert (
         "Never let a sparse update erase richer artifact fields from load-run" in source
     )
@@ -1615,7 +1616,7 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
-    assert "body: JSON.stringify({ run_id: runId })" in ui
+    assert "body: JSON.stringify({ run_id: runId, run_ref: runRef })" in ui
     assert "prefix: artifactPrefixValue()" not in ui
 
 

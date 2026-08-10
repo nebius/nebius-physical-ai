@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = ROOT / "npa" / "scripts" / "run_byof_repo.py"
@@ -18,6 +20,16 @@ def _load_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _accepted_wan_base_args(module) -> list[str]:
+    digest = module.wan_accepted_image_manifest()["oci_digest"]
+    return [
+        "--base-profile",
+        "prebuilt",
+        "--base-image",
+        f"registry.example/project/npa-wan2-2@{digest}",
+    ]
 
 
 def test_run_sanitizes_stale_nebius_tokens(monkeypatch) -> None:
@@ -458,6 +470,276 @@ def test_main_forwards_solution_smoke_to_container_runner(monkeypatch) -> None:
     assert env["AWS_ACCESS_KEY_ID"] == "key"
 
 
+def test_main_publishes_verified_wan_rrd_after_success(monkeypatch, capsys) -> None:
+    module = _load_module()
+    published: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+    monkeypatch.setattr(module, "_refresh_registry_pull_secrets", lambda *_args: None)
+    monkeypatch.setattr(module, "_live_runner_env", lambda *_args: {})
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout='{"status":"success"}\n', stderr=""
+        ),
+    )
+
+    def fake_postprocess(key, context):
+        published.update(key=key, uri=context.run_prefix_uri, project=context.project)
+        return {"status": "verified", "capability": "wan2.2_verified_rerun_recording"}
+
+    monkeypatch.setattr(module, "run_registered_postprocess", fake_postprocess)
+    rc = module.main(
+        [
+            "--run-id",
+            "wan-generic-run",
+            *_accepted_wan_base_args(module),
+            "--skip-build",
+            "--workload",
+            "solution-smoke",
+            "--solution-name",
+            "wan2.2-multigpu",
+            "--capability-name",
+            "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
+            "--smoke-artifact-name",
+            "wan2_2_ti2v_5b_multigpu.json",
+            "--output-root",
+            "s3://example/wan2.2-multigpu",
+            "--project",
+            "wan-project",
+        ]
+    )
+
+    assert rc == 0
+    assert published == {
+        "key": "wan2.2-multigpu",
+        "uri": "s3://example/wan2.2-multigpu/wan-generic-run/",
+        "project": "wan-project",
+    }
+    output = capsys.readouterr().out
+    assert '"postprocess": {' in output
+    assert '"capability": "wan2.2_verified_rerun_recording"' in output
+
+
+def test_main_fails_before_launch_when_registered_wan_has_no_output_root(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    launched = False
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+
+    def unexpected_run(*_args, **_kwargs):
+        nonlocal launched
+        launched = True
+        raise AssertionError("registered Wan smoke must fail before launch")
+
+    monkeypatch.setattr(module, "_run", unexpected_run)
+    rc = module.main(
+        [
+            "--run-id",
+            "wan-no-output-root",
+            *_accepted_wan_base_args(module),
+            "--skip-build",
+            "--workload",
+            "solution-smoke",
+            "--solution-name",
+            "wan2.2",
+            "--capability-name",
+            "wan2.2_ti2v_5b_text_to_video",
+            "--smoke-artifact-name",
+            "wan2_2_ti2v_5b_text_to_video.json",
+        ]
+    )
+
+    assert rc == 1
+    assert launched is False
+    output = capsys.readouterr().out
+    assert "requires --output-root" in output
+    assert '"status": "failed"' in output
+
+
+@pytest.mark.parametrize("solution_name", [None, "wan2.2-typo"])
+def test_immutable_wan_base_cannot_skip_postprocess_by_changing_solution_label(
+    monkeypatch, capsys, solution_name: str | None
+) -> None:
+    module = _load_module()
+    launched = False
+
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+
+    def unexpected_run(*_args, **_kwargs):
+        nonlocal launched
+        launched = True
+        raise AssertionError("invalid Wan postprocess contract must fail before launch")
+
+    monkeypatch.setattr(module, "_run", unexpected_run)
+    argv = [
+        "--run-id",
+        "wan-label-bypass",
+        "--workload",
+        "solution-smoke",
+        *_accepted_wan_base_args(module),
+        "--capability-name",
+        "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",
+        "--smoke-artifact-name",
+        "wan2_2_ti2v_5b_multigpu.json",
+        "--output-root",
+        "s3://example/wan2.2-multigpu",
+    ]
+    if solution_name is not None:
+        argv.extend(["--solution-name", solution_name])
+
+    assert module.main(argv) == 1
+    assert launched is False
+    output = capsys.readouterr().out
+    assert "cannot disable verified RRD postprocessing" in output
+    assert '"status": "failed"' in output
+
+
+def test_registered_wan_cannot_report_success_with_skip_run(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+
+    assert (
+        module.main(
+            [
+                "--run-id",
+                "wan-skip-run",
+                *_accepted_wan_base_args(module),
+                "--workload",
+                "solution-smoke",
+                "--solution-name",
+                "wan2.2",
+                "--capability-name",
+                "wan2.2_ti2v_5b_text_to_video",
+                "--smoke-artifact-name",
+                "wan2_2_ti2v_5b_text_to_video.json",
+                "--output-root",
+                "s3://example/wan2.2",
+                "--skip-run",
+            ]
+        )
+        == 1
+    )
+    output = capsys.readouterr().out
+    assert "cannot use --skip-run" in output
+    assert '"status": "failed"' in output
+
+
+def test_main_fails_closed_when_wan_rrd_publication_fails(monkeypatch, capsys) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+    monkeypatch.setattr(module, "_refresh_registry_pull_secrets", lambda *_args: None)
+    monkeypatch.setattr(module, "_live_runner_env", lambda *_args: {})
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout='{"status":"success"}\n', stderr=""
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "run_registered_postprocess",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("RRD verify failed")
+        ),
+    )
+
+    rc = module.main(
+        [
+            "--run-id",
+            "wan-generic-run",
+            *_accepted_wan_base_args(module),
+            "--skip-build",
+            "--workload",
+            "solution-smoke",
+            "--solution-name",
+            "wan2.2",
+            "--capability-name",
+            "wan2.2_ti2v_5b_text_to_video",
+            "--smoke-artifact-name",
+            "wan2_2_ti2v_5b_text_to_video.json",
+            "--output-root",
+            "s3://example/wan2.2",
+        ]
+    )
+
+    assert rc == 1
+    output = capsys.readouterr().out
+    assert '"status": "failed"' in output
+    assert '"error": "RRD verify failed"' in output
+
+
+def test_main_fails_closed_when_registered_postprocess_returns_no_result(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+    monkeypatch.setattr(module, "_refresh_registry_pull_secrets", lambda *_args: None)
+    monkeypatch.setattr(module, "_live_runner_env", lambda *_args: {})
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout='{"status":"success"}\n', stderr=""
+        ),
+    )
+    monkeypatch.setattr(module, "run_registered_postprocess", lambda *_args: None)
+
+    rc = module.main(
+        [
+            "--run-id",
+            "wan-missing-postprocess",
+            *_accepted_wan_base_args(module),
+            "--skip-build",
+            "--workload",
+            "solution-smoke",
+            "--solution-name",
+            "wan2.2",
+            "--capability-name",
+            "wan2.2_ti2v_5b_text_to_video",
+            "--smoke-artifact-name",
+            "wan2_2_ti2v_5b_text_to_video.json",
+            "--output-root",
+            "s3://example/wan2.2",
+        ]
+    )
+
+    assert rc == 1
+    output = capsys.readouterr().out
+    assert "returned no verified postprocess result" in output
+    assert '"status": "failed"' in output
+
+
 def test_base_image_candidates_ubuntu_profile_default() -> None:
     module = _load_module()
     candidates = module._base_image_candidates(
@@ -478,6 +760,104 @@ def test_base_image_candidates_explicit_base_overrides_profile() -> None:
         explicit_base="ubuntu:24.04",
     )
     assert candidates == ["ubuntu:24.04"]
+
+
+def test_prebuilt_profile_resolves_only_registered_tool_image(monkeypatch) -> None:
+    module = _load_module()
+    seen: dict[str, str] = {}
+
+    def resolve(tool: str, *, registry: str):
+        seen.update(tool=tool, registry=registry)
+        return f"{registry}/npa-wan2-2:immutable"
+
+    monkeypatch.setattr(module, "container_image_for_tool", resolve)
+    candidates = module._base_image_candidates(
+        profile="prebuilt",
+        image="registry.example/project/npa-byof:test",
+        registry="registry.example/project",
+        explicit_base="tool://wan2-2",
+    )
+    digest = module.wan_accepted_image_manifest()["oci_digest"]
+    assert candidates == [f"registry.example/project/npa-wan2-2@{digest}"]
+    assert seen == {"tool": "wan2-2", "registry": "registry.example/project"}
+
+
+def test_registered_wan_refuses_a_nonaccepted_base_digest(monkeypatch, capsys) -> None:
+    module = _load_module()
+    launched = False
+    monkeypatch.setattr(
+        module,
+        "resolve_container_registry",
+        lambda *_args, **_kwargs: "registry.example/project",
+    )
+
+    def unexpected_run(*_args, **_kwargs):
+        nonlocal launched
+        launched = True
+        raise AssertionError("nonaccepted Wan digest must fail before launch")
+
+    monkeypatch.setattr(module, "_run", unexpected_run)
+    rc = module.main(
+        [
+            "--run-id",
+            "wan-wrong-digest",
+            "--base-profile",
+            "prebuilt",
+            "--base-image",
+            "registry.example/project/npa-wan2-2@sha256:" + "0" * 64,
+            "--skip-build",
+            "--workload",
+            "solution-smoke",
+            "--solution-name",
+            "wan2.2",
+            "--capability-name",
+            "wan2.2_ti2v_5b_text_to_video",
+            "--smoke-artifact-name",
+            "wan2_2_ti2v_5b_text_to_video.json",
+            "--output-root",
+            "s3://example/wan2.2",
+        ]
+    )
+    assert rc == 1
+    assert launched is False
+    assert "exact GPU-accepted prebuilt image digest" in capsys.readouterr().out
+
+
+def test_closed_postprocess_registry_ignores_unregistered_solution() -> None:
+    from npa.workflows.byof.postprocess import (
+        PostprocessContext,
+        run_registered_postprocess,
+    )
+
+    result = run_registered_postprocess(
+        "untrusted.module:callable",
+        PostprocessContext("s3://bucket/prefix/", None),
+    )
+    assert result is None
+
+
+def test_closed_postprocess_registry_normalizes_solution_casing(monkeypatch) -> None:
+    from npa.workflows.byof import postprocess
+    from npa.workflows.byof.postprocess import (
+        PostprocessContext,
+        has_registered_postprocess,
+        run_registered_postprocess,
+    )
+
+    seen: list[str] = []
+    monkeypatch.setitem(
+        postprocess.POSTPROCESSORS,
+        "wan2.2",
+        lambda context: {"run_prefix_uri": seen.append(context.run_prefix_uri)},
+    )
+    assert has_registered_postprocess("  WAN2.2  ")
+    assert (
+        run_registered_postprocess(
+            "Wan2.2", PostprocessContext("s3://bucket/prefix/", None)
+        )
+        is not None
+    )
+    assert seen == ["s3://bucket/prefix/"]
 
 
 def test_base_image_candidates_isaac_lab_profile(monkeypatch) -> None:

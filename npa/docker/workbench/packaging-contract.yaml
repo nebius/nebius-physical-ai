@@ -150,6 +150,16 @@ images:
     tier: service
     ports: [8790]
     redistribution: public
+  wan2-2:
+    dockerfile: wan2-2/Dockerfile
+    tier: job
+    redistribution: public
+    notes: >-
+      Immutable Apache-2.0 Wan source plus an OSS CPU dependency base. CUDA
+      PyTorch and all nvidia-* distributions are fetched only into a non-root
+      writable runtime volume after explicit operator acceptance; model and
+      tokenizer payloads are also runtime-only. Built-image byte/layer scanning
+      is mandatory before publication.
   sonic:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true

@@ -46,8 +46,26 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     assert 'getElementById("stagesRunSelect")' in ui
     assert 'getElementById("runIdSelect")' in ui
     load_fn = ui.split("async function loadSelectedRun")[1].split("function normalizeStageStatus")[0]
-    assert "loadRunData()" in load_fn
+    assert "loadRunData(selection)" in load_fn
     assert "syncRunChooserFields" in load_fn
+
+
+def test_selected_run_capability_is_installed_before_rerun_mount() -> None:
+    """A newly selected recording must not mount through the Basic-Auth blob fallback."""
+    ui = _embedded_ui_html()
+    assert "function syncRerunRecordingCapability(simViz)" in ui
+
+    load_run = ui.split("async function loadRunData")[1].split("async function selectCamera")[0]
+    assert load_run.index("syncRerunRecordingCapability(data && data.sim_viz)") < load_run.index(
+        "bestEffortMountRerun"
+    )
+
+    load_artifact = ui.split("async function loadArtifact(payload)")[1].split(
+        "async function loadVoxelDataset"
+    )[0]
+    assert load_artifact.index("syncRerunRecordingCapability(simViz)") < load_artifact.index(
+        "swapRerunRecordingInPlace"
+    )
 
 
 def test_artifact_backed_stages_skip_unrelated_draft_overlay() -> None:
