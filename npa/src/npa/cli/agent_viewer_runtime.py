@@ -38,10 +38,11 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         _rerun_iframe_url,
         _restart_rerun_serve,
         _save_state,
+        _sim_viz_load_response,
         _sim2real_pipeline_camera_label,
         _wait_rerun_web_viewer_healthy,
         is_neural_reconstruction_recording,
-    ) = (None,) * 25
+    ) = (None,) * 26
 # NPA_EMBED_STANDALONE_END
 
 
@@ -142,6 +143,60 @@ def _stage_description(stage_key: str, label: str, count: int) -> str:
     if description:
         return description
     return f"{label} — {count} artifact(s) discovered under `{key or 'run'}`."
+
+
+def _load_session_run_if_known(
+    *, body: dict, run_id: str, requested_camera: str = ""
+) -> dict | None:
+    """Load an unqualified session-owned run without scanning artifact storage."""
+    if any(
+        body.get(key)
+        for key in (
+            "run_ref",
+            "rrd_uri",
+            "prefix",
+            "resource_bucket",
+            "project_id",
+            "resolved_prefix",
+            "source_selected",
+        )
+    ):
+        return None
+    state = _load_state()
+    runs = state.get("sim_viz_runs")
+    runs = runs if isinstance(runs, dict) else {}
+    selected = runs.get(run_id)
+    sim2real_runs = state.get("sim2real_runs")
+    sim2real_runs = sim2real_runs if isinstance(sim2real_runs, dict) else {}
+    if isinstance(selected, dict):
+        source_type = str(selected.get("source_type") or "").strip()
+        if source_type == "artifact_storage" or any(
+            str(selected.get(key) or "").strip()
+            for key in ("artifact_run_ref", "bucket", "resolved_prefix")
+        ):
+            return None
+        selected = dict(selected)
+    elif run_id in sim2real_runs:
+        selected = {"run_id": run_id}
+    else:
+        return None
+    if requested_camera:
+        selected["camera"] = requested_camera
+    stage = str(body.get("stage") or "").strip()
+    if stage:
+        selected["stage"] = stage
+    mode = str(body.get("mode") or "").strip().lower()
+    if mode in {"static", "live"}:
+        selected["mode"] = mode
+    selected["run_id"] = run_id
+    selected["rrd_updated_at"] = _now_iso()
+    state["sim_viz"] = selected
+    _record_sim_viz_run(state, selected)
+    _save_state(state)
+    return {
+        "ok": True,
+        "sim_viz": _sim_viz_load_response(state, selected, run_id=run_id),
+    }
 
 
 def _serialized_artifact_apply(func):

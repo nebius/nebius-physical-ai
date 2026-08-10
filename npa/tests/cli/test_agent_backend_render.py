@@ -115,6 +115,25 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
         resolved = module._sim2real_run_details(state, run_id=run_id)
         assert resolved["run_id"] == run_id
         assert resolved["stages"]
+        viewer = {
+            "run_id": run_id,
+            "source_type": "workflow_history",
+            "rrd_uri": "file:///opt/npa-agent/recordings/session.rrd",
+            "camera": "workspace",
+        }
+        state["sim_viz_runs"] = {run_id: viewer}
+        monkeypatch.setattr(module, "_load_state", lambda: state)
+        monkeypatch.setattr(module, "_save_state", lambda _state: None)
+        monkeypatch.setattr(
+            module,
+            "_agent_s3_client",
+            lambda: (_ for _ in ()).throw(
+                AssertionError("session load-run must not scan artifact buckets")
+            ),
+        )
+        loaded = module.sim_viz_load_run({"run_id": run_id})
+        assert loaded["sim_viz"]["run_id"] == run_id
+        assert loaded["sim_viz"]["rrd_uri"].endswith("session.rrd")
     finally:
         sys.modules.pop(module_name, None)
 

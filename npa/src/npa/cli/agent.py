@@ -6327,6 +6327,9 @@ def sim_viz_load_run(payload: dict | None = None):
         )
         return {{"ok": True, "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id)}}
 
+    session_response = _load_session_run_if_known(body=body, run_id=run_id, requested_camera=requested_camera)
+    if session_response is not None:
+        return session_response
     try:
         s3, settings = _agent_s3_client()
         requested_prefix = str(body.get("prefix") or "")
