@@ -19,7 +19,9 @@ from npa.cli.agent import (
 MEDIA_PREVIEW_UI_MARKERS = tuple(
     marker
     for marker in AGENT_MEDIA_PREVIEW_CONTRACT
-    if not marker.startswith("@app.") and "artifact_media_type(" not in marker
+    if not marker.startswith("@app.")
+    and marker not in {"parse_http_byte_range", "X-Content-Type-Options"}
+    and "artifact_media_type(" not in marker
 )
 
 
