@@ -50,8 +50,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && install -d -m 0755 /var/run/sshd \
     && python3 --version \
-    && rsync --version >/dev/null \
-    && sudo -V >/dev/null
+    && rsync --version >/dev/null
 
 WORKDIR /workspace
 
