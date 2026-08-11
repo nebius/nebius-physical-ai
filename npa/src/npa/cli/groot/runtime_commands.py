@@ -58,6 +58,23 @@ replace_once(
     "    config.model.use_relative_action = ft_config.use_relative_action\\n",
 )
 replace_once(
+    "gr00t/configs/finetune_config.py",
+    "    save_steps: int = 1000\\n"
+    "    \\\"\\\"\\\"Frequency (in training steps) at which to save checkpoints.\\\"\\\"\\\"\\n",
+    "    logging_steps: int = 10\\n"
+    "    \\\"\\\"\\\"Frequency (in optimizer steps) at which to record real trainer losses.\\\"\\\"\\\"\\n\\n"
+    "    save_steps: int = 1000\\n"
+    "    \\\"\\\"\\\"Frequency (in training steps) at which to save checkpoints.\\\"\\\"\\\"\\n",
+)
+replace_once(
+    "gr00t/experiment/launch_finetune.py",
+    "    config.training.output_dir = ft_config.output_dir\\n"
+    "    config.training.save_steps = ft_config.save_steps\\n",
+    "    config.training.output_dir = ft_config.output_dir\\n"
+    "    config.training.logging_steps = ft_config.logging_steps\\n"
+    "    config.training.save_steps = ft_config.save_steps\\n",
+)
+replace_once(
     "gr00t/model/gr00t_n1d7/gr00t_n1d7.py",
     "        super().__init__(config)\\n"
     "        self.config = config\\n\\n"

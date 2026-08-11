@@ -1407,6 +1407,7 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
         max_steps=2,
         global_batch_size=1,
         dataloader_num_workers=0,
+        logging_steps=1,
         save_steps=1,
         save_total_limit=1,
         save_only_model=True,
@@ -1448,6 +1449,8 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     assert "--max-steps 2" in cmd
     assert "--global-batch-size 1" in cmd
     assert "--dataloader-num-workers 0" in cmd
+    assert "--logging-steps 1" in cmd
+    assert "config.training.logging_steps = ft_config.logging_steps" in cmd
     assert "--save-steps 1" in cmd
     assert "--save-total-limit 1" in cmd
     assert "--save-only-model" in cmd
