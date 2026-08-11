@@ -131,7 +131,6 @@ from npa.workbench.training_config import (
     TrainingConfigError,
     build_training_config,
     checkpoint_s3_uri as resolve_checkpoint_s3_uri,
-    render_overrides,
     shell_env_exports,
 )
 from npa.cli.groot.finetune_runtime import run_local_finetune as _run_local_finetune
@@ -1496,6 +1495,24 @@ print("npa_s3_download_done")
     return local_file, _remote_python(script) + " && "
 
 
+def _render_tyro_overrides(overrides: tuple[str, ...]) -> str:
+    """Render validated training overrides for the pinned Tyro launcher."""
+
+    argv: list[str] = []
+    for raw in overrides:
+        key, value = raw.split("=", 1)
+        key = key.lstrip("+").lstrip("-")
+        flag = f"--{key}"
+        normalized = value.strip().lower()
+        if normalized == "true":
+            argv.append(flag)
+        elif normalized == "false":
+            argv.append(f"--no-{key}")
+        else:
+            argv.extend((flag, value))
+    return shlex.join(argv)
+
+
 def _build_finetune_command(
     *,
     input_path: str,
@@ -1609,7 +1626,7 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
         )
     # The stock pinned launcher hard-codes relative actions. The image/runtime
     # compatibility patch turns this into a real FinetuneConfig option.
-    train_args += " \\\n  --use-relative-action false"
+    train_args += " \\\n  --no-use-relative-action"
     if dataloader_num_workers is not None:
         train_args += f" \\\n  --dataloader-num-workers {dataloader_num_workers}"
     if logging_steps is not None:
@@ -1620,7 +1637,7 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
         train_args += f" \\\n  --save-total-limit {save_total_limit}"
     if save_only_model:
         train_args += " \\\n  --save-only-model"
-    override_args = render_overrides(training.overrides, style="cli")
+    override_args = _render_tyro_overrides(training.overrides)
     if override_args:
         train_args += f" \\\n  {override_args}"
     training_env = shell_env_exports(training.env())

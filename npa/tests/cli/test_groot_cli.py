@@ -39,6 +39,7 @@ from npa.clients.config import SSHConfig, StorageConfig, WorkbenchConfig
 from npa.clients.credentials import CredentialsConfig
 from npa.clients.http import ServerError
 from npa.clients.serverless import EndpointNotFoundError
+from npa.workbench.training_config import TrainingConfig
 
 
 runner = CliRunner()
@@ -1484,13 +1485,24 @@ def test_groot_finetune_maps_effective_batch_and_absolute_action_mode(mocker) ->
         global_batch_size=140,
         per_device_batch_size=1,
         gradient_accumulation_steps=20,
+        training_config=TrainingConfig(
+            overrides=(
+                "episode-sampling-rate=1.0",
+                "tune-projector=true",
+                "tune-diffusion-model=false",
+            )
+        ),
     )
     script = shlex.split(cmd)[2]
 
     assert "--global-batch-size 7" in cmd
     assert "--gradient-accumulation-steps 20" in cmd
     assert "--batch-size" not in cmd
-    assert "--use-relative-action false" in cmd
+    assert "--no-use-relative-action" in cmd
+    assert "--episode-sampling-rate 1.0" in cmd
+    assert "--tune-projector" in cmd
+    assert "--tune-projector true" not in cmd
+    assert "--no-tune-diffusion-model" in cmd
     assert "config.model.use_relative_action = ft_config.use_relative_action" in cmd
     assert '"global_batch_size": 140' in script
     assert '"trainer_global_batch_size": 7' in script
