@@ -38,7 +38,11 @@ The committed spec is tenant-neutral. At submission, set the S3 bucket/trigger,
 six registry-qualified immutable images, and the prewarmed Isaac cache PVC.
 The image adapters require `NPA_TASK_IMAGE` to contain `@sha256:` and attest the
 image source SHA. Isaac also verifies its read-only content-addressed runtime
-cache before simulator startup.
+cache before simulator startup. The operator must also pass explicit NVIDIA
+acceptance through `omni_kit_accept_eula` and `isaacsim_accept_eula`; both
+committed defaults are empty. The inline Isaac adapter validates both values
+before starting Kit, so the workflow never accepts terms on the operator's
+behalf and never falls through to an interactive prompt in an unattended Job.
 
 `controller_image` is the digest-pinned, CPU-only `npa-sim2real-control` image
 built from `npa/docker/workbench/sim2real-control/Dockerfile`. It deliberately
@@ -74,6 +78,8 @@ npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --var isaac_image=<registry/isaac@sha256:...> \
   --var viewer_image=<registry/viewer@sha256:...> \
   --var isaac_cache_pvc=<pvc> \
+  --var omni_kit_accept_eula=YES \
+  --var isaacsim_accept_eula=YES \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env HF_TOKEN

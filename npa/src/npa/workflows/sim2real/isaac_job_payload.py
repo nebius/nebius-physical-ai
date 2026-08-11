@@ -10,6 +10,8 @@ from typing import Any
 
 _ARG_CHUNK_CHARS = 60_000
 _SCRIPT_PATH = "/tmp/npa-isaac-job-script.sh"
+_ISAAC_EULA_VARS = ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA")
+_ACCEPTED_EULA_VALUES = frozenset({"1", "TRUE", "Y", "YES"})
 _DECODE_STUB = (
     "set -euo pipefail; "
     f"printf '%s' \"$@\" | base64 --decode | gzip --decompress > {_SCRIPT_PATH}; "
@@ -48,6 +50,21 @@ def decode_compressed_bash_args(args: list[str]) -> str:
     return gzip.decompress(base64.b64decode("".join(args[2:]))).decode("utf-8")
 
 
+def _require_operator_eula_acceptance(env: dict[str, str]) -> None:
+    """Fail before Kit starts unless the operator explicitly accepted both terms."""
+
+    missing = [
+        name
+        for name in _ISAAC_EULA_VARS
+        if str(env.get(name) or "").strip().upper() not in _ACCEPTED_EULA_VALUES
+    ]
+    if missing:
+        raise RuntimeError(
+            "inline Isaac execution requires explicit operator EULA acceptance: "
+            + " ".join(missing)
+        )
+
+
 def execute_manifest_container_inline(manifest: dict[str, Any]) -> dict[str, Any]:
     """Execute an existing Isaac Job payload in its workflow-owned GPU task.
 
@@ -84,6 +101,7 @@ def execute_manifest_container_inline(manifest: dict[str, Any]) -> dict[str, Any
         name = str(item.get("name") or "")
         if name and "value" in item:
             env[name] = str(item["value"])
+    _require_operator_eula_acceptance(env)
     subprocess.run([*command, *args], env=env, check=True)
     return {
         "mode": "npa_workflow_skypilot_task",
