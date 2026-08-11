@@ -82,10 +82,11 @@ image (`public` | `restricted`), enforced by
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
   make us the third-party redistributor.
 
-  **No image is currently `restricted`.** `isaac-lab`, `sonic`, `sonic-mujoco` and
-  `groot` used to be, and the re-architecture that changed that is described below.
-  The class and its guards are kept, with empty membership, for the next runtime we
-  cannot ship.
+  **`cosmos3-serving` is currently `restricted`.** Its pinned vLLM-Omni base embeds
+  NVIDIA's Deep Learning Container License; the thin wrapper and anonymous GHCR do
+  not establish that license's derived-distribution conditions. `isaac-lab`, `sonic`,
+  `sonic-mujoco` and `groot` used to be restricted, and the re-architecture that made
+  those four public is described below.
 
 ## Runtime-fetched Isaac Sim (why the Isaac images are publishable)
 

@@ -481,6 +481,17 @@
       "notes": "The cu130 wheel set carries sm_100 and sm_120, so the arch side is covered; not yet measured in the published image or run on datacenter Blackwell."
     },
     {
+      "name": "npa-cosmos3-serving",
+      "dockerfile": "cosmos3-serving/Dockerfile",
+      "build_script": "cosmos3-serving/build.sh",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "CUDA 13 / vLLM-Omni runtime with TORCH_CUDA_ARCH_LIST covering 10.0",
+      "source_compiled_extensions": [],
+      "smoke": "8-GPU Cosmos3-Super server readiness plus a real /v1/videos generation and full H.264 decode",
+      "notes": "Build-your-own restricted image, never a public mirror candidate. The pinned amd64 base declares CUDA 13.0 and TORCH_CUDA_ARCH_LIST including 10.0. The serving stack passed a real guardrails-on generation on 8xH200, but has not run on B200 or B300."
+    },
+    {
       "name": "npa-cosmos-curate",
       "dockerfile": "cosmos-curate/Dockerfile",
       "verdict": "not-applicable",

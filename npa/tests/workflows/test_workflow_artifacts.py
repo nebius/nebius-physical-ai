@@ -15,10 +15,14 @@ from npa.workflows.artifacts import (
     decode_run_ref,
     encode_run_ref,
     find_run_artifacts,
+    find_run_artifact_page,
+    list_all_run_prefixes,
     list_all_runs,
     list_artifacts,
+    list_artifacts_page,
     list_run_categories,
     list_runs,
+    list_runs_at_prefix_across_buckets,
     render_hint_for_object,
     resolve_run_artifacts,
     select_preferred_artifact,
@@ -477,6 +481,25 @@ class _PrefixAwareS3:
 
         return _P()
 
+    def list_objects_v2(
+        self,
+        *,
+        Bucket=None,  # noqa: N803
+        Prefix="",  # noqa: N803
+        MaxKeys=1000,  # noqa: N803
+        ContinuationToken="",  # noqa: N803
+    ):
+        del Bucket
+        matching = [_obj(key, ts=ts) for key, ts in self._keys if key.startswith(Prefix)]
+        start = int(ContinuationToken or 0)
+        end = min(start + int(MaxKeys), len(matching))
+        truncated = end < len(matching)
+        return {
+            "Contents": matching[start:end],
+            "IsTruncated": truncated,
+            "NextContinuationToken": str(end) if truncated else "",
+        }
+
 
 class _PaginatedPrefixAwareS3(_PrefixAwareS3):
     """Prefix-aware fake that splits every object/category listing into pages."""
@@ -644,6 +667,63 @@ def test_duplicate_run_basenames_are_source_qualified_and_plain_lookup_fails_clo
     assert [item.key for item in exact.artifacts] == ["root/category-b/shared-run/b.rrd"]
 
 
+def test_run_ref_must_match_a_server_discovered_exact_source(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    artifact = A.Artifact(
+        "safe-run",
+        "authorized/safe-run/report.json",
+        "s3://bucket/authorized/safe-run/report.json",
+        1,
+        "2026-08-10T00:00:00Z",
+        "json",
+        True,
+    )
+    monkeypatch.setattr(
+        A,
+        "find_run_artifact_matches",
+        lambda *_args, **_kwargs: [
+            A.RunResolution("safe-run", "bucket", "authorized", [artifact])
+        ],
+    )
+
+    forged = A.encode_run_ref("bucket", "guessed", "safe-run")
+    assert (
+        A.resolve_run_artifacts(
+            ["bucket"], base_prefix="", run_ref_or_id=forged, s3=object()
+        )
+        is None
+    )
+
+
+def test_plain_run_resolution_fails_when_any_bucket_search_is_incomplete(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    artifact = A.Artifact(
+        "safe-run",
+        "authorized/safe-run/report.json",
+        "s3://bucket-a/authorized/safe-run/report.json",
+        1,
+        "2026-08-10T00:00:00Z",
+        "json",
+        True,
+    )
+
+    def find(bucket, **_kwargs):
+        if bucket == "bucket-b":
+            raise A.ArtifactDiscoveryError("incomplete")
+        return [A.RunResolution("safe-run", bucket, "authorized", [artifact])]
+
+    monkeypatch.setattr(A, "find_run_artifact_matches", find)
+    with pytest.raises(A.ArtifactDiscoveryError, match="incomplete"):
+        A.resolve_run_artifacts(
+            ["bucket-a", "bucket-b"],
+            base_prefix="",
+            run_ref_or_id="safe-run",
+            s3=object(),
+        )
+
+
 @pytest.mark.parametrize(
     ("key", "expected"),
     [
@@ -707,6 +787,67 @@ def test_list_all_runs_surfaces_root_level_runs() -> None:
     assert set(ids) == {"scenario-gen-smoke-1", "paidf-1", "paidf-root-1", "run-a", "default"}
 
 
+def test_lightweight_prefix_index_discovers_runs_without_object_summaries() -> None:
+    page = list_all_run_prefixes(
+        "bucket",
+        base_prefix="checkpoints",
+        limit=50,
+        s3=_PrefixAwareS3(_MULTI_ROOT_LAYOUT),
+    )
+
+    assert {item.run_id for item in page.runs} == {
+        "scenario-gen-smoke-1",
+        "paidf-1",
+        "paidf-root-1",
+        "run-a",
+        "default",
+    }
+    assert all(item.summary_complete is True for item in page.runs)
+    assert all(item.artifact_count > 0 for item in page.runs)
+    assert all(item.last_modified for item in page.runs)
+    assert any(item.has_viewable is True for item in page.runs)
+
+
+def test_lightweight_timestamp_less_runs_use_s3_recency_and_viewability() -> None:
+    layout = [
+        ("category/plain-old/result.bin", "2026-07-01T00:00:00+00:00"),
+        ("category/plain-new/preview.mp4", "2026-08-01T00:00:00+00:00"),
+    ]
+
+    page = list_all_run_prefixes(
+        "bucket",
+        limit=50,
+        s3=_PrefixAwareS3(layout),
+    )
+
+    assert [item.run_id for item in page.runs] == ["plain-new", "plain-old"]
+    assert page.runs[0].last_modified == "2026-08-01T00:00:00+00:00"
+    assert page.runs[0].started_at == "2026-08-01T00:00:00+00:00"
+    assert page.runs[0].has_viewable is True
+    assert page.runs[0].summary_complete is True
+    assert page.runs[1].has_viewable is False
+
+
+def test_artifact_index_follows_all_pages_for_exact_summary() -> None:
+    layout = [
+        (f"category/large-run/raw/{index:04d}.bin", "2026-08-01T00:00:00+00:00")
+        for index in range(1001)
+    ]
+    layout.append(("category/large-run/preview.mp4", "2026-08-02T00:00:00+00:00"))
+
+    page = list_all_run_prefixes(
+        "bucket",
+        limit=50,
+        s3=_PrefixAwareS3(layout),
+    )
+
+    summary = page.runs[0]
+    assert summary.run_id == "large-run"
+    assert summary.summary_complete is True
+    assert summary.has_viewable is True
+    assert summary.artifact_count == 1002
+
+
 def test_find_run_artifacts_locates_root_level_run() -> None:
     s3 = _PrefixAwareS3(_MULTI_ROOT_LAYOUT)
     arts = find_run_artifacts(
@@ -745,6 +886,24 @@ def test_discovery_categories_excludes_infra_roots() -> None:
     assert "scenario-gen-smoke" in cats
 
 
+def test_discovery_categories_preserves_nested_exclusion_scope() -> None:
+    from npa.workflows.artifacts import discovery_categories
+
+    layout = [
+        ("npa-agent/session-state/current/state.json", "2026-07-23T00:00:00+00:00"),
+        ("npa-agent/customer-runs/run-a/report.json", "2026-07-24T00:00:00+00:00"),
+        ("other/run-b/report.json", "2026-07-25T00:00:00+00:00"),
+    ]
+    cats = discovery_categories(
+        "bucket",
+        exclude={"npa-agent/session-state"},
+        s3=_PrefixAwareS3(layout),
+    )
+
+    assert "npa-agent" in cats
+    assert "other" in cats
+
+
 def test_list_all_runs_excludes_infra_roots() -> None:
     layout = _MULTI_ROOT_LAYOUT + [
         ("npa-agent/session-state/a/state.json", "2026-07-23T00:00:00+00:00"),
@@ -755,6 +914,118 @@ def test_list_all_runs_excludes_infra_roots() -> None:
     ids = [r.run_id for r in page.runs]
     assert "session-state" not in ids
     assert "scenario-gen-smoke-1" in ids
+
+
+def test_infrastructure_state_roots_are_never_discovered_as_runs() -> None:
+    layout = _MULTI_ROOT_LAYOUT + [
+        ("terraform-state/environments/production.tfstate", "2026-08-01T00:00:00+00:00"),
+        ("terraform_state/workspaces/default.tfstate", "2026-08-01T00:01:00+00:00"),
+        ("checkpoints/sim2real-b/terraform-state/current.tfstate", "2026-08-01T00:02:00+00:00"),
+        ("scenario-gen-smoke/terraform_state/current.tfstate", "2026-08-01T00:03:00+00:00"),
+    ]
+
+    full = list_all_runs("bucket", base_prefix="checkpoints", limit=50, s3=_PrefixAwareS3(layout))
+    light = list_all_run_prefixes(
+        "bucket", base_prefix="checkpoints", limit=50, s3=_PrefixAwareS3(layout)
+    )
+
+    assert "terraform-state" not in {item.run_id for item in full.runs}
+    assert "terraform_state" not in {item.run_id for item in full.runs}
+    assert "environments" not in {item.run_id for item in light.runs}
+    assert "workspaces" not in {item.run_id for item in light.runs}
+
+
+def test_infrastructure_only_bucket_returns_no_user_runs() -> None:
+    layout = [
+        ("terraform-state/environments/production.tfstate", "2026-08-01T00:00:00+00:00"),
+        ("terraform_state/workspaces/default.tfstate", "2026-08-01T00:01:00+00:00"),
+    ]
+
+    full = list_all_runs("bucket", limit=50, contains="terraform-state", s3=_PrefixAwareS3(layout))
+    light = list_all_run_prefixes(
+        "bucket", limit=50, contains="terraform-state", s3=_PrefixAwareS3(layout)
+    )
+
+    assert full.runs == []
+    assert full.total_runs == 0
+    assert light.runs == []
+    assert light.total_runs == 0
+
+
+def test_artifact_index_excludes_category_and_source_cache_roots_across_pages() -> None:
+    nested = "byof-solution-e2e-20310102T030405Z"
+    flat = "flat-policy-20310103T030405Z"
+    pages = [
+        {
+            "Contents": [
+                _obj("tenants/tenant-a/project-a/chat-sessions/session.json"),
+                _obj(f"npa-src/{flat}/source/main.py"),
+                _obj(f"oss-solutions/solution-family/{nested}/output/future.blobx"),
+            ]
+        },
+        {
+            "Contents": [
+                _obj(f"{flat}/evaluation/aggregate.json"),
+                _obj(f"{flat}/preview.mp4"),
+            ]
+        },
+    ]
+
+    page = list_all_run_prefixes("bucket", limit=50, s3=_FakeS3(pages))
+    sources = {(item.run_id, item.resolved_prefix) for item in page.runs}
+
+    assert sources == {
+        (nested, "oss-solutions/solution-family"),
+        (flat, ""),
+    }
+    assert page.discovery_complete is True
+    assert "tenants" not in {item.run_id for item in page.runs}
+
+
+def test_duplicate_run_ids_keep_each_exact_source() -> None:
+    duplicate = "duplicate-policy-20310103T030405Z"
+    layout = [
+        (f"{duplicate}/aggregate.json", "2031-01-03T03:05:00+00:00"),
+        (f"category/{duplicate}/report.json", "2031-01-03T03:06:00+00:00"),
+    ]
+
+    page = list_all_run_prefixes("bucket", limit=50, s3=_PrefixAwareS3(layout))
+    matches = [item for item in page.runs if item.run_id == duplicate]
+
+    assert {item.resolved_prefix for item in matches} == {"", "category"}
+    assert len(matches) == 2
+
+
+def test_mixed_category_and_flat_layout_retains_timestamped_parent_run() -> None:
+    flat_run = "policy-run-20310405t060708z"
+    layout = _MULTI_ROOT_LAYOUT + [
+        (f"{flat_run}/evaluation/aggregate.json", "2031-04-05T06:10:00+00:00"),
+        (f"{flat_run}/checkpoints/policy.ckpt", "2031-04-05T06:11:00+00:00"),
+    ]
+
+    page = list_all_run_prefixes(
+        "bucket", base_prefix="checkpoints", limit=50, s3=_PrefixAwareS3(layout)
+    )
+
+    run_ids = {item.run_id for item in page.runs}
+    assert flat_run in run_ids
+    assert "evaluation" not in run_ids
+    assert page.runs[[item.run_id for item in page.runs].index(flat_run)].to_dict()[
+        "source_type"
+    ] == "artifact_storage"
+
+
+def test_flat_run_detection_still_honors_server_side_search() -> None:
+    layout = [
+        ("alpha-run-20310405t060708z/evaluation/report.json", "2031-04-05T06:10:00+00:00"),
+        ("beta-run-20310406t060708z/evaluation/report.json", "2031-04-06T06:10:00+00:00"),
+    ]
+
+    page = list_all_run_prefixes(
+        "bucket", limit=50, contains="beta-run", s3=_PrefixAwareS3(layout)
+    )
+
+    assert [item.run_id for item in page.runs] == ["beta-run-20310406t060708z"]
 
 
 def test_ppm_and_netpbm_are_images_and_need_transcode() -> None:
@@ -793,47 +1064,134 @@ def test_list_all_runs_contains_search_across_roots() -> None:
     assert [r.run_id for r in page.runs] == ["rtxpro-staged-2x2-old"]
 
 
-def test_list_runs_cached_serves_fresh_then_refreshes_when_stale(monkeypatch) -> None:
-    """Fresh hits avoid re-walking S3; a stale entry is refreshed (here inline)."""
-    import npa.workflows.artifacts as A
+def test_exact_search_finds_flat_root_run_in_mixed_layout() -> None:
+    run_id = "mixed-flat-run-20300101t010203z"
+    layout = _MULTI_ROOT_LAYOUT + [
+        (f"{run_id}/eval/report.json", "2026-08-06T01:50:00+00:00"),
+        (f"{run_id}/eval/rollout.mp4", "2026-08-06T01:51:00+00:00"),
+        (f"{run_id}/checkpoints/policy.ckpt", "2026-08-06T01:52:00+00:00"),
+        (f"{run_id}/checkpoints/metrics.json", "2026-08-06T01:53:00+00:00"),
+        (f"{run_id}/logs/train.log", "2026-08-06T01:54:00+00:00"),
+        (f"{run_id}/raw/future-format.blobx", "2026-08-06T01:55:00+00:00"),
+    ]
+    s3 = _PrefixAwareS3(layout)
 
-    A._run_list_cache_clear()
-    calls = {"n": 0}
-
-    def fake_all(bucket, **kwargs):  # noqa: ANN001
-        calls["n"] += 1
-        run = A.RunSummary(
-            run_id=f"run-{calls['n']}", last_modified="2026-07-24T00:00:00+00:00",
-            artifact_count=1, has_viewable=True,
-        )
-        return A.RunListPage(runs=[run], truncated=False, total_runs=1, limit=kwargs.get("limit", 50))
-
-    monkeypatch.setattr(A, "list_all_runs", fake_all)
-
-    # Cold miss -> computes once.
-    p1 = A.list_runs_cached("bucket", all_categories=True, base_prefix="checkpoints", ttl=1000, s3=object())
-    assert calls["n"] == 1 and p1.runs[0].run_id == "run-1"
-    # Fresh hit -> no recompute, same page.
-    p2 = A.list_runs_cached("bucket", all_categories=True, base_prefix="checkpoints", ttl=1000, s3=object())
-    assert calls["n"] == 1 and p2.runs[0].run_id == "run-1"
-    # Stale (ttl=0) -> inline refresh recomputes and returns fresh.
-    p3 = A.list_runs_cached(
-        "bucket", all_categories=True, base_prefix="checkpoints", ttl=0, s3=object(), refresh_sync=True
+    page = list_all_runs(
+        "bucket",
+        base_prefix="checkpoints",
+        limit=50,
+        contains=run_id,
+        s3=s3,
     )
-    assert calls["n"] == 2 and p3.runs[0].run_id == "run-2"
-    A._run_list_cache_clear()
+
+    assert [item.run_id for item in page.runs] == [run_id]
+    assert page.runs[0].artifact_count == 6
+    assert "eval" not in [item.run_id for item in page.runs]
+    assert "checkpoints" not in [item.run_id for item in page.runs]
+    artifacts = find_run_artifacts("bucket", base_prefix="checkpoints", run_id=run_id, s3=s3)
+    assert len(artifacts) == 6
+    unknown = next(item for item in artifacts if item.key.endswith(".blobx"))
+    assert unknown.render == "download"
+    assert unknown.inline is False
+
+    lightweight = list_all_run_prefixes(
+        "bucket",
+        base_prefix="checkpoints",
+        limit=50,
+        contains=run_id,
+        s3=s3,
+    )
+    assert [item.run_id for item in lightweight.runs] == [run_id]
+    assert lightweight.runs[0].summary_complete is True
+
+    resolved_prefix, artifact_page = find_run_artifact_page(
+        "bucket",
+        base_prefix="checkpoints",
+        run_id=run_id,
+        s3=s3,
+    )
+    assert resolved_prefix == ""
+    assert len(artifact_page.artifacts) == 6
+    assert artifact_page.truncated is False
 
 
-def test_list_runs_cached_prefix_path_matches_list_runs() -> None:
-    """The prefix (single-category) cache path returns the same runs as list_runs."""
+def test_artifact_pages_preserve_unknown_formats_and_cursor() -> None:
+    run_id = "paged-run"
+    s3 = _PrefixAwareS3(
+        [
+            (f"category/{run_id}/a.json", "2030-01-01T00:00:01+00:00"),
+            (f"category/{run_id}/b.futureblob", "2030-01-01T00:00:02+00:00"),
+            (f"category/{run_id}/c.mp4", "2030-01-01T00:00:03+00:00"),
+        ]
+    )
+
+    first = list_artifacts_page(
+        "bucket",
+        run_id,
+        prefix="category",
+        page_size=2,
+        s3=s3,
+    )
+    second = list_artifacts_page(
+        "bucket",
+        run_id,
+        prefix="category",
+        cursor=first.next_cursor,
+        page_size=2,
+        s3=s3,
+    )
+
+    assert first.truncated is True
+    assert first.next_cursor
+    assert second.truncated is False
+    combined = [*first.artifacts, *second.artifacts]
+    unknown = next(item for item in combined if item.key.endswith(".futureblob"))
+    assert unknown.render == "download"
+    assert unknown.inline is False
+
+
+def test_run_artifact_discovery_object_scan_is_bounded_and_truthful(monkeypatch) -> None:
     import npa.workflows.artifacts as A
+    monkeypatch.setattr(A, "MAX_RUN_DISCOVERY_OBJECTS", 2)
+    page = A.list_all_run_prefixes(
+        "bucket",
+        limit=50,
+        s3=_PrefixAwareS3(
+            [
+                (f"category/run-{index}/report.json", f"2030-01-0{index + 1}T00:00:00+00:00")
+                for index in range(5)
+            ]
+        ),
+    )
+    assert page.discovery_complete is False
+    assert page.truncated is True
+    assert page.to_dict()["pagination_complete"] is False
 
-    A._run_list_cache_clear()
-    s3 = _PrefixAwareS3(_MULTI_ROOT_LAYOUT)
-    direct = list_runs("bucket", prefix="checkpoints/sim2real-b", limit=50, s3=s3)
-    cached = A.list_runs_cached("bucket", prefix="checkpoints/sim2real-b", limit=50, s3=s3, ttl=1000)
-    assert [r.run_id for r in cached.runs] == [r.run_id for r in direct.runs]
-    A._run_list_cache_clear()
+
+def test_explicit_prefix_discovery_searches_all_accessible_project_buckets() -> None:
+    class MultiBucketS3:
+        def get_paginator(self, name: str):
+            assert name == "list_objects_v2"
+
+            class Paginator:
+                def paginate(self, **kwargs):
+                    bucket = kwargs["Bucket"]
+                    prefix = kwargs["Prefix"]
+                    yield {"Contents": [_obj(f"{prefix}run-{bucket}/report.json")]}
+
+            return Paginator()
+
+    page = list_runs_at_prefix_across_buckets(
+        ["bucket-a", "bucket-b"],
+        prefix="category/",
+        bucket_projects={"bucket-a": "project-a", "bucket-b": "project-b"},
+        s3=MultiBucketS3(),
+    )
+
+    assert {(run.bucket, run.project_id) for run in page.runs} == {
+        ("bucket-a", "project-a"),
+        ("bucket-b", "project-b"),
+    }
 
 
 # --- Multi-bucket discovery ---------------------------------------------------
@@ -900,10 +1258,179 @@ def test_list_all_runs_across_buckets_merges_and_tags(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(A, "list_all_runs", fake_all)
-    page = A.list_all_runs_across_buckets(["b1", "b2"], base_prefix="", limit=50, exclude=None, contains="", s3=object())
-    tagged = {(r.bucket, r.run_id) for r in page.runs}
-    assert ("b1", "run-b1") in tagged and ("b2", "run-b2") in tagged
+    page = A.list_all_runs_across_buckets(
+        ["b1", "b2"],
+        base_prefix="",
+        limit=50,
+        exclude=None,
+        contains="",
+        bucket_projects={"b1": "project-a", "b2": "project-b"},
+        s3=object(),
+    )
+    tagged = {(r.bucket, r.project_id, r.run_id) for r in page.runs}
+    assert ("b1", "project-a", "run-b1") in tagged
+    assert ("b2", "project-b", "run-b2") in tagged
     assert page.total_runs == 2
+
+
+def test_multi_bucket_run_discovery_preserves_bucket_truncation(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    def fake_light(bucket, **_kwargs):
+        return A.RunListPage(
+            runs=[A.RunSummary("run-known", "2030-01-01T00:00:00+00:00", 1, True)],
+            truncated=True,
+            total_runs=A.MAX_RUN_PARENT_CANDIDATES + 1,
+            limit=A.MAX_RUN_PARENT_CANDIDATES,
+            discovery_complete=True,
+        )
+
+    monkeypatch.setattr(A, "list_all_run_prefixes", fake_light)
+    page = A.list_all_runs_across_buckets(
+        ["bucket"],
+        base_prefix="",
+        limit=A.MAX_RUN_PARENT_CANDIDATES,
+        lightweight=True,
+        s3=object(),
+    )
+
+    assert page.total_runs == A.MAX_RUN_PARENT_CANDIDATES + 1
+    assert page.truncated is True
+    assert page.discovery_complete is True
+
+
+def test_exact_source_discovery_reports_a_truncated_candidate_set_incomplete(
+    monkeypatch,
+) -> None:
+    import npa.workflows.artifacts as A
+
+    source = A.RunSummary(
+        "run-known",
+        "2026-06-30T00:00:00+00:00",
+        1,
+        True,
+        bucket="bucket",
+        project_id="project",
+        resolved_prefix="category",
+    )
+    monkeypatch.setattr(
+        A,
+        "list_all_runs_across_buckets",
+        lambda *_args, **_kwargs: A.RunListPage(
+            runs=[source],
+            truncated=True,
+            total_runs=A.MAX_RUN_PARENT_CANDIDATES + 1,
+            limit=A.MAX_RUN_PARENT_CANDIDATES,
+            discovery_complete=True,
+        ),
+    )
+
+    matches, errors, complete = A.find_run_sources_across_buckets(
+        ["bucket"], base_prefix="", run_id="run-known", s3=object()
+    )
+
+    assert matches == [source]
+    assert errors == ()
+    assert complete is False
+
+
+def test_exact_source_discovery_uses_one_bounded_prefix_probe(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    calls: list[dict[str, object]] = []
+
+    class _S3:
+        def list_objects_v2(self, **kwargs):
+            calls.append(dict(kwargs))
+            return {
+                "Contents": [
+                    {
+                        "Key": "category/nested/run-known/report.json",
+                        "LastModified": datetime(2026, 8, 10, tzinfo=timezone.utc),
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        A,
+        "list_all_runs_across_buckets",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("exact source probe must not scan the whole bucket")
+        ),
+    )
+    matches, errors, complete = A.find_run_sources_across_buckets(
+        ["bucket"],
+        base_prefix="",
+        run_id="run-known",
+        exact_prefix="category/nested",
+        exclude={"npa-agent/tenants"},
+        bucket_projects={"bucket": "project"},
+        s3=_S3(),
+    )
+
+    assert calls == [
+        {
+            "Bucket": "bucket",
+            "Prefix": "category/nested/run-known/",
+            "MaxKeys": 1,
+        }
+    ]
+    assert errors == ()
+    assert complete is True
+    assert len(matches) == 1
+    assert matches[0].bucket == "bucket"
+    assert matches[0].project_id == "project"
+    assert matches[0].resolved_prefix == "category/nested"
+    assert matches[0].summary_complete is False
+
+
+def test_exact_source_discovery_rejects_excluded_structural_prefix() -> None:
+    import npa.workflows.artifacts as A
+
+    class _S3:
+        def list_objects_v2(self, **_kwargs):
+            raise AssertionError("excluded prefixes must not be probed")
+
+    matches, errors, complete = A.find_run_sources_across_buckets(
+        ["bucket"],
+        base_prefix="",
+        run_id="run-known",
+        exact_prefix="npa-agent/tenants",
+        s3=_S3(),
+    )
+
+    assert matches == []
+    assert errors == ()
+    assert complete is True
+
+
+def test_multi_bucket_discovery_keeps_accessible_siblings_when_one_is_denied(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    def fake_light(bucket, *, base_prefix, limit, exclude, contains, s3):
+        if bucket == "denied-bucket":
+            raise A.ArtifactDiscoveryError("access denied")
+        return A.RunListPage(
+            runs=[A.RunSummary(f"real-run-{bucket}", "2030-01-01T00:00:00+00:00", 0, False)],
+            truncated=False,
+            total_runs=1,
+            limit=limit,
+        )
+
+    monkeypatch.setattr(A, "list_all_run_prefixes", fake_light)
+    page = A.list_all_runs_across_buckets(
+        ["accessible-a", "denied-bucket", "accessible-b"],
+        base_prefix="",
+        limit=50,
+        bucket_projects={"accessible-a": "project-a", "accessible-b": "project-b"},
+        lightweight=True,
+        s3=object(),
+    )
+
+    assert {(item.bucket, item.project_id, item.run_id) for item in page.runs} == {
+        ("accessible-a", "project-a", "real-run-accessible-a"),
+        ("accessible-b", "project-b", "real-run-accessible-b"),
+    }
 
 
 def test_build_fiftyone_dataset_emits_bucket_qualified_uris() -> None:

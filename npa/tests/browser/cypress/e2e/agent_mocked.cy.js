@@ -1,10 +1,12 @@
 import {
+  ARTIFACT_ONLY_RUN_ID,
   COMPLEX_WORKFLOW_YAML,
   DF_INPUT_ONLY_RUN_ID,
   DF_MOCK_RUN_ID,
   FIELD_IDS,
   GENERIC_WORKFLOW_YAML,
   NON_STOCK_RUN_ID,
+  SIM_VIZ,
   STATIC_BUTTON_IDS,
   WORKFLOW_YAML,
 } from "../support/e2e";
@@ -14,6 +16,8 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.visitMockAgent();
     cy.wait("@session");
     cy.wait("@simAssets");
+    cy.wait("@agentAccess");
+    cy.wait("@artifactRuns");
     // Wait for boot mount to finish so later loadRun/loadArtifact are not clobbered
     // by ensureFrankaRerunLoaded. Cover clears quickly after warm (no splash latency).
     cy.get("#rerunBundleCover", { timeout: 20000 }).should("have.attr", "hidden");
@@ -23,7 +27,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#stagesPanel").should("exist");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
-    cy.get("#stagesPanel .hint").should("contain.text", "timeline, result, and logs");
+    cy.get("#stagesPanel .hint").should("contain.text", "evidence-backed timeline and artifacts");
     cy.get("#stagesPanel .hint").should("not.contain.text", "Sim2Real-only");
     cy.get("#stageList").should("have.attr", "aria-label", "Workflow stages");
     cy.get("#stageList").should("contain.text", "Select assets");
@@ -53,12 +57,80 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.contains("Sim2Real Run Monitor").should("not.exist");
   });
 
+  it("renders artifact-only groups without fabricated outcomes and clears demo state", () => {
+    // First render the isolated local fixture so the switch proves its graph is
+    // cleared before the storage-backed response arrives.
+    cy.get("#stagesRunInput").clear().type("franka-demo");
+    cy.get("#stagesLoadRun").click();
+    cy.wait("@loadFranka");
+    cy.get("#stageList").should("contain.text", "Local Franka demo");
+
+    cy.get("#stagesRunInput").clear().type(ARTIFACT_ONLY_RUN_ID);
+    cy.get("#stagesLoadRun").click();
+    cy.wait("@artifactOnlyList");
+    cy.wait("@runDetails");
+
+    cy.get("#runSummary").should("contain.text", ARTIFACT_ONLY_RUN_ID);
+    cy.get("#runSummary").should("contain.text", "S3 artifacts");
+    cy.get("#stageList .stage-item").should("have.length", 6);
+    cy.get("#stageList .stage-progress").should(
+      "have.text",
+      "6 observed groups · execution status unavailable",
+    );
+    cy.get("#stageList .stage-status").each(($status) => {
+      expect($status.text()).to.eq("Observed output");
+    });
+    cy.get("#stageList").should("not.contain.text", "Not run");
+    cy.get("#stageList").should("not.contain.text", "Succeeded");
+    cy.get("#stageList").should("not.contain.text", "Local Franka demo");
+    cy.get("#stageList .stage-evidence").should("have.length", 6);
+    cy.get("#stageList .stage-evidence").first().should("contain.text", "artifact_listing");
+    cy.get("#stageList .stage-evidence").first().should("contain.text", "observed");
+  });
+
+  it("blocks a stale stage response from restoring the previous run graph", () => {
+    const slowRun = "submitted-run";
+    const fastRun = "cosmos-reason-run";
+    cy.intercept("GET", `/api/workflows/sim2real/runs/${slowRun}*`, (req) => {
+      req.reply({
+        delay: 600,
+        body: {
+          run: {
+            run_id: slowRun,
+            status: "running",
+            stages: [{ id: "stale-stage", label: "Stale stage", status: "running" }],
+            logs: [],
+          },
+        },
+      });
+    }).as("slowRunDetails");
+    cy.intercept("GET", `/api/workflows/sim2real/runs/${fastRun}*`, {
+      run: {
+        run_id: fastRun,
+        status: "running",
+        stages: [{ id: "current-stage", label: "Current stage", status: "running" }],
+        logs: [],
+      },
+    }).as("fastRunDetails");
+
+    cy.get("#stagesRunInput").clear().type(slowRun);
+    cy.get("#stagesLoadRun").click();
+    cy.wait(40);
+    cy.get("#stagesRunInput").clear().type(fastRun);
+    cy.get("#stagesLoadRun").click();
+    cy.wait("@fastRunDetails");
+    cy.wait(800);
+    cy.get("#runSummary").should("contain.text", fastRun);
+    cy.get("#stageList").should("contain.text", "Current stage");
+    cy.get("#stageList").should("not.contain.text", "Stale stage");
+  });
+
   it("keeps Stages generic after drafting a non-Sim2Real workflow YAML", () => {
     cy.get("#workflowYaml").clear().type(GENERIC_WORKFLOW_YAML, { delay: 0 });
     cy.get("#workflowValidate").click();
     cy.wait("@workflowValidate");
     cy.get("#stagesPanel h3").should("have.text", "Stages");
-    cy.get("#stagesPanel .hint").should("contain.text", "timeline, result, and logs");
+    cy.get("#stagesPanel .hint").should("contain.text", "evidence-backed timeline and artifacts");
     cy.contains("Sim2Real Run Monitor").should("not.exist");
   });
 
@@ -114,6 +186,380 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simRunId").should("contain.text", "mock-run");
   });
 
+  it("selects one escaped project detail at a time and preserves the stable project ID", () => {
+    const projectCapabilities = (artifactStatus, artifactReason, readStatus, readReason, submitStatus, submitReason) => ({
+      project_metadata: { status: "available", reason: "Project identity was returned by tenant discovery." },
+      storage_resource_discovery: { status: "available", reason: "Object storage resources visible in this project were listed." },
+      artifact_discovery: { status: artifactStatus, reason: artifactReason, scope: "read_only" },
+      artifact_read: { status: readStatus, reason: readReason, scope: "read_only" },
+      workflow_submission: { status: submitStatus, reason: submitReason, scope: "deployment_project" },
+    });
+    const resource = (id, name, readStatus = "available", readReason = "Object reads were verified.") => ({
+      type: "object_storage_bucket",
+      id,
+      name,
+      capabilities: {
+        artifact_discovery: { status: "available", reason: "Object listing was verified.", scope: "read_only" },
+        artifact_read: { status: readStatus, reason: readReason, scope: "read_only" },
+      },
+    });
+    const hostileProjectId = 'project-x"><svg/onload=window.__npaXss=1>';
+    const hostileBucket = 'bucket-<img src=x onerror=window.__npaXss=2>-&"\'';
+    const projects = [
+      {
+        id: "project-d",
+        name: "Empty Bucket",
+        deployment_project: false,
+        status: "partial",
+        capabilities: projectCapabilities(
+          "available",
+          "The empty bucket remains searchable.",
+          "unverified",
+          "Read access is unverified because the empty bucket has no object to probe.",
+          "unavailable",
+          "Tenant-wide discovery does not enable workflow submission in this project.",
+        ),
+        resources: [resource(
+          "resource-empty",
+          "empty-artifacts",
+          "unverified",
+          "Object listing succeeded; the empty bucket has no object to verify read access.",
+        )],
+      },
+      {
+        id: "project-b",
+        name: "Foreign Project",
+        deployment_project: false,
+        status: "available",
+        capabilities: projectCapabilities(
+          "available",
+          "At least one project bucket is searchable.",
+          "available",
+          "Artifact object reads were verified.",
+          "unavailable",
+          "Tenant-wide discovery does not enable workflow submission in this project.",
+        ),
+        resources: [resource("resource-b", "foreign-artifacts")],
+      },
+      {
+        id: "project-f",
+        name: "Duplicate Name",
+        deployment_project: false,
+        status: "available",
+        capabilities: projectCapabilities("unavailable", "No searchable object storage bucket was verified.", "unavailable", "No reads were verified.", "unavailable", "Home project only."),
+        resources: [],
+      },
+      {
+        id: "project-a",
+        name: "Project Alpha",
+        deployment_project: true,
+        status: "available",
+        capabilities: projectCapabilities("available", "At least one project bucket is searchable.", "available", "Artifact object reads were verified.", "available", "Workflow submission remains scoped to the deployment project."),
+        resources: [resource("resource-a", "project-artifacts")],
+      },
+      {
+        id: "project-c",
+        name: "No Bucket",
+        deployment_project: false,
+        status: "partial",
+        capabilities: projectCapabilities("unavailable", "No searchable object storage bucket was verified for this project.", "unavailable", "Artifact object reads were not verified.", "unavailable", "Tenant-wide discovery does not enable workflow submission in this project."),
+        resources: [],
+      },
+      {
+        id: "project-e",
+        name: "Duplicate Name",
+        deployment_project: false,
+        status: "available",
+        capabilities: projectCapabilities("unavailable", "No searchable object storage bucket was verified.", "unavailable", "No reads were verified.", "unavailable", "Home project only."),
+        resources: [],
+      },
+      {
+        id: hostileProjectId,
+        name: '<img src=x onerror="window.__npaXss=3">',
+        deployment_project: false,
+        status: "partial",
+        capabilities: projectCapabilities("available", '<script>window.__npaXss=4</script> searchable.', "unverified", 'No object named "<probe>" exists.', "unavailable", '<img src=x onerror="window.__npaXss=5"> home project only.'),
+        resources: [resource("resource-hostile", hostileBucket, "unverified", '<svg onload="window.__npaXss=6">empty</svg>')],
+      },
+    ];
+    const accessPayload = {
+      apiVersion: "npa.agent.access/v1",
+      identity: {
+        tenant_id: "tenant-test",
+        deployment_project_id: "project-a",
+        deployment_project_name: "Project Alpha",
+      },
+      status: "partial",
+      scope: "partial_tenant",
+      capabilities: { artifact_discovery: { status: "partial", reason: "Accessible projects are searched; specific gaps are reported." } },
+      projects,
+      errors: [{ message: '<img src=x onerror="window.__npaXss=7"> access probe unavailable.' }],
+    };
+    cy.intercept("GET", "/api/access*", { statusCode: 200, body: accessPayload }).as("selectorAccess");
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@selectorAccess");
+
+    cy.get('label[for="agentAccessProjectSelect"]').should("contain.text", "Project");
+    cy.get("#agentAccessProjectSelect")
+      .should("have.prop", "tagName", "SELECT")
+      .and("be.enabled")
+      .and("have.value", "project-a");
+    cy.get("#agentAccessProjectSelect option").should("have.length", projects.length).then(($options) => {
+      expect([...$options].map((option) => option.value)).to.deep.equal([
+        "project-a",
+        "project-b",
+        "project-c",
+        "project-d",
+        "project-e",
+        "project-f",
+        hostileProjectId,
+      ]);
+    });
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
+      .and("contain.text", "Project Alpha")
+      .and("contain.text", "project-a")
+      .and("contain.text", "deployment project");
+    cy.get("#agentAccessPanel").should(($panel) => {
+      expect($panel.text()).not.to.match(/\bpartial\b/i);
+    });
+
+    cy.get("#agentAccessProjectSelect").select("project-b");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
+      .and("contain.text", "Foreign Project")
+      .and("contain.text", "foreign-artifacts")
+      .and("contain.text", "tenant read-only")
+      .and("not.contain.text", "project-artifacts");
+    cy.get('#agentAccessProjects button[data-access-action="list"]')
+      .should("have.attr", "data-project-id", "project-b")
+      .and("have.attr", "data-resource-bucket", "foreign-artifacts");
+
+    cy.get("#agentAccessProjectSelect").select("project-c");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
+      .and("contain.text", "No searchable artifact bucket.")
+      .and("contain.text", "No Bucket")
+      .and("not.contain.text", "foreign-artifacts");
+    cy.get("#agentAccessProjects button[data-access-action]").should("not.exist");
+
+    cy.get("#agentAccessProjectSelect").select("project-d");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
+      .and("contain.text", "Empty Bucket")
+      .and("contain.text", "empty-artifacts")
+      .and("contain.text", "Read: Unverified")
+      .and("contain.text", "empty bucket has no object to verify read access")
+      .and("not.contain.text", "No searchable artifact bucket.");
+    cy.get('#agentAccessProjects button[data-access-action="list"]').should("be.enabled");
+    cy.get('#agentAccessProjects button[data-access-action="read"]').should("be.disabled");
+
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@selectorAccess");
+    cy.get("#agentAccessProjectSelect").should("have.value", "project-d");
+    cy.reload();
+    cy.wait("@selectorAccess");
+    cy.get("#agentAccessProjectSelect").should("have.value", "project-d");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1).and("contain.text", "Empty Bucket");
+
+    cy.get("#agentAccessProjectSelect option").then(($options) => {
+      const duplicateLabels = [...$options].filter((option) => option.textContent.includes("Duplicate Name"));
+      expect(duplicateLabels.map((option) => option.textContent)).to.deep.equal([
+        "Duplicate Name — project-e",
+        "Duplicate Name — project-f",
+      ]);
+    });
+    cy.get("#agentAccessProjectSelect").invoke("val", hostileProjectId).trigger("change");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1)
+      .and("contain.text", hostileProjectId)
+      .and("contain.text", hostileBucket)
+      .and("contain.text", "window.__npaXss=4");
+    cy.get("#agentAccessPanel").find("script, img, svg").should("not.exist");
+    cy.window().its("__npaXss").should("not.exist");
+    cy.get("#agentAccessProjectSelect").focus().should("be.focused");
+
+    cy.viewport(375, 667);
+    cy.get("#agentAccessProjectSelect").should("be.visible").then(($select) => {
+      const selectRect = $select[0].getBoundingClientRect();
+      const panelRect = $select[0].closest("#agentAccessPanel").getBoundingClientRect();
+      expect(selectRect.left).to.be.at.least(panelRect.left);
+      expect(selectRect.right).to.be.at.most(panelRect.right + 1);
+    });
+
+    cy.intercept("GET", "/api/access*", {
+      statusCode: 200,
+      body: { ...accessPayload, projects: projects.filter((project) => project.id !== hostileProjectId) },
+    }).as("selectorAccessMissing");
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@selectorAccessMissing");
+    cy.get("#agentAccessProjectSelect").should("have.value", "project-a");
+    cy.get("#agentAccessProjects .access-project-detail").should("have.length", 1).and("contain.text", "Project Alpha");
+  });
+
+  it("makes available access capabilities semantic mouse and keyboard actions", () => {
+    cy.get('#agentAccessProjects button[data-access-action="list"][data-resource-bucket="project-artifacts"]')
+      .should("have.prop", "tagName", "BUTTON")
+      .and("be.enabled")
+      .and("have.attr", "aria-label");
+    cy.get('#agentAccessProjects button[data-access-action="list"][data-resource-bucket="project-artifacts"]').click();
+    cy.wait("@artifactRuns").its("request.url").should((url) => {
+      expect(url).to.include("project_id=project-a");
+      expect(url).to.include("resource_bucket=project-artifacts");
+    });
+    cy.get("#agentAccessActionResult")
+      .should("be.visible")
+      .and("contain.text", "List complete")
+      .and("contain.text", "3 runs")
+      .and("contain.text", "project-a")
+      .and("contain.text", "project-artifacts")
+      .and("contain.text", NON_STOCK_RUN_ID);
+
+    // Native <button> semantics make Enter dispatch the same scoped action.
+    cy.get('#agentAccessProjects button[data-access-action="list"][data-resource-bucket="project-artifacts"]')
+      .focus();
+    cy.press(Cypress.Keyboard.Keys.ENTER);
+    cy.wait("@artifactRuns").its("request.url").should("include", "resource_bucket=project-artifacts");
+
+    // Read is independently actionable and opens the real artifact browser + preferred preview.
+    cy.get('#agentAccessProjects button[data-access-action="read"][data-resource-bucket="project-artifacts"]')
+      .should("be.enabled")
+      .click();
+    cy.wait("@artifactRuns");
+    cy.wait("@nonStockArtifactList");
+    cy.wait("@loadArtifact");
+    cy.get("#renderedDataSummary").should("contain.text", NON_STOCK_RUN_ID);
+    cy.get("#tabMain").click();
+    cy.get("#agentAccessActionResult")
+      .should("contain.text", "Readable artifacts opened")
+      .and("contain.text", "project-artifacts");
+
+    // Space/Enter activation is supplied by the same native button, not a key shim.
+    cy.get('#agentAccessProjects button[data-access-action="read"][data-resource-bucket="project-artifacts"]')
+      .focus();
+    cy.press(Cypress.Keyboard.Keys.ENTER);
+    cy.wait("@artifactRuns");
+    cy.wait("@nonStockArtifactList");
+    cy.get("#agentAccessActionResult").should("contain.text", "Readable artifacts opened");
+  });
+
+  it("disables denied and unavailable access actions with visible reasons", () => {
+    for (const bucket of ["denied-artifacts", "unavailable-artifacts"]) {
+      cy.get(`#agentAccessProjects [data-resource-bucket="${bucket}"]`).each(($button) => {
+        expect($button[0].tagName).to.eq("BUTTON");
+        expect($button).to.be.disabled;
+        expect($button.attr("aria-describedby")).to.be.a("string").and.not.be.empty;
+      });
+    }
+    cy.get("#agentAccessProjects").should("contain.text", "Permission denied while listing objects.");
+    cy.get("#agentAccessProjects").should("contain.text", "Object reads could not be verified.");
+  });
+
+  it("shows busy/error feedback and blocks stale resource responses", () => {
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      const url = new URL(req.url);
+      const bucket = url.searchParams.get("resource_bucket") || "";
+      if (bucket === "project-artifacts") {
+        req.reply({
+          delay: 700,
+          statusCode: 200,
+          body: {
+            ok: true,
+            runs: [{ run_id: "stale-project-run", bucket, project_id: "project-a" }],
+            total_runs: 1,
+            truncated: false,
+          },
+        });
+        return;
+      }
+      req.reply({
+        delay: 25,
+        statusCode: 200,
+        body: {
+          ok: true,
+          runs: [{ run_id: "fresh-archive-run", bucket, project_id: "project-a" }],
+          total_runs: 1,
+          truncated: false,
+        },
+      });
+    }).as("scopedAccessRuns");
+
+    cy.get('#agentAccessProjects button[data-access-action="list"][data-resource-bucket="project-artifacts"]').click();
+    cy.get("#agentAccessActionResult")
+      .should("have.attr", "aria-busy", "true")
+      .and("contain.text", "Querying the selected project and bucket");
+    cy.get('#agentAccessProjects button[data-access-action="list"][data-resource-bucket="archive-artifacts"]').click();
+    cy.wait("@scopedAccessRuns");
+    cy.get("#agentAccessActionResult", { timeout: 3000 })
+      .should("contain.text", "fresh-archive-run")
+      .and("contain.text", "archive-artifacts")
+      .and("not.contain.text", "stale-project-run");
+    cy.wait(800);
+    cy.get("#agentAccessActionResult").should("not.contain.text", "stale-project-run");
+
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      statusCode: 502,
+      body: { ok: false, error: "Scoped list probe failed." },
+    }).as("failedAccessRuns");
+    cy.get('#agentAccessProjects button[data-access-action="list"][data-resource-bucket="project-artifacts"]').click();
+    cy.wait("@failedAccessRuns");
+    cy.get("#agentAccessActionResult")
+      .should("have.attr", "role", "alert")
+      .and("contain.text", "List failed")
+      .and("contain.text", "Scoped list probe failed")
+      .and("not.contain.text", "fresh-archive-run");
+  });
+
+  it("refreshing access cancels and clears an in-flight scoped result", () => {
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      delay: 700,
+      statusCode: 200,
+      body: {
+        ok: true,
+        runs: [{ run_id: "must-not-render-after-refresh", bucket: "project-artifacts", project_id: "project-a" }],
+        total_runs: 1,
+        truncated: false,
+      },
+    }).as("refreshStaleRuns");
+    cy.get('#agentAccessProjects button[data-access-action="list"][data-resource-bucket="project-artifacts"]').click();
+    cy.get("#agentAccessActionResult").should("have.attr", "aria-busy", "true");
+    cy.get("#agentAccessRefresh").click();
+    cy.wait("@agentAccess");
+    cy.get("#agentAccessActionResult").should("have.attr", "hidden");
+    cy.wait(800);
+    cy.get("#agentAccessActionResult").should("have.attr", "hidden");
+    cy.get("#agentAccessActionResult").should("not.contain.text", "must-not-render-after-refresh");
+  });
+
+  it("opens a JSON-only run through Read and renders useful content", () => {
+    cy.intercept("GET", "/api/artifacts/runs*", (req) => {
+      const url = new URL(req.url);
+      expect(url.searchParams.get("project_id")).to.eq("project-a");
+      expect(url.searchParams.get("resource_bucket")).to.eq("project-artifacts");
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          runs: [{
+            run_id: "json-only-storage-run",
+            bucket: "project-artifacts",
+            project_id: "project-a",
+            source_type: "artifact_storage",
+            source_label: "S3 artifacts",
+          }],
+          total_runs: 1,
+          truncated: false,
+        },
+      });
+    }).as("jsonScopedRuns");
+    cy.get('#agentAccessProjects button[data-access-action="read"][data-resource-bucket="project-artifacts"]')
+      .focus();
+    cy.press(Cypress.Keyboard.Keys.ENTER);
+    cy.wait("@jsonScopedRuns");
+    cy.wait("@jsonOnlyArtifactList");
+    cy.wait("@loadArtifact");
+    cy.get("#renderModeData").should("have.class", "is-active");
+    cy.get("#artifactPreviewHost pre")
+      .should("contain.text", "json-only-storage-run")
+      .and("contain.text", "evaluations");
+    cy.get("#artifactList").should("contain.text", "Download");
+  });
+
   it("embeds the Lichtblick MCAP viewer as a Viewer render mode", () => {
     cy.window().then((win) => {
       cy.stub(win, "open").as("windowOpen");
@@ -156,6 +602,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runIdSelect").select(NON_STOCK_RUN_ID);
     cy.wait("@nonStockArtifactList");
     cy.wait("@loadArtifact");
+    cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
 
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.mcap`);
     cy.get("#artifactList").should("contain.text", "mcap");
@@ -277,8 +724,11 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#chatLog").should("contain.text", "Latest workflow status");
 
     cy.get("#tabRerun").click();
-    cy.get("#runIdInput").clear().type("mock-run");
-    cy.get("#loadRunData").click();
+    cy.get('#runIdSelect option[value="mock-run"][data-source-type="workflow_history"]').then(($opt) => {
+      const select = $opt[0].parentElement;
+      select.selectedIndex = [...select.options].indexOf($opt[0]);
+      cy.wrap(select).trigger("change");
+    });
     cy.wait("@loadRun");
     cy.get("#tabMain").click();
     cy.get("#chatLog").should("contain.text", "Loaded run context");
@@ -314,6 +764,126 @@ describe("NPA agent UI with mocked APIs", () => {
     });
   });
 
+  it("preserves known and unknown viewability in lightweight run summaries", () => {
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        runs: [
+          {
+            run_id: "known-viewable-run",
+            source_type: "artifact_storage",
+            has_viewable: true,
+            summary_complete: false,
+            last_modified: "2026-08-02T00:00:00Z",
+          },
+          {
+            run_id: "unknown-viewability-run",
+            source_type: "artifact_storage",
+            has_viewable: null,
+            summary_complete: false,
+            last_modified: "2026-08-01T00:00:00Z",
+          },
+        ],
+        total_runs: 2,
+        truncated: false,
+      },
+    }).as("viewabilityRuns");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@viewabilityRuns");
+    cy.get('#runIdSelect option[value="known-viewable-run"]')
+      .should("contain.text", "viewable")
+      .and("not.contain.text", "viewability unknown");
+    cy.get('#runIdSelect option[value="unknown-viewability-run"]')
+      .should("contain.text", "viewability unknown");
+  });
+
+  it("follows the native S3 artifact cursor and merges pages", () => {
+    const runId = "paged-ui-run";
+    cy.intercept("GET", "/api/artifacts/runs*", {
+      statusCode: 200,
+      body: {
+        ok: true,
+        runs: [{
+          run_id: runId,
+          source_type: "artifact_storage",
+          bucket: "paged-bucket",
+          project_id: "project-paged",
+          has_viewable: true,
+          summary_complete: false,
+          last_modified: "2026-08-03T00:00:00Z",
+        }],
+        total_runs: 1,
+        truncated: false,
+      },
+    }).as("pagedRuns");
+    cy.intercept("GET", `/api/artifacts/run/${runId}*`, (req) => {
+      const cursor = String((req.query && req.query.cursor) || "");
+      if (!cursor) {
+        req.reply({
+          statusCode: 200,
+          body: {
+            ok: true,
+            run_id: runId,
+            bucket: "paged-bucket",
+            project_id: "project-paged",
+            resolved_prefix: "category",
+            artifacts: [{
+              run_id: runId,
+              key: `category/${runId}/a.json`,
+              s3_uri: `s3://paged-bucket/category/${runId}/a.json`,
+              render: "json",
+              size: 10,
+            }],
+            preferred: null,
+            truncated: true,
+            next_cursor: "cursor-page-2",
+          },
+        });
+        return;
+      }
+      expect(cursor).to.eq("cursor-page-2");
+      expect(req.query.resolved_prefix).to.eq("category");
+      expect(req.query.source_selected).to.eq("1");
+      expect(req.query.resource_bucket).to.eq("paged-bucket");
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          run_id: runId,
+          bucket: "paged-bucket",
+          project_id: "project-paged",
+          resolved_prefix: "category",
+          artifacts: [{
+            run_id: runId,
+            key: `category/${runId}/b.json`,
+            s3_uri: `s3://paged-bucket/category/${runId}/b.json`,
+            render: "json",
+            size: 11,
+          }],
+          preferred: null,
+          truncated: false,
+          next_cursor: "",
+        },
+      });
+    }).as("pagedArtifacts");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@pagedRuns");
+    cy.get("#runIdSelect").select(runId);
+    cy.wait("@pagedArtifacts");
+    cy.get("#artifactList").should("contain.text", `category/${runId}/a.json`);
+    cy.get('#artifactList button[data-action="load-more-artifacts"]').click();
+    cy.wait("@pagedArtifacts");
+    cy.get("#artifactList")
+      .should("contain.text", `category/${runId}/a.json`)
+      .and("contain.text", `category/${runId}/b.json`);
+    cy.get('#artifactList button[data-action="load-more-artifacts"]').should("not.exist");
+  });
+
   it("covers artifact discovery, dynamic artifact load button, and camera cards", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
@@ -321,7 +891,10 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRuns");
     // Consolidated picker may already have mock-run selected — force list via button.
-    cy.get("#runIdSelect").select("mock-run", { force: true });
+    cy.get('#runIdSelect option[data-run-id="mock-run"][data-source-type="artifact_storage"]').then(($opt) => {
+      const select = $opt[0].parentElement;
+      select.selectedIndex = [...select.options].indexOf($opt[0]);
+    });
     cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@artifactList");
     cy.get("#artifactList").should("contain.text", "mock-run/preview.png");
@@ -339,6 +912,58 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#panelRerun").should("have.class", "is-inactive");
   });
 
+  it("dispatches local, workflow-history, and JSON-only S3 runs by provenance", () => {
+    const JSON_RUN_ID = "json-only-storage-run";
+    let workflowLoads = 0;
+    let localLoads = 0;
+    cy.intercept("POST", "/api/sim-viz/load-run", (req) => {
+      workflowLoads += 1;
+      const runId = String((req.body && req.body.run_id) || "");
+      req.reply({ statusCode: 200, body: { ok: true, sim_viz: { ...SIM_VIZ, run_id: runId, active_run_id: runId } } });
+    }).as("provenanceWorkflowLoad");
+    cy.intercept("POST", "/api/sim-viz/load-franka-demo", (req) => {
+      localLoads += 1;
+      req.reply({
+        statusCode: 200,
+        body: {
+          ok: true,
+          sim_viz: { ...SIM_VIZ, run_id: "franka-demo", active_run_id: "franka-demo", source_type: "local_demo" },
+        },
+      });
+    }).as("provenanceLocalLoad");
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactRefreshRuns").click();
+    cy.wait("@artifactRuns");
+    cy.get(`#runIdSelect option[value="${JSON_RUN_ID}"]`)
+      .should("have.attr", "data-source-type", "artifact_storage")
+      .and("contain.text", "S3 artifacts");
+    cy.get("#runIdSelect").select(JSON_RUN_ID);
+    cy.wait("@jsonOnlyArtifactList");
+    cy.wait("@loadArtifact");
+    cy.get("#renderModeData").should("have.class", "is-active");
+    cy.get("#artifactPreviewHost pre").should("contain.text", "evaluations");
+    cy.get("#stageList").should("contain.text", "evaluation");
+    cy.get("#artifactList").should("contain.text", "policy.ckpt");
+    cy.get(`#runIdSelect option[value="${JSON_RUN_ID}"][data-source-type="artifact_storage"]`)
+      .should("have.length", 1);
+    cy.wrap(null).should(() => expect(workflowLoads, "S3 selection never calls load-run").to.eq(0));
+
+    cy.get("#runIdSelect").select("franka-demo");
+    cy.wait("@provenanceLocalLoad");
+    cy.get("#tabMain").click();
+    cy.get("#stageList").should("contain.text", "Local Franka demo");
+    cy.get("#runSummary").should("contain.text", "franka-demo");
+    cy.wrap(null).should(() => expect(localLoads, "local demo endpoint called once").to.eq(1));
+
+    cy.get("#tabRerun").click();
+    cy.get("#runIdSelect").select("cosmos-reason-run");
+    cy.wait("@provenanceWorkflowLoad");
+    cy.get("#tabMain").click();
+    cy.get("#stageList").should("contain.text", "Fetch checkpoint");
+    cy.wrap(null).should(() => expect(workflowLoads, "workflow endpoint called once").to.eq(1));
+  });
+
   it("discovers and interacts with non-stock Sim2Real run artifacts", () => {
     cy.window().then((win) => {
       cy.stub(win, "open").as("windowOpen");
@@ -353,6 +978,7 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.wait("@loadArtifact");
 
     cy.get("#artifactList").should("contain.text", `${NON_STOCK_RUN_ID}/reports/sim2real.rrd`);
+    cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
     cy.get("#artifactList").should("contain.text", "rerun");
     cy.get("#artifactList").should("contain.text", "video");
     cy.get("#artifactList").should("contain.text", "json");
@@ -374,8 +1000,11 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#simCamera").should("contain.text", "customer-overhead");
     cy.get("#rerunFrame").should("have.attr", "src").and("include", "/rerun/");
 
-    cy.get("#runIdInput").clear().type(NON_STOCK_RUN_ID);
-    cy.get("#loadRunData").click();
+    cy.get(`#runIdSelect option[value="${NON_STOCK_RUN_ID}"][data-source-type="workflow_history"]`).then(($opt) => {
+      const select = $opt[0].parentElement;
+      select.selectedIndex = [...select.options].indexOf($opt[0]);
+      cy.wrap(select).trigger("change");
+    });
     cy.wait("@loadRun");
     cy.get("#tabMain").click();
     cy.get("#stagesPanel h3").should("have.text", "Stages");
@@ -384,6 +1013,9 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#runLog").should("contain.text", "non-stock sim2real artifacts");
 
     cy.get("#tabRerun").click();
+    cy.get("#artifactLoadRunArtifacts").click();
+    cy.wait("@nonStockArtifactList");
+    cy.wait("@loadArtifact");
     cy.get(
       `#artifactList button[data-action='load-artifact'][data-key="${NON_STOCK_RUN_ID}/rollouts/customer-camera.mp4"]`
     ).click();
@@ -462,7 +1094,6 @@ describe("NPA agent UI with mocked APIs", () => {
     // Load a data-factory run whose augment is a REAL Cosmos Transfer 2.5 GPU render.
     // Enter in the paste box loads the typed run and lists its artifacts.
     cy.get("#runIdInput").clear({ force: true }).type(`${DF_MOCK_RUN_ID}{enter}`, { force: true });
-    cy.wait("@loadRun");
     cy.wait("@dfArtifactList");
     cy.wait("@artifactProvenance");
 
@@ -494,7 +1125,6 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#runIdInput").clear({ force: true }).type(`${DF_MOCK_RUN_ID}{enter}`, { force: true });
-    cy.wait("@loadRun");
     cy.wait("@dfArtifactList");
     cy.wait("@artifactProvenance");
 
@@ -521,7 +1151,6 @@ describe("NPA agent UI with mocked APIs", () => {
     // A DF run with only input/ + configs/ (augment never produced output) must
     // be flagged so a raw input clip is not mistaken for a Data Factory result.
     cy.get("#runIdInput").clear({ force: true }).type(`${DF_INPUT_ONLY_RUN_ID}{enter}`, { force: true });
-    cy.wait("@loadRun");
     cy.wait("@dfInputOnlyArtifactList");
     cy.wait("@artifactProvenance");
     cy.get("#artifactProvenance .prov-warn").should("contain.text", "no augmented output");
@@ -641,7 +1270,10 @@ describe("NPA agent UI with mocked APIs", () => {
       },
     }).as("evilArtifactList");
     cy.get("#tabRerun").click();
-    cy.get("#runIdSelect").select("mock-run", { force: true });
+    cy.get('#runIdSelect option[data-run-id="mock-run"][data-source-type="artifact_storage"]').then(($opt) => {
+      const select = $opt[0].parentElement;
+      select.selectedIndex = [...select.options].indexOf($opt[0]);
+    });
     cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@evilArtifactList");
     cy.get("#artifactList").then(($el) => {
@@ -762,7 +1394,9 @@ describe("NPA agent UI with mocked APIs", () => {
 
   it("Stages Load prefers pasted run id over a stale dropdown selection", () => {
     cy.get("#tabMain").click();
-    cy.get("#stagesRunSelect").select("mock-run");
+    cy.get("#stagesRunSelect").then(($select) => {
+      $select[0].value = "mock-run";
+    });
     cy.get("#stagesRunInput").clear().type("cosmos-reason-run", { delay: 0 });
     cy.get("#stagesLoadRun").click();
     cy.wait("@loadRun");
@@ -779,8 +1413,32 @@ describe("NPA agent UI with mocked APIs", () => {
       expect(values.every((value) => value.includes("mock"))).to.eq(true);
     });
     cy.get("#stagesLoadRun").click();
-    cy.wait("@loadRun");
+    cy.wait("@artifactList");
     cy.get("#runSummary").should("contain.text", "mock-run");
+  });
+
+  it("keeps current-run evidence separate from a failed maintenance-job lookup", () => {
+    const maintenanceId = "codex-maintenance-20310102T030405Z-deadbeef";
+    cy.intercept("GET", `/api/artifacts/run/${maintenanceId}*`, {
+      statusCode: 404,
+      body: {
+        ok: false,
+        error: {
+          code: "run_not_discovered",
+          message: "No discovered NPA workflow/artifact run has this identifier. Identifiers under /home/ubuntu/codex-runs are Codex maintenance job IDs, not NPA run IDs.",
+        },
+      },
+    }).as("maintenanceNotFound");
+
+    cy.get("#runSummary").should("contain.text", "mock-run");
+    cy.get("#stagesRunInput").clear().type(maintenanceId, { delay: 0 });
+    cy.get("#stagesLoadRun").click();
+    cy.wait("@maintenanceNotFound");
+    cy.get("#runSummary").should("contain.text", "currently loaded run");
+    cy.get("#runSummary").should("contain.text", "mock-run");
+    cy.get("#runSummary").should("not.contain.text", maintenanceId);
+    cy.get("#stagesRunSearchResult").should("contain.text", "Codex maintenance job IDs");
+    cy.get("#stagesRunSearchResult").should("contain.text", "Currently loaded run remains mock-run");
   });
 
   it("surfaces an old run beyond the newest page via server-side (q=) search", () => {
@@ -839,8 +1497,10 @@ describe("NPA agent UI with mocked APIs", () => {
     });
     // …but typing a fragment triggers a debounced server search that finds it.
     cy.get("#artifactPrefix").clear().type(FRAGMENT, { delay: 0 });
+    cy.get("#runSummary").should("contain.text", "currently loaded run");
+    cy.get("#runSummary").should("contain.text", "mock-run");
     cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
-    cy.get("#runIdSelect option").then(($opts) => {
+    cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
       expect(values, "server search surfaces the old run in the Rerun picker").to.include(OLD_RUN_ID);
     });
@@ -848,18 +1508,17 @@ describe("NPA agent UI with mocked APIs", () => {
     // Stages tab: same server-search path must populate the stages picker.
     cy.get("#tabMain").click();
     cy.get("#stagesRunInput").clear().type(FRAGMENT, { delay: 0 });
+    cy.get("#stagesRunSearchResult").should("contain.text", "separate from the currently loaded run mock-run");
     cy.wait("@artifactRunsPaged").its("request.url").should("include", "q=");
-    cy.get("#stagesRunSelect option").then(($opts) => {
+    cy.get("#stagesRunSelect option").should(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
       expect(values, "server search surfaces the old run in the Stages picker").to.include(OLD_RUN_ID);
     });
   });
 
-  it("loads the full run list into the picker by default (no search needed)", () => {
-    // Guards the "runs don't show" fix: the default (no-query) discovery must
-    // request a high limit and render EVERY run — including ones far older than
-    // the historical 100-run cap — so the operator never has to guess a search
-    // fragment just to see a run that exists.
+  it("follows every server cursor into the default run picker", () => {
+    // The API owns bounded pagination. The browser must follow every cursor and
+    // render runs beyond the first page without requiring a guessed search term.
     const bigList = Array.from({ length: 150 }, (_unused, i) => {
       const idx = String(i).padStart(3, "0");
       return {
@@ -871,12 +1530,22 @@ describe("NPA agent UI with mocked APIs", () => {
         last_modified: `2026-06-${String((i % 27) + 1).padStart(2, "0")}T00:00:${idx.slice(-2)}Z`,
       };
     });
-    let capturedUrl = "";
+    const capturedUrls = [];
     cy.intercept("GET", "/api/artifacts/runs*", (req) => {
-      capturedUrl = String(req.url || "");
+      capturedUrls.push(String(req.url || ""));
+      const cursor = String((req.query && req.query.cursor) || "");
+      const start = cursor ? 100 : 0;
+      const visible = bigList.slice(start, start + 100);
       req.reply({
         statusCode: 200,
-        body: { ok: true, runs: bigList, total_runs: bigList.length, truncated: false },
+        body: {
+          ok: true,
+          runs: visible,
+          total_runs: bigList.length,
+          next_cursor: start + visible.length < bigList.length ? "page-two" : "",
+          truncated: start + visible.length < bigList.length,
+          pagination_complete: start + visible.length >= bigList.length,
+        },
       });
     }).as("artifactRunsFull");
 
@@ -884,12 +1553,14 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#panelRerun").should("have.class", "is-active");
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@artifactRunsFull");
+    cy.wait("@artifactRunsFull");
     cy.wrap(null).should(() => {
-      const limitMatch = capturedUrl.match(/[?&]limit=(\d+)/);
+      const limitMatch = capturedUrls[0].match(/[?&]limit=(\d+)/);
       expect(limitMatch, "default discovery sends a limit").to.not.eq(null);
       expect(Number(limitMatch[1]), "default discovery limit exceeds the old 100 cap").to.be.greaterThan(100);
+      expect(capturedUrls[1], "second request follows the cursor").to.include("cursor=page-two");
     });
-    cy.get("#runIdSelect option").then(($opts) => {
+    cy.get("#runIdSelect option").should(($opts) => {
       const values = [...$opts].map((o) => o.value).filter(Boolean);
       // Far more than the historical 100-run cap render without any search
       // (the picker also unions the sim-viz "known" runs, so allow >=).
@@ -1258,10 +1929,13 @@ describe("NPA agent UI with mocked APIs", () => {
       const api = win.__NPA_AGENT_TEST__;
       const iframe = win.document.getElementById("rerunFrame");
       expect(win.document.documentElement.outerHTML).to.include("ensureRerunCaptureBridge");
-      const bridge = api.ensureRerunCaptureBridge(iframe);
+      // Restart after the mock canvas paints content so the MediaStream cannot
+      // retain an empty frame produced by the preceding page-load mount.
+      const bridge = api.ensureRerunCaptureBridge(iframe, { forceRestart: true });
       expect(bridge, "capture bridge").to.exist;
       expect(bridge.video).to.exist;
-      const grabbed = await api.grabFromRerunCaptureBridge(3000);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const grabbed = await api.grabFromRerunCaptureBridge(5000);
       expect(grabbed).to.match(/^data:image\/jpeg/);
       // Capture must succeed even if we ignore sync blank gates (the live WebGL failure mode).
       const quality = await api.waitForQualityRerunFrame(4000);

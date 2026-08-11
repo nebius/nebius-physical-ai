@@ -24,6 +24,7 @@ from npa.cli.agent_workflow import (
 
 
 AGENT_PY = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent.py"
+ACCESS_RUNTIME_PY = AGENT_PY.with_name("agent_access_runtime.py")
 UI_HTML = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
 
 
@@ -61,10 +62,16 @@ def test_s3_uri_prefix_gate_optional() -> None:
 
 
 def test_agent_source_uses_configured_bucket_assert() -> None:
-    source = AGENT_PY.read_text(encoding="utf-8")
+    source = AGENT_PY.read_text(encoding="utf-8") + ACCESS_RUNTIME_PY.read_text(encoding="utf-8")
     assert "_assert_s3_uri_in_agent_bucket" in source
     assert "configured_agent_s3_buckets" in source
     assert '_AGENT_S3_GUARD_EMBED' in source
+    # Cross-project reads are narrower than arbitrary bucket access: the run id
+    # and exact discovered object key must both match. Mutation/write scope is
+    # still represented by the configured-bucket guard above.
+    assert "def _resolve_accessible_run_artifact(" in source
+    assert "artifact is not a discovered object for this run" in source
+    assert "cross-project s3_uri requires a run_id and exact discovered artifact" in source
 
 
 def test_soperator_rejects_spec_path() -> None:

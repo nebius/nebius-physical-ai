@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from npa.cli.agent import rendered_agent_ui_html
 
+import base64
 import json
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -396,18 +398,26 @@ def test_staged_agent_source_is_readable_by_unprivileged_runtime(
 
 
 def _agent_source() -> str:
-    """agent.py plus the login and nginx policy modules split out of it.
+    """agent.py plus source modules embedded or split out of it.
 
-    These helpers moved out to keep the monolith under its size ratchet, so
-    source-scanning assertions must see all three files.
+    Source-scanning assertions include login, nginx, and effective-access policy
+    modules that the bootstrap embeds into the generated backend.
     """
     from npa.cli import agent as agent_module
+    from npa.cli import agent_access_runtime as agent_access_runtime_module
     from npa.cli import agent_login as agent_login_module
     from npa.cli import agent_site as agent_site_module
+    from npa.cli import agent_viewer_runtime as agent_viewer_runtime_module
 
     return "\n".join(
         Path(module.__file__).read_text(encoding="utf-8")
-        for module in (agent_module, agent_login_module, agent_site_module)
+        for module in (
+            agent_module,
+            agent_access_runtime_module,
+            agent_login_module,
+            agent_site_module,
+            agent_viewer_runtime_module,
+        )
     )
 
 
@@ -867,9 +877,7 @@ def test_deploy_persists_terraform_state_before_apply(monkeypatch, tmp_path) -> 
 
 
 def test_bootstrap_enables_public_https_nginx() -> None:
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     assert "ssl_certificate /etc/nginx/ssl/npa-agent.crt" in source
     assert "DEFAULT_HTTPS_PORT" in source
     assert "Customer URL: use" in source
@@ -1174,7 +1182,7 @@ def test_bootstrap_embeds_chat_endpoint() -> None:
     assert "/api/artifacts/runs?limit=1" in source
     # Multi-bucket discovery is deterministic: only configured buckets are scanned.
     assert "def _agent_s3_buckets(" in source
-    assert "list_accessible_buckets" in source
+    assert "accessible_artifact_buckets(_agent_access_report())" in source
     assert "list_runs_cached_multi" in source
     assert "find_run_artifacts_across_buckets" in source
     assert "Never enumerate every credential-readable bucket" in source
@@ -1466,15 +1474,25 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     assert "_record_sim_viz_run" in source
     assert "_wire_sim2real_run_preview" in source
     assert "Prefer a run-scoped Rerun recording over stale history entries" in source
-    assert 'preferred and preferred.render == "rerun"' in source
+    assert (
+        'preferred and (preferred.render == "rerun" or '
+        "(requested_bucket and source_selected))" in source
+    )
     assert "held-out simulation camera stream" in source
     assert "reference proxy context" in source
-    assert "def _artifact_backed_run_details" in source
-    assert "def _workflow_stage_defs_from_state" in source
-    assert "Derived stage timeline from" in source
-    assert (
-        "Never let a sparse update erase richer artifact fields from load-run" in source
+    from npa.cli import agent as agent_module
+
+    stage_runtime = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
     )
+    assert "def _artifact_backed_run_details" in stage_runtime
+    assert "def _workflow_stage_defs_from_state" in stage_runtime
+    assert "artifact presence does not establish execution success" in source
+    assert "npa.stage-evidence/v1" in source
+    assert "runDetailsRequestId" in source
+    assert "runDetailsAbortController" in source
+    assert "execution status unavailable" in source
+    assert "Never let a sparse update erase richer artifact fields from load-run" in source
     assert "Read-only: do not _record/_save here" in source
     assert (
         "Always use the stock demo run id and clear any prior media-artifact preview"
@@ -1583,10 +1601,12 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     assert "const runFilter = runFilterValue().toLowerCase();" in source
     assert 'runFilterInput.addEventListener("input"' in source
     # Discovery is generic (no ?prefix= path); the old prefix-path helper is gone.
-    # The picker loads the full run list by default (not just the newest 100) so
-    # older runs show without the operator having to guess a search fragment.
-    assert "const ARTIFACT_RUN_LIST_LIMIT = 2000;" in source
+    # The picker follows every bounded server cursor, rather than assuming one
+    # oversized response is the whole tenant inventory.
+    assert "const ARTIFACT_RUN_LIST_LIMIT = 200;" in source
     assert '"/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT' in source
+    assert 'cursor = String(data.next_cursor || "");' in source
+    assert "} while (cursor);" in source
     # Typing in the box also triggers a SERVER-side search so runs beyond the
     # newest page (by name/ID) are findable, not just client-side filtering.
     assert "&q=" in source
@@ -1634,12 +1654,10 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
     augmented-frame guidance, not the Sim2Real held-out-camera / Franka note —
     both applications write reports/sim2real.rrd.
 
-    These live inside the bootstrap template string (not importable module
-    attributes), so this is a source-text regression guard.
+    These live in the bootstrap template and its embedded viewer runtime, so
+    this is a source-text regression guard across the generated backend inputs.
     """
-    from npa.cli import agent as agent_module
-
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = _agent_source()
     # The DF recording detector is defined and keyed on the app id.
     assert "def _is_data_factory_recording(key: str) -> bool:" in source
     assert 'DATA_FACTORY_APP_ID = "physical-ai-data-factory"' in source
@@ -1726,7 +1744,10 @@ def test_default_run_discovery_is_generic_not_hardcoded() -> None:
     assert "exclude=_discovery_exclude_roots()" in source
     assert "AGENT_DEFAULT_WORKFLOW_PREFIXES" not in source
     # Per-run lookup falls back to a generic cross-category, cross-bucket find.
-    assert "find_run_artifacts_across_buckets(" in source
+    runtime = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
+    )
+    assert "find_run_artifacts_across_buckets(" in runtime
 
 
 def test_run_details_resolves_run_generically_by_id() -> None:
@@ -1736,18 +1757,24 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     """
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
-    # Backend resolves the run generically across categories (no prefix needed).
-    assert (
-        'def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "")'
-        in source
+    source = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
     )
-    assert "find_run_artifacts(" in source
+    # Backend resolves the run generically across categories (no prefix needed).
+    assert "def _artifact_backed_run_details(" in source
+    assert "resource_bucket: str = \"\"" in source
+    assert "find_run_artifacts_across_buckets(" in source
     # Frontend loads run details / run by id WITHOUT a path prefix.
     ui = _agent_ui_bundle()
     assert '"/api/workflows/sim2real/runs/" + encodeURIComponent(target)' in ui
-    assert "body: JSON.stringify({ run_id: runId, run_ref: runRef })" in ui
+    assert "body: JSON.stringify({ run_id: targetRunId, run_ref: targetRunRef })" in ui
+    assert 'entry.source_type === "artifact_storage"' in ui
+    assert "loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true })" in ui
     assert "prefix: artifactPrefixValue()" not in ui
+    assert 'params.set("resource_bucket", resourceBucket)' in ui
+    assert 'params.set("resolved_prefix", resolvedPrefix)' in ui
+    assert 'params.set("source_selected", "1")' in ui
+    assert '"stages succeeded"' not in ui
 
 
 def test_bootstrap_chat_has_scroll_to_bottom_button() -> None:
@@ -1895,6 +1922,7 @@ def test_verify_live_requires_a_recorded_region(monkeypatch) -> None:
 
 
 def test_verify_live_runs_pytests(monkeypatch) -> None:
+    workflow_status_timeouts: list[float] = []
     deployment = {
         "deployment_id": "npa-agent-test",
         "deployment_name": "agent",
@@ -1999,6 +2027,24 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             )
         if url_s.endswith("/api/session"):
             return _Resp({"chat_history": [], "selection": {}})
+        if url_s.endswith("/api/access"):
+            return _Resp(
+                {
+                    "ok": True,
+                    "apiVersion": "npa.agent.access/v1",
+                    "status": "available",
+                    "scope": "single_project",
+                    "identity": {
+                        "tenant_id": "tenant-id",
+                        "deployment_project_id": "project-id",
+                        "deployment_project_name": "default",
+                    },
+                    "capabilities": {},
+                    "projects": [],
+                    "errors": [],
+                    "refreshed_at": "2026-08-06T23:30:00+00:00",
+                }
+            )
         if url_s.endswith("/api/sim-viz/status"):
             params = _kwargs.get("params") or {}
             run_id = str(params.get("run_id") or "")
@@ -2039,12 +2085,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 }
             )
         if url_s.endswith("/api/workflows/sim2real/status"):
-            return _Resp(
-                {
-                    "latest_submit": {"run_id": "agent-run-123"},
-                    "sim_viz": {"stage": "demo"},
-                }
-            )
+            workflow_status_timeouts.append(float(_kwargs["timeout"]))
+            return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
         if url_s.endswith("/welcome"):
             return _Resp("<html>NPA Agent is running</html>", status_code=200)
         if url_s.endswith("/healthz"):
@@ -2057,10 +2099,14 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 f'<meta name="npa-ui-version" content="{AGENT_UI_VERSION}"></head>'
                 "<body>"
                 '<div id="tabMain"></div><div id="tabRerun"></div>'
+                '<div id="agentAccessPanel"></div><button id="agentAccessRefresh"></button>'
+                '<select id="agentAccessProjectSelect"></select>'
+                '<article class="access-project-detail">No searchable artifact bucket.</article>'
+                '<script>function refreshAccess(){ fetch("/api/access"); }</script>'
                 '<div id="stagesPanel"><h3>Stages</h3>'
                 '<div class="stages-run-picker">'
                 '<select id="stagesRunSelect"></select>'
-                "<label>Search or paste run ID</label>"
+                '<label>Search NPA workflow/artifact runs</label>'
                 '<input id="stagesRunInput" />'
                 '<button id="stagesLoadRun"></button></div></div>'
                 '<div id="tenantResourcesPanel"><h3>Tenant resources</h3>'
@@ -2212,6 +2258,7 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
     result = runner.invoke(app, ["verify-live"])
     assert result.exit_code == 0, result.output
     assert "verify-live: ok" in result.output
+    assert workflow_status_timeouts == [30.0]
     assert calls == [
         [
             "npa/.venv/bin/python",
@@ -2523,6 +2570,14 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
     )
 
     setup_script = captured["setup_script"]
+    shell_proc = subprocess.run(
+        ["bash", "-n"],
+        input=setup_script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert shell_proc.returncode == 0, shell_proc.stderr
     assert "RERUN_CAPABILITY_NAME_RE" in setup_script
     assert "RERUN_RECORDING_HTTP_PATH" not in setup_script
     assert 'sim_viz["served_recording_sha256"] = hashlib.sha256(' in setup_script
@@ -2563,6 +2618,17 @@ def test_bootstrap_uses_unique_remote_setup_script_path() -> None:
     assert "npa-agent-bootstrap-{secrets.token_hex" in source
 
 
+def test_rrd_publish_uses_request_unique_atomic_temp_path() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    publish = source.split("def _publish_rrd_recording", 1)[1].split(
+        "def _safe_artifact_key", 1
+    )[0]
+    assert "secrets.token_hex(6)" in publish
+    assert 'with_suffix(".rrd.tmp")' not in publish
+
+
 def test_bootstrap_installs_boto3_for_artifact_endpoints() -> None:
     from npa.cli import agent as agent_module
 
@@ -2578,10 +2644,9 @@ def test_bootstrap_installs_nebius_cli_and_sa_profile() -> None:
     assert "--token-file /mnt/cloud-metadata/token" in source
     assert 'nebius_profile = "cursor-sa"' in source
     assert "--profile {nebius_profile}" in source
-    assert (
-        '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null'
-        in source
-    )
+    assert '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null' in source
+    assert 'sudo -H "$NEBIUS_BIN" profile create' in source
+    assert 'sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token' in source
     assert "nebius CLI binary not found after install" in source
     assert "--parent-id" in source
 
@@ -2679,6 +2744,21 @@ def test_resolve_agent_storage_credentials_prefers_record() -> None:
     assert sa_id == "serviceaccount-abc"
 
 
+def test_credential_refresh_cannot_replace_recorded_service_account() -> None:
+    from npa.cli.agent_access import consistent_agent_service_account_id
+
+    assert (
+        consistent_agent_service_account_id("serviceaccount-a", "serviceaccount-a")
+        == "serviceaccount-a"
+    )
+    assert (
+        consistent_agent_service_account_id("serviceaccount-a", "")
+        == "serviceaccount-a"
+    )
+    with pytest.raises(ValueError, match="different service account"):
+        consistent_agent_service_account_id("serviceaccount-a", "serviceaccount-b")
+
+
 def test_bootstrap_stages_nebius_env_and_record_ssh_key() -> None:
     from npa.cli import agent as agent_module
 
@@ -2690,6 +2770,54 @@ def test_bootstrap_stages_nebius_env_and_record_ssh_key() -> None:
     assert "--ssh-key" in source
     assert "_resolve_agent_ssh_key" in source
     assert "_creds_from_terraform_state" in source
+
+
+def test_agent_nebius_env_uses_metadata_profile_without_static_iam_token() -> None:
+    from npa.cli import agent as agent_module
+
+    commands: list[str] = []
+
+    class SSH:
+        def run_or_raise(self, command: str) -> None:
+            commands.append(command)
+
+    agent_module._write_agent_nebius_env(
+        SSH(),
+        project_alias="agent-project",
+        agent_name="agent",
+        project_id="project-test",
+        tenant_id="tenant-test",
+        region="eu-north1",
+        service_account_id="serviceaccount-test",
+        bucket="bucket-test",
+        endpoint="https://storage.example",
+        access_key="synthetic-access",
+        secret_key="synthetic-secret",
+        iam_token="synthetic-stale-token",
+    )
+
+    assert len(commands) == 1
+    encoded = shlex.split(commands[0])[1]
+    env_text = base64.b64decode(encoded).decode("utf-8")
+    assert "NEBIUS_PROFILE=cursor-sa" in env_text
+    assert "NPA_NEBIUS_CONFIG=/root/.nebius/config.yaml" in env_text
+    assert "NPA_NEBIUS_CREDENTIAL_SOURCE=instance_metadata" in env_text
+    assert "NEBIUS_IAM_TOKEN" not in env_text
+    assert "NPA_NEBIUS_IAM_TOKEN" not in env_text
+    assert "TF_VAR_iam_token" not in env_text
+    assert "synthetic-stale-token" not in env_text
+
+
+def test_bootstrap_verifies_attached_identity_and_tenant_inventory() -> None:
+    from npa.cli import agent as agent_module
+
+    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    assert "attached service-account verification failed" in source
+    assert "expected_sa={expected_agent_service_account_id}" in source
+    assert "isinstance(value, str) and value == expected" in source
+    assert '[[ "$whoami_json" != *"$expected_sa"* ]]' not in source
+    assert "iam project list --parent-id \"$expected_tenant\" --all" in source
+    assert "env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN" in source
 
 
 def test_creds_from_terraform_state(monkeypatch) -> None:
@@ -3225,7 +3353,9 @@ def test_run_details_surface_per_stage_workflow_logs() -> None:
     from the npa.workflow run manifest so operators can view logs of each stage."""
     from npa.cli import agent as agent_module
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = Path(agent_module.__file__).with_name("agent_stage_runtime.py").read_text(
+        encoding="utf-8"
+    )
     assert "def _workflow_run_steps(" in source
     assert "/npa-workflow/manifest.json" in source
     assert '"workflow_steps": workflow_steps' in source

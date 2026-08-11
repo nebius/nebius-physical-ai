@@ -111,3 +111,26 @@ def test_only_the_publish_workflow_can_write_to_ghcr() -> None:
         "publishing is irreversible; it must never be triggered by a push or a schedule"
     )
     assert spec["permissions"].get("packages") == "write"
+
+
+def test_visibility_guidance_requires_a_completed_copy_phase() -> None:
+    """A pre-copy exception must never produce irreversible visibility instructions."""
+    steps = _steps(PUBLISH)
+    publish = next(step for step in steps if step.get("name") == "Publish and verify")
+    visibility = next(
+        step
+        for step in steps
+        if step.get("name") == "Write the visibility checklist to the job summary"
+    )
+    pre_copy = next(
+        step
+        for step in steps
+        if step.get("name") == "Write pre-copy failure guidance to the job summary"
+    )
+
+    assert publish["id"] == "publish"
+    assert "steps.publish.outputs.copy_phase_completed == 'true'" in visibility["if"]
+    assert "Images copied, but not yet public" in visibility["run"]
+    assert "--tool \"$SELECTED_TOOL\" --mode checklist" in visibility["run"]
+    assert "steps.publish.outputs.copy_phase_completed != 'true'" in pre_copy["if"]
+    assert "do not change GHCR visibility" in pre_copy["run"]

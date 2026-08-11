@@ -7,6 +7,7 @@ from pathlib import Path
 from npa.cli.agent import AGENT_UI_VERSION
 
 AGENT_MODULE = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent.py"
+AGENT_STAGES_MODULE = AGENT_MODULE.with_name("agent_stages.py")
 
 
 def _embedded_ui_html(source: str = "") -> str:
@@ -55,20 +56,17 @@ def test_available_runs_expose_viewer_activity_not_as_recency() -> None:
     top, labeled with today's date even though it ran days ago. The run's start
     time is exposed separately as ``started_at``.
     """
-    source = AGENT_MODULE.read_text(encoding="utf-8")
-    for anchor, terminator in (
-        ('@app.get("/sim-viz/status")', '@app.get("/sim-viz/runs")'),
-        ("def _sim_viz_load_response", "@app.post"),
-    ):
-        block = source.split(anchor)[1].split(terminator)[0]
-        available = block.split('payload["available_runs"] = [')[1].split("]")[0]
-        # Viewer-load time is exposed under activity_at, start under started_at,
-        # and last_modified is blank so S3 discovery owns the displayed recency.
-        assert '"activity_at": str(' in available, anchor
-        assert '"started_at": str(item.get("submitted_at")' in available, anchor
-        assert '"last_modified": ""' in available, anchor
-        # The old bug: rrd_updated_at collapsed into last_modified.
-        assert '"last_modified": str(' not in available, anchor
+    source = AGENT_STAGES_MODULE.read_text(encoding="utf-8")
+    available = source.split("def build_available_sim_viz_runs")[1].split(
+        "def local_demo_run_details"
+    )[0]
+    # Viewer-load time is exposed under activity_at, start under started_at,
+    # and last_modified is blank so S3 discovery owns the displayed recency.
+    assert '"activity_at": str(' in available
+    assert '"started_at": str(item.get("submitted_at")' in available
+    assert '"last_modified": ""' in available
+    # The old bug: rrd_updated_at collapsed into last_modified.
+    assert '"last_modified": str(' not in available
 
 
 def test_client_merge_dates_runs_by_start_not_recency_or_activity() -> None:
@@ -88,3 +86,20 @@ def test_client_merge_dates_runs_by_start_not_recency_or_activity() -> None:
     # Known/available runs carry started_at + activity_at through to the merge.
     assert "started_at: String((item && (item.started_at || item.submitted_at))" in ui
     assert "activity_at: String((item && (item.activity_at || item.rrd_updated_at))" in ui
+
+
+def test_client_consumes_incomplete_viewability_without_fabricating_false() -> None:
+    ui = _embedded_ui_html()
+    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split(
+        "function fillRunSelectOptionsRich"
+    )[0]
+    picker_fn = ui.split("function fillRunSelectOptionsRich")[1].split(
+        "function runEntryFromSelect"
+    )[0]
+
+    assert "has_viewable: null" in merge_fn
+    assert "summary_complete: null" in merge_fn
+    assert "run.has_viewable === true" in merge_fn
+    assert "run.summary_complete === false" in merge_fn
+    assert 'bits.push("viewable")' in picker_fn
+    assert 'bits.push("viewability unknown")' in picker_fn

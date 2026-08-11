@@ -58,7 +58,13 @@ CONTAINER_IMAGE_NAMES = {
 # Tools whose built image may NOT be published to a public/anonymous registry,
 # because it bakes a runtime we are not licensed to redistribute.
 #
-# THIS SET IS DELIBERATELY EMPTY, and the mechanism around it is deliberately kept.
+# The Isaac-family membership is deliberately empty: those images were
+# re-architected to fetch Isaac at runtime. Cosmos3 serving is restricted for a
+# separate reason: its pinned vLLM-Omni base embeds the NVIDIA Deep Learning
+# Container License and the thin wrapper does not establish the license's
+# material-additional-functionality and downstream-terms conditions for an
+# anonymous standalone GHCR distribution. Operators may build it into their own
+# registry instead.
 #
 # It used to hold {"isaac-lab", "sonic", "groot"}, because those images baked NVIDIA
 # Omniverse Kit (Isaac Sim): the Isaac Sim SOURCE is Apache-2.0, but the shipped
@@ -75,13 +81,11 @@ CONTAINER_IMAGE_NAMES = {
 # workbench already uses for gated model weights. Verified mechanically against the
 # built images by npa/scripts/scan_image_omniverse_payload.py.
 #
-# Keeping an empty set rather than deleting the machinery is a deliberate choice:
-# the next runtime we cannot ship needs exactly this, and a mechanism that is
-# deleted when unused has to be rebuilt (and re-reviewed) under time pressure. Its
-# tests monkeypatch a synthetic restricted tool in, so the guard cannot rot while
-# its membership is empty. Kept in sync with packaging-contract.yaml's
-# `redistribution:` fields by npa/tests/deploy/test_public_publish.py.
-OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset()
+# The compatibility name predates this non-Omniverse member. Keep it until a
+# deliberate API rename; the behavior is the general restricted-runtime guard.
+# Kept in sync with packaging-contract.yaml's `redistribution:` fields by
+# npa/tests/deploy/test_public_publish.py.
+OMNIVERSE_RESTRICTED_TOOLS: frozenset[str] = frozenset({"cosmos3-serving"})
 
 # Images built FROM a restricted tool image, so they inherit whatever it bakes and
 # the same no-public-redistribution rule. They are not separate
@@ -230,6 +234,20 @@ def supported_tool_version(tool: str) -> str:
         raise RuntimeError(
             f"Could not find supported version for tool: {tool}"
         ) from exc
+
+
+def public_mirror_tag_for_tool(tool: str) -> str:
+    """Return the exact repository pin that the public mirror must carry.
+
+    SONIC's normal resolver selects a hardware variant and defaults to the L40S
+    ``0.1.2`` image. The public inventory contract instead pins the validated
+    cross-architecture Kubernetes runtime from ``SUPPORTED_TOOL_VERSIONS``. A
+    publisher that called ``supported_tool_version('sonic')`` would silently
+    mirror only the default variant and leave the repository pin unavailable.
+    """
+    if tool == "sonic":
+        return SUPPORTED_TOOL_VERSIONS[tool]
+    return supported_tool_version(tool)
 
 
 def supported_lerobot_versions() -> tuple[str, ...]:
@@ -434,7 +452,7 @@ def is_publicly_redistributable(tool: str) -> bool:
 
     ``False`` for any tool in ``OMNIVERSE_RESTRICTED_TOOLS`` — images that bake a
     runtime we may not redistribute, which are licensed for internal-R&D /
-    build-your-own use only. That set is currently empty; see its comment.
+    build-your-own use only. See the set's comment for current membership.
     """
     return tool not in OMNIVERSE_RESTRICTED_TOOLS
 
@@ -447,10 +465,10 @@ def omniverse_restricted_image_names() -> list[str]:
 def publicly_publishable_tools() -> list[str]:
     """Return the workbench tools that are OSS-redistributable to a public registry.
 
-    Excludes anything in ``OMNIVERSE_RESTRICTED_TOOLS``, which is currently empty:
-    the Isaac images now fetch Isaac Sim / Isaac Lab at run time under the
-    operator's own EULA acceptance rather than baking it, so every workbench tool
-    is publishable. See that set's comment for why the exclusion mechanism is kept.
+    Excludes anything in ``OMNIVERSE_RESTRICTED_TOOLS``. The Isaac images now
+    fetch Isaac Sim / Isaac Lab at run time under the operator's own EULA
+    acceptance, so every entry in ``CONTAINER_IMAGE_NAMES`` remains publishable;
+    the separately contracted Cosmos3 serving image stays build-your-own.
     """
     return sorted(
         tool for tool in CONTAINER_IMAGE_NAMES if is_publicly_redistributable(tool)

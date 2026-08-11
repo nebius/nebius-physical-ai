@@ -45,7 +45,9 @@ class AgentLiveContext:
     def get(self, path: str, **kwargs: object) -> httpx.Response:
         url = path if path.startswith("http") else f"{self.api_base}{path}"
         kwargs.setdefault("verify", self.tls_verify)
-        kwargs.setdefault("timeout", 10.0)
+        # Tenant inventory and first-page artifact discovery are bounded server
+        # operations, but a cold cache can legitimately span several projects.
+        kwargs.setdefault("timeout", 30.0)
         return httpx.get(url, auth=self.auth(), **kwargs)
 
     def post(self, path: str, **kwargs: object) -> httpx.Response:
@@ -110,6 +112,7 @@ UI_BUTTON_IDS = (
     "loadRunData",
     "artifactRefreshRuns",
     "artifactLoadRunArtifacts",
+    "agentAccessRefresh",
 )
 
 UI_WIRING_MARKERS = (
@@ -120,6 +123,7 @@ UI_WIRING_MARKERS = (
     'id="tabMain"',
     'id="tabRerun"',
     'id="stagesPanel"',
+    'id="agentAccessPanel"',
     "<h3>Stages</h3>",
     "initNpaAgentUi",
     "DOMContentLoaded",

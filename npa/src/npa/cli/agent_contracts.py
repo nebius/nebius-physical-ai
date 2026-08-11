@@ -104,7 +104,7 @@ AGENT_STAGES_RUN_PICKER_CONTRACT = (
     "loadSelectedRun",
     "syncRunChooserFields",
     "filterStagesRunSelect",
-    "Search or paste run ID",
+    "Search NPA workflow/artifact runs",
 )
 
 AGENT_READABLE_COLOR_CONTRACT = (

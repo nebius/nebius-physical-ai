@@ -228,3 +228,42 @@ before generation starts.
 For access checks before a run (`gh`/HF/NGC reachability) see
 `npa workbench cosmos check`. For the un-baked, clone-at-job-time text-to-image
 smoke, use `npa/workflows/workbench/npa-workflows/cosmos3-text-to-image.yaml`.
+
+## Measured timing: Cosmos3-Super text2video on H200 and B200
+
+Measured 2026-08-08 with `npa-cosmos3:1.2.2-cu130` (npa `3fe85845`, cosmos-framework `5e67049c`), mode `text2video`, checkpoint `Cosmos3-Super` at the serving lane's anchor shape: 1280x720, 189 frames, 24 fps, 35 sampling steps, seed 17, guardrails on, NVIDIA's example text-to-video prompt. One job is one full model load: every invocation loads the checkpoint, samples, decodes, applies the guardrail postprocessor, encodes, and publishes, then exits.
+
+| Platform | Wall per invocation | Sampling | Steady state per step | Notes |
+| --- | --- | --- | --- | --- |
+| 8x H200 SXM (141 GB HBM3e per GPU) | 819 s mean (n=3: 819 / 820 / 821 s) | 756.8 s mean | ~21 s/step | Model load 39-41 s warm page cache plus ~10 s container overhead; requires `PYTORCH_ALLOC_CONF=expandable_segments:True` for 720p VAE decode (see operational notes) |
+| 8x B200 SXM (192 GB HBM3e per GPU) | ~473 s warm (n=2: 473 / 472 s; the very first invocation took 740 s including one-time guardrail-asset downloads) | ~394 s | ~11.3 s/step | The full 124 GB checkpoint fits one card; no allocator workaround needed |
+
+The batch-path single job uses one GPU: at this commit the runner launches one process on one card, and upstream's multi-GPU path (`torchrun` full-shard) is not exposed through the CLI. The remaining 7 GPUs of the node are idle during a batch job.
+
+### Batch versus served: the load-every-time cost structure
+
+The same workload (anchor shape, guardrails on) served from a resident vLLM-Omni endpoint with the card-recommended 8-GPU config measures **142.1 s** (8x H200) and **87 s** (8x B200) per clip; the server's startup cost is paid once and amortizes across requests. The batch path pays its overhead on every invocation:
+
+- Sampling is the dominant term: ~92% of wall on H200, ~83% on B200.
+- The remainder, ~62 s per invocation on H200 and ~79 s on B200, covers container start, model load, VAE decode, the guardrail postprocessor, MP4 encode, and publish. (Warm model load alone measures 39-41 s on H200 and ~80 s load-to-first-step on B200; component boundaries overlap, so the wall and sampling figures are the authoritative totals.)
+
+Net: per anchor clip the batch path costs about **5.7x** (H200: 819 vs 142.1 s) or **5.4x** (B200: 473 vs 87 s) the served-resident cost, before accounting for the serving path's own multi-minute boot. Use the batch path for one-off or low-volume generation; keep a resident server for any sustained synthetic-data volume.
+
+### Determinism per platform
+
+Same seed, same config, separate invocations of the batch job:
+
+- **B200: 4 of 4 invocations byte-identical** (one sha256 across all outputs), including across separate container starts and a host cache rebuild.
+- **H200: 5 invocations split into two byte-stable groups** (3 runs share one sha256, 2 share another). Within each group the output is bit-exact across cold starts; the two groups differ, most plausibly from per-invocation compile/autotune kernel selection (hypothesis, not established).
+
+The serving path's rule is different on both platforms: output is byte-identical only within one running server instance; a server restart changes the bytes (restart-drift medians measured in the serving-lane study: 26.8-29.0 dB PSNR on H200, 32.1-32.2 dB on B200). Plan verification around hash equality where measured, and metadata plus perceptual checks otherwise.
+
+### Operational notes for single-GPU operation
+
+- On H200-class cards (141 GB per GPU) at 720p, set `PYTORCH_ALLOC_CONF=expandable_segments:True` or the VAE decode runs out of memory with the full 64B (124 GB) checkpoint in one process; the B200's 192 GB per card does not need it.
+- The job publishes `vision.mp4` plus `generate.json` to the output path verbatim, so multiple cells to one output prefix overwrite each other: give every cell its own prefix.
+- Container invocations need `USER`/`LOGNAME` exported for the runtime uid, or torch import fails on a passwd-less uid, and the HF cache mount must be writable by the container's uid.
+
+### Guardrail posture on this path
+
+At this framework ref the video content-safety classifier is commented out upstream ("Too many false positives, add back when fixed"): the runtime posture is the text guardrail (Blocklist + Qwen3Guard) plus the RetinaFaceFilter face-blur postprocessor. Manifests record `guardrails: true` either way; do not describe this path as screening video content.

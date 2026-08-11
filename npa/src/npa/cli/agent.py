@@ -40,6 +40,12 @@ from npa.clients.network import (
 from npa.clients.ssh import SSHClient, SSHError
 from npa.agent_backend.shipping import render_shipped_backend_install
 from npa.cli import agent_resources
+from npa.cli.agent_access import (
+    ACCESS_SCHEMA,
+    ACCESS_STATES,
+    consistent_agent_service_account_id,
+)
+from npa.cli.agent_embed import embedded_python_source
 from npa.cli.agent_artifact_storage import (
     _resolve_artifact_project_storage,
     _resolve_deploy_storage_credentials,
@@ -133,14 +139,46 @@ _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
 _AGENT_BACKEND_SHIP = "__NPA_AGENT_BACKEND_SHIP__"
 _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
+_AGENT_ACCESS_EMBED = "__NPA_AGENT_ACCESS_EMBED__"
+_AGENT_ACCESS_RUNTIME_EMBED = "__NPA_AGENT_ACCESS_RUNTIME_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
 _AGENT_STATE_EMBED = "__NPA_AGENT_STATE_EMBED__"
 _AGENT_S3_GUARD_EMBED = "__NPA_AGENT_S3_GUARD_EMBED__"
 _AGENT_STAGES_EMBED = "__NPA_AGENT_STAGES_EMBED__"
+_AGENT_STAGE_RUNTIME_EMBED = "__NPA_AGENT_STAGE_RUNTIME_EMBED__"
+_AGENT_VIEWER_RUNTIME_EMBED = "__NPA_AGENT_VIEWER_RUNTIME_EMBED__"
 _AGENT_PROVENANCE_EMBED = "__NPA_AGENT_PROVENANCE_EMBED__"
 _AGENT_UI_HTML_EMBED = "__NPA_AGENT_UI_HTML__"
+
+
+def _embedded_agent_stage_runtime_source() -> str:
+    """Return agent_stage_runtime.py source embedded into the backend."""
+    return embedded_python_source(
+        Path(__file__).with_name("agent_stage_runtime.py"), strip_standalone=True
+    )
+
+
+def _embedded_agent_viewer_runtime_source() -> str:
+    """Return agent_viewer_runtime.py source embedded into the backend."""
+    return embedded_python_source(
+        Path(__file__).with_name("agent_viewer_runtime.py"), strip_standalone=True
+    )
+
+
+def _embedded_agent_access_source() -> str:
+    """Return agent_access.py source embedded into the backend."""
+    return embedded_python_source(
+        Path(__file__).with_name("agent_access.py"), strip_standalone=True
+    )
+
+
+def _embedded_agent_access_runtime_source() -> str:
+    """Return agent_access_runtime.py source embedded into the backend."""
+    return embedded_python_source(
+        Path(__file__).with_name("agent_access_runtime.py"), strip_standalone=True
+    )
 
 
 def _fail(message: str) -> NoReturn:
@@ -1030,7 +1068,13 @@ def _write_agent_nebius_env(
     secret_key: str,
     iam_token: str = "",
 ) -> None:
-    """Stage long-lived Nebius project credentials on the agent VM."""
+    """Stage deterministic metadata-profile and S3 settings on the agent VM.
+
+    ``iam_token`` is retained for call compatibility but is deliberately never
+    persisted: a bootstrap token is short-lived and can shadow the VM's rotating
+    attached-service-account profile in the systemd process.
+    """
+    del iam_token
     if not (project_id.strip() and access_key.strip() and secret_key.strip()):
         return
     env_lines = [
@@ -1040,51 +1084,22 @@ def _write_agent_nebius_env(
         f"NEBIUS_TENANT_ID={tenant_id.strip()}",
         f"NEBIUS_REGION={region.strip() or 'eu-north1'}",
         f"NEBIUS_SERVICE_ACCOUNT_ID={service_account_id.strip()}",
+        "NEBIUS_PROFILE=cursor-sa",
+        "NPA_NEBIUS_PROFILE=cursor-sa",
+        "NPA_NEBIUS_CONFIG=/root/.nebius/config.yaml",
+        "NPA_NEBIUS_CREDENTIAL_SOURCE=instance_metadata",
         f"NEBIUS_S3_BUCKET={bucket.strip()}",
         f"NEBIUS_S3_ENDPOINT={endpoint.strip()}",
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",
         f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
         f"AWS_REGION={region.strip() or 'eu-north1'}",
     ]
-    if iam_token.strip():
-        env_lines.extend(
-            [
-                "NEBIUS_PROFILE=agent-bootstrap",
-                f"NEBIUS_IAM_TOKEN={iam_token.strip()}",
-                f"NPA_NEBIUS_IAM_TOKEN={iam_token.strip()}",
-                f"TF_VAR_iam_token={iam_token.strip()}",
-                "NPA_REUSE_IAM_TOKEN=1",
-            ]
-        )
     env_lines.append("")
     env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
     ssh.run_or_raise(
         f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/nebius.env >/dev/null "
         "&& sudo chmod 600 /opt/npa-agent/nebius.env"
     )
-    if iam_token.strip():
-        ssh.run_or_raise(
-            "sudo bash -lc "
-            + shlex.quote(
-                "\n".join(
-                    [
-                        "set -euo pipefail",
-                        "set -a",
-                        ". /opt/npa-agent/nebius.env",
-                        "set +a",
-                        "mkdir -p /root/.npa",
-                        "printf '%s' \"$NEBIUS_IAM_TOKEN\" > /root/.npa/nebius-token",
-                        "chmod 600 /root/.npa/nebius-token",
-                        "NEBIUS_BIN=\"$(command -v nebius || true)\"",
-                        "if [ -z \"$NEBIUS_BIN\" ] && [ -x /usr/local/bin/nebius ]; then NEBIUS_BIN=/usr/local/bin/nebius; fi",
-                        "if [ -n \"$NEBIUS_BIN\" ]; then",
-                        "  \"$NEBIUS_BIN\" profile create --endpoint api.eu.nebius.cloud --token-file /root/.npa/nebius-token --profile agent-bootstrap --parent-id \"$NEBIUS_PROJECT_ID\" >/dev/null 2>&1 || true",
-                        "  NEBIUS_PROFILE=agent-bootstrap \"$NEBIUS_BIN\" iam get-access-token >/dev/null",
-                        "fi",
-                    ]
-                )
-            )
-        )
 
 
 def _env_line_value(value: str) -> str:
@@ -1234,12 +1249,16 @@ def _bootstrap_agent_stack(
     agent_backend_ship_script = render_shipped_backend_install()
     agent_workflow_source = _embedded_agent_workflow_source()
     agent_artifacts_source = _embedded_agent_artifacts_source()
+    agent_access_source = _embedded_agent_access_source()
+    agent_access_runtime_source = _embedded_agent_access_runtime_source()
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
     agent_state_source = _embedded_agent_state_source()
     agent_s3_guard_source = _embedded_agent_s3_guard_source()
     agent_stages_source = _embedded_agent_stages_source()
+    agent_stage_runtime_source = _embedded_agent_stage_runtime_source()
+    agent_viewer_runtime_source = _embedded_agent_viewer_runtime_source()
     agent_provenance_source = _embedded_agent_provenance_source()
     deployment = deployment or build_deployment_manifest(
         project_alias=project_alias,
@@ -1297,6 +1316,8 @@ server {{
 """
     nebius_profile = "cursor-sa"
     nebius_parent_id = shlex.quote((nebius_project_id or project_id).strip())
+    expected_agent_service_account_id = shlex.quote(service_account_id.strip())
+    expected_agent_tenant_id = shlex.quote((nebius_tenant_id or tenant_id).strip())
     lichtblick_port = DEFAULT_LICHTBLICK_PORT
     rerun_recording_arg = (
         "/opt/npa-agent/sim2real.rrd " if preload_stock_demo else ""
@@ -1346,9 +1367,25 @@ if [ -s /mnt/cloud-metadata/token ]; then
   if ! "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
     "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
   fi
-  sudo mkdir -p /root/.nebius
-  sudo "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1 || \
-    sudo "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
+  # The backend systemd service runs as root. Provision the same rotating
+  # metadata profile under root's CLI home so tenant inventory does not fail
+  # merely because bootstrap itself ran through the SSH user's home.
+  if ! sudo -H "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
+    sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
+  fi
+  # Inventory must use the exact attached identity and its rotating metadata
+  # token. Scrub any operator/bootstrap token inherited by SSH before verifying.
+  expected_sa={expected_agent_service_account_id}
+  expected_tenant={expected_agent_tenant_id}
+  inventory_env=(env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN -u TF_VAR_iam_token -u NPA_REUSE_IAM_TOKEN HOME=/root NEBIUS_PROFILE={nebius_profile})
+  whoami_json="$(sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam whoami --format json)"
+  if [ -n "$expected_sa" ] && ! python3 -c 'import json, sys; expected = sys.argv[1]; matches = lambda value: any(map(matches, value.values())) if isinstance(value, dict) else any(map(matches, value)) if isinstance(value, list) else isinstance(value, str) and value == expected; raise SystemExit(0 if matches(json.load(sys.stdin)) else 1)' "$expected_sa" <<<"$whoami_json"; then
+    echo "attached service-account verification failed" >&2
+    exit 1
+  fi
+  if [ -n "$expected_tenant" ]; then
+    sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam project list --parent-id "$expected_tenant" --all --format json >/dev/null
+  fi
 fi
 sudo mkdir -p /opt/npa-agent
 printf '%s' {shlex.quote(deployment_b64)} | base64 -d | sudo tee /opt/npa-agent/deployment.json >/dev/null
@@ -1555,6 +1592,8 @@ DEFAULT_SELECTION = {{
 }}
 DEFAULT_SIM_VIZ = {{
     "run_id": "",
+    "source_type": "",
+    "source_label": "",
     "stage": "idle",
     "rrd_uri": "",
     "rrd_updated_at": "",
@@ -1707,6 +1746,7 @@ def _default_state() -> dict:
     }}
 
 _STATE_LOCK = threading.RLock()
+_ARTIFACT_LOAD_LOCK = threading.RLock()
 _STATE_STORE: StateStore | None = None
 
 
@@ -1829,6 +1869,7 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
         snapshot.update(existing)
     snapshot.update(payload)
     snapshot["run_id"] = run_id
+    snapshot["source_type"], snapshot["source_label"] = resolve_run_source(payload, existing, run_id)
     incoming_rrd = bool(str(payload.get("rrd_uri") or "").strip())
     incoming_render = str(payload.get("artifact_render") or "").strip().lower()
     # A Rerun/demo update must not resurrect a prior video/image/json media preview.
@@ -1873,30 +1914,52 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
 
 def _default_sim2real_run_details(run_id: str, *, submitted_at: str = "", selection: dict | None = None) -> dict:
     stages = []
-    for index, (stage_id, label) in enumerate(SIM2REAL_STAGE_TEMPLATE):
+    for stage_id, label in SIM2REAL_STAGE_TEMPLATE:
         stages.append(
-            {{
-                "id": stage_id,
-                "label": label,
-                "status": "not_run",
-                "started_at": "",
-                "finished_at": "",
-                "summary": "Not launched by the agent UI submit endpoint.",
-            }}
+            stage_evidence_record(
+                stage_id=stage_id,
+                label=label,
+                status="not_run",
+                status_label="Not run",
+                raw_status="not_run",
+                evidence_type="workflow_status",
+                evidence_source="agent_sim2real_submit_record",
+                authority="authoritative",
+                confidence="high",
+                reason="The agent submit record explicitly says this stage was not launched.",
+                summary="Not launched by the agent UI submit endpoint.",
+            )
         )
     if stages:
-        stages[0]["status"] = "succeeded"
-        stages[0]["started_at"] = submitted_at
-        stages[0]["finished_at"] = submitted_at
-        stages[0]["summary"] = "Agent accepted the Sim2Real submit request."
+        submit_stage_id, submit_stage_label = SIM2REAL_STAGE_TEMPLATE[0]
+        stages[0] = stage_evidence_record(
+            stage_id=submit_stage_id,
+            label=submit_stage_label,
+            status="succeeded",
+            status_label="Succeeded",
+            raw_status="accepted",
+            evidence_type="event_log",
+            evidence_source="agent_sim2real_submit_record",
+            authority="authoritative",
+            confidence="high",
+            reason="The agent accepted and durably recorded this Sim2Real submit request.",
+            started_at=submitted_at,
+            finished_at=submitted_at,
+            observed_at=submitted_at,
+            summary="Agent accepted the Sim2Real submit request.",
+        )
     return {{
         "run_id": run_id,
+        "source_type": "workflow_history",
+        "source_label": "Workflow history",
+        "workflow_name": "sim2real-staged-loop",
         "status": "submitted",
         "result": "recorded_not_launched",
         "submitted_at": submitted_at,
         "updated_at": submitted_at or _now_iso(),
         "selection": selection if isinstance(selection, dict) else {{}},
         "stages": stages,
+        "stage_summary": summarize_stage_evidence(stages),
         "logs": [
             {{
                 "timestamp": submitted_at or _now_iso(),
@@ -1933,219 +1996,6 @@ def _merge_sim2real_run_details(base: dict, update: dict | None) -> dict:
             else:
                 merged[key] = value
     return merged
-
-
-def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[str]]]:
-    draft = _workflow_draft_from_state(state)
-    stages: list[tuple[str, str, list[str]]] = []
-    plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {{}}
-    for source in (plan.get("steps"), plan.get("states"), draft.get("states")):
-        if not isinstance(source, list):
-            continue
-        for item in source:
-            if isinstance(item, dict):
-                raw_id = str(item.get("state") or item.get("id") or item.get("name") or "").strip()
-                label = str(item.get("label") or item.get("description") or raw_id).strip() or raw_id
-            else:
-                raw_id = str(item or "").strip()
-                label = raw_id
-            if not raw_id:
-                continue
-            stage_id = _slug(raw_id, fallback="stage")
-            patterns = [raw_id, raw_id.replace("_", "-"), raw_id.replace("-", "_")]
-            if (stage_id, label, patterns) not in stages:
-                stages.append((stage_id, label, patterns))
-        if stages:
-            break
-    return stages
-
-
-def _workflow_run_steps(s3, bucket: str, keys: list) -> list:
-    # Read the npa.workflow run manifest (<run>/npa-workflow/manifest.json) and
-    # return per-stage execution records: state, command, returncode, status,
-    # iteration, output_uri. Empty list when the run was not scheduler-driven.
-    manifest_key = ""
-    for key in keys:
-        if str(key).endswith("/npa-workflow/manifest.json"):
-            manifest_key = str(key)
-            break
-    if not manifest_key:
-        return []
-    try:
-        body = s3.get_object(Bucket=bucket, Key=manifest_key)["Body"].read()
-        manifest = json.loads(body)
-    except Exception:
-        return []
-    out = []
-    for step in manifest.get("steps", []) if isinstance(manifest, dict) else []:
-        if not isinstance(step, dict):
-            continue
-        argv = step.get("argv") or []
-        command = " ".join(str(a) for a in argv) if isinstance(argv, list) else str(argv)
-        outputs = step.get("outputs") or []
-        output_uri = ""
-        if isinstance(outputs, list) and outputs and isinstance(outputs[0], dict):
-            output_uri = str(outputs[0].get("uri") or "")
-        out.append(
-            {{
-                "stage": str(step.get("state") or ""),
-                "status": str(step.get("status") or ""),
-                "returncode": step.get("returncode"),
-                "iteration": step.get("iteration"),
-                "command": command[:2000],
-                "output_uri": output_uri,
-            }}
-        )
-    return out
-
-
-def _artifact_backed_run_details(state: dict, run_id: str, prefix: str = "") -> dict | None:
-    if not run_id:
-        return None
-    try:
-        s3, settings = _agent_s3_client()
-        artifacts = []
-        # Fast path: honor the artifact prefix the run was discovered under.
-        if prefix:
-            effective_prefix = _artifact_discovery_prefix(settings, prefix)
-            artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
-        # Generic fallback: locate the run across ALL category folders under the
-        # single run root (no hardcoded workflow path), so a run stored under any
-        # workflow shows its real artifact-backed stages, not the sim2real
-        # "not_run" template.
-        if not artifacts:
-            artifacts = find_run_artifacts(
-                settings["bucket"],
-                base_prefix=settings.get("prefix", ""),
-                run_id=validate_run_id(run_id),
-                s3=s3,
-            )
-    except Exception:
-        return None
-    if not artifacts:
-        return None
-    keys = [str(item.key or "") for item in artifacts]
-    # Prefix (root/category) the run was actually found under, derived from the
-    # real keys so stage extraction strips <root>/<category>/<run_id>/ correctly
-    # regardless of which category held the run (works for both the prefix and
-    # generic-find paths).
-    marker = "/" + str(run_id) + "/"
-    effective_prefix = keys[0].split(marker, 1)[0] if marker in keys[0] else settings.get("prefix", "")
-    # Real per-stage execution record written by the npa.workflow scheduler:
-    # each step's state, exact command (argv), returncode, status, loop iteration.
-    # This is the authoritative "logs of each stage" surface (the artifact-derived
-    # stages below cover "artifacts of each stage").
-    workflow_steps = _workflow_run_steps(s3, settings["bucket"], keys)
-    workflow_stage_defs = _workflow_stage_defs_from_state(state)
-    overlay_unmatched = run_owns_workflow_stage_overlay(state, run_id)
-    stages = build_artifact_backed_stages(
-        keys,
-        run_id=run_id,
-        prefix=effective_prefix,
-        workflow_stage_defs=workflow_stage_defs,
-        overlay_unmatched=overlay_unmatched,
-    )
-    report_ready = any(key.endswith("/reports/sim2real-report.json") or key.endswith("/reports/report.json") for key in keys)
-    rrd_ready = any(key.endswith(".rrd") for key in keys)
-    preferred = select_preferred_artifact(artifacts)
-    report_note = ""
-    report_artifact = next((item for item in artifacts if item.key.endswith("/reports/sim2real-report.json")), None)
-    if report_artifact:
-        local_report = RECORDINGS_DIR / (_artifact_filename(report_artifact.key) + ".json")
-        try:
-            download_s3_uri(report_artifact.s3_uri, local_report, s3=s3)
-            report = json.loads(local_report.read_text(encoding="utf-8"))
-            viz = report.get("visualization") if isinstance(report.get("visualization"), dict) else {{}}
-            decision = report.get("outer_loop", {{}}).get("latest_decision", {{}}) if isinstance(report.get("outer_loop"), dict) else {{}}
-            source = str(viz.get("source") or "").strip()
-            success_rate = decision.get("success_rate")
-            if source or success_rate is not None:
-                report_note = (
-                    "Report summary: visualization source="
-                    + (source or "unknown")
-                    + (f", success_rate={{success_rate}}" if success_rate is not None else "")
-                    + "."
-                )
-        except Exception:
-            report_note = ""
-    return {{
-        "run_id": run_id,
-        "status": "completed" if report_ready else "artifact-backed",
-        "result": "rerun_ready" if rrd_ready else "artifacts_available",
-        "submitted_at": "",
-        "updated_at": max((str(item.last_modified or "") for item in artifacts), default=_now_iso()),
-        "selection": {{}},
-        "stages": stages,
-        "workflow_steps": workflow_steps,
-        "logs": [
-            {{
-                "timestamp": _now_iso(),
-                "level": "info",
-                "message": f"Derived stage timeline from {{len(artifacts)}} S3 artifacts.",
-            }},
-            *[
-                {{
-                    "timestamp": _now_iso(),
-                    "level": "info" if str(step.get("status") or "") in ("ok", "succeeded", "") and (step.get("returncode") in (0, None)) else "error",
-                    "message": (
-                        f"[{{step.get('stage') or '?'}}"
-                        + (f" #{{step.get('iteration')}}" if step.get("iteration") not in (None, "") else "")
-                        + f"] rc={{step.get('returncode')}} ({{step.get('status') or 'n/a'}}) $ {{step.get('command') or ''}}"
-                    ),
-                }}
-                for step in workflow_steps
-            ],
-            {{
-                "timestamp": _now_iso(),
-                "level": "info" if rrd_ready else "warn",
-                "message": (
-                    f"Preferred viewable artifact: {{preferred.key}}"
-                    if preferred
-                    else "No preferred viewable artifact found."
-                ),
-            }},
-            {{
-                "timestamp": _now_iso(),
-                "level": "info",
-                "message": report_note or "No structured run report summary was available.",
-            }},
-        ],
-        "artifacts": [item.to_dict() for item in artifacts[:25]],
-    }}
-
-
-def _sim2real_run_details(state: dict, run_id: str = "", prefix: str = "") -> dict:
-    latest = state.get("latest_submit", {{}})
-    if not isinstance(latest, dict):
-        latest = {{}}
-    sim_viz = state.get("sim_viz", {{}})
-    if not isinstance(sim_viz, dict):
-        sim_viz = {{}}
-    resolved_run_id = str(run_id or latest.get("run_id") or sim_viz.get("run_id") or state.get("active_run_id") or "").strip()
-    details_map = state.get("sim2real_runs")
-    if not isinstance(details_map, dict):
-        details_map = {{}}
-    existing = details_map.get(resolved_run_id, {{}}) if resolved_run_id else {{}}
-    submitted_at = str(latest.get("submitted_at") or sim_viz.get("rrd_updated_at") or "")
-    selection = latest.get("selection") if isinstance(latest.get("selection"), dict) else {{}}
-    details = _default_sim2real_run_details(resolved_run_id, submitted_at=submitted_at, selection=selection)
-    details = _merge_sim2real_run_details(details, existing if isinstance(existing, dict) else {{}})
-    artifact_details = _artifact_backed_run_details(state, resolved_run_id, prefix=prefix)
-    if artifact_details:
-        details = _merge_sim2real_run_details(details, artifact_details)
-    stage = str(sim_viz.get("stage") or details.get("status") or "submitted").strip()
-    if stage and not artifact_details:
-        details["status"] = stage
-    if sim_viz.get("rrd_uri"):
-        if str(details.get("result") or "") not in {"completed", "failed", "running", "rerun_ready"}:
-            details["result"] = "recording_available"
-        for item in details.get("stages", []):
-            if isinstance(item, dict) and item.get("id") == "stage_14_rerun_viz":
-                item["status"] = "succeeded"
-                item["summary"] = "Rerun recording is available."
-    elif resolved_run_id:
-        details["result"] = "recorded_not_launched"
-    return details
 
 
 def _sim_viz_for_run(state: dict, run_id: str = "") -> dict:
@@ -2440,30 +2290,61 @@ def _generate_franka_demo_rrd(*, camera: str = "workspace") -> Path:
 def _publish_rrd_recording(source: Path) -> str:
     if not source.is_file(): return ""
     RECORDING_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = RECORDING_PATH.with_suffix(".rrd.tmp")
-    shutil.copy2(source, tmp)
-    tmp.replace(RECORDING_PATH)
+    tmp = RECORDING_PATH.with_name(f"{{RECORDING_PATH.name}}.{{secrets.token_hex(6)}}.tmp")
+    try:
+        shutil.copy2(source, tmp)
+        tmp.replace(RECORDING_PATH)
+    finally:
+        # replace() removes the temporary source on success. On any copy/replace
+        # failure, remove only the randomized temporary path, never the published
+        # destination.
+        if tmp != RECORDING_PATH:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
     capability_name = f"cap-{{secrets.token_urlsafe(32)}}.rrd"
     if not RERUN_CAPABILITY_NAME_RE.fullmatch(capability_name): raise RuntimeError("generated Rerun capability filename is invalid")
     capability_path = RECORDINGS_DIR / capability_name
-    capability_tmp = capability_path.with_suffix(".rrd.tmp")
-    shutil.copy2(RECORDING_PATH, capability_tmp)
-    capability_tmp.replace(capability_path)
+    capability_tmp = capability_path.with_name(
+        f"{{capability_path.name}}.{{secrets.token_hex(6)}}.tmp"
+    )
+    try:
+        shutil.copy2(RECORDING_PATH, capability_tmp)
+        capability_tmp.replace(capability_path)
+    finally:
+        try:
+            capability_tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
     for stale in RECORDINGS_DIR.glob("cap-*.rrd"):
         if stale != capability_path and RERUN_CAPABILITY_NAME_RE.fullmatch(stale.name):
-            stale.unlink(missing_ok=True)
+            try:
+                stale.unlink(missing_ok=True)
+            except OSError:
+                pass
     return f"/rerun/recordings/{{capability_name}}"
 
 
 def _safe_artifact_key(key: str) -> str:
-    value = str(key or "").strip().lstrip("/")
+    value = str(key or "").strip()
     if not value:
         raise HTTPException(status_code=400, detail="artifact key is required")
-    if "\\\\" in value or any(ord(ch) < 32 for ch in value):
-        raise HTTPException(status_code=400, detail="artifact key contains unsupported characters")
-    parts = value.split("/")
-    if any(part in {{"", ".", ".."}} for part in parts):
-        raise HTTPException(status_code=400, detail="artifact key traversal is not allowed")
+    variants = [value]
+    for _attempt in range(2):
+        decoded = unquote(variants[-1])
+        if decoded == variants[-1]:
+            break
+        variants.append(decoded)
+    for candidate in variants:
+        if (
+            candidate.startswith("/")
+            or candidate.endswith("/")
+            or "\\\\" in candidate
+            or any(ord(ch) < 32 for ch in candidate)
+            or any(part in {{"", ".", ".."}} for part in candidate.split("/"))
+        ):
+            raise HTTPException(status_code=400, detail="artifact key traversal is not allowed")
     return value
 
 
@@ -2514,16 +2395,17 @@ def _artifact_discovery_prefix(settings: dict[str, str], user_prefix: str = "") 
     return base
 
 def _discovery_exclude_roots() -> set:
-    # Bucket-root prefixes that hold the agent's own state/chat-memory, not runs.
-    # Derived from the configured prefixes so generic discovery never lists them.
+    # Exact prefix subtrees that hold agent state/chat memory, not runs. Preserve
+    # nested prefixes so excluding one agent subtree does not hide unrelated data
+    # under the same first path segment.
     roots = set()
     for prefix in (
         str(_state_s3_settings().get("prefix") or ""),
         _chat_memory_prefix(),
     ):
-        top = str(prefix or "").strip().strip("/").split("/", 1)[0]
-        if top:
-            roots.add(top)
+        normalized = str(prefix or "").strip().strip("/")
+        if normalized:
+            roots.add(normalized)
     return roots
 
 
@@ -2548,36 +2430,7 @@ def _agent_s3_client():
     return client, settings
 
 
-def _agent_s3_buckets(s3, settings) -> list:
-    # Discovery is limited to the configured primary bucket plus explicit extras.
-    # Never enumerate every credential-readable bucket: that is slow, can surface
-    # unrelated storage, and makes the default UI scope non-deterministic.
-    primary = str(settings.get("bucket") or "")
-    override = str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip()
-    extra = [b.strip() for b in override.split(",") if b.strip()] if override else []
-    buckets = list_accessible_buckets(s3, primary=primary, extra=extra)
-    return buckets or ([primary] if primary else [])
-
-
-def _configured_agent_s3_buckets(settings) -> set:
-    return configured_agent_s3_buckets(
-        str((settings or {{}}).get("bucket") or ""),
-        str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip(),
-    )
-
-
-def _assert_s3_uri_in_agent_bucket(uri: str, settings) -> None:
-    # Bucket-only gate (configured primary + explicit NPA_AGENT_S3_BUCKETS).
-    # Prefix is intentionally not enforced: runs live under multiple category
-    # roots inside the same configured bucket.
-    ok, reason = s3_uri_in_configured_buckets(
-        uri,
-        primary=str((settings or {{}}).get("bucket") or ""),
-        extras_csv=str(os.environ.get("NPA_AGENT_S3_BUCKETS", "")).strip(),
-        prefix="",
-    )
-    if not ok:
-        raise HTTPException(status_code=400, detail=reason or "s3_uri bucket is not the configured agent bucket")
+{_AGENT_ACCESS_RUNTIME_EMBED}
 
 
 def _chat_memory_tenant() -> str:
@@ -2867,105 +2720,7 @@ def _artifact_preview_url(filename: str) -> str:
     return f"/api/artifacts/file/{{filename}}"
 
 
-def _artifact_stage_key(key: str, run_id: str) -> str:
-    # Derive a run-relative stage key from an object key, mirroring the UI's
-    # client-side derivation so stage selection is consistent both ways.
-    scoped = str(key or "")
-    marker = "/" + str(run_id) + "/"
-    idx = scoped.find(marker)
-    if idx >= 0:
-        scoped = scoped[idx + len(marker):]
-    elif run_id and scoped.startswith(str(run_id) + "/"):
-        scoped = scoped[len(str(run_id)) + 1:]
-    parts = [p for p in scoped.split("/") if p]
-    first = parts[0] if parts else "artifacts"
-    if first == "reports":
-        return "reports"
-    if first == "eval" and len(parts) > 1:
-        return "eval/" + parts[1]
-    if first in ("actions", "vlm_eval", "training_signal", "envs") and len(parts) > 1:
-        return first + "/" + parts[1]
-    return first
-
-
-_STAGE_DESCRIPTIONS = {{
-    "input": (
-        "Input — the run's source clip(s) and frames that the pipeline augments "
-        "(the base footage the augment stage conditions on)."
-    ),
-    "configs": (
-        "Config Generation — samples appearance-only scenario combos "
-        "(lighting/background/surface/color) into manifest.json. Each combo drives "
-        "one Cosmos Transfer inference, so N combos become N scenario variants in "
-        "the multiply fan-out."
-    ),
-    "labeled_original": (
-        "Understand & Annotate — Token Factory VLM dense captions of the SOURCE "
-        "frames (captions.json). These are descriptive labels, NOT the quality "
-        "gate (see the grade stage for the attribute-verify / hallucination check)."
-    ),
-    "cosmos_augmented": (
-        "Augment & Multiply — real Cosmos Transfer 2.5 GPU output: one augmented "
-        "variant per sampled scenario, each under aug-<clip>/ with "
-        "augmented_video.mp4 + frames + metadata.json (the sampled appearance). "
-        "manifest.json records variant_count / multiply_mode / variant_parallelism."
-    ),
-    "grade": (
-        "Evaluate & Validate — the VLM attribute-verification / hallucination check "
-        "(vlm_eval_stub.json: score / threshold / model) plus the quality-gate "
-        "decision.json (promote_checkpoint vs loop_back). This IS the eval, not a "
-        "caption."
-    ),
-    "labeled_augmented": (
-        "Pseudo-Label Augmented — Token Factory VLM captions of the AUGMENTED clips "
-        "(captions.json) so the amplified dataset ships fully labeled."
-    ),
-    "curation": (
-        "Curation — a real dataset report over the augmented + graded set "
-        "(clip/frame counts, per-clip coverage, multiply mode) for FiftyOne / "
-        "Voxel51 review."
-    ),
-    "reports": (
-        "Visualize & Finalize — the embedded Rerun recording (sim2real.rrd) and the "
-        "aggregate final report (final.json) summarizing the whole run."
-    ),
-    "eval/heldout": "Held-out evaluation — simulation eval report for the trained checkpoint.",
-    "actions/train": "Policy rollouts — action rollouts collected on the training envs.",
-    "vlm_eval/train": "VLM eval — VLM scoring of the training rollouts.",
-    "outer_loop": "Decision / outer loop — the promote_checkpoint vs loop_back gate decision.",
-}}
-
-
-_STAGE_LABELS = {{
-    "input": "Input",
-    "configs": "Configs",
-    "labeled_original": "Labeled original",
-    "cosmos_augmented": "Cosmos augmented",
-    "grade": "Grade",
-    "labeled_augmented": "Labeled augmented",
-    "curation": "Curation",
-    "reports": "Reports / visualization",
-    "eval/heldout": "Held-out eval",
-    "actions/train": "Policy rollouts",
-    "vlm_eval/train": "VLM eval",
-    "outer_loop": "Decision / outer loop",
-}}
-
-
-def _stage_label(stage_key: str) -> str:
-    key = str(stage_key or "").strip()
-    if key in _STAGE_LABELS:
-        return _STAGE_LABELS[key]
-    cleaned = key.replace("_", " ").replace("/", " / ").replace("-", " ").strip() or "Artifacts"
-    return cleaned[:1].upper() + cleaned[1:]
-
-
-def _stage_description(stage_key: str, label: str, count: int) -> str:
-    key = str(stage_key or "").strip()
-    desc = _STAGE_DESCRIPTIONS.get(key)
-    if desc:
-        return desc
-    return f"{{label}} — {{count}} artifact(s) discovered under `{{key or 'run'}}`."
+{_AGENT_VIEWER_RUNTIME_EMBED}
 
 
 def _is_sim2real_pipeline_recording(key: str) -> bool:
@@ -3031,136 +2786,6 @@ def _foxglove_config(state: dict | None = None) -> dict:
         self_hosted_ready=_self_hosted_viewer_healthy(),
     )
 
-
-def _apply_loaded_artifact(
-    *,
-    state: dict,
-    run_id: str,
-    key: str,
-    s3_uri: str,
-    render: str,
-    local_path: Path,
-    run_ref: str = "",
-) -> dict:
-    now = _now_iso()
-    sim_viz = dict(DEFAULT_SIM_VIZ)
-    current = state.get("sim_viz")
-    if isinstance(current, dict):
-        sim_viz.update(current)
-    # Never let a previous RRD's binding survive a later media load.
-    sim_viz.pop("served_recording_sha256", None)
-    camera = str(sim_viz.get("camera") or "workspace")
-    # Keep the data-factory exclusion on one line: npa/tests/cli/test_agent.py
-    # guards that exact expression as source text.
-    if (
-        render == "rerun"
-        and _is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)
-        and not is_neural_reconstruction_recording(key)
-    ):
-        camera = _sim2real_pipeline_camera_label(camera)
-    elif render == "rerun" and is_neural_reconstruction_recording(key):
-        # Do not inherit the previous run's label: the agent keeps sim_viz state
-        # across loads, so a NuRec run following a Sim2Real one would report
-        # camera="heldout-sim" while its own viewer note says the opposite.
-        camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL
-    sim_viz.update(
-        {{
-            "run_id": run_id,
-            "stage": "artifact-loaded",
-            "rrd_updated_at": now,
-            "artifact_uri": s3_uri,
-            "artifact_key": key,
-            "artifact_render": render,
-            "artifact_run_ref": str(run_ref or ""),
-            "mode": "static",
-            "camera": camera,
-        }}
-    )
-    if render == "rerun":
-        capability_path = _publish_rrd_recording(local_path)
-        sim_viz["served_recording_sha256"] = hashlib.sha256(RECORDING_PATH.read_bytes()).hexdigest()
-        restarted = _restart_rerun_serve(force=True)
-        rerun_ready = _wait_rerun_web_viewer_healthy() if restarted else False
-        sim_viz["rrd_uri"] = f"file://{{RECORDING_PATH}}"
-        sim_viz["artifact_preview_url"] = capability_path
-        sim_viz["artifact_download_url"] = "/api/sim-viz/rrd-blob"
-        sim_viz["rerun_iframe_url"] = _rerun_iframe_url(str(sim_viz.get("camera") or "workspace"), recording_path=capability_path)
-        sim_viz["rerun_ready"] = bool(capability_path) and rerun_ready
-        if _is_data_factory_recording(key):
-            sim_viz["preview_entity"] = "augmented"
-            sim_viz["visualization_note"] = (
-                "Physical AI Data Factory recording loaded. Entities: input/<clip> "
-                "(source frames), augmented/<clip> (Cosmos Transfer 2.5 output; the "
-                "static text label shows the sampled appearance variables), and "
-                "captions/ (Token Factory VLM pseudo-labels). Scrub the frame "
-                "timeline to compare original vs augmented."
-            )
-        elif is_neural_reconstruction_recording(key):
-            sim_viz["preview_entity"] = NEURAL_RECONSTRUCTION_PREVIEW_ENTITY
-            sim_viz["visualization_note"] = NEURAL_RECONSTRUCTION_VIEWER_NOTE
-        elif _is_sim2real_pipeline_recording(key):
-            sim_viz["preview_entity"] = "camera"
-            sim_viz["visualization_note"] = (
-                "Pipeline Sim2Real recording loaded. The primary Rerun view is the "
-                "held-out simulation camera stream; any 3D Franka/world entities are "
-                "reference proxy context, not custom hardware footage."
-            )
-    elif render == "mcap":
-        # One recording, two embedded viewers. Lichtblick (OSS, in-page) streams
-        # the same-origin copy; the official Foxglove app runs cross-origin and
-        # needs the CORS + byte-range copy. Publish both so either backend works.
-        # Only real .mcap files may take the Lichtblick slot (it is a fixed
-        # sim2real.mcap path); bags/db3/ulog are published on the Foxglove path,
-        # which keeps their real extension so the viewer picks the right reader.
-        is_mcap = key.lower().endswith(".mcap")
-        published = _publish_foxglove_recording(local_path, key)
-        sim_viz["rrd_uri"] = ""
-        sim_viz["rerun_iframe_url"] = "/rerun/"
-        sim_viz["rerun_ready"] = False
-        sim_viz["preview_entity"] = ""
-        sim_viz["foxglove_url"] = published
-        sim_viz["foxglove_ready"] = bool(published)
-        sim_viz["mcap_updated_at"] = now
-        if is_mcap:
-            _publish_mcap_recording(local_path)
-            mcap_url = _lichtblick_recording_url()
-            sim_viz["mcap_uri"] = f"file://{{MCAP_RECORDING_PATH}}"
-            sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
-            sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
-            sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
-            sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
-            sim_viz["visualization_note"] = (
-                "MCAP recording loaded: it plays in the embedded Lichtblick "
-                "(Foxglove-compatible, OSS) viewer — rollout camera, VLM critiques and "
-                "reward/advantage signals — and the same file is published on a CORS + "
-                "byte-range path for the official Foxglove app."
-            )
-        else:
-            sim_viz["lichtblick_ready"] = False
-            sim_viz["artifact_preview_url"] = published or _copy_artifact_preview(local_path, key)
-            sim_viz["artifact_download_url"] = sim_viz["artifact_preview_url"]
-            sim_viz["visualization_note"] = (
-                f"Recording loaded ({{Path(key).suffix.lower() or 'unknown'}}). Foxglove-family "
-                "viewers read it directly; the Lichtblick slot is reserved for .mcap."
-            )
-    else:
-        preview_url = _copy_artifact_preview(local_path, key)
-        sim_viz["artifact_preview_url"] = preview_url
-        sim_viz["artifact_download_url"] = preview_url
-        sim_viz["rrd_uri"] = ""
-        sim_viz["rerun_iframe_url"] = "/rerun/"
-        sim_viz["rerun_ready"] = False
-        sim_viz["preview_entity"] = ""
-        sim_viz["foxglove_ready"] = False
-        sim_viz["foxglove_url"] = ""
-        sim_viz["visualization_note"] = (
-            f"Loaded {{render}} artifact preview. Use the Video/Image/Data viewer tabs."
-        )
-    sim_viz["active_run_id"] = run_id
-    state["sim_viz"] = sim_viz
-    _record_sim_viz_run(state, sim_viz)
-    _save_state(state)
-    return sim_viz
 
 _RERUN_RESTART_MIN_INTERVAL_S = 8.0
 _last_rerun_restart_monotonic = 0.0
@@ -3319,10 +2944,13 @@ def _wire_active_sim2real_recording(state: dict, *, camera: str = "workspace") -
     _save_state(state)
     return viz
 
-def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
-    active = _wire_active_sim2real_recording(state, camera=camera)
-    if active is not None:
-        return active
+def _wire_franka_demo(
+    state: dict, *, camera: str = "workspace", force_local_demo: bool = False
+) -> dict:
+    if not force_local_demo:
+        active = _wire_active_sim2real_recording(state, camera=camera)
+        if active is not None:
+            return active
     # Preserve operator-posted custom URIs; only fill stock defaults when empty.
     current = state.get("selection") if isinstance(state.get("selection"), dict) else {{}}
     if not current:
@@ -3337,6 +2965,8 @@ def _wire_franka_demo(state: dict, *, camera: str = "workspace") -> dict:
     # Always use the stock demo run id and clear any prior media-artifact preview.
     viz = {{
         "run_id": "franka-demo",
+        "source_type": "local_demo",
+        "source_label": "Local demo",
         "stage": "demo",
         "rrd_uri": f"file://{{target}}",
         "rrd_updated_at": now,
@@ -3370,6 +3000,8 @@ def _wire_sim2real_run_preview(state: dict, *, run_id: str, camera: str = "works
     now = _now_iso()
     viz = {{
         "run_id": str(run_id or "").strip() or f"agent-run-{{secrets.token_hex(6)}}",
+        "source_type": "workflow_history",
+        "source_label": "Workflow history",
         "stage": "stage_14_rerun_viz",
         "rrd_uri": f"file://{{target}}",
         "rrd_updated_at": now,
@@ -3513,6 +3145,7 @@ def _agent_system_prompt() -> str:
         "workflows, sim assets, and Sim2Real runs. Be concise and actionable.",
         "",
         "Agent HTTP APIs on this VM (same-origin relative paths; nginx proxies /api/):",
+        "- GET /api/access — tenant identity, project-by-project effective access, and searchable resources",
         "- GET /api/sim-assets, /api/sim-assets/selection, /api/sim-assets/cameras",
         "- GET /api/sim-viz/status — active run + .rrd URI for the Rerun iframe at /rerun/",
         "- GET /api/sim-viz/recordings — list available .rrd recording files for quick viewer switching",
@@ -3675,6 +3308,8 @@ def _chat_with_resilience(
 
 {_AGENT_STAGES_EMBED}
 
+{_AGENT_STAGE_RUNTIME_EMBED}
+
 {_AGENT_PROVENANCE_EMBED}
 
 import sys as _npa_sys
@@ -3714,6 +3349,8 @@ from agent_backend import trace as _agent_tracing
 {_AGENT_WORKFLOW_EMBED}
 
 {_AGENT_ARTIFACTS_EMBED}
+
+{_AGENT_ACCESS_EMBED}
 
 def _workflow_draft_from_state(state: dict) -> dict:
     draft = state.get("workflow_draft", {{}})
@@ -3825,13 +3462,13 @@ def _agent_command_env() -> dict:
         env.setdefault("NEBIUS_PROFILE", "cursor-sa")
     if not env.get("TF_VAR_ssh_public_key"):
         for candidate in ("/home/ubuntu/.ssh/id_ed25519.pub", "/root/.ssh/id_ed25519.pub"):
-            if Path(candidate).is_file():
+            if os.path.isfile(candidate) and os.access(candidate, os.R_OK):
                 env["TF_VAR_ssh_public_key"] = json.dumps({{"path": candidate}})
                 break
         if not env.get("TF_VAR_ssh_public_key"):
             for candidate in ("/home/ubuntu/.ssh/authorized_keys", "/root/.ssh/authorized_keys"):
                 path = Path(candidate)
-                if not path.is_file():
+                if not os.path.isfile(candidate) or not os.access(candidate, os.R_OK):
                     continue
                 for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
                     value = line.strip()
@@ -3996,17 +3633,34 @@ def _mark_stage(details: dict, stage_id: str, status: str, summary: str = "") ->
     stages = details.get("stages")
     if not isinstance(stages, list):
         stages = _default_sim2real_run_details(str(details.get("run_id") or ""), submitted_at=str(details.get("submitted_at") or "")).get("stages", [])
+    normalized, status_label = normalize_explicit_stage_status(status)
     for item in stages:
         if isinstance(item, dict) and item.get("id") == stage_id:
-            item["status"] = status
-            if status == "running" and not item.get("started_at"):
+            item["status"] = normalized
+            item["status_label"] = status_label
+            item["raw_status"] = str(status or "")
+            item["evidence"] = {{
+                "type": "event_log",
+                "source": "agent_sim2real_runner",
+                "authority": "authoritative",
+                "confidence": "high",
+                "reason": summary or f"The agent Sim2Real runner reported '{{status}}'.",
+                "observed_at": _now_iso(),
+            }}
+            item["evidence_type"] = "event_log"
+            item["evidence_source"] = "agent_sim2real_runner"
+            item["authority"] = "authoritative"
+            item["confidence"] = "high"
+            item["diagnostic_reason"] = str(item["evidence"]["reason"])
+            if normalized == "running" and not item.get("started_at"):
                 item["started_at"] = _now_iso()
-            if status in {{"succeeded", "failed"}}:
+            if normalized in {{"succeeded", "failed", "skipped", "not_run"}}:
                 item["finished_at"] = _now_iso()
             if summary:
                 item["summary"] = summary
             break
     details["stages"] = stages
+    details["stage_summary"] = summarize_stage_evidence(stages)
 
 
 def _sim2real_agent_command(run_id: str, output_dir: Path) -> list[str]:
@@ -4675,7 +4329,7 @@ def _maybe_toolground_chat_reply(
         if not rerun_ready:
             selected = state.get("camera_selection", ["workspace"])
             cam = str(selected[0] if isinstance(selected, list) and selected else "workspace")
-            _wire_franka_demo(state, camera=cam)
+            _wire_franka_demo(state, camera=cam, force_local_demo=True)
             apis_used.append("sim-viz/load-franka-demo")
             state = _load_state()
             loaded_now = True
@@ -6281,6 +5935,12 @@ def health():
 def deployment_identity():
     return dict(DEPLOYMENT)
 
+
+@app.get("/access")
+def agent_access(refresh: bool = False):
+    return _agent_access_api_response(refresh)
+
+
 @app.get("/models")
 def models(refresh: bool = False):
     return {{
@@ -6496,32 +6156,7 @@ def sim_viz_status(run_id: str = ""):
         for item in _sim_viz_runs(state)
         if str(item.get("run_id") or "").strip()
     ]
-    payload["available_runs"] = [
-        {{
-            "run_id": str(item.get("run_id") or "").strip(),
-            "run_ref": str(item.get("artifact_run_ref") or "").strip(),
-            # activity_at is when this run was last loaded/visualized in the agent
-            # (rrd_updated_at), NOT when its artifacts were produced. It is exposed
-            # separately so the client never relabels a days-old run as recent just
-            # because it was opened today. Real recency (last_modified) is supplied
-            # by S3 artifact discovery; left blank here so viewer activity cannot
-            # override it in the merged, date-sorted run list.
-            "activity_at": str(
-                item.get("rrd_updated_at")
-                or item.get("updated_at")
-                or item.get("submitted_at")
-                or ""
-            ).strip(),
-            # When the run started (its submit time). Used for the displayed date;
-            # S3 discovery supplies started_at for runs it can see, and the client
-            # keeps the earliest of the two.
-            "started_at": str(item.get("submitted_at") or "").strip(),
-            "last_modified": "",
-            "stage": str(item.get("stage") or "").strip(),
-        }}
-        for item in _sim_viz_runs(state)
-        if str(item.get("run_id") or "").strip()
-    ]
+    payload["available_runs"] = build_available_sim_viz_runs(_sim_viz_runs(state))
     payload["active_run_id"] = str(state.get("active_run_id") or payload.get("run_id") or "").strip()
     return payload
 
@@ -6597,26 +6232,7 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
         for item in _sim_viz_runs(state)
         if str(item.get("run_id") or "").strip()
     ]
-    payload["available_runs"] = [
-        {{
-            "run_id": str(item.get("run_id") or "").strip(),
-            "run_ref": str(item.get("artifact_run_ref") or "").strip(),
-            # See sim_viz_status: activity_at is viewer-load time, not artifact
-            # recency; last_modified stays blank so S3 discovery owns the date.
-            "activity_at": str(
-                item.get("rrd_updated_at")
-                or item.get("updated_at")
-                or item.get("submitted_at")
-                or ""
-            ).strip(),
-            # Run start (submit time) for the displayed date; see sim_viz_status.
-            "started_at": str(item.get("submitted_at") or "").strip(),
-            "last_modified": "",
-            "stage": str(item.get("stage") or "").strip(),
-        }}
-        for item in _sim_viz_runs(state)
-        if str(item.get("run_id") or "").strip()
-    ]
+    payload["available_runs"] = build_available_sim_viz_runs(_sim_viz_runs(state))
     render = str(payload.get("artifact_render") or "").strip().lower()
     if render and render != "rerun":
         payload["rrd_uri"] = ""
@@ -6648,24 +6264,39 @@ def sim_viz_load_run(payload: dict | None = None):
     # show "Non-RRD artifact loaded" even when reports/sim2real.rrd exists.
     if requested_rrd_uri:
         s3, _settings = _agent_s3_client()
-        _assert_s3_uri_in_agent_bucket(requested_rrd_uri, _settings)
-        bucket, key = parse_s3_uri(requested_rrd_uri)
+        bucket, key, _authorized_run = _authorize_agent_artifact_uri(
+            s3=s3,
+            settings=_settings,
+            uri=requested_rrd_uri,
+            run_id=run_id,
+        )
         key = _safe_artifact_key(key)
         if render_hint_for_object(key=key) != "rerun":
             raise HTTPException(status_code=400, detail="rrd_uri must identify an RRD artifact")
-        resolution = resolve_run_artifacts(
-            _agent_s3_buckets(s3, _settings),
-            base_prefix=_settings.get("prefix", ""),
-            run_ref_or_id=requested_run_ref or run_id,
-            s3=s3,
+        source_bucket, source_project, source_prefix = _artifact_source_metadata(
+            _agent_access_report(), bucket, key, run_id
         )
-        if resolution is None or not any(
-            item.key == key and item.s3_uri == requested_rrd_uri
-            for item in resolution.artifacts
-        ):
-            raise HTTPException(status_code=400, detail="RRD URI is outside the selected run")
-        run_id = resolution.run_id
-        requested_run_ref = resolution.run_ref
+        if requested_run_ref:
+            resolution = resolve_run_artifacts(
+                _agent_s3_buckets(s3, _settings),
+                base_prefix=_settings.get("prefix", ""),
+                run_ref_or_id=requested_run_ref,
+                s3=s3,
+            )
+            if resolution is None or not any(
+                item.key == key and item.s3_uri == requested_rrd_uri
+                for item in resolution.artifacts
+            ):
+                raise HTTPException(status_code=400, detail="RRD URI is outside the selected run")
+            run_id = resolution.run_id
+            requested_run_ref = resolution.run_ref
+            source_bucket = resolution.bucket
+            source_prefix = resolution.source_prefix
+            source_project = artifact_bucket_projects(_agent_access_report()).get(
+                source_bucket, ""
+            )
+        elif source_bucket:
+            requested_run_ref = encode_run_ref(source_bucket, source_prefix, run_id)
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
         download_s3_uri(requested_rrd_uri, local_path, s3=s3)
@@ -6677,23 +6308,41 @@ def sim_viz_load_run(payload: dict | None = None):
             s3_uri=requested_rrd_uri,
             render="rerun",
             local_path=local_path,
+            source_identity=(source_bucket, source_project, source_prefix),
             run_ref=requested_run_ref,
+            requested_camera=requested_camera,
         )
-        if requested_camera:
-            sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(key) else camera
-            state["sim_viz"] = sim_viz
-            _record_sim_viz_run(state, sim_viz)
-            _save_state(state)
         return {{"ok": True, "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=run_id)}}
 
+    session_response = _load_session_run_if_known(body=body, run_id=run_id, requested_camera=requested_camera)
+    if session_response is not None:
+        return session_response
     try:
         s3, settings = _agent_s3_client()
         requested_prefix = str(body.get("prefix") or "")
-        resolution = None
+        requested_bucket, requested_project, requested_resolved_prefix, source_selected = _selected_run_request(body)
         artifacts = []
-        if requested_prefix:
+        resolution = None
+        selected_prefix = ""
+        selected_bucket = requested_bucket
+        selected_project = requested_project
+        resolved_run_id = run_id
+        resolved_ref = requested_run_ref
+        if requested_bucket:
+            selected_bucket, selected_project, selected_prefix, artifacts = _load_selected_run_artifacts(
+                s3=s3, settings=settings, run_id=run_id,
+                resource_bucket=requested_bucket, project_id=requested_project,
+                resolved_prefix=requested_resolved_prefix, source_selected=source_selected,
+                exclude=_discovery_exclude_roots(),
+            )
+            resolved_ref = encode_run_ref(selected_bucket, selected_prefix, run_id)
+        elif requested_prefix:
             effective_prefix = _artifact_discovery_prefix(settings, requested_prefix)
             artifacts = list_artifacts(settings["bucket"], validate_run_id(run_id), prefix=effective_prefix, s3=s3)
+            selected_bucket = settings["bucket"]
+            selected_prefix = effective_prefix
+            if artifacts:
+                resolved_ref = encode_run_ref(selected_bucket, selected_prefix, run_id)
         if not artifacts:
             resolution = resolve_run_artifacts(
                 _agent_s3_buckets(s3, settings),
@@ -6701,10 +6350,17 @@ def sim_viz_load_run(payload: dict | None = None):
                 run_ref_or_id=requested_run_ref or run_id,
                 s3=s3,
             )
-            artifacts = resolution.artifacts if resolution is not None else []
+            if resolution is not None:
+                artifacts = resolution.artifacts
+                selected_bucket = resolution.bucket
+                selected_prefix = resolution.source_prefix
+                selected_project = artifact_bucket_projects(
+                    _agent_access_report()
+                ).get(selected_bucket, "")
+                resolved_run_id = resolution.run_id
+                resolved_ref = resolution.run_ref
         preferred = select_preferred_artifact(artifacts)
-        if preferred and preferred.render == "rerun":
-            resolved_run_id = resolution.run_id if resolution is not None else run_id
+        if preferred and (preferred.render == "rerun" or (requested_bucket and source_selected)):
             local_name = _artifact_filename(preferred.key)
             local_path = RECORDINGS_DIR / local_name
             download_s3_uri(preferred.s3_uri, local_path, s3=s3)
@@ -6716,28 +6372,31 @@ def sim_viz_load_run(payload: dict | None = None):
                 s3_uri=preferred.s3_uri,
                 render=preferred.render,
                 local_path=local_path,
-                run_ref=(resolution.run_ref if resolution is not None else requested_run_ref),
+                source_identity=(selected_bucket, selected_project, selected_prefix),
+                run_ref=resolved_ref,
+                requested_camera=requested_camera,
             )
-            if requested_camera:
-                sim_viz["camera"] = _sim2real_pipeline_camera_label(camera) if _is_sim2real_pipeline_recording(preferred.key) else camera
-                state["sim_viz"] = sim_viz
-                _record_sim_viz_run(state, sim_viz)
-                _save_state(state)
             return {{
                 "ok": True,
+                "contract": ARTIFACT_DISCOVERY_CONTRACT,
                 "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=resolved_run_id),
                 "preferred": preferred.to_dict(),
+                "run_ref": resolved_ref,
             }}
+        if requested_bucket:
+            raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
             detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
         ) from exc
+    except AmbiguousRunSourceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ArtifactDiscoveryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
         raise
-    except Exception:
+    except (ClientError, BotoCoreError, OSError, KeyError, TypeError, ValueError):
         # Fall back to the historical in-memory run selector below; callers still
         # get a useful 404 if the run has never been seen.
         pass
@@ -6818,29 +6477,74 @@ def sim_viz_recordings():
 
 
 @app.get("/artifacts/runs")
-def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
+def artifacts_runs(
+    prefix: str = "", limit: int = 50, q: str = "", cursor: str = "",
+    resource_bucket: str = "", project_id: str = "",
+):
     # q: case-insensitive substring search over run ids, applied across ALL runs
     # (every bucket root) before the limit — so old runs beyond the newest `limit`
     # are still findable by name from the "Find run" box.
     try:
         s3, settings = _agent_s3_client()
+        access_report = _agent_access_report()
+        access_diagnostics = _agent_access_diagnostics(access_report)
+        bucket_projects = artifact_bucket_projects(access_report)
+        buckets, selected_scope = _agent_artifact_list_scope(
+            access_report, resource_bucket, project_id
+        )
         query = str(q or "").strip()
+        page_size = max(1, min(int(limit), 500))
+        offset = _artifact_run_cursor_offset(cursor)
+        discovery_limit = 10_000
+
+        def _page_response(page, *, effective_prefix: str):
+            end = min(offset + page_size, len(page.runs))
+            visible = page.runs[offset:end]
+            has_more = end < len(page.runs)
+            next_cursor = _artifact_run_cursor(end) if has_more else ""
+            return {{
+                "ok": True,
+                "contract": ARTIFACT_DISCOVERY_CONTRACT,
+                "bucket": settings["bucket"],
+                "buckets": buckets,
+                "resource_scope": selected_scope,
+                "prefix": effective_prefix,
+                "base_prefix": settings.get("prefix", ""),
+                "query": query,
+                "summary_mode": "artifact_index",
+                "namespace": "npa_workflow_artifact_run",
+                "namespace_help": "Searches discovered NPA workflow/artifact runs; Codex maintenance job IDs are a separate operator-local namespace.",
+                "access": access_diagnostics,
+                "runs": [item.to_dict() for item in visible],
+                "count": len(visible),
+                "total_runs": page.total_runs,
+                "limit": page_size,
+                "cursor": cursor,
+                "next_cursor": next_cursor,
+                "truncated": bool(has_more or page.truncated or not page.discovery_complete),
+                "pagination_complete": bool(
+                    not has_more and not page.truncated and page.discovery_complete
+                ),
+                "source_errors": [dict(item) for item in page.source_errors],
+            }}
         if prefix:
             effective_prefix = _artifact_discovery_prefix(settings, prefix)
             # Cached (TTL + stale-while-revalidate): the run list is polled on every
             # page load; walking a category's objects each time made the UI show
             # "no runs" for seconds. The cache serves a warm result instantly and
             # refreshes in the background, so only the first load pays the S3 walk.
-            page = list_runs_cached(
-                settings["bucket"],
+            page = list_runs_cached_multi(
+                buckets,
                 prefix=effective_prefix,
                 base_prefix=settings.get("prefix", ""),
-                limit=limit,
+                limit=discovery_limit,
                 contains=query,
+                bucket_projects=bucket_projects,
+                lightweight=not bool(query),
                 s3=s3,
             )
-            return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "bucket": settings["bucket"], "prefix": effective_prefix, "base_prefix": settings.get("prefix", ""), "query": query, **page.to_dict()}}
-        # No user prefix: discover runs generically across configured bucket roots.
+            return _page_response(page, effective_prefix=effective_prefix)
+        # No user prefix: discover runs generically across ALL bucket roots.
         # Runs live under <base>/<category>/<run_id>/... (base from config, e.g.
         # "checkpoints") AND directly at the bucket root <category>/<run_id>/...
         # (e.g. scenario-gen-smoke/..., physical-ai-data-factory/...). list_all_runs
@@ -6848,63 +6552,158 @@ def artifacts_runs(prefix: str = "", limit: int = 50, q: str = ""):
         # workflow's runs show without hardcoding any workflow path. Cached the same
         # way (the no-prefix walk is the slowest and the default UI view).
         base = settings.get("prefix", "")
-        # Scan the primary + explicitly configured extra buckets only.
-        buckets = _agent_s3_buckets(s3, settings)
+        # Discover across every access-report bucket (not just the configured one).
+        # Never enumerate every credential-readable bucket: the tenant access report
+        # is the bounded, policy-qualified source of artifact storage locations.
         page = list_runs_cached_multi(
             buckets,
             base_prefix=base,
-            limit=limit,
+            limit=discovery_limit,
             exclude=_discovery_exclude_roots(),
             contains=query,
+            bucket_projects=bucket_projects,
+            lightweight=not bool(query),
             s3=s3,
         )
-        return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "bucket": settings["bucket"], "buckets": buckets, "prefix": base, "base_prefix": base, "query": query, **page.to_dict()}}
+        return _page_response(page, effective_prefix=base)
     except HTTPException:
         raise
     except Exception as exc:
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
-
-
 @app.get("/artifacts/run/{{run_id:path}}")
-def artifacts_for_run(run_id: str, prefix: str = ""):
+def artifacts_for_run(
+    run_id: str,
+    prefix: str = "",
+    cursor: str = "",
+    resolved_prefix: str = "",
+    resource_bucket: str = "",
+    project_id: str = "", source_selected: bool = False,
+):
     try:
-        s3, settings = _agent_s3_client()
-        effective_prefix = _artifact_discovery_prefix(settings, prefix)
-        resolution = None
-        if prefix:
-            normalized_run = _validate_run_basename(run_id)
-            artifacts = list_artifacts(
-                settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3
-            )
-            if artifacts:
-                resolution = RunResolution(
-                    normalized_run, settings["bucket"], effective_prefix, artifacts
-                )
+        requested_ref = str(run_id or "").strip()
+        if requested_ref.startswith("npa1_"):
+            ref_bucket, ref_prefix, normalized_run = decode_run_ref(requested_ref)
+            if resource_bucket and resource_bucket != ref_bucket:
+                raise ArtifactDiscoveryError("run_ref conflicts with resource_bucket")
+            requested_selector = _validated_resolved_prefix(resolved_prefix or prefix)
+            if requested_selector and requested_selector != ref_prefix:
+                raise ArtifactDiscoveryError("run_ref conflicts with resolved_prefix")
+            resource_bucket = ref_bucket
+            resolved_prefix = ref_prefix
+            source_selected = True
         else:
-            resolution = resolve_run_artifacts(
-                _agent_s3_buckets(s3, settings),
-                base_prefix=settings.get("prefix", ""),
-                run_ref_or_id=run_id,
-                s3=s3,
-            )
-        normalized_run = resolution.run_id if resolution is not None else (
-            decode_run_ref(run_id)[2] if str(run_id).startswith("npa1_") else _validate_run_basename(run_id)
+            normalized_run = validate_run_id(requested_ref)
+        s3, settings = _agent_s3_client()
+        access_report = _agent_access_report()
+        bucket_projects = artifact_bucket_projects(access_report)
+        allowed_buckets, _selected_scope = _agent_artifact_list_scope(
+            access_report, resource_bucket, project_id
         )
-        artifacts = resolution.artifacts if resolution is not None else []
-        run_bucket = resolution.bucket if resolution is not None else settings["bucket"]
-        source_prefix = resolution.source_prefix if resolution is not None else effective_prefix
-        preferred = select_preferred_artifact(artifacts)
+        search_buckets = [resource_bucket] if resource_bucket else allowed_buckets
+        requested_prefix = _validated_resolved_prefix(resolved_prefix or prefix)
+        matches, source_errors, discovery_complete = find_run_sources_across_buckets(
+            search_buckets,
+            base_prefix=settings.get("prefix", ""),
+            run_id=normalized_run,
+            exact_prefix=(requested_prefix if requested_prefix else "")
+            if resource_bucket and (requested_prefix or source_selected)
+            else None,
+            exclude=_discovery_exclude_roots(),
+            bucket_projects=bucket_projects,
+            s3=s3,
+        )
+        if resource_bucket:
+            matches = [item for item in matches if item.bucket == resource_bucket]
+        if project_id:
+            matches = [item for item in matches if item.project_id == project_id]
+        if requested_prefix:
+            matches = [item for item in matches if item.resolved_prefix == requested_prefix]
+        elif source_selected:
+            matches = [item for item in matches if not item.resolved_prefix]
+        search_complete = bool(
+            discovery_complete
+            and not source_errors
+            and (resource_bucket or _artifact_search_scope_complete(access_report))
+        )
+        if not matches:
+            code = "run_not_discovered" if search_complete else "artifact_search_incomplete"
+            status_code = 404 if search_complete else 503
+            message = (
+                "No discovered NPA workflow/artifact run has this identifier. "
+                "Identifiers under /home/ubuntu/codex-runs are Codex maintenance job IDs, not NPA run IDs."
+                if search_complete
+                else "The run could not be resolved because one or more tenant artifact sources are inaccessible or incomplete."
+            )
+            return JSONResponse(
+                status_code=status_code,
+                content={{
+                    "ok": False,
+                    "error": {{"code": code, "message": message}},
+                    "run_id": normalized_run,
+                    "namespace": "npa_workflow_artifact_run",
+                    "access": _agent_access_diagnostics(access_report),
+                    "source_errors": [dict(item) for item in source_errors],
+                }},
+            )
+        exact_selection = bool(resource_bucket and (requested_prefix or source_selected))
+        if not exact_selection and not search_complete:
+            return JSONResponse(
+                status_code=503,
+                content={{
+                    "ok": False,
+                    "error": {{
+                        "code": "artifact_search_incomplete",
+                        "message": "The run could not be selected uniquely because artifact discovery was incomplete.",
+                    }},
+                    "run_id": normalized_run,
+                    "namespace": "npa_workflow_artifact_run",
+                    "access": _agent_access_diagnostics(access_report),
+                    "source_errors": [dict(item) for item in source_errors],
+                }},
+            )
+        if len(matches) > 1:
+            return JSONResponse(
+                status_code=409,
+                content={{
+                    "ok": False,
+                    "error": {{
+                        "code": "ambiguous_run_id",
+                        "message": "This run ID exists in multiple artifact sources; select a project, bucket, and resolved prefix.",
+                    }},
+                    "run_id": normalized_run,
+                    "sources": [item.to_dict() for item in matches],
+                    "access": _agent_access_diagnostics(access_report),
+                }},
+            )
+        selected = matches[0]
+        run_bucket = selected.bucket
+        artifact_prefix = selected.resolved_prefix
+        page = list_artifacts_page(
+            run_bucket,
+            normalized_run,
+            prefix=artifact_prefix,
+            cursor=cursor,
+            s3=s3,
+        )
+        preferred = select_preferred_artifact(page.artifacts)
         return {{
             "ok": True,
             "contract": ARTIFACT_DISCOVERY_CONTRACT,
             "bucket": run_bucket,
-            "prefix": source_prefix,
+            "project_id": str(bucket_projects.get(run_bucket) or ""),
+            "prefix": artifact_prefix,
+            "resolved_prefix": artifact_prefix,
             "base_prefix": settings.get("prefix", ""),
             "run_id": normalized_run,
-            "run_ref": resolution.run_ref if resolution is not None else "",
-            "count": len(artifacts),
-            "artifacts": [item.to_dict() for item in artifacts],
+            "run_ref": selected.run_ref,
+            "pagination": {{
+                "contract": "one_native_s3_page",
+                "max_objects": 1000,
+                "continue_with": ["next_cursor", "resolved_prefix", "resource_bucket", "source_selected"],
+            }},
             "preferred": preferred.to_dict() if preferred else None,
+            "access": _agent_access_diagnostics(access_report),
+            **page.to_dict(),
         }}
     except AmbiguousRunError as exc:
         raise HTTPException(
@@ -6917,35 +6716,95 @@ def artifacts_for_run(run_id: str, prefix: str = ""):
         raise
     except Exception as exc:
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+_SENSITIVE_ARTIFACT_INFO_KEY = _SENSITIVE_PUBLIC_NAME
+_SENSITIVE_ARTIFACT_INFO_VALUE = _SENSITIVE_PUBLIC_VALUE
+
+
+def _public_artifact_info(value, depth: int = 0):
+    # Artifact metadata may contain operator-authored config. Preserve its shape
+    # for inspection while never reflecting credential-bearing fields or values.
+    if depth > 8:
+        return "<truncated>"
+    if isinstance(value, dict):
+        return {{
+            str(key): (
+                "<redacted>"
+                if _SENSITIVE_ARTIFACT_INFO_KEY.search(str(key))
+                else _public_artifact_info(item, depth + 1)
+            )
+            for key, item in value.items()
+        }}
+    if isinstance(value, list):
+        return [_public_artifact_info(item, depth + 1) for item in value[:100]]
+    if isinstance(value, str):
+        public = _public_url_without_credentials(value)
+        return "<redacted>" if _SENSITIVE_ARTIFACT_INFO_VALUE.search(public) else public
+    return value
 
 
 @app.get("/artifacts/stage/{{run_id:path}}")
-def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
+def artifacts_stage(
+    run_id: str,
+    stage_key: str = "",
+    prefix: str = "",
+    resource_bucket: str = "",
+    project_id: str = "",
+    resolved_prefix: str = "", source_selected: bool = False,
+):
     # Describe one pipeline stage and return its artifacts + inlined info/config
     # JSON so an operator can click a stage and manually inspect it (grounded in
     # the run's real S3 objects, no LLM call).
     try:
         normalized_run = validate_run_id(run_id)
+        exact_prefix = _validated_resolved_prefix(resolved_prefix)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         s3, settings = _agent_s3_client()
         artifacts = []
         run_bucket = settings["bucket"]
-        if prefix:
+        access_report = _agent_access_report()
+        bucket_projects = artifact_bucket_projects(access_report)
+        if resource_bucket:
+            run_bucket, selected_project, exact_prefix, artifacts = (
+                _load_selected_run_artifacts(
+                    s3=s3,
+                    settings=settings,
+                    run_id=normalized_run,
+                    resource_bucket=resource_bucket,
+                    project_id=project_id,
+                    resolved_prefix=exact_prefix,
+                    source_selected=source_selected,
+                    exclude=_discovery_exclude_roots(),
+                )
+            )
+            if selected_project:
+                bucket_projects[run_bucket] = selected_project
+        elif prefix:
             artifacts = list_artifacts(
                 settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
             )
-        if not artifacts:
+        if not artifacts and not resource_bucket:
             run_bucket, artifacts = find_run_artifacts_across_buckets(
                 _agent_s3_buckets(s3, settings), base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
             )
             if not run_bucket:
                 run_bucket = settings["bucket"]
         wanted = str(stage_key or "").strip()
+        keys = [str(item.key or "") for item in artifacts]
+        marker = "/" + normalized_run + "/"
+        effective_prefix = exact_prefix if resource_bucket else (
+            keys[0].split(marker, 1)[0]
+            if keys and marker in keys[0]
+            else settings.get("prefix", "")
+        )
+        wrapper = run_stage_wrapper(keys, normalized_run, effective_prefix)
         stage_arts = [
             a for a in artifacts
-            if not wanted or _artifact_stage_key(str(a.key or ""), normalized_run) == wanted
+            if not wanted
+            or artifact_stage_key(
+                str(a.key or ""), normalized_run, effective_prefix, wrapper
+            ) == wanted
         ]
         label = _stage_label(wanted)
         description = _stage_description(wanted, label, len(stage_arts))
@@ -6961,13 +6820,17 @@ def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
                 continue
             rel = k.split("/" + normalized_run + "/", 1)[-1]
             try:
-                body = s3.get_object(Bucket=run_bucket, Key=k)["Body"].read()
-                info[rel] = json.loads(body)
+                payload = _read_bounded_json_object(s3, run_bucket, k)
+                if isinstance(payload, dict):
+                    info[rel] = _public_artifact_info(payload)
             except Exception:
                 continue
         return {{
             "ok": True,
             "run_id": normalized_run,
+            "project_id": str(bucket_projects.get(run_bucket) or project_id or ""),
+            "bucket": run_bucket,
+            "resolved_prefix": effective_prefix,
             "stage_key": wanted,
             "label": label,
             "description": description,
@@ -6982,7 +6845,14 @@ def artifacts_stage(run_id: str, stage_key: str = "", prefix: str = ""):
 
 
 @app.get("/fiftyone/dataset/{{run_id:path}}")
-def fiftyone_dataset(run_id: str, prefix: str = ""):
+def fiftyone_dataset(
+    run_id: str,
+    prefix: str = "",
+    resource_bucket: str = "",
+    project_id: str = "",
+    resolved_prefix: str = "",
+    source_selected: bool = False,
+):
     # FiftyOne / Voxel51 view of a data-factory run: augmented scenario variants
     # (thumbnail + appearance tags + caption + video) and input frames as samples,
     # summarized with grade + curation. Grounded in the run's real S3 artifacts.
@@ -6994,11 +6864,24 @@ def fiftyone_dataset(run_id: str, prefix: str = ""):
         s3, settings = _agent_s3_client()
         artifacts = []
         bucket = settings["bucket"]
-        if prefix:
+        selected_project = ""
+        exact_prefix = _validated_resolved_prefix(resolved_prefix)
+        if resource_bucket:
+            bucket, selected_project, exact_prefix, artifacts = _load_selected_run_artifacts(
+                s3=s3,
+                settings=settings,
+                run_id=normalized_run,
+                resource_bucket=resource_bucket,
+                project_id=project_id,
+                resolved_prefix=exact_prefix,
+                source_selected=source_selected,
+                exclude=_discovery_exclude_roots(),
+            )
+        elif prefix:
             artifacts = list_artifacts(
                 settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3
             )
-        if not artifacts:
+        if not artifacts and not resource_bucket:
             bucket, artifacts = find_run_artifacts_across_buckets(
                 _agent_s3_buckets(s3, settings), base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3
             )
@@ -7016,7 +6899,14 @@ def fiftyone_dataset(run_id: str, prefix: str = ""):
 
         keys = [str(a.key or "") for a in artifacts]
         dataset = build_fiftyone_dataset(keys, run_id=normalized_run, read_json=_read_json, bucket=bucket)
-        return {{"ok": True, "run_id": normalized_run, "bucket": bucket, **dataset}}
+        return {{
+            "ok": True,
+            "run_id": normalized_run,
+            "bucket": bucket,
+            "project_id": selected_project or project_id,
+            "resolved_prefix": exact_prefix,
+            **dataset,
+        }}
     except HTTPException:
         raise
     except Exception as exc:
@@ -7024,7 +6914,14 @@ def fiftyone_dataset(run_id: str, prefix: str = ""):
 
 
 @app.get("/artifacts/provenance/{{run_id:path}}")
-def artifacts_run_provenance(run_id: str, prefix: str = ""):
+def artifacts_run_provenance(
+    run_id: str,
+    prefix: str = "",
+    resource_bucket: str = "",
+    project_id: str = "",
+    resolved_prefix: str = "",
+    source_selected: bool = False,
+):
     # Where a run's data came from in the pipeline + which components produced it,
     # grounded in the run's real artifacts (and manifests) so Describe-this can
     # explain provenance instead of guessing.
@@ -7035,23 +6932,49 @@ def artifacts_run_provenance(run_id: str, prefix: str = ""):
     try:
         s3, settings = _agent_s3_client()
         artifacts = []
-        if prefix:
+        run_bucket = settings["bucket"]
+        selected_project = ""
+        exact_prefix = _validated_resolved_prefix(resolved_prefix)
+        if resource_bucket:
+            run_bucket, selected_project, exact_prefix, artifacts = _load_selected_run_artifacts(
+                s3=s3,
+                settings=settings,
+                run_id=normalized_run,
+                resource_bucket=resource_bucket,
+                project_id=project_id,
+                resolved_prefix=exact_prefix,
+                source_selected=source_selected,
+                exclude=_discovery_exclude_roots(),
+            )
+        elif prefix:
             artifacts = list_artifacts(settings["bucket"], normalized_run, prefix=_artifact_discovery_prefix(settings, prefix), s3=s3)
-        if not artifacts:
-            artifacts = find_run_artifacts(settings["bucket"], base_prefix=settings.get("prefix", ""), run_id=normalized_run, s3=s3)
+        if not artifacts and not resource_bucket:
+            run_bucket, artifacts = find_run_artifacts_across_buckets(
+                _agent_s3_buckets(s3, settings),
+                base_prefix=settings.get("prefix", ""),
+                run_id=normalized_run,
+                s3=s3,
+            )
         keys = [str(a.key or "") for a in artifacts]
 
         def _read_json(key: str):
             if not key:
                 return None
             try:
-                body = s3.get_object(Bucket=settings["bucket"], Key=key)["Body"].read()
+                body = s3.get_object(Bucket=run_bucket, Key=key)["Body"].read()
                 return json.loads(body)
             except Exception:
                 return None
 
         prov = build_run_provenance(keys, run_id=normalized_run, read_json=_read_json)
-        return {{"ok": True, "run_id": normalized_run, **prov}}
+        return {{
+            "ok": True,
+            "run_id": normalized_run,
+            "bucket": run_bucket,
+            "project_id": selected_project or project_id,
+            "resolved_prefix": exact_prefix,
+            **prov,
+        }}
     except HTTPException:
         raise
     except Exception as exc:
@@ -7100,30 +7023,58 @@ def artifacts_download(run_id: str = "", key: str = "", s3_uri: str = "", bucket
         raise HTTPException(status_code=400, detail="Provide s3_uri or key")
     try:
         s3, settings = _agent_s3_client()
+        run_selector = str(run_id or "").strip()
         if requested_uri:
             obj_bucket, obj_key = parse_s3_uri(requested_uri)
             obj_key = _safe_artifact_key(obj_key)
-            # Restrict caller-supplied URIs to the configured agent bucket(s) only
-            # (never ListBuckets / every credential-readable bucket).
-            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
-            uri = requested_uri
-        else:
-            obj_key = _safe_artifact_key(requested_key)
-            obj_bucket = requested_bucket or settings["bucket"]
-            if not requested_bucket and str(run_id or "").strip():
+            if run_selector:
                 resolution = resolve_run_artifacts(
                     _agent_s3_buckets(s3, settings),
                     base_prefix=settings.get("prefix", ""),
-                    run_ref_or_id=run_id,
+                    run_ref_or_id=run_selector,
+                    s3=s3,
+                )
+                if resolution is None or not any(
+                    item.key == obj_key and item.s3_uri == requested_uri
+                    for item in resolution.artifacts
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="artifact URI is outside the selected run",
+                    )
+                obj_bucket = resolution.bucket
+            else:
+                obj_bucket, obj_key, _authorized_run = _authorize_agent_artifact_uri(
+                    s3=s3, settings=settings, uri=requested_uri
+                )
+            uri = f"s3://{{obj_bucket}}/{{obj_key}}"
+        else:
+            obj_key = _safe_artifact_key(requested_key)
+            if run_selector:
+                resolution = resolve_run_artifacts(
+                    _agent_s3_buckets(s3, settings),
+                    base_prefix=settings.get("prefix", ""),
+                    run_ref_or_id=run_selector,
                     s3=s3,
                 )
                 if resolution is None:
                     raise HTTPException(status_code=404, detail="run_id not found")
+                if requested_bucket and requested_bucket != resolution.bucket:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="artifact bucket conflicts with the selected run",
+                    )
                 if obj_key not in {{item.key for item in resolution.artifacts}}:
                     raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
                 obj_bucket = resolution.bucket
+            else:
+                obj_bucket = requested_bucket or settings["bucket"]
+                if obj_bucket not in _configured_agent_s3_buckets(settings):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="artifact bucket is not a configured agent bucket",
+                    )
             uri = f"s3://{{obj_bucket}}/{{obj_key}}"
-        _assert_s3_uri_in_agent_bucket(uri, settings)
         local_path = RECORDINGS_DIR / _artifact_filename(obj_key)
         download_s3_uri(uri, local_path, s3=s3)
         leaf = Path(obj_key).name or "artifact.bin"
@@ -7149,20 +7100,18 @@ def sim_viz_load_artifact(payload: dict | None = None):
         raise HTTPException(status_code=400, detail="Provide either s3_uri or run_id + key")
     try:
         s3, settings = _agent_s3_client()
+        resolved_ref = ""
+        resolution = None
         if requested_uri:
             bucket, key = parse_s3_uri(requested_uri)
             key = _safe_artifact_key(key)
-            # Configured agent bucket only — blocks arbitrary-bucket exfil.
-            _assert_s3_uri_in_agent_bucket(requested_uri, settings)
-            run_guess = str(body.get("run_id") or _run_id_for_key(key, ""))
-            run_id = validate_run_id(run_guess) if run_guess else "artifact"
             s3_uri = requested_uri
-            resolved_ref = ""
-            if requested_run_ref:
+            selector = requested_run_ref or requested_run
+            if selector:
                 resolution = resolve_run_artifacts(
                     _agent_s3_buckets(s3, settings),
                     base_prefix=settings.get("prefix", ""),
-                    run_ref_or_id=requested_run_ref,
+                    run_ref_or_id=selector,
                     s3=s3,
                 )
                 if resolution is None or not any(
@@ -7171,7 +7120,15 @@ def sim_viz_load_artifact(payload: dict | None = None):
                 ):
                     raise HTTPException(status_code=400, detail="artifact URI is outside the selected run")
                 run_id = resolution.run_id
+                bucket = resolution.bucket
                 resolved_ref = resolution.run_ref
+            else:
+                bucket, key, authorized_run = _authorize_agent_artifact_uri(
+                    s3=s3, settings=settings, uri=requested_uri
+                )
+                run_guess = str(authorized_run or _run_id_for_key(key, ""))
+                run_id = validate_run_id(run_guess) if run_guess else "artifact"
+                s3_uri = f"s3://{{bucket}}/{{key}}"
         else:
             key = _safe_artifact_key(requested_key)
             resolution = resolve_run_artifacts(
@@ -7193,6 +7150,9 @@ def sim_viz_load_artifact(payload: dict | None = None):
         download_s3_uri(s3_uri, local_path, s3=s3)
         render = render_hint_for_object(key=key)
         state = _load_state()
+        source_bucket, source_project, source_prefix = _artifact_source_metadata(
+            _agent_access_report(), bucket, key, run_id
+        )
         sim_viz = _apply_loaded_artifact(
             state=state,
             run_id=run_id,
@@ -7200,6 +7160,7 @@ def sim_viz_load_artifact(payload: dict | None = None):
             s3_uri=s3_uri,
             render=render,
             local_path=local_path,
+            source_identity=(source_bucket, source_project, source_prefix),
             run_ref=resolved_ref,
         )
         return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri, "run_ref": resolved_ref}}
@@ -7253,7 +7214,7 @@ def load_franka_demo(payload: dict | None = None):
         else:
             camera = "workspace"
     state = _load_state()
-    viz = _wire_franka_demo(state, camera=camera)
+    viz = _wire_franka_demo(state, camera=camera, force_local_demo=True)
     return {{"ok": True, "sim_viz": viz, "selection": state["selection"]}}
 
 @app.post("/sim-viz/camera-preview")
@@ -7453,7 +7414,6 @@ def set_sim_assets_selection(payload: dict):
         return {{"ok": True, "selection": persisted, "sim_viz": viz}}
     _save_state(state)
     return {{"ok": True, "selection": selection}}
-
 @app.get("/sim-assets/selection")
 def get_sim_assets_selection():
     state = _load_state()
@@ -7461,13 +7421,26 @@ def get_sim_assets_selection():
     if not isinstance(selection, dict):
         selection = dict(DEFAULT_SELECTION)
     return selection
-
 @app.get("/workflows/sim2real/status")
-def sim2real_status(run_id: str = "", prefix: str = ""):
+def sim2real_status(
+    run_id: str = "",
+    prefix: str = "",
+    resource_bucket: str = "",
+    project_id: str = "",
+    resolved_prefix: str = "", source_selected: bool = False,
+):
     state = _load_state()
     latest = state.get("latest_submit", {{}})
     sim_viz = state.get("sim_viz", {{}})
-    details = _sim2real_run_details(state, run_id=run_id, prefix=prefix)
+    details = _sim2real_run_details(
+        state,
+        run_id=run_id,
+        prefix=prefix,
+        resource_bucket=resource_bucket,
+        project_id=project_id,
+        resolved_prefix=resolved_prefix,
+        source_selected=source_selected,
+    )
     return {{
         "ok": True,
         "latest_submit": latest if isinstance(latest, dict) else {{}},
@@ -7478,9 +7451,23 @@ def sim2real_status(run_id: str = "", prefix: str = ""):
     }}
 
 @app.get("/workflows/sim2real/runs/{{run_id:path}}")
-def sim2real_run_detail(run_id: str, prefix: str = ""):
+def sim2real_run_detail(
+    run_id: str,
+    prefix: str = "",
+    resource_bucket: str = "",
+    project_id: str = "",
+    resolved_prefix: str = "", source_selected: bool = False,
+):
     state = _load_state()
-    details = _sim2real_run_details(state, run_id=run_id, prefix=prefix)
+    details = _sim2real_run_details(
+        state,
+        run_id=run_id,
+        prefix=prefix,
+        resource_bucket=resource_bucket,
+        project_id=project_id,
+        resolved_prefix=resolved_prefix,
+        source_selected=source_selected,
+    )
     if not str(details.get("run_id") or "").strip():
         raise HTTPException(status_code=404, detail=f"run_id not found: {{run_id}}")
     return {{"ok": True, "run": details}}
@@ -8262,12 +8249,16 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_BACKEND_SHIP, agent_backend_ship_script)
         .replace(_AGENT_WORKFLOW_EMBED, agent_workflow_source)
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
+        .replace(_AGENT_ACCESS_EMBED, agent_access_source)
+        .replace(_AGENT_ACCESS_RUNTIME_EMBED, agent_access_runtime_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)
         .replace(_AGENT_STATE_EMBED, agent_state_source)
         .replace(_AGENT_S3_GUARD_EMBED, agent_s3_guard_source)
         .replace(_AGENT_STAGES_EMBED, agent_stages_source)
+        .replace(_AGENT_STAGE_RUNTIME_EMBED, agent_stage_runtime_source)
+        .replace(_AGENT_VIEWER_RUNTIME_EMBED, agent_viewer_runtime_source)
         .replace(_AGENT_PROVENANCE_EMBED, agent_provenance_source)
         .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
     )
@@ -8318,13 +8309,6 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         s3_secret_key=s3_secret_key,
         service_account_id=service_account_id,
     )
-    agent_iam_token = ""
-    try:
-        from npa.clients.nebius import get_iam_token
-
-        agent_iam_token = get_iam_token()
-    except Exception:
-        agent_iam_token = ""
     _write_agent_nebius_env(
         ssh,
         project_alias=project_alias,
@@ -8337,7 +8321,6 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         endpoint=s3_endpoint,
         access_key=s3_access_key,
         secret_key=s3_secret_key,
-        iam_token=agent_iam_token,
     )
     if (
         tf_api_key.strip()
@@ -9137,12 +9120,22 @@ def bootstrap_cmd(
             _fail("Nebius credential refresh failed and no terraform_state fallback is configured")
         creds = _resolve_deploy_storage_credentials(region=region, bootstrap_creds=creds)
         agent_credentials = _agent_credentials_payload(creds)
+        refreshed_service_account_id = str(
+            agent_credentials.get("service_account_id") or ""
+        ).strip()
+        try:
+            refreshed_service_account_id = consistent_agent_service_account_id(
+                service_account_id, refreshed_service_account_id
+            )
+        except ValueError as exc:
+            _fail(f"{exc}; refusing to replace the attached identity")
         s3_bucket = agent_credentials["s3_bucket"]
         s3_prefix = agent_credentials.get("s3_prefix", "")
         s3_endpoint = agent_credentials["s3_endpoint"]
         s3_access_key = agent_credentials["access_key"]
         s3_secret_key = agent_credentials["secret_key"]
-        service_account_id = agent_credentials["service_account_id"]
+        service_account_id = refreshed_service_account_id
+        agent_credentials["service_account_id"] = service_account_id
         if not service_account_id:
             service_account_id = _resolve_agent_service_account_id(project, record)
             agent_credentials["service_account_id"] = service_account_id
@@ -9737,7 +9730,7 @@ def verify_live_cmd(
         workflow_status_resp = httpx.get(
             f"{agent_base}/api/workflows/sim2real/status",
             auth=(auth_user, auth_password),
-            timeout=5.0,
+            timeout=30.0,
             verify=tls_verify,
         )
         workflow_status_resp.raise_for_status()
@@ -9763,13 +9756,16 @@ def verify_live_cmd(
         'id="tabMain"',
         'id="tabRerun"',
         'id="stagesPanel"',
+        'id="agentAccessPanel"',
+        'id="agentAccessProjectSelect"',
+        "/api/access",
         "<h3>Stages</h3>",
         'id="stagesRunSelect"',
         'id="stagesLoadRun"',
         "loadSelectedRun",
         "stages-run-picker",
         "filterStagesRunSelect",
-        "Search or paste run ID",
+        "Search NPA workflow/artifact runs",
         "function sendChat(",
         "function wireUi(",
         "activateMainTab",
@@ -9872,6 +9868,24 @@ def verify_live_cmd(
         _fail(f"session endpoint failed: {exc}")
     if not isinstance(session_payload, dict):
         _fail("session endpoint did not return JSON object")
+
+    try:
+        access_resp = httpx.get(
+            f"{str(record.get('agent_url', '')).rstrip('/')}/api/access",
+            auth=(auth_user, auth_password),
+            timeout=5.0,
+            verify=tls_verify,
+        )
+        access_resp.raise_for_status()
+        access_payload = access_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"agent access endpoint failed: {exc}")
+    if not isinstance(access_payload, dict) or access_payload.get("apiVersion") != ACCESS_SCHEMA:
+        _fail("agent access endpoint returned an invalid schema")
+    if access_payload.get("status") not in ACCESS_STATES:
+        _fail("agent access endpoint returned an invalid status")
+    if not isinstance(access_payload.get("projects"), list):
+        _fail("agent access endpoint did not return a projects list")
 
     try:
         tools_resp = httpx.get(
