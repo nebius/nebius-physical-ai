@@ -162,6 +162,15 @@ skills:
       - type: cli_help
         args: ["--help"]
         contains: "Nebius Physical AI"
+  - name: third-party-eula-preflight
+    category: atomic
+    when_to_use: "Before provisioning, building, downloading, or submitting workloads whose images, software, models, or data require third-party EULAs: identify exact agreements and acceptance mechanisms, verify scoped operator consent, and fail fast when it is absent."
+    path: skills/atomic/third-party-eula-preflight/SKILL.md
+    smoke:
+      - type: file_exists
+        path: npa/tests/guardrails/test_third_party_eula_preflight_skill.py
+      - type: file_exists
+        path: npa/docker/workbench/common/isaac_bootstrap.sh
   - name: cosmos
     category: tools
     when_to_use: "Cosmos world model serving, inference, serverless training smoke, backend selection, or rendering limits."

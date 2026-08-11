@@ -30,6 +30,11 @@ convenient reading.
 - Deciding whether something may be published to a public registry
 - Reviewing a PR that does any of the above
 
+Before any provisioning, build, download, or submission that depends on a
+third-party EULA, also load
+`skills/atomic/third-party-eula-preflight/SKILL.md`; licensing classification
+does not itself establish operator consent.
+
 ## The Three Layers
 
 Classify each layer separately. A permissive answer at one layer says nothing

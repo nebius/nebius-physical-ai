@@ -80,6 +80,13 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh
 
+# Git tracks only the executable bit, while a prepared checkout can materialize scripts
+# as 0700 and data files as 0600. Normalize only this small copied bootstrap directory;
+# never recursively rewrite the multi-GB Isaac cache or environment.
+RUN find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
+ && find /opt/npa/docker/workbench/common -type f -exec chmod 0644 {} + \
+ && chmod 0755 /opt/npa/docker/workbench/common/*.sh
+
 RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
       /workspace/isaaclab \
       /workspace/isaaclab/npa-runs \

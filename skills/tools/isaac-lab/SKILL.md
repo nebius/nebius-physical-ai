@@ -9,6 +9,11 @@ Isaac Lab is the RL simulation framework. It requires RT cores: use L40S or RTX 
 
 Training must invoke headless mode. Verify training commands do not trigger rendering paths.
 
+Before provisioning, building, downloading, or submitting an Isaac workload,
+load `skills/atomic/third-party-eula-preflight/SKILL.md`. Confirm explicit,
+run-scoped operator acceptance of the exact NVIDIA agreements and forward both
+documented variables only from the caller; otherwise fail before expensive work.
+
 ## Runtime Isaac bootstrap (the container ships no Isaac Sim)
 
 The `npa-isaac-lab` image contains **no NVIDIA Isaac Sim or Isaac Lab code**. It used to bake
