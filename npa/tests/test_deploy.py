@@ -25,6 +25,41 @@ def test_build_var_args_preserves_key_values() -> None:
     ]
 
 
+def test_state_list_treats_terraform_missing_state_as_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        provisioner,
+        "_run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["terraform", "state", "list"],
+            returncode=1,
+            stdout="",
+            stderr="No state file was found!\n",
+        ),
+    )
+
+    assert provisioner.state_list(tmp_path) == []
+
+
+def test_state_list_keeps_backend_failures_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        provisioner,
+        "_run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["terraform", "state", "list"],
+            returncode=1,
+            stdout="",
+            stderr="Error loading state: AccessDenied\n",
+        ),
+    )
+
+    with pytest.raises(ProvisionerError, match="AccessDenied"):
+        provisioner.state_list(tmp_path)
+
+
 def test_prepare_working_dir_copies_tf_files_and_writes_backend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

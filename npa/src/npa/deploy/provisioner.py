@@ -363,7 +363,20 @@ def destroy(
 def state_list(tf_dir: str | Path | None = None) -> list[str]:
     """Run terraform state list and return managed resource addresses."""
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
-    result = _run(["state", "list"], cwd=tf_dir, capture=True)
+    # Terraform exits 1 for a valid, initialized backend whose state object does
+    # not exist yet.  That is the expected first-deploy representation of an
+    # empty namespace, not an inspection failure.  Keep every other nonzero
+    # result fail-closed so auth/backend failures cannot be mistaken for empty
+    # state by lifecycle ownership guards.
+    result = _run(["state", "list"], cwd=tf_dir)
+    if result.returncode != 0:
+        detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+        if "no state file was found" in detail.lower():
+            return []
+        suffix = f":\n{detail}" if detail else ""
+        raise ProvisionerError(
+            f"terraform state failed (exit {result.returncode}){suffix}"
+        )
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
