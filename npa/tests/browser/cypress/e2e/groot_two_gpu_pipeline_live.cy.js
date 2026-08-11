@@ -186,11 +186,18 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
 
   it("describes the viewer as offline evaluation rather than a robot rollout", () => {
     const rrd = artifacts.find((item) => String(item.key || "").endsWith("groot-offline-evaluation.rrd"));
-    agentReq("/api/sim-viz/load-artifact", {
-      method: "POST",
-      body: { run_id: activeRun, run_ref: inventory.run_ref || "", key: rrd.key },
+    cy.get("#runIdInput").clear().type(activeRun, { delay: 0 });
+    cy.get("#loadRunData").click();
+    cy.get("#statusBar", { timeout: 300000 }).should("contain.text", "Load run data done");
+    cy.window().then({ timeout: 180000 }, (win) => {
+      return win.__NPA_AGENT_TEST__.loadArtifact({
+        run_id: activeRun,
+        run_ref: inventory.run_ref || "",
+        key: rrd.key,
+      });
+    }).then((loaded) => {
+      expect(loaded, "exact RRD becomes the active viewer artifact").to.eq(true);
     });
-    cy.reload();
     cy.get("#tabRerun").click();
     cy.get("#rerunFrame", { timeout: 180000 }).should("be.visible");
     const waitForDescribePaint = (attempt) => {
@@ -206,9 +213,16 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
       });
     };
     waitForDescribePaint(0);
+    cy.window().then({ timeout: 30000 }, (win) => {
+      return win.__NPA_AGENT_TEST__.captureVisualContext();
+    }).then((captured) => {
+      expect(captured.meta.run_id, "Describe-this run identity").to.eq(activeRun);
+      expect(String(captured.meta.artifact_key || ""), "Describe-this artifact identity")
+        .to.include("groot-offline-evaluation.rrd");
+    });
     cy.get("#describeVisual", { timeout: 180000 }).click({ force: true });
-    cy.get("#chatLog .msg-row.assistant", { timeout: 180000 }).last().invoke("text").then((value) => {
-      const description = String(value || "").toLowerCase();
+    cy.get("#chatLog .msg-row.assistant", { timeout: 180000 }).should(($rows) => {
+      const description = String($rows.last().text() || "").toLowerCase();
       expect(description.length, "nonblank Describe-this response").to.be.greaterThan(40);
       expect(description).to.match(/offline|held-out|evaluation/);
       expect(description).to.match(/not (a )?(physical )?robot rollout|not a rollout|offline.*not.*rollout/);

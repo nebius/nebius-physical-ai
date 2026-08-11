@@ -44,6 +44,31 @@ GROOT_TASK_PERFORMANCE_NOTE = (
 )
 
 
+def is_offline_groot_learning_context(
+    visual_context: Mapping[str, Any] | None,
+) -> bool:
+    """Recognize legacy and operational GR00T offline-evaluation recordings."""
+
+    facts = " ".join(
+        str((visual_context or {}).get(key) or "")
+        for key in ("run_id", "artifact_key", "note", "provenance", "origin")
+    ).lower()
+    groot_recording = any(
+        marker in facts
+        for marker in (
+            "groot-learning",
+            "groot17-learning",
+            "groot-offline-evaluation",
+            "groot17-two-gpu-pipeline",
+        )
+    )
+    offline_evidence = any(
+        marker in facts
+        for marker in ("heldout", "held-out", "offline evaluation", "offline-evaluation")
+    )
+    return groot_recording and offline_evidence
+
+
 def task_performance_visual_fact_block(
     visual_context: Mapping[str, Any] | None,
 ) -> str:
@@ -72,14 +97,7 @@ def task_performance_visual_fact_block(
 def learning_visual_fact_block(visual_context: Mapping[str, Any] | None) -> str:
     """Return fail-closed facts for an offline GR00T learning replay."""
 
-    facts = " ".join(
-        str((visual_context or {}).get(key) or "")
-        for key in ("run_id", "artifact_key", "note", "provenance", "origin")
-    ).lower()
-    if not (
-        ("groot-learning" in facts or "groot17-learning" in facts)
-        and ("heldout" in facts or "held-out" in facts)
-    ):
+    if not is_offline_groot_learning_context(visual_context):
         return ""
     return (
         "\n\nNON-NEGOTIABLE FACTS FOR THIS LEARNING REPLAY:\n"
@@ -267,10 +285,7 @@ def infer_visual_domain_hints(meta: Mapping[str, Any] | None) -> list[str]:
         return []
     # Soft-normalize separators so gr00t_n1 / isaac-lab match token rules.
     normalized = re.sub(r"[_\-/.:]+", " ", blob)
-    if (
-        ("groot learning" in normalized or "learning report" in normalized)
-        and ("heldout" in normalized or "held out" in normalized)
-    ):
+    if is_offline_groot_learning_context(meta):
         return [
             "This is explicitly an offline held-out GR00T policy evaluation, not a "
             "simulator/robot rollout or closed-loop execution. Describe the recorded "
@@ -302,11 +317,7 @@ def learning_visual_reply_needs_correction(
     meta: Mapping[str, Any] | None,
 ) -> bool:
     """Reject visual prose that contradicts a learning run's grounded facts."""
-    blob = _meta_blob(meta)
-    learning = ("groot-learning" in blob or "groot17-learning" in blob) and (
-        "heldout" in blob or "held-out" in blob
-    )
-    if not learning:
+    if not is_offline_groot_learning_context(meta):
         return False
     lowered = str(reply or "").lower()
     return any(phrase in lowered for phrase in _LEARNING_REPLY_CONTRADICTIONS)
@@ -551,6 +562,17 @@ def build_metadata_only_visual_reply(meta: Mapping[str, Any] | None) -> str:
     ]
     if note:
         lines.append(f"- note: {note[:320]}")
+    if is_offline_groot_learning_context(meta):
+        lines.extend(
+            [
+                "",
+                "**Grounded evaluation facts**: This is offline held-out GR00T policy "
+                "evaluation, **not a physical-robot or closed-loop robot rollout**. "
+                "The recording aligns persisted dataset camera frames with expert and "
+                "baseline/post-training predicted actions, losses, metrics, and "
+                "checkpoint provenance.",
+            ]
+        )
     if hints:
         lines.append("")
         lines.append("Domain hints from metadata:")

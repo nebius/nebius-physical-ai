@@ -186,6 +186,21 @@ def test_learning_visual_reply_fails_closed_on_origin_contradictions() -> None:
     assert "synthetic simulation" not in reply
 
 
+def test_operational_two_gpu_offline_context_is_classified_without_a_frame() -> None:
+    meta = {
+        "run_id": "groot17-two-gpu-pipeline-20260811t0131z-example-r11",
+        "artifact_key": "reports/groot-offline-evaluation.rrd",
+        "note": "Offline held-out policy evaluation",
+        "capture": "metadata-only",
+    }
+
+    assert vf.is_offline_groot_learning_context(meta) is True
+    assert "not simulator/robot rollout" in vf.learning_visual_fact_block(meta)
+    reply = vf.build_metadata_only_visual_reply(meta)
+    assert "offline held-out" in reply.lower()
+    assert "not a physical-robot or closed-loop robot rollout" in reply.lower()
+
+
 def test_task_performance_visual_feedback_is_simulation_grounded() -> None:
     meta = {
         "run_id": "groot17-closed-loop-test",
