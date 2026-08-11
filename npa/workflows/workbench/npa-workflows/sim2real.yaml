@@ -51,8 +51,10 @@ config:
   reason2_model: nvidia/Cosmos-Reason2-8B
   reason3_model: nvidia/Cosmos-Reason2-2B
 
-  # Required live inputs. Empty defaults keep this repository portable; runtime
-  # preflight and every stage reject mutable/missing task images.
+  # Required live inputs. The controller image is the purpose-built CPU-only
+  # stage adapter, never a Genesis/trainer runtime. Empty defaults keep this
+  # repository portable; runtime preflight and every stage reject
+  # mutable/missing task images.
   controller_image: ""
   transfer_image: ""
   envgen_image: ""

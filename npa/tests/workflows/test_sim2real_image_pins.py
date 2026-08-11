@@ -25,6 +25,7 @@ _EXACT_SOURCE_DOCKERFILES = (
     "lerobot-vlm-rl/Dockerfile",
     "sim2real-envgen/Dockerfile",
     "sim2real-eval/Dockerfile",
+    "sim2real-control/Dockerfile",
 )
 
 
@@ -105,6 +106,31 @@ def test_isaac_exact_source_image_uses_light_package_imports() -> None:
         "import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation"
         in (dockerfile)
     )
+
+
+def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
+    root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
+    dockerfile = (root / "sim2real-control" / "Dockerfile").read_text()
+    assert "python:3.11-slim-trixie@sha256:" in dockerfile
+    assert "npa-sim2real-control" not in dockerfile
+    assert "Genesis" not in dockerfile
+    assert "CUDA" not in dockerfile
+    assert "--no-deps" in dockerfile
+    assert "pip check" in dockerfile
+    assert "NPA_SOURCE_SHA" in dockerfile
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
+
+    requirements = (
+        root / "common" / "sim2real-controller-requirements.txt"
+    ).read_text()
+    lines = [
+        line.strip()
+        for line in requirements.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert lines
+    assert all(line.count("==") == 1 for line in lines)
 
 
 def test_cosmos2_exact_source_image_uses_light_package_imports() -> None:

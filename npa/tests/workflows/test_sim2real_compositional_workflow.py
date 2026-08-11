@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 
 import yaml
 
@@ -93,6 +95,20 @@ def test_stage_adapters_do_not_submit_hidden_kubernetes_jobs() -> None:
     assert "submit_sim2real" not in source
     assert "sim2real.engine" not in source
     assert "NPA_SIM2REAL_INLINE_TASK" in source
+
+
+def test_stage_adapter_import_does_not_load_legacy_controller() -> None:
+    script = """
+import sys
+import npa.workflows.sim2real.workflow_stage
+for name in (
+    'npa.workflows.sim2real.engine',
+    'npa.workflows.sim2real.legacy_orchestration',
+    'npa.workflows.sim2real.runner',
+):
+    assert name not in sys.modules, name
+"""
+    subprocess.run([sys.executable, "-c", script], check=True)
 
 
 def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> None:

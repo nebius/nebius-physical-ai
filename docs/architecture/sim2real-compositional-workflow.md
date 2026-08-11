@@ -47,6 +47,13 @@ label and Kubernetes priority class to the SkyPilot Pod, so sibling waves use
 observable admission instead of delete/recreate contention. The workflow task
 image must equal the payload's immutable digest.
 
+CPU contract/bookkeeping states use the dedicated digest-pinned
+`npa-sim2real-control` image. Its Python-slim base, exact source, and
+resolver-closed S3 dependency set are intentionally separate from Genesis,
+Isaac, CUDA, and trainer images. Importing a focused stage adapter also leaves
+the archived controller facade unloaded. This keeps a cold CPU pull small and
+prevents control-plane success from depending on GPU-runtime packaging.
+
 `config.require_baked_npa` makes the renderer reject mutable or missing images
 and replaces source-tarball/package bootstrap with a baked-source attestation.
 The task verifies `NPA_IMAGE_SOURCE_SHA` against the exact workflow SHA before

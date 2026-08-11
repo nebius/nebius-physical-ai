@@ -40,6 +40,13 @@ The image adapters require `NPA_TASK_IMAGE` to contain `@sha256:` and attest the
 image source SHA. Isaac also verifies its read-only content-addressed runtime
 cache before simulator startup.
 
+`controller_image` is the digest-pinned, CPU-only `npa-sim2real-control` image
+built from `npa/docker/workbench/sim2real-control/Dockerfile`. It deliberately
+contains no Genesis, Isaac, CUDA, or trainer runtime; using a GPU solution image
+for CPU bookkeeping is unsupported because its cold pull can exhaust a CPU
+node before Stage 1. Transfer, EnvGen, Reason, Isaac, and visualization each
+retain their own immutable image at the corresponding workflow boundary.
+
 ```bash
 SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml
 
