@@ -141,33 +141,8 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
     }
   });
 
-  it("paints the exact RRD and opens the exact MCAP with expected topics", () => {
-    const rrd = artifacts.find((item) => String(item.key || "").endsWith("groot-offline-evaluation.rrd"));
+  it("opens the exact MCAP with expected topics in Lichtblick", () => {
     const mcap = artifacts.find((item) => String(item.key || "").endsWith("groot-offline-evaluation.mcap"));
-    agentReq("/api/sim-viz/load-artifact", {
-      method: "POST",
-      body: { run_id: activeRun, run_ref: inventory.run_ref || "", key: rrd.key },
-    }).then((resp) => {
-      expect(resp.status).to.eq(200);
-      expect(resp.body.render).to.eq("rerun");
-    });
-    cy.reload();
-    cy.get("#tabRerun").click();
-    cy.get("#rerunFrame", { timeout: 180000 }).should("be.visible");
-    const waitForPaint = (attempt) => {
-      cy.window().then((win) => {
-        const frame = win.document.getElementById("rerunFrame");
-        return win.__NPA_AGENT_TEST__.probeRerunCanvasContent(frame);
-      }).then((painted) => {
-        if (!painted && attempt < 60) {
-          cy.wait(1000).then(() => waitForPaint(attempt + 1));
-          return;
-        }
-        expect(painted, "Rerun paints nonblank recording content").to.eq(true);
-      });
-    };
-    waitForPaint(0);
-
     agentReq("/api/sim-viz/load-artifact", {
       method: "POST",
       body: { run_id: activeRun, run_ref: inventory.run_ref || "", key: mcap.key },
@@ -214,7 +189,7 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
     cy.screenshot("after-two-gpu-pipeline-ui", { capture: "viewport" });
   });
 
-  it("describes the viewer as offline evaluation rather than a robot rollout", () => {
+  it("paints and describes the exact RRD as offline evaluation rather than a robot rollout", () => {
     const rrd = artifacts.find((item) => String(item.key || "").endsWith("groot-offline-evaluation.rrd"));
     cy.get("#runIdInput").clear().type(activeRun, { delay: 0 });
     cy.get("#loadRunData").click();
