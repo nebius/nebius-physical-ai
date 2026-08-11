@@ -32,6 +32,7 @@ from npa.cli.groot.runtime_commands import (
     build_read_env_command,
     build_reload_env_command,
     build_runtime_pin_patch_command,
+    build_status_result,
     parse_env_read as _parse_env_read,
 )
 from npa.clients.config import (
@@ -4353,53 +4354,12 @@ def status_cmd(
         _fail(f"Cannot reach GR00T endpoint at {cfg.endpoint}/health: {exc}")
         return
 
-    loaded = bool(data.get("loaded"))
-    hf_present = bool(getattr(cfg, "hf_token", ""))
-    ngc_ok = bool(data.get("ngc_credentials_configured"))
-    # A model that is actually loaded and serving is ready. NGC and HF
-    # credentials only matter for *downloading* checkpoints (NGC-hosted or
-    # gated HF repos); a model already served over HF needs neither going
-    # forward, so they must not force ready:False.
-    readiness = {
-        "hf_token_present": hf_present,
-        "ngc_credentials_configured": ngc_ok,
-        "model_loaded": loaded,
-        "ready": loaded,
-        "blockers": [],
-        "notes": [],
-    }
-    if not loaded:
-        readiness["blockers"].append(
-            f"Model {data.get('model') or DEFAULT_MODEL} not loaded"
-        )
-        if not hf_present:
-            readiness["blockers"].append(
-                "HF_TOKEN not configured - gated model downloads will fail"
-            )
-        if not ngc_ok:
-            readiness["blockers"].append(
-                "NGC credentials not configured - required only for NGC-hosted checkpoints"
-            )
-    else:
-        if not hf_present:
-            readiness["notes"].append(
-                "HF_TOKEN not configured - only affects future gated HF downloads"
-            )
-        if not ngc_ok:
-            readiness["notes"].append(
-                "NGC credentials not configured - only needed for NGC-hosted checkpoints"
-            )
-    app_status = "healthy" if loaded else "degraded"
-
-    result = {
-        "endpoint": endpoint_url,
-        "app_status": app_status,
-        "server": "up",
-        **data,
-        "readiness": readiness,
-    }
-    if not loaded:
-        result["reason"] = "model not loaded"
+    result = build_status_result(
+        data,
+        endpoint_url=endpoint_url,
+        hf_token_present=bool(getattr(cfg, "hf_token", "")),
+        default_model=DEFAULT_MODEL,
+    )
     _output(result, output)
 
 

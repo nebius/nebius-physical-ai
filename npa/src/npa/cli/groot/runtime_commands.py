@@ -4,7 +4,61 @@ from __future__ import annotations
 
 import json
 import shlex
-from typing import Callable
+from typing import Any, Callable, Mapping
+
+
+def build_status_result(
+    data: Mapping[str, Any],
+    *,
+    endpoint_url: str,
+    hf_token_present: bool,
+    default_model: str,
+) -> dict[str, Any]:
+    """Build the public GR00T health/readiness response from server facts."""
+
+    loaded = bool(data.get("loaded"))
+    ngc_ok = bool(data.get("ngc_credentials_configured"))
+    # A model that is actually loaded and serving is ready. NGC and HF
+    # credentials only matter for downloading future checkpoints.
+    readiness: dict[str, Any] = {
+        "hf_token_present": hf_token_present,
+        "ngc_credentials_configured": ngc_ok,
+        "model_loaded": loaded,
+        "ready": loaded,
+        "blockers": [],
+        "notes": [],
+    }
+    if not loaded:
+        readiness["blockers"].append(
+            f"Model {data.get('model') or default_model} not loaded"
+        )
+        if not hf_token_present:
+            readiness["blockers"].append(
+                "HF_TOKEN not configured - gated model downloads will fail"
+            )
+        if not ngc_ok:
+            readiness["blockers"].append(
+                "NGC credentials not configured - required only for NGC-hosted checkpoints"
+            )
+    else:
+        if not hf_token_present:
+            readiness["notes"].append(
+                "HF_TOKEN not configured - only affects future gated HF downloads"
+            )
+        if not ngc_ok:
+            readiness["notes"].append(
+                "NGC credentials not configured - only needed for NGC-hosted checkpoints"
+            )
+    result: dict[str, Any] = {
+        "endpoint": endpoint_url,
+        "app_status": "healthy" if loaded else "degraded",
+        "server": "up",
+        **data,
+        "readiness": readiness,
+    }
+    if not loaded:
+        result["reason"] = "model not loaded"
+    return result
 
 
 def build_runtime_pin_patch_command(
