@@ -351,11 +351,13 @@ def test_learning_rrd_is_closed_with_a_parseable_footer(
         "training": {
             "checkpoint_uri": "s3://bucket/checkpoint",
             "loss_history": [{"optimizer_step": 1, "loss": 0.5}],
+            "resolved_checkpoint_step": 1,
         },
         "evaluation": {
             "baseline_value": 2.0,
             "posttrain_value": 1.0,
-            "checkpoint_selection_uri": "s3://bucket/selection.json",
+            "candidate_skill_score": 0.1,
+            "checkpoint_selection_uri": None,
             "per_horizon_mse": {
                 "baseline": [2.0],
                 "posttrain": [1.0],
@@ -409,13 +411,6 @@ def test_learning_rrd_is_closed_with_a_parseable_footer(
             post_arrays,
         ),
     )
-    monkeypatch.setattr(
-        learning,
-        "_read_s3_json",
-        lambda *_args: {
-            "learning_curve": [{"optimizer_step": 1, "mse": 1.0, "skill_score": 0.1}]
-        },
-    )
     monkeypatch.setattr(learning, "_download", lambda *_args: None)
     monkeypatch.setattr(
         learning,
@@ -437,6 +432,29 @@ def test_learning_rrd_is_closed_with_a_parseable_footer(
     )
     assert result["inspect"]["parseable"] is True
     assert result["inspect"]["bytes"] == len(uploaded["s3://bucket/learning.rrd"])
+
+
+def test_operational_smoke_uses_final_evaluation_as_checkpoint_curve() -> None:
+    curve = learning._evaluated_checkpoint_curve(
+        object(),
+        {
+            "training": {"resolved_checkpoint_step": 4},
+            "evaluation": {
+                "checkpoint_selection_uri": None,
+                "posttrain_value": 12.5,
+                "candidate_skill_score": -0.25,
+            },
+        },
+    )
+
+    assert curve == [
+        {
+            "optimizer_step": 4,
+            "mse": 12.5,
+            "skill_score": -0.25,
+            "source": "final_evaluated_smoke_checkpoint",
+        }
+    ]
 
 
 def test_learning_mcap_topics_use_real_camera_log_and_metric_schemas(

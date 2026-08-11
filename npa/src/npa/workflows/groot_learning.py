@@ -2699,6 +2699,50 @@ def _evaluation_bundle(
     return report, baseline, posttrain, before_arrays, after_arrays
 
 
+def _evaluated_checkpoint_curve(
+    client: Any, report: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Return factual validation points for checkpoints evaluated by this run.
+
+    Longer training recipes may evaluate several intermediate checkpoints and
+    persist a selection curve.  The operational smoke intentionally writes and
+    evaluates only its final checkpoint, so that final evaluation is the honest
+    one-point curve.  Keeping that point explicit prevents the required RRD and
+    MCAP checkpoint-provenance channels from disappearing merely because no
+    checkpoint-selection stage was needed.
+    """
+
+    evaluation = report.get("evaluation")
+    training = report.get("training")
+    if not isinstance(evaluation, Mapping) or not isinstance(training, Mapping):
+        raise GrootVisualizationError(
+            "learning report lacks evaluation/training evidence"
+        )
+    selection_uri = str(evaluation.get("checkpoint_selection_uri") or "").strip()
+    if selection_uri:
+        selection = _read_s3_json(client, selection_uri)
+        curve = selection.get("learning_curve")
+        if not isinstance(curve, list) or not curve:
+            raise GrootVisualizationError("checkpoint selection has no learning curve")
+        return [dict(item) for item in curve if isinstance(item, Mapping)]
+
+    step = int(training.get("resolved_checkpoint_step") or 0)
+    mse = float(evaluation.get("posttrain_value"))
+    skill_score = float(evaluation.get("candidate_skill_score"))
+    if step <= 0 or not math.isfinite(mse) or not math.isfinite(skill_score):
+        raise GrootVisualizationError(
+            "final evaluated checkpoint lacks a valid step/MSE/skill score"
+        )
+    return [
+        {
+            "optimizer_step": step,
+            "mse": mse,
+            "skill_score": skill_score,
+            "source": "final_evaluated_smoke_checkpoint",
+        }
+    ]
+
+
 def _validate_learning_mcap(
     path: Path, *, run_id: str, camera_name: str = "front"
 ) -> dict[str, Any]:
@@ -2826,6 +2870,7 @@ def emit_learning_mcap(
             predicted_records.append(predicted_record)
             expert_records.append(expert_record)
             error_records.append(error_record)
+        checkpoint_curve = _evaluated_checkpoint_curve(client, report)
         metric_documents = {
             "policy/predicted_action": predicted_records,
             "expert/action": expert_records,
@@ -2883,15 +2928,7 @@ def emit_learning_mcap(
                     + int(item["optimizer_step"]) * 1_000_000_000,
                     "clock_domain": "optimizer_step",
                 }
-                for item in (
-                    _read_s3_json(
-                        client,
-                        str(report["evaluation"]["checkpoint_selection_uri"]),
-                    ).get("learning_curve")
-                    or []
-                    if report["evaluation"].get("checkpoint_selection_uri")
-                    else []
-                )
+                for item in checkpoint_curve
             ],
         }
         metric_inputs: list[MetricsInput] = []
@@ -3070,9 +3107,7 @@ def emit_learning_rrd(
             optimizer_step = float(item["optimizer_step"])
             _set_rerun_time(rr, recording, "optimizer_step", optimizer_step)
             rr.log("train/loss", rr.Scalars(float(item["loss"])), recording=recording)
-        selection_uri = report["evaluation"].get("checkpoint_selection_uri")
-        selection = _read_s3_json(client, str(selection_uri)) if selection_uri else {}
-        for item in selection.get("learning_curve") or []:
+        for item in _evaluated_checkpoint_curve(client, report):
             _set_rerun_time(
                 rr, recording, "optimizer_step", float(item["optimizer_step"])
             )
