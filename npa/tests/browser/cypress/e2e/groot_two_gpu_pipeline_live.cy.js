@@ -31,6 +31,21 @@ function artifactContentPath(activeRun, artifact) {
   return `/api/artifacts/content?${query.toString()}`;
 }
 
+function assertViewerDocument(frame, label) {
+  const iframe = frame[0];
+  const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+  expect(doc, `${label} same-origin document`).to.exist;
+  expect(doc.readyState, `${label} document loaded`).to.eq("complete");
+  const text = String((doc.body && doc.body.innerText) || "");
+  expect(text, `${label} has no load failure`).not.to.match(/failed to load|unable to load|application error/i);
+  const canvases = [...doc.querySelectorAll("canvas")];
+  expect(canvases.length, `${label} rendered canvas count`).to.be.greaterThan(0);
+  expect(
+    canvases.some((canvas) => canvas.width > 100 && canvas.height > 100),
+    `${label} has a substantive render surface`,
+  ).to.eq(true);
+}
+
 describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: false }, () => {
   let activeRun = "";
   let inventory = {};
@@ -176,11 +191,26 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
         expect(body, `MCAP topic ${topic}`).to.include(topic);
       }
     });
+    cy.intercept("GET", "/lichtblick/recordings/sim2real.mcap*").as("mcapPlayback");
     cy.reload();
     cy.get("#tabRerun").click();
     cy.get("#renderModeLichtblick").click();
     cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
-    cy.get("#lichtblickFrame").should("be.visible").and("have.attr", "src").and("include", "/lichtblick/");
+    cy.get("#lichtblickFrame", { timeout: 180000 })
+      .should("be.visible")
+      .and("have.attr", "src")
+      .and("include", "/lichtblick/")
+      .and("include", "ds.url")
+      .and("include", "npa.layout=learning");
+    cy.wait("@mcapPlayback", { timeout: 180000 }).then((interception) => {
+      expect([200, 206]).to.include(interception.response && interception.response.statusCode);
+    });
+    cy.get("#lichtblickFrame", { timeout: 180000 }).should(($frame) => {
+      assertViewerDocument($frame, "Lichtblick");
+    });
+    cy.get("#simvizCta")
+      .should("contain.text", "OFFLINE EVALUATION")
+      .and("contain.text", "NOT A ROBOT ROLLOUT");
     cy.screenshot("after-two-gpu-pipeline-ui", { capture: "viewport" });
   });
 

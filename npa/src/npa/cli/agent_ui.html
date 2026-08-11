@@ -2207,7 +2207,7 @@
                   <iframe id="lichtblickFrame" title="lichtblick" src="about:blank" allow="fullscreen; clipboard-read; clipboard-write" allowfullscreen></iframe>
                   <div id="lichtblickPlaceholder" class="rerun-placeholder lichtblick-placeholder" hidden>
                     <p><strong>Lichtblick</strong> (Foxglove-compatible MCAP viewer)</p>
-                    <p class="hint">Load a run with a <code>reports/sim2real.mcap</code> to play its camera, VLM critiques, and reward signals here.</p>
+                    <p class="hint">Load a run with an MCAP artifact to play its synchronized camera, action, metric, and provenance topics here.</p>
                   </div>
                 </div>
               </div>
@@ -5262,16 +5262,19 @@
         const status = simViz || lastSimVizStatus || {};
         if (activeRenderMode === "lichtblick") {
           const ready = Boolean(status.lichtblick_ready || status.mcap_uri);
+          const learningReplay = lichtblickLayoutKind(status) === "learning";
           // Always set Lichtblick-appropriate copy so the shared banner never
           // retains stale Rerun wording from a previous tab, even when hidden.
           cta.textContent = ready
-            ? "Lichtblick (MCAP) recording loaded: camera and reward/advantage signals " +
-              "play in the panels below. The GPU 3D point cloud is on /heldout/points — " +
-              "enable that topic in the 3D panel (Lichtblick hides point clouds by " +
-              "default). The Rerun tab shows the same 3D point cloud automatically."
-            : "No run-specific Lichtblick (MCAP) recording yet. Load a run with a " +
-              "reports/sim2real.mcap to play its camera, reward/advantage signals, and " +
-              "GPU 3D point cloud (topic /heldout/points) here.";
+            ? learningReplay
+              ? "OFFLINE EVALUATION / NOT A ROBOT ROLLOUT: Lichtblick loaded the MCAP " +
+                "camera, predicted/expert action, error, loss, metric, and provenance topics."
+              : "Lichtblick (MCAP) recording loaded: camera and reward/advantage signals " +
+                "play in the panels below. The GPU 3D point cloud is on /heldout/points — " +
+                "enable that topic in the 3D panel (Lichtblick hides point clouds by " +
+                "default). The Rerun tab shows the same 3D point cloud automatically."
+            : "No run-specific Lichtblick (MCAP) recording yet. Load a run with an MCAP " +
+              "artifact to play its synchronized camera, action, metric, and provenance topics here.";
           cta.hidden = false;
           return;
         }
@@ -5405,7 +5408,7 @@
       }
       function lichtblickLayoutKind(simViz) {
         const artifactKey = String((simViz && simViz.artifact_key) || "").toLowerCase();
-        return artifactKey.endsWith("/groot-learning.mcap") || artifactKey === "groot-learning.mcap"
+        return /(?:^|\/)(?:groot-learning|groot-offline-evaluation)\.mcap$/.test(artifactKey)
           ? "learning"
           : "sim2real";
       }
@@ -5528,7 +5531,7 @@
             (outputCount ? " " + String(outputCount) + " output artifacts are listed for download or inline viewing." : "");
         } else {
           mountLichtblickIframe(currentLichtblickSimViz || {});
-          setStatus("No sim2real.mcap artifact for " + rid + " (run the pipeline with NPA_SIM2REAL_MCAP on).");
+          setStatus("No MCAP artifact for " + rid + ".");
         }
       }
       async function openLichtblickTab() {

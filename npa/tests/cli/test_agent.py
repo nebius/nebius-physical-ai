@@ -952,6 +952,7 @@ def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
     # The iframe URL always flows through the rewrite.
     assert "const pinned = pinLichtblickDsToSameOrigin(url) || \"/lichtblick/\";" in source
     assert 'viewer.searchParams.set("npa.layout", lichtblickLayoutKind(simViz));' in source
+    assert "groot-offline-evaluation" in source
 
 
 def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() -> None:
