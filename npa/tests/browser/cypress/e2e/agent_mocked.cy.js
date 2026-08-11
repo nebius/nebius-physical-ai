@@ -1699,7 +1699,12 @@ describe("NPA agent UI with mocked APIs", () => {
       rrd_uri: artifacts[0].s3_uri,
       artifact_render: "rerun",
       preview_status: "ready",
-      available_runs: [{ run_id: LEARNING_RUN, artifact_count: artifacts.length }],
+      available_runs: [{
+        run_id: LEARNING_RUN,
+        artifact_count: artifacts.length,
+        source_type: "workflow_history",
+        source_label: "Workflow history",
+      }],
     };
     cy.intercept("GET", "/api/artifacts/runs*", {
       statusCode: 200,

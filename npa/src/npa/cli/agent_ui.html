@@ -5892,13 +5892,24 @@
           try {
             const resp = await fetchWithTimeout(previewUrl, { credentials: "include" }, 12000);
             if (!resp.ok) throw new Error("preview fetch failed");
-            const payload = await resp.json();
+            const rawText = await resp.text();
+            let previewText = rawText;
+            if (safeRender === "json") {
+              try {
+                const payload = JSON.parse(rawText);
+                previewText = typeof payload.text === "string"
+                  ? payload.text
+                  : JSON.stringify(payload, null, 2);
+              } catch (_parseErr) {
+                // A mislabeled JSON object remains useful as plain text.
+              }
+            }
             if (!isCurrent()) return;
             host.hidden = false;
             host.replaceChildren();
             const pre = document.createElement("pre");
             pre.className = "artifact-text-preview";
-            pre.textContent = String(payload.text || "");
+            pre.textContent = String(previewText || "");
             host.appendChild(pre);
             appendArtifactDownloadLink(host, downloadUrl, "artifact");
             return;
@@ -7466,6 +7477,7 @@
         activeArtifactInventoryRunId = runId;
         activeArtifactInventory = artifacts;
         renderArtifactRunSummary(data && data.summary, artifacts);
+        const learningSummary = data && data.summary && data.summary.learning && data.summary.learning.evaluation_kind;
         if (data && data.no_recording) {
           const noRecordingState = {
             run_id: runId,
@@ -7480,6 +7492,7 @@
         }
         const list = document.getElementById("artifactList");
         if (!list) return false;
+        list.hidden = Boolean(learningSummary);
         activeRunResourceScope = {
           run_id: runId,
           bucket: String(data.bucket || (entry && entry.bucket) || ""),

@@ -1795,6 +1795,16 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     assert '"stages succeeded"' not in ui
 
 
+def test_artifact_cards_define_runtime_metadata_before_rendering() -> None:
+    """Artifact card rendering must not fail on undefined metadata variables."""
+    ui = _agent_ui_bundle()
+
+    assert "const learningSummary = data && data.summary && data.summary.learning" in ui
+    assert "list.hidden = Boolean(learningSummary);" in ui
+    assert 'const s3uri = String(item.s3_uri || "");' in ui
+    assert 'data-s3-uri="\' + escapeHtml(s3uri)' in ui
+
+
 def test_bootstrap_chat_has_scroll_to_bottom_button() -> None:
     """The chat log ships a jump-to-latest arrow wired to scroll to the end."""
     source = _agent_ui_bundle()
