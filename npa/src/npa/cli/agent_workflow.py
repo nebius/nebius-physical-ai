@@ -1592,7 +1592,12 @@ def _data_factory_spec() -> dict[str, Any]:
                         ),
                         "needs": ["annotate-augmented"],
                         "toolRef": "workbench.cosmos_curate.curate",
-                        "resources": "cpu",
+                        # Cosmos Curator prefers NVENC whenever the NVIDIA runtime
+                        # exposes the node's GPU to nvidia-smi.  A CPU-only pod on a
+                        # GPU node can pass that probe while CUDA remains blocked by
+                        # the pod's device allocation, silently producing empty
+                        # clips.  Give the real transcode stage the declared GPU.
+                        "resources": "gpu",
                         "inputs": [
                             OrderedDict(
                                 {

@@ -234,6 +234,7 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
     assert "workbench.cosmos_evaluator.evaluate" in tool_refs
     assert "workbench.cosmos_curate.curate" in tool_refs
     assert "workbench.fiftyone.curate_augmented" in tool_refs
+    assert generated["states"]["cosmos-curate"]["resources"] == "gpu"
     assert generated["config"]["trigger_uri"] == generated["config"]["input_uri"]
     assert "supported video" in generated["states"]["augment"]["description"].lower()
 

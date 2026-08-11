@@ -67,6 +67,7 @@ def fake_runtime(mocker):
 
 
 def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
+    config_path = REPO_ROOT / "npa" / "workflows" / "workbench" / "config.yaml"
     result = RUNNER.invoke(
         app,
         [
@@ -77,6 +78,8 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
             "--run-id",
             "rt-cli-1",
             "--runtime",
+            "--config-path",
+            str(config_path),
             "--registry",
             "cr.example.invalid/reg",
             "--poll-seconds",
@@ -103,6 +106,7 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
     assert options.max_concurrency == 2
     assert options.cancel_on_timeout is False
     assert options.resume is False
+    assert options.config_path == config_path
     # --var reaches the spec's config, not just the renderer.
     assert fake_runtime["spec"].config["max_images"] == "1"
     assert fake_runtime["render_options"].registry == "cr.example.invalid/reg"

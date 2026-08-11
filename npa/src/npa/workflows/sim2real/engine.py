@@ -2380,7 +2380,8 @@ fi
         else f"python -m npa.workflows.sim2real {subcommand}"
     )
     return f"""set -euo pipefail
-{vlm_preamble}if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
+{vlm_preamble}export NPA_SKIP_EAGER_IMPORTS=1
+if [ -n "${{NPA_SIM2REAL_SOURCE_TARBALL_URI:-}}" ]; then
   rm -rf /tmp/npa-source && mkdir -p /tmp/npa-source
   python - "${{NPA_SIM2REAL_SOURCE_TARBALL_URI}}" <<'PYB'
 import os, sys, tarfile, urllib.parse, boto3

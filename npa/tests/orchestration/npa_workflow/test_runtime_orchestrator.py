@@ -475,6 +475,24 @@ def test_parallel_group_failure_stops_the_barrier(tmp_path: Path) -> None:
     assert "join" not in [state for wave in report.waves for state in wave["states"]]
 
 
+def test_runtime_forwards_skypilot_config_path(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    submitter = FakeSubmitter()
+    config_path = tmp_path / "sky-config.yaml"
+    options = RuntimeOptions(
+        poll_seconds=0, max_wait_seconds=60, config_path=config_path
+    )
+    executor = _executor(spec, submitter=submitter, options=options)
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-config-path", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert submitter.calls
+    assert all(call["kwargs"]["config_path"] == config_path for call in submitter.calls)
+
+
 # ------------------------------------------------------------ retry / resume / timeout
 
 

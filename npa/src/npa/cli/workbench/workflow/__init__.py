@@ -495,6 +495,7 @@ def submit_cmd(
                 secret_envs=secret_env,
                 controller_backend=controller_backend.value,
                 infra=infra,
+                config_path=config_path,
                 isolated_config_dir=isolated_config_dir,
                 submit_timeout=submit_timeout,
                 poll_seconds=poll_seconds,
@@ -744,6 +745,7 @@ def _run_npa_workflow_runtime(
     secret_envs: list[str],
     controller_backend: str,
     infra: str,
+    config_path: Path | None,
     isolated_config_dir: Path | None,
     submit_timeout: int,
     poll_seconds: int,
@@ -780,6 +782,7 @@ def _run_npa_workflow_runtime(
         submit_timeout=submit_timeout,
         infra=infra,
         controller_backend=controller_backend,
+        config_path=config_path,
         isolated_config_dir=isolated_config_dir,
         resume=resume,
     )
