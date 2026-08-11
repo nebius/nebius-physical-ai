@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from npa.deploy.images import supported_tool_version
 from npa.workflows.sim2real import constants
@@ -46,24 +47,32 @@ def test_sim2real_constant_matches_supported_tool_version(
     )
 
 
-@pytest.mark.parametrize(
-    ("environment_variable", "tool"),
-    [
-        ("TRAINER_IMAGE", "lerobot-vlm-rl"),
-        ("VLM_IMAGE", "cosmos3-reason"),
-        ("EVAL_IMAGE", "loop-eval"),
-    ],
-)
-def test_sim2real_runbook_fallback_matches_supported_tool_version(
-    environment_variable: str, tool: str
-) -> None:
-    runbook = (
-        Path(__file__).resolve().parents[2] / "workflows" / "sim2real.yaml"
-    ).read_text(encoding="utf-8")
-    expected = f"${{{environment_variable}:-npa-{tool}:{supported_tool_version(tool)}}}"
-    assert expected in runbook, (
-        f"{environment_variable} runbook fallback drifted from canonical "
-        f"{tool}={supported_tool_version(tool)!r} (pyproject supported-tools)"
+def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
+    """The standard workflow must not supply mutable image-tag fallbacks."""
+
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "sim2real.yaml"
+    )
+    runbook = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config = runbook["config"]
+    image_inputs = (
+        "controller_image",
+        "transfer_image",
+        "envgen_image",
+        "reason_image",
+        "isaac_image",
+        "viewer_image",
+    )
+    assert config["require_baked_npa"] == "1"
+    assert all(config[name] == "" for name in image_inputs)
+    resources = runbook["resources"]
+    assert all(
+        str(resource["image"]).startswith("{{config.")
+        for resource in resources.values()
     )
 
 

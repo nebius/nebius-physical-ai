@@ -67,26 +67,42 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "token-factory-caption.yaml",
         "cpu",
-        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
         requires_token_factory=True,
         notes="Cheapest live path; validates render→submit without a GPU.",
     ),
     SubmitLiveCase(
         "token-factory-generate.yaml",
         "cpu",
-        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
         requires_token_factory=True,
     ),
     SubmitLiveCase(
         "token-factory-cosmos-reason.yaml",
         "cpu",
-        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
         requires_token_factory=True,
     ),
     SubmitLiveCase(
         "token-factory-parallel-fanout.yaml",
         "cpu",
-        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
         requires_token_factory=True,
         runtime=True,
         expected_parallel_tasks=3,
@@ -98,7 +114,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "token-factory-gate-loop.yaml",
         "cpu",
-        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
         requires_token_factory=True,
         runtime=True,
         config_vars=(("grade_threshold", "0.0"),),
@@ -111,7 +131,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "token-factory-trigger-watch.yaml",
         "cpu",
-        secret_envs=("NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
         requires_token_factory=True,
         runtime=True,
         notes=(
@@ -215,7 +239,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "The REAL Cosmos-Transfer2.5 model, not a manifest: transfer_execute "
             "conditions on a repository-authored procedural MP4, and --execute makes a "
             "missing runtime a hard error rather than a silent fallback. Replaces a "
-            "template that held a GPU to print `\"status\": \"contract_ready\"`."
+            'template that held a GPU to print `"status": "contract_ready"`.'
         ),
     ),
     SubmitLiveCase(
@@ -303,7 +327,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             # a licence acceptance. Substituting public ones exercises the identical code
             # path — a real git clone and a real Hugging Face download into the cache — which
             # is what a live run of this twin is meant to prove.
-            ("cosmos_source_repo", "https://github.com/githubtraining/hellogitworld.git"),
+            (
+                "cosmos_source_repo",
+                "https://github.com/githubtraining/hellogitworld.git",
+            ),
             ("cosmos_model_id", "hf-internal-testing/tiny-random-gpt2"),
         ),
         notes=(
@@ -385,7 +412,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sonic-train.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
         notes=(
             "Trains in-job (`sonic_runtime: local`). The serverless/vm/container "
             "runtimes delegate to more infrastructure, which a stage that already "
@@ -421,7 +453,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "nurec-reconstruct.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
         # No image_tool: the runtime is NVIDIA's vendor NRE container supplied via
         # resources.image / image_id, not an NPA-built workbench image.
         # A ~14 GB NGC image pull on a cold node, then 30k 3DGUT steps and a
@@ -459,7 +496,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sonic-locomotion-finetuning.yaml",
         "multi",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NGC_API_KEY"),
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
         notes=(
             "retarget → train → mjlab. Retargeting consumes the SOMA/G1 motion "
             "clips staged in the run bucket (see SONIC_MOTION_FIXTURE_PREFIX in "
@@ -511,7 +553,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NEBIUS_TOKEN_FACTORY_KEY",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-                    "HF_TOKEN",
+            "HF_TOKEN",
         ),
         requires_token_factory=True,
         notes=(
@@ -574,7 +616,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NEBIUS_TOKEN_FACTORY_KEY",
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-                    "HF_TOKEN",
+            "HF_TOKEN",
         ),
         requires_token_factory=True,
         plan_only=True,
@@ -589,11 +631,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
-        "sim2real-vlm-rl.yaml",
+        "sim2real.yaml",
         "multi",
-        secret_envs=("HF_TOKEN",),
-        plan_only=True,
-        notes="Stub toolRefs; plan-only until engine wiring lands.",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        runtime=True,
+        expected_parallel_tasks=2,
+        rotation_skip=True,
+        skip_reason=(
+            "The canonical live case requires six project-local immutable image "
+            "digests, a prewarmed Isaac cache PVC, and task-aligned trigger data."
+        ),
+        notes=(
+            "Canonical compositional 14-stage Sim2Real runtime. Repository CI "
+            "validates the dynamic plan; an operator live run supplies six "
+            "registry-qualified immutable component images, an Isaac cache PVC, "
+            "and task-aligned trigger data. The reduced real-GPU proof is archived "
+            "separately because the component images are project-local."
+        ),
     ),
     SubmitLiveCase(
         "byof.yaml",
@@ -649,15 +703,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "workbench.fiftyone.launch_app is a stub, and both synthetic shard states "
             "currently target the same transfer manifest object; keep plan-only until "
             "both gaps close."
-        ),
-    ),
-    SubmitLiveCase(
-        "sim2real-gpu-cross-region-agent.yaml",
-        "multi",
-        plan_only=True,
-        notes=(
-            "Three of five toolRefs are stubs: policy_rollouts, heldout_eval, and "
-            "finalize."
         ),
     ),
     SubmitLiveCase(
@@ -746,7 +791,9 @@ def runtime_submit_cases() -> list[SubmitLiveCase]:
     ``submit --runtime``.
     """
 
-    return [case for case in selected_submit_cases() if case.runtime and not case.plan_only]
+    return [
+        case for case in selected_submit_cases() if case.runtime and not case.plan_only
+    ]
 
 
 def one_shot_submit_cases() -> list[SubmitLiveCase]:

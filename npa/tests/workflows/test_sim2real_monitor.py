@@ -476,12 +476,10 @@ def test_workflow_cli_status_sim2real_run(monkeypatch: pytest.MonkeyPatch) -> No
     assert body["status"] == "RUNNING"
 
 
-def test_is_sim2real_runbook() -> None:
-    from npa.workflows.sim2real.k8s_submit import is_sim2real_runbook
+def test_retired_sim2real_runbook_is_not_shipped() -> None:
 
     root = Path(__file__).resolve().parents[2]
-    runbook = root / "workflows" / "sim2real.yaml"
-    assert is_sim2real_runbook(runbook)
-    assert not is_sim2real_runbook(
-        root / "src" / "npa" / "workflows" / "skypilot" / "vlm-eval.yaml"
-    )
+    assert not (root / "workflows" / "sim2real.yaml").exists()
+    assert (
+        root / "workflows" / "workbench" / "npa-workflows" / "sim2real.yaml"
+    ).is_file()

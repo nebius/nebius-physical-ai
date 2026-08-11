@@ -56,7 +56,7 @@ def default_runbook_path() -> Path:
         if candidate.is_file():
             return candidate
     raise Sim2RealMaterializeError(
-        "could not locate the canonical npa/workflows/sim2real.yaml; pass an explicit path"
+        "could not locate the retired direct-controller runbook; pass an explicit archived path"
     )
 
 

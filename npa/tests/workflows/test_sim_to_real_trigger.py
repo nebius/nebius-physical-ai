@@ -85,7 +85,9 @@ class FakeS3:
 class RecordingLauncher:
     launches: list[tuple[TriggerConfig, tuple[TriggerObject, ...]]]
 
-    def launch(self, config: TriggerConfig, objects: tuple[TriggerObject, ...]) -> PipelineLaunch:
+    def launch(
+        self, config: TriggerConfig, objects: tuple[TriggerObject, ...]
+    ) -> PipelineLaunch:
         self.launches.append((config, objects))
         return PipelineLaunch(
             run_id=f"run-{len(self.launches)}",
@@ -109,14 +111,18 @@ def _config() -> TriggerConfig:
 
 def test_lists_only_lerobot_format_objects_under_prefix() -> None:
     fake = FakeS3()
-    fake.add("bucket", "datasets/lerobot-pusht/meta/info.json", b"{}", last_modified=_ts(1))
+    fake.add(
+        "bucket", "datasets/lerobot-pusht/meta/info.json", b"{}", last_modified=_ts(1)
+    )
     fake.add(
         "bucket",
         "datasets/lerobot-pusht/data/chunk-000/episode_000000.parquet",
         b"parquet",
         last_modified=_ts(2),
     )
-    fake.add("bucket", "datasets/lerobot-pusht/notes.txt", b"ignore", last_modified=_ts(3))
+    fake.add(
+        "bucket", "datasets/lerobot-pusht/notes.txt", b"ignore", last_modified=_ts(3)
+    )
     fake.add("bucket", "other/meta/info.json", b"ignore", last_modified=_ts(4))
 
     objects = list_lerobot_objects(_config(), s3_client=fake)
@@ -129,18 +135,26 @@ def test_lists_only_lerobot_format_objects_under_prefix() -> None:
 
 def test_run_once_launches_once_and_does_not_double_fire(tmp_path: Path) -> None:
     fake = FakeS3()
-    fake.add("bucket", "datasets/lerobot-pusht/meta/info.json", b"{}", last_modified=_ts(1))
+    fake.add(
+        "bucket", "datasets/lerobot-pusht/meta/info.json", b"{}", last_modified=_ts(1)
+    )
     store = LocalWatermarkStore(tmp_path / "watermark.json")
     launcher = RecordingLauncher([])
 
-    first = run_once(_config(), s3_client=fake, watermark_store=store, launcher=launcher)
-    second = run_once(_config(), s3_client=fake, watermark_store=store, launcher=launcher)
+    first = run_once(
+        _config(), s3_client=fake, watermark_store=store, launcher=launcher
+    )
+    second = run_once(
+        _config(), s3_client=fake, watermark_store=store, launcher=launcher
+    )
 
     assert first.status == "triggered"
     assert second.status == "idle"
     assert len(launcher.launches) == 1
     assert launcher.launches[0][0].s3_endpoint == "https://s3.example.invalid"
-    assert launcher.launches[0][0].input_data_uri == "s3://bucket/datasets/lerobot-pusht/"
+    assert (
+        launcher.launches[0][0].input_data_uri == "s3://bucket/datasets/lerobot-pusht/"
+    )
 
     fake.add(
         "bucket",
@@ -148,7 +162,9 @@ def test_run_once_launches_once_and_does_not_double_fire(tmp_path: Path) -> None
         b"new",
         last_modified=_ts(2),
     )
-    third = run_once(_config(), s3_client=fake, watermark_store=store, launcher=launcher)
+    third = run_once(
+        _config(), s3_client=fake, watermark_store=store, launcher=launcher
+    )
 
     assert third.status == "triggered"
     assert third.new_object_count == 1
@@ -157,7 +173,9 @@ def test_run_once_launches_once_and_does_not_double_fire(tmp_path: Path) -> None
 
 def test_sdk_run_once_honors_byo_endpoint_config(tmp_path: Path) -> None:
     fake = FakeS3()
-    fake.add("bucket", "datasets/lerobot-pusht/meta/info.json", b"{}", last_modified=_ts(1))
+    fake.add(
+        "bucket", "datasets/lerobot-pusht/meta/info.json", b"{}", last_modified=_ts(1)
+    )
     launcher = RecordingLauncher([])
 
     result = trigger_sdk.run_once(
@@ -198,12 +216,13 @@ def test_the_watcher_launches_the_spec_not_the_retired_pipeline_template() -> No
     command = _pipeline_command(config, run_id="trigger-001")
 
     assert command[:4] == ["npa", "workbench", "workflow", "submit"]
-    assert command[4].endswith("workflows/sim2real.yaml")
+    assert command[4].endswith("workflows/workbench/npa-workflows/sim2real.yaml")
     assert "run_sim_to_real_pipeline" not in " ".join(command)
     # The trigger prefix the watch fired on is what the spec's first stage reads.
-    assert "NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://example-bucket/datasets/lerobot-pusht/" in command
-    assert "NPA_SIM2REAL_BUCKET=example-bucket" in command
-    assert "NPA_SIM2REAL_PREFIX=sim-to-real/trigger-001" in command
+    assert "trigger_uri=s3://example-bucket/datasets/lerobot-pusht/" in command
+    assert "bucket=example-bucket" in command
+    assert "prefix=sim-to-real/trigger-001" in command
+    assert "--runtime" in command
 
 
 def test_render_only_materializes_without_submitting() -> None:

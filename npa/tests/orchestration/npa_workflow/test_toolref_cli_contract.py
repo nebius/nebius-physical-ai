@@ -50,8 +50,16 @@ CHECKED_TOOLREFS = [
     ),
     ("workbench.cosmos3.generate", "npa.cli.workbench.cosmos3", "generate"),
     ("workbench.cosmos3.reason", "npa.cli.workbench.cosmos3", "reason"),
-    ("workbench.cosmos_curate.curate", "npa.cli.workbench.cosmos_curate", "curate-augmented"),
-    ("workbench.cosmos_evaluator.evaluate", "npa.cli.workbench.cosmos_evaluator", "evaluate"),
+    (
+        "workbench.cosmos_curate.curate",
+        "npa.cli.workbench.cosmos_curate",
+        "curate-augmented",
+    ),
+    (
+        "workbench.cosmos_evaluator.evaluate",
+        "npa.cli.workbench.cosmos_evaluator",
+        "evaluate",
+    ),
     ("workbench.token_factory.caption", "npa.cli.workbench.token_factory", "caption"),
     ("workbench.token_factory.generate", "npa.cli.workbench.token_factory", "generate"),
     ("workbench.token_factory.reason", "npa.cli.workbench.token_factory", "reason"),
@@ -60,7 +68,9 @@ CHECKED_TOOLREFS = [
 
 
 @pytest.mark.parametrize(("tool_ref", "module_path", "command_name"), CHECKED_TOOLREFS)
-def test_toolref_flags_are_real_cli_options(tool_ref: str, module_path: str, command_name: str) -> None:
+def test_toolref_flags_are_real_cli_options(
+    tool_ref: str, module_path: str, command_name: str
+) -> None:
     cli_opts = _cli_option_names(module_path, command_name)
     for flag in _toolref_flags(tool_ref):
         assert flag in cli_opts, (
@@ -80,7 +90,13 @@ def test_every_toolref_the_data_factory_submits_is_checked() -> None:
 
     from npa.orchestration.npa_workflow.spec import load_spec
 
-    blueprint = Path(__file__).resolve().parents[3] / "workflows" / "physical-ai-data-factory.yaml"
+    blueprint = (
+        Path(__file__).resolve().parents[3]
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "physical-ai-data-factory.yaml"
+    )
     states = yaml.safe_load(blueprint.read_text(encoding="utf-8"))["states"]
     submitted = {
         state["toolRef"]
@@ -114,7 +130,13 @@ def test_the_visualize_stage_pins_the_same_rerun_as_npas_viz_extra() -> None:
     import re
 
     repo = Path(__file__).resolve().parents[3]
-    blueprint = (repo / "workflows" / "physical-ai-data-factory.yaml").read_text(encoding="utf-8")
+    blueprint = (
+        repo
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "physical-ai-data-factory.yaml"
+    ).read_text(encoding="utf-8")
     pyproject = (repo / "pyproject.toml").read_text(encoding="utf-8")
 
     in_stage = re.search(r'"rerun-sdk==([0-9.]+)"', blueprint)

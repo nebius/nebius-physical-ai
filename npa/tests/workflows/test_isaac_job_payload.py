@@ -6,9 +6,12 @@ import random
 import string
 import subprocess
 
+import pytest
+
 from npa.workflows.sim2real.isaac_job_payload import (
     compressed_bash_launch,
     decode_compressed_bash_args,
+    execute_manifest_container_inline,
 )
 
 
@@ -36,3 +39,32 @@ def test_compressed_launch_executes_reconstructed_script() -> None:
 
     assert result.returncode == 0
     assert result.stdout == "ISAAC_PAYLOAD_EXEC_OK"
+
+
+def test_inline_payload_requires_and_attests_exact_workflow_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = "registry.example/npa/isaac@sha256:" + "b" * 64
+    monkeypatch.setenv("NPA_TASK_IMAGE", image)
+    command, args = compressed_bash_launch('test "$INLINE_MARKER" = yes')
+    manifest = {
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "image": image,
+                            "command": command,
+                            "args": args,
+                            "env": [{"name": "INLINE_MARKER", "value": "yes"}],
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+    proof = execute_manifest_container_inline(manifest)
+
+    assert proof["mode"] == "npa_workflow_skypilot_task"
+    assert proof["image"] == image

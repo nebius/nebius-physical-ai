@@ -45,7 +45,9 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
     assert detect_submit_format(path) == "skypilot"
 
 
-def test_sonic_stage_setup_installs_torch_stack(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sonic_stage_setup_installs_torch_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # SONIC train/export/eval need torch + ONNX. On a run with no baked image
     # (the daily rotation clears image pins) the stage would otherwise reach the
     # GPU and fail with "requires torch".
@@ -84,7 +86,10 @@ def test_self_hosted_vlm_eval_run_starts_vllm_server() -> None:
     # the server is never up and the eval fails with connection-refused.
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     rendered = render_skypilot_yaml(
-        spec, build_plan(spec, run_id="demo"), run_id="demo", options=SkypilotRenderOptions(materialize_registry_secrets=False)
+        spec,
+        build_plan(spec, run_id="demo"),
+        run_id="demo",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
     )
     docs = [d for d in yaml.safe_load_all(rendered) if d]
     run = next(d["run"] for d in docs if "vlm-eval run" in d.get("run", ""))
@@ -106,7 +111,7 @@ def test_self_hosted_vlm_eval_run_starts_vllm_server() -> None:
     assert "export VLLM_USE_FLASHINFER_SAMPLER=0" in run
     # Console scripts that vLLM's dependencies install (ninja, for the JIT paths)
     # live next to the stage interpreter, not on the stage shell's PATH.
-    assert "export PATH=\"$PATH:$npa_scripts\"" in run
+    assert 'export PATH="$PATH:$npa_scripts"' in run
     setup = next(d["setup"] for d in docs if "vlm-eval run" in d.get("run", ""))
     # Weights are pulled in setup so the run phase only loads local files.
     assert "snapshot_download(MODEL)" in setup
@@ -122,7 +127,9 @@ def test_vlm_eval_benchmark_starts_a_server_because_its_twin_scores_for_real() -
 
     spec = load_spec(NPA_SPECS / "vlm-eval-benchmark.yaml")
     rendered = render_skypilot_yaml(
-        spec, build_plan(spec, run_id="demo"), run_id="demo",
+        spec,
+        build_plan(spec, run_id="demo"),
+        run_id="demo",
         options=SkypilotRenderOptions(materialize_registry_secrets=False),
     )
     backend = str(spec.config.get("vlm_backend") or "").replace("_", "-")
@@ -136,7 +143,10 @@ def _unused_test_stub_vlm_eval_benchmark_does_not_start_vllm_server() -> None:
     # The benchmark twin runs backend=stub; it must NOT launch a vLLM server.
     spec = load_spec(NPA_SPECS / "vlm-eval-benchmark.yaml")
     rendered = render_skypilot_yaml(
-        spec, build_plan(spec, run_id="demo"), run_id="demo", options=SkypilotRenderOptions(materialize_registry_secrets=False)
+        spec,
+        build_plan(spec, run_id="demo"),
+        run_id="demo",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
     )
     assert "vllm serve" not in rendered
 
@@ -157,7 +167,9 @@ def test_normalize_resources_leaves_exact_nebius_shapes() -> None:
     }
 
 
-def test_nebius_cloud_render_injects_docker_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nebius_cloud_render_injects_docker_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
     # Use a GPU twin that resolves a Nebius registry image (Token Factory no
@@ -192,7 +204,9 @@ def _nebius_gpu_spec():
     return spec, build_plan(spec, run_id="demo")
 
 
-def test_render_errors_on_registry_credentials_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_render_errors_on_registry_credentials_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Image pinned to us-central1 but Docker creds authenticate to eu-north1 →
     # a 403 ErrImagePull for EVERY stage image. Must fail fast at render, not stall.
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
@@ -208,7 +222,9 @@ def test_render_errors_on_registry_credentials_mismatch(monkeypatch: pytest.Monk
         )
 
 
-def test_render_ok_when_registry_matches_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_render_ok_when_registry_matches_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
     monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
     monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "cr.eu-north1.nebius.cloud")
@@ -243,7 +259,9 @@ def test_cosmos3_generate_and_reason_resolve_to_different_images() -> None:
     assert tool_image_key("workbench.cosmos3.reason") == "cosmos3-reason"
 
 
-def test_render_token_factory_uses_env_aws_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_render_token_factory_uses_env_aws_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.us-central1.nebius.cloud")
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     prepared = prepare_npa_workflow_for_submit(
@@ -350,7 +368,9 @@ def test_render_token_factory_requires_npa_src_s3_uri(
         )
 
 
-def test_render_token_factory_sets_npa_src_s3_uri(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_render_token_factory_sets_npa_src_s3_uri(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     prepared = prepare_npa_workflow_for_submit(
         NPA_SPECS / "token-factory-caption.yaml",
@@ -439,7 +459,7 @@ def test_resolve_task_image_uses_override() -> None:
 def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
     with pytest.raises(Exception, match="assume-decision"):
         prepare_npa_workflow_for_submit(
-            NPA_SPECS / "sim2real-vlm-rl.yaml",
+            NPA_SPECS / "tokenfactory-cosmos-gate.yaml",
             run_id="dyn-demo",
         )
 

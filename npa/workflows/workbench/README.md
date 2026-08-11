@@ -47,7 +47,7 @@ Submit the staged VLM-to-RL loop:
 
 ```bash
 npa workbench workflow submit \
-  npa/workflows/sim2real.yaml \
+  npa/workflows/workbench/npa-workflows/sim2real.yaml \
   --run-id <run-id> \
   --var NPA_SIM2REAL_BUCKET=<your-bucket> \
   --var NPA_SIM2REAL_TRIGGER_DATASET_URI=s3://<your-bucket>/<trigger-prefix>/

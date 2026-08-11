@@ -31,15 +31,16 @@ from npa.cli.agent_workflow import (
 from npa.cli.main import app
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-EXAMPLE_YAML = REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
+EXAMPLE_YAML = (
+    REPO_ROOT / "npa/workflows/workbench/npa-workflows/sim2real-two-step-agent.yaml"
+)
 
 _GOLDEN_YAMLS = [
     "byof.yaml",
     "rl-policy-training-sim-success.yaml",
-    "sim2real-gpu-cross-region-agent.yaml",
     "sim2real-two-step-agent.yaml",
     "sim2real-two-step.yaml",
-    "sim2real-vlm-rl.yaml",
+    "sim2real.yaml",
     "tokenfactory-cosmos-gate.yaml",
     "tokenfactory-rollout-judge.yaml",
     "vlm-eval-single.yaml",
@@ -64,7 +65,9 @@ def test_generated_two_step_matches_the_checked_in_agent_example() -> None:
     # the stable spelling. Their actual workflow contract must otherwise match.
     generated["apiVersion"] = checked_in["apiVersion"]
     generated["metadata"]["description"] = generated["metadata"]["description"].strip()
-    checked_in["metadata"]["description"] = checked_in["metadata"]["description"].strip()
+    checked_in["metadata"]["description"] = checked_in["metadata"][
+        "description"
+    ].strip()
 
     assert generated == checked_in
 
@@ -73,7 +76,9 @@ def test_example_yaml_file_validate_spec_cli() -> None:
     if not EXAMPLE_YAML.is_file():
         EXAMPLE_YAML.write_text(generate_sim2real_two_step_yaml(), encoding="utf-8")
     assert EXAMPLE_YAML.is_file()
-    result = runner.invoke(app, ["workbench", "workflow", "validate-spec", str(EXAMPLE_YAML), "--json"])
+    result = runner.invoke(
+        app, ["workbench", "workflow", "validate-spec", str(EXAMPLE_YAML), "--json"]
+    )
     assert result.exit_code == 0
     assert "sim2real-two-step" in result.output
 
@@ -85,8 +90,7 @@ def test_plan_two_step_workflow_has_two_steps() -> None:
     assert len(plan["steps"]) == 2
     steps = {step["state"]: step for step in plan["steps"]}
     assert (
-        steps["augment"]["tool_ref"]
-        == "workbench.cosmos2.transfer_conditioned_execute"
+        steps["augment"]["tool_ref"] == "workbench.cosmos2.transfer_conditioned_execute"
     )
     assert "--execute" in steps["augment"]["argv"]
     assert "--condition-on-input" in steps["augment"]["argv"]
@@ -104,14 +108,16 @@ def test_generate_sim2real_loop_gate_yaml_validates() -> None:
     result = validate_workflow_yaml_text(yaml_text)
     assert result["ok"] is True
     assert result["name"] == "sim2real-loop-gate-agent"
-    assert {"augment", "refine", "vlm-critique", "quality-gate", "publish"}.issubset(set(result["states"]))
+    assert {"augment", "refine", "vlm-critique", "quality-gate", "publish"}.issubset(
+        set(result["states"])
+    )
 
 
 @pytest.mark.parametrize(
     ("yaml_text", "state"),
     [
         (generate_sim2real_loop_gate_yaml(), "augment"),
-        (generate_vlm_rl_loop_yaml(), "augment"),
+        (generate_vlm_rl_loop_yaml(), "stage-03-transfer"),
         (generate_token_factory_gate_yaml(), "augment-scene"),
         (generate_data_factory_yaml(), "augment"),
     ],
@@ -121,16 +127,14 @@ def test_generated_cosmos_transfer_outputs_use_canonical_manifest_schema(
 ) -> None:
     spec = yaml.safe_load(yaml_text)
 
-    assert spec["states"][state]["outputs"][0]["schema"] == (
-        "npa.cosmos2.transfer.v1"
-    )
+    assert spec["states"][state]["outputs"][0]["schema"] == ("npa.cosmos2.transfer.v1")
 
 
 @pytest.mark.parametrize(
     ("yaml_text", "state"),
     [
         (generate_sim2real_loop_gate_yaml(), "augment"),
-        (generate_vlm_rl_loop_yaml(), "augment"),
+        (generate_vlm_rl_loop_yaml(), "stage-03-transfer"),
         (generate_token_factory_gate_yaml(), "augment-scene"),
     ],
 )
@@ -139,13 +143,17 @@ def test_generated_input_cosmos_stages_fail_closed_without_their_clip(
 ) -> None:
     spec = yaml.safe_load(yaml_text)
 
-    input_uris = {
-        artifact["uri"] for artifact in spec["states"][state]["inputs"]
-    }
+    input_uris = {artifact["uri"] for artifact in spec["states"][state]["inputs"]}
     assert "{{config.trigger_uri}}" in input_uris
-    assert spec["states"][state]["toolRef"] == (
-        "workbench.cosmos2.transfer_conditioned_execute"
-    )
+    if state == "stage-03-transfer":
+        assert (
+            "npa.workflows.sim2real.workflow_stage"
+            in spec["states"][state]["run"]["argv"]
+        )
+    else:
+        assert spec["states"][state]["toolRef"] == (
+            "workbench.cosmos2.transfer_conditioned_execute"
+        )
 
 
 def test_generated_data_factory_consumer_uses_canonical_manifest_schema() -> None:
@@ -158,7 +166,9 @@ def test_generated_data_factory_consumer_uses_canonical_manifest_schema() -> Non
 
 def test_plan_loop_gate_workflow_respects_assume_decision() -> None:
     yaml_text = generate_sim2real_loop_gate_yaml()
-    plan = plan_workflow_yaml_text(yaml_text, run_id="loop-demo", assume_decision="promote_checkpoint")
+    plan = plan_workflow_yaml_text(
+        yaml_text, run_id="loop-demo", assume_decision="promote_checkpoint"
+    )
     assert plan["ok"] is True
     step_states = [str(step.get("state")) for step in plan["steps"]]
     assert "quality-gate" in step_states
@@ -167,12 +177,17 @@ def test_plan_loop_gate_workflow_respects_assume_decision() -> None:
 
 def test_match_create_workflow_intent() -> None:
     assert match_chat_intent("create a 2-step sim2real workflow") == "create_workflow"
-    assert match_chat_intent("generate npa.workflow YAML for sim2real") == "create_workflow"
+    assert (
+        match_chat_intent("generate npa.workflow YAML for sim2real")
+        == "create_workflow"
+    )
 
 
 def test_create_workflow_grounded_reply_includes_yaml_fence() -> None:
     state: dict = {}
-    reply = build_grounded_reply("create_workflow", state, ["workbench.cosmos2.transfer"])
+    reply = build_grounded_reply(
+        "create_workflow", state, ["workbench.cosmos2.transfer"]
+    )
     assert "```yaml" in reply
     assert "sim2real-two-step" in reply
     assert "augment" in reply
@@ -222,7 +237,9 @@ def test_extract_data_factory_params_fanout_gpus_subject() -> None:
     assert "warehouse robot clips" in params["augment_subject"]
 
     # "8 variants" style also parses.
-    p2 = extract_data_factory_params("generate a paidf workflow with 8 scenario variants")
+    p2 = extract_data_factory_params(
+        "generate a paidf workflow with 8 scenario variants"
+    )
     assert p2["n_augmentations"] == 8
 
 
@@ -254,7 +271,9 @@ def test_default_data_factory_uses_four_gpus() -> None:
 
 def test_match_create_data_factory_intent() -> None:
     assert (
-        match_chat_intent("write me a paidf npa workflow to augment and fan out scenarios")
+        match_chat_intent(
+            "write me a paidf npa workflow to augment and fan out scenarios"
+        )
         == "create_data_factory_workflow"
     )
     assert (
@@ -291,8 +310,14 @@ def test_data_factory_draft_from_intent_and_text_is_runnable() -> None:
 
 
 def test_infra_backend_intent_and_reply() -> None:
-    assert match_chat_intent("which kubernetes clusters are available?") == "infra_backends"
-    assert match_chat_intent("deploy an mk8s cluster for workflow runs") == "mk8s_provision"
+    assert (
+        match_chat_intent("which kubernetes clusters are available?")
+        == "infra_backends"
+    )
+    assert (
+        match_chat_intent("deploy an mk8s cluster for workflow runs")
+        == "mk8s_provision"
+    )
     apis = apis_for_intent("infra_backends")
     assert "infra/k8s" in apis
     mk8s_apis = apis_for_intent("mk8s_provision")
@@ -350,10 +375,17 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "Sim2Real Run Monitor" not in bundled
     assert "Pick a run" in bundled and "pipeline timeline, result, and logs." in bundled
     assert "formatStageStatusLabel" in bundled
-    assert "data.ok === false" in bundled  # submitWorkflowYaml must not treat blocked as success
-    assert 'ok": bool(validation.get("ok"))' in source or '"ok": bool(validation.get("ok"))' in source
+    assert (
+        "data.ok === false" in bundled
+    )  # submitWorkflowYaml must not treat blocked as success
+    assert (
+        'ok": bool(validation.get("ok"))' in source
+        or '"ok": bool(validation.get("ok"))' in source
+    )
     assert "lastAppliedDraftYaml" in bundled  # refresh must not stomp local YAML edits
-    assert "Uploaded `" in bundled or "not runnable yet" in bundled  # upload surfaces validation state
+    assert (
+        "Uploaded `" in bundled or "not runnable yet" in bundled
+    )  # upload surfaces validation state
     assert "No run-specific Rerun recording yet" in bundled
     assert "_run_sim2real_pipeline_background" in source
     assert "agent-local-sim2real" in source
@@ -427,7 +459,9 @@ states:
   recover:
     terminal: true
 """
-    plan = plan_workflow_yaml_text(yaml_text, run_id="agent-branch-demo", tool_refs=frozenset())
+    plan = plan_workflow_yaml_text(
+        yaml_text, run_id="agent-branch-demo", tool_refs=frozenset()
+    )
     assert plan["ok"] is True
     states = [step["state"] for step in plan["steps"]]
     assert states == ["root", "branch", "deploy", "recover"]
@@ -468,36 +502,35 @@ def test_generate_vlm_rl_loop_yaml_validates() -> None:
     yaml_text = generate_vlm_rl_loop_yaml()
     result = validate_workflow_yaml_text(yaml_text)
     assert result["ok"] is True, f"vlm-rl validate failed: {result.get('error')}"
-    assert result["name"] == "sim2real-vlm-rl"
+    assert result["name"] == "sim2real"
     states = set(result["states"])
-    assert "augment" in states
-    assert "envgen" in states
-    assert "finalize" in states
+    assert "stage-03-transfer" in states
+    assert "stage-04-wave" in states
+    assert "stage-14-visualize" in states
 
 
 def test_generate_vlm_rl_loop_yaml_plan_has_multiple_steps() -> None:
     yaml_text = generate_vlm_rl_loop_yaml()
-    plan = plan_workflow_yaml_text(yaml_text, run_id="vlm-rl-test", assume_decision="promote_checkpoint")
+    plan = plan_workflow_yaml_text(
+        yaml_text, run_id="vlm-rl-test", assume_decision="promote_checkpoint"
+    )
     assert plan["ok"] is True, f"vlm-rl plan failed: {plan.get('error')}"
     assert len(plan["steps"]) >= 3
     steps = {step["state"]: step for step in plan["steps"]}
-    tool_refs = [step.get("tool_ref") for step in plan["steps"]]
-    assert "workbench.cosmos2.transfer_conditioned_execute" in tool_refs
-    assert "workbench.sim2real_envgen.raw_shard" in tool_refs
+    assert "npa.workflows.sim2real.workflow_stage" in steps["stage-03-transfer"]["argv"]
     manifest_uri = "s3://example-bucket/sim2real/vlm-rl-test/augment/manifest.json"
-    envgen_argv = steps["envgen"]["argv"]
-    assert envgen_argv[envgen_argv.index("--augmented-frames-uri") + 1] == manifest_uri
-    assert steps["envgen"]["inputs"] == [
-        {"uri": manifest_uri, "schema": "npa.cosmos2.transfer.v1"}
-    ]
+    assert steps["stage-03-transfer"]["outputs"][0]["uri"] == manifest_uri
+    assert steps["stage-03-transfer"]["inputs"][0]["uri"].startswith(
+        "s3://example-bucket/sim2real-triggers/"
+    )
 
 
 def test_generate_vlm_rl_loop_yaml_contains_loop_and_gate() -> None:
     yaml_text = generate_vlm_rl_loop_yaml()
     assert "loop:" in yaml_text
-    assert "transitions:" in yaml_text
+    assert "parallel:" in yaml_text
     assert "promote_checkpoint" in yaml_text
-    assert "loop_back" in yaml_text
+    assert "writesDecision: true" in yaml_text
     assert "writesDecision: true" in yaml_text
 
 
@@ -514,7 +547,9 @@ def test_generate_token_factory_gate_yaml_validates() -> None:
 
 def test_generate_token_factory_gate_yaml_plan() -> None:
     yaml_text = generate_token_factory_gate_yaml()
-    plan = plan_workflow_yaml_text(yaml_text, run_id="gate-test", assume_decision="promote_checkpoint")
+    plan = plan_workflow_yaml_text(
+        yaml_text, run_id="gate-test", assume_decision="promote_checkpoint"
+    )
     assert plan["ok"] is True, f"token-factory plan failed: {plan.get('error')}"
     assert len(plan["steps"]) >= 2
     tool_refs = [step.get("tool_ref") for step in plan["steps"]]
@@ -549,65 +584,31 @@ def test_generate_isaac_byof_yaml_plan_contains_byof_toolref() -> None:
 
 
 def test_generate_gpu_cross_region_yaml_validates() -> None:
-    yaml_text = generate_gpu_cross_region_yaml()
-    result = validate_workflow_yaml_text(yaml_text)
-    assert result["ok"] is True, f"gpu-cross-region validate failed: {result.get('error')}"
-    assert result["name"] == "sim2real-gpu-cross-region"
-    states = set(result["states"])
-    assert "primary-rollout" in states
-    assert "transform-rollouts" in states
-    assert "secondary-eval" in states
-    assert "summarize-improvement" in states
-    assert "finalize" in states
+    with pytest.raises(ValueError, match="stub Sim2Real components"):
+        generate_gpu_cross_region_yaml()
 
 
 def test_generate_gpu_cross_region_yaml_includes_multi_region_resources() -> None:
-    yaml_text = generate_gpu_cross_region_yaml()
-    assert "gpu-primary:" in yaml_text
-    assert "gpu-secondary:" in yaml_text
-    assert "container-glue:" in yaml_text
-    assert "project_primary" in yaml_text
-    assert "project_secondary" in yaml_text
-    assert "region_primary" in yaml_text
-    assert "region_secondary" in yaml_text
-    assert "transform-rollouts" in yaml_text
-    assert "summarize-improvement" in yaml_text
-    assert "workbench.data_transform.rollout_contract" in yaml_text
-    assert "workbench.data_transform.improvement_summary" in yaml_text
-    assert "rollout_source_schema" not in yaml_text
-    assert "rollout_target_schema" not in yaml_text
+    with pytest.raises(ValueError, match="retired"):
+        generate_gpu_cross_region_yaml()
 
 
 def test_generate_gpu_cross_region_yaml_contract_edges_align() -> None:
-    spec = yaml.safe_load(generate_gpu_cross_region_yaml())
-    states = spec["states"]
-    primary_out_schema = states["primary-rollout"]["outputs"][0]["schema"]
-    transform_in_schema = states["transform-rollouts"]["inputs"][0]["schema"]
-    transform_out_schema = states["transform-rollouts"]["outputs"][0]["schema"]
-    secondary_in_schema = states["secondary-eval"]["inputs"][0]["schema"]
-
-    assert primary_out_schema == transform_in_schema
-    assert transform_out_schema == secondary_in_schema
+    with pytest.raises(ValueError, match="real solution toolRefs"):
+        generate_gpu_cross_region_yaml()
 
 
 def test_generate_gpu_cross_region_yaml_plan() -> None:
-    yaml_text = generate_gpu_cross_region_yaml()
-    plan = plan_workflow_yaml_text(yaml_text, run_id="gpu-cross-region-test")
-    assert plan["ok"] is True, f"gpu-cross-region plan failed: {plan.get('error')}"
-    states = [step["state"] for step in plan["steps"]]
-    assert states == [
-        "primary-rollout",
-        "transform-rollouts",
-        "secondary-eval",
-        "summarize-improvement",
-        "finalize",
-    ]
+    with pytest.raises(ValueError, match="retired"):
+        generate_gpu_cross_region_yaml()
 
 
 def test_generate_rl_policy_training_yaml_validates() -> None:
     yaml_text = generate_rl_policy_training_yaml()
     result = validate_workflow_yaml_text(yaml_text)
-    assert result["ok"] is True, f"rl-policy-success validate failed: {result.get('error')}"
+    assert result["ok"] is True, (
+        f"rl-policy-success validate failed: {result.get('error')}"
+    )
     assert result["name"] == "rl-policy-training-sim-success"
     states = set(result["states"])
     assert "train-policy" in states
@@ -619,7 +620,9 @@ def test_generate_rl_policy_training_yaml_validates() -> None:
 
 def test_generate_rl_policy_training_yaml_plan() -> None:
     yaml_text = generate_rl_policy_training_yaml()
-    plan = plan_workflow_yaml_text(yaml_text, run_id="rl-policy-success-test", assume_decision="promote_checkpoint")
+    plan = plan_workflow_yaml_text(
+        yaml_text, run_id="rl-policy-success-test", assume_decision="promote_checkpoint"
+    )
     assert plan["ok"] is True, f"rl-policy-success plan failed: {plan.get('error')}"
     states = [step["state"] for step in plan["steps"]]
     assert "train-policy" in states
@@ -633,7 +636,7 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "sim2real-two-step" in two_step
     assert "apiVersion: npa.workflow/v0.0.1-beta" in two_step
     vlm_rl = generate_workflow_yaml("vlm-rl-loop")
-    assert "sim2real-vlm-rl" in vlm_rl
+    assert "name: sim2real" in vlm_rl
     gate = generate_workflow_yaml("token-factory-gate")
     assert "tokenfactory-cosmos-gate" in gate
     loop_gate = generate_workflow_yaml("loop-gate")
@@ -642,7 +645,7 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "name: byof" in isaac_byof or "isaac-lab-byof" not in isaac_byof
     assert "isaac-lab-byof" not in isaac_byof
     cross_region = generate_workflow_yaml("gpu-cross-region")
-    assert "sim2real-gpu-cross-region" in cross_region
+    assert "sim2real-two-step" in cross_region
     rl_policy = generate_workflow_yaml("rl-policy-success")
     assert "rl-policy-training-sim-success" in rl_policy
     default = generate_workflow_yaml("unknown-template")
@@ -669,7 +672,7 @@ def test_choose_workflow_template_by_intent_and_text() -> None:
         user_text="create gpu workflow across two regions for one tenant",
         intent="create_workflow",
     )
-    assert selected_multi_region["template"] == "gpu-cross-region"
+    assert selected_multi_region["template"] == "two-step"
     selected_rl_policy = choose_workflow_template(
         user_text="build an rl policy training workflow in simulation",
         intent="create_workflow",
@@ -731,8 +734,8 @@ def test_generate_workflow_draft_sets_not_runnable_when_plan_fails(monkeypatch) 
 
 
 def test_generate_workflow_yaml_aliases() -> None:
-    assert "sim2real-vlm-rl" in generate_workflow_yaml("vlm-rl")
-    assert "sim2real-vlm-rl" in generate_workflow_yaml("vlm_rl_loop")
+    assert "name: sim2real" in generate_workflow_yaml("vlm-rl")
+    assert "name: sim2real" in generate_workflow_yaml("vlm_rl_loop")
     assert "tokenfactory-cosmos-gate" in generate_workflow_yaml("gate")
     assert "tokenfactory-cosmos-gate" in generate_workflow_yaml("tokenfactory")
     assert "sim2real-loop-gate-agent" in generate_workflow_yaml("loop")
@@ -760,8 +763,17 @@ def test_golden_yaml_plan_spec_cli(yaml_name: str) -> None:
         pytest.skip(f"golden YAML not found: {yaml_name}")
     result = runner.invoke(
         app,
-        ["workbench", "workflow", "plan-spec", str(yaml_path), "--run-id", "golden-test",
-         "--assume-decision", "promote_checkpoint", "--json"],
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(yaml_path),
+            "--run-id",
+            "golden-test",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--json",
+        ],
     )
     assert result.exit_code == 0, f"{yaml_name} plan-spec CLI failed:\n{result.output}"
     assert "golden-test" in result.output or "steps" in result.output
@@ -771,22 +783,39 @@ def test_golden_yaml_plan_spec_cli(yaml_name: str) -> None:
 
 
 def test_match_vlm_rl_workflow_intent() -> None:
-    assert match_chat_intent("create a VLM-RL loop workflow") == "create_vlm_rl_workflow"
-    assert match_chat_intent("generate a sim2real vlm rl pipeline") == "create_vlm_rl_workflow"
-    assert match_chat_intent("build a workflow with outer loop and inner loop gate") == "create_vlm_rl_workflow"
+    assert (
+        match_chat_intent("create a VLM-RL loop workflow") == "create_vlm_rl_workflow"
+    )
+    assert (
+        match_chat_intent("generate a sim2real vlm rl pipeline")
+        == "create_vlm_rl_workflow"
+    )
+    assert (
+        match_chat_intent("build a workflow with outer loop and inner loop gate")
+        == "create_vlm_rl_workflow"
+    )
 
 
 def test_match_gate_workflow_intent() -> None:
-    assert match_chat_intent("create a token factory gate workflow") == "create_gate_workflow"
-    assert match_chat_intent("generate a quality gate cosmos augment loop") == "create_gate_workflow"
-    assert match_chat_intent("build a tokenfactory cosmos-gate spec") == "create_gate_workflow"
+    assert (
+        match_chat_intent("create a token factory gate workflow")
+        == "create_gate_workflow"
+    )
+    assert (
+        match_chat_intent("generate a quality gate cosmos augment loop")
+        == "create_gate_workflow"
+    )
+    assert (
+        match_chat_intent("build a tokenfactory cosmos-gate spec")
+        == "create_gate_workflow"
+    )
 
 
 def test_create_vlm_rl_workflow_grounded_reply() -> None:
     state: dict = {}
     reply = build_grounded_reply("create_vlm_rl_workflow", state, [])
     assert "```yaml" in reply
-    assert "sim2real-vlm-rl" in reply
+    assert "name: sim2real" in reply
     assert "VLM-RL" in reply
     assert "GET /api" not in reply
 

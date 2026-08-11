@@ -55,7 +55,7 @@ Requires `NPA_REGISTRY` (or `NPA_E2E_REGISTRY`), and for cpu-tier twins
 The **NVIDIA Physical AI Data Factory** blueprint (annotate → Cosmos augment →
 evaluate/validate gate → re-label → FiftyOne curate → Rerun visualize; no OSMO)
 is promoted to the top of the workflow tree for prominence:
-[`npa/workflows/physical-ai-data-factory.yaml`](../../physical-ai-data-factory.yaml).
+[`physical-ai-data-factory.yaml`](physical-ai-data-factory.yaml).
 It is still an `npa.workflow/v0.0.1` spec and is discovered alongside the specs
 below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide:
 `docs/workbench/guides/physical-ai-data-factory-deploy.md`.
@@ -92,13 +92,11 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `byof-openpi.yaml` | OSS registry: OpenPI pinned image + pi05 DROID config smoke |
 | `byof-droid-policy-learning.yaml` | OSS registry: DROID policy learning pinned image + RLDS config smoke |
 | `rl-policy-training-sim-success.yaml` | Isaac Lab RL train (partial) |
-| `sim2real-vlm-rl.yaml` | **DEMO ONLY** loops with stub toolRefs; never the 14-stage engine |
 | `sim2real-two-step.yaml` / `sim2real-two-step-agent.yaml` | **DEMO ONLY** two-state DSL fixtures |
-| `sim2real-gpu-cross-region-agent.yaml` | **DEMO ONLY** cross-region agent fixture |
 | `sim2real-envgen-shards.yaml` | **DEMO ONLY** isolated envgen fan-out fixture |
 
 The single canonical Sim2Real **14-stage engine** YAML is
-`npa/workflows/sim2real.yaml`. `npa workbench workflow submit`
+`npa/workflows/workbench/npa-workflows/sim2real.yaml`. `npa workbench workflow submit`
 detects that exact file and routes it to direct Kubernetes; none of the demo
 specs above can take that route.
 

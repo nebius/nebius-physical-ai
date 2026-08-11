@@ -206,6 +206,8 @@ def write_dryrun_rollouts(
     steps_per_rollout: int,
     checkpoint_uri: str,
 ) -> list[str]:
+    global _LAST_GPU_PROVENANCE
+
     """Emit deterministic rollout dirs (procedural frames) for wiring tests.
 
     Honest: these are NOT real Isaac frames — DRYRUN only validates the contract
@@ -931,7 +933,7 @@ def run_isaac_rollout_job(
 ) -> list[str]:
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
-    from npa.workflows.sim2real.engine import _image_pull_policy
+    from npa.workflows.sim2real.k8s_components import _image_pull_policy
 
     bucket = (
         _env("NPA_SIM2REAL_BUCKET")
@@ -1050,6 +1052,22 @@ def run_isaac_rollout_job(
         robot_usd_uri=robot_usd_uri,
         task_config=task_config,
     )
+    from npa.workflows.sim2real.isaac_job_payload import (
+        execute_manifest_container_inline,
+    )
+
+    if _env("NPA_SIM2REAL_INLINE_TASK") == "1":
+        provenance = execute_manifest_container_inline(manifest)
+        job_name = str(provenance["job_name"] or job_name)
+        _LAST_GPU_PROVENANCE = provenance
+        return materialize_rollout_dirs(
+            output_dir,
+            _download_rollout_metadata(out_s3, endpoint=endpoint),
+            out_s3,
+            checkpoint_uri=checkpoint_uri,
+            s3_endpoint=endpoint,
+        )
+
     from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
 
     def manifest_factory(product: str, candidate_job_name: str) -> dict[str, Any]:
@@ -1079,7 +1097,6 @@ def run_isaac_rollout_job(
         timeout_s=timeout_s,
     )
     job_name = str(provenance["job_name"])
-    global _LAST_GPU_PROVENANCE
     _LAST_GPU_PROVENANCE = provenance
 
     # Pull the rollouts manifest, then materialize local rollout dirs.
@@ -1097,6 +1114,18 @@ def run_isaac_rollout_job(
     return materialize_rollout_dirs(
         output_dir, meta, out_s3, checkpoint_uri=checkpoint_uri, s3_endpoint=endpoint
     )
+
+
+def _download_rollout_metadata(out_s3: str, *, endpoint: str) -> dict[str, Any]:
+    import boto3
+    from urllib.parse import urlparse
+
+    uri = urlparse(out_s3)
+    response = boto3.client("s3", endpoint_url=endpoint or None).get_object(
+        Bucket=uri.netloc,
+        Key=f"{uri.path.lstrip('/').rstrip('/')}/rollouts.json",
+    )
+    return json.loads(response["Body"].read())
 
 
 def main() -> int:
@@ -1143,7 +1172,9 @@ def main() -> int:
         "rollout_dirs": rollout_dirs,
         "capture": capture_settings(),
         "component_invocation": {
-            "mode": "kubernetes_job" if _LAST_GPU_PROVENANCE else "dryrun",
+            "mode": str(_LAST_GPU_PROVENANCE.get("mode") or "kubernetes_job")
+            if _LAST_GPU_PROVENANCE
+            else "dryrun",
             "gpu_provenance": _LAST_GPU_PROVENANCE,
         },
     }

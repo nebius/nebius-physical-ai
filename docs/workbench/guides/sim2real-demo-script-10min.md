@@ -2,7 +2,7 @@
 
 > **Presentation-only legacy script.** Do not use the private operator-pack
 > commands below to launch a qualification run. The sole production entrypoint
-> is `npa workbench workflow submit npa/workflows/sim2real.yaml`; follow
+> is `npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml --runtime`; follow
 > [the canonical operator guide](sim2real-workflow.md). Pre-staged artifacts here
 > are for a timed presentation, never live-run evidence.
 

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import base64
 import gzip
+import os
+import subprocess
+from typing import Any
 
 _ARG_CHUNK_CHARS = 60_000
 _SCRIPT_PATH = "/tmp/npa-isaac-job-script.sh"
@@ -43,3 +46,51 @@ def decode_compressed_bash_args(args: list[str]) -> str:
     if len(args) < 3 or args[0] != _DECODE_STUB or args[1] != "npa-isaac-payload":
         raise ValueError("not an NPA compressed Isaac bash payload")
     return gzip.decompress(base64.b64decode("".join(args[2:]))).decode("utf-8")
+
+
+def execute_manifest_container_inline(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Execute an existing Isaac Job payload in its workflow-owned GPU task.
+
+    The Sim2Real workflow renderer has already selected the immutable image,
+    admitted the task through SkyPilot/Kubernetes, mounted credentials, and
+    assigned its GPU.  Reusing the exact generated container command here keeps
+    the proven Isaac scripts while avoiding a hidden sibling Kubernetes Job.
+    """
+
+    containers = (
+        manifest.get("spec", {})
+        .get("template", {})
+        .get("spec", {})
+        .get("containers", [])
+    )
+    if len(containers) != 1:
+        raise RuntimeError("inline Isaac execution requires exactly one container")
+    container = containers[0]
+    expected_image = str(container.get("image") or "").removeprefix("docker:")
+    task_image = os.environ.get("NPA_TASK_IMAGE", "").removeprefix("docker:")
+    if not expected_image or "@sha256:" not in expected_image:
+        raise RuntimeError("inline Isaac execution requires an immutable image digest")
+    if not task_image or task_image != expected_image:
+        raise RuntimeError(
+            "inline Isaac payload image does not match the workflow task image: "
+            f"expected={expected_image!r} task={task_image!r}"
+        )
+    command = [str(item) for item in container.get("command") or []]
+    args = [str(item) for item in container.get("args") or []]
+    if not command:
+        raise RuntimeError("inline Isaac payload has no command")
+    env = os.environ.copy()
+    for item in container.get("env") or []:
+        name = str(item.get("name") or "")
+        if name and "value" in item:
+            env[name] = str(item["value"])
+    subprocess.run([*command, *args], env=env, check=True)
+    return {
+        "mode": "npa_workflow_skypilot_task",
+        "job_name": os.environ.get("SKYPILOT_TASK_ID", "")
+        or os.environ.get("SKYPILOT_CLUSTER_NAME", ""),
+        "image": expected_image,
+        "gpu_product": os.environ.get("NPA_WORKFLOW_GPU_PRODUCT", "")
+        or os.environ.get("NPA_SIM2REAL_K8S_GPU_PRODUCT", ""),
+        "owner": "standard_npa_workflow_runtime",
+    }

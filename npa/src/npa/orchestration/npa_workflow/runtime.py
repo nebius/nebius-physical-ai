@@ -37,7 +37,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Literal, Mapping, Sequence, cast
 
 from npa.orchestration.npa_workflow.decisions import normalize_decision
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
@@ -97,6 +97,37 @@ def is_terminal_fail(status: str) -> bool:
 
 def is_terminal(status: str) -> bool:
     return is_terminal_ok(status) or is_terminal_fail(status)
+
+
+def s3_artifact_exists(uri: str) -> bool:
+    """Verify a declared durable output without trusting the job exit status."""
+
+    from urllib.parse import urlparse
+
+    from botocore.exceptions import ClientError
+
+    from npa.clients.storage import StorageClient
+
+    parsed = urlparse(uri)
+    if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.lstrip("/"):
+        raise NpaWorkflowError(f"runtime output must be an explicit s3:// URI: {uri!r}")
+    client = StorageClient.from_environment().s3
+    key = parsed.path.lstrip("/")
+    try:
+        if uri.endswith("/"):
+            response = client.list_objects_v2(
+                Bucket=parsed.netloc, Prefix=key, MaxKeys=1
+            )
+            return any(
+                int(item.get("Size") or 0) > 0 for item in response.get("Contents", [])
+            )
+        response = client.head_object(Bucket=parsed.netloc, Key=key)
+        return int(response.get("ContentLength") or 0) > 0
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        raise
 
 
 @dataclass
@@ -172,7 +203,9 @@ class WaveAttempt:
         }
 
 
-def plan_fingerprint(spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str = "") -> str:
+def plan_fingerprint(
+    spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str = ""
+) -> str:
     """Fingerprint the plan a ledger belongs to.
 
     Wave keys carry a monotonic sequence number, so replaying them is only sound when
@@ -243,6 +276,7 @@ class SkyPilotWaveExecutor:
         timeline_fn: Callable[..., list[dict[str, Any]]] | None = None,
         canceller: Callable[..., Any] | None = None,
         name_lookup_fn: Callable[[str], list[str]] | None = None,
+        output_checker: Callable[[str], bool] | None = None,
         sleeper: Callable[[float], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         logger: Callable[[str], None] | None = None,
@@ -257,6 +291,7 @@ class SkyPilotWaveExecutor:
         self._timeline_fn = timeline_fn
         self._canceller = canceller
         self._name_lookup_fn = name_lookup_fn
+        self._output_checker = output_checker or s3_artifact_exists
         self._sleep = sleeper or time.sleep
         self._clock = clock
         self._log = logger or (lambda message: None)
@@ -342,7 +377,9 @@ class SkyPilotWaveExecutor:
 
     # ----------------------------------------------------------------- private
 
-    def _run_wave(self, steps: Sequence[PlanStep], *, kind: str, group: str) -> WaveAttempt:
+    def _run_wave(
+        self, steps: Sequence[PlanStep], *, kind: str, group: str
+    ) -> WaveAttempt:
         self._sequence += 1
         key = wave_key(steps, group=group, sequence_number=self._sequence)
 
@@ -352,6 +389,14 @@ class SkyPilotWaveExecutor:
                 return adopted
 
         replayed = self.ledger.completed(key) if self.options.resume else None
+        if replayed is not None:
+            outputs = list(replayed.get("outputs") or [])
+            if not self._outputs_exist(outputs):
+                self._log(
+                    f"wave {key}: ledger says succeeded but a declared output is "
+                    "missing; resubmitting"
+                )
+                replayed = None
         if replayed is not None:
             attempt = WaveAttempt(
                 key=key,
@@ -387,6 +432,7 @@ class SkyPilotWaveExecutor:
             self.attempts.append(attempt)
             try:
                 self._submit_and_wait(steps, kind=kind, group=group, attempt=attempt)
+                self._require_outputs(attempt.outputs, key=key)
             except BaseException as exc:  # noqa: BLE001 - see _abort_wave
                 # ANY abort (workflow error, transient tooling error, KeyboardInterrupt)
                 # must cancel the managed job we just launched: leaving it running
@@ -459,7 +505,9 @@ class SkyPilotWaveExecutor:
         self.attempts.append(attempt)
 
         try:
-            status = str(getattr(self._status(job_id), "status", "") or "UNKNOWN").upper()
+            status = str(
+                getattr(self._status(job_id), "status", "") or "UNKNOWN"
+            ).upper()
         except Exception as exc:  # noqa: BLE001 - cannot reconcile blind
             self._abort_wave(
                 attempt,
@@ -472,11 +520,18 @@ class SkyPilotWaveExecutor:
             return attempt
 
         if is_terminal_ok(status):
-            self._log(f"wave {key}: in-flight job {job_id} already succeeded; adopting it")
+            self._log(
+                f"wave {key}: in-flight job {job_id} already succeeded; adopting it"
+            )
             attempt.status = "succeeded"
             attempt.sky_status = status
             attempt.ended_at = utc_now()
             attempt.tasks = self._timeline(job_id)
+            try:
+                self._require_outputs(attempt.outputs, key=key)
+            except NpaWorkflowError as exc:
+                self._abort_wave(attempt, exc)
+                return attempt
             self.ledger.record(attempt)
             return attempt
 
@@ -504,6 +559,7 @@ class SkyPilotWaveExecutor:
                     f"wave {key} (adopted job {job_id}) reached terminal status "
                     f"{final_status}"
                 )
+            self._require_outputs(attempt.outputs, key=key)
         except BaseException as exc:  # noqa: BLE001 - same abort contract as a fresh wave
             self._abort_wave(attempt, exc)
             if not isinstance(exc, Exception):
@@ -513,6 +569,16 @@ class SkyPilotWaveExecutor:
         attempt.ended_at = utc_now()
         self.ledger.record(attempt)
         return attempt
+
+    def _outputs_exist(self, outputs: Sequence[str]) -> bool:
+        return all(self._output_checker(uri) for uri in outputs if uri)
+
+    def _require_outputs(self, outputs: Sequence[str], *, key: str) -> None:
+        missing = [uri for uri in outputs if uri and not self._output_checker(uri)]
+        if missing:
+            raise NpaWorkflowError(
+                f"wave {key} completed without declared durable output(s): {missing}"
+            )
 
     def _abort_wave(self, attempt: WaveAttempt, exc: BaseException) -> None:
         """Record a failed attempt and cancel its managed job if one is in flight."""
@@ -582,8 +648,14 @@ class SkyPilotWaveExecutor:
                 f"(job_id={job_id}, name={job_name})"
             )
 
-    def _poll(self, job_id: str, attempt: WaveAttempt, *, observe_tasks: bool = False) -> str:
-        deadline = self._clock() + max(1, self.options.max_wait_seconds)
+    def _poll(
+        self, job_id: str, attempt: WaveAttempt, *, observe_tasks: bool = False
+    ) -> str:
+        deadline = (
+            self._clock() + self.options.max_wait_seconds
+            if self.options.max_wait_seconds > 0
+            else None
+        )
         last = "UNKNOWN"
         consecutive_status_errors = 0
         while True:
@@ -604,7 +676,7 @@ class SkyPilotWaveExecutor:
                     f"wave {attempt.key}: status query {consecutive_status_errors} failed "
                     f"({exc}); job {job_id} still running, retrying"
                 )
-                if self._clock() >= deadline:
+                if deadline is not None and self._clock() >= deadline:
                     if self.options.cancel_on_timeout:
                         self._cancel(job_id, attempt.job_name)
                     raise NpaWorkflowError(
@@ -619,7 +691,7 @@ class SkyPilotWaveExecutor:
                 self._observe_concurrency(job_id, attempt)
             if is_terminal(last):
                 return last
-            if self._clock() >= deadline:
+            if deadline is not None and self._clock() >= deadline:
                 if self.options.cancel_on_timeout:
                     self._cancel(job_id, attempt.job_name)
                 raise NpaWorkflowError(
@@ -661,11 +733,16 @@ class SkyPilotWaveExecutor:
         )
 
     def _job_ids_by_name(self, job_name: str) -> list[str]:
-        lookup = self._name_lookup_fn
-        if lookup is None:
+        lookup: Callable[..., list[str]]
+        if self._name_lookup_fn is None:
             from npa.orchestration.skypilot.workflow import (
-                find_job_ids_by_name as lookup,
+                find_job_ids_by_name,
             )
+
+            def lookup(name: str) -> list[str]:
+                return find_job_ids_by_name(name)
+        else:
+            lookup = self._name_lookup_fn
 
         try:
             return [str(item) for item in lookup(job_name)]
@@ -694,14 +771,18 @@ class SkyPilotWaveExecutor:
             },
         }
         attempt.observations.append(observation)
-        attempt.max_concurrent_observed = max(attempt.max_concurrent_observed, len(running))
+        attempt.max_concurrent_observed = max(
+            attempt.max_concurrent_observed, len(running)
+        )
         if len(running) > 1:
             self._log(
                 f"wave {attempt.key}: {len(running)} tasks running concurrently "
                 f"({', '.join(sorted(running))})"
             )
 
-    def _job_name(self, steps: Sequence[PlanStep], *, group: str, attempt: WaveAttempt) -> str:
+    def _job_name(
+        self, steps: Sequence[PlanStep], *, group: str, attempt: WaveAttempt
+    ) -> str:
         label = group or steps[0].state
         suffix = f"-a{attempt.attempt}" if attempt.attempt > 1 else ""
         iteration = steps[0].iteration
@@ -711,33 +792,44 @@ class SkyPilotWaveExecutor:
         return _sanitize_job_name(name)
 
     def _submit(self, path: Path, job_name: str) -> Any:
-        submitter = self._submitter
-        if submitter is None:
-            from npa.orchestration.skypilot.workflow import submit_workflow as submitter
+        if self._submitter is None:
+            from npa.orchestration.skypilot.workflow import submit_workflow
+
+            submitter = submit_workflow
+        else:
+            submitter = self._submitter
 
         return submitter(
             path,
             job_name,
             isolated_config_dir=self.options.isolated_config_dir,
-            controller_backend=self.options.controller_backend,
+            controller_backend=cast(
+                Literal["kubernetes", "nebius"], self.options.controller_backend
+            ),
             infra=self.options.infra,
             secret_envs=list(self.options.secret_envs),
             timeout=self.options.submit_timeout,
         )
 
     def _status(self, job_id: str) -> Any:
-        status_fn = self._status_fn
-        if status_fn is None:
-            from npa.orchestration.skypilot.workflow import workflow_status as status_fn
+        if self._status_fn is None:
+            from npa.orchestration.skypilot.workflow import workflow_status
+
+            status_fn = workflow_status
+        else:
+            status_fn = self._status_fn
 
         return status_fn(job_id)
 
     def _timeline(self, job_id: str) -> list[dict[str, Any]]:
-        timeline_fn = self._timeline_fn
-        if timeline_fn is None:
+        if self._timeline_fn is None:
             from npa.orchestration.skypilot.workflow import (
-                workflow_task_statuses as timeline_fn,
+                workflow_task_statuses,
             )
+
+            timeline_fn = workflow_task_statuses
+        else:
+            timeline_fn = self._timeline_fn
 
         try:
             return list(timeline_fn(job_id))
@@ -750,7 +842,9 @@ class SkyPilotWaveExecutor:
         if canceller is None:
             try:
                 from npa.orchestration.skypilot._bin import resolve_config
-                from npa.orchestration.skypilot.workflow_state import cancel_workflow_job
+                from npa.orchestration.skypilot.workflow_state import (
+                    cancel_workflow_job,
+                )
             except Exception:  # noqa: BLE001
                 return
 
@@ -790,7 +884,9 @@ class RuntimeLedger:
         resume: bool = False,
     ) -> None:
         self.store = store
-        self.state = RuntimeRunState(workflow=workflow, run_id=run_id, api_version=api_version)
+        self.state = RuntimeRunState(
+            workflow=workflow, run_id=run_id, api_version=api_version
+        )
         if store is not None and resume:
             existing = store.read_runtime_state()
             if existing is not None and existing.run_id == run_id:
@@ -926,10 +1022,10 @@ def s3_trigger_waiter(
     recording the observed watermark in the ledger so a resumed run does not wait
     again for data it already saw.
 
-    The wait is bounded twice over: by ``trigger.maxPolls`` when the spec sets one,
-    and **always** by ``max_wait_seconds`` (the run's per-wave deadline). Without the
-    second bound a spec that leaves ``maxPolls`` at its default of 0 would wait for
-    data forever instead of failing the run.
+    The wait is bounded by ``trigger.maxPolls`` when set and by
+    ``max_wait_seconds`` when positive. A zero max wait is an explicit unbounded
+    operator choice for long-running workflows; the durable ledger and status
+    timeline remain observable and resumable while it waits.
     """
 
     log = logger or (lambda message: None)
@@ -966,7 +1062,7 @@ def s3_trigger_waiter(
             if seen and int(seen.get("objects") or 0) >= trigger.min_objects:
                 return dict(seen)
         polls = 0
-        deadline = clock() + max(1, max_wait_seconds)
+        deadline = clock() + max_wait_seconds if max_wait_seconds > 0 else None
         while True:
             keys = _list(uri)
             polls += 1
@@ -980,14 +1076,16 @@ def s3_trigger_waiter(
                 }
                 if ledger is not None:
                     ledger.record_watermark(state.name, watermark)
-                log(f"trigger {state.name}: {len(keys)} object(s) at {uri} after {polls} poll(s)")
+                log(
+                    f"trigger {state.name}: {len(keys)} object(s) at {uri} after {polls} poll(s)"
+                )
                 return watermark
             if trigger.max_polls and polls >= trigger.max_polls:
                 raise NpaWorkflowError(
                     f"state {state.name}: trigger {uri} still has {len(keys)} object(s) "
                     f"after {polls} poll(s) (need {trigger.min_objects})"
                 )
-            if clock() >= deadline:
+            if deadline is not None and clock() >= deadline:
                 raise NpaWorkflowError(
                     f"state {state.name}: trigger {uri} still has {len(keys)} object(s) "
                     f"(need {trigger.min_objects}) after waiting {max_wait_seconds}s"
@@ -1039,7 +1137,8 @@ def run_workflow_runtime(
     state_store: RunStateStore | None = None,
     decision_reader: Callable[[str, str], str] | None = None,
     executor: SkyPilotWaveExecutor | None = None,
-    trigger_waiter: Callable[[StateSpec, str, RunContext], dict[str, Any]] | None = None,
+    trigger_waiter: Callable[[StateSpec, str, RunContext], dict[str, Any]]
+    | None = None,
     logger: Callable[[str], None] | None = None,
 ) -> RuntimeReport:
     """Drive a spec to completion through the runtime tier.
@@ -1168,7 +1267,9 @@ def _resolved_config(spec: NpaWorkflowSpec, run_id: str) -> dict[str, Any]:
     return dict(ctx.config)
 
 
-def plan_preview(spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str = "") -> ExecutionPlan:
+def plan_preview(
+    spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str = ""
+) -> ExecutionPlan:
     """Convenience for callers that want the flattened plan next to a runtime run."""
 
     return build_plan(spec, run_id=run_id, assume_decision=assume_decision)

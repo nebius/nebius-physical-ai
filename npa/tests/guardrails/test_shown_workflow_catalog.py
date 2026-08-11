@@ -30,7 +30,7 @@ def test_skypilot_catalog_dir_is_not_reintroduced() -> None:
 
 def test_no_raw_skypilot_task_yaml_in_shown_catalog() -> None:
     # Covers the catalog directory plus any promoted top-level blueprint spec
-    # (e.g. npa/workflows/physical-ai-data-factory.yaml).
+    # (e.g. npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml).
     offenders = [
         str(path.relative_to(REPO_ROOT))
         for path in iter_npa_workflow_specs()
@@ -46,4 +46,4 @@ def test_shown_catalog_has_npa_workflow_specs() -> None:
     specs = iter_npa_workflow_specs()
     assert specs, "expected npa.workflow specs under the shown catalog"
     assert all(detect_submit_format(path) == "npa.workflow" for path in specs)
-    assert "sim2real.yaml" not in {path.name for path in specs}
+    assert [path.name for path in specs].count("sim2real.yaml") == 1

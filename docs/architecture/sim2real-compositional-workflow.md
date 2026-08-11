@@ -1,0 +1,60 @@
+# Sim2Real compositional workflow and resume contract
+
+The operator-facing Sim2Real pipeline is
+`npa/workflows/workbench/npa-workflows/sim2real.yaml`. It is an
+`npa.workflow/v0.0.1` graph executed by `npa workbench workflow ... --runtime`.
+It is not detected or submitted through a Sim2Real-specific controller.
+
+## Solution boundaries
+
+Each real solution boundary is a workflow state with its own immutable image,
+resource request, inputs, and outputs. CPU contract states surround Cosmos
+Transfer, parallel environment-generation shards, Isaac policy rollouts,
+parallel Cosmos Reason lanes, BYO Isaac RSL-RL PPO, Isaac gold evaluation, and
+Rerun/MCAP finalization. Stage 12 is intentionally an external `SEAM`; it is
+recorded as such and is never reported as `WORKS`.
+
+The outer and inner loops are ordinary workflow loops. Named `{{loop.*}}`
+tokens scope iteration artifacts, while the standard decision artifact controls
+the outer gate. The reduced merge proof sets both bounds to one and disables
+early exit; higher iteration counts are a post-merge efficacy choice.
+
+## Artifact and restart contract
+
+Every stage consumes explicit S3 URIs and publishes an immutable result plus a
+`ComponentRecord`. The canonical pointer `components/stage_XX.json` is backed by
+a content-addressed copy under `components/history/stage_XX/<sha256>.json`.
+Records attest the source SHA, workflow-owned image digest, input/output URIs,
+and GPU evidence where applicable. Train, validation, and gold paths remain
+disjoint; checkpoint selection records the exact checkpoint URI, SHA-256, and
+training iteration. Gold reports retain their exact render prefix.
+
+The standard workflow runtime persists its ledger at
+`<run-prefix>/npa-workflow/runtime.json`. On `--resume` it adopts an in-flight
+managed SkyPilot job, reuses completed waves only after their declared S3
+outputs pass validation, and resubmits only incomplete work. Consequently a
+restart at the Stage 8/9 barrier or during finalization reconciles from the
+same workflow/S3 state instead of reconstructing private controller memory.
+
+## Execution ownership
+
+SkyPilot/Kubernetes owns each state Job. Isaac rollout, PPO, and evaluation run
+their existing fail-closed payload in the already admitted workflow task; they
+do not create hidden sibling Jobs. Kubernetes scheduling, retries, queueing,
+credentials, and image pull behavior therefore remain visible to the standard
+runtime. Each GPU resource profile attaches the configurable Kueue LocalQueue
+label and Kubernetes priority class to the SkyPilot Pod, so sibling waves use
+observable admission instead of delete/recreate contention. The workflow task
+image must equal the payload's immutable digest.
+
+`config.require_baked_npa` makes the renderer reject mutable or missing images
+and replaces source-tarball/package bootstrap with a baked-source attestation.
+The task verifies `NPA_IMAGE_SOURCE_SHA` against the exact workflow SHA before
+it runs; no dependency installation happens after admission.
+
+`engine.py` is now a small compatibility facade for archived direct-controller
+runs. Its implementation is split into bounded, ratcheted legacy
+orchestration, component/training, held-out-contract, Isaac, and artifact
+modules. The canonical workflow imports none of them and never calls
+`run_preamble`, `run_inner_loop`, `run_single_outer_iteration`, or
+`run_finalize`.

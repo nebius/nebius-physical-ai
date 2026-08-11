@@ -1230,11 +1230,11 @@ def run_isaac_eval_job(
     num_envs: int,
     generated_envs: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    global _SCENARIO_INPUT_PROVENANCE
+    global _LAST_GPU_PROVENANCE, _SCENARIO_INPUT_PROVENANCE
 
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
-    from npa.workflows.sim2real.engine import _image_pull_policy
+    from npa.workflows.sim2real.k8s_components import _image_pull_policy
 
     bucket = (
         _env("NPA_SIM2REAL_BUCKET")
@@ -1357,36 +1357,41 @@ def run_isaac_eval_job(
         scenarios_uri=str(_SCENARIO_INPUT_PROVENANCE["uri"]),
         scenarios_sha256=str(_SCENARIO_INPUT_PROVENANCE["sha256"]),
     )
-    from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
-
-    def manifest_factory(product: str, candidate_job_name: str) -> dict[str, Any]:
-        candidate = copy.deepcopy(manifest)
-        candidate.setdefault("metadata", {})["name"] = candidate_job_name
-        pod_spec = (
-            candidate.setdefault("spec", {})
-            .setdefault("template", {})
-            .setdefault("spec", {})
+    if _env("NPA_SIM2REAL_INLINE_TASK") == "1":
+        from npa.workflows.sim2real.isaac_job_payload import (
+            execute_manifest_container_inline,
         )
-        pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
-        return candidate
 
-    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+        provenance = execute_manifest_container_inline(manifest)
+    else:
+        from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
+        from npa.workflows.sim2real.k8s_client import KubernetesJobClient
 
-    provenance = run_gpu_job_with_fallback(
-        client=KubernetesJobClient.from_environment(namespace=namespace),
-        manifest_factory=manifest_factory,
-        base_job_name=job_name,
-        namespace=namespace,
-        image=image,
-        preferred_product=gpu_product,
-        explicit_candidates=_env("NPA_SIM2REAL_K8S_GPU_CANDIDATES"),
-        workload="isaac",
-        gpu_resource=_env("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
-        gpu_count=1,
-        timeout_s=timeout_s,
-    )
+        def manifest_factory(product: str, candidate_job_name: str) -> dict[str, Any]:
+            candidate = copy.deepcopy(manifest)
+            candidate.setdefault("metadata", {})["name"] = candidate_job_name
+            pod_spec = (
+                candidate.setdefault("spec", {})
+                .setdefault("template", {})
+                .setdefault("spec", {})
+            )
+            pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
+            return candidate
+
+        provenance = run_gpu_job_with_fallback(
+            client=KubernetesJobClient.from_environment(namespace=namespace),
+            manifest_factory=manifest_factory,
+            base_job_name=job_name,
+            namespace=namespace,
+            image=image,
+            preferred_product=gpu_product,
+            explicit_candidates=_env("NPA_SIM2REAL_K8S_GPU_CANDIDATES"),
+            workload="isaac",
+            gpu_resource=_env("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
+            gpu_count=1,
+            timeout_s=timeout_s,
+        )
     job_name = str(provenance["job_name"])
-    global _LAST_GPU_PROVENANCE
     _LAST_GPU_PROVENANCE = provenance
     out = _download_json(per_env_uri)
     note = str(out.get("note") or "")
@@ -1604,7 +1609,9 @@ def main() -> int:
     report["scenario_records_uri"] = envs_uri
     report["scenario_records_source"] = scenario_records_source
     report["component_invocation"] = {
-        "mode": "kubernetes_job" if _LAST_GPU_PROVENANCE else "dryrun",
+        "mode": str(_LAST_GPU_PROVENANCE.get("mode") or "kubernetes_job")
+        if _LAST_GPU_PROVENANCE
+        else "dryrun",
         "gpu_provenance": _LAST_GPU_PROVENANCE,
     }
     report["success_distance_m"] = success_dist

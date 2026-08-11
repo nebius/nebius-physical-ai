@@ -112,7 +112,9 @@ def load_spec(path: str | Path) -> NpaWorkflowSpec:
     except yaml.YAMLError as exc:
         raise NpaWorkflowError(f"workflow spec is not valid YAML: {exc}") from exc
     if not isinstance(data, dict):
-        raise NpaWorkflowError(f"workflow spec must be a mapping, got {type(data).__name__}")
+        raise NpaWorkflowError(
+            f"workflow spec must be a mapping, got {type(data).__name__}"
+        )
     from npa.orchestration.npa_workflow.schema_validation import validate_document
 
     validate_document(data)
@@ -139,7 +141,9 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
             states_dict[name] = entry
         raw_states = states_dict
     if not isinstance(raw_states, dict) or not raw_states:
-        raise NpaWorkflowError("workflow spec must declare a non-empty 'states' mapping")
+        raise NpaWorkflowError(
+            "workflow spec must declare a non-empty 'states' mapping"
+        )
 
     states: dict[str, StateSpec] = {}
     for name, entry in raw_states.items():
@@ -244,12 +248,16 @@ def _parse_state(
             )
 
     inputs = [
-        ArtifactSpec(uri=str(item.get("uri") or ""), schema=str(item.get("schema") or ""))
+        ArtifactSpec(
+            uri=str(item.get("uri") or ""), schema=str(item.get("schema") or "")
+        )
         for item in (entry.get("inputs") or [])
         if isinstance(item, dict)
     ]
     outputs = [
-        ArtifactSpec(uri=str(item.get("uri") or ""), schema=str(item.get("schema") or ""))
+        ArtifactSpec(
+            uri=str(item.get("uri") or ""), schema=str(item.get("schema") or "")
+        )
         for item in (entry.get("outputs") or [])
         if isinstance(item, dict)
     ]
@@ -272,7 +280,9 @@ def _parse_state(
         outputs=outputs,
         resources=str(entry.get("resources") or "default"),
         terminal=bool(entry.get("terminal")),
-        writes_decision=bool(entry.get("writesDecision") or entry.get("writes_decision")),
+        writes_decision=bool(
+            entry.get("writesDecision") or entry.get("writes_decision")
+        ),
     )
 
 
@@ -368,7 +378,12 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
                     f"state {state.name}: must set run, toolRef, sequence, parallel, "
                     "transitions, next, or terminal"
                 )
-        if state.run and state.run.is_empty() and not state.tool_ref and not state.sequence:
+        if (
+            state.run
+            and state.run.is_empty()
+            and not state.tool_ref
+            and not state.sequence
+        ):
             raise NpaWorkflowError(f"state {state.name}: empty run block")
 
         if state.loop:
@@ -400,7 +415,7 @@ def _validate_resource_profiles(spec: NpaWorkflowSpec) -> None:
                 f"resource profile {name!r}: num_nodes must be an integer, not a bool"
             )
         try:
-            value = int(raw)
+            value = int(str(raw))
         except (TypeError, ValueError) as exc:
             raise NpaWorkflowError(
                 f"resource profile {name!r}: num_nodes must be an integer, got {raw!r}"
@@ -451,9 +466,13 @@ def _validate_parallel_group(spec: NpaWorkflowSpec, state: StateSpec) -> None:
 
     for member in state.parallel:
         if member not in spec.states:
-            raise NpaWorkflowError(f"state {state.name}: unknown parallel member {member!r}")
+            raise NpaWorkflowError(
+                f"state {state.name}: unknown parallel member {member!r}"
+            )
         if member == state.name:
-            raise NpaWorkflowError(f"state {state.name}: parallel member cannot be itself")
+            raise NpaWorkflowError(
+                f"state {state.name}: parallel member cannot be itself"
+            )
         child = spec.states[member]
         if child.sequence or child.parallel or child.loop is not None:
             raise NpaWorkflowError(
@@ -496,6 +515,12 @@ def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
     from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
 
     ctx = _make_context(spec, run_id="validate-run")
+    # Named loop tokens are execution-time values. Resolve them with a harmless
+    # first-iteration sentinel here so validation still catches misspelled loop
+    # names while nested-loop specs remain statically checkable.
+    ctx.loop_iterations = {
+        state.name: 1 for state in spec.states.values() if state.loop is not None
+    }
     for state in spec.states.values():
         if state.loop and state.loop.max is not None:
             try:
@@ -510,9 +535,16 @@ def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
             if not isinstance(value, str):
                 continue
             try:
-                resolve_tokens(value, config=ctx.config, run=ctx.run)
+                resolve_tokens(
+                    value,
+                    config=ctx.config,
+                    run=ctx.run,
+                    loop_iterations=ctx.loop_iterations,
+                )
             except TokenError as exc:
-                raise NpaWorkflowError(f"state {state.name}: params.{key}: {exc}") from exc
+                raise NpaWorkflowError(
+                    f"state {state.name}: params.{key}: {exc}"
+                ) from exc
         try:
             _resolved_run(state, ctx)
         except TokenError as exc:
@@ -525,9 +557,16 @@ def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
         trigger_uris = [state.trigger.uri] if state.trigger is not None else []
         for uri in trigger_uris:
             try:
-                resolve_tokens(uri, config=state_scope, run=ctx.run)
+                resolve_tokens(
+                    uri,
+                    config=state_scope,
+                    run=ctx.run,
+                    loop_iterations=ctx.loop_iterations,
+                )
             except TokenError as exc:
-                raise NpaWorkflowError(f"state {state.name}: trigger.uri: {exc}") from exc
+                raise NpaWorkflowError(
+                    f"state {state.name}: trigger.uri: {exc}"
+                ) from exc
         for artifact in [*state.inputs, *state.outputs]:
             if not artifact.uri:
                 continue
@@ -537,6 +576,7 @@ def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
                     config=state_scope,
                     run=ctx.run,
                     state_outputs=ctx.state_outputs,
+                    loop_iterations=ctx.loop_iterations,
                 )
             except TokenError as exc:
                 if not str(exc).startswith("unknown state token:"):
@@ -548,7 +588,9 @@ def _validate_loop_max(state: StateSpec, config: dict[str, Any]) -> None:
         return
     resolved = resolve_config_int(state.loop.max, config)
     if resolved < 1:
-        raise NpaWorkflowError(f"state {state.name}: loop.max must be >= 1, got {resolved}")
+        raise NpaWorkflowError(
+            f"state {state.name}: loop.max must be >= 1, got {resolved}"
+        )
 
 
 def _assert_acyclic_needs(spec: NpaWorkflowSpec) -> None:
@@ -575,7 +617,9 @@ def _assert_acyclic_needs(spec: NpaWorkflowSpec) -> None:
 def _assert_terminal_exists(spec: NpaWorkflowSpec) -> None:
     terminals = [name for name, state in spec.states.items() if state.terminal]
     if not terminals:
-        raise NpaWorkflowError("workflow must declare at least one terminal: true state")
+        raise NpaWorkflowError(
+            "workflow must declare at least one terminal: true state"
+        )
 
 
 def _assert_bounded_control_flow_cycles(spec: NpaWorkflowSpec) -> None:

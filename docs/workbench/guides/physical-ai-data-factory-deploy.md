@@ -10,7 +10,7 @@ the "how to stand it up".
 
 The blueprint is a single `npa.workflow/v0.0.1` spec, promoted to the top of the
 workflow tree for prominence:
-[`npa/workflows/physical-ai-data-factory.yaml`](../../../npa/workflows/physical-ai-data-factory.yaml).
+[`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml`](../../../npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml).
 SkyPilot is the only orchestrator; there is no OSMO and no bespoke "data factory"
 tool — every stage is an existing workbench tool or a real `run.shell` step.
 
@@ -220,7 +220,7 @@ The blueprint lives at the promoted top-level path. Validate → plan → submit
 there:
 
 ```bash
-SPEC=npa/workflows/physical-ai-data-factory.yaml
+SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
 
 npa workbench workflow validate-spec "$SPEC" --json
 npa workbench workflow plan-spec   "$SPEC" \

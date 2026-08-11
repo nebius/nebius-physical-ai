@@ -1,6 +1,6 @@
 """Validated camera-capture and PPO runtime parameters for Sim2Real.
 
-These values originate in ``npa/workflows/sim2real.yaml`` and are consumed by
+These values originate in the canonical compositional Sim2Real workflow and are consumed by
 the real Isaac rollout/eval/trainer sibling Jobs.  Keeping parsing here makes
 submission, Job materialization, and artifact metadata agree on one contract.
 """

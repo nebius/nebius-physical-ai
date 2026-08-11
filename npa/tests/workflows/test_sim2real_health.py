@@ -379,7 +379,10 @@ def test_run_preflight_selects_requested_checks() -> None:
         probes=DoctorProbes(),
         checks=["config", "coherence"],
     )
-    assert [r.name for r in results] == ["config", "three-tier-coherence"]
+    assert [r.name for r in results] == [
+        "config",
+        "compositional-workflow-coherence",
+    ]
 
 
 @pytest.mark.parametrize("gpu_resource", ["nvidia.com/gpu"])

@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 import npa.workflows.sim2real.engine as engine_module
 import npa.workflows.sim2real_loop as loop_module
@@ -39,7 +38,6 @@ from npa.workflows.sim2real.runner import Sim2RealWorkflow
 
 
 ROOT = Path(__file__).resolve().parents[3]
-RUNBOOK = ROOT / "npa" / "workflows" / "sim2real.yaml"
 SIM2REAL_ACTIONS = (
     ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "sim2real-actions.yaml"
 )
@@ -1291,58 +1289,6 @@ def test_default_augment_image_uses_first_party_cosmos2_registry(monkeypatch) ->
         config.vlm_image
         == "registry.example/workbench/npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
-
-
-def test_raw_runbook_invokes_staged_flow_and_exposes_byo_envs() -> None:
-    docs = [
-        doc
-        for doc in yaml.safe_load_all(RUNBOOK.read_text(encoding="utf-8"))
-        if doc is not None
-    ]
-
-    assert len(docs) == 1
-    task = docs[0]
-    assert task["name"] == "sim2real-staged-loop"
-    assert task["resources"]["cloud"] == "kubernetes"
-    assert "accelerators" not in task["resources"]
-    assert task["envs"]["NPA_SIM2REAL_K8S_GPU_PRODUCT"].startswith("NVIDIA-RTX-PRO")
-
-    # SkyPilot 0.12.2 does not interpolate ${VAR} inside `envs` or `image_id`.
-    # The raw runbook must therefore carry materialized literals and expand env
-    # vars only at container runtime in the `run` block.
-    env_values = "\n".join(str(value) for value in task["envs"].values())
-    assert "${" not in env_values
-    assert "${" not in str(task["resources"]["image_id"])
-    assert task["resources"]["image_id"].startswith("docker:example.invalid/")
-
-    # The BYO seam env names are still declared and consumed by the run block.
-    for env_name in (
-        "NPA_SIM2REAL_TRIGGER_DATASET_URI",
-        "NPA_SIM2REAL_TRIGGER_DATASET_ID",
-        "VLM_IMAGE",
-        "TRAINER_IMAGE",
-        "EVAL_IMAGE",
-    ):
-        assert env_name in task["envs"]
-        assert env_name in task["run"]
-
-    assert "npa.workflows.sim2real run" in task["run"]
-    assert "--initial-quality" in task["run"]
-    assert "--upload-artifacts" in task["run"]
-    assert "for outer_iteration in $(seq 1" not in task["run"]
-    assert "--trigger-dataset-uri" in task["run"]
-    assert "--byo-signal-converter" in task["run"]
-    assert "--k8s-service-account" in task["run"]
-    assert "--k8s-gpu-product" in task["run"]
-    assert "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition" in task["run"]
-    assert "--heldout-eval-limit" in task["run"]
-    assert "--vlm-dual-reason" in task["run"]
-    assert "--no-early-exit" in task["run"]
-    assert "--vlm-reason2-model" in task["run"]
-    assert "--vlm-reason3-model" in task["run"]
-    assert task["envs"]["VLM_REASON2_MODEL"] == "nvidia/Cosmos-Reason2-8B"
-    assert task["envs"]["VLM_REASON3_MODEL"] == "nvidia/Cosmos-Reason2-2B"
-    assert "nebius.cloud" not in RUNBOOK.read_text(encoding="utf-8")
 
 
 def test_staged_path_produces_same_decision_as_full_loop(tmp_path: Path) -> None:

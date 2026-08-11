@@ -18,7 +18,7 @@
 | Task seed/trigger dataset | trigger URI, dataset id | `NPA_SIM2REAL_TRIGGER_DATASET_URI`, `NPA_SIM2REAL_TRIGGER_DATASET_ID` (alias `TRIGGER_DATASET_ID`), default `npa/isaac-lift-cube-franka-seed-v1`; real mode requires a matching `task-dataset-manifest.json` and fails closed on PushT/Franka mismatch |
 | Custom container images | operator env before submit | `AUGMENT_IMAGE`, `ENVGEN_IMAGE`, `POLICY_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE`, `TRAINER_IMAGE`, `ISAAC_IMAGE`, `NPA_SIM2REAL_RERUN_IMAGE` |
 
-Trace env names from `npa/workflows/sim2real.yaml` `envs:`, `npa.workflows.sim2real.k8s_submit`, and `npa.workflows.sim2real.config.build_config_from_env`.
+Trace portable inputs from `npa/workflows/workbench/npa-workflows/sim2real.yaml` `config:` and the stateless `workflow_stage` adapters.
 
 ---
 

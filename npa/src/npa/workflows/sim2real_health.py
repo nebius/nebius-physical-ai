@@ -17,12 +17,9 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from npa.guardrails.skypilot import (
-    env_names_for_yaml,
-    env_refs_for_yaml,
-    unresolved_image_placeholders,
-)
-from npa.guardrails.three_tier import callback_parameters, option_flags
+import yaml
+
+from npa.guardrails.skypilot import unresolved_image_placeholders
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
 PASS = "PASS"
@@ -32,7 +29,7 @@ SKIP = "SKIP"
 
 CLI_MODULE = "npa.cli.workbench.sim2real"
 CLI_CALLBACK = "run_command"
-RUNBOOK_YAML = Path("npa/workflows/sim2real.yaml")
+RUNBOOK_YAML = Path("npa/workflows/workbench/npa-workflows/sim2real.yaml")
 
 
 @dataclass(frozen=True)
@@ -168,35 +165,58 @@ class KubeResult:
 
 
 def coherence_failures(repo_root: Path) -> list[str]:
-    """Return three-tier coherence failures for the sim2real seams.
+    """Return canonical compositional-workflow contract failures."""
 
-    Validates, for each seam, that the CLI flag exists on ``sim2real run``, the
-    YAML env is both declared and referenced in the runbook, and the SDK/config
-    field is a real ``Sim2RealLoopConfig`` field (the SDK forwards overrides by
-    field name).
-    """
-
+    path = repo_root / RUNBOOK_YAML
+    if not path.is_file():
+        return [f"canonical workflow missing: {RUNBOOK_YAML}"]
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     failures: list[str] = []
-    cli_params = callback_parameters(CLI_MODULE, CLI_CALLBACK)
-    cli_flags: set[str] = set()
-    for param in cli_params.values():
-        cli_flags |= option_flags(param)
-    config_field_names = {f.name for f in fields(Sim2RealLoopConfig)}
-    yaml_path = repo_root / RUNBOOK_YAML
-    yaml_envs = env_names_for_yaml(yaml_path)
-    yaml_refs = env_refs_for_yaml(yaml_path)
-
-    for seam in SIM2REAL_SEAMS:
-        if seam.cli_flag not in cli_flags:
-            failures.append(f"{seam.name}: CLI flag missing: {seam.cli_flag}")
-        if seam.config_field not in config_field_names:
+    if (
+        payload.get("apiVersion") != "npa.workflow/v0.0.1"
+        or payload.get("kind") != "Workflow"
+    ):
+        failures.append("canonical YAML is not an npa.workflow/v0.0.1 Workflow")
+    config = dict(payload.get("config") or {})
+    required_config = {
+        "source_sha",
+        "bucket",
+        "root_uri",
+        "trigger_uri",
+        "controller_image",
+        "transfer_image",
+        "envgen_image",
+        "reason_image",
+        "isaac_image",
+        "viewer_image",
+        "isaac_cache_pvc",
+        "gpu_queue",
+        "gpu_priority_class",
+    }
+    missing_config = sorted(required_config - set(config))
+    if missing_config:
+        failures.append(f"canonical config inputs missing: {missing_config}")
+    stages: set[int] = set()
+    commands: list[str] = []
+    for state in (payload.get("states") or {}).values():
+        argv = list((state.get("run") or {}).get("argv") or [])
+        commands.extend(str(item) for item in argv)
+        if "--stage" in argv:
+            stages.add(int(argv[argv.index("--stage") + 1]))
+    if stages != set(range(1, 15)):
+        failures.append(f"canonical stage adapters are incomplete: {sorted(stages)}")
+    joined = " ".join(commands)
+    for forbidden in (
+        "run_preamble",
+        "run_inner_loop",
+        "run_single_outer_iteration",
+        "run_finalize",
+        "k8s_submit",
+    ):
+        if forbidden in joined:
             failures.append(
-                f"{seam.name}: SDK/config field missing: {seam.config_field}"
+                f"canonical workflow calls retired orchestrator: {forbidden}"
             )
-        if seam.yaml_env not in yaml_envs:
-            failures.append(f"{seam.name}: YAML env missing: {seam.yaml_env}")
-        elif seam.yaml_env not in yaml_refs:
-            failures.append(f"{seam.name}: YAML env not referenced: {seam.yaml_env}")
     return failures
 
 
@@ -204,19 +224,19 @@ def check_coherence(repo_root: Path) -> CheckResult:
     failures = coherence_failures(repo_root)
     if failures:
         return CheckResult(
-            name="three-tier-coherence",
+            name="compositional-workflow-coherence",
             status=FAIL,
-            summary=f"{len(failures)} seam(s) are not coherent across CLI, SDK, and YAML.",
+            summary=f"{len(failures)} canonical workflow contract failure(s).",
             remedy=(
-                "Keep each seam wired through the CLI flag, the SDK/config field, "
-                "and the runbook env. See npa/workflows/workbench/sim2real/README.md."
+                "Keep all 14 stages and immutable runtime inputs on the standard "
+                "npa.workflow surface. See npa/workflows/workbench/sim2real/README.md."
             ),
             details=tuple(failures),
         )
     return CheckResult(
-        name="three-tier-coherence",
+        name="compositional-workflow-coherence",
         status=PASS,
-        summary=f"All {len(SIM2REAL_SEAMS)} BYO seams map 1:1 across CLI, SDK, and YAML.",
+        summary="Canonical npa.workflow exposes all 14 stateless stage adapters and runtime inputs.",
     )
 
 

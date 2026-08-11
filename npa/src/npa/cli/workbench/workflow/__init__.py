@@ -48,13 +48,17 @@ def _fail(msg: str, code: int = 1) -> None:
 
 
 # ``docker:cr.<region>.nebius.cloud/<registry-id>/<image>:<tag>`` in a rendered plan.
-_NEBIUS_IMAGE_RE = re.compile(r"image_id:\s*docker:(cr\.[a-z0-9-]+\.nebius\.cloud)/", re.IGNORECASE)
+_NEBIUS_IMAGE_RE = re.compile(
+    r"image_id:\s*docker:(cr\.[a-z0-9-]+\.nebius\.cloud)/", re.IGNORECASE
+)
 
 
 def nebius_registry_hosts(rendered_yaml: str) -> list[str]:
     """Distinct Nebius registry hosts a rendered plan pulls images from."""
 
-    return sorted({match.group(1).lower() for match in _NEBIUS_IMAGE_RE.finditer(rendered_yaml)})
+    return sorted(
+        {match.group(1).lower() for match in _NEBIUS_IMAGE_RE.finditer(rendered_yaml)}
+    )
 
 
 def _refresh_kubernetes_pull_secrets(rendered_path: Path) -> None:
@@ -184,7 +188,7 @@ def submit_cmd(
     max_wait_seconds: int = typer.Option(
         3600,
         "--max-wait-seconds",
-        help="With --runtime: per-wave deadline before the job is cancelled.",
+        help="With --runtime: per-wave deadline before cancellation; 0 is unbounded.",
     ),
     cancel_on_timeout: bool = typer.Option(
         True,
@@ -365,49 +369,7 @@ def submit_cmd(
     materializer = _resolve_materializer(tool, yaml_path)
     resolved_run_id = run_id or _default_submit_run_id(yaml_path)
 
-    from npa.workflows.sim2real.k8s_submit import (
-        status_monitor_command,
-        submit_sim2real_from_workflow_vars,
-    )
-
     submit_format = detect_submit_format(yaml_path)
-    if submit_format == "sim2real_runbook":
-        try:
-            sim2real_result = submit_sim2real_from_workflow_vars(
-                run_id=resolved_run_id,
-                substitutions=substitutions,
-                s3_bucket=s3_bucket,
-                s3_prefix=s3_prefix or "sim2real-b",
-                s3_endpoint=s3_endpoint,
-                registry=registry,
-                orchestrator_image=image,
-                plan_only=plan_only,
-            )
-        except (RuntimeError, ValueError, FileNotFoundError) as exc:
-            _fail(str(exc))
-            return
-        payload = {
-            "status": sim2real_result.status,
-            "run_id": sim2real_result.run_id,
-            "job_id": sim2real_result.job_name,
-            "k8s_context": sim2real_result.k8s_context,
-            "run_prefix_uri": sim2real_result.run_prefix_uri,
-            "log_path": sim2real_result.log_path,
-            "manifest_sha256": sim2real_result.manifest_sha256,
-        }
-        if output_format == OutputFormat.json:
-            typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            typer.echo(f"status: {sim2real_result.status}")
-            typer.echo(f"run_id: {sim2real_result.run_id}")
-            typer.echo(f"job_id: {sim2real_result.job_name}")
-            typer.echo(f"k8s_context: {sim2real_result.k8s_context}")
-            typer.echo(f"run_prefix_uri: {sim2real_result.run_prefix_uri}")
-            typer.echo(f"manifest_sha256: {sim2real_result.manifest_sha256}")
-            if sim2real_result.status == "submitted":
-                typer.echo(f"monitor: {status_monitor_command(sim2real_result.run_id)}")
-        return
-
     prepared_npa = None
     if submit_format == "npa.workflow":
         if deploy_if_absent:
@@ -415,12 +377,16 @@ def submit_cmd(
                 ensure_infra_present,
                 parse_deploy_targets,
             )
-            from npa.orchestration.npa_workflow.spec import load_spec as _load_deploy_spec
+            from npa.orchestration.npa_workflow.spec import (
+                load_spec as _load_deploy_spec,
+            )
 
             try:
                 deploy_targets = parse_deploy_targets(_load_deploy_spec(yaml_path))
                 if deploy_targets:
-                    for record in ensure_infra_present(deploy_targets, dry_run=plan_only):
+                    for record in ensure_infra_present(
+                        deploy_targets, dry_run=plan_only
+                    ):
                         typer.echo(
                             "deployIfAbsent["
                             f"{record['profile']}]: {record['status']} "
@@ -506,8 +472,7 @@ def submit_cmd(
                 typer.echo(f"steps: {len(prepared_npa.plan.steps)}")
                 if prepared_npa.secret_env_hints:
                     typer.echo(
-                        "secret_env_hints: "
-                        + ",".join(prepared_npa.secret_env_hints)
+                        "secret_env_hints: " + ",".join(prepared_npa.secret_env_hints)
                     )
                 typer.echo("---")
                 typer.echo(rendered)
@@ -522,14 +487,11 @@ def submit_cmd(
         yaml_path = prepared_npa.skypilot_yaml_path
         if prepared_npa.secret_env_hints:
             missing = [
-                name
-                for name in prepared_npa.secret_env_hints
-                if name not in secret_env
+                name for name in prepared_npa.secret_env_hints if name not in secret_env
             ]
             if missing:
                 typer.echo(
-                    "Hint: consider --secret-env "
-                    + " --secret-env ".join(missing),
+                    "Hint: consider --secret-env " + " --secret-env ".join(missing),
                     err=True,
                 )
 
@@ -547,7 +509,9 @@ def submit_cmd(
         if substitutions:
             assert submitted_yaml_context is not None
             substituted = _substitute_workflow_vars(yaml_path, substitutions)
-            source_yaml_path = Path(submitted_yaml_context.name) / f"substituted-{yaml_path.name}"
+            source_yaml_path = (
+                Path(submitted_yaml_context.name) / f"substituted-{yaml_path.name}"
+            )
             source_yaml_path.write_text(substituted, encoding="utf-8")
 
         if materializer == "sonic":
@@ -608,7 +572,9 @@ def submit_cmd(
                     s3_endpoint=s3_endpoint,
                 )
                 instrumented = instrument_workflow_yaml(
-                    submitted_yaml_path if submitted_yaml_path.exists() else source_yaml_path,
+                    submitted_yaml_path
+                    if submitted_yaml_path.exists()
+                    else source_yaml_path,
                     run_id=resolved_run_id,
                     state=workflow_state,
                 )
@@ -642,14 +608,20 @@ def submit_cmd(
                 job_id=result.job_id,
             )
             result.log_paths["run_prefix_uri"] = workflow_state.uri
-            result.log_paths["manifest_uri"] = f"{workflow_state.uri.rstrip('/')}/manifest.json"
-            result.log_paths["stages"] = ",".join(instrumented_manifest.get("stages", {}).keys())
+            result.log_paths["manifest_uri"] = (
+                f"{workflow_state.uri.rstrip('/')}/manifest.json"
+            )
+            result.log_paths["stages"] = ",".join(
+                instrumented_manifest.get("stages", {}).keys()
+            )
         if prepared_npa is not None:
             # Persist the npa.workflow run manifest for the submitted run. Only the
             # local `run-spec --persist-state` path used to write it, so a run that
             # actually reached the cluster left no `npa.workflow.run.v1` record and
             # was invisible to every manifest consumer (e.g. the insights GPU metric).
-            run_prefix_uri = _persist_npa_run_manifest(prepared_npa, run_id=resolved_run_id)
+            run_prefix_uri = _persist_npa_run_manifest(
+                prepared_npa, run_id=resolved_run_id
+            )
             # ``result`` is union-typed across submit paths; only the workflow
             # result carries log_paths, so probe for it instead of assuming.
             log_paths = getattr(result, "log_paths", None)
@@ -698,7 +670,9 @@ def _persist_npa_run_manifest(prepared, *, run_id: str) -> str:
             steps=prepared.plan.steps,
         )
     except Exception as exc:  # noqa: BLE001 - never fail an accepted submit
-        typer.echo(f"warning: could not persist the npa.workflow run manifest: {exc}", err=True)
+        typer.echo(
+            f"warning: could not persist the npa.workflow run manifest: {exc}", err=True
+        )
         return ""
 
 
@@ -877,7 +851,11 @@ def _resolve_monitor_parent_state(
     s3_bucket: str = "",
     s3_endpoint: str = "",
 ):
-    from npa.orchestration.skypilot.workflow_state import WorkflowS3Config, parse_s3_uri, resolve_workflow_s3_config
+    from npa.orchestration.skypilot.workflow_state import (
+        WorkflowS3Config,
+        parse_s3_uri,
+        resolve_workflow_s3_config,
+    )
 
     if workflow_s3_uri:
         bucket, prefix = parse_s3_uri(workflow_s3_uri)
@@ -945,7 +923,10 @@ def _durable_workflow_status(
     sky_bin: str = "",
 ) -> dict[str, object]:
     from npa.orchestration.skypilot.workflow import workflow_status
-    from npa.orchestration.skypilot.workflow_state import read_manifest, read_stage_status
+    from npa.orchestration.skypilot.workflow_state import (
+        read_manifest,
+        read_stage_status,
+    )
 
     state = _resolve_monitor_state(
         run_id,
@@ -959,9 +940,9 @@ def _durable_workflow_status(
     stages: dict[str, dict[str, object]] = {}
     for stage, info in (manifest.get("stages", {}) or {}).items():
         stage_info = dict(info) if isinstance(info, dict) else {"name": str(stage)}
-        status = read_stage_status(state, str(stage))
-        if status:
-            stage_info.update(status)
+        stage_status = read_stage_status(state, str(stage))
+        if stage_status:
+            stage_info.update(stage_status)
         stages[str(stage)] = stage_info
 
     job_id = str(manifest.get("sky_job_id") or "")
@@ -972,11 +953,11 @@ def _durable_workflow_status(
             live_status = live.status if not live.error else ""
         except Exception:
             live_status = ""
-    status = _aggregate_stage_status(stages, live_status)
+    aggregate_status = _aggregate_stage_status(stages, live_status)
     return {
         "run_id": manifest.get("run_id") or _display_run_id(run_id),
         "workflow_name": manifest.get("workflow_name", ""),
-        "status": status,
+        "status": aggregate_status,
         "live_status": live_status,
         "sky_job_id": job_id,
         "run_prefix_uri": manifest.get("run_prefix_uri") or state.uri,
@@ -985,9 +966,14 @@ def _durable_workflow_status(
     }
 
 
-def _aggregate_stage_status(stages: dict[str, dict[str, object]], live_status: str) -> str:
+def _aggregate_stage_status(
+    stages: dict[str, dict[str, object]], live_status: str
+) -> str:
     stage_states = [str(info.get("state") or "").upper() for info in stages.values()]
-    if any(state.startswith("FAILED") or state in {"CANCELLED", "BLOCKED"} for state in stage_states):
+    if any(
+        state.startswith("FAILED") or state in {"CANCELLED", "BLOCKED"}
+        for state in stage_states
+    ):
         return "FAILED"
     if stage_states and all(state == "SUCCEEDED" for state in stage_states):
         return "SUCCEEDED"
@@ -1001,10 +987,16 @@ def _aggregate_stage_status(stages: dict[str, dict[str, object]], live_status: s
 
 def _workflow_status_is_terminal(status: str) -> bool:
     normalized = status.upper()
-    return normalized == "SUCCEEDED" or normalized.startswith("FAILED") or normalized in {"CANCELLED", "BLOCKED"}
+    return (
+        normalized == "SUCCEEDED"
+        or normalized.startswith("FAILED")
+        or normalized in {"CANCELLED", "BLOCKED"}
+    )
 
 
-def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat) -> None:
+def _emit_workflow_status(
+    result: dict[str, object], output_format: OutputFormat
+) -> None:
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(result, indent=2, sort_keys=True))
         return
@@ -1030,7 +1022,9 @@ def _emit_workflow_status(result: dict[str, object], output_format: OutputFormat
     stages = result.get("stages", {})
     if isinstance(stages, dict):
         for stage, info in stages.items():
-            state = info.get("state", "UNKNOWN") if isinstance(info, dict) else "UNKNOWN"
+            state = (
+                info.get("state", "UNKNOWN") if isinstance(info, dict) else "UNKNOWN"
+            )
             tier = info.get("tier", "") if isinstance(info, dict) else ""
             suffix = f" ({tier})" if tier else ""
             typer.echo(f"{stage}: {state}{suffix}")
@@ -1070,24 +1064,32 @@ def run_cmd(
     ),
     robot: str = typer.Option("franka_panda", "--robot", help="Robot type."),
     task: str = typer.Option("pick_place", "--task", help="Task name."),
-    n_envs: int = typer.Option(4096, "--n-envs", help="Parallel environments for simulation."),
+    n_envs: int = typer.Option(
+        4096, "--n-envs", help="Parallel environments for simulation."
+    ),
     remote: bool = typer.Option(
-        False, "--remote/--local",
+        False,
+        "--remote/--local",
         help="Execute on remote VMs via SSH (requires --s3-bucket).",
     ),
     s3_bucket: str = typer.Option(
-        "", "--s3-bucket", help="S3 bucket URI for artifact storage (required for --remote)."
+        "",
+        "--s3-bucket",
+        help="S3 bucket URI for artifact storage (required for --remote).",
     ),
     sim_workbench: str = typer.Option(
         "", "--sim-workbench", help="Workbench name for sim VM (Genesis stages)."
     ),
     train_workbench: str = typer.Option(
-        "", "--train-workbench", help="Workbench name for training VM (LeRobot stages). Defaults to sim workbench."
+        "",
+        "--train-workbench",
+        help="Workbench name for training VM (LeRobot stages). Defaults to sim workbench.",
     ),
     action_space: ActionSpace = typer.Option(
-        ActionSpace.cartesian, "--action-space",
+        ActionSpace.cartesian,
+        "--action-space",
         help="Action space for Genesis env: 'cartesian' (4D: delta xyz + gripper) "
-             "or 'joint' (8D: delta joint positions + gripper).",
+        "or 'joint' (8D: delta joint positions + gripper).",
     ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
@@ -1108,7 +1110,9 @@ def run_cmd(
     console.print(f"  project={project or '(default)'}  robot={robot}  task={task}")
     console.print(f"  n_envs={n_envs}")
     if remote:
-        console.print(f"  sim_workbench={sim_workbench or '(default)'}  train_workbench={train_workbench or '(same as sim)'}")
+        console.print(
+            f"  sim_workbench={sim_workbench or '(default)'}  train_workbench={train_workbench or '(same as sim)'}"
+        )
 
     from npa.workflows.distill import DistillationError, run_distillation
 
@@ -1183,7 +1187,9 @@ def status_cmd(
         "--interval",
         help="Watch refresh interval in seconds.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Shortcut for --output-format json."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Shortcut for --output-format json."
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
     ),
@@ -1242,8 +1248,12 @@ def status_cmd(
                     s3_endpoint=s3_endpoint,
                     sky_bin=sky_bin,
                 )
-                _emit_workflow_status(result, OutputFormat.json if json_output else output_format)
-                if not watch or _workflow_status_is_terminal(str(result.get("status", ""))):
+                _emit_workflow_status(
+                    result, OutputFormat.json if json_output else output_format
+                )
+                if not watch or _workflow_status_is_terminal(
+                    str(result.get("status", ""))
+                ):
                     return
                 time.sleep(interval)
         except Exception as exc:
@@ -1382,11 +1392,19 @@ def logs_cmd(
 def artifacts_cmd(
     run_id: str = typer.Argument(help="Durable workflow run ID or s3:// run prefix."),
     stage: str = typer.Option("", "--stage", help="Optional stage name."),
-    project: str = typer.Option("", "--project", "-p", help="Project alias for S3 credentials."),
-    workflow_s3_uri: str = typer.Option("", "--workflow-s3-uri", help="Exact durable workflow run prefix."),
-    workflow_s3_prefix: str = typer.Option("", "--workflow-s3-prefix", help="Parent prefix. The run ID is appended."),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias for S3 credentials."
+    ),
+    workflow_s3_uri: str = typer.Option(
+        "", "--workflow-s3-uri", help="Exact durable workflow run prefix."
+    ),
+    workflow_s3_prefix: str = typer.Option(
+        "", "--workflow-s3-prefix", help="Parent prefix. The run ID is appended."
+    ),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket name or URI."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint."),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """List durable S3 artifact URIs for a workflow run."""
@@ -1406,7 +1424,11 @@ def artifacts_cmd(
         _fail(str(exc))
         return
     if json_output:
-        typer.echo(json.dumps({"run_id": _display_run_id(run_id), "artifacts": artifacts}, indent=2))
+        typer.echo(
+            json.dumps(
+                {"run_id": _display_run_id(run_id), "artifacts": artifacts}, indent=2
+            )
+        )
         return
     for uri in artifacts:
         typer.echo(uri)
@@ -1414,11 +1436,19 @@ def artifacts_cmd(
 
 @app.command("list")
 def list_cmd(
-    project: str = typer.Option("", "--project", "-p", help="Project alias for S3 credentials."),
-    workflow_s3_uri: str = typer.Option("", "--workflow-s3-uri", help="Parent durable workflow prefix."),
-    workflow_s3_prefix: str = typer.Option("", "--workflow-s3-prefix", help="Parent prefix for durable workflow state."),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias for S3 credentials."
+    ),
+    workflow_s3_uri: str = typer.Option(
+        "", "--workflow-s3-uri", help="Parent durable workflow prefix."
+    ),
+    workflow_s3_prefix: str = typer.Option(
+        "", "--workflow-s3-prefix", help="Parent prefix for durable workflow state."
+    ),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket name or URI."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint."),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint."
+    ),
     limit: int = typer.Option(50, "--limit", help="Maximum runs to list."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
@@ -1450,18 +1480,31 @@ def list_cmd(
 @app.command("cancel")
 def cancel_cmd(
     run_id: str = typer.Argument(help="Durable workflow run ID or s3:// run prefix."),
-    project: str = typer.Option("", "--project", "-p", help="Project alias for S3 credentials."),
-    workflow_s3_uri: str = typer.Option("", "--workflow-s3-uri", help="Exact durable workflow run prefix."),
-    workflow_s3_prefix: str = typer.Option("", "--workflow-s3-prefix", help="Parent prefix. The run ID is appended."),
+    project: str = typer.Option(
+        "", "--project", "-p", help="Project alias for S3 credentials."
+    ),
+    workflow_s3_uri: str = typer.Option(
+        "", "--workflow-s3-uri", help="Exact durable workflow run prefix."
+    ),
+    workflow_s3_prefix: str = typer.Option(
+        "", "--workflow-s3-prefix", help="Parent prefix. The run ID is appended."
+    ),
     s3_bucket: str = typer.Option("", "--s3-bucket", help="S3 bucket name or URI."),
-    s3_endpoint: str = typer.Option("", "--s3-endpoint", help="S3-compatible endpoint."),
+    s3_endpoint: str = typer.Option(
+        "", "--s3-endpoint", help="S3-compatible endpoint."
+    ),
     sky_bin: str = typer.Option("", "--sky-bin", help="SkyPilot executable path."),
-    cluster: str = typer.Option("", "--cluster", help="SkyPilot cluster name to tear down. Defaults to run ID."),
+    cluster: str = typer.Option(
+        "", "--cluster", help="SkyPilot cluster name to tear down. Defaults to run ID."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Cancel a managed workflow job and explicitly tear down its cluster."""
     try:
-        from npa.orchestration.skypilot.workflow_state import cancel_workflow_job, read_manifest
+        from npa.orchestration.skypilot.workflow_state import (
+            cancel_workflow_job,
+            read_manifest,
+        )
 
         state = _resolve_monitor_state(
             run_id,
@@ -1497,7 +1540,9 @@ def cancel_cmd(
 @app.command("teardown")
 def teardown_cmd(
     output_format: OutputFormat = typer.Option(
-        OutputFormat.text, "--output-format", help="Output format.",
+        OutputFormat.text,
+        "--output-format",
+        help="Output format.",
     ),
 ) -> None:
     """Destroy both VMs from a distill workflow run.
@@ -1507,11 +1552,18 @@ def teardown_cmd(
     the workbench entries from ~/.npa/config.yaml.
     """
     from npa.workflows.distill_two_vm import (
-        PROJECT_ALIAS, PROJECT_ID, REGION, SIM_VM, TENANT_ID,
-        TRAIN_VM, TwoVMDistillError, _destroy_vm,
+        PROJECT_ALIAS,
+        PROJECT_ID,
+        REGION,
+        SIM_VM,
+        TENANT_ID,
+        TRAIN_VM,
+        TwoVMDistillError,
+        _destroy_vm,
     )
     from npa.clients.config import (
-        ConfigError, resolve_ssh_config,
+        ConfigError,
+        resolve_ssh_config,
         remove_workbench_config,
     )
 
@@ -1542,7 +1594,9 @@ def teardown_cmd(
     console.print("  Bootstrapping Nebius credentials...")
     try:
         nebius_creds = bootstrap_environment(
-            PROJECT_ID, TENANT_ID, REGION,
+            PROJECT_ID,
+            TENANT_ID,
+            REGION,
             on_status=lambda msg: console.print(f"    {msg}"),
         )
     except NebiusError as exc:
@@ -1587,44 +1641,60 @@ def teardown_cmd(
 @app.command("distill")
 def distill_cmd(
     teardown: bool = typer.Option(
-        False, "--teardown/--no-teardown",
+        False,
+        "--teardown/--no-teardown",
         help="Destroy both VMs after the workflow completes (even on failure).",
     ),
     skip_infra: bool = typer.Option(
-        False, "--skip-infra/--provision",
+        False,
+        "--skip-infra/--provision",
         help="Skip provisioning and Nebius bootstrap; resolve VMs and S3 "
-             "credentials from ~/.npa/config.yaml.",
+        "credentials from ~/.npa/config.yaml.",
     ),
     skip_setup: bool = typer.Option(
-        False, "--skip-setup/--setup",
+        False,
+        "--skip-setup/--setup",
         help="Skip runtime setup (conda env + npa install). Use when VMs "
-             "already have the correct environment.",
+        "already have the correct environment.",
     ),
-    n_envs: int = typer.Option(4096, "--n-envs", help="Parallel environments for simulation."),
+    n_envs: int = typer.Option(
+        4096, "--n-envs", help="Parallel environments for simulation."
+    ),
     teacher_max_iterations: int = typer.Option(
-        500, "--teacher-max-iterations",
+        500,
+        "--teacher-max-iterations",
         help="PPO training iterations for teacher.",
     ),
     student_policy: str = typer.Option(
-        "act", "--student-policy",
+        "act",
+        "--student-policy",
         help="Student policy type: act, diffusion, smolvla.",
     ),
     student_epochs: int = typer.Option(
-        100, "--student-epochs", help="Training epochs for student.",
+        100,
+        "--student-epochs",
+        help="Training epochs for student.",
     ),
     student_batch_size: int = typer.Option(
-        64, "--student-batch-size", help="Batch size for student training.",
+        64,
+        "--student-batch-size",
+        help="Batch size for student training.",
     ),
     eval_n_episodes: int = typer.Option(
-        1024, "--eval-n-episodes", help="Number of eval episodes for the student.",
+        1024,
+        "--eval-n-episodes",
+        help="Number of eval episodes for the student.",
     ),
     action_space: ActionSpace = typer.Option(
-        ActionSpace.cartesian, "--action-space",
+        ActionSpace.cartesian,
+        "--action-space",
         help="Action space for Genesis env: 'cartesian' (4D: delta xyz + gripper) "
-             "or 'joint' (8D: delta joint positions + gripper).",
+        "or 'joint' (8D: delta joint positions + gripper).",
     ),
     output_format: OutputFormat = typer.Option(
-        OutputFormat.text, "--output-format", help="Output format.",
+        OutputFormat.text,
+        "--output-format",
+        help="Output format.",
     ),
 ) -> None:
     """Run expert distillation: L40S (Genesis) + H100 (LeRobot).
@@ -1636,7 +1706,9 @@ def distill_cmd(
     if n_envs <= 0:
         _fail(f"--n-envs must be positive, got {n_envs}")
     if teacher_max_iterations <= 0:
-        _fail(f"--teacher-max-iterations must be positive, got {teacher_max_iterations}")
+        _fail(
+            f"--teacher-max-iterations must be positive, got {teacher_max_iterations}"
+        )
     if student_epochs <= 0:
         _fail(f"--student-epochs must be positive, got {student_epochs}")
     if student_batch_size <= 0:
@@ -1644,13 +1716,17 @@ def distill_cmd(
     if eval_n_episodes <= 0:
         _fail(f"--eval-n-episodes must be positive, got {eval_n_episodes}")
     if student_policy not in ("act", "diffusion", "smolvla"):
-        _fail(f"--student-policy must be act, diffusion, or smolvla, got {student_policy}")
+        _fail(
+            f"--student-policy must be act, diffusion, or smolvla, got {student_policy}"
+        )
 
     mode = "skip-infra" if skip_infra else "provision"
     console.print(f"[bold]Expert distillation ({mode})[/bold]")
     console.print(f"  sim:   L40S  ({mode})")
     console.print(f"  train: H100  ({mode})")
-    console.print(f"  policy={student_policy}  n_envs={n_envs}  epochs={student_epochs}")
+    console.print(
+        f"  policy={student_policy}  n_envs={n_envs}  epochs={student_epochs}"
+    )
 
     from npa.workflows.distill_two_vm import TwoVMDistillError, distill
 
@@ -1694,7 +1770,9 @@ def _load_npa_workflow(path: Path):
 
 @app.command("validate-spec")
 def validate_spec_cmd(
-    yaml_path: Path = typer.Argument(help="NPA workflow spec (apiVersion: npa.workflow/v0.0.1)."),
+    yaml_path: Path = typer.Argument(
+        help="NPA workflow spec (apiVersion: npa.workflow/v0.0.1)."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON result."),
 ) -> None:
     """Validate an NPA workflow specification file."""
@@ -1761,7 +1839,9 @@ def plan_spec_cmd(
                 if wave.kind == "parallel"
                 else ""
             )
-            typer.echo(f"  {wave.index:02d}. [{wave.kind}] {wave.name}: {states}{suffix}")
+            typer.echo(
+                f"  {wave.index:02d}. [{wave.kind}] {wave.name}: {states}{suffix}"
+            )
         return
 
     if json_output:
@@ -1791,7 +1871,9 @@ def run_spec_cmd(
         "--execute/--plan-only",
         help="Execute tool commands locally (default: plan only).",
     ),
-    assume_decision: str = typer.Option("", "--assume-decision", help="Branch assumption for planning."),
+    assume_decision: str = typer.Option(
+        "", "--assume-decision", help="Branch assumption for planning."
+    ),
     persist_state: bool = typer.Option(
         False,
         "--persist-state",
@@ -1811,12 +1893,18 @@ def run_spec_cmd(
 ) -> None:
     """Run or plan an NPA workflow spec."""
 
-    from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan, run_workflow
+    from npa.orchestration.npa_workflow import (
+        NpaWorkflowError,
+        build_plan,
+        run_workflow,
+    )
     from npa.orchestration.npa_workflow.scheduler import build_scheduler_plan
 
     spec = _load_npa_workflow(yaml_path)
     resolved_run_id = run_id or f"{spec.name}-{int(time.time())}"
-    resolved_assume = assume_decision or str(spec.config.get("plan_assume_decision") or "")
+    resolved_assume = assume_decision or str(
+        spec.config.get("plan_assume_decision") or ""
+    )
     try:
         report = run_workflow(
             spec,
@@ -1831,7 +1919,9 @@ def run_spec_cmd(
         return
     if scheduler_plan:
         plan = build_plan(spec, run_id=resolved_run_id, assume_decision=resolved_assume)
-        report["scheduler"] = build_scheduler_plan(spec, plan.steps, run_id=resolved_run_id)
+        report["scheduler"] = build_scheduler_plan(
+            spec, plan.steps, run_id=resolved_run_id
+        )
     if json_output:
         typer.echo(json.dumps(report, indent=2, sort_keys=True))
     else:

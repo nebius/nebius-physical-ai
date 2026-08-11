@@ -13,7 +13,7 @@ PY="${REPO}/npa/.venv/bin/python"
 NPA="${REPO}/npa/.venv/bin/npa"
 export NPA_INTEGRATION_E2E=1
 SPECS="${REPO}/npa/workflows/workbench/npa-workflows"
-DYNAMIC="sim2real-vlm-rl.yaml tokenfactory-cosmos-gate.yaml"
+DYNAMIC="sim2real.yaml tokenfactory-cosmos-gate.yaml"
 
 LOG="/tmp/npa-workflow-real-infra-$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1

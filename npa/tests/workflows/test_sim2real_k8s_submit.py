@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
 import stat
 from contextlib import contextmanager
@@ -42,6 +41,63 @@ def _patch_operator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         return values, orchestrator
 
     monkeypatch.setattr(k8s_submit, "_default_image_env", immutable_defaults)
+    archived = tmp_path / "retired-controller.yaml"
+    controller = {
+        "apiVersion": "npa.sim2real/v1alpha1",
+        "kind": "Sim2RealController",
+        "metadata": {"name": "retired-test-controller"},
+        "spec": {
+            "stageCount": 14,
+            "execution": "durable-kubernetes-controller",
+            "stateStore": "content-addressed-s3-journal",
+            "kubernetesClient": "official-python-client",
+            "scheduler": "kueue",
+        },
+    }
+    task = {
+        "name": "retired-sim2real-test-task",
+        "resources": {
+            "cloud": "kubernetes",
+            "cpus": "16+",
+            "memory": "64+",
+            "image_id": "docker:example.invalid/retired:latest",
+        },
+        "envs": {
+            "INNER_ITERATIONS": "3",
+            "OUTER_ITERATIONS": "3",
+            "LOOP_OF_LOOPS_ITERATIONS": "1",
+            "ROLLOUT_COUNT": "1",
+            "STEPS_PER_ROLLOUT": "32",
+            "VALIDATION_ENV_COUNT": "1",
+            "HELDOUT_ENV_COUNT": "1",
+            "NPA_ENV_COUNT": "12",
+            "NPA_SIM2REAL_HELDOUT_EVAL_LIMIT": "0",
+            "NPA_SIM2REAL_K8S_JOB_TIMEOUT_S": "0",
+            "NPA_BYO_ISAAC_JOB_TIMEOUT_S": "0",
+            "NPA_BYO_ISAAC_VALIDATION_INTERVAL": "1",
+            "NPA_SIM2REAL_ROLLOUT_HORIZON_STEPS": "32",
+            "NPA_COSMOS_REASON_MAX_FRAMES": "32",
+            "NPA_COSMOS_REASON_MAX_NEW_TOKENS": "2048",
+            "SUCCESS_THRESHOLD": "0.50",
+            "NPA_BYO_ISAAC_SUCCESS_DIST_M": "0.05",
+            "NPA_SIM2REAL_EARLY_EXIT": "0",
+            "NPA_SIM2REAL_RERUN": "1",
+            "NPA_SIM2REAL_RERUN_SERVE": "1",
+            "BYO_TRAINER_COMMAND": "python3 -m npa.workflows.sim2real.byo_isaac_trainer",
+            "BYO_POLICY_COMMAND": "python3 -m npa.workflows.sim2real.byo_isaac_policy_rollout",
+            "BYO_EVAL_COMMAND": "python3 -m npa.workflows.sim2real.byo_isaac_eval",
+            "NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS": "1",
+            "NPA_SIM2REAL_ISAAC_CACHE_PVC": "isaac-cache",
+            "NPA_SIM2REAL_K8S_REGISTRY_CONFIG_SECRET": "npa-nebius-registry",
+            "NPA_SIM2REAL_K8S_IMAGE_PULL_SECRETS": "npa-nebius-registry",
+            "NPA_SIM2REAL_K8S_SERVICE_ACCOUNT": "agent-sa",
+            "NPA_SIM2REAL_CONTROLLER_RETRIES": "3",
+        },
+        "setup": "python3 -m npa.workflows.sim2real.runtime_attestation",
+        "run": "python3 -m npa.workflows.sim2real run --upload-artifacts",
+    }
+    archived.write_text(yaml.safe_dump_all([controller, task], sort_keys=False))
+    monkeypatch.setattr(k8s_submit, "default_runbook_path", lambda: archived)
 
 
 def _capture_ephemeral_manifest(
@@ -140,22 +196,13 @@ def test_operator_config_rejects_relative_explicit_path(
         load_operator_config()
 
 
-def test_is_sim2real_runbook_accepts_only_committed_canonical_file(
-    tmp_path: Path,
-) -> None:
+def test_canonical_sim2real_uses_standard_workflow_detection() -> None:
     from npa.orchestration.npa_workflow.detect import detect_submit_format
-    from npa.workflows.sim2real.k8s_submit import is_sim2real_runbook
-    from npa.workflows.sim2real.materialize import default_runbook_path
 
-    runbook = default_runbook_path()
-    lookalike = tmp_path / "sim2real" / "runbook-copy.yaml"
-    lookalike.parent.mkdir()
-    lookalike.write_text(runbook.read_text(encoding="utf-8"), encoding="utf-8")
-
-    assert is_sim2real_runbook(runbook)
-    assert detect_submit_format(runbook) == "sim2real_runbook"
-    assert not is_sim2real_runbook(lookalike)
-    assert detect_submit_format(lookalike) == "skypilot"
+    root = Path(__file__).resolve().parents[2]
+    canonical = root / "workflows" / "workbench" / "npa-workflows" / "sim2real.yaml"
+    assert detect_submit_format(canonical) == "npa.workflow"
+    assert not (root / "workflows" / "sim2real.yaml").exists()
 
 
 def test_plan_only_materializes_qualified_real_images_without_external_writes(
@@ -467,47 +514,3 @@ def test_workflow_var_aliases_route_to_runbook_env(
     assert captured["inner_iterations"] == 3
     assert captured["outer_iterations"] == 2
     assert captured["plan_only"] is True
-
-
-def test_workflow_submit_json_exposes_digest_but_no_manifest_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from typer.testing import CliRunner
-
-    from npa.cli.main import app
-    from npa.workflows.sim2real import k8s_submit
-    from npa.workflows.sim2real.materialize import default_runbook_path
-
-    digest = "a" * 64
-    monkeypatch.setattr(
-        k8s_submit,
-        "submit_sim2real_from_workflow_vars",
-        lambda **_kwargs: k8s_submit.Sim2RealSubmitResult(
-            run_id="unit-json",
-            job_name="sim2real-unit-json",
-            k8s_context="unit-context",
-            run_prefix_uri="s3://unit-bucket/sim2real-b/unit-json/",
-            status="planned",
-            manifest_sha256=digest,
-        ),
-    )
-
-    result = CliRunner().invoke(
-        app,
-        [
-            "workbench",
-            "workflow",
-            "submit",
-            str(default_runbook_path()),
-            "--run-id",
-            "unit-json",
-            "--plan-only",
-            "--output-format",
-            "json",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.stdout)
-    assert payload["manifest_sha256"] == digest
-    assert "manifest_path" not in payload

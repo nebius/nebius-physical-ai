@@ -1249,7 +1249,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         raise SystemExit(
             "byo_isaac_trainer: ISAAC_IMAGE/NPA_SIM2REAL_ISAAC_IMAGE not set"
         )
-    from npa.workflows.sim2real.engine import _image_pull_policy
+    from npa.workflows.sim2real.k8s_components import _image_pull_policy
 
     bucket = _env("NPA_SIM2REAL_BUCKET") or _env("S3_BUCKET")
     s3_prefix = _env("NPA_SIM2REAL_PREFIX", "sim2real-b").strip("/")
@@ -1563,35 +1563,41 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         scenarios_uri=train_envs_uri,
         scenarios_sha256=scenarios_sha256,
     )
-    from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
-
-    def manifest_factory(product: str, candidate_job_name: str) -> dict[str, Any]:
-        candidate = copy.deepcopy(manifest)
-        candidate.setdefault("metadata", {})["name"] = candidate_job_name
-        pod_spec = (
-            candidate.setdefault("spec", {})
-            .setdefault("template", {})
-            .setdefault("spec", {})
-        )
-        pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
-        return candidate
-
-    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
-
     start = time.time()
-    provenance = run_gpu_job_with_fallback(
-        client=KubernetesJobClient.from_environment(namespace=namespace),
-        manifest_factory=manifest_factory,
-        base_job_name=job_name,
-        namespace=namespace,
-        image=image,
-        preferred_product=gpu_product,
-        explicit_candidates=_env("NPA_SIM2REAL_K8S_GPU_CANDIDATES"),
-        workload="isaac",
-        gpu_resource=_env("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
-        gpu_count=1,
-        timeout_s=timeout_s,
-    )
+    if _env("NPA_SIM2REAL_INLINE_TASK") == "1":
+        from npa.workflows.sim2real.isaac_job_payload import (
+            execute_manifest_container_inline,
+        )
+
+        provenance = execute_manifest_container_inline(manifest)
+    else:
+        from npa.workflows.sim2real.gpu_fallback import run_gpu_job_with_fallback
+        from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+
+        def manifest_factory(product: str, candidate_job_name: str) -> dict[str, Any]:
+            candidate = copy.deepcopy(manifest)
+            candidate.setdefault("metadata", {})["name"] = candidate_job_name
+            pod_spec = (
+                candidate.setdefault("spec", {})
+                .setdefault("template", {})
+                .setdefault("spec", {})
+            )
+            pod_spec["nodeSelector"] = {"nvidia.com/gpu.product": product}
+            return candidate
+
+        provenance = run_gpu_job_with_fallback(
+            client=KubernetesJobClient.from_environment(namespace=namespace),
+            manifest_factory=manifest_factory,
+            base_job_name=job_name,
+            namespace=namespace,
+            image=image,
+            preferred_product=gpu_product,
+            explicit_candidates=_env("NPA_SIM2REAL_K8S_GPU_CANDIDATES"),
+            workload="isaac",
+            gpu_resource=_env("NPA_SIM2REAL_K8S_GPU_RESOURCE", "nvidia.com/gpu"),
+            gpu_count=1,
+            timeout_s=timeout_s,
+        )
     job_name = str(provenance["job_name"])
     status = "success"
     checkpoint_uri = s3_output + "model_latest.pt"
@@ -1610,7 +1616,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         learning_rate=learning_rate,
     )
     result["component_invocation"] = {
-        "mode": "kubernetes_job",
+        "mode": str(provenance.get("mode") or "kubernetes_job"),
         "job_name": job_name,
         "image": image,
         "gpu_provenance": provenance,

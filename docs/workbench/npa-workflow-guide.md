@@ -10,7 +10,7 @@ three ways: YAML file, CLI, and Python SDK.
 npa workbench workflow validate-spec npa/workflows/workbench/npa-workflows/vlm-eval-single.yaml
 
 # Expand loops/branches in the demo-only Sim2Real DSL fixture (dry-run)
-npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real-vlm-rl.yaml \
+npa workbench workflow plan-spec npa/workflows/workbench/npa-workflows/sim2real.yaml \
   --run-id demo --assume-decision loop_back
 
 # Plan + optional scheduler hints + S3 run manifest
@@ -44,7 +44,7 @@ Reference specs (all pytest-guarded):
 | `vlm-eval-single.yaml` | Single `toolRef`, terminal state |
 | `token-factory-caption.yaml` | Zero-GPU Token Factory caption |
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool chain with `inputs`/`outputs` |
-| `sim2real-vlm-rl.yaml` | Demo-only stub-toolRef nested loops; not the 14-stage engine |
+| `sim2real.yaml` | Canonical compositional 14-stage Sim2Real runtime; requires immutable component images and task-aligned S3 inputs for execution |
 | `bdd100k-pipeline.yaml` | AV failure-mode pipeline — ingest → backfill → train → eval |
 | `av-night-scene-hardening.yaml` | AV night-scene hardening — fan-out into two per-view detector train→eval branches |
 | `cosmos-synth-fanout-curation.yaml` | Fan-out Cosmos Transfer 2.5 synthetic-data shards → Voxel51 (FiftyOne) curation |

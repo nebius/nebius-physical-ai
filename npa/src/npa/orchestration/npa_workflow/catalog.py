@@ -645,21 +645,12 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.augmented_frames_uri}}",
         ],
     ),
-    "workbench.sim2real.policy_rollouts": ToolEntry(
-        name="workbench.sim2real.policy_rollouts",
-        description="Policy rollouts on train envs (workflow stub until sim2real step wiring).",
-        argv_template=["echo", "policy rollouts -> {{config.rollouts_uri}}"],
-        stub=True,
-    ),
-    "workbench.sim2real.heldout_eval": ToolEntry(
-        name="workbench.sim2real.heldout_eval",
-        description="Held-out simulation eval (workflow stub).",
-        argv_template=["echo", "heldout eval -> {{config.heldout_report_uri}}"],
-        stub=True,
-    ),
+    # Generic decision writer retained for non-Sim2Real workflow examples. The
+    # canonical Sim2Real graph calls its stage adapter and does not use this
+    # historical namespace.
     "workbench.sim2real.write_decision": ToolEntry(
         name="workbench.sim2real.write_decision",
-        description="Write threshold decision artifact for dynamic transitions (demo stub).",
+        description="Write a real S3 workflow decision artifact.",
         argv_template=[
             "python3",
             "-c",
@@ -668,15 +659,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
                 "write_decision('{{config.decision_uri}}', '{{config.default_decision}}')"
             ),
         ],
-    ),
-    "workbench.sim2real.finalize": ToolEntry(
-        name="workbench.sim2real.finalize",
-        description="Finalize run artifacts (workflow stub).",
-        argv_template=[
-            "echo",
-            "finalize run {{run.id}} -> {{config.finalize_report_uri}}",
-        ],
-        stub=True,
     ),
     "workbench.byof.repo": ToolEntry(
         name="workbench.byof.repo",
