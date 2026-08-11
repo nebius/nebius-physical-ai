@@ -7734,6 +7734,14 @@
           }
         }
         if (!requestIsCurrent()) return false;
+        // Page boot may issue a best-effort status refresh while this exact run
+        // is loading. If that superseded the first detail request, retry after
+        // the preferred preview settles so authoritative stages/job IDs replace
+        // the temporary artifact-group timeline.
+        const physicalStageCount = document.querySelectorAll(
+          "#stageList .stage-physical-job"
+        ).length;
+        if (!physicalStageCount) await loadRunDetails(runId, detailOptions);
         if (artifactListAbortController === localController) artifactListAbortController = null;
         return true;
       }
