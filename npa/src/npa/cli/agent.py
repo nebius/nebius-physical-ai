@@ -1419,11 +1419,13 @@ def _lichtblick_recording_url(*, cache_bust: bool = False) -> str:
     return url
 
 
-def _lichtblick_iframe_url(*, mcap_url: str = "") -> str:
+def _lichtblick_iframe_url(*, mcap_url: str = "", mcap_size: int = 0) -> str:
     # Lichtblick opens a remote MCAP the same way the standalone tool does; the MCAP is
     # co-served same-origin under /lichtblick/recordings/ so the browser fetch needs no CORS.
     source = mcap_url or _lichtblick_recording_url()
-    return f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}"
+    size_hint = max(0, int(mcap_size or 0))
+    size_query = f"&npa.size={{size_hint}}" if size_hint else ""
+    return f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}{{size_query}}"
 
 
 def _publish_mcap_recording(source: Path) -> Path:

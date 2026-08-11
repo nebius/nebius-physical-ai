@@ -962,8 +962,14 @@ def test_lichtblick_recovers_proxy_stripped_remote_file_size() -> None:
     script = _lichtblick_default_layout_script()
     assert 'target.pathname.startsWith("/lichtblick/recordings/")' in script
     assert 'headers:{Range:"bytes=0-0"}' in script
+    assert 'get("npa.size")' in script
+    assert 'response.headers.get("content-length")' in script
+    assert "const knownSize=responseSize>0?responseSize:hintedSize" in script
     assert 'probe.headers.get("content-range")' in script
-    assert 'headers.set("content-length",match[1])' in script
+    assert 'headers.set("content-length",recoveredSize)' in script
+    assert "new Response(null" in script
+    assert 'Object.defineProperty(window,"fetch"' in script
+    assert "set(_value){}" in script
     assert "Access-Control-Allow-Origin" not in script
 
 
@@ -1014,6 +1020,13 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     assert learning_image["imageMode"]["imageTopic"] == "/camera/front"
     script = agent_site_module._lichtblick_default_layout_script()
     assert 'get("npa.layout")==="learning"' in script
+    assert 'window.Worker=function(scriptUrl,options)' in script
+    assert 'new URL("/lichtblick/npa-worker.js"' in script
+    assert 'target.pathname.startsWith("/lichtblick/recordings/")' in script
+    worker = agent_site_module._lichtblick_worker_script()
+    assert 'importScripts(target)' in worker
+    assert 'url.pathname.startsWith("/lichtblick/recordings/")' in worker
+    assert "location = /lichtblick/npa-worker.js {{" in source
 
 
 def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:

@@ -356,7 +356,10 @@ def _apply_loaded_artifact(
             sim_viz["mcap_uri"] = f"file://{MCAP_RECORDING_PATH}"
             sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
             sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
-            sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(mcap_url=mcap_url)
+            sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(
+                mcap_url=mcap_url,
+                mcap_size=MCAP_RECORDING_PATH.stat().st_size,
+            )
             sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
             if is_groot_learning_recording(key):
                 sim_viz["visualization_note"] = GROOT_LEARNING_MCAP_NOTE
