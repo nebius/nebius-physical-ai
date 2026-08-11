@@ -7714,7 +7714,7 @@
           String((entry && entry.entry_key) || runId),
           String((preferred && preferred.key) || ""),
         ].join("|");
-        const shouldLoadPreferred = preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
+        const shouldLoadPreferred = !context.deferPreferredViewer && preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
           !(preferredRender === "rerun" && isMobileLayout()) &&
           preferredLoadKey !== autoLoadedPreferredKey;
         // Render the authoritative workflow timeline before attempting the
@@ -9293,6 +9293,11 @@
           try {
             const loaded = await loadArtifactsForSelectedRun(runRef || runId, null, exactEntry, {
               pendingSelection: true,
+              // Direct-by-ID loading must surface the run summary, authoritative
+              // stages, and physical jobs without blocking on a multi-megabyte
+              // WASM viewer mount. Viewer artifacts remain one click away and
+              // their explicit load paths retain independent failure semantics.
+              deferPreferredViewer: true,
             });
             if (loaded && activeArtifactInventory.length) {
               const hasRecording = activeArtifactInventory.some((item) =>

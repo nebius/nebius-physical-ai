@@ -1608,6 +1608,8 @@ def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts()
     assert "if (loaded && activeArtifactInventory.length)" in source
     assert 'refreshArtifactRuns("", { singlePage: true })' in source
     assert "Render the authoritative workflow timeline before attempting" in source
+    assert "!context.deferPreferredViewer && preferred" in source
+    assert "deferPreferredViewer: true" in source
     assert 'showToast("Run loaded; preferred viewer failed: "' in source
     assert '"#stageList .stage-physical-job"' in source
     assert "if (!physicalStageCount) await loadRunDetails(runId, detailOptions);" in source
