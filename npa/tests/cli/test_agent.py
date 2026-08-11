@@ -3785,7 +3785,10 @@ def test_agent_only_deploy_omits_paidf_capacity_reservation(
         return_value=SimpleNamespace(status="PASS"),
     )
     mocker.patch("npa.cli.agent._resolve_deploy_llm_credentials", return_value=("k", "m"))
-    mocker.patch("npa.clients.nebius.bootstrap_agent_environment", return_value={})
+    mocker.patch(
+        "npa.clients.nebius.bootstrap_agent_environment",
+        return_value={"iam_token": "token-from-bootstrap"},
+    )
     mocker.patch(
         "npa.cli.agent._apply_agent_terraform",
         side_effect=RuntimeError("stop after preflight"),

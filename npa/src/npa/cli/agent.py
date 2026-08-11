@@ -8746,7 +8746,12 @@ def deploy_cmd(
             on_resource_created=_record_created_agent_resource,
             reuse_storage_credentials=configured_storage,
         )
-        iam_token = get_iam_token()
+        # Bootstrap already resolves the operator token and returns it with the
+        # provider credentials.  Reuse that exact result so deploy does not make
+        # a second, environment-dependent CLI/profile lookup after successful
+        # bootstrap.  The fallback preserves compatibility with older/custom
+        # bootstrap implementations that omitted ``iam_token``.
+        iam_token = str(creds.get("iam_token") or "").strip() or get_iam_token()
     except (AgentStorageCredentialError, NebiusError) as exc:
         _fail(f"Nebius bootstrap failed: {exc}")
 
