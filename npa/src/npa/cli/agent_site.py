@@ -167,13 +167,34 @@ def _lichtblick_learning_layout_json() -> str:
 
 
 def _lichtblick_default_layout_script() -> str:
-    """Select a truthful default layout from the same-origin viewer query."""
+    """Install the range-size shim and select the truthful default layout.
+
+    Lichtblick discovers a remote file's size from the ``Content-Length`` header
+    on an initial full GET. Browser automation proxies (including Cypress) may
+    remove that header while preserving the response body and byte-range
+    semantics. In that narrow case, recover the size from a same-origin 0-0
+    range probe and return a synthetic response with the missing header. The
+    shim is scoped to the agent's own MCAP alias and grants no cross-origin read.
+    """
 
     learning = _lichtblick_learning_layout_json()
     sim2real = _lichtblick_default_layout_json()
     return (
+        '(()=>{const originalFetch=window.fetch.bind(window);window.fetch=async(input,init)=>{'
+        "const response=await originalFetch(input,init);try{"
+        'const rawUrl=typeof input==="string"?input:String((input&&input.url)||input||"");'
+        "const target=new URL(rawUrl,window.location.href);"
+        'const supplied=new Headers((init&&init.headers)||(input instanceof Request?input.headers:undefined));'
+        'if(target.origin===window.location.origin&&target.pathname.startsWith("/lichtblick/recordings/")&&'
+        'target.pathname.endsWith(".mcap")&&!supplied.has("range")&&'
+        'response.headers.get("accept-ranges")==="bytes"&&!response.headers.get("content-length")){'
+        'const probe=await originalFetch(target.toString(),{cache:"no-store",credentials:"same-origin",'
+        'headers:{Range:"bytes=0-0"}});const contentRange=probe.headers.get("content-range")||"";'
+        'const match=/\\/(\\d+)/.exec(contentRange);if(match){const headers=new Headers(response.headers);'
+        'headers.set("content-length",match[1]);return new Response(response.body,{status:response.status,'
+        "statusText:response.statusText,headers});}}}catch(_error){}return response;};return "
         '(new URLSearchParams(window.location.search).get("npa.layout")==="learning"?'
-        f"{learning}:{sim2real})"
+        f"{learning}:{sim2real});}})()"
     )
 
 

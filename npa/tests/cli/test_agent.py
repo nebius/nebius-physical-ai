@@ -955,6 +955,18 @@ def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
     assert "groot-offline-evaluation" in source
 
 
+def test_lichtblick_recovers_proxy_stripped_remote_file_size() -> None:
+    """The embedded viewer must remain usable through browser-test proxies."""
+    from npa.cli.agent_site import _lichtblick_default_layout_script
+
+    script = _lichtblick_default_layout_script()
+    assert 'target.pathname.startsWith("/lichtblick/recordings/")' in script
+    assert 'headers:{Range:"bytes=0-0"}' in script
+    assert 'probe.headers.get("content-range")' in script
+    assert 'headers.set("content-length",match[1])' in script
+    assert "Access-Control-Allow-Origin" not in script
+
+
 def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() -> None:
     """The layout wipe evicts a pre-injection layout; it must not run every mount.
 
