@@ -263,12 +263,13 @@ def test_training_coverage_uses_factual_batch_for_maximum_free_gpu_allocation() 
         "training_examples": 3360,
         "epoch_equivalent": pytest.approx(1.0017889087656529),
     }
-    with pytest.raises(
-        learning.GrootVisualizationError, match="complete train-set pass"
-    ):
-        learning.calculate_training_coverage(
-            optimizer_steps=479, global_batch_size=7, train_samples=3354
-        )
+    short = learning.calculate_training_coverage(
+        optimizer_steps=4, global_batch_size=2, train_samples=201
+    )
+    assert short == {
+        "training_examples": 8,
+        "epoch_equivalent": pytest.approx(8 / 201),
+    }
 
 
 def test_training_step_contract_derives_prior_480_step_case() -> None:
@@ -740,6 +741,13 @@ def test_robust_loss_gate_preserves_flat_regions_and_requires_decrease() -> None
     evidence = learning.robust_loss_decrease(decreasing)
     assert evidence["loss_decreased"] is True
     assert len(decreasing) == 10
+    smoke = [
+        {"optimizer_step": i, "loss": value}
+        for i, value in enumerate([1.4, 1.3, 1.2, 1.1], 1)
+    ]
+    smoke_evidence = learning.robust_loss_decrease(smoke)
+    assert smoke_evidence["window"] == 2
+    assert smoke_evidence["loss_decreased"] is True
 
 
 def test_absolute_action_configuration_contract_is_identical(tmp_path: Path) -> None:

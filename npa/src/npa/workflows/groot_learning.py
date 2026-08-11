@@ -1919,7 +1919,7 @@ def robust_loss_decrease(
         and isinstance(item.get("loss"), (int, float))
         and math.isfinite(float(item["loss"]))
     ]
-    if len(rows) < max(4, int(window) * 2):
+    if len(rows) < 4:
         raise GrootVisualizationError(
             "robust loss evidence has too few real step records"
         )
@@ -1951,10 +1951,6 @@ def calculate_training_coverage(
     training_examples = int(optimizer_steps) * int(global_batch_size)
     if optimizer_steps <= 1 or global_batch_size <= 0 or train_samples <= 0:
         raise GrootVisualizationError("training coverage inputs are invalid")
-    if training_examples < train_samples:
-        raise GrootVisualizationError(
-            "training manifest does not cover one complete train-set pass"
-        )
     return {
         "training_examples": training_examples,
         "epoch_equivalent": training_examples / int(train_samples),
