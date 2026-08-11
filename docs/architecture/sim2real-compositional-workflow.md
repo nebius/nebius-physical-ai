@@ -53,6 +53,9 @@ resolver-closed S3 dependency set are intentionally separate from Genesis,
 Isaac, CUDA, and trainer images. The image also bakes the standard non-root
 SkyPilot Kubernetes bootstrap closure from a fixed Debian snapshot; no task
 depends on installing sshd or rsync from a mutable mirror after scheduling.
+The exact source is also registered through a site-packages `.pth` file, so
+SkyPilot login/setup shells can import the stage adapter even when they do not
+preserve the image's `PYTHONPATH` environment variable.
 Importing a focused stage adapter also leaves the archived controller facade
 unloaded. This keeps a cold CPU pull small and prevents control-plane success
 from depending on GPU-runtime packaging.

@@ -46,9 +46,11 @@ contains no Genesis, Isaac, CUDA, or trainer runtime; using a GPU solution image
 for CPU bookkeeping is unsupported because its cold pull can exhaust a CPU
 node before Stage 1. It does contain the non-root SkyPilot Kubernetes bootstrap
 prerequisites, which are part of the schedulable-image contract and are tested
-through the same standard runtime path used live. Transfer, EnvGen, Reason,
-Isaac, and visualization each retain their own immutable image at the
-corresponding workflow boundary.
+through the same standard runtime path used live. Its exact source is installed
+as a site-packages path as well as exported through `PYTHONPATH`, because the
+SkyPilot setup login shell is allowed to rebuild its environment. Transfer,
+EnvGen, Reason, Isaac, and visualization each retain their own immutable image
+at the corresponding workflow boundary.
 
 ```bash
 SPEC=npa/workflows/workbench/npa-workflows/sim2real.yaml

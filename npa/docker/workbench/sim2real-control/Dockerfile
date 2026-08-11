@@ -1,7 +1,7 @@
 # Digest pinned 2026-06-02. Tag: python:3.11-slim-trixie.
 FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
 
-ARG SIM2REAL_CONTROL_VERSION=0.1.1
+ARG SIM2REAL_CONTROL_VERSION=0.1.2
 ARG NPA_SOURCE_SHA
 ARG DEBIAN_SNAPSHOT=20260801T000000Z
 
@@ -69,10 +69,11 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/sim2real-controller-requirements.txt \
     && python -m pip check \
+    && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\n', encoding='utf-8')" \
     && python -m py_compile \
       /opt/npa/src/npa/workflows/sim2real/workflow_io.py \
       /opt/npa/src/npa/workflows/sim2real/workflow_stage.py \
-    && python -c "import boto3; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)" \
+    && env -u PYTHONPATH python -c "import boto3; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)" \
     && chown -R ubuntu:ubuntu /workspace
 
 USER ubuntu

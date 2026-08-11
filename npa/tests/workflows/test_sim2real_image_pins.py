@@ -131,6 +131,8 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
     assert "ARG DEBIAN_SNAPSHOT=20260801T000000Z" in dockerfile
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in dockerfile
+    assert "npa-exact-source.pth" in dockerfile
+    assert "env -u PYTHONPATH python -c" in dockerfile
     for prerequisite in (
         "openssh-server",
         "rsync",
@@ -139,6 +141,12 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
         "NOPASSWD",
     ):
         assert prerequisite in dockerfile
+
+    repair_dockerfile = (
+        root / "sim2real-control" / "Dockerfile.k8s-prereqs"
+    ).read_text()
+    assert "npa-exact-source.pth" in repair_dockerfile
+    assert "env -u PYTHONPATH python3 -c" in repair_dockerfile
 
     requirements = (
         root / "common" / "sim2real-controller-requirements.txt"
