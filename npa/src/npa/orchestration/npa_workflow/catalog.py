@@ -1811,7 +1811,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--data-path",
             "{{config.data_uri}}",
             "--checkpoint-s3-uri",
-            "{{config.checkpoint_uri}}",
+            "{{config.candidate_checkpoint_uri}}",
             "--base-model",
             "{{config.base_model}}",
             "--robot-embodiment",

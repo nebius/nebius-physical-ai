@@ -83,6 +83,9 @@ def test_groot_workflow_is_short_honest_operational_pipeline() -> None:
     assert _option_value(trainer.argv, "--num-gpus") == "2"
     assert _option_value(trainer.argv, "--logging-steps") == "1"
     assert _option_value(trainer.argv, "--save-steps") == "4"
+    assert _option_value(trainer.argv, "--checkpoint-s3-uri").endswith(
+        "/checkpoints/candidate/"
+    )
     assert _option_value(resolver.argv, "--expected-gpu-count") == "2"
     assert _option_value(posttrain.argv, "--checkpoint-uri").endswith(
         "/checkpoint-4/"
