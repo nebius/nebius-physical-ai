@@ -736,10 +736,6 @@ def _is_serverless_runtime(runtime: Any) -> bool:
     return str(getattr(runtime, "value", runtime)) == WorkbenchRuntime.serverless.value
 
 
-def _remote_bash(script: str) -> str:
-    return f"bash -lc {shlex.quote(script)}"
-
-
 def _serverless_job_name(project: str, name: str, tool: str) -> str:
     raw = f"npa-{tool}-jobs-{project}-{name}".lower()
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]+", "-", raw)).strip("-")[:63]
@@ -1594,6 +1590,7 @@ export NCCL_CUMEM_HOST_ENABLE=0
 uv pip install --quiet --python {GROOT_VENV}/bin/python nvidia-nccl-cu12=={GROOT_NCCL_RUNTIME_VERSION}
 echo NPA_GROOT_NCCL_TRANSPORT socket
 """
+    trainer_global_batch_size: int | None
     if (
         global_batch_size is not None
         and per_device_batch_size is not None

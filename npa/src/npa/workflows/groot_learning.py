@@ -1109,7 +1109,7 @@ def checkpoint_model_config_contract(directory: Path) -> dict[str, Any]:
         kwargs = processor.get("processor_kwargs")
         if not isinstance(kwargs, Mapping):
             continue
-        relative = kwargs.get("use_relative_action")
+        use_relative_action = kwargs.get("use_relative_action")
         modalities = kwargs.get("modality_configs")
         custom = (
             modalities.get("new_embodiment")
@@ -1118,13 +1118,13 @@ def checkpoint_model_config_contract(directory: Path) -> dict[str, Any]:
         )
         action = custom.get("action") if isinstance(custom, Mapping) else None
         configs = action.get("action_configs") if isinstance(action, Mapping) else None
-        if not isinstance(relative, bool) or not isinstance(configs, list):
+        if not isinstance(use_relative_action, bool) or not isinstance(configs, list):
             continue
         reps = [
             str(item.get("rep") or "") for item in configs if isinstance(item, Mapping)
         ]
         if reps and len(reps) == len(configs):
-            processor_contracts.append((relative, reps))
+            processor_contracts.append((use_relative_action, reps))
     if not processor_contracts:
         raise GrootVisualizationError(
             "checkpoint processor omits factual custom action configuration"
@@ -2727,8 +2727,16 @@ def _evaluated_checkpoint_curve(
         return [dict(item) for item in curve if isinstance(item, Mapping)]
 
     step = int(training.get("resolved_checkpoint_step") or 0)
-    mse = float(evaluation.get("posttrain_value"))
-    skill_score = float(evaluation.get("candidate_skill_score"))
+    mse_value = evaluation.get("posttrain_value")
+    skill_score_value = evaluation.get("candidate_skill_score")
+    if not isinstance(mse_value, (int, float)) or not isinstance(
+        skill_score_value, (int, float)
+    ):
+        raise GrootVisualizationError(
+            "final evaluated checkpoint omits numeric MSE/skill score"
+        )
+    mse = float(mse_value)
+    skill_score = float(skill_score_value)
     if step <= 0 or not math.isfinite(mse) or not math.isfinite(skill_score):
         raise GrootVisualizationError(
             "final evaluated checkpoint lacks a valid step/MSE/skill score"
@@ -3406,7 +3414,10 @@ def verify_agent_ui_handoff(
                 "s3_uri": str(item.get("s3_uri") or ""),
             },
         )
-        sim_viz = loaded.get("sim_viz") if isinstance(loaded.get("sim_viz"), dict) else {}
+        sim_viz_value = loaded.get("sim_viz")
+        sim_viz: dict[str, Any] = (
+            dict(sim_viz_value) if isinstance(sim_viz_value, dict) else {}
+        )
         ready = (
             sim_viz.get("rerun_ready") is True
             if label == "rrd"

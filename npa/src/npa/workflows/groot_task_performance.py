@@ -984,7 +984,8 @@ def paired_bootstrap(
     rng = np.random.default_rng(seed)
     indices = rng.integers(0, len(values), size=(int(samples), len(values)))
     means = values[indices].mean(axis=1)
-    low, high = np.quantile(means, [0.025, 0.975])
+    low = float(np.quantile(means, 0.025))
+    high = float(np.quantile(means, 0.975))
     randomization_samples = max(100_000, int(samples))
     signs = rng.choice(np.asarray([-1.0, 1.0]), size=(randomization_samples, len(values)))
     randomized = (signs * values).mean(axis=1)
@@ -994,8 +995,8 @@ def paired_bootstrap(
         "method": "paired percentile bootstrap",
         "confidence_level": 0.95,
         "bootstrap_samples": int(samples),
-        "ci_low": float(low),
-        "ci_high": float(high),
+        "ci_low": low,
+        "ci_high": high,
         "mean_delta": observed,
         "paired_test": "one-sided paired sign-randomization Monte Carlo",
         "paired_test_samples": randomization_samples,
