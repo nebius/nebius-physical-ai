@@ -46,6 +46,21 @@ def _build_text(tool: str) -> str:
 # SkyPilot task catalog is retired: once a tool's only workflow surface is an
 # npa.workflow spec, its image MUST be able to host a SkyPilot task.
 SKYPILOT_HOSTED_IMAGES = (
+    "cosmos2-transfer",
+    "cosmos3-reason",
+    "isaac-lab",
+    "lerobot",
+    "sim2real-control",
+    "sim2real-envgen",
+    "sim2real-eval",
+    "sonic",
+)
+
+# Only these images publish a lightweight repair Dockerfile for an existing
+# vendor base.  The purpose-built canonical Sim2Real images above must satisfy
+# the same runtime contract, but rebuilding their primary Dockerfile is the
+# supported repair path.
+DERIVED_PREREQ_IMAGES = (
     "cosmos3-reason",
     "isaac-lab",
     "lerobot",
@@ -168,7 +183,7 @@ def test_isaac_lab_grants_its_runtime_user_access_to_isaac_sim() -> None:
     )
 
 
-@pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
+@pytest.mark.parametrize("tool", DERIVED_PREREQ_IMAGES)
 def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
     """The derived recipe exists and applies the same prerequisites.
 
@@ -203,6 +218,25 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
         # Newer bases fetch Isaac at run time and keep Kit's state in /tmp instead, so a
         # derived recipe must carry that mechanism too: it cannot know which base it repairs.
         assert "OMNI_USER_DIR" in text and "OMNI_LOG_DIR" in text
+
+
+@pytest.mark.parametrize("tool", ("sim2real-envgen", "sim2real-eval"))
+def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) -> None:
+    """The two Genesis-derived canonical stages failed identically without sudo."""
+
+    dockerfile = (DOCKER_ROOT / tool / "Dockerfile").read_text(encoding="utf-8")
+    assert "ARG UBUNTU_SNAPSHOT=20260801T053000Z" in dockerfile
+    assert "install_workflow_runtime_prereqs.sh" in dockerfile
+    assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
+    assert "sudo -n true" in dockerfile
+
+    installer = (
+        DOCKER_ROOT / "common" / "install_workflow_runtime_prereqs.sh"
+    ).read_text(encoding="utf-8")
+    assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in installer
+    assert "ubuntu:22.04" in installer
+    assert "sudo" in installer and "rsync" in installer
+    assert "NOPASSWD" in installer
 
 
 def test_in_cluster_build_script_is_executable_and_generic() -> None:

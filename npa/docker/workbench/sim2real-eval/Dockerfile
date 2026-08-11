@@ -3,6 +3,7 @@ FROM ${BASE_IMAGE}
 
 ARG SIM2REAL_EVAL_VERSION=cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 ARG NPA_SOURCE_SHA
+ARG UBUNTU_SNAPSHOT=20260801T053000Z
 
 LABEL npa.tool="loop-eval" \
       npa.version="${SIM2REAL_EVAL_VERSION}" \
@@ -27,10 +28,13 @@ COPY docker/workbench/common/sim2real-genesis-requirements.txt \
     /opt/npa/sim2real-genesis-requirements.txt
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
+COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
+    /usr/local/bin/install-workflow-runtime-prereqs
 
 USER root
 
-RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
+    && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
@@ -41,7 +45,9 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
     && python -c "from npa.genesis.env_pick_place import EnvConfig, FrankaPickPlaceEnv; assert EnvConfig(action_space='cartesian').action_space == 'cartesian'; assert FrankaPickPlaceEnv.__name__ == 'FrankaPickPlaceEnv'" \
-    && chown -R ubuntu:ubuntu /workspace /opt/npa/src /opt/npa/pyproject.toml
+    && chown -R ubuntu:ubuntu /workspace /opt/npa/src /opt/npa/pyproject.toml \
+    && su ubuntu -s /bin/bash -c \
+      'test "$(id -u)" -ne 0 && sudo -n true && rsync --version >/dev/null'
 
 USER ubuntu
 
