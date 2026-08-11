@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -174,6 +175,52 @@ def test_curated_splits_are_disjoint_and_consume_stage3_lineage(
     assert reasons == {"duplicate_config_digest": 1, "unreachable_placement": 1}
 
 
+def test_reduced_split_clamps_train_count_to_keep_validation_and_gold_sealed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Storage:
+        def upload_file(self, _source: str, destination: str) -> str:
+            return destination
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_envgen.StorageClient.from_environment",
+        lambda: Storage(),
+    )
+    contract = build_task_contract(
+        task_id=LIFT_TASK_ID,
+        dataset_id=LIFT_DATASET_ID,
+        dataset_uri="s3://bucket/lift/",
+    )
+    config = EnvGenConfig(
+        run_id="reduced-live-proof",
+        output_uri="s3://bucket/run",
+        env_count=24,
+        train_fraction=0.8,
+        scene_spec=SceneSpec(
+            augmented_frame_uris=("s3://bucket/augment/frame.png",),
+            task_contract=contract,
+            task_id=LIFT_TASK_ID,
+            dataset_id=LIFT_DATASET_ID,
+        ),
+    )
+
+    result = write_split_manifest(config, tmp_path)
+
+    assert result["requested_train_count"] == 19
+    assert result["train_count"] == 18
+    assert result["validation_count"] == 3
+    assert result["gold_heldout_count"] == 3
+    assert result["effective_train_fraction"] == 0.75
+    assert result["split_count_adjusted_for_stratification"] is True
+    assert all(
+        all(
+            result["coverage"][split]["difficulty"][difficulty] >= 1
+            for difficulty in ("easy", "medium", "hard")
+        )
+        for split in ("train", "validation", "gold_heldout")
+    )
+
+
 def test_canonical_stratified_quotas_are_exact() -> None:
     sizes = {"easy": 3334, "medium": 3333, "hard": 3333}
     train = _bounded_stratified_quotas(
@@ -200,7 +247,7 @@ def test_stage5_loads_and_hashes_exact_stage4_shards(tmp_path: Path) -> None:
         dataset_id=LIFT_DATASET_ID,
         dataset_uri="s3://bucket/lift/",
     )
-    base = dict(
+    base: dict[str, Any] = dict(
         run_id="raw-handoff",
         output_uri="s3://bucket/run",
         env_count=12,

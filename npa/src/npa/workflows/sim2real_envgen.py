@@ -615,7 +615,17 @@ def write_split_manifest(
     # Stratify by difficulty; a digest-based order is deterministic and immune to
     # input file ordering.  The non-train remainder is divided evenly between
     # checkpoint validation and final gold heldout.
-    target_train = int(round(len(accepted) * config.train_fraction))
+    requested_train = int(round(len(accepted) * config.train_fraction))
+    # Every difficulty stratum must retain one validation and one gold
+    # scenario.  On small integration runs, rounding the requested fraction can
+    # otherwise demand more train rows than that sealed coverage permits (for
+    # example 19/24 at 0.8 while three strata must retain six rows).  Clamp the
+    # requested count to the explicit bounds and record both values below.  The
+    # allocator remains exact and fail-closed for internally inconsistent
+    # bounds.
+    minimum_train = len(strata)
+    maximum_train = sum(len(rows) - 2 for rows in strata.values())
+    target_train = min(maximum_train, max(minimum_train, requested_train))
     train_quotas = _bounded_stratified_quotas(
         {difficulty: len(rows) for difficulty, rows in strata.items()},
         target=target_train,
@@ -715,6 +725,9 @@ def write_split_manifest(
         "run_id": config.run_id,
         "seed": config.seed,
         "train_fraction": config.train_fraction,
+        "requested_train_count": requested_train,
+        "effective_train_fraction": len(train_envs) / len(accepted),
+        "split_count_adjusted_for_stratification": target_train != requested_train,
         "raw_count": len(input_rows),
         "accepted_count": len(accepted),
         "train_count": len(train_envs),
