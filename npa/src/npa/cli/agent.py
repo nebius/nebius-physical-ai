@@ -4666,7 +4666,7 @@ def chat(payload: dict):
     origin_reply, origin_apis = _maybe_origin_reply(
         last_content, visual_context=visual_context, state=state
     )
-    if origin_reply and not has_image_content(llm_messages):
+    if origin_reply and not visual_turn and not has_image_content(llm_messages):
         history = [*merged_history, {{"role": "assistant", "content": origin_reply}}][-80:]
         session.update(
             {{
