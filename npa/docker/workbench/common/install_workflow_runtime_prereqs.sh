@@ -38,6 +38,12 @@ printf '%s\n' \
   > /etc/apt/sources.list.d/ubuntu.sources
 
 apt-get update
+# NVIDIA's Genesis-derived base contains development packages whose declared
+# dependencies are absent from its final layer (observed live: libc6-dev
+# without linux-libc-dev).  Apt refuses even unrelated installs while that
+# graph is broken.  Repair it from the same immutable snapshot first; this is
+# deliberately fail-closed and never falls back to a moving mirror.
+apt-get --fix-broken install -y --no-install-recommends
 apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
