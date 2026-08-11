@@ -10,12 +10,14 @@ import time
 from typing import Any, Callable, Mapping
 
 from npa.clients.json_output import parse_single_json_document
+from npa.lifecycle_intent import OperationIntent, intent_boundary
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 PROJECT_DELETE_VERIFY_TIMEOUT_SECONDS = 180.0
 PROJECT_DELETE_VERIFY_INTERVAL_SECONDS = 2.0
+PROJECT_STABLE_ABSENCE_OBSERVATIONS = 2
 
 _FATAL_INVENTORY_DIAGNOSTIC = re.compile(
     r"(?i)\b(?:unauthenticated|unauthorized|permission denied|access denied|forbidden|"
@@ -33,12 +35,130 @@ def _project_bucket_name(project_id: str, state_bucket: str) -> str:
     saved = str(state_bucket or "").strip()
     if saved:
         return saved
+    from npa.clients.project_credential_store import project_credential_record
+
+    record = project_credential_record(project_id, migrate_legacy=False)
+    storage = record.get("storage")
+    if isinstance(storage, Mapping):
+        return str(storage.get("bucket") or storage.get("s3_bucket") or "").strip()
+    # Compatibility adapter for callers/tests that supply a proven legacy view
+    # without a writable store. Exact ownership remains mandatory.
     from npa.clients.credentials import load_credentials
 
-    credentials = load_credentials(environ={})
-    if credentials.s3_project_id != project_id:
-        return ""
-    return str(credentials.s3_bucket or "").strip()
+    legacy = load_credentials(environ={})
+    if legacy.s3_project_id == project_id:
+        return str(legacy.s3_bucket or "").strip()
+    return ""
+
+
+def _project_storage_iam_generation_ids(project: str, project_id: str) -> tuple[str, ...]:
+    """Return every exact NPA-owned storage principal generation for a project."""
+
+    from npa.clients.project_credential_store import project_credential_record
+    from npa.teardown_receipts import list_teardown_receipts
+
+    ids: set[str] = set()
+    record = project_credential_record(project_id, migrate_legacy=False)
+    storage_iam = record.get("storage_iam")
+    if isinstance(storage_iam, Mapping):
+        generations = storage_iam.get("generations")
+        rows = generations if isinstance(generations, list) else [storage_iam]
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            ownership = str(
+                row.get("ownership") or row.get("service_account_managed_by") or ""
+            ).strip()
+            account_id = str(row.get("service_account_id") or "").strip()
+            if ownership in {"npa", "npa-recovery-attested"} and account_id:
+                ids.add(account_id)
+    for receipt in list_teardown_receipts(
+        project_alias=project, project_id=project_id, legacy="exclude"
+    ):
+        identity = receipt.get("identity")
+        identity = identity if isinstance(identity, Mapping) else {}
+        receipt_iam = identity.get("storage_iam")
+        if not isinstance(receipt_iam, Mapping):
+            continue
+        generations = receipt_iam.get("generations")
+        rows = generations if isinstance(generations, list) else [receipt_iam]
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            if str(row.get("project_id") or project_id).strip() != project_id:
+                continue
+            account_id = str(row.get("service_account_id") or "").strip()
+            if row.get("ownership") == "npa" and account_id:
+                ids.add(account_id)
+    return tuple(sorted(ids))
+
+
+def _project_storage_iam_logical_names(project_id: str) -> tuple[str, ...]:
+    from npa.clients.project_credential_store import project_credential_record
+    from npa.teardown_receipts import list_teardown_receipts
+
+    names: set[str] = set()
+    record = project_credential_record(project_id, migrate_legacy=False)
+    storage_iam = record.get("storage_iam")
+    if isinstance(storage_iam, Mapping):
+        generations = storage_iam.get("generations")
+        rows = generations if isinstance(generations, list) else [storage_iam]
+        for row in rows:
+            if isinstance(row, Mapping):
+                name = str(row.get("service_account_name") or "").strip()
+                if name:
+                    names.add(name)
+    for receipt in list_teardown_receipts(project_id=project_id, legacy="exclude"):
+        identity = receipt.get("identity")
+        receipt_iam = identity.get("storage_iam") if isinstance(identity, Mapping) else None
+        if not isinstance(receipt_iam, Mapping):
+            continue
+        generations = receipt_iam.get("generations")
+        rows = generations if isinstance(generations, list) else [receipt_iam]
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            if str(row.get("project_id") or project_id).strip() != project_id:
+                continue
+            name = str(row.get("service_account_name") or "").strip()
+            if name:
+                names.add(name)
+    return tuple(sorted(names))
+
+
+def _verify_storage_iam_stable_absence(
+    *, project_id: str, account_ids: tuple[str, ...], names: tuple[str, ...]
+) -> dict[str, Any]:
+    """Reject exact-ID residue or a same-name replacement across stable observations."""
+
+    from npa.clients.nebius import (
+        get_service_account_id_by_name,
+        get_service_account_identity,
+    )
+
+    observations: list[dict[str, str]] = []
+    for index in range(PROJECT_STABLE_ABSENCE_OBSERVATIONS):
+        present: dict[str, str] = {}
+        for account_id in account_ids:
+            if (
+                get_service_account_identity(account_id, project_id=project_id)
+                is not None
+            ):
+                present[f"id:{account_id}"] = account_id
+        for name in names:
+            replacement = get_service_account_id_by_name(project_id, name, strict=True)
+            if replacement:
+                present[f"name:{name}"] = replacement
+        observations.append(present)
+        if present:
+            raise RuntimeError(
+                "storage IAM stable-absence verification found owned generation or "
+                "same-name replacement: "
+                + ", ".join(sorted(present))
+            )
+        if index + 1 < PROJECT_STABLE_ABSENCE_OBSERVATIONS:
+            time.sleep(PROJECT_DELETE_VERIFY_INTERVAL_SECONDS)
+    return {"stable_absence_observations": len(observations), "logical_names": list(names)}
 
 
 @dataclass(frozen=True)
@@ -198,6 +318,40 @@ def build_project_destroy_plan(
                 "--json",
             ),
         )
+    storage_iam_ids = _project_storage_iam_generation_ids(project, project_id)
+    storage_iam_names = _project_storage_iam_logical_names(project_id)
+    storage_iam_commands: tuple[tuple[str, ...], ...] = tuple(
+        (
+            "npa",
+            "storage",
+            "service-account",
+            "delete",
+            "--project",
+            project,
+            "--project-id",
+            project_id,
+            "--id",
+            account_id,
+            "--yes",
+            "--json",
+        )
+        for account_id in storage_iam_ids
+    )
+    if not storage_iam_commands:
+        storage_iam_commands = (
+            (
+                "npa",
+                "storage",
+                "service-account",
+                "delete",
+                "--project",
+                project,
+                "--project-id",
+                project_id,
+                "--yes",
+                "--json",
+            ),
+        )
     phases = [
         DestroyPhase(
             "workflows",
@@ -233,24 +387,18 @@ def build_project_destroy_plan(
             "bucket",
             bucket_commands,
             "Delete and verify the exact state bucket.",
-            ("agents", "clusters"),
+            ("workflows", "agents", "controller", "clusters"),
         ),
         DestroyPhase(
             "storage_iam",
-            (
-                (
-                    "npa",
-                    "storage",
-                    "service-account",
-                    "delete",
-                    "--project",
-                    project,
-                    "--yes",
-                    "--json",
-                ),
-            ),
+            storage_iam_commands,
             "Delete only project-scoped NPA-owned storage IAM.",
-            ("bucket",),
+            ("workflows", "agents", "controller", "clusters", "bucket"),
+            {
+                "project_id": project_id,
+                "generation_ids": list(storage_iam_ids),
+                "logical_names": list(storage_iam_names),
+            },
         ),
     ]
     if delete_project:
@@ -337,6 +485,26 @@ def build_project_destroy_plan(
                     *(("delete_project",) if delete_project else ()),
                     "local_cleanup",
                 ),
+            ),
+            DestroyPhase(
+                "final_audit",
+                (
+                    (
+                        "npa",
+                        "cleanup",
+                        "--project",
+                        project_id,
+                        "--full",
+                        "--yes",
+                        "--include-sky",
+                        "--skip-jobs",
+                        "--attest-no-active-jobs",
+                        "--json",
+                    ),
+                ),
+                "Remove remaining exact-project secrets and shared SkyPilot state only after "
+                "owned jobs/controllers are stopped, then prove no operational residue remains.",
+                ("forget_alias",),
             ),
         ]
     )
@@ -465,13 +633,20 @@ def _delete_owned_empty_project(
         raise RuntimeError(
             f"provider project region {identity.region} does not match durable region {region}"
         )
-    dependencies = list_project_dependencies(project_id, profile=profile or None)
-    remaining = {kind: list(ids) for kind, ids in dependencies.items() if ids}
-    if remaining:
-        raise RuntimeError(
-            "provider dependency inventory is nonempty: "
-            + ", ".join(f"{kind}={len(ids)}" for kind, ids in sorted(remaining.items()))
-        )
+    dependency_observations: list[dict[str, list[str]]] = []
+    for observation_index in range(PROJECT_STABLE_ABSENCE_OBSERVATIONS):
+        dependencies = list_project_dependencies(project_id, profile=profile or None)
+        remaining = {kind: list(ids) for kind, ids in dependencies.items() if ids}
+        dependency_observations.append(remaining)
+        if remaining:
+            raise RuntimeError(
+                "provider dependency inventory is nonempty: "
+                + ", ".join(
+                    f"{kind}={len(ids)}" for kind, ids in sorted(remaining.items())
+                )
+            )
+        if observation_index + 1 < PROJECT_STABLE_ABSENCE_OBSERVATIONS:
+            time.sleep(PROJECT_DELETE_VERIFY_INTERVAL_SECONDS)
     # This durable intent receipt is a precondition to mutation. If it cannot be
     # written, deletion does not run. It carries only exact, non-secret identity.
     record_teardown_event(
@@ -490,22 +665,31 @@ def _delete_owned_empty_project(
         precheck={
             "provider_identity_verified": True,
             "child_inventory": "verified_empty",
+            "stable_empty_observations": len(dependency_observations),
         },
         action={"kind": "delete_exact_project", "project_id": project_id},
     )
     try:
         delete_project(project_id, profile=profile or None)
         deadline = time.monotonic() + PROJECT_DELETE_VERIFY_TIMEOUT_SECONDS
+        absent_observations = 0
         while True:
             after = get_project_identity(
                 project_id, tenant_id=tenant_id, profile=profile or None
             )
-            if after is None or time.monotonic() >= deadline:
+            if after is None:
+                absent_observations += 1
+            else:
+                absent_observations = 0
+            if (
+                absent_observations >= PROJECT_STABLE_ABSENCE_OBSERVATIONS
+                or time.monotonic() >= deadline
+            ):
                 break
             time.sleep(PROJECT_DELETE_VERIFY_INTERVAL_SECONDS)
     except NebiusError as exc:
         raise RuntimeError(f"exact provider project deletion failed: {exc}") from exc
-    if after is not None:
+    if after is not None or absent_observations < PROJECT_STABLE_ABSENCE_OBSERVATIONS:
         raise RuntimeError(
             "provider accepted deletion but exact project remains present"
         )
@@ -519,6 +703,7 @@ def _delete_owned_empty_project(
         verification={
             "exact_project_absent": True,
             "child_inventory": "verified_empty",
+            "stable_absence_observations": absent_observations,
         },
     )
     return {"outcome": "verified_deleted", "project_id": project_id}
@@ -537,6 +722,11 @@ def _run(command: tuple[str, ...], runner: Runner) -> subprocess.CompletedProces
             if operation is not None:
                 child_env = os.environ.copy()
                 child_env["NPA_PARENT_LIFECYCLE_OPERATION"] = operation.operation_id
+                child_env["NPA_OPERATION_INTENT"] = "destroy"
+                kwargs["env"] = child_env
+            else:
+                child_env = os.environ.copy()
+                child_env["NPA_OPERATION_INTENT"] = "destroy"
                 kwargs["env"] = child_env
         return runner(
             argv,
@@ -578,7 +768,9 @@ def _parse_workflow_inventory(
 
     payload = parse_single_json_document(completed.stdout or "")
     rows = payload.get("runs") if isinstance(payload, dict) else None
-    if not isinstance(rows, list) or set(payload) != {"runs"}:
+    if not isinstance(payload, dict) or not isinstance(rows, list):
+        return None, "workflow inventory returned ambiguous JSON"
+    if set(payload) != {"runs"}:
         return None, "workflow inventory returned ambiguous JSON"
     if any(
         not isinstance(row, dict) or not str(row.get("run_id") or "").strip()
@@ -639,6 +831,28 @@ def _command_failure_detail(completed: subprocess.CompletedProcess[str]) -> str:
     )
 
 
+def _redacted_stream_summary(value: object) -> str:
+    """Keep bounded diagnostic evidence without persisting secret-bearing output."""
+
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    return redact_text(str(value or "").strip())[:500]
+
+
+def _command_evidence(
+    completed: subprocess.CompletedProcess[str], command: tuple[str, ...]
+) -> dict[str, Any]:
+    return {
+        "argv": _completed_argv(completed, command),
+        "exit_code": completed.returncode,
+        "stdout_kind": _stream_kind(completed.stdout),
+        "stderr_kind": _stream_kind(completed.stderr),
+        "stdout_summary": _redacted_stream_summary(completed.stdout),
+        "stderr_summary": _redacted_stream_summary(completed.stderr),
+    }
+
+
+@intent_boundary(OperationIntent.DESTROY)
 def execute_project_destroy(
     project: str,
     phases: list[DestroyPhase],
@@ -707,23 +921,72 @@ def execute_project_destroy(
         if on_phase:
             on_phase(phase.name)
         if f"project_destroy_{phase.name}" in completed_receipt_phases:
-            statuses[phase.name] = "completed"
-            results.append(
-                {
-                    "phase": phase.name,
-                    "status": "completed",
-                    "commands": [],
-                    "errors": [],
-                    "warnings": [],
-                    "recovery_commands": [],
-                    "blocked_by": [],
-                    "evidence": {
-                        "durable_prior_completion": True,
-                        "command_results": [],
-                    },
-                }
-            )
-            continue
+            prior_evidence: dict[str, Any] = {"durable_prior_completion": True}
+            if phase.name == "storage_iam":
+                raw_ids = phase.metadata.get("generation_ids", [])
+                raw_names = phase.metadata.get("logical_names", [])
+                id_values = raw_ids if isinstance(raw_ids, (list, tuple)) else ()
+                name_values = (
+                    raw_names if isinstance(raw_names, (list, tuple)) else ()
+                )
+                ids = tuple(
+                    str(value)
+                    for value in id_values
+                    if str(value).strip()
+                )
+                names = tuple(
+                    str(value)
+                    for value in name_values
+                    if str(value).strip()
+                )
+                if ids or names:
+                    try:
+                        prior_evidence.update(
+                            _verify_storage_iam_stable_absence(
+                                project_id=project_id,
+                                account_ids=ids,
+                                names=names,
+                            )
+                        )
+                    except (OSError, RuntimeError, ValueError):
+                        # A replacement or delayed generation invalidates the
+                        # prior completion. Re-enter the guarded exact-ID phase;
+                        # it still cannot delete an ownership-unproven name hit.
+                        pass
+                    else:
+                        statuses[phase.name] = "completed"
+                        results.append(
+                            {
+                                "phase": phase.name,
+                                "status": "completed",
+                                "commands": [],
+                                "errors": [],
+                                "warnings": [],
+                                "recovery_commands": [],
+                                "blocked_by": [],
+                                "evidence": {**prior_evidence, "command_results": []},
+                            }
+                        )
+                        continue
+                else:
+                    # Legacy receipts without an identity set cannot justify
+                    # skipping current exact-project reconciliation.
+                    pass
+            else:
+                statuses[phase.name] = "completed"
+                results.append(
+                    {
+                        "phase": phase.name,
+                        "status": "completed",
+                        "commands": [],
+                        "errors": [],
+                        "warnings": [],
+                        "recovery_commands": [],
+                        "blocked_by": [],
+                        "evidence": {**prior_evidence, "command_results": []},
+                    }
+                )
+                continue
         commands = list(phase.commands)
         phase_errors: list[str] = []
         phase_warnings: list[str] = []
@@ -756,14 +1019,7 @@ def execute_project_destroy(
         elif phase.name == "workflows" and commands:
             inventory = _run(commands[0], runner)
             executed.append(list(commands[0]))
-            command_results.append(
-                {
-                    "argv": _completed_argv(inventory, commands[0]),
-                    "exit_code": inventory.returncode,
-                    "stdout_kind": _stream_kind(inventory.stdout),
-                    "stderr_kind": _stream_kind(inventory.stderr),
-                }
-            )
+            command_results.append(_command_evidence(inventory, commands[0]))
             rows, inventory_error = _parse_workflow_inventory(inventory)
             if rows is None:
                 phase_errors.append(
@@ -793,14 +1049,7 @@ def execute_project_destroy(
                     )
                     completed = _run(cancel_command, runner)
                     executed.append(list(cancel_command))
-                    command_results.append(
-                        {
-                            "argv": _completed_argv(completed, cancel_command),
-                            "exit_code": completed.returncode,
-                            "stdout_kind": _stream_kind(completed.stdout),
-                            "stderr_kind": _stream_kind(completed.stderr),
-                        }
-                    )
+                    command_results.append(_command_evidence(completed, cancel_command))
                     if completed.returncode != 0:
                         phase_errors.append(
                             f"workflow cancellation failed for {run_id}: "
@@ -811,14 +1060,7 @@ def execute_project_destroy(
             for command in commands:
                 completed = _run(command, runner)
                 executed.append(list(command))
-                command_results.append(
-                    {
-                        "argv": _completed_argv(completed, command),
-                        "exit_code": completed.returncode,
-                        "stdout_kind": _stream_kind(completed.stdout),
-                        "stderr_kind": _stream_kind(completed.stderr),
-                    }
-                )
+                command_results.append(_command_evidence(completed, command))
                 parsed = parse_single_json_document(completed.stdout or "")
                 remote_only_converged = bool(
                     phase.name == "controller"
@@ -844,6 +1086,38 @@ def execute_project_destroy(
                 elif completed.returncode != 0:
                     phase_errors.append(_command_failure_detail(completed))
                     recovery_commands.append(list(command))
+            if phase.name == "storage_iam" and not phase_errors:
+                raw_generation_ids = phase.metadata.get("generation_ids", [])
+                raw_logical_names = phase.metadata.get("logical_names", [])
+                generation_ids = tuple(
+                    str(value)
+                    for value in (
+                        raw_generation_ids
+                        if isinstance(raw_generation_ids, (list, tuple))
+                        else []
+                    )
+                    if str(value).strip()
+                )
+                logical_names = tuple(
+                    str(value)
+                    for value in (
+                        raw_logical_names
+                        if isinstance(raw_logical_names, (list, tuple))
+                        else []
+                    )
+                    if str(value).strip()
+                )
+                if generation_ids or logical_names:
+                    try:
+                        phase_evidence.update(
+                            _verify_storage_iam_stable_absence(
+                                project_id=project_id,
+                                account_ids=generation_ids,
+                                names=logical_names,
+                            )
+                        )
+                    except (OSError, RuntimeError, ValueError) as exc:
+                        phase_errors.append(str(exc))
         phase_status = (
             "skipped_dependency"
             if blocked_by

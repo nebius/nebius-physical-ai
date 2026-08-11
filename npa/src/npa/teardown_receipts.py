@@ -282,6 +282,15 @@ def _merge_identity(
     if isinstance(existing, Mapping) and isinstance(incoming, Mapping):
         mapping_merged = dict(existing)
         for key, value in incoming.items():
+            if (
+                path == "identity.storage_iam"
+                and key != "generations"
+                and mapping_merged.get(str(key)) not in (None, "", {}, [])
+                and mapping_merged.get(str(key)) != value
+            ):
+                # Compatibility scalar fields describe the first generation;
+                # the authoritative complete set lives in generations.
+                continue
             mapping_merged[str(key)] = _merge_identity(
                 mapping_merged.get(str(key)), value, path=f"{path}.{key}"
             )
@@ -302,6 +311,7 @@ def _merge_identity(
                                 "context",
                                 "run_id",
                                 "operation_id",
+                                "service_account_id",
                             )
                             if item.get(key) not in (None, "")
                         ),
@@ -407,7 +417,43 @@ def _root_identity(
         root[collection] = _merge_identity(root.get(collection, []), [scoped])
     elif collection == "storage_iam" and scoped:
         existing = root.get(collection, {})
-        root[collection] = _merge_identity(existing, scoped)
+        if isinstance(existing, Mapping) and "generations" in existing:
+            generations = existing.get("generations")
+            generations = list(generations) if isinstance(generations, list) else []
+        elif isinstance(existing, Mapping) and existing:
+            # Additive v2 migration from the original single-generation shape.
+            generations = [dict(existing)]
+        else:
+            generations = []
+        account_id = str(scoped.get("service_account_id") or "")
+        matching = [
+            item
+            for item in generations
+            if isinstance(item, Mapping)
+            and str(item.get("service_account_id") or "") == account_id
+        ]
+        if matching:
+            saved = matching[0]
+            incoming = dict(scoped)
+            # Ownership proof is monotonic. A later provider observation marked
+            # "unverified" must not erase durable NPA creation provenance.
+            if saved.get("ownership") == "npa" and incoming.get("ownership") != "npa":
+                incoming.pop("ownership", None)
+            merged_generation = _merge_identity(
+                saved, incoming, path="identity.storage_iam.generation"
+            )
+            generations[generations.index(saved)] = merged_generation
+        else:
+            generations.append(dict(scoped))
+        compatibility = dict(existing) if isinstance(existing, Mapping) else {}
+        compatibility.pop("generations", None)
+        if not compatibility or compatibility.get("service_account_id") == account_id:
+            for key, value in scoped.items():
+                if key == "ownership" and compatibility.get(key) == "npa":
+                    continue
+                compatibility[key] = value
+        compatibility["generations"] = generations
+        root[collection] = compatibility
     return root
 
 

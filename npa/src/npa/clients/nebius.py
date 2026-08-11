@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import warnings
 from dataclasses import dataclass
+from enum import Enum
 from datetime import datetime, timezone
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -72,6 +73,57 @@ class ProjectDefaultNetworkIdentity:
     security_group_name: str
     project_id: str
     profile: str = ""
+
+
+class IamBindingState(str, Enum):
+    """Typed result of reconciling an effective provider IAM capability."""
+
+    CREATED = "created"
+    EXISTING = "existing"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class StorageIamBindingEvidence:
+    state: IamBindingState
+    role: str
+    scope_id: str
+    group_id: str
+    group_name: str
+    access_permit_id: str = ""
+    compatibility_fallback: bool = False
+
+    @property
+    def propagation_eligible(self) -> bool:
+        return self.state is IamBindingState.CREATED
+
+
+class StorageIamBindingError(NebiusError):
+    """Terminal IAM failure carrying a typed, non-secret capability outcome."""
+
+    def __init__(self, message: str, evidence: StorageIamBindingEvidence):
+        super().__init__(message)
+        self.evidence = evidence
+
+
+STORAGE_RUNTIME_ROLE = "storage.object-editor"
+STORAGE_REQUIRED_S3_ACTIONS = (
+    "GetObject",
+    "HeadObject",
+    "PutObject",
+    "DeleteObject",
+    "ListObjectsV2",
+)
+STORAGE_BINDING_GROUP_PREFIX = "npa-storage-object-editors"
+# Compatibility export for callers that only display the group family name.
+STORAGE_BINDING_GROUP_NAME = STORAGE_BINDING_GROUP_PREFIX
+
+
+def storage_binding_group_name(project_id: str) -> str:
+    """Give each exact project a distinct tenant IAM group capability boundary."""
+
+    suffix = re.sub(r"[^a-z0-9-]", "-", str(project_id).lower()).strip("-")
+    return f"{STORAGE_BINDING_GROUP_PREFIX}-{suffix}"
 
 
 # ── Low-level CLI runner ─────────────────────────────────────────────────
@@ -868,6 +920,34 @@ def delete_project_default_network(
                 raise
 
 
+def delete_subnet(subnet_id: str, *, profile: str | None = None) -> None:
+    """Delete one exact subnet ID; no name discovery or creation is performed."""
+
+    exact = str(subnet_id or "").strip()
+    if not exact:
+        raise NebiusError("exact subnet ID is required")
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    try:
+        _run([*profile_args, "vpc", "subnet", "delete", "--id", exact])
+    except NebiusError as exc:
+        if not _is_not_found(str(exc)):
+            raise
+
+
+def delete_network(network_id: str, *, profile: str | None = None) -> None:
+    """Delete one exact network ID; no name discovery or creation is performed."""
+
+    exact = str(network_id or "").strip()
+    if not exact:
+        raise NebiusError("exact network ID is required")
+    profile_args, _resolved_profile = _iam_profile_args(profile)
+    try:
+        _run([*profile_args, "vpc", "network", "delete", "--id", exact])
+    except NebiusError as exc:
+        if not _is_not_found(str(exc)):
+            raise
+
+
 def list_registry_image_ids(
     registry_id: str, *, profile: str | None = None
 ) -> tuple[str, ...]:
@@ -1334,6 +1414,9 @@ def ensure_service_account(
     account found by name, recovered from an IAM error, or loaded from existing
     credentials is deliberately never claimed as NPA-owned.
     """
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_service_account")
     # Try to find existing.
     try:
         data = _run_json(
@@ -1404,8 +1487,35 @@ def ensure_service_account(
 # ── Editors group membership ─────────────────────────────────────────────
 
 
-def ensure_editors_membership(tenant_id: str, sa_id: str) -> None:
-    """Add the service account to the tenant's *editors* group."""
+def _group_has_member(group_id: str, member_id: str) -> bool:
+    members_data = _run_json(
+        [
+            "iam",
+            "group-membership",
+            "list-members",
+            "--parent-id",
+            group_id,
+            "--page-size",
+            "1000",
+        ]
+    )
+    memberships = members_data.get("memberships", members_data.get("items", []))
+    if not isinstance(memberships, list):
+        raise NebiusError("IAM group membership inventory returned an invalid schema")
+    return any(
+        isinstance(item, dict)
+        and str((item.get("spec") or {}).get("member_id") or "") == member_id
+        for item in memberships
+    )
+
+
+def _ensure_editors_membership_impl(
+    tenant_id: str, sa_id: str
+) -> StorageIamBindingEvidence:
+    """Explicit compatibility fallback for the tenant-wide editors group."""
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_editors_membership")
     group_data = _run_json(
         [
             "iam",
@@ -1421,22 +1531,15 @@ def ensure_editors_membership(tenant_id: str, sa_id: str) -> None:
     if not group_id:
         raise NebiusError(f"Could not find editors group in tenant {tenant_id}")
 
-    # Check membership.
-    members_data = _run_json(
-        [
-            "iam",
-            "group-membership",
-            "list-members",
-            "--parent-id",
+    if _group_has_member(group_id, sa_id):
+        return StorageIamBindingEvidence(
+            IamBindingState.EXISTING,
+            "editor",
+            tenant_id,
             group_id,
-            "--page-size",
-            "1000",
-        ]
-    )
-    memberships = members_data.get("memberships", [])
-    for m in memberships:
-        if m.get("spec", {}).get("member_id") == sa_id:
-            return  # Already a member.
+            "editors",
+            compatibility_fallback=True,
+        )
 
     _run(
         [
@@ -1449,6 +1552,223 @@ def ensure_editors_membership(tenant_id: str, sa_id: str) -> None:
             sa_id,
         ]
     )
+    return StorageIamBindingEvidence(
+        IamBindingState.CREATED,
+        "editor",
+        tenant_id,
+        group_id,
+        "editors",
+        compatibility_fallback=True,
+    )
+
+
+def ensure_editors_membership(
+    tenant_id: str, sa_id: str
+) -> StorageIamBindingEvidence:
+    """Reconcile the explicit broad fallback and type terminal failure evidence."""
+
+    try:
+        return _ensure_editors_membership_impl(tenant_id, sa_id)
+    except NebiusError as exc:
+        evidence = StorageIamBindingEvidence(
+            IamBindingState.FAILED,
+            "editor",
+            tenant_id,
+            "",
+            "editors",
+            compatibility_fallback=True,
+        )
+        raise StorageIamBindingError(
+            "editors compatibility binding failed; required S3 actions: "
+            + ", ".join(STORAGE_REQUIRED_S3_ACTIONS),
+            evidence,
+        ) from exc
+
+
+def _existing_editors_binding(
+    tenant_id: str, sa_id: str
+) -> StorageIamBindingEvidence | None:
+    """Read-only compatibility verification for existing installations."""
+
+    group_data = _run_json(
+        [
+            "iam",
+            "group",
+            "get-by-name",
+            "--parent-id",
+            tenant_id,
+            "--name",
+            "editors",
+        ]
+    )
+    group_id = str((group_data.get("metadata") or {}).get("id") or "")
+    if not group_id:
+        raise NebiusError(f"Could not find editors group in tenant {tenant_id}")
+    if not _group_has_member(group_id, sa_id):
+        return None
+    return StorageIamBindingEvidence(
+        IamBindingState.EXISTING,
+        "editor",
+        tenant_id,
+        group_id,
+        "editors",
+        compatibility_fallback=True,
+    )
+
+
+def ensure_storage_capability_binding(
+    *,
+    project_id: str,
+    tenant_id: str,
+    bucket_id: str,
+    service_account_id: str,
+    allow_editors_fallback: bool = False,
+    on_resource_created: Callable[[str, dict[str, str]], None] | None = None,
+) -> StorageIamBindingEvidence:
+    """Ensure the narrow provider-verified bucket object capability binding.
+
+    Nebius assigns roles to groups. NPA therefore creates/reuses one project-
+    scoped custom group, grants ``storage.object-editor`` on the exact bucket,
+    and adds the storage service account. Existing tenant-wide editors members
+    remain accepted for compatibility, but NPA only creates that broad binding
+    when the operator explicitly opts into the fallback.
+    """
+
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_storage_capability_binding")
+    if not all((project_id, tenant_id, bucket_id, service_account_id)):
+        raise NebiusError("storage IAM verification requires exact project, tenant, bucket, and service-account IDs")
+
+    changed = False
+    group_created = False
+    group_name = storage_binding_group_name(project_id)
+    try:
+        group_data = _run_json(
+            [
+                "iam",
+                "group",
+                "get-by-name",
+                "--parent-id",
+                tenant_id,
+                "--name",
+                group_name,
+            ]
+        )
+    except NebiusError as exc:
+        if not _is_not_found(str(exc)):
+            raise NebiusError(
+                "Storage IAM inventory is unreadable; refusing to create a key or probe. "
+                f"Required S3 actions: {', '.join(STORAGE_REQUIRED_S3_ACTIONS)}."
+            ) from exc
+        group_data = _run_json(
+            [
+                "iam",
+                "group",
+                "create",
+                "--parent-id",
+                tenant_id,
+                "--name",
+                group_name,
+                "--description",
+                "NPA bucket-scoped storage principals",
+            ]
+        )
+        changed = group_created = True
+    group_id = str((group_data.get("metadata") or {}).get("id") or "")
+    if not group_id:
+        raise NebiusError("Storage IAM group reconciliation did not return an exact ID")
+    if group_created and on_resource_created:
+        on_resource_created(
+            "iam_group",
+            {"id": group_id, "name": group_name, "project_id": project_id},
+        )
+
+    permits = _run_json(
+        ["iam", "access-permit", "list", "--parent-id", group_id, "--all"]
+    )
+    items = permits.get("items", permits.get("access_permits", []))
+    if not isinstance(items, list):
+        raise NebiusError("Storage IAM access-permit inventory returned an invalid schema")
+    matching = [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and str((item.get("spec") or {}).get("resource_id") or "") == bucket_id
+        and str((item.get("spec") or {}).get("role") or "") == STORAGE_RUNTIME_ROLE
+    ]
+    permit_id = ""
+    if matching:
+        permit_id = str((matching[0].get("metadata") or {}).get("id") or "")
+        if not permit_id:
+            raise NebiusError("Matching storage IAM permit is missing its exact ID")
+    else:
+        try:
+            permit = _run_json(
+                [
+                    "iam",
+                    "access-permit",
+                    "create",
+                    "--parent-id",
+                    group_id,
+                    "--resource-id",
+                    bucket_id,
+                    "--role",
+                    STORAGE_RUNTIME_ROLE,
+                ]
+            )
+        except NebiusError as exc:
+            if allow_editors_fallback and re.search(
+                r"(?i)unsupported|unimplemented|unknown role", str(exc)
+            ):
+                return ensure_editors_membership(tenant_id, service_account_id)
+            raise NebiusError(
+                "Cannot establish the supported narrow storage binding. Required S3 "
+                f"actions: {', '.join(STORAGE_REQUIRED_S3_ACTIONS)}. Supported choices: "
+                f"bucket-scoped {STORAGE_RUNTIME_ROLE}; an already-converged editors "
+                "membership; or explicit editors compatibility fallback when the provider "
+                "reports the narrow role unsupported."
+            ) from exc
+        permit_id = str((permit.get("metadata") or {}).get("id") or "")
+        if not permit_id:
+            raise NebiusError("Storage IAM permit creation did not return an exact ID")
+        changed = True
+        if on_resource_created:
+            on_resource_created("iam_permit", {"id": permit_id, "group_id": group_id})
+
+    if not _group_has_member(group_id, service_account_id):
+        _run(
+            [
+                "iam",
+                "group-membership",
+                "create",
+                "--parent-id",
+                group_id,
+                "--member-id",
+                service_account_id,
+            ]
+        )
+        changed = True
+    return StorageIamBindingEvidence(
+        IamBindingState.CREATED if changed else IamBindingState.EXISTING,
+        STORAGE_RUNTIME_ROLE,
+        bucket_id,
+        group_id,
+        group_name,
+        permit_id,
+    )
+
+
+def delete_access_permit(permit_id: str, *, profile: str | None = None) -> None:
+    if permit_id:
+        profile_args, _resolved_profile = _iam_profile_args(profile)
+        _run(["iam", "access-permit", "delete", "--id", permit_id, *profile_args])
+
+
+def delete_group(group_id: str, *, profile: str | None = None) -> None:
+    if group_id:
+        profile_args, _resolved_profile = _iam_profile_args(profile)
+        _run(["iam", "group", "delete", "--id", group_id, *profile_args])
 
 
 # ── Access keys ──────────────────────────────────────────────────────────
@@ -1776,6 +2096,9 @@ def ensure_access_key(
 
     Reuses an existing key when possible; creates a new one otherwise.
     """
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_access_key")
     existing = _find_active_access_key(
         project_id, sa_id, key_name=key_name
     ) or _find_active_access_key(project_id, sa_id)
@@ -1943,6 +2266,9 @@ def ensure_bucket(
     applied when the bucket is created; an existing bucket is reused unchanged.
     *default_storage_class* is applied only when the bucket is created.
     """
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_bucket")
     if bucket_exists(project_id, bucket_name):
         return bucket_name
 
@@ -2002,6 +2328,7 @@ def bootstrap_environment(
     access_key_description: str = "Access key for LeRobot S3 and API access",
     on_status: Callable[[str], None] | None = None,
     on_resource_created: Callable[[str, dict[str, str]], None] | None = None,
+    allow_editors_fallback: bool = False,
 ) -> dict[str, str]:
     """Run the full environment bootstrap, return a dict of credentials.
 
@@ -2014,6 +2341,10 @@ def bootstrap_environment(
     created. *on_status* is an optional callback ``(message: str) -> None`` for
     progress reporting.
     """
+
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("bootstrap_environment")
 
     def _status(msg: str) -> None:
         if on_status:
@@ -2056,18 +2387,8 @@ def bootstrap_environment(
             )
         return payload
 
-    _status("Configuring service account permissions...")
-    try:
-        ensure_editors_membership(tenant_id, sa_id)
-    except NebiusError as exc:
-        raise NebiusError(
-            "Required storage IAM grant failed before bucket/access-key creation: "
-            f"service account {sa_id} must be a member of tenant {tenant_id}'s "
-            "'editors' group, or the provider must prove an equivalent role with "
-            "the required bucket and access-key actions. No broader role was requested."
-        ) from exc
-
     bucket_name = bucket_name or bucket_name_for(tenant_id, project_id)
+    saved_storage: dict[str, str] | None = None
 
     _status("Setting up S3 bucket...")
     try:
@@ -2089,19 +2410,57 @@ def bootstrap_environment(
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
             raise
-        fallback = _saved_storage_credentials(
+        saved_storage = _saved_storage_credentials(
             project_id=project_id,
             tenant_id=tenant_id,
             region=region,
             bucket_name=bucket_name,
             service_account_id=sa_id,
         )
-        if fallback is None:
+        if saved_storage is None:
             raise
         _status(
-            "Reusing saved object-storage credentials (bucket provisioning skipped)."
+            "Bucket ensure was forbidden; validating the saved exact-project storage "
+            "identity and IAM binding without provisioning."
         )
-        return _with_storage_account_ownership(fallback)
+
+    bucket = get_bucket_by_name(project_id, bucket_name)
+    bucket_id = str(((bucket or {}).get("metadata") or {}).get("id") or "")
+    if not bucket_id:
+        raise NebiusError(
+            "Created/reused bucket could not be resolved to an exact provider ID; "
+            "refusing IAM changes, key creation, and write probe."
+        )
+
+    _status("Verifying least-privilege storage capability binding...")
+    try:
+        binding = _existing_editors_binding(tenant_id, sa_id)
+        if binding is None:
+            binding = ensure_storage_capability_binding(
+                project_id=project_id,
+                tenant_id=tenant_id,
+                bucket_id=bucket_id,
+                service_account_id=sa_id,
+                allow_editors_fallback=allow_editors_fallback,
+                on_resource_created=on_resource_created,
+            )
+    except NebiusError as exc:
+        failed = StorageIamBindingEvidence(
+            IamBindingState.FAILED,
+            STORAGE_RUNTIME_ROLE,
+            bucket_id,
+            "",
+            storage_binding_group_name(project_id),
+        )
+        raise StorageIamBindingError(
+            "Required storage IAM capability verification failed before access-key "
+            "creation/probe. Required S3 actions: "
+            f"{', '.join(STORAGE_REQUIRED_S3_ACTIONS)}. Supported binding choices: "
+            f"bucket-scoped {STORAGE_RUNTIME_ROLE}; verified existing editors "
+            "membership; or explicit editors compatibility fallback only when the "
+            "provider reports the narrow role unsupported."
+            , failed
+        ) from exc
 
     _status("Setting up access key for S3...")
     try:
@@ -2124,19 +2483,20 @@ def bootstrap_environment(
     except NebiusError as exc:
         if not _is_permission_denied(str(exc)):
             raise
-        fallback = _saved_storage_credentials(
+        saved_storage = saved_storage or _saved_storage_credentials(
             project_id=project_id,
             tenant_id=tenant_id,
             region=region,
             bucket_name=bucket_name,
             service_account_id=sa_id,
         )
-        if fallback is None:
+        if saved_storage is None:
             raise
+        aws_access_key = str(saved_storage.get("nebius_api_key") or "")
+        aws_secret_key = str(saved_storage.get("nebius_secret_key") or "")
         _status(
-            "Reusing saved object-storage credentials (access-key provisioning skipped)."
+            "Reusing the saved exact-project active access key after IAM capability verification."
         )
-        return _with_storage_account_ownership(fallback)
 
     s3_endpoint = f"https://storage.{region}.nebius.cloud"
 
@@ -2149,7 +2509,19 @@ def bootstrap_environment(
         "s3_endpoint": s3_endpoint,
         "nebius_project_id": project_id,
         "nebius_region": region,
+        "iam_binding_state": binding.state.value,
+        "iam_binding_role": binding.role,
+        "iam_binding_scope_id": binding.scope_id,
+        "iam_binding_group_id": binding.group_id,
+        "iam_binding_group_name": binding.group_name,
+        "iam_binding_access_permit_id": binding.access_permit_id,
+        "iam_binding_compatibility_fallback": str(binding.compatibility_fallback).lower(),
     }
+    _status(
+        "Storage permission contract: "
+        f"{binding.role} at {'tenant' if binding.compatibility_fallback else 'bucket'} scope; required S3 actions "
+        f"{', '.join(STORAGE_REQUIRED_S3_ACTIONS)}; binding {binding.state.value}."
+    )
     return _with_storage_account_ownership(result)
 
 
@@ -2434,6 +2806,9 @@ def bootstrap_agent_environment(
     When IAM provisioning is blocked, reuse saved or configured object-storage
     credentials instead of failing bootstrap.
     """
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("bootstrap_agent_environment")
 
     on_status = kwargs.pop("on_status", None)
     external_created = kwargs.pop("on_resource_created", None)

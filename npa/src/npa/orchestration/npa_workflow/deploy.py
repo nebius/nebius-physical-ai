@@ -267,6 +267,10 @@ def ensure_infra_present(
     same cluster provision it once. Returns one result record per unique context.
     """
 
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_infra_present")
+
     if not targets:
         return []
     provision = provisioner or _default_provisioner()

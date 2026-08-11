@@ -36,7 +36,10 @@ from npa.clients.credentials import CredentialsConfig, load_credentials
 from npa.config_schema import STRICT_CONFIG_SECTION_KEYS, unknown_config_keys
 from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY
 
-CONFIG_PATH = Path.home() / ".npa" / "config.yaml"
+NPA_CONFIG_DIR = Path(
+    os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
+)
+CONFIG_PATH = NPA_CONFIG_DIR / "config.yaml"
 
 APP_STATUS_PROVISIONED = "provisioned"
 APP_STATUS_INSTALLING = "installing"
@@ -820,7 +823,8 @@ def clear_storage_iam_residue(alias: str, *, account_id: str = "") -> bool:
         return False
     yml = _load_yaml()
     projects = yml.get("projects")
-    project = projects.get(cleaned) if isinstance(projects, dict) else None
+    project_map: dict[str, Any] = projects if isinstance(projects, dict) else {}
+    project = project_map.get(cleaned)
     if not isinstance(project, dict):
         return False
     marker = project.get(STORAGE_IAM_RESIDUE_KEY)
@@ -833,8 +837,8 @@ def clear_storage_iam_residue(alias: str, *, account_id: str = "") -> bool:
             "Refusing to clear storage-IAM residue for a different service account."
         )
     project.pop(STORAGE_IAM_RESIDUE_KEY, None)
-    projects[cleaned] = project
-    yml["projects"] = projects
+    project_map[cleaned] = project
+    yml["projects"] = project_map
     _write_config_replace(yml)
     return True
 
@@ -870,14 +874,15 @@ def forget_project(alias: str) -> bool:
         else ""
     )
     skypilot = yml.get("skypilot")
-    owner = skypilot.get("controller_owner") if isinstance(skypilot, dict) else None
+    skypilot_map: dict[str, Any] = skypilot if isinstance(skypilot, dict) else {}
+    owner = skypilot_map.get("controller_owner")
     if isinstance(owner, dict):
         owner_project_id = str(owner.get("project_id", "") or "")
         owner_alias = str(owner.get("project_alias", "") or "")
         if (project_id and owner_project_id == project_id) or (
             not owner_project_id and owner_alias == cleaned
         ):
-            skypilot.pop("controller_owner", None)
+            skypilot_map.pop("controller_owner", None)
     del projects[cleaned]
     yml["projects"] = projects
     if yml.get("default_project") == cleaned:
@@ -1415,6 +1420,24 @@ def resolve_terraform_state(project: str | None = None) -> TerraformStateConfig:
     state = proj.get("terraform_state", {}) if isinstance(proj, dict) else {}
     if not isinstance(state, dict):
         state = {}
+    project_id = str(proj.get("project_id", "") or "") if isinstance(proj, dict) else ""
+    if project_id:
+        from npa.clients.project_credential_store import project_credential_record
+
+        from npa.lifecycle_intent import OperationIntent, current_intent
+
+        read_only = current_intent() in {
+            OperationIntent.DESTROY,
+            OperationIntent.OBSERVE,
+        }
+        record = project_credential_record(
+            project_id,
+            alias="" if read_only else str(project or ""),
+            migrate_legacy=not read_only,
+        )
+        saved = record.get("terraform_state")
+        if isinstance(saved, dict):
+            state = {**state, **saved}
 
     return TerraformStateConfig(
         bucket=str(state.get("bucket", "") or ""),
@@ -1462,6 +1485,25 @@ def resolve_project_storage(
         state = {}
 
     credentials = load_credentials()
+    project_id = str(proj.get("project_id", "") or "")
+    project_storage_credentials: dict[str, Any] = {}
+    if project_id:
+        from npa.clients.project_credential_store import project_credential_record
+
+        from npa.lifecycle_intent import OperationIntent, current_intent
+
+        read_only = current_intent() in {
+            OperationIntent.DESTROY,
+            OperationIntent.OBSERVE,
+        }
+        record = project_credential_record(
+            project_id,
+            alias="" if read_only else str(project or ""),
+            migrate_legacy=not read_only,
+        )
+        saved_storage = record.get("storage")
+        if isinstance(saved_storage, dict):
+            project_storage_credentials = saved_storage
 
     def pick(*keys: str, default: str = "") -> str:
         for key in keys:
@@ -1484,10 +1526,15 @@ def resolve_project_storage(
 
     # Shared credentials are host-scoped. Keep scoped project settings primary
     # and only use these when no project storage key is configured.
-    credentials_bucket = credentials.s3_bucket if include_shared_credentials else ""
-    credentials_endpoint = credentials.s3_endpoint if include_shared_credentials else ""
-    credentials_access_key = credentials.s3_access_key_id if include_shared_credentials else ""
-    credentials_secret_key = credentials.s3_secret_access_key if include_shared_credentials else ""
+    credentials_bucket = str(project_storage_credentials.get("bucket", "") or "")
+    credentials_endpoint = str(project_storage_credentials.get("endpoint_url", "") or "")
+    credentials_access_key = str(project_storage_credentials.get("aws_access_key_id", "") or "")
+    credentials_secret_key = str(project_storage_credentials.get("aws_secret_access_key", "") or "")
+    if include_shared_credentials and not project_id:
+        credentials_bucket = credentials_bucket or credentials.s3_bucket
+        credentials_endpoint = credentials_endpoint or credentials.s3_endpoint
+        credentials_access_key = credentials_access_key or credentials.s3_access_key_id
+        credentials_secret_key = credentials_secret_key or credentials.s3_secret_access_key
 
     bucket = pick(
         "checkpoint_bucket",

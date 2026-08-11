@@ -250,6 +250,9 @@ def ensure_ingress(
     tool: str = "manual",
 ) -> EnsureIngressResult:
     """Ensure TCP ingress from ``source`` to ``ports`` on the target VM security groups."""
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_ingress")
     if bool(vm_id) == bool(ip and project_id):
         raise NetworkIngressError("pass exactly one of --vm or (--ip and --project)")
     if ip and not project_id:

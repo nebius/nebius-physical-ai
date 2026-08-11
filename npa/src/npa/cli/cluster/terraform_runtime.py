@@ -39,7 +39,9 @@ def _now() -> str:
 def terraform_scratch_root() -> Path:
     """Return the NPA-owned parent used for ephemeral Terraform data."""
 
-    return Path.home() / ".npa" / "terraform-data" / "cluster"
+    return Path(
+        os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
+    ) / "terraform-data" / "cluster"
 
 
 def terraform_inventory_file(context: str) -> Path:

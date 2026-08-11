@@ -23,6 +23,8 @@ from typing import Any
 
 import typer
 
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
+
 
 @dataclass
 class _Residue:
@@ -331,8 +333,9 @@ def _prune_full_empty_state(npa_dir: Path) -> list[tuple[str, Path]]:
 
 
 def _collect_residue(*, include_sky: bool) -> list[_Residue]:
-    home = Path.home()
-    npa_dir = home / ".npa"
+    from npa.clients.config import CONFIG_PATH
+
+    npa_dir = CONFIG_PATH.parent
     residue: list[_Residue] = []
     for label, path in (
         ("SkyPilot venv", npa_dir / "skypilot-venv"),
@@ -347,7 +350,10 @@ def _collect_residue(*, include_sky: bool) -> list[_Residue]:
                 _Residue(label, path, _dir_size(path), identity.st_dev, identity.st_ino)
             )
     if include_sky:
-        sky_home = home / ".sky"
+        sky_home = Path(
+            os.environ.get("NPA_SKY_STATE_DIR", "").strip()
+            or (Path.home() / ".sky")
+        )
         if sky_home.exists() and not sky_home.is_symlink():
             sky_identity: os.stat_result | None
             try:
@@ -437,7 +443,10 @@ def _storage_iam_full_check(
     partial = False
     for alias in aliases:
         try:
-            context = _resolve_storage_iam_context(alias)
+            if alias.startswith("project-"):
+                context = _resolve_storage_iam_context(project_id=alias)
+            else:
+                context = _resolve_storage_iam_context(alias)
             observation = _observe_storage_iam(context)
             _persist_storage_iam_observation(observation)
         except ConfigError as exc:
@@ -814,6 +823,8 @@ def _iam_note() -> str:
     return generic
 
 
+@intent_boundary(OperationIntent.DESTROY)
+@json_stdout_contract
 def cleanup_cmd(
     yes: bool = typer.Option(
         False,
@@ -919,7 +930,7 @@ def cleanup_cmd(
                 str(environment.project_id or "") if environment is not None else ""
             )
         except Exception:  # noqa: BLE001 - exact immutable ID is valid for receipt audit
-            if list_receipts and project.startswith("project-"):
+            if project.startswith("project-"):
                 receipt_alias = ""
                 receipt_project_id = project
 
@@ -983,6 +994,7 @@ def cleanup_cmd(
 
     removed_total = 0
     shared_runtime_preserved = False
+    project_credential_residue_items: list[dict[str, str]] = []
 
     def emit_json(
         result: str, local_state: str, *, cleanup_failed: bool = False
@@ -1000,7 +1012,10 @@ def cleanup_cmd(
         )
         from npa.teardown_receipts import TERMINAL_STATES
 
-        operational_residue = local_state not in {"fully_clean", "fully_cleaned"}
+        operational_residue = bool(
+            local_state not in {"fully_clean", "fully_cleaned"}
+            or project_credential_residue_items
+        )
         unresolved_receipts = any(
             str(event.get("terminal_state") or "") not in TERMINAL_STATES
             for event in receipt_phases.values()
@@ -1043,13 +1058,16 @@ def cleanup_cmd(
                     "audit_receipts_retained": bool(retained_receipts),
                     "audit_receipts_are_operational_residue": False,
                     "preserved_shared_runtime": shared_runtime_preserved,
+                    "retained_local_residue": project_credential_residue_items,
                 },
                 indent=2,
                 sort_keys=True,
             )
         )
 
-    npa_dir = Path.home() / ".npa"
+    from npa.clients.config import CONFIG_PATH
+
+    npa_dir = CONFIG_PATH.parent
     residue = _collect_residue(include_sky=include_sky)
     terraform_residue = collect_terraform_residue()
     empty_dirs = _empty_alias_dirs(npa_dir, project)
@@ -1069,10 +1087,28 @@ def cleanup_cmd(
             iam_ownership_state,
         ) = _storage_iam_full_check(project, prune_verified_absence=yes)
 
+    if full and receipt_project_id:
+        from npa.clients.project_credential_store import project_credential_residue
+
+        project_credential_residue_items = project_credential_residue(
+            receipt_project_id
+        )
+        if receipt_alias:
+            project_credential_residue_items.append(
+                {
+                    "path": f"config.projects.{receipt_alias}",
+                    "class": "project_alias_or_default",
+                }
+            )
+
     prior_phases = latest_phase_states(
         project_alias=receipt_alias, project_id=receipt_project_id
     )
-    prior_workflow = prior_phases.get("workflow_audit") or prior_phases.get("workflow")
+    prior_workflow = (
+        prior_phases.get("workflow_audit")
+        or prior_phases.get("workflow")
+        or prior_phases.get("project_destroy_workflows")
+    )
     prior_workflow_state = str((prior_workflow or {}).get("terminal_state") or "")
     prior_workflow_terminal = prior_workflow_state in {
         "already_absent",
@@ -1208,6 +1244,7 @@ def cleanup_cmd(
         and not empty_dirs
         and not credential_labels
         and not full_empty_state
+        and not project_credential_residue_items
     ):
         if output_json:
             emit_json(
@@ -1426,6 +1463,55 @@ def cleanup_cmd(
                 + ", ".join(missing_credentials)
                 + ". Any groups reported removed above remain removed; unrelated "
                 "credential data was preserved.",
+                err=True,
+            )
+        cloud_terminal_states = {
+            "already_absent",
+            "cancelled",
+            "completed",
+            "deleted",
+            "not_submitted",
+            "terminal",
+            "verified_absent",
+            "verified_deleted",
+        }
+        cloud_phase_names = (
+            "project_destroy_workflows",
+            "project_destroy_agents",
+            "project_destroy_controller",
+            "project_destroy_clusters",
+            "project_destroy_bucket",
+            "project_destroy_storage_iam",
+        )
+        phase_states = latest_phase_states(
+            project_alias=receipt_alias, project_id=receipt_project_id
+        )
+        cloud_absent = bool(
+            receipt_project_id
+            and all(
+                str((phase_states.get(name) or {}).get("terminal_state") or "")
+                in cloud_terminal_states
+                for name in cloud_phase_names
+            )
+        )
+        if project_credential_residue_items and not iam_partial and cloud_absent:
+            from npa.clients.project_credential_store import (
+                forget_project_credentials,
+                project_credential_residue,
+            )
+
+            if forget_project_credentials(receipt_project_id):
+                project_credential_residue_items = project_credential_residue(
+                    receipt_project_id
+                )
+                emit(
+                    "Removed exact-project operational credentials after complete cloud absence proof."
+                )
+        if project_credential_residue_items:
+            cleanup_failed = True
+            emit(
+                "Warning: exact-project operational credential residue remains at "
+                + ", ".join(item["path"] for item in project_credential_residue_items),
                 err=True,
             )
         pruned_state = _prune_full_empty_state(npa_dir)

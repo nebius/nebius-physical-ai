@@ -45,6 +45,7 @@ from npa.provisioning_journal import (
     emit_recovery_summary,
     operation_context,
 )
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,8 @@ app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
 
 @app.command("destroy", rich_help_panel="Platform utilities")
+@intent_boundary(OperationIntent.DESTROY)
+@json_stdout_contract
 def destroy_project_cmd(
     project: str = typer.Option(
         "", "--project", help="Exact configured project alias."
@@ -696,6 +699,9 @@ def _bucket_name_from_uri(bucket: str) -> str:
 
 
 def _collision_bucket_name(bucket_name: str, *, tenant_id: str, project_id: str) -> str:
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("collision_bucket_name")
     suffix = hashlib.sha256(
         f"{tenant_id}\0{project_id}\0{bucket_name}\0collision".encode("utf-8")
     ).hexdigest()[:8]
@@ -824,11 +830,13 @@ def _provision_object_storage(
                 f"    nebius storage bucket list --parent-id {project_id}"
             )
             typer.echo(
-                "  If that also fails, grant your identity the project 'editors' "
-                "role (or enable object storage for it) and re-run `npa configure` "
-                "— a newly granted role can take ~a minute to propagate. If it "
-                "succeeds but npa still fails, unset NPA_REUSE_IAM_TOKEN so npa "
-                "does not reuse an injected token."
+                "  NPA first tries a bucket-scoped storage.object-editor binding "
+                "covering GetObject, HeadObject, PutObject, DeleteObject, and "
+                "ListObjectsV2. Existing editors memberships remain compatible. "
+                "Only if this provider reports that narrow role unsupported may "
+                "you explicitly opt into the broader compatibility fallback with "
+                "NPA_ALLOW_EDITORS_STORAGE_FALLBACK=1. Newly changed IAM can take "
+                "about a minute to propagate; then re-run `npa configure`."
             )
             typer.echo(f"  Underlying error: {exc}")
         else:
@@ -1680,7 +1688,18 @@ def _run_interactive_configure(
         ):
             credentials_payload["storage_iam"] = service_account_keys
 
-    credentials_path = write_credentials_file(credentials_payload)
+    # Service tokens remain host-scoped. Storage/IAM identity is authoritative
+    # only in the exact-project v2 store; the top-level storage keys are a
+    # derived compatibility view of the selected project.
+    shared_sections = {"tokens", "ngc"}
+    if not project_id:
+        shared_sections.update({"storage", "storage_iam", "nebius"})
+    shared_payload = {
+        key: value
+        for key, value in credentials_payload.items()
+        if key in shared_sections
+    }
+    credentials_path = write_credentials_file(shared_payload)
 
     wrote_config = False
     alias = ""
@@ -1747,6 +1766,19 @@ def _run_interactive_configure(
             )
         write_config({"projects": {alias: project_stanza}, "default_project": alias})
         wrote_config = True
+
+    if project_id and storage:
+        from npa.clients.project_credential_store import write_project_credentials
+
+        write_project_credentials(
+            project_id,
+            {
+                key: value
+                for key, value in credentials_payload.items()
+                if key in {"storage", "storage_iam", "nebius"}
+            },
+            alias=alias,
+        )
 
     if permissions_warning:
         note = (
@@ -2070,7 +2102,7 @@ def _forget_project(alias: str) -> None:
         configured_project_found: bool,
         full_identity: dict[str, Any],
     ) -> Path | None:
-        event = {
+        event: dict[str, Any] = {
             "phase": "project_config",
             "resource": cleaned,
             "terminal_state": terminal_state,
@@ -2180,7 +2212,7 @@ def _run_known_project_configure(
 
     from npa.clients import nebius as nebius_client
     from npa.clients.config import CONFIG_PATH, list_projects, write_config
-    from npa.clients.credentials import load_credentials, write_credentials_file
+    from npa.clients.credentials import load_credentials
 
     values = {
         "--tenant-id": str(tenant_id or "").strip(),
@@ -2325,7 +2357,13 @@ def _run_known_project_configure(
             credentials_payload["nebius"] = {"service_account_id": account_id}
         if len(service_account_keys) == 4:
             credentials_payload["storage_iam"] = service_account_keys
-        credentials_path = write_credentials_file(credentials_payload)
+        from npa.clients.project_credential_store import write_project_credentials
+
+        credentials_path = write_project_credentials(
+            values["--project-id"],
+            credentials_payload,
+            alias=alias,
+        )
         typer.echo(f"Wrote {credentials_path} (chmod 600).")
 
     write_config(
@@ -2501,10 +2539,18 @@ def _transactional_configure(function):
 
     @functools.wraps(function)
     def wrapped(*args, **kwargs):
-        if current_operation() is not None:
-            return function(*args, **kwargs)
         bound = signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
+        if current_operation() is not None:
+            nested_forget = str(bound.arguments.get("forget_project") or "").strip()
+            from npa.lifecycle_intent import operation_intent
+
+            with operation_intent(
+                OperationIntent.DESTROY
+                if nested_forget
+                else OperationIntent.ENSURE_PRESENT
+            ):
+                return function(*args, **kwargs)
         if (
             bool(bound.arguments.get("show")) or bool(bound.arguments.get("env_output"))
         ) and not bool(bound.arguments.get("save_env_credentials")):
@@ -2575,7 +2621,15 @@ def _transactional_configure(function):
             preflight_private_yaml_store(CREDENTIALS_PATH)
             operation.transition("mutating")
             try:
-                result = function(*args, **kwargs)
+                intent = (
+                    OperationIntent.DESTROY
+                    if forget
+                    else OperationIntent.ENSURE_PRESENT
+                )
+                from npa.lifecycle_intent import operation_intent
+
+                with operation_intent(intent):
+                    result = function(*args, **kwargs)
             except BaseException as exc:
                 phase = str(operation.read().get("phase") or "")
                 if phase not in {

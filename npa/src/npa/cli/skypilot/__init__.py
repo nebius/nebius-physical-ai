@@ -24,6 +24,7 @@ from rich.console import Console
 
 from npa.orchestration.skypilot._bin import REQUIRED_SKYPILOT_VERSION
 from npa.orchestration.skypilot.workflow_state import redact_text
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 app = typer.Typer(
     name="skypilot",
@@ -45,7 +46,9 @@ SKYPILOT_PACKAGE = f"skypilot[{','.join(SKYPILOT_EXTRAS)}]=={SKYPILOT_VERSION}"
 # forever, so pin the client below the break.
 KUBERNETES_CLIENT_MAX_EXCLUSIVE = "36"
 KUBERNETES_CLIENT_SPEC = f"kubernetes>=20.0.0,!=32.0.0,<{KUBERNETES_CLIENT_MAX_EXCLUSIVE}"
-DEFAULT_VENV_PATH = Path.home() / ".npa" / "skypilot-venv"
+DEFAULT_VENV_PATH = Path(
+    os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
+) / "skypilot-venv"
 VENV_PATH_ENV = "NPA_SKYPILOT_VENV_PATH"
 PYTHON_ENV = "NPA_SKYPILOT_PYTHON"
 MARKER_FILE = ".npa-bootstrap-ok"
@@ -345,6 +348,8 @@ def status_cmd(
 
 
 @app.command("cleanup-controller")
+@intent_boundary(OperationIntent.DESTROY)
+@json_stdout_contract
 def cleanup_controller_cmd(
     yes: bool = typer.Option(
         False,
@@ -433,8 +438,9 @@ def cleanup_controller_cmd(
         }
     else:
         remote_absence_verified = bool(
-            getattr(result, "remote_absence_verified", False)
+            getattr(result, "remote_absence_verified", result.ok)
         )
+        local_metadata_cleared = bool(getattr(result, "verified", result.ok))
         payload = {
             "outcome": (
                 getattr(result, "outcome", "cleaned")
@@ -448,7 +454,11 @@ def cleanup_controller_cmd(
             "commands": result.commands,
             "identity_source": getattr(result, "identity_source", "live_configuration"),
             "receipt_id": getattr(result, "receipt_id", ""),
-            "verified": getattr(result, "verified", result.ok),
+            "verified": bool(remote_absence_verified and local_metadata_cleared),
+            "overall_verified": bool(
+                remote_absence_verified and local_metadata_cleared
+            ),
+            "local_metadata_cleared": local_metadata_cleared,
             "no_op": getattr(result, "no_op", not result.resources_removed),
             "project_alias": getattr(result, "project_alias", project),
             "project_id": getattr(result, "project_id", project_id),
@@ -705,6 +715,10 @@ def bootstrap_skypilot(
     directory is exchanged under an owner-only lock.  The parent NPA state tree
     is never renamed, recreated, or recursively removed.
     """
+
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("bootstrap_skypilot")
 
     path = _resolve_venv_path(venv_path)
     _validate_managed_venv_path(path)

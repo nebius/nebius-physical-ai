@@ -176,6 +176,10 @@ def ensure_registry_secret(
     first attempt sat in ImagePullBackOff with `401 Unauthorized` against a tag that exists.
     """
 
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_registry_secret")
+
     from npa.workflows.sim2real.registry_auth import mint_nebius_registry_token
 
     try:
@@ -315,6 +319,10 @@ def ensure_storage_secret(
     runner: Any = None,
 ) -> None:
     """Create or update the Secret holding the object-store keys."""
+
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_storage_secret")
 
     missing = [key for key in STORAGE_SECRET_ENVS if not credentials.get(key)]
     if missing:

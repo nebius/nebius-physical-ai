@@ -137,6 +137,7 @@ def test_real_destroy_cli_executes_registered_phases_without_npa_on_path(
         "storage_iam",
         "local_cleanup",
         "forget_alias",
+        "final_audit",
     ]
     by_phase = {item["phase"]: item for item in payload["phases"]}
     workflows = by_phase["workflows"]
@@ -151,7 +152,12 @@ def test_real_destroy_cli_executes_registered_phases_without_npa_on_path(
             "argv": internal_cli_argv(tuple(workflows["commands"][0][1:])),
             "exit_code": 1,
             "stderr_kind": "text",
+            "stderr_summary": (
+                "Error: S3 bucket is not configured. Pass --s3-bucket, "
+                "--workflow-s3-uri, or configure project storage."
+            ),
             "stdout_kind": "empty",
+            "stdout_summary": "",
         }
     ]
     assert by_phase["local_cleanup"]["status"] == "completed"

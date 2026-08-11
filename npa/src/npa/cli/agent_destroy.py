@@ -8,6 +8,7 @@ from typing import Any
 import typer
 
 from npa.cli._typer_defaults import resolve_typer_defaults
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 
 def _emit(payload: dict[str, Any], *, output_json: bool) -> None:
@@ -19,6 +20,8 @@ def _emit(payload: dict[str, Any], *, output_json: bool) -> None:
 
 
 @resolve_typer_defaults
+@intent_boundary(OperationIntent.DESTROY)
+@json_stdout_contract
 def destroy_cmd(
     project: str = typer.Option("", "--project", help="NPA project alias."),
     name: str = typer.Option("agent", "--name", help="Agent deployment name."),

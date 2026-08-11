@@ -952,8 +952,13 @@ def test_owned_empty_project_delete_is_exact_receipted_and_isolated(
     monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
     _owned_project_operation()
     observations = iter(
-        [nebius.ProjectIdentity("project-a", "demo", "tenant-a", "eu-test1"), None]
+        [
+            nebius.ProjectIdentity("project-a", "demo", "tenant-a", "eu-test1"),
+            None,
+            None,
+        ]
     )
+    monkeypatch.setattr("npa.project_destroy.time.sleep", lambda _delay: None)
     monkeypatch.setattr(
         nebius, "get_project_identity", lambda *_a, **_k: next(observations)
     )
@@ -1004,7 +1009,7 @@ def test_owned_project_delete_waits_for_eventual_provider_absence(
     monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
     _owned_project_operation()
     present = nebius.ProjectIdentity("project-a", "demo", "tenant-a", "eu-test1")
-    observations = iter([present, present, None])
+    observations = iter([present, present, None, None])
     monkeypatch.setattr(
         nebius, "get_project_identity", lambda *_a, **_k: next(observations)
     )
@@ -1018,7 +1023,7 @@ def test_owned_project_delete_waits_for_eventual_provider_absence(
     )
 
     assert result["status"] == "success"
-    assert sleeps == [project_destroy.PROJECT_DELETE_VERIFY_INTERVAL_SECONDS]
+    assert sleeps == [project_destroy.PROJECT_DELETE_VERIFY_INTERVAL_SECONDS] * 3
 
 
 def test_owned_project_not_found_retry_is_idempotent(
@@ -1444,8 +1449,13 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
     )
 
     observations = iter(
-        [nebius.ProjectIdentity("project-a", "demo", "tenant-a", "eu-test1"), None]
+        [
+            nebius.ProjectIdentity("project-a", "demo", "tenant-a", "eu-test1"),
+            None,
+            None,
+        ]
     )
+    monkeypatch.setattr("npa.project_destroy.time.sleep", lambda _delay: None)
     monkeypatch.setattr(
         nebius, "get_project_identity", lambda *_a, **_k: next(observations)
     )

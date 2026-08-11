@@ -15,8 +15,10 @@ from npa.cluster.state import (
     list_local_clusters,
     load_cluster_state,
 )
+from npa.lifecycle_intent import OperationIntent, intent_boundary
 
 
+@intent_boundary(OperationIntent.DESTROY)
 def destroy_cmd(
     name: str = typer.Option(..., "--name", help="NPA cluster target/profile name to clean up."),
     force: bool = typer.Option(False, "--force", help="Skip confirmation for NPA target cleanup."),

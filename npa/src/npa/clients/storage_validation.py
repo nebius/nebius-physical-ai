@@ -573,6 +573,10 @@ def probe_storage_write(
 ) -> StorageProbeResult:
     """Probe only a consumer profile's declared actions."""
 
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("probe_storage_write")
+
     name = bucket_name(bucket)
     endpoint = str(endpoint_url or "").strip()
     access = str(access_key_id or "").strip()

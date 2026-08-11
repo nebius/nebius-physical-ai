@@ -7,7 +7,8 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+import os
+from typing import Any, Callable, Mapping, cast
 from uuid import uuid4
 
 import yaml
@@ -170,6 +171,8 @@ class StorageSetupTransaction:
             "service_account": {"id", "name"},
             "bucket": {"id", "name"},
             "access_key": {"id", "name", "service_account_id"},
+            "iam_group": {"id", "name"},
+            "iam_permit": {"id", "group_id"},
         }
         if kind not in allowlists:
             raise ValueError(f"unsupported storage resource kind: {kind}")
@@ -197,6 +200,8 @@ class StorageSetupTransaction:
                 "bucket": "storage_bucket",
                 "service_account": "storage_service_account",
                 "access_key": "storage_access_key",
+                "iam_group": "storage_iam_group",
+                "iam_permit": "storage_iam_access_permit",
             }[kind]
             self.operation.record_resource(
                 resource_type=resource_type,
@@ -218,7 +223,7 @@ class StorageSetupTransaction:
                 raise ValueError("created access key record is missing its id")
             keys[key_id] = clean
             resources["access_keys"] = keys
-        elif kind in {"bucket", "service_account"}:
+        elif kind in {"bucket", "service_account", "iam_group", "iam_permit"}:
             resources[kind] = clean
         self._update_record(
             {
@@ -322,11 +327,68 @@ class StorageSetupTransaction:
             },
         }
         ownership = self._owned_service_account(account_id)
+        project_payload: dict[str, Any] = {
+            "storage": payload.pop("storage"),
+        }
         if account_id:
-            payload["nebius"] = {"service_account_id": account_id}
-        if ownership:
-            payload["storage_iam"] = ownership
-        _update_document(path, lambda current: _deep_merge(current, payload))
+            project_payload["nebius"] = {"service_account_id": account_id}
+            access_keys = saved_resources.get("access_keys")
+            access_key_ids = (
+                sorted(str(item) for item in access_keys)
+                if isinstance(access_keys, dict)
+                else []
+            )
+            generation = {
+                **ownership,
+                "service_account_id": account_id,
+                "service_account_project_id": self.project_id,
+                "access_key_ids": access_key_ids,
+                "binding": {
+                    "state": str(credentials.get("iam_binding_state", "")),
+                    "role": str(credentials.get("iam_binding_role", "")),
+                    "scope_id": str(credentials.get("iam_binding_scope_id", "")),
+                    "group_id": str(credentials.get("iam_binding_group_id", "")),
+                    "group_name": str(credentials.get("iam_binding_group_name", "")),
+                    "access_permit_id": str(
+                        credentials.get("iam_binding_access_permit_id", "")
+                    ),
+                    "group_managed_by": (
+                        "npa"
+                        if isinstance(saved_resources.get("iam_group"), dict)
+                        and str(saved_resources["iam_group"].get("id") or "")
+                        == str(credentials.get("iam_binding_group_id") or "")
+                        else ""
+                    ),
+                    "access_permit_managed_by": (
+                        "npa"
+                        if isinstance(saved_resources.get("iam_permit"), dict)
+                        and str(saved_resources["iam_permit"].get("id") or "")
+                        == str(credentials.get("iam_binding_access_permit_id") or "")
+                        else ""
+                    ),
+                },
+            }
+            project_payload["storage_iam"] = {
+                **ownership,
+                "active_service_account_id": account_id,
+                "generations": [generation],
+            }
+
+        def commit_all(current: dict[str, Any]) -> dict[str, Any]:
+            from npa.clients.project_credential_store import (
+                merge_project_credentials_document,
+            )
+
+            document = _deep_merge(current, payload)
+            return merge_project_credentials_document(
+                document,
+                self.project_id,
+                project_payload,
+                alias=self.project_alias,
+                select=True,
+            )
+
+        _update_document(path, commit_all)
 
     def fail_and_rollback(self, exc: BaseException) -> list[str]:
         """Roll back only this attempt's exact creations; preserve failures."""
@@ -339,6 +401,10 @@ class StorageSetupTransaction:
             try:
                 if kind == "access_key":
                     nebius.delete_access_key(metadata.get("id", ""))
+                elif kind == "iam_permit":
+                    nebius.delete_access_permit(metadata.get("id", ""))
+                elif kind == "iam_group":
+                    nebius.delete_group(metadata.get("id", ""))
                 elif kind == "bucket":
                     item = nebius.get_bucket_by_name(
                         self.project_id, metadata.get("name", "")
@@ -446,8 +512,13 @@ def provision_storage(
     convergence_policy: StorageConvergencePolicy = StorageConvergencePolicy(),
     convergence_sleep: Callable[[float], None] | None = None,
     convergence_random: Callable[[], float] | None = None,
+    allow_editors_fallback: bool = False,
 ) -> tuple[dict[str, str], StorageProbeResult]:
     """Reconcile, validate and atomically commit first-run storage."""
+
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("provision_storage")
 
     from npa.clients import nebius
 
@@ -484,6 +555,21 @@ def provision_storage(
         project_alias=project_alias,
         operation=operation,
     )
+    # Promote provably owned legacy credentials before ``begin`` changes the
+    # legacy storage-setup record from complete to in-progress. This preserves
+    # the exact ownership proof during a deliberate bucket replacement.
+    from npa.clients.project_credential_store import project_credential_record
+
+    try:
+        project_credential_record(
+            project_id,
+            alias=project_alias,
+            path=transaction.credentials_path,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise StorageSetupStateError(
+            f"storage owner state is unavailable or malformed: {exc}"
+        ) from exc
     context = operation_context(operation) if owns_operation else nullcontext(operation)
     with context:
         transaction.begin()
@@ -493,7 +579,18 @@ def provision_storage(
                 identity_name_kwargs["service_account_name"] = service_account_name
             if access_key_name != "lerobot-access-key":
                 identity_name_kwargs["access_key_name"] = access_key_name
-            credentials = nebius.bootstrap_environment(
+            fallback_enabled = (
+                allow_editors_fallback
+                or os.environ.get("NPA_ALLOW_EDITORS_STORAGE_FALLBACK", "")
+                .strip()
+                .lower()
+                in {"1", "true", "yes"}
+            )
+            fallback_kwargs: dict[str, bool] = {}
+            if fallback_enabled:
+                fallback_kwargs["allow_editors_fallback"] = True
+            bootstrap = cast(Callable[..., dict[str, str]], nebius.bootstrap_environment)
+            credentials = bootstrap(
                 project_id,
                 tenant_id,
                 region,
@@ -502,6 +599,7 @@ def provision_storage(
                 bucket_storage_class=bucket_storage_class,
                 on_status=on_status,
                 on_resource_created=transaction.record_created,
+                **fallback_kwargs,
                 **identity_name_kwargs,
             )
             def run_probe() -> StorageProbeResult:
@@ -529,8 +627,12 @@ def provision_storage(
 
             probe = converge_storage_probe(
                 run_probe,
-                propagation_context=any(
-                    kind == "access_key" for kind, _metadata in transaction._created_this_attempt
+                propagation_context=(
+                    str(credentials.get("iam_binding_state", "")) == "created"
+                    or any(
+                        kind == "access_key"
+                        for kind, _metadata in transaction._created_this_attempt
+                    )
                 ),
                 policy=convergence_policy,
                 on_retry=report_retry,

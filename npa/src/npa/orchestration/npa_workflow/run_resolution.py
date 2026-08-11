@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast
 from urllib.parse import urlparse
 
 from npa.orchestration.npa_workflow.run_state import (
@@ -67,6 +67,7 @@ class RunResolution:
     run_prefix_uri: str = ""
     manifest_uri: str = ""
     workflow_name: str = ""
+    durable_terminal_state: str = ""
     checks: list[ResolutionCheck] = field(default_factory=list)
 
     def checks_payload(self) -> list[dict[str, str]]:
@@ -201,7 +202,7 @@ def _child_state(parent: WorkflowS3Config, prefix: str) -> WorkflowS3Config:
 
 def _probe_manifest(
     state: WorkflowS3Config, run_id: str
-) -> tuple[str, dict[str, Any] | None, str]:
+) -> tuple[ResolutionOutcome, dict[str, Any] | None, str]:
     try:
         manifest = read_manifest(state)
     except WorkflowStateError as exc:
@@ -224,7 +225,7 @@ def _probe_manifest(
     return "found", manifest, f"{state.uri.rstrip('/')}/manifest.json"
 
 
-def _probe_exact_prefix(state: WorkflowS3Config) -> tuple[str, str]:
+def _probe_exact_prefix(state: WorkflowS3Config) -> tuple[ResolutionOutcome, str]:
     """Check one exact PAIDF run prefix with a bounded, paginated query."""
 
     run_prefix = state.prefix.rstrip("/").removesuffix("/npa-workflow") + "/"
@@ -482,6 +483,26 @@ def resolve_run(
             result.source = result.source or "durable_submission_receipt"
             result.manifest_pending = True
 
+    from npa.orchestration.npa_workflow.first_run_state import terminal_run_evidence
+
+    terminal_evidence = terminal_run_evidence(project=ledger_project, run_id=resolved_id)
+    if terminal_evidence:
+        result.found = True
+        result.source = "project_run_terminal_ledger"
+        result.durable_terminal_state = str(
+            terminal_evidence.get("last_known_state") or ""
+        ).upper()
+        result.workflow_name = str(
+            terminal_evidence.get("workflow_identity") or result.workflow_name
+        )
+        result.checks.append(
+            ResolutionCheck(
+                "project_run_terminal_ledger",
+                "found",
+                f"verified durable terminal state {result.durable_terminal_state}",
+            )
+        )
+
     parent: WorkflowS3Config | None = None
     if not explicit_uri and not result.found:
         try:
@@ -505,7 +526,7 @@ def resolve_run(
                     source="canonical_paidf_s3_prefix",
                 )
             prefix_outcome, prefix_detail = _probe_exact_prefix(canonical_state)
-            combined = (
+            combined: ResolutionOutcome = (
                 "found"
                 if prefix_outcome == "found"
                 else (
@@ -557,21 +578,26 @@ def resolve_run(
         sky_bin=sky_bin or None,
     )
     result.managed_job = managed
+    managed_outcome: ResolutionOutcome = (
+        cast(ResolutionOutcome, managed.outcome)
+        if managed.outcome in {"found", "absent", "unavailable", "not_supplied", "skipped"}
+        else "unavailable"
+    )
     detail = managed.error
-    if result.job_id and managed.outcome != "found":
+    if result.job_id and managed_outcome != "found":
         recorded_by = "runtime ledger" if result.runtime_state else "submission receipt"
         detail = (
             f"job {result.job_id} recorded in {recorded_by}; live verification "
-            f"{managed.outcome}" + (f": {managed.error}" if managed.error else "")
+            f"{managed_outcome}" + (f": {managed.error}" if managed.error else "")
         )
-    result.checks.append(ResolutionCheck("managed_job", managed.outcome, detail))
-    if managed.outcome == "found":
+    result.checks.append(ResolutionCheck("managed_job", managed_outcome, detail))
+    if managed_outcome == "found":
         result.found = True
         result.source = result.source or "managed_job"
         result.manifest_pending = result.manifest is None
         result.job_id = managed.job_id
         result.workflow_name = result.workflow_name or PAIDF_WORKFLOW_NAME
-    elif managed.outcome == "unavailable":
+    elif managed_outcome == "unavailable":
         result.verification_unavailable = True
 
     if result.found:

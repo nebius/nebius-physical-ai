@@ -36,14 +36,22 @@ workflow environment variables.
 
    Real runs may ensure S3 and Kubernetes. Dry runs only resolve settings and
    print intended actions. The command must not teardown or replace resources.
-   Storage setup requires the dedicated service account's tenant `editors`
-   membership (or provider-proven equivalent capability) before creating a bucket
-   or access key. Grant failure is atomic and stops there. Newly created HMAC/IAM
-   credentials use bounded typed propagation convergence without identity/name
-   replacement. The standard profile requires PUT+GET; Terraform requires
-   HEAD+GET+PUT+LIST; append-only workflow submission requires PUT. DELETE is
-   either explicit legacy behavior or separately reported best-effort cleanup,
-   never an implicit permission expansion.
+   Storage setup declares `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`,
+   and `ListObjectsV2`. The minimum provider binding is bucket-scoped
+   `storage.object-editor`, assigned through the project-scoped
+   `npa-storage-object-editors-<exact-project-id>` group. A provider-verified existing tenant
+   `editors` membership is accepted for backward compatibility. Creating that
+   broader membership is allowed only as an explicit fallback after the provider
+   reports the narrow role unsupported; unknown or unreadable IAM fails closed
+   before key creation or probing. A newly created or changed binding enables
+   typed propagation convergence even when an active key is reused. Persistent
+   authorization denial is terminal and must retain redacted phase evidence.
+   The explicit opt-in is `NPA_ALLOW_EDITORS_STORAGE_FALLBACK=1`; never set it
+   merely to bypass an authorization or inventory failure.
+   Credentials and IAM generations are authoritative only under
+   `project_credentials.projects.<exact-project-id>`; top-level fields are a
+   selected-project compatibility view. Migrate legacy global state only with
+   exact ownership proof.
    Its canonical whole-path quota plan treats
    `compute.disk.size.network-ssd` as bytes and reports exact bytes plus GiB,
    independently of `compute.disk.count`. Unknown, missing, malformed, or

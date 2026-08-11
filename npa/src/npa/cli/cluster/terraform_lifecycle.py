@@ -32,6 +32,7 @@ from npa.provisioning_journal import (
     list_operations,
     operation_context,
 )
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 _DEFAULT_TERRAFORM_SUBDIR = Path("deploy") / "cluster"
 _DEFAULT_SKYPILOT_BIN = Path.home() / ".npa" / "skypilot-venv" / "bin" / "sky"
@@ -470,6 +471,18 @@ def up_cmd(
                     tfvars.get("parent_id") or env.get("TF_VAR_parent_id") or ""
                 ),
             )
+            output_ids = {
+                "network": str(
+                    (outputs.get("created_network_id") or {}).get("value") or ""
+                ),
+                "subnet": str(
+                    (outputs.get("created_subnet_id") or {}).get("value") or ""
+                ),
+                "service_account": str(
+                    (outputs.get("k8s_node_group_service_account_id") or {}).get("value")
+                    or ""
+                ),
+            }
             for resource_type, requested_name in (
                 ("network", f"{cluster_name}-network"),
                 ("subnet", f"{cluster_name}-subnet"),
@@ -481,6 +494,7 @@ def up_cmd(
                 operation.record_resource(
                     resource_type=resource_type,
                     requested_name=requested_name,
+                    provider_id=output_ids[resource_type],
                     ownership="created_by_this_operation",
                     ownership_source="terraform-state",
                     project_id=str(
@@ -535,6 +549,8 @@ def up_cmd(
             _run_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_gpus)
 
 
+@intent_boundary(OperationIntent.DESTROY)
+@json_stdout_contract
 def down_cmd(
     terraform_dir: Path | None = typer.Option(
         None,
@@ -717,12 +733,125 @@ def down_cmd(
                 err=True,
             )
         else:
-            raise typer.BadParameter(
-                "The exact cluster operation journal exists but contains no durable "
-                "Terraform state. NPA refused a broad name-based dependency sweep; "
-                "resume the recorded operation to reconcile state, then retry destroy: "
-                + str(payload.get("recovery_commands", {}).get("resume", ""))
+            resources = [
+                dict(item)
+                for item in payload.get("resources") or []
+                if isinstance(item, dict)
+                and item.get("ownership") == "created_by_this_operation"
+                and str(item.get("project_id") or "") == exact_project_id
+            ]
+            required_types = {
+                str(item.get("resource_type") or "")
+                for item in resources
+                if str(item.get("resource_type") or "")
+                in {"managed_kubernetes_cluster", "network", "subnet", "service_account"}
+            }
+            unresolved = sorted(
+                str(item.get("resource_type") or "")
+                for item in resources
+                if str(item.get("resource_type") or "") in required_types
+                and not str(item.get("provider_id") or "").strip()
             )
+            if unresolved:
+                raise typer.BadParameter(
+                    "The exact operation has no recoverable Terraform state and its "
+                    "provider inventory lacks immutable IDs for: "
+                    + ", ".join(unresolved)
+                    + ". No provider mutation ran; restore preserved state or retry "
+                    "with a newer operation receipt."
+                )
+            if not force and not typer.confirm(
+                f"Destroy exact operation-owned provider inventory for {preview_context}?"
+            ):
+                raise typer.Exit(1)
+            from npa.cluster.api import MK8sClient
+            from npa.cluster.exceptions import ClusterNotFoundError
+            from npa.clients.nebius import (
+                NebiusError,
+                delete_network,
+                delete_service_account,
+                delete_subnet,
+            )
+            from npa.teardown_receipts import record_teardown_event
+
+            ids = {
+                str(item.get("resource_type") or ""): str(item.get("provider_id") or "")
+                for item in resources
+                if str(item.get("provider_id") or "")
+            }
+            errors: list[str] = []
+            removed: list[dict[str, str]] = []
+            cluster_removed = False
+            target_cluster = ids.get("managed_kubernetes_cluster", exact_cluster_id)
+            try:
+                client = MK8sClient(timeout=timeout * 60, poll_interval=30.0)
+                try:
+                    client.delete_cluster(target_cluster, project_id=exact_project_id)
+                    client.wait_for_deleted(
+                        target_cluster,
+                        project_id=exact_project_id,
+                        timeout_minutes=timeout,
+                    )
+                except ClusterNotFoundError:
+                    pass
+                cluster_removed = True
+                removed.append({"type": "managed_kubernetes_cluster", "id": target_cluster})
+            except Exception as exc:  # noqa: BLE001 - retain independent phase evidence
+                errors.append(f"managed_kubernetes_cluster: {type(exc).__name__}: {exc}")
+            if cluster_removed:
+                for kind, delete_fn in (
+                    ("service_account", delete_service_account),
+                    ("subnet", delete_subnet),
+                    ("network", delete_network),
+                ):
+                    resource_id = ids.get(kind, "")
+                    if not resource_id:
+                        continue
+                    try:
+                        delete_fn(
+                            resource_id,
+                            **(
+                                {"profile": str(cleanup_identity.get("profile") or "")}
+                                if cleanup_identity.get("profile")
+                                else {}
+                            ),
+                        )
+                        removed.append({"type": kind, "id": resource_id})
+                    except NebiusError as exc:
+                        errors.append(f"{kind}: {exc}")
+            record_teardown_event(
+                phase="cluster",
+                resource=preview_context,
+                terminal_state="verified_deleted" if not errors else "partial",
+                project_alias=alias,
+                project_id=exact_project_id,
+                context=preview_context,
+                identity=cleanup_identity.values,
+                precheck={"identity_source": cleanup_identity.source, "state_source": "operation_inventory"},
+                action={"kind": "delete_exact_operation_inventory", "removed": removed},
+                verification={"state_consumers_absent": cluster_removed, "errors": errors},
+                errors=errors,
+            )
+            result_payload = {
+                **cleanup_identity.to_dict(),
+                "outcome": "verified_deleted" if not errors else "partial",
+                "verified": not errors,
+                "state_consumers_absent": cluster_removed,
+                "resources_removed": removed,
+                "errors": errors,
+            }
+            if output_json:
+                typer.echo(json.dumps(result_payload, indent=2, sort_keys=True))
+            else:
+                typer.echo(f"identity_source: {cleanup_identity.source}")
+                typer.echo(f"Removed {len(removed)} exact operation-owned provider resources.")
+                for error in errors:
+                    typer.echo(f"Warning: {error}", err=True)
+            if errors:
+                raise typer.Exit(code=2)
+            if not keep_local_state:
+                _clear_local_cluster_state(preview_context)
+            return
     if not has_evidence:
         if cleanup_identity.receipt_is_terminal:
             payload = {
@@ -2578,8 +2707,9 @@ def _save_terraform_cluster_state(
     *,
     env: dict[str, str] | None = None,
 ) -> None:
-    endpoints = (
-        cluster.get("endpoints") if isinstance(cluster.get("endpoints"), dict) else {}
+    raw_endpoints = cluster.get("endpoints")
+    endpoints: dict[str, Any] = (
+        dict(raw_endpoints) if isinstance(raw_endpoints, dict) else {}
     )
     state = ClusterState(
         name=context,

@@ -292,10 +292,19 @@ fi
 `provision-if-absent` now reconciles and write/read-probes S3 before it considers
 Kubernetes; interrupted configuration resumes from owner-only provenance in
 `~/.npa/credentials.yaml`. It never launches the cluster while required storage
-is missing. A required tenant `editors` membership failure stops before bucket
-or access-key creation; NPA does not continue toward a later data-plane 403 or
-silently request a broader role. Newly granted HMAC/IAM access converges through
-typed, bounded retries without replacing the new identity. Agent preflight
+is missing. The minimum runtime binding is a project-scoped NPA group with the
+bucket-scoped Nebius `storage.object-editor` role. It supplies exactly
+`GetObject`, `HeadObject`, `PutObject`, `DeleteObject`, and `ListObjectsV2` for
+the configured bucket. Existing tenant `editors` membership remains a verified
+compatibility path; NPA creates that broader grant only when the provider
+explicitly reports that the narrow assignable role is unsupported and the
+operator has enabled the fallback. Unreadable or insufficient IAM stops before
+access-key creation or any S3 probe. Newly granted HMAC/IAM access converges through
+typed, bounded retries without replacing the new identity.
+The explicit fallback switch is `NPA_ALLOW_EDITORS_STORAGE_FALLBACK=1`; leave it
+unset unless the provider has rejected `storage.object-editor` as unsupported.
+Each custom group name includes the exact project ID, so aliases cannot collide.
+Agent preflight
 separately probes the exact Terraform state object and an unconditionally written,
 unique sibling under its exact prefix, so a generic writable-bucket success cannot
 hide state-key `403`/list failures or depend on conditional-header support. Probe
@@ -944,7 +953,11 @@ artifacts, managed Kubernetes and GPU runtimes for multi-stage jobs
 (H100, H200, L40S, B300, RTX6000 — validated per tool), and vLLM-compatible
 endpoints for serving.
 
-User secrets live in `~/.npa/credentials.yaml`; machine-managed config lives
+User secrets live in a versioned, exact-project map in
+`~/.npa/credentials.yaml`; top-level storage fields are compatibility views of
+the explicitly selected project, not host-global truth. Legacy global storage
+records migrate only when their exact project ownership is provable; ambiguous
+records remain unchanged and fail closed. Machine-managed config lives
 in `~/.npa/config.yaml`. The repo supports multiple top-level solution
 namespaces; Workbench is the current primary solution (`npa.workbench` /
 `npa workbench`). Future solutions are additive and never rename or nest

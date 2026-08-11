@@ -19,6 +19,7 @@ from rich.console import Console
 
 from npa.cli.workbench.trigger import app as trigger_app
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 if TYPE_CHECKING:
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
@@ -3026,6 +3027,37 @@ def _durable_workflow_status(
             attempted_at=attempted_at,
         )
 
+    if resolution.durable_terminal_state:
+        payload = {
+            "run_id": resolution.run_id,
+            "workflow_name": resolution.workflow_name,
+            "status": resolution.durable_terminal_state,
+            "submission_state": resolution.durable_terminal_state,
+            "manifest_state": "verification_unavailable",
+            "manifest_pending": False,
+            "artifact_verification": "unavailable",
+            "resolution_source": resolution.source,
+            "resolution_checks": resolution.checks_payload(),
+            "live_status": "",
+            "sky_job_id": resolution.job_id,
+            "run_prefix_uri": resolution.run_prefix_uri,
+            "manifest_uri": resolution.manifest_uri,
+            "stages": {},
+            "diagnostics": [
+                "Durable project/run terminal evidence has precedence; storage artifact "
+                "verification is unavailable and does not regress terminal lifecycle truth."
+            ],
+        }
+        return apply_verification(
+            payload,
+            status=VERIFIED,
+            target=resolution.run_id,
+            last_known_state=resolution.durable_terminal_state,
+            last_known_source="project_run_terminal_ledger",
+            retry_command=retry_command,
+            attempted_at=attempted_at,
+        )
+
     state = resolution.state
     manifest = resolution.manifest
     if manifest is None:
@@ -4013,6 +4045,7 @@ def run_cmd(
 
 
 @app.command("status")
+@intent_boundary(OperationIntent.OBSERVE)
 def status_cmd(
     run_id: str = typer.Argument(help="Run ID to check status of."),
     project: str = typer.Option(
@@ -4794,6 +4827,7 @@ def load_artifact_cmd(
 
 
 @app.command("list")
+@intent_boundary(OperationIntent.OBSERVE)
 def list_cmd(
     project: str = typer.Option(
         "", "--project", "-p", help="Project alias for S3 credentials."
@@ -4851,6 +4885,8 @@ def list_cmd(
 
 
 @app.command("cancel")
+@intent_boundary(OperationIntent.DESTROY)
+@json_stdout_contract
 def cancel_cmd(
     run_id: str = typer.Argument(help="Durable workflow run ID or s3:// run prefix."),
     project: str = typer.Option(

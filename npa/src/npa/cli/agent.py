@@ -22,6 +22,11 @@ import httpx
 import typer
 
 from npa.cli._typer_defaults import resolve_typer_defaults
+from npa.clients.project_credential_store import (
+    persist_agent_service_account_id as _persist_project_agent_service_account_id,
+    persist_agent_terraform_credentials,
+)
+from npa.lifecycle_intent import OperationIntent, intent_boundary
 from npa.cli.agent_errors import _agent_deploy_failure_hint
 from npa.cli.agent_quota import (
     _agent_check_compute_instance_quota,  # noqa: F401 - compatibility re-export
@@ -977,23 +982,7 @@ def _persist_agent_service_account_id(
     service_account_id: str, project_id: str = ""
 ) -> None:
     """Write discovered SA id into ~/.npa/credentials.yaml when missing."""
-    sa_id = str(service_account_id or "").strip()
-    if not sa_id:
-        return
-    from npa.clients.credentials import write_credentials_file
-    from npa.clients.nebius import _saved_service_account_id
-
-    exact_project = str(project_id or "").strip()
-    if _saved_service_account_id(exact_project) == sa_id:
-        return
-    write_credentials_file(
-        {
-            "nebius": {
-                "service_account_id": sa_id,
-                "service_account_project_id": exact_project,
-            }
-        }
-    )
+    _persist_project_agent_service_account_id(project_id, service_account_id)
 
 
 def _creds_from_terraform_state(
@@ -9865,6 +9854,14 @@ def bootstrap_cmd(
             service_account_id = _resolve_agent_service_account_id(project, record)
             agent_credentials["service_account_id"] = service_account_id
         if s3_access_key and s3_secret_key:
+            persist_agent_terraform_credentials(
+                str(record.get("project_id") or ""),
+                alias=project,
+                bucket=s3_bucket,
+                endpoint=s3_endpoint,
+                access_key=s3_access_key,
+                secret_key=s3_secret_key,
+            )
             write_config(
                 {
                     "projects": {
@@ -9872,8 +9869,7 @@ def bootstrap_cmd(
                             "terraform_state": {
                                 "bucket": s3_bucket,
                                 "endpoint": s3_endpoint,
-                                "access_key": s3_access_key,
-                                "secret_key": s3_secret_key,
+                                "credential_source": "project_credentials_v2",
                             },
                         }
                     }
@@ -10028,6 +10024,7 @@ def bootstrap_cmd(
 
 
 @app.command("status")
+@intent_boundary(OperationIntent.OBSERVE)
 def status_cmd(
     project: str = typer.Option(
         "", "--project", help="NPA project alias (default: configured default_project)."

@@ -567,8 +567,22 @@ def test_nebius_bootstrap_returns_verifiable_storage_account_ownership(mocker) -
         return "serviceaccount-created"
 
     mocker.patch("npa.clients.nebius.ensure_service_account", side_effect=create_account)
-    mocker.patch("npa.clients.nebius.ensure_editors_membership")
     mocker.patch("npa.clients.nebius.ensure_bucket")
+    mocker.patch(
+        "npa.clients.nebius.get_bucket_by_name",
+        return_value={"metadata": {"id": "bucket-id"}},
+    )
+    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
+    mocker.patch(
+        "npa.clients.nebius.ensure_storage_capability_binding",
+        return_value=nebius.StorageIamBindingEvidence(
+            nebius.IamBindingState.CREATED,
+            nebius.STORAGE_RUNTIME_ROLE,
+            "bucket-id",
+            "group-id",
+            nebius.STORAGE_BINDING_GROUP_NAME,
+        ),
+    )
     mocker.patch("npa.clients.nebius.ensure_access_key", return_value=("key", "secret"))
 
     result = nebius.bootstrap_environment("project", "tenant", "eu-north1")
@@ -610,29 +624,48 @@ def test_nebius_bootstrap_stops_before_bucket_or_key_when_required_iam_fails(
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
     mocker.patch("npa.clients.nebius.ensure_service_account", return_value="sa-id")
     mocker.patch(
-        "npa.clients.nebius.ensure_editors_membership",
+        "npa.clients.nebius.ensure_storage_capability_binding",
         side_effect=nebius.NebiusError("rpc error: PermissionDenied desc = No permission"),
     )
     bucket = mocker.patch("npa.clients.nebius.ensure_bucket", return_value="bucket")
+    mocker.patch(
+        "npa.clients.nebius.get_bucket_by_name",
+        return_value={"metadata": {"id": "bucket-id"}},
+    )
+    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
     key = mocker.patch(
         "npa.clients.nebius.ensure_access_key", return_value=("key", "secret")
     )
 
     messages: list[str] = []
-    with pytest.raises(nebius.NebiusError, match="Required storage IAM grant failed"):
+    with pytest.raises(nebius.NebiusError, match="Required storage IAM capability"):
         nebius.bootstrap_environment(
             "project", "tenant", "eu-north1", on_status=messages.append
         )
 
-    bucket.assert_not_called()
+    bucket.assert_called_once()
     key.assert_not_called()
 
 
 def test_nebius_bootstrap_reuses_saved_storage_on_access_key_permission_denied(mocker) -> None:
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
     mocker.patch("npa.clients.nebius.ensure_service_account", return_value="sa-id")
-    mocker.patch("npa.clients.nebius.ensure_editors_membership")
     mocker.patch("npa.clients.nebius.ensure_bucket", return_value="bucket")
+    mocker.patch(
+        "npa.clients.nebius.get_bucket_by_name",
+        return_value={"metadata": {"id": "bucket-id"}},
+    )
+    mocker.patch(
+        "npa.clients.nebius._existing_editors_binding",
+        return_value=nebius.StorageIamBindingEvidence(
+            nebius.IamBindingState.EXISTING,
+            "editor",
+            "tenant",
+            "editors-id",
+            "editors",
+            compatibility_fallback=True,
+        ),
+    )
     mocker.patch(
         "npa.clients.nebius.ensure_access_key",
         side_effect=nebius.NebiusError("Permission denied PermissionDenied"),
@@ -998,8 +1031,22 @@ def test_nebius_ensure_access_key_does_not_delete_existing_key_without_secret(mo
 def test_nebius_bucket_name_and_bootstrap_order(mocker) -> None:
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
     mocker.patch("npa.clients.nebius.ensure_service_account", return_value="sa")
-    editors = mocker.patch("npa.clients.nebius.ensure_editors_membership")
     bucket = mocker.patch("npa.clients.nebius.ensure_bucket", return_value="bucket")
+    mocker.patch(
+        "npa.clients.nebius.get_bucket_by_name",
+        return_value={"metadata": {"id": "bucket-id"}},
+    )
+    mocker.patch("npa.clients.nebius._existing_editors_binding", return_value=None)
+    narrow = mocker.patch(
+        "npa.clients.nebius.ensure_storage_capability_binding",
+        return_value=nebius.StorageIamBindingEvidence(
+            nebius.IamBindingState.CREATED,
+            nebius.STORAGE_RUNTIME_ROLE,
+            "bucket-id",
+            "group-id",
+            nebius.STORAGE_BINDING_GROUP_NAME,
+        ),
+    )
     mocker.patch("npa.clients.nebius.ensure_access_key", return_value=("key", "secret"))
     statuses: list[str] = []
 
@@ -1011,7 +1058,7 @@ def test_nebius_bucket_name_and_bootstrap_order(mocker) -> None:
     )
 
     assert nebius.bucket_name_for("tenant", "project").startswith("npa-bucket-")
-    editors.assert_called_once_with("tenant", "sa")
+    narrow.assert_called_once()
     bucket.assert_called_once()
     assert result["iam_token"] == "iam"
     assert result["s3_endpoint"] == "https://storage.eu-north1.nebius.cloud"
@@ -1021,8 +1068,22 @@ def test_nebius_bucket_name_and_bootstrap_order(mocker) -> None:
 def test_nebius_bootstrap_uses_explicit_bucket_name(mocker) -> None:
     mocker.patch("npa.clients.nebius.get_iam_token", return_value="iam")
     mocker.patch("npa.clients.nebius.ensure_service_account", return_value="sa")
-    mocker.patch("npa.clients.nebius.ensure_editors_membership")
     bucket = mocker.patch("npa.clients.nebius.ensure_bucket", return_value="chosen")
+    mocker.patch(
+        "npa.clients.nebius.get_bucket_by_name",
+        return_value={"metadata": {"id": "bucket-id"}},
+    )
+    mocker.patch(
+        "npa.clients.nebius._existing_editors_binding",
+        return_value=nebius.StorageIamBindingEvidence(
+            nebius.IamBindingState.EXISTING,
+            "editor",
+            "tenant",
+            "editors-id",
+            "editors",
+            compatibility_fallback=True,
+        ),
+    )
     mocker.patch("npa.clients.nebius.ensure_access_key", return_value=("key", "secret"))
 
     result = nebius.bootstrap_environment(

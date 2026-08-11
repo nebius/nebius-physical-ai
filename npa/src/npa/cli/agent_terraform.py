@@ -121,6 +121,22 @@ def _persist_agent_project_config(
                 f"projects.{project}.terraform_state.session_token",
             ],
         )
+    terraform_state = {
+        "bucket": merged_vars.get("s3_bucket", ""),
+        "endpoint": merged_vars.get("s3_endpoint", ""),
+        "access_key": merged_vars.get("nebius_api_key", ""),
+        "secret_key": merged_vars.get("nebius_secret_key", ""),
+        "session_token": merged_vars.get("s3_session_token", ""),
+        "region": region,
+        "addressing_style": "path",
+    }
+    from npa.clients.project_credential_store import write_project_credentials
+
+    write_project_credentials(
+        project_id,
+        {"terraform_state": terraform_state},
+        alias=project,
+    )
     agent_module.write_config(
         {
             "projects": {
@@ -129,13 +145,11 @@ def _persist_agent_project_config(
                     "tenant_id": tenant_id,
                     "region": region,
                     "terraform_state": {
-                        "bucket": merged_vars.get("s3_bucket", ""),
-                        "endpoint": merged_vars.get("s3_endpoint", ""),
-                        "access_key": merged_vars.get("nebius_api_key", ""),
-                        "secret_key": merged_vars.get("nebius_secret_key", ""),
-                        "session_token": merged_vars.get("s3_session_token", ""),
+                        "bucket": terraform_state["bucket"],
+                        "endpoint": terraform_state["endpoint"],
                         "region": region,
                         "addressing_style": "path",
+                        "credential_source": "project_credentials_v2",
                     },
                 }
             }
@@ -157,6 +171,10 @@ def _apply_agent_terraform(
     env_region: str,
 ) -> dict[str, Any]:
     """Apply agent Terraform and durably verify its remote state."""
+
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("apply_agent_terraform")
 
     from npa.cli.agent import (
         _AGENT_TERRAFORM_RUNTIME_ONLY_VARS,

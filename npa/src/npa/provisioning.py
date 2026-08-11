@@ -115,6 +115,9 @@ def _transactional_provision(function):
 
     @functools.wraps(function)
     def wrapped(*args, **kwargs):
+        from npa.lifecycle_intent import forbid_destructive_provisioning
+
+        forbid_destructive_provisioning("provision_if_absent")
         if current_operation() is not None:
             return function(*args, **kwargs)
         bound = signature.bind_partial(*args, **kwargs)
@@ -285,6 +288,9 @@ def provision_if_absent(
     _resolved_plan=None,
 ) -> ProvisionIfAbsentResult:
     """Ensure configured S3 and Kubernetes exist without deleting resources."""
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("provision_if_absent")
     alias, environment, storage, registry = _resolve_project_runtime(project)
     context = context_name.strip() or cluster_name
     kubeconfig_path = kubeconfig or kubeconfig_file(context)

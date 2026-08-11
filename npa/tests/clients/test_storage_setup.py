@@ -144,7 +144,15 @@ def test_custom_created_storage_identity_keeps_exact_name_in_cleanup_proof(
         access_key_name="npa-run-scoped-key",
     )
     data = yaml.safe_load(credentials_path.read_text())
-    assert data["storage_iam"] == {
+    assert {
+        key: data["storage_iam"][key]
+        for key in (
+            "service_account_id",
+            "service_account_name",
+            "service_account_project_id",
+            "service_account_managed_by",
+        )
+    } == {
         "service_account_id": "serviceaccount-storage",
         "service_account_name": custom_name,
         "service_account_project_id": "project-a",

@@ -1689,7 +1689,8 @@ def test_configure_provision_falls_back_to_manual_on_error(
     # Access-denied provisioning should surface actionable IAM guidance, not a
     # bare rpc dump, before falling back to manual entry.
     assert "access denied" in result.output.lower()
-    assert "editors' role" in result.output
+    assert "storage.object-editor" in result.output
+    assert "NPA_ALLOW_EDITORS_STORAGE_FALLBACK=1" in result.output
     assert "re-run `npa configure`" in result.output
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AKIAMANUAL"

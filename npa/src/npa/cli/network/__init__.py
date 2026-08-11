@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import typer
 
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
+
 from npa.clients.network import (
     NetworkIngressError,
     ensure_ingress as ensure_ingress_impl,
@@ -19,6 +21,8 @@ app = typer.Typer(
 
 
 @app.command("delete-project-default")
+@intent_boundary(OperationIntent.DESTROY)
+@json_stdout_contract
 def delete_project_default(
     project: str = typer.Option(..., "--project", help="Exact NPA project alias."),
     project_id: str = typer.Option(..., "--project-id", help="Exact project ID."),

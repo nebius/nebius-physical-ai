@@ -22,8 +22,11 @@ import tempfile
 from typing import Any, Iterator
 
 STATE_SCHEMA = "npa.workflow.first-run.v1"
-DEFAULT_ROOT = Path.home() / ".npa" / "workflow-runs"
-LEGACY_PATH = Path.home() / ".npa" / "paidf-first-run-id"
+_NPA_CONFIG_DIR = Path(
+    os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
+)
+DEFAULT_ROOT = _NPA_CONFIG_DIR / "workflow-runs"
+LEGACY_PATH = _NPA_CONFIG_DIR / "paidf-first-run-id"
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +60,45 @@ def resolve_project_identity(project: str) -> tuple[str, str, str]:
             "Could not resolve stable project identity; isolating by explicit alias",
             exc_info=True,
         )
+    if alias.startswith("project-"):
+        return alias, alias, "explicit_project_id"
     return f"alias:{alias or 'default'}", alias or "default", "project_alias_fallback"
+
+
+def terminal_run_evidence(
+    *, project: str, run_id: str, state_root: Path | None = None
+) -> dict[str, Any]:
+    """Read a unique verified terminal project/run observation without mutation."""
+
+    stable_project, _alias, _source = resolve_project_identity(project)
+    root = (state_root or DEFAULT_ROOT) / _scope_part(stable_project)
+    if root.is_symlink():
+        return {}
+    try:
+        paths = list(root.glob("*.json"))
+    except OSError:
+        return {}
+    matches: list[dict[str, Any]] = []
+    terminal = {"SUCCEEDED", "FAILED", "FAILED_STARTUP", "CANCELLED", "BLOCKED"}
+    for path in paths:
+        if path.is_symlink() or not path.is_file():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        state = str(payload.get("last_known_state") or "").upper()
+        if (
+            payload.get("schema_version") == STATE_SCHEMA
+            and str(payload.get("project_identity") or "") == stable_project
+            and str(payload.get("run_id") or "") == run_id
+            and str(payload.get("last_verification_status") or "").upper() == "VERIFIED"
+            and state in terminal
+        ):
+            matches.append(dict(payload))
+    return matches[0] if len(matches) == 1 else {}
 
 
 def state_path(

@@ -616,7 +616,12 @@ def test_skypilot_controller_cleanup_requires_confirmation_and_is_npa_only(
         ],
     )
     assert cleanup.exit_code == 0, cleanup.output
-    assert json.loads(cleanup.output)["outcome"] == "cleaned"
+    cleanup_payload = json.loads(cleanup.output)
+    assert cleanup_payload["outcome"] == "cleaned"
+    assert cleanup_payload["remote_absence_verified"] is True
+    assert cleanup_payload["local_metadata_cleared"] is True
+    assert cleanup_payload["overall_verified"] is True
+    assert cleanup_payload["verified"] is True
     assert calls == [{"project": "", "context": "", "sky_bin": "/npa/pinned/sky"}]
 
     monkeypatch.setattr(

@@ -226,6 +226,10 @@ def verify_live_controller_candidate(candidate: ControllerOwner) -> ControllerOw
 def ensure_controller_owner(project: str, context: str) -> ControllerOwner:
     """Verify and atomically bind an unowned exact cluster, or compare an owner."""
 
+    from npa.lifecycle_intent import forbid_destructive_provisioning
+
+    forbid_destructive_provisioning("ensure_controller_owner")
+
     candidate = verify_live_controller_candidate(
         resolve_controller_candidate(project, context)
     )

@@ -13,7 +13,9 @@ from typing import Any
 
 from npa.cluster.exceptions import ClusterStateError
 
-CLUSTERS_DIR = Path.home() / ".npa" / "clusters"
+CLUSTERS_DIR = Path(
+    os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
+) / "clusters"
 
 
 @dataclass

@@ -14,7 +14,10 @@ from typing import Any, Callable, Mapping
 
 import yaml
 
-CREDENTIALS_PATH = Path.home() / ".npa" / "credentials.yaml"
+NPA_CONFIG_DIR = Path(
+    os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
+)
+CREDENTIALS_PATH = NPA_CONFIG_DIR / "credentials.yaml"
 NGC_ENV_KEYS = ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
 TOKEN_FACTORY_ENV_KEY = "NEBIUS_TOKEN_FACTORY_KEY"
 KNOWN_TOKEN_KEYS = (
@@ -634,7 +637,7 @@ def _private_store_lock(path: Path):
 
 def update_private_yaml(
     path: Path,
-    updater: Callable[[dict[str, Any]], Mapping[str, Any]],
+    updater: Callable[[dict[str, Any]], Mapping[str, Any] | None],
 ) -> Path:
     """Lock and atomically update a protected YAML mapping.
 
@@ -648,6 +651,14 @@ def update_private_yaml(
         if path.exists():
             existing = _read_credentials_document(path)
         updated = updater(existing)
+        if updated is None:
+            path.unlink(missing_ok=True)
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            return path
         return write_private_yaml(path, updated)
 
 

@@ -11,6 +11,8 @@ from typing import Any
 
 import typer
 
+from npa.lifecycle_intent import OperationIntent, intent_boundary
+
 from npa.cli.cluster.terraform_lifecycle import _read_tfvars, terraform_status
 from npa.cluster.api import ClusterInfo, MK8sClient
 from npa.cluster.config import resolve_project_id
@@ -30,6 +32,7 @@ from npa.cluster.state import (
 logger = logging.getLogger(__name__)
 
 
+@intent_boundary(OperationIntent.OBSERVE)
 def status_cmd(
     name: str = typer.Option(
         "",
@@ -72,6 +75,7 @@ def status_cmd(
     )
 
 
+@intent_boundary(OperationIntent.OBSERVE)
 def list_cmd(
     output_format: str = typer.Option(
         "table", "--format", help="Output format: table or json."

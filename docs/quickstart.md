@@ -182,10 +182,18 @@ npa configure
 ```
 
 Storage is committed after its declared write/read capability probe succeeds.
-Delete is best-effort probe cleanup and is reported independently; it is not an
-implicit permission requirement. A required tenant `editors` grant failure stops
-before bucket or access-key creation. Newly granted credentials receive bounded,
-typed propagation retries against the same identity. If a
+Delete is best-effort probe cleanup and is reported independently. The declared
+runtime actions are `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`, and
+`ListObjectsV2`; NPA binds `storage.object-editor` to a project-scoped NPA group
+at the exact bucket. A provider-verified existing `editors` membership is
+accepted for older installations. Creating `editors` is an explicit compatibility
+fallback only when Nebius reports the narrow role unsupported. Unknown,
+unreadable, or insufficient IAM stops before key creation and probing. Newly
+Set `NPA_ALLOW_EDITORS_STORAGE_FALLBACK=1` only for that explicit fallback;
+otherwise a provider rejection remains terminal. The custom group name is
+derived from the exact project ID rather than its mutable alias. Newly
+created or changed bindings receive bounded, typed propagation retries against
+the same identity, including when an existing active key is reused. If a
 provider step or the probe fails, configure prints **Setup incomplete**, keeps
 owner-only creation provenance in `~/.npa/credentials.yaml`, and prints the
 restart-safe recovery command:
@@ -197,6 +205,14 @@ npa provision-if-absent --project <PROJECT_ALIAS> --skip-k8s
 That recovery reconciles storage before any cluster work. It rolls back only
 resources conclusively created by the failing invocation; reused, shared, or
 ownership-unproven resources are preserved.
+
+Credentials are stored under
+`project_credentials.projects.<exact-project-id>` with the alias retained only
+as metadata. Atomic locked 0600 writes keep two projects on one host isolated.
+The legacy top-level `storage`, `storage_iam`, and `nebius` keys are derived
+compatibility views for the selected exact project. NPA migrates an older global
+record only when its project ownership is exact and unique; otherwise it leaves
+the record recoverable and fails closed.
 
 You do not need to run `nebius profile create` manually; the Nebius CLI binary
 must still be installed because `npa` invokes it internally.
