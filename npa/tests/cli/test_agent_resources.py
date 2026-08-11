@@ -45,6 +45,26 @@ def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(monkeypatch
     }
 
 
+def test_nested_k8s_grounding_keeps_secret_names_but_redacts_secret_values() -> None:
+    configured = configured_k8s_backends(
+        {
+            "kubernetes": {
+                "context": "customer-context",
+                "image_pull_secrets": "registry-pull",
+                "env_secret_names": "runtime-env",
+                "api_token": "must-not-leak",
+                "registry_password": "must-not-leak",
+            }
+        },
+        "customer",
+    )
+
+    assert configured[0]["raw"]["image_pull_secrets"] == "registry-pull"
+    assert configured[0]["raw"]["env_secret_names"] == "runtime-env"
+    assert "api_token" not in configured[0]["raw"]
+    assert "registry_password" not in configured[0]["raw"]
+
+
 def test_build_inventory_prefers_metadata_profile_and_includes_local_resources() -> None:
     inventory = build_resource_inventory(
         config={

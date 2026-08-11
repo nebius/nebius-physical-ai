@@ -20,13 +20,24 @@ _SECRET_KEY_RE = re.compile(
 )
 _INVENTORY_CACHE: dict[str, Any] = {"expires_at": 0.0, "payload": None}
 _INVENTORY_LOCK = threading.Lock()
+_SAFE_K8S_REFERENCE_KEYS = {
+    "image_pull_secrets",
+    "k8s_image_pull_secrets",
+    "env_secret_names",
+    "k8s_env_secret_names",
+}
+
+
+def _is_safe_k8s_config_key(key: str) -> bool:
+    """Keep placement references while redacting actual credential material."""
+    return key in _SAFE_K8S_REFERENCE_KEYS or not _SECRET_KEY_RE.search(key)
 
 
 def configured_k8s_backends(project_block: dict[str, Any], alias: str) -> list[dict[str, Any]]:
     """Normalize nested and legacy project Kubernetes placement configuration."""
     kube = project_block.get("kubernetes")
     if isinstance(kube, dict) and kube:
-        raw = {key: value for key, value in kube.items() if not _SECRET_KEY_RE.search(key)}
+        raw = {key: value for key, value in kube.items() if _is_safe_k8s_config_key(key)}
         return [{
             "source": "project_config",
             "project": alias,
