@@ -31,7 +31,7 @@ function artifactContentPath(activeRun, artifact) {
   return `/api/artifacts/content?${query.toString()}`;
 }
 
-describe("GR00T operational two-GPU pipeline (live system)", () => {
+describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: false }, () => {
   let activeRun = "";
   let inventory = {};
   let artifacts = [];
@@ -45,16 +45,15 @@ describe("GR00T operational two-GPU pipeline (live system)", () => {
       inventory = resp.body;
       artifacts = resp.body.artifacts || [];
       expect(artifacts.length, "published artifact count").to.be.greaterThan(0);
+      cy.visitLiveAgent();
+      cy.get("#statusBar", { timeout: 60000 }).should("exist");
+      cy.get("#tabRerun").click();
+      cy.get("#runIdInput").clear().type(activeRun, { delay: 0 });
+      cy.get("#loadRunData").click();
+      cy.get("#artifactRunSummary", { timeout: 180000 }).should("contain.text", activeRun);
+      cy.get("#statusBar", { timeout: 300000 }).should("contain.text", "Load run data done");
+      cy.get("#stageList .stage-item", { timeout: 180000 }).should("have.length", 12);
     });
-  });
-
-  beforeEach(() => {
-    cy.visitLiveAgent();
-    cy.get("#statusBar", { timeout: 60000 }).should("exist");
-    cy.get("#tabRerun").click();
-    cy.get("#runIdInput").clear().type(activeRun, { delay: 0 });
-    cy.get("#loadRunData").click();
-    cy.get("#artifactRunSummary", { timeout: 180000 }).should("contain.text", activeRun);
   });
 
   it("separates operational success from the learning outcome", () => {
