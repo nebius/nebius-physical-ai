@@ -31,6 +31,8 @@ USER root
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
+COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
+    /usr/local/bin/npa-workflow-entrypoint
 
 USER root
 
@@ -97,5 +99,4 @@ RUN apt-get update \
 
 USER ubuntu
 
-ENTRYPOINT ["python", "-m", "npa.workflows.sim2real_loop"]
-CMD ["inner-loop", "--help"]
+ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]

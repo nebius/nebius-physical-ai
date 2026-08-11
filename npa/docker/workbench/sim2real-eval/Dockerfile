@@ -25,6 +25,8 @@ COPY docker/workbench/common/sim2real-control-requirements.txt \
     /opt/npa/sim2real-control-requirements.txt
 COPY docker/workbench/common/sim2real-genesis-requirements.txt \
     /opt/npa/sim2real-genesis-requirements.txt
+COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
+    /usr/local/bin/npa-workflow-entrypoint
 
 USER root
 
@@ -43,5 +45,4 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
 
 USER ubuntu
 
-ENTRYPOINT ["python", "-m", "npa.workflows.sim2real_loop"]
-CMD ["full-loop", "--help"]
+ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]

@@ -23,6 +23,8 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY docker/workbench/common/sim2real-controller-requirements.txt \
     /opt/npa/sim2real-controller-requirements.txt
+COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
+    /usr/local/bin/npa-workflow-entrypoint
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
@@ -39,5 +41,4 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
 
 USER ubuntu
 
-ENTRYPOINT ["python3", "-m", "npa.workflows.sim2real.workflow_stage"]
-CMD ["--help"]
+ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]

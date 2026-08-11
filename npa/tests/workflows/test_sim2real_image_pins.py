@@ -10,6 +10,7 @@ these bare constants — this test closes that gap.
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import pytest
 import yaml
@@ -26,6 +27,14 @@ _EXACT_SOURCE_DOCKERFILES = (
     "sim2real-envgen/Dockerfile",
     "sim2real-eval/Dockerfile",
     "sim2real-control/Dockerfile",
+)
+
+_STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
+    "cosmos3-reason/Dockerfile",
+    "isaac-lab/Dockerfile",
+    "sim2real-control/Dockerfile",
+    "sim2real-envgen/Dockerfile",
+    "sim2real-eval/Dockerfile",
 )
 
 
@@ -131,6 +140,32 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     ]
     assert lines
     assert all(line.count("==") == 1 for line in lines)
+
+
+def test_standard_workflow_entrypoint_execs_orchestrator_argv() -> None:
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "docker/workbench/common/workflow_runtime_entrypoint.sh"
+    )
+    result = subprocess.run(
+        ["bash", str(script), "/bin/sh", "-c", "printf standard-workflow-ready"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout == "standard-workflow-ready"
+
+
+@pytest.mark.parametrize("relative_path", _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES)
+def test_standard_workflow_images_use_passthrough_entrypoint(
+    relative_path: str,
+) -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "docker/workbench" / relative_path
+    ).read_text(encoding="utf-8")
+    assert "workflow_runtime_entrypoint.sh" in dockerfile
+    assert 'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]' in dockerfile
+    assert 'CMD ["--help"]' not in dockerfile
 
 
 def test_cosmos2_exact_source_image_uses_light_package_imports() -> None:

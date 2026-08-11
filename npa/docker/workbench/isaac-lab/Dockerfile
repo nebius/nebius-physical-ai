@@ -72,6 +72,8 @@ SHELL ["/bin/bash", "-lc"]
 USER root
 
 COPY docker/workbench/common /opt/npa/docker/workbench/common
+COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
+    /usr/local/bin/npa-workflow-entrypoint
 COPY docker/workbench/isaac-lab/smoke_env.py /opt/npa/docker/workbench/isaac-lab/smoke_env.py
 COPY docker/workbench/isaac-lab/smoke_functional.py /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
@@ -126,4 +128,4 @@ ENV PATH=/usr/bin:$PATH
 
 WORKDIR /workspace/isaaclab
 USER ${NPA_RUNTIME_USER}
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]
