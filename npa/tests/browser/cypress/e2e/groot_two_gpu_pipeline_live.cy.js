@@ -1,0 +1,204 @@
+const requiredLiveEnv = ["NPA_AGENT_BASE_URL", "NPA_AGENT_USER", "NPA_AGENT_PASSWORD"];
+
+function liveEnvAvailable() {
+  return requiredLiveEnv.every((name) => Boolean(Cypress.env(name)));
+}
+
+function runId() {
+  return String(Cypress.env("NPA_AGENT_CYPRESS_RUN_ID") || "").trim();
+}
+
+function agentReq(path, options = {}) {
+  const baseUrl = String(Cypress.env("NPA_AGENT_BASE_URL") || Cypress.config("baseUrl") || "")
+    .replace(/\/$/, "");
+  return cy.request({
+    url: `${baseUrl}${path}`,
+    auth: {
+      username: Cypress.env("NPA_AGENT_USER"),
+      password: Cypress.env("NPA_AGENT_PASSWORD"),
+    },
+    timeout: 180000,
+    ...options,
+  });
+}
+
+function artifactContentPath(activeRun, artifact) {
+  const query = new URLSearchParams({
+    run_id: activeRun,
+    key: String(artifact.key || ""),
+    bucket: String(artifact.bucket || ""),
+  });
+  return `/api/artifacts/content?${query.toString()}`;
+}
+
+describe("GR00T operational two-GPU pipeline (live system)", () => {
+  let activeRun = "";
+  let inventory = {};
+  let artifacts = [];
+
+  before(function () {
+    if (!liveEnvAvailable() || !runId()) this.skip();
+    activeRun = runId();
+    return agentReq(`/api/artifacts/run/${encodeURIComponent(activeRun)}`).then((resp) => {
+      expect(resp.status, "artifact inventory status").to.eq(200);
+      expect(resp.body.run_id, "exact run identity").to.eq(activeRun);
+      inventory = resp.body;
+      artifacts = resp.body.artifacts || [];
+      expect(artifacts.length, "published artifact count").to.be.greaterThan(0);
+    });
+  });
+
+  beforeEach(() => {
+    cy.visitLiveAgent();
+    cy.get("#statusBar", { timeout: 60000 }).should("exist");
+    cy.get("#tabRerun").click();
+    cy.get("#runIdInput").clear().type(activeRun, { delay: 0 });
+    cy.get("#loadRunData").click();
+    cy.get("#artifactRunSummary", { timeout: 180000 }).should("contain.text", activeRun);
+  });
+
+  it("separates operational success from the learning outcome", () => {
+    const learning = inventory.summary && inventory.summary.learning;
+    expect(learning, "machine-readable learning summary").to.be.an("object");
+    expect(learning.pipeline_status).to.eq("succeeded");
+    expect(learning.learning_outcome).to.be.oneOf(["improved", "not_improved", "inconclusive"]);
+    if (learning.learning_outcome !== "improved") {
+      expect(learning.candidate_promoted, "unsupported candidate is not promoted").to.eq(false);
+    }
+    expect(learning.gpu_count, "live training GPU count").to.eq(2);
+    expect(learning.optimizer_steps, "real optimizer steps").to.eq(4);
+    expect(learning.closed_loop, "offline evidence is not a robot rollout").to.eq(false);
+
+    cy.get("#artifactRunSummary")
+      .should("have.class", "learning-summary")
+      .and("contain.text", "Pipeline status")
+      .and("contain.text", "SUCCEEDED")
+      .and("contain.text", "Learning outcome")
+      .and("contain.text", "Candidate promoted")
+      .and("contain.text", "offline held-out (not rollout)");
+  });
+
+  it("shows every terminal workflow stage and physical managed-job ID", () => {
+    agentReq(`/api/workflows/sim2real/runs/${encodeURIComponent(activeRun)}`).then((resp) => {
+      expect(resp.status, "run details status").to.eq(200);
+      const run = resp.body.run || resp.body;
+      const stages = run.stages || [];
+      expect(run.status, "authoritative workflow status").to.eq("succeeded");
+      expect(stages, "workflow stages").to.have.length(12);
+      expect(stages.every((stage) => stage.status === "succeeded"), "all stages succeeded").to.eq(true);
+      expect(stages.every((stage) => String(stage.job_id || "").length > 0), "all physical job IDs").to.eq(true);
+      expect(new Set(stages.map((stage) => String(stage.job_id))).size, "one physical job per serial stage")
+        .to.eq(12);
+    });
+    cy.get("#stageList .stage-item", { timeout: 180000 }).should("have.length", 12);
+    cy.get("#stageList .stage-status").each(($status) => {
+      expect($status.text()).to.eq("Succeeded");
+    });
+    cy.get("#stageList .stage-physical-job").should("have.length", 12)
+      .and("contain.text", "Physical managed job ID:");
+  });
+
+  it("lists and range-serves every required diagnostic artifact", () => {
+    const required = [
+      "reports/two-gpu-pipeline-report.json",
+      "reports/groot-offline-evaluation.rrd",
+      "reports/groot-offline-evaluation.mcap",
+      "reports/publish-manifest.json",
+      "reports/agent-ui-verification.json",
+      "reports/trained-checkpoint.json",
+      "checkpoints/candidate/npa_groot_finetune_manifest.json",
+      "npa-workflow/manifest.json",
+    ];
+    for (const suffix of required) {
+      const artifact = artifacts.find((item) => String(item.key || "").endsWith(suffix));
+      expect(artifact, suffix).to.exist;
+      expect(Number(artifact.size || 0), `${suffix} bytes`).to.be.greaterThan(0);
+    }
+    for (const suffix of [".rrd", ".mcap", "two-gpu-pipeline-report.json"]) {
+      const artifact = artifacts.find((item) => String(item.key || "").endsWith(suffix));
+      agentReq(artifactContentPath(activeRun, artifact), {
+        headers: { Range: "bytes=0-255" },
+        encoding: "binary",
+        failOnStatusCode: false,
+      }).then((resp) => {
+        expect(resp.status, `${suffix} byte range`).to.eq(206);
+        expect(String(resp.body || "").length, `${suffix} ranged bytes`).to.be.greaterThan(0);
+      });
+    }
+  });
+
+  it("paints the exact RRD and opens the exact MCAP with expected topics", () => {
+    const rrd = artifacts.find((item) => String(item.key || "").endsWith("groot-offline-evaluation.rrd"));
+    const mcap = artifacts.find((item) => String(item.key || "").endsWith("groot-offline-evaluation.mcap"));
+    agentReq("/api/sim-viz/load-artifact", {
+      method: "POST",
+      body: { run_id: activeRun, run_ref: inventory.run_ref || "", key: rrd.key },
+    }).then((resp) => {
+      expect(resp.status).to.eq(200);
+      expect(resp.body.render).to.eq("rerun");
+    });
+    cy.reload();
+    cy.get("#tabRerun").click();
+    cy.get("#rerunFrame", { timeout: 180000 }).should("be.visible");
+    const waitForPaint = (attempt) => {
+      cy.window().then((win) => {
+        const frame = win.document.getElementById("rerunFrame");
+        return win.__NPA_AGENT_TEST__.probeRerunCanvasContent(frame);
+      }).then((painted) => {
+        if (!painted && attempt < 60) {
+          cy.wait(1000).then(() => waitForPaint(attempt + 1));
+          return;
+        }
+        expect(painted, "Rerun paints nonblank recording content").to.eq(true);
+      });
+    };
+    waitForPaint(0);
+
+    agentReq("/api/sim-viz/load-artifact", {
+      method: "POST",
+      body: { run_id: activeRun, run_ref: inventory.run_ref || "", key: mcap.key },
+    }).then((resp) => {
+      expect(resp.status).to.eq(200);
+      expect(resp.body.render).to.eq("mcap");
+      expect(resp.body.sim_viz.lichtblick_ready).to.eq(true);
+      expect(String(resp.body.sim_viz.artifact_key || "")).to.eq(mcap.key);
+    });
+    agentReq(artifactContentPath(activeRun, mcap), { encoding: "binary" }).then((resp) => {
+      const body = String(resp.body || "");
+      expect(resp.status).to.eq(200);
+      for (const topic of [
+        "/camera/front",
+        "/policy/predicted_action",
+        "/expert/action",
+        "/metrics/action_error",
+        "/metrics/train_loss",
+        "/log",
+      ]) {
+        expect(body, `MCAP topic ${topic}`).to.include(topic);
+      }
+    });
+    cy.reload();
+    cy.get("#tabRerun").click();
+    cy.get("#renderModeLichtblick").click();
+    cy.get("#viewerPaneLichtblick").should("have.class", "is-active-viewer");
+    cy.get("#lichtblickFrame").should("be.visible").and("have.attr", "src").and("include", "/lichtblick/");
+    cy.screenshot("after-two-gpu-pipeline-ui", { capture: "viewport" });
+  });
+
+  it("describes the viewer as offline evaluation rather than a robot rollout", () => {
+    const rrd = artifacts.find((item) => String(item.key || "").endsWith("groot-offline-evaluation.rrd"));
+    agentReq("/api/sim-viz/load-artifact", {
+      method: "POST",
+      body: { run_id: activeRun, run_ref: inventory.run_ref || "", key: rrd.key },
+    });
+    cy.reload();
+    cy.get("#tabRerun").click();
+    cy.get("#describeVisual", { timeout: 180000 }).click({ force: true });
+    cy.get("#chatLog .msg-row.assistant", { timeout: 180000 }).last().invoke("text").then((value) => {
+      const description = String(value || "").toLowerCase();
+      expect(description.length, "nonblank Describe-this response").to.be.greaterThan(40);
+      expect(description).to.match(/offline|held-out|evaluation/);
+      expect(description).to.match(/not (a )?(physical )?robot rollout|not a rollout|offline.*not.*rollout/);
+    });
+  });
+});
