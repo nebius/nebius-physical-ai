@@ -35,7 +35,8 @@ def _run_with_report(monkeypatch, report: dict) -> int:
 
 def test_run_exits_nonzero_on_blocked_upload(monkeypatch, capsys) -> None:
     code = _run_with_report(
-        monkeypatch, {"upload": {"status": "blocked", "reason": "S3 upload failed: boom"}}
+        monkeypatch,
+        {"upload": {"status": "blocked", "reason": "S3 upload failed: boom"}},
     )
     assert code == 1
     assert "blocked" in capsys.readouterr().err
@@ -89,7 +90,9 @@ def test_run_cli_propagates_learning_rate_and_positive_timeout(monkeypatch) -> N
     assert _FakeWorkflow.config.k8s_job_timeout_s == 3600
 
 
-def test_run_cli_help_documents_uncapped_timeout_and_learning_rate_scope(capsys) -> None:
+def test_run_cli_help_documents_uncapped_timeout_and_learning_rate_scope(
+    capsys,
+) -> None:
     with pytest.raises(SystemExit) as exc:
         cli.main(["run", "--help"])
     assert exc.value.code == 0

@@ -33,7 +33,9 @@ NPA_WORKFLOW_SPEC_DIRS: tuple[Path, ...] = (
 def npa_workflow_spec_dirs() -> tuple[Path, ...]:
     """Return the existing spec roots (skips missing dirs, e.g. wheel installs)."""
 
-    return tuple(directory for directory in NPA_WORKFLOW_SPEC_DIRS if directory.is_dir())
+    return tuple(
+        directory for directory in NPA_WORKFLOW_SPEC_DIRS if directory.is_dir()
+    )
 
 
 def iter_npa_workflow_specs() -> list[Path]:

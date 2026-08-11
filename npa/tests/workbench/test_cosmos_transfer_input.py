@@ -69,8 +69,13 @@ def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
     assert spec["guidance"] == 4
     # depth/seg need a precomputed control file → fall back to edge for input-only.
     _rel2, modality2 = tx._spec_for_input_video(
-        repo, input_video=str(clip), prompt="", control="depth",
-        control_weight=1.0, guidance=3, name="run-2",
+        repo,
+        input_video=str(clip),
+        prompt="",
+        control="depth",
+        control_weight=1.0,
+        guidance=3,
+        name="run-2",
     )
     assert modality2 == "edge"
 
@@ -100,7 +105,9 @@ def test_run_cosmos_transfer_conditions_on_input(tmp_path: Path, monkeypatch) ->
     assert spec["prompt"] == "foggy morning"
 
 
-def test_run_cosmos_transfer_requires_input_or_explicit_spec(tmp_path: Path, monkeypatch) -> None:
+def test_run_cosmos_transfer_requires_input_or_explicit_spec(
+    tmp_path: Path, monkeypatch
+) -> None:
     repo = tmp_path / "repo"
     (repo / "examples").mkdir(parents=True)
     _fake_env(monkeypatch, repo)
@@ -155,7 +162,9 @@ def test_run_cosmos_transfer_accepts_small_guardrailed_video(
     assert result["video_path"].endswith("small.mp4")
 
 
-def test_publish_marks_real_gpu_mode_and_conditioning(tmp_path: Path, monkeypatch) -> None:
+def test_publish_marks_real_gpu_mode_and_conditioning(
+    tmp_path: Path, monkeypatch
+) -> None:
     video = tmp_path / "out.mp4"
     video.write_bytes(b"x" * 200_000)
     monkeypatch.setattr(tx, "extract_frames", lambda vp, dest, max_frames=8: [])
@@ -194,7 +203,9 @@ def test_publish_marks_real_gpu_mode_and_conditioning(tmp_path: Path, monkeypatc
     assert meta["conditioned_input"] == "robot_input.mp4"
 
 
-def test_multi_variant_publish_writes_one_clip_per_combo(tmp_path: Path, monkeypatch) -> None:
+def test_multi_variant_publish_writes_one_clip_per_combo(
+    tmp_path: Path, monkeypatch
+) -> None:
     """publish_transfer_clip (per combo) + write_run_manifest (once) must emit one
     clip dir per sampled scenario and a run manifest that records the fan-out."""
     monkeypatch.setattr(tx, "extract_frames", lambda vp, dest, max_frames=8: [])
@@ -218,8 +229,14 @@ def test_multi_variant_publish_writes_one_clip_per_combo(tmp_path: Path, monkeyp
         video.write_bytes(b"x" * 200_000)
         clips.append(
             tx.publish_transfer_clip(
-                {"video_path": str(video), "video_bytes": 200_000, "spec": f"spec{i}",
-                 "input_conditioned": True, "input_video": "/tmp/robot.mp4", "control": "edge"},
+                {
+                    "video_path": str(video),
+                    "video_bytes": 200_000,
+                    "spec": f"spec{i}",
+                    "input_conditioned": True,
+                    "input_video": "/tmp/robot.mp4",
+                    "control": "edge",
+                },
                 "s3://bkt/run1/cosmos_augmented/",
                 run_id="run1",
                 clip_name=f"aug-run1-{i}",
@@ -227,7 +244,9 @@ def test_multi_variant_publish_writes_one_clip_per_combo(tmp_path: Path, monkeyp
                 storage_client=storage,
             )
         )
-    manifest = tx.write_run_manifest(clips, "s3://bkt/run1/cosmos_augmented/", run_id="run1", storage_client=storage)
+    manifest = tx.write_run_manifest(
+        clips, "s3://bkt/run1/cosmos_augmented/", run_id="run1", storage_client=storage
+    )
 
     assert manifest["variant_count"] == 3
     assert manifest["multiply_mode"] == "multi-variant"
@@ -240,7 +259,9 @@ def test_multi_variant_publish_writes_one_clip_per_combo(tmp_path: Path, monkeyp
     assert sum(u.endswith("cosmos_augmented/manifest.json") for u in uploaded) == 1
 
 
-def test_single_variant_manifest_reports_single_mode(tmp_path: Path, monkeypatch) -> None:
+def test_single_variant_manifest_reports_single_mode(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(tx, "extract_frames", lambda vp, dest, max_frames=8: [])
     video = tmp_path / "out.mp4"
     video.write_bytes(b"x" * 200_000)
@@ -309,14 +330,20 @@ def test_materialize_input_clip_propagates_storage_failures(
         return FailingStorage()
 
     monkeypatch.setattr(StorageClient, "from_environment", from_environment)
-    source = "s3://test-bucket/input.mp4" if stage == "download" else "s3://test-bucket/input/"
+    source = (
+        "s3://test-bucket/input.mp4"
+        if stage == "download"
+        else "s3://test-bucket/input/"
+    )
 
     with pytest.raises(PermissionError) as caught:
         cosmos2._materialize_input_clip(source)
     assert caught.value is failure
 
 
-def test_cli_materialization_error_is_sanitized_and_preserves_cause(monkeypatch) -> None:
+def test_cli_materialization_error_is_sanitized_and_preserves_cause(
+    monkeypatch,
+) -> None:
     secret = "do-not-print-this-token"
     failure = PermissionError(f"access denied: token={secret}")
     source = f"s3://test-bucket/input/?token={secret}"
@@ -437,12 +464,16 @@ def test_variant_parallelism_env_override_and_cap(monkeypatch) -> None:
     assert cosmos2._variant_parallelism(1) == 1
 
 
-def test_run_cosmos_transfer_pins_gpu_and_unique_spec(tmp_path: Path, monkeypatch) -> None:
+def test_run_cosmos_transfer_pins_gpu_and_unique_spec(
+    tmp_path: Path, monkeypatch
+) -> None:
     repo = tmp_path / "repo"
     (repo / "examples").mkdir(parents=True)
     # A default spec the prompt override copies from.
     spec_path = repo / "spec.json"
-    spec_path.write_text(json.dumps({"prompt": "orig", "video_path": "x"}), encoding="utf-8")
+    spec_path.write_text(
+        json.dumps({"prompt": "orig", "video_path": "x"}), encoding="utf-8"
+    )
     _fake_env(monkeypatch, repo)
 
     seen_env: dict[str, str] = {}
@@ -471,7 +502,9 @@ def test_run_cosmos_transfer_pins_gpu_and_unique_spec(tmp_path: Path, monkeypatc
     assert Path(res["video_path"]).exists()
 
 
-def test_write_run_manifest_records_variant_parallelism(tmp_path: Path, monkeypatch) -> None:
+def test_write_run_manifest_records_variant_parallelism(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(tx, "extract_frames", lambda vp, dest, max_frames=8: [])
 
     class FakeStorage:
@@ -494,8 +527,11 @@ def test_write_run_manifest_records_variant_parallelism(tmp_path: Path, monkeypa
             )
         )
     manifest = tx.write_run_manifest(
-        clips, "s3://bkt/run1/cosmos_augmented/", run_id="run1",
-        storage_client=storage, variant_parallelism=4,
+        clips,
+        "s3://bkt/run1/cosmos_augmented/",
+        run_id="run1",
+        storage_client=storage,
+        variant_parallelism=4,
     )
     assert manifest["variant_count"] == 4
     assert manifest["variant_parallelism"] == 4
@@ -614,7 +650,9 @@ def test_frame_extraction_os_failure_raises_public_error(
     repo.mkdir()
     monkeypatch.setenv("COSMOS_TRANSFER_REPO", str(repo))
 
-    with pytest.raises(tx.FrameExtractionError, match="could not start frame extraction"):
+    with pytest.raises(
+        tx.FrameExtractionError, match="could not start frame extraction"
+    ):
         tx.extract_frames(str(tmp_path / "input.mp4"), tmp_path / "frames")
 
 
@@ -654,7 +692,9 @@ def test_publish_transfer_clip_requires_frames_before_any_upload(
     assert uploads == []
 
 
-def test_conditioned_execute_fails_closed_when_input_video_is_missing(monkeypatch) -> None:
+def test_conditioned_execute_fails_closed_when_input_video_is_missing(
+    monkeypatch,
+) -> None:
     from typer.testing import CliRunner
 
     from npa.cli.main import app
@@ -665,7 +705,9 @@ def test_conditioned_execute_fails_closed_when_input_video_is_missing(monkeypatc
     monkeypatch.setattr(
         tx,
         "run_cosmos_transfer",
-        lambda **_kwargs: pytest.fail("inference must not run without conditioned input"),
+        lambda **_kwargs: pytest.fail(
+            "inference must not run without conditioned input"
+        ),
     )
 
     result = CliRunner().invoke(
@@ -696,7 +738,9 @@ def test_execute_fails_closed_when_vendor_runtime_is_unavailable(monkeypatch) ->
     monkeypatch.setattr(
         tx,
         "reference_augment_frames",
-        lambda *_args, **_kwargs: pytest.fail("--execute must not use the reference fallback"),
+        lambda *_args, **_kwargs: pytest.fail(
+            "--execute must not use the reference fallback"
+        ),
     )
 
     result = CliRunner().invoke(
@@ -718,7 +762,9 @@ def test_execute_fails_closed_when_vendor_runtime_is_unavailable(monkeypatch) ->
     assert "needs the cosmos-transfer2.5 runtime" in result.output
 
 
-def test_conditioned_execute_uses_input_and_shared_generic_publisher(monkeypatch) -> None:
+def test_conditioned_execute_uses_input_and_shared_generic_publisher(
+    monkeypatch,
+) -> None:
     from typer.testing import CliRunner
 
     from npa.cli.main import app
@@ -726,7 +772,9 @@ def test_conditioned_execute_uses_input_and_shared_generic_publisher(monkeypatch
 
     seen: dict[str, object] = {}
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
-    monkeypatch.setattr(cosmos2, "_materialize_input_clip", lambda _uri: "/tmp/input.mp4")
+    monkeypatch.setattr(
+        cosmos2, "_materialize_input_clip", lambda _uri: "/tmp/input.mp4"
+    )
 
     def fake_run(**kwargs):
         seen["input_video"] = kwargs.get("input_video")

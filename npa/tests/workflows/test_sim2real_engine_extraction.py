@@ -20,10 +20,12 @@ def test_engine_reexports_extracted_decision_and_state_io() -> None:
     assert engine._read_workflow_state is workflow_state_io._read_workflow_state
     assert engine._write_workflow_state is workflow_state_io._write_workflow_state
     assert (
-        engine.sync_workflow_state_to_s3
-        is workflow_state_io.sync_workflow_state_to_s3
+        engine.sync_workflow_state_to_s3 is workflow_state_io.sync_workflow_state_to_s3
     )
-    assert engine.emit_active_progress_rerun is workflow_state_io.emit_active_progress_rerun
+    assert (
+        engine.emit_active_progress_rerun
+        is workflow_state_io.emit_active_progress_rerun
+    )
     assert engine._upload_final_report is artifact_upload._upload_final_report
     assert engine.upload_run_artifacts is artifact_upload.upload_run_artifacts
 

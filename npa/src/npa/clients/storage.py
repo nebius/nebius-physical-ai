@@ -104,8 +104,10 @@ class StorageClient:
                 or os.environ.get("AWS_ENDPOINT_URL", "")
                 or os.environ.get("NEBIUS_S3_ENDPOINT", "")
             ),
-            aws_access_key_id=aws_access_key_id or os.environ.get("AWS_ACCESS_KEY_ID", ""),
-            aws_secret_access_key=aws_secret_access_key or os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+            aws_access_key_id=aws_access_key_id
+            or os.environ.get("AWS_ACCESS_KEY_ID", ""),
+            aws_secret_access_key=aws_secret_access_key
+            or os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
         )
 
     def list_checkpoints(self, bucket_uri: str) -> list[dict[str, str]]:
@@ -116,9 +118,7 @@ class StorageClient:
 
         results: list[dict[str, str]] = []
         paginator = self._s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(
-            Bucket=bucket, Prefix=prefix, Delimiter="/"
-        ):
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
             for cp in page.get("CommonPrefixes", []):
                 p = cp["Prefix"]
                 name = p.rstrip("/").rsplit("/", 1)[-1]
@@ -216,7 +216,9 @@ class StorageClient:
                     raise
             else:
                 target = (
-                    dest / Path(prefix).name if dest.exists() and dest.is_dir() else dest
+                    dest / Path(prefix).name
+                    if dest.exists() and dest.is_dir()
+                    else dest
                 )
                 target.parent.mkdir(parents=True, exist_ok=True)
                 self._s3.download_file(bucket, prefix, str(target))
@@ -232,7 +234,9 @@ class StorageClient:
         ]
 
         if prefix in keys:
-            target = dest / Path(prefix).name if dest.exists() and dest.is_dir() else dest
+            target = (
+                dest / Path(prefix).name if dest.exists() and dest.is_dir() else dest
+            )
             target.parent.mkdir(parents=True, exist_ok=True)
             self._s3.download_file(bucket, prefix, str(target))
             return str(target)
@@ -241,7 +245,7 @@ class StorageClient:
         for key in keys:
             if not key.startswith(prefix_dir):
                 continue
-            rel_path = key[len(prefix_dir):]
+            rel_path = key[len(prefix_dir) :]
             if not rel_path:
                 continue
             target = dest / rel_path
