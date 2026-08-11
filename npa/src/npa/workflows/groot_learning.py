@@ -14,6 +14,7 @@ import importlib.util
 import io
 import json
 import math
+import os
 import random
 import re
 import subprocess
@@ -1260,6 +1261,11 @@ def _seed_stochastic_sources(seed: int) -> None:
     import numpy as np
     import torch
 
+    # PyTorch's deterministic-algorithm guard rejects CuBLAS matmuls unless a
+    # reproducible workspace policy is configured.  Set it before the first
+    # policy forward (this helper runs before Gr00tPolicy construction) so
+    # seeded evaluation is deterministic in fact instead of failing on CUDA.
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     random.seed(int(seed))
     np.random.seed(int(seed) % (2**32))
     torch.manual_seed(int(seed))

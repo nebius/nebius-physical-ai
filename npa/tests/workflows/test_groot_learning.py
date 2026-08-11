@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -49,6 +51,45 @@ def _evaluation(*, real: bool = True) -> dict:
         },
         "model_config_contract": learning.GROOT_MODEL_CONFIG_CONTRACT,
     }
+
+
+def test_seeded_cuda_evaluation_configures_deterministic_cublas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, object] = {}
+    cudnn = SimpleNamespace(benchmark=True, deterministic=False)
+    fake_torch = SimpleNamespace(
+        manual_seed=lambda seed: calls.__setitem__("torch_seed", seed),
+        cuda=SimpleNamespace(
+            is_available=lambda: True,
+            manual_seed_all=lambda seed: calls.__setitem__("cuda_seed", seed),
+        ),
+        use_deterministic_algorithms=lambda enabled, warn_only=False: calls.update(
+            deterministic=enabled, warn_only=warn_only
+        ),
+        backends=SimpleNamespace(cudnn=cudnn),
+    )
+    fake_transformers = SimpleNamespace(
+        set_seed=lambda seed, deterministic=False: calls.update(
+            transformers_seed=seed,
+            transformers_deterministic=deterministic,
+        )
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+    learning._seed_stochastic_sources(1701)
+    assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+    assert calls == {
+        "torch_seed": 1701,
+        "cuda_seed": 1701,
+        "deterministic": True,
+        "warn_only": True,
+        "transformers_seed": 1701,
+        "transformers_deterministic": True,
+    }
+    assert cudnn.benchmark is False
+    assert cudnn.deterministic is True
 
 
 def test_deterministic_split_is_episode_disjoint_and_stable() -> None:
