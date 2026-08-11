@@ -166,7 +166,6 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
         expect(body, `MCAP topic ${topic}`).to.include(topic);
       }
     });
-    cy.intercept("GET", "/lichtblick/recordings/sim2real.mcap*").as("mcapPlayback");
     cy.reload();
     cy.get("#tabRerun").click();
     cy.get("#renderModeLichtblick").click();
@@ -177,11 +176,13 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
       .and("include", "/lichtblick/")
       .and("include", "ds.url")
       .and("include", "npa.layout=learning");
-    cy.wait("@mcapPlayback", { timeout: 180000 }).then((interception) => {
-      expect([200, 206]).to.include(interception.response && interception.response.statusCode);
-    });
     cy.get("#lichtblickFrame", { timeout: 180000 }).should(($frame) => {
       assertViewerDocument($frame, "Lichtblick");
+      const doc = $frame[0].contentDocument;
+      const text = String((doc && doc.body && doc.body.innerText) || "");
+      expect(text, "Lichtblick initializes the remote MCAP").not.to.include("Error initializing");
+      expect(text, "the configured camera topic exists").not.to.include("Image topic does not exist");
+      expect(text, "the camera topic is visible in the viewer").to.include("/camera/front");
     });
     cy.get("#simvizCta")
       .should("contain.text", "OFFLINE EVALUATION")
