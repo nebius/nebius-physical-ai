@@ -589,8 +589,16 @@ def _validate_cluster_once(kubectl_bin: str, kubeconfig_path: Path, tfvars: dict
         if annotations.get("storageclass.kubernetes.io/is-default-class") == "true":
             default_sc = item.get("metadata", {}).get("name", "")
             break
-    if default_sc != "csi-mounted-fs-path-sc":
-        raise typer.BadParameter(f"Expected default StorageClass csi-mounted-fs-path-sc, found {default_sc}")
+    filestore_enabled = bool(tfvars.get("enable_filestore", True))
+    expected_default_sc = (
+        "csi-mounted-fs-path-sc"
+        if filestore_enabled
+        else str(tfvars.get("previous_default_storage_class_name") or "compute-csi-default-sc")
+    )
+    if default_sc != expected_default_sc:
+        raise typer.BadParameter(
+            f"Expected default StorageClass {expected_default_sc}, found {default_sc}"
+        )
     return {
         "ready_nodes": ready_nodes,
         "gpu_nodes": gpu_node_count,

@@ -138,6 +138,55 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(monkeypatch, tmp_path
     assert "16 allocatable GPUs" in result.output
 
 
+def test_validate_cluster_accepts_compute_csi_when_filestore_is_disabled(
+    monkeypatch, tmp_path: Path
+) -> None:
+    responses = {
+        ("kubectl", "get", "nodes", "-o", "json"): {
+            "items": [{
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "allocatable": {"nvidia.com/gpu": "1"},
+                }
+            }]
+        },
+        ("kubectl", "get", "pods", "-n", "gpu-operator", "-o", "json"): {
+            "items": [{"metadata": {"name": "gpu-operator"}, "status": {"phase": "Running"}}]
+        },
+        ("kubectl", "get", "storageclass", "-o", "json"): {
+            "items": [{
+                "metadata": {
+                    "name": "compute-csi-default-sc",
+                    "annotations": {"storageclass.kubernetes.io/is-default-class": "true"},
+                }
+            }]
+        },
+    }
+
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda args, **_kwargs: _completed(json.dumps(responses[tuple(args)])),
+    )
+
+    result = tf_mod._validate_cluster_once(
+        "kubectl",
+        tmp_path / "kubeconfig",
+        {
+            "gpu_nodes_count": 1,
+            "gpu_nodes_preset": "1gpu-24vcpu-218gb",
+            "enable_filestore": False,
+        },
+    )
+
+    assert result == {
+        "ready_nodes": 1,
+        "gpu_nodes": 1,
+        "total_gpus": 1,
+        "default_storage_class": "compute-csi-default-sc",
+    }
+
+
 def test_up_stops_on_unmanaged_duplicate(monkeypatch, tmp_path: Path) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
