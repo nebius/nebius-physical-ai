@@ -237,6 +237,8 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
   [docs/cli/foxglove.md](docs/cli/foxglove.md).
 - **`trigger`** watches S3-compatible prefixes and retriggers workflows.
 - **`golden-eval`** runs per-container hello-world reruns as a CI gate.
+- Public GHCR releases and exact hardware-specific tags are listed in the
+  [Workbench container image catalog](docs/workbench/container-image-catalog.md).
 - SONIC image routing is manifest-driven — see
   [sonic-image-catalog.md](docs/workbench/sonic-image-catalog.md).
 
@@ -399,6 +401,7 @@ More architectural detail: [docs/architecture/contributor-context.md](docs/archi
 | Beginner robot guides | [docs/workbench/guides/README.md](docs/workbench/guides/README.md)                                    |
 | Cookbooks            | [docs/workbench/cookbooks/README.md](docs/workbench/cookbooks/README.md) — includes the [BDD100K + LanceDB pipeline](docs/workbench/cookbooks/bdd100k-pipeline.md) and [Isaac-Lab BYOF](docs/workbench/cookbooks/byof-isaac-lab/) |
 | Workflow authoring   | [docs/workbench/npa-workflow-guide.md](docs/workbench/npa-workflow-guide.md) · [tool catalog](docs/workbench/npa-workflow-tool-catalog.md) |
+| Container images     | [Public Workbench image catalog](docs/workbench/container-image-catalog.md) · [packaging contract](docs/workbench/container-packaging.md) |
 | `npa agent`          | [skills/tools/npa-agent/SKILL.md](skills/tools/npa-agent/SKILL.md) · [agent operate](skills/workflows/agent-fresh-operate/SKILL.md) |
 | Preemptible GPU VMs | [docs/workbench/preemptible-vms.md](docs/workbench/preemptible-vms.md)                                 |
 | Troubleshooting      | [docs/workbench/troubleshooting/known-footguns.md](docs/workbench/troubleshooting/known-footguns.md) · [active FIXMEs](FIXME.md) · [FTUE audit](FTUE-AUDIT.md) |
