@@ -198,7 +198,11 @@ def _artifact_content_response(
         headers["Content-Length"] = str(total)
         return Response(status_code=200, media_type=content_type, headers=headers)
 
-    if render in {"json", "text"} and not download:
+    # A caller-supplied Range header always requests raw object bytes, including
+    # for JSON/text artifacts. Inline structured previews remain the default for
+    # ordinary GETs, while standards-compliant range/download clients receive
+    # 206 + Content-Range from the common streaming path below.
+    if render in {"json", "text"} and not download and not request.headers.get("range"):
         if total:
             end = min(total - 1, INLINE_TEXT_MAX_BYTES)
             obj = s3.get_object(

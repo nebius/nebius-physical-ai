@@ -331,6 +331,7 @@ def test_secure_content_endpoint_contract_is_s3_only_and_range_aware() -> None:
     assert '"X-Content-Type-Options": "nosniff"' in source
     assert '"Content-Range"' in source
     assert '"Accept-Ranges": "bytes"' in source
+    assert 'not request.headers.get("range")' in source
     assert "INLINE_TEXT_MAX_BYTES" in source
     assert 'render in {"json", "text"} and not download' in source
     guard = source.split("def _resolved_artifact_for_content", 1)[1].split(

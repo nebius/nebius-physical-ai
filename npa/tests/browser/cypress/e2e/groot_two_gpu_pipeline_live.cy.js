@@ -192,6 +192,20 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
     });
     cy.reload();
     cy.get("#tabRerun").click();
+    cy.get("#rerunFrame", { timeout: 180000 }).should("be.visible");
+    const waitForDescribePaint = (attempt) => {
+      cy.window().then((win) => {
+        const frame = win.document.getElementById("rerunFrame");
+        return win.__NPA_AGENT_TEST__.probeRerunCanvasContent(frame);
+      }).then((painted) => {
+        if (!painted && attempt < 90) {
+          cy.wait(1000).then(() => waitForDescribePaint(attempt + 1));
+          return;
+        }
+        expect(painted, "Describe-this receives a painted Rerun frame").to.eq(true);
+      });
+    };
+    waitForDescribePaint(0);
     cy.get("#describeVisual", { timeout: 180000 }).click({ force: true });
     cy.get("#chatLog .msg-row.assistant", { timeout: 180000 }).last().invoke("text").then((value) => {
       const description = String(value || "").toLowerCase();
