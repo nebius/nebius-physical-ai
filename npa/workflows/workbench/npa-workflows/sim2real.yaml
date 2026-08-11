@@ -140,6 +140,8 @@ resources:
                   value: "1"
                 - name: NPA_ISAAC_BOOTSTRAP_OFFLINE
                   value: "1"
+                - name: NPA_BAKED_PYTHON
+                  value: /opt/npa/sim/venv/bin/python
               volumeMounts:
                 - name: npa-isaac-runtime-cache
                   mountPath: /opt/isaac-cache

@@ -10,6 +10,7 @@ from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.detect import detect_submit_format
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
+    render_setup_for_tool,
     render_skypilot_yaml,
 )
 
@@ -111,6 +112,34 @@ for name in (
     subprocess.run([sys.executable, "-c", script], check=True)
 
 
+def test_baked_setup_executes_and_records_the_declared_interpreter(
+    tmp_path: Path,
+) -> None:
+    record = tmp_path / "npa-python"
+    setup = render_setup_for_tool(
+        "run.shell",
+        config={"require_baked_npa": "1"},
+        options=SkypilotRenderOptions(),
+    ).replace("/tmp/npa-python", str(record))
+    source_sha = "a" * 40
+    environment = {
+        "PATH": "/usr/bin:/bin",
+        "NPA_BAKED_PYTHON": sys.executable,
+        "NPA_IMAGE_SOURCE_SHA": source_sha,
+        "NPA_SIM2REAL_SOURCE_SHA": source_sha,
+    }
+
+    subprocess.run(["bash", "-c", setup], check=True, env=environment)
+
+    assert record.read_text(encoding="utf-8").strip() == sys.executable
+    environment["NPA_BAKED_PYTHON"] = "relative/python"
+    failed = subprocess.run(
+        ["bash", "-c", setup], check=False, capture_output=True, env=environment
+    )
+    assert failed.returncode == 68
+    assert b"must be an absolute path" in failed.stderr
+
+
 def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> None:
     spec = load_spec(SPEC)
     source_sha = "a" * 40
@@ -143,6 +172,10 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         assert task["envs"]["NPA_SIM2REAL_SOURCE_SHA"] == source_sha
         assert task["envs"]["NPA_TASK_IMAGE"] == image
         assert "immutable baked NPA runtime verified" in task["setup"]
+        assert "NPA_BAKED_PYTHON" in task["setup"]
+        assert "/tmp/npa-python" in task["setup"]
+        assert "baked NPA interpreter must be an absolute path" in task["setup"]
+        assert "baked NPA interpreter is not executable" in task["setup"]
         assert "pip install" not in task["setup"]
         assert "NPA_SRC_S3_URI" not in task["envs"]
 
@@ -154,3 +187,10 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
             "kueue.x-k8s.io/queue-name": "sim2real-gpu"
         }
         assert pod_config["spec"]["priorityClassName"] == "sim2real-production"
+
+    isaac_env = spec.resources["isaac-gpu"]["kubernetes"]["pod_config"]["spec"][
+        "containers"
+    ][0]["env"]
+    assert {item["name"]: item["value"] for item in isaac_env}[
+        "NPA_BAKED_PYTHON"
+    ] == "/opt/npa/sim/venv/bin/python"

@@ -1163,7 +1163,19 @@ def render_setup_for_tool(
     if require_baked in {"1", "true", "yes", "on"}:
         return (
             "set -e\n"
-            "python3 - <<'PY'\n"
+            'npa_baked_python="${NPA_BAKED_PYTHON:-}"\n'
+            'if [ -z "$npa_baked_python" ]; then\n'
+            '  npa_baked_python="$(command -v python3 || true)"\n'
+            "fi\n"
+            'case "$npa_baked_python" in\n'
+            "  /*) ;;\n"
+            '  *) echo "baked NPA interpreter must be an absolute path" >&2; exit 68 ;;\n'
+            "esac\n"
+            'if [ ! -x "$npa_baked_python" ]; then\n'
+            '  echo "baked NPA interpreter is not executable: $npa_baked_python" >&2\n'
+            "  exit 69\n"
+            "fi\n"
+            "\"$npa_baked_python\" - <<'PY'\n"
             "import os\n"
             "import npa\n"
             "actual = os.environ.get('NPA_IMAGE_SOURCE_SHA', '').strip().lower()\n"
@@ -1172,6 +1184,7 @@ def render_setup_for_tool(
             "    raise SystemExit('baked NPA source attestation does not match workflow source SHA')\n"
             "print('immutable baked NPA runtime verified', actual)\n"
             "PY\n"
+            "printf '%s\\n' \"$npa_baked_python\" > /tmp/npa-python\n"
         )
     parts = [default_npa_setup()]
     parts.append(render_vendor_interpreter_setup(tool_vendor_interpreters(tool_ref)))

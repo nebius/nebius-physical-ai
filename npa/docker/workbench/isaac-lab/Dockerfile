@@ -57,6 +57,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT} \
     NPA_ISAAC_CACHE_DIR=/opt/isaac-cache \
     NPA_ISAAC_BASE_PYTHON=/opt/npa/sim/venv/bin/python \
+    NPA_BAKED_PYTHON=/opt/npa/sim/venv/bin/python \
     NPA_ISAAC_WHEELS_FILE=/opt/npa/docker/workbench/common/isaac-nvidia-wheels.txt \
     ISAAC_LAB_PYTHON=/isaac-sim/python.sh \
     NPA_ISAAC_LAB_OUTPUT_DIR=/workspace/isaaclab/npa-runs \
@@ -104,6 +105,8 @@ RUN find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
       -r /opt/npa/docker/workbench/common/sim2real-control-requirements.txt \
     && /opt/npa/sim/venv/bin/python -m pip check \
     && /opt/npa/sim/venv/bin/python -c \
+      "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
+    && env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c \
       'import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation'
 
 RUN /opt/npa/sim/venv/bin/python -m \

@@ -111,6 +111,9 @@ def test_isaac_exact_source_image_uses_light_package_imports() -> None:
         / "Dockerfile"
     ).read_text(encoding="utf-8")
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
+    assert "NPA_BAKED_PYTHON=/opt/npa/sim/venv/bin/python" in dockerfile
+    assert "npa-exact-source.pth" in dockerfile
+    assert "env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c" in dockerfile
     assert (
         "import boto3, kubernetes, mcap, npa.workflows.sim2real.runtime_attestation"
         in (dockerfile)
