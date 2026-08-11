@@ -326,9 +326,7 @@ def _storage_service_account_record(
             if isinstance(receipt_storage, dict):
                 generations = receipt_storage.get("generations")
                 records = (
-                    generations
-                    if isinstance(generations, list)
-                    else [receipt_storage]
+                    generations if isinstance(generations, list) else [receipt_storage]
                 )
                 for generation in records:
                     if not isinstance(generation, dict):
@@ -386,8 +384,18 @@ def _storage_service_account_record(
     unique = {(item.account_id, item.project_id) for item in candidates}
     if len(unique) == 1:
         preferred = next(
-            (item for item in candidates if item.source == "storage_iam"),
-            candidates[0],
+            (item for item in candidates if item.binding_managed_by_npa),
+            next(
+                (
+                    item
+                    for item in candidates
+                    if item.source.startswith("project credential store")
+                ),
+                next(
+                    (item for item in candidates if item.source == "storage_iam"),
+                    candidates[0],
+                ),
+            ),
         )
         return preferred, ""
     if len(unique) > 1:
@@ -447,7 +455,12 @@ def _remove_storage_service_account_record(account_id: str) -> bool:
                     removed = True
                     if any(
                         project_record.get(section)
-                        for section in ("storage", "storage_iam", "terraform_state", "nebius")
+                        for section in (
+                            "storage",
+                            "storage_iam",
+                            "terraform_state",
+                            "nebius",
+                        )
                     ):
                         projects[exact_project] = project_record
                     else:
@@ -466,7 +479,10 @@ def _remove_storage_service_account_record(account_id: str) -> bool:
             removed = True
             if retained:
                 project_iam["generations"] = retained
-                if str(project_iam.get("active_service_account_id") or "").strip() == account_id:
+                if (
+                    str(project_iam.get("active_service_account_id") or "").strip()
+                    == account_id
+                ):
                     project_iam["active_service_account_id"] = str(
                         retained[-1].get("service_account_id") or ""
                     )
@@ -474,9 +490,10 @@ def _remove_storage_service_account_record(account_id: str) -> bool:
             else:
                 project_record.pop("storage_iam", None)
             nebius = project_record.get("nebius")
-            if isinstance(nebius, dict) and str(
-                nebius.get("service_account_id") or ""
-            ).strip() == account_id:
+            if (
+                isinstance(nebius, dict)
+                and str(nebius.get("service_account_id") or "").strip() == account_id
+            ):
                 project_record.pop("nebius", None)
             if any(
                 project_record.get(section)
@@ -492,8 +509,16 @@ def _remove_storage_service_account_record(account_id: str) -> bool:
         setup_projects = setup.get("projects") if isinstance(setup, dict) else None
         if isinstance(setup, dict) and isinstance(setup_projects, dict):
             for exact_project, project_record in list(setup_projects.items()):
-                resources = project_record.get("resources") if isinstance(project_record, dict) else None
-                account = resources.get("service_account") if isinstance(resources, dict) else None
+                resources = (
+                    project_record.get("resources")
+                    if isinstance(project_record, dict)
+                    else None
+                )
+                account = (
+                    resources.get("service_account")
+                    if isinstance(resources, dict)
+                    else None
+                )
                 if not (
                     isinstance(account, dict)
                     and str(account.get("id") or "").strip() == account_id
@@ -2030,7 +2055,7 @@ def delete_bucket_cmd(
         credentials = load_credentials(environ={})
     except Exception:  # noqa: BLE001 - teardown must work without readable credentials
         credentials = None
-    bucket_name = name.strip() or _bucket_name_from_uri(
+    bucket_name = _bucket_name_from_uri(name.strip()) or _bucket_name_from_uri(
         str(getattr(credentials, "s3_bucket", "") or "")
     )
     resolved_project = project_id.strip()
@@ -2094,13 +2119,18 @@ def delete_bucket_cmd(
             if output_json:
                 import json
 
-                typer.echo(json.dumps({
-                    "result": "already_absent",
-                    "bucket_id": "",
-                    "bucket_name": bucket_name,
-                    "project_id": resolved_project,
-                    "verified_absent": True,
-                }, sort_keys=True))
+                typer.echo(
+                    json.dumps(
+                        {
+                            "result": "already_absent",
+                            "bucket_id": "",
+                            "bucket_name": bucket_name,
+                            "project_id": resolved_project,
+                            "verified_absent": True,
+                        },
+                        sort_keys=True,
+                    )
+                )
             return
         resolved_id = str((item.get("metadata") or {}).get("id", "") or "")
         bucket_name = bucket_name or str(
@@ -2170,26 +2200,36 @@ def delete_bucket_cmd(
                 if output_json:
                     import json
 
-                    typer.echo(json.dumps({
-                        "result": "partial",
-                        "bucket_id": resolved_id,
-                        "bucket_name": bucket_name,
-                        "project_id": resolved_project,
-                        "provider_state": pending,
-                        "verified_absent": False,
-                    }, sort_keys=True))
+                    typer.echo(
+                        json.dumps(
+                            {
+                                "result": "partial",
+                                "bucket_id": resolved_id,
+                                "bucket_name": bucket_name,
+                                "project_id": resolved_project,
+                                "provider_state": pending,
+                                "verified_absent": False,
+                            },
+                            sort_keys=True,
+                        )
+                    )
                 raise typer.Exit(code=2)
             if output_json:
                 import json
 
-                typer.echo(json.dumps({
-                    "result": "already_scheduled",
-                    "bucket_id": resolved_id,
-                    "bucket_name": bucket_name,
-                    "project_id": resolved_project,
-                    "provider_state": pending,
-                    "verified_absent": verified_gone,
-                }, sort_keys=True))
+                typer.echo(
+                    json.dumps(
+                        {
+                            "result": "already_scheduled",
+                            "bucket_id": resolved_id,
+                            "bucket_name": bucket_name,
+                            "project_id": resolved_project,
+                            "provider_state": pending,
+                            "verified_absent": verified_gone,
+                        },
+                        sort_keys=True,
+                    )
+                )
             return
         raise typer.BadParameter(f"Bucket delete failed: {message}") from exc
 
@@ -2230,24 +2270,34 @@ def delete_bucket_cmd(
         if output_json:
             import json
 
-            typer.echo(json.dumps({
-                "result": "partial",
-                "bucket_id": resolved_id,
-                "bucket_name": bucket_name,
-                "project_id": resolved_project,
-                "verified_absent": False,
-            }, sort_keys=True))
+            typer.echo(
+                json.dumps(
+                    {
+                        "result": "partial",
+                        "bucket_id": resolved_id,
+                        "bucket_name": bucket_name,
+                        "project_id": resolved_project,
+                        "verified_absent": False,
+                    },
+                    sort_keys=True,
+                )
+            )
         raise typer.Exit(code=2)
     if output_json:
         import json
 
-        typer.echo(json.dumps({
-            "result": "deleted" if verified_gone else "scheduled",
-            "bucket_id": resolved_id,
-            "bucket_name": bucket_name,
-            "project_id": resolved_project,
-            "verified_absent": verified_gone,
-        }, sort_keys=True))
+        typer.echo(
+            json.dumps(
+                {
+                    "result": "deleted" if verified_gone else "scheduled",
+                    "bucket_id": resolved_id,
+                    "bucket_name": bucket_name,
+                    "project_id": resolved_project,
+                    "verified_absent": verified_gone,
+                },
+                sort_keys=True,
+            )
+        )
 
 
 def _call_bucket_waiter(
@@ -2531,7 +2581,9 @@ def _prune_storage_credentials(bucket_name: str) -> None:
                     if isinstance(project_record, dict)
                     else None
                 )
-                bucket = resources.get("bucket") if isinstance(resources, dict) else None
+                bucket = (
+                    resources.get("bucket") if isinstance(resources, dict) else None
+                )
                 if not (
                     isinstance(project_record, dict)
                     and isinstance(resources, dict)

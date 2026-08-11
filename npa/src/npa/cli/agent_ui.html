@@ -161,6 +161,121 @@
       }
       .panel h3 { margin: 0 0 10px 0; font-size: 17px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text); }
       .panel p { margin: 0; color: var(--muted); }
+      .access-panel { margin-bottom: 12px; }
+      .access-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .access-head h3 { margin-bottom: 4px; }
+      .access-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+      .access-overview-status {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.4;
+      }
+      .access-status {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 4px 9px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        border: 1px solid var(--border);
+        background: #eef6fc;
+        color: #1e4b6b;
+      }
+      .access-status.available { background: var(--ok-bg); color: var(--ok-text); border-color: #b4dc70; }
+      .access-status.partial, .access-status.unverified { background: #fef3c7; color: #7c4a03; border-color: #f4ca64; }
+      .access-status.denied, .access-status.unavailable { background: #fee2e2; color: #991b1b; border-color: #f4aaaa; }
+      .access-project-picker {
+        display: grid;
+        gap: 5px;
+        margin-top: 12px;
+        max-width: 720px;
+      }
+      .access-project-picker label {
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .access-project-picker select {
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 8px 10px;
+        background: #fff;
+        color: var(--text);
+      }
+      .access-projects { display: grid; gap: 8px; margin-top: 10px; }
+      .access-project {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-soft);
+        padding: 9px 10px;
+      }
+      .access-project-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .access-project-name { font-weight: 750; color: var(--ink-strong); }
+      .access-project-id { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+      .access-project-scopes { display: grid; gap: 5px; margin-top: 8px; }
+      .access-project-scope { color: var(--muted); font-size: 12px; line-height: 1.45; }
+      .access-resources { margin-top: 7px; display: grid; gap: 5px; }
+      .access-resource {
+        display: grid;
+        gap: 7px;
+        font-size: 12px;
+        border-top: 1px solid var(--border);
+        padding-top: 5px;
+      }
+      .access-resource-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .access-resource code { overflow-wrap: anywhere; }
+      .access-capabilities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+      .access-capability {
+        display: grid;
+        grid-template-columns: auto minmax(112px, auto);
+        align-items: center;
+        gap: 5px 7px;
+        min-width: 0;
+      }
+      .access-capability-reason {
+        grid-column: 1 / -1;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .access-capability .btn { justify-self: start; min-height: 36px; }
+      .access-capability .btn[disabled] { cursor: not-allowed; opacity: 0.58; }
+      .access-action-result {
+        margin-top: 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #fff;
+        padding: 9px 10px;
+      }
+      .access-action-result[hidden] { display: none; }
+      .access-action-result.is-error { border-color: #f4aaaa; background: #fff7f7; }
+      .access-action-result-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+      .access-action-runs { display: grid; gap: 6px; margin-top: 8px; }
+      .access-action-run {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        border-top: 1px solid var(--border);
+        padding-top: 6px;
+      }
+      .access-action-run-copy { min-width: 0; overflow-wrap: anywhere; }
+      .access-errors { margin-top: 8px; color: var(--danger-text); font-size: 12px; }
+      @media (max-width: 760px) {
+        .access-capabilities { grid-template-columns: 1fr; }
+        .access-action-run { align-items: flex-start; flex-direction: column; }
+      }
       .subsection {
         border: 1px solid var(--border);
         border-radius: 10px;
@@ -831,7 +946,8 @@
         transform: none;
       }
       body.viewer-focus #panelChat .workflow-panel,
-      body.viewer-focus #panelChat .stages-panel {
+      body.viewer-focus #panelChat .stages-panel,
+      body.viewer-focus #panelChat #agentAccessPanel {
         display: none !important;
       }
       body.viewer-focus #panelChat .chat-panel {
@@ -1073,9 +1189,14 @@
       .stage-status.running { background: #fef3c7; color: #92400e; }
       .stage-status.queued { background: #eef6fc; color: #1e4b6b; }
       .stage-status.pending { background: #eef6fc; color: #3d5a6e; }
+      .stage-status.skipped { background: #f3e8ff; color: #6b21a8; }
       .stage-status.not_run { background: #f8fafc; color: #4b6476; border: 1px solid var(--border); }
+      .stage-status.observed_output { background: #e6fffb; color: #115e59; border: 1px solid #99f6e4; }
+      .stage-status.status_unavailable { background: #fff; color: #64748b; border: 1px solid var(--border); }
       .stage-label { font-weight: 700; color: var(--text); }
       .stage-summary { color: var(--muted); margin-top: 2px; line-height: 1.35; }
+      .stage-evidence { color: #52697a; margin-top: 4px; font-size: 11px; line-height: 1.35; }
+      .stage-evidence code { font-size: 10px; }
       .stage-item.is-selected { background: #eff6ff; box-shadow: inset 3px 0 0 #2563eb; }
       .stage-detail:empty { display: none; }
       .stage-detail {
@@ -1629,6 +1750,29 @@
       </button>
       <main class="page">
         <div id="panelChat" class="tab-panel is-active" role="tabpanel" aria-labelledby="tabMain" aria-hidden="false">
+        <section class="panel access-panel" id="agentAccessPanel" data-testid="agent-access-panel" aria-busy="true">
+          <div class="access-head">
+            <div>
+              <h3>Agent access</h3>
+              <p class="hint">Effective tenant, project, and storage access for this running agent.</p>
+            </div>
+            <div class="btn-row">
+              <span id="agentAccessStatus" class="access-overview-status" role="status">Loading access…</span>
+              <button id="agentAccessRefresh" class="btn" type="button">Refresh access</button>
+            </div>
+          </div>
+          <div id="agentAccessSummary" class="access-summary" aria-live="polite"></div>
+          <div class="access-project-picker">
+            <label for="agentAccessProjectSelect">Project</label>
+            <select id="agentAccessProjectSelect" aria-describedby="agentAccessProjectHint" disabled>
+              <option value="">Loading projects…</option>
+            </select>
+            <span id="agentAccessProjectHint" class="hint">Choose a project to inspect its effective read access and available actions.</span>
+          </div>
+          <div id="agentAccessProjects" class="access-projects" aria-live="polite"></div>
+          <div id="agentAccessErrors" class="access-errors" role="status"></div>
+          <div id="agentAccessActionResult" class="access-action-result" role="status" aria-live="polite" aria-busy="false" hidden></div>
+        </section>
         <section class="panel chat-panel">
           <div class="chat-panel-head">
             <div>
@@ -1702,7 +1846,7 @@
         </section>
         <section class="panel stages-panel" id="stagesPanel" data-testid="stages-panel">
           <h3>Stages</h3>
-          <p class="hint">Pick a run (latest first) to load its pipeline timeline, result, and logs. Search filters the list by run name.</p>
+          <p class="hint">Pick a discovered NPA workflow/artifact run (latest first) to load its evidence-backed timeline and artifacts.</p>
           <div class="stages-run-picker field-row" data-testid="stages-run-picker">
             <div class="field" style="flex:1;">
               <label for="stagesRunSelect">Run</label>
@@ -1711,9 +1855,10 @@
               </select>
             </div>
             <div class="field" style="flex:1;">
-              <label for="stagesRunInput">Search or paste run ID</label>
-              <input id="stagesRunInput" type="search" placeholder="franka-topdown…" autocomplete="off" aria-label="Search or paste run ID for stages" />
-              <p class="hint" id="stagesRunSearchHint" style="margin:4px 0 0;">Type to filter runs by name.</p>
+              <label for="stagesRunInput">Search NPA workflow/artifact runs</label>
+              <input id="stagesRunInput" type="search" placeholder="franka-topdown…" autocomplete="off" aria-label="Search NPA workflow or artifact run ID for stages" />
+              <p class="hint" id="stagesRunSearchHint" style="margin:4px 0 0;">Codex maintenance job IDs under <code>/home/ubuntu/codex-runs</code> are not NPA run IDs.</p>
+              <p class="hint" id="stagesRunSearchResult" style="margin:4px 0 0;" aria-live="polite"></p>
             </div>
             <div class="btn-row" style="align-self:flex-end; margin-bottom:2px;">
               <button id="stagesLoadRun" class="btn btn-primary" type="button">Load run</button>
@@ -2197,6 +2342,484 @@
           if (toast.parentNode) toast.parentNode.removeChild(toast);
         }, 4200);
       }
+      function accessStatusClass(value) {
+        const status = String(value || "unavailable").toLowerCase();
+        return ["available", "partial", "denied", "unavailable", "unverified"].includes(status)
+          ? status
+          : "unavailable";
+      }
+      function accessStatusLabel(value) {
+        const status = accessStatusClass(value);
+        if (status === "partial") return "Limited";
+        return status.charAt(0).toUpperCase() + status.slice(1);
+      }
+      function accessScopeLabel(value) {
+        const scope = String(value || "single_project");
+        if (scope === "tenant") return "Tenant-wide read discovery";
+        if (scope === "partial_tenant") return "Tenant read discovery with specific gaps";
+        return "Deployment-project discovery";
+      }
+      function sortedAccessProjects(report) {
+        const projects = Array.isArray(report && report.projects) ? report.projects.slice() : [];
+        return projects.sort((left, right) => {
+          const leftId = String((left && left.id) || "");
+          const rightId = String((right && right.id) || "");
+          if (leftId < rightId) return -1;
+          if (leftId > rightId) return 1;
+          const leftName = String((left && left.name) || "");
+          const rightName = String((right && right.name) || "");
+          if (leftName < rightName) return -1;
+          if (leftName > rightName) return 1;
+          return 0;
+        });
+      }
+      const ACCESS_PROJECT_STORAGE_KEY = "npa.agent.access.selected-project-id";
+      function storedAccessProjectId() {
+        try {
+          return String(window.sessionStorage.getItem(ACCESS_PROJECT_STORAGE_KEY) || "").trim();
+        } catch (_err) {
+          return "";
+        }
+      }
+      function persistAccessProjectId(projectId) {
+        try {
+          if (projectId) window.sessionStorage.setItem(ACCESS_PROJECT_STORAGE_KEY, projectId);
+          else window.sessionStorage.removeItem(ACCESS_PROJECT_STORAGE_KEY);
+        } catch (_err) {
+          // Storage may be disabled; in-memory selection still survives access refreshes.
+        }
+      }
+      let accessActionRequestId = 0;
+      let accessActionController = null;
+      let accessRefreshRequestId = 0;
+      let accessRefreshController = null;
+      let selectedAccessResource = null;
+      let selectedAccessProjectId = storedAccessProjectId();
+      let currentAccessReport = null;
+      function accessSelectionFromButton(button) {
+        return {
+          projectId: String(button.getAttribute("data-project-id") || "").trim(),
+          projectName: String(button.getAttribute("data-project-name") || "").trim(),
+          bucket: String(button.getAttribute("data-resource-bucket") || "").trim(),
+          readStatus: accessStatusClass(button.getAttribute("data-read-status")),
+          readReason: String(button.getAttribute("data-read-reason") || "").trim(),
+        };
+      }
+      function sameAccessSelection(left, right) {
+        return Boolean(left && right) &&
+          left.projectId === right.projectId && left.bucket === right.bucket;
+      }
+      function accessActionIsCurrent(requestId, selection) {
+        return requestId === accessActionRequestId && sameAccessSelection(selection, selectedAccessResource);
+      }
+      function resetAccessActionButtons() {
+        document.querySelectorAll("button[data-access-action]").forEach((button) => {
+          button.removeAttribute("aria-busy");
+          if (button.dataset.defaultLabel) button.textContent = button.dataset.defaultLabel;
+          const enabled = button.getAttribute("data-capability-status") === "available";
+          button.disabled = !enabled;
+        });
+      }
+      function cancelAccessAction(clearResult) {
+        const hadAction = Boolean(accessActionController || selectedAccessResource);
+        accessActionRequestId += 1;
+        if (hadAction) {
+          runSearchRequestId += 1;
+          artifactLoadRequestId += 1;
+        }
+        if (accessActionController) accessActionController.abort();
+        accessActionController = null;
+        selectedAccessResource = null;
+        resetAccessActionButtons();
+        const host = document.getElementById("agentAccessActionResult");
+        if (host) {
+          host.setAttribute("aria-busy", "false");
+          if (clearResult !== false) {
+            host.hidden = true;
+            host.classList.remove("is-error");
+            host.innerHTML = "";
+          }
+        }
+        return hadAction;
+      }
+      function beginAccessAction(selection, button, busyLabel) {
+        const previousSelection = selectedAccessResource;
+        if (accessActionController) accessActionController.abort();
+        if (!previousSelection || !sameAccessSelection(previousSelection, selection)) {
+          runSearchRequestId += 1;
+          artifactLoadRequestId += 1;
+          clearVisibleRunState("Storage resource changed. Loading fresh scoped content…");
+        }
+        const requestId = ++accessActionRequestId;
+        const controller = new AbortController();
+        accessActionController = controller;
+        selectedAccessResource = selection;
+        resetAccessActionButtons();
+        if (button) {
+          button.dataset.defaultLabel = button.dataset.defaultLabel || button.textContent;
+          button.textContent = busyLabel;
+          button.disabled = true;
+          button.setAttribute("aria-busy", "true");
+        }
+        return {
+          requestId,
+          selection,
+          signal: controller.signal,
+          isCurrent: () => accessActionIsCurrent(requestId, selection),
+        };
+      }
+      function finishAccessAction(context) {
+        if (!context.isCurrent()) return;
+        accessActionController = null;
+        resetAccessActionButtons();
+        const host = document.getElementById("agentAccessActionResult");
+        if (host) host.setAttribute("aria-busy", "false");
+      }
+      function renderAccessActionResult(options) {
+        const opts = options || {};
+        const host = document.getElementById("agentAccessActionResult");
+        if (!host) return;
+        const selection = opts.selection || selectedAccessResource || {};
+        const runs = Array.isArray(opts.runs) ? opts.runs : [];
+        const title = String(opts.title || "Artifact access");
+        const message = String(opts.message || "");
+        const kind = String(opts.kind || "info");
+        const shown = runs.slice(0, 25);
+        const canRead = selection.readStatus === "available";
+        host.hidden = false;
+        host.classList.toggle("is-error", kind === "error");
+        host.setAttribute("role", kind === "error" ? "alert" : "status");
+        host.setAttribute("aria-busy", kind === "busy" ? "true" : "false");
+        host.innerHTML =
+          '<div class="access-action-result-head"><strong>' + escapeHtml(title) + "</strong>" +
+          '<span><span class="pill">project <strong>' + escapeHtml(String(selection.projectName || selection.projectId || "unknown")) + "</strong></span> " +
+          '<span class="pill">bucket <strong>' + escapeHtml(String(selection.bucket || "unknown")) + "</strong></span></span></div>" +
+          '<p class="hint" style="margin-top:6px;">' + escapeHtml(message) + "</p>" +
+          (shown.length ? '<div class="access-action-runs">' + shown.map((run) => {
+            const runId = String((run && run.run_id) || "");
+            const runBucket = String((run && run.bucket) || selection.bucket || "");
+            const runProject = String((run && run.project_id) || selection.projectId || "");
+            const disabled = canRead ? "" : " disabled aria-disabled=\"true\"";
+            const reason = canRead ? "Browse and preview this run's readable artifacts." : (selection.readReason || "Artifact read is not available.");
+            return '<div class="access-action-run"><div class="access-action-run-copy"><strong>' + escapeHtml(runId) + "</strong><br>" +
+              '<span class="hint">project ' + escapeHtml(runProject || "unknown") + " · bucket " + escapeHtml(runBucket || "unknown") + "</span></div>" +
+              '<button class="btn" type="button" data-access-action="read-run" data-capability-status="' + (canRead ? "available" : "unavailable") + '"' +
+              ' data-project-id="' + escapeHtml(runProject) + '" data-project-name="' + escapeHtml(String(selection.projectName || "")) + '"' +
+              ' data-resource-bucket="' + escapeHtml(runBucket) + '" data-read-status="' + escapeHtml(selection.readStatus || "unavailable") + '"' +
+              ' data-read-reason="' + escapeHtml(selection.readReason || "") + '" data-run-id="' + escapeHtml(runId) + '"' +
+              ' aria-label="Browse readable artifacts for run ' + escapeHtml(runId) + '" title="' + escapeHtml(reason) + '"' + disabled + ">Browse run</button></div>";
+          }).join("") + "</div>" : "") +
+          (runs.length > shown.length ? '<p class="hint" style="margin-top:6px;">Showing the first ' + String(shown.length) + " of " + String(runs.length) + " runs. The full scoped result is in Runs &amp; artifacts.</p>" : "");
+      }
+      async function listAccessResource(selection, button) {
+        const context = beginAccessAction(selection, button, "Listing…");
+        renderAccessActionResult({
+          kind: "busy",
+          title: "Listing readable runs",
+          message: "Querying the selected project and bucket…",
+          selection,
+        });
+        try {
+          const result = await refreshArtifactRuns("", {
+            projectId: selection.projectId,
+            resourceBucket: selection.bucket,
+            signal: context.signal,
+            isCurrent: context.isCurrent,
+          });
+          if (!context.isCurrent() || !result) return false;
+          const runs = result.runs || [];
+          renderAccessActionResult({
+            kind: "success",
+            title: "List complete",
+            message: String(runs.length) + " run" + (runs.length === 1 ? "" : "s") + " found in the selected resource.",
+            selection,
+            runs,
+          });
+          setStatus("Listed " + String(runs.length) + " scoped artifact runs");
+          return true;
+        } catch (err) {
+          if (!context.isCurrent()) return false;
+          renderAccessActionResult({
+            kind: "error",
+            title: "List failed",
+            message: String((err && err.message) || err),
+            selection,
+          });
+          setStatus("Scoped artifact listing failed");
+          return false;
+        } finally {
+          finishAccessAction(context);
+        }
+      }
+      async function readAccessResource(selection, button, requestedRunId) {
+        const context = beginAccessAction(selection, button, "Opening…");
+        renderAccessActionResult({
+          kind: "busy",
+          title: "Opening readable artifacts",
+          message: "Finding a selectable run in the selected project and bucket…",
+          selection,
+        });
+        try {
+          const result = await refreshArtifactRuns("", {
+            projectId: selection.projectId,
+            resourceBucket: selection.bucket,
+            signal: context.signal,
+            isCurrent: context.isCurrent,
+          });
+          if (!context.isCurrent() || !result) return false;
+          const runs = result.runs || [];
+          if (!runs.length) {
+            renderAccessActionResult({
+              kind: "success",
+              title: "No readable runs yet",
+              message: "No runs were found in this bucket. Choose another available resource or refresh access after artifacts are uploaded.",
+              selection,
+            });
+            return true;
+          }
+          const requested = String(requestedRunId || "").trim();
+          const current = String(activeRunId || selectedRunIdFromUi() || "").trim();
+          const entry = runs.find((run) => String((run && run.run_id) || "") === requested) ||
+            runs.find((run) => String((run && run.run_id) || "") === current) || runs[0];
+          const runId = String((entry && entry.run_id) || "").trim();
+          renderAccessActionResult({
+            kind: "busy",
+            title: "Opening run " + runId,
+            message: "Listing its artifacts and loading the preferred preview. If no preview is supported, the artifact browser keeps a download action.",
+            selection,
+            runs,
+          });
+          const opened = await loadArtifactsForSelectedRun(runId, null, entry, context);
+          if (!context.isCurrent() || opened === false) return false;
+          renderAccessActionResult({
+            kind: "success",
+            title: "Readable artifacts opened",
+            message: "Opened run " + runId + " in Runs & artifacts with project/bucket provenance and preview/download controls.",
+            selection,
+            runs,
+          });
+          setStatus("Opened readable artifacts for " + runId);
+          return true;
+        } catch (err) {
+          if (!context.isCurrent()) return false;
+          renderAccessActionResult({
+            kind: "error",
+            title: "Read failed",
+            message: String((err && err.message) || err),
+            selection,
+          });
+          setStatus("Artifact read failed");
+          return false;
+        } finally {
+          finishAccessAction(context);
+        }
+      }
+      async function dispatchAccessAction(button) {
+        const action = String(button.getAttribute("data-access-action") || "");
+        const selection = accessSelectionFromButton(button);
+        if (action === "list") return listAccessResource(selection, button);
+        if (action === "read" || action === "read-run") {
+          return readAccessResource(selection, button, button.getAttribute("data-run-id") || "");
+        }
+        return false;
+      }
+      function renderSelectedAccessProject() {
+        const projectsHost = document.getElementById("agentAccessProjects");
+        if (!projectsHost) return;
+        const projects = sortedAccessProjects(currentAccessReport);
+        const projectIndex = projects.findIndex(
+          (item) => String((item && item.id) || "") === selectedAccessProjectId,
+        );
+        const project = projectIndex >= 0 ? projects[projectIndex] : null;
+        if (!project) {
+          projectsHost.innerHTML = '<p class="hint">No project identity is visible to this agent.</p>';
+          return;
+        }
+        const capabilities = (project && project.capabilities) || {};
+        const discovery = capabilities.artifact_discovery || {};
+        const readScope = capabilities.artifact_read || {};
+        const submit = capabilities.workflow_submission || {};
+        const storageDiscovery = capabilities.storage_resource_discovery || {};
+        const resources = Array.isArray(project && project.resources) ? project.resources : [];
+        const projectId = String(project.id || "");
+        const projectName = String(project.name || projectId || "project");
+        const scopeHtml = (label, capability) => {
+          const capStatus = accessStatusClass(capability.status);
+          return '<div class="access-project-scope"><strong>' + escapeHtml(label) + ": " +
+            escapeHtml(accessStatusLabel(capStatus)) + "</strong> — " +
+            escapeHtml(String(capability.reason || "No capability reason was reported.")) + "</div>";
+        };
+        const resourceHtml = resources.length ? resources.map((resource, resourceIndex) => {
+          const caps = (resource && resource.capabilities) || {};
+          const list = caps.artifact_discovery || {};
+          const read = caps.artifact_read || {};
+          const bucket = String(resource.name || "unnamed bucket");
+          const capabilityHtml = (name, capability, action, label) => {
+            const capStatus = accessStatusClass(capability.status);
+            const reasonId = "accessReason-" + String(projectIndex) + "-" + String(resourceIndex) + "-" + action;
+            const enabled = capStatus === "available";
+            return '<div class="access-capability"><span class="access-status ' + capStatus + '">' +
+              escapeHtml(name + ": " + accessStatusLabel(capStatus)) + "</span>" +
+              '<button class="btn" type="button" data-access-action="' + action + '" data-capability-status="' + capStatus + '"' +
+              ' data-project-id="' + escapeHtml(projectId) + '" data-project-name="' + escapeHtml(projectName) + '"' +
+              ' data-resource-bucket="' + escapeHtml(bucket) + '" data-read-status="' + escapeHtml(String(read.status || "unavailable")) + '"' +
+              ' data-read-reason="' + escapeHtml(String(read.reason || "")) + '" aria-describedby="' + reasonId + '"' +
+              ' aria-label="' + escapeHtml(label + " in " + bucket + " (project " + projectName + ")") + '"' +
+              (enabled ? "" : ' disabled aria-disabled="true"') + ">" + escapeHtml(label) + "</button>" +
+              '<span id="' + reasonId + '" class="access-capability-reason">' +
+              escapeHtml(String(capability.reason || "No capability reason was reported.")) + "</span></div>";
+          };
+          return '<div class="access-resource">' +
+            '<div class="access-resource-head"><span class="pill">object storage</span><code>' + escapeHtml(bucket) + "</code></div>" +
+            '<div class="access-capabilities">' +
+            capabilityHtml("List", list, "list", "List artifacts") +
+            capabilityHtml("Read", read, "read", "Browse / preview") +
+            "</div></div>";
+        }).join("") : '<div class="access-resource-empty"><strong>No searchable artifact bucket.</strong> <span class="hint">' +
+          escapeHtml(String(storageDiscovery.reason || discovery.reason || "No object-storage resource was returned for this project.")) +
+          "</span></div>";
+        projectsHost.innerHTML = '<article class="access-project access-project-detail" data-project-id="' + escapeHtml(projectId) + '">' +
+          '<div class="access-project-head"><span class="access-project-name">' + escapeHtml(projectName) + "</span>" +
+          (project.deployment_project ? '<span class="pill">deployment project</span>' : '<span class="pill">tenant read-only</span>') +
+          "</div>" +
+          '<div class="access-project-id">Stable project ID: <code>' + escapeHtml(projectId) + "</code></div>" +
+          '<div class="access-project-scopes">' +
+          scopeHtml("Artifact discovery", discovery) +
+          scopeHtml("Artifact reads", readScope) +
+          scopeHtml("Workflow submission", submit) +
+          "</div>" +
+          '<div class="access-resources">' + resourceHtml + "</div></article>";
+      }
+      function selectAccessProject(projectId, options) {
+        const opts = options || {};
+        const projects = sortedAccessProjects(currentAccessReport);
+        const requested = String(projectId || "").trim();
+        const selected = projects.find((item) => String((item && item.id) || "") === requested);
+        if (!selected) return false;
+        if (selectedAccessProjectId !== requested && !opts.renderOnly) {
+          cancelAccessAction(true);
+        }
+        selectedAccessProjectId = requested;
+        persistAccessProjectId(requested);
+        const picker = document.getElementById("agentAccessProjectSelect");
+        if (picker && picker.value !== requested) picker.value = requested;
+        renderSelectedAccessProject();
+        return true;
+      }
+      function renderAccessReport(report) {
+        const panel = document.getElementById("agentAccessPanel");
+        const statusEl = document.getElementById("agentAccessStatus");
+        const summary = document.getElementById("agentAccessSummary");
+        const picker = document.getElementById("agentAccessProjectSelect");
+        const errorsHost = document.getElementById("agentAccessErrors");
+        const identity = (report && report.identity) || {};
+        const projects = sortedAccessProjects(report);
+        const resourceCount = projects.reduce(
+          (count, project) => count + (Array.isArray(project && project.resources) ? project.resources.length : 0),
+          0,
+        );
+        currentAccessReport = report || {};
+        if (panel) panel.setAttribute("aria-busy", "false");
+        if (statusEl) {
+          statusEl.className = "access-overview-status";
+          statusEl.textContent = String(projects.length) + " project" + (projects.length === 1 ? "" : "s") +
+            " · " + String(resourceCount) + " discovered bucket" + (resourceCount === 1 ? "" : "s");
+          statusEl.title = String((((report || {}).capabilities || {}).artifact_discovery || {}).reason || "");
+        }
+        if (summary) {
+          const tenant = String(identity.tenant_id || "not available");
+          const deployment = String(identity.deployment_project_name || identity.deployment_project_id || "not available");
+          const scope = accessScopeLabel(report && report.scope);
+          const serviceAccount = String(identity.service_account_id || "not reported");
+          const credentialSource = String(identity.credential_source || "not reported");
+          const credentialProfile = String(identity.credential_profile || "not reported");
+          const refreshState = String((((report || {}).refresh || {}).state) || "current");
+          summary.innerHTML =
+            '<span class="pill">tenant <strong>' + escapeHtml(tenant) + "</strong></span>" +
+            '<span class="pill">visible projects <strong>' + String(projects.length) + "</strong></span>" +
+            '<span class="pill">discovered buckets <strong>' + String(resourceCount) + "</strong></span>" +
+            '<span class="pill">deployment project <strong>' + escapeHtml(deployment) + "</strong></span>" +
+            '<span class="pill">scope <strong>' + escapeHtml(scope) + "</strong></span>" +
+            '<span class="pill">service account <strong>' + escapeHtml(serviceAccount) + "</strong></span>" +
+            '<span class="pill">credentials <strong>' + escapeHtml(credentialSource + " / " + credentialProfile) + "</strong></span>" +
+            '<span class="pill">refresh <strong>' + escapeHtml(refreshState) + "</strong></span>" +
+            '<div class="hint">Tenant discovery is application-enforced read-only. Workflow submission and writes remain home-project-only.</div>';
+        }
+        if (picker) {
+          picker.replaceChildren();
+          projects.forEach((project) => {
+            const option = document.createElement("option");
+            const projectId = String((project && project.id) || "");
+            const projectName = String((project && project.name) || projectId || "project");
+            option.value = projectId;
+            option.textContent = projectName + " — " + projectId;
+            option.setAttribute("data-project-id", projectId);
+            picker.appendChild(option);
+          });
+          picker.disabled = !projects.length;
+        }
+        const deploymentId = String(identity.deployment_project_id || "");
+        const retained = projects.some(
+          (project) => String((project && project.id) || "") === selectedAccessProjectId,
+        ) ? selectedAccessProjectId : "";
+        const deployment = projects.some(
+          (project) => String((project && project.id) || "") === deploymentId,
+        ) ? deploymentId : "";
+        const nextSelection = retained || deployment || String(((projects[0] || {}).id) || "");
+        if (nextSelection) selectAccessProject(nextSelection, { renderOnly: true });
+        else {
+          selectedAccessProjectId = "";
+          persistAccessProjectId("");
+          renderSelectedAccessProject();
+        }
+        const errors = Array.isArray(report && report.errors) ? report.errors : [];
+        if (errorsHost) {
+          errorsHost.textContent = errors.length
+            ? errors.map((item) => String((item && item.message) || "Access probe unavailable.")).join(" ")
+            : "";
+        }
+      }
+      async function refreshAccess(force) {
+        const invalidatedAction = cancelAccessAction(true);
+        if (force && invalidatedAction) {
+          activeArtifactBrowseScope = null;
+          discoveredArtifactRuns = [];
+          applyMergedRunSelectors("");
+          clearVisibleRunState("Access refreshed. Select a resource to list or read fresh artifacts.");
+        }
+        const refreshId = ++accessRefreshRequestId;
+        if (accessRefreshController) accessRefreshController.abort();
+        accessRefreshController = new AbortController();
+        const panel = document.getElementById("agentAccessPanel");
+        const statusEl = document.getElementById("agentAccessStatus");
+        const errorsHost = document.getElementById("agentAccessErrors");
+        if (panel) panel.setAttribute("aria-busy", "true");
+        if (statusEl) {
+          statusEl.className = "access-overview-status";
+          statusEl.textContent = force ? "Refreshing access…" : "Loading access…";
+        }
+        try {
+          const report = await apiJson("/api/access" + (force ? "?refresh=true" : ""), {
+            signal: accessRefreshController.signal,
+          });
+          if (refreshId !== accessRefreshRequestId) return false;
+          renderAccessReport(report);
+          return true;
+        } catch (err) {
+          if (refreshId !== accessRefreshRequestId) return false;
+          if (panel) panel.setAttribute("aria-busy", "false");
+          if (statusEl) {
+            statusEl.className = "access-overview-status";
+            statusEl.textContent = "Access unavailable";
+          }
+          if (errorsHost) {
+            errorsHost.textContent = "Access refresh failed. Existing project-scoped operations are unchanged; retry refresh for current diagnostics.";
+          }
+          throw err;
+        } finally {
+          if (refreshId === accessRefreshRequestId) accessRefreshController = null;
+        }
+      }
       function bindClick(id, fn, label) {
         const el = document.getElementById(id);
         if (!el) {
@@ -2301,6 +2924,10 @@
         document.querySelectorAll(".render-mode-tab[data-render-mode]").forEach((btn) => {
           btn.addEventListener("click", () => {
             const mode = String(btn.getAttribute("data-render-mode") || "rerun");
+            // A manual viewer choice supersedes any artifact preview started by
+            // run auto-selection.  Otherwise a slow JSON fetch can repaint Data
+            // after the operator has already switched to another viewer.
+            artifactLoadRequestId += 1;
             setRenderMode(mode);
             // Clicking the Lichtblick tab should load the active run's MCAP, not just
             // reveal an empty viewer (the .mcap is 1-of-many artifacts, easy to miss).
@@ -2356,6 +2983,40 @@
         bindClick("workflowValidate", validateWorkflowYaml, "Validate workflow YAML");
         bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
         bindClick("workflowSubmitYaml", submitWorkflowYaml, "Submit workflow YAML");
+        bindClick("agentAccessRefresh", () => refreshAccess(true), "Refresh agent access");
+        const accessProjectSelect = document.getElementById("agentAccessProjectSelect");
+        if (accessProjectSelect) {
+          accessProjectSelect.addEventListener("change", (event) => {
+            const value = String((event.target && event.target.value) || "");
+            selectAccessProject(value);
+          });
+        }
+        const accessPanel = document.getElementById("agentAccessPanel");
+        if (accessPanel) {
+          // One delegated handler owns all dynamically-rendered access actions.
+          // Native buttons provide mouse, Enter and Space activation semantics.
+          accessPanel.addEventListener("click", (event) => {
+            const target = event.target instanceof Element
+              ? event.target.closest("button[data-access-action]")
+              : null;
+            if (!target || target.disabled) return;
+            event.preventDefault();
+            dispatchAccessAction(target).catch((err) => {
+              showToast("Access action failed: " + String((err && err.message) || err), "error");
+            });
+          });
+          accessPanel.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            const target = event.target instanceof Element
+              ? event.target.closest("button[data-access-action]")
+              : null;
+            if (!target || target.disabled) return;
+            // Explicitly normalize Enter/Space for embedded and assistive browser
+            // contexts, while keeping one delegated action path via click.
+            event.preventDefault();
+            target.click();
+          });
+        }
         bindClick("artifactRefreshRuns", refreshArtifactRuns, "Discover artifact runs");
         bindClick("artifactLoadRunArtifacts", loadArtifactsForSelectedRun, "List run artifacts");
         bindClick("loadRerunViewer", () => loadRerunViewer(), "Reload Rerun data");
@@ -2401,9 +3062,7 @@
           runIdSelect.addEventListener("change", () => {
             const chosen = String(runIdSelect.value || "").trim();
             if (!chosen) return;
-            syncRunChooserFields(chosen);
-            loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
+            loadSelectedRun(runEntryFromSelect(runIdSelect) || chosen)
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
@@ -2412,9 +3071,7 @@
           stagesRunSelect.addEventListener("change", () => {
             const chosen = String(stagesRunSelect.value || "").trim();
             if (!chosen) return;
-            syncRunChooserFields(chosen);
-            loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
+            loadSelectedRun(runEntryFromSelect(stagesRunSelect) || chosen)
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
@@ -2426,7 +3083,6 @@
           const selected = String((select && select.value) || "").trim();
           const chosen = resolveStagesRunChoice(typed, selected);
           await loadSelectedRun(chosen);
-          await loadArtifactsForSelectedRun().catch(() => false);
         }, "Load run for stages");
         const stagesRunInput = document.getElementById("stagesRunInput");
         if (stagesRunInput) {
@@ -2438,7 +3094,10 @@
             // are surfaced by name/ID (then re-filtered into this select).
             const value = String(stagesRunInput.value || "").trim();
             if (stagesSearchTimer) clearTimeout(stagesSearchTimer);
-            if (!value) return;
+            if (!value) {
+              runSearchRequestId += 1;
+              return;
+            }
             stagesSearchTimer = setTimeout(async () => {
               try {
                 await refreshArtifactRuns(value);
@@ -2454,7 +3113,6 @@
             const selected = String((select && select.value) || "").trim();
             const chosen = resolveStagesRunChoice(typed, selected);
             loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
@@ -2465,7 +3123,6 @@
             event.preventDefault();
             const chosen = String(runIdInput.value || "").trim();
             loadSelectedRun(chosen)
-              .then(() => loadArtifactsForSelectedRun().catch(() => false))
               .catch((err) => showToast(String(err && err.message ? err.message : err), "error"));
           });
         }
@@ -2475,7 +3132,9 @@
             node.addEventListener("change", async () => {
               const selectedRun = selectedRunIdFromUi();
               if (!selectedRun) return;
-              await loadArtifactsForSelectedRun();
+              const selectedEntry = runEntryFromSelect(document.getElementById("runIdSelect")) ||
+                runEntryFromSelect(document.getElementById("stagesRunSelect"));
+              await loadArtifactsForSelectedRun(selectedRun, null, selectedEntry);
             });
           }
         }
@@ -2486,13 +3145,16 @@
         if (runFilterInput) {
           let runSearchTimer = null;
           runFilterInput.addEventListener("input", () => {
+            const value = runFilterValue();
             // Immediate client-side filter of what's already loaded…
             applyMergedRunSelectors(activeRunId);
             // …plus a debounced server-side search so runs older than the newest
             // page (beyond the fetch limit) are surfaced by name/ID too.
-            const value = runFilterValue();
             if (runSearchTimer) clearTimeout(runSearchTimer);
-            if (!value) return;
+            if (!value) {
+              runSearchRequestId += 1;
+              return;
+            }
             runSearchTimer = setTimeout(async () => {
               try {
                 await refreshArtifactRuns(value);
@@ -3408,9 +4070,26 @@
           // do not deliver its first video frame until a later canvas mutation.
           // Reuse the full async canvas capture ladder before giving up; it still
           // prefers captureStream/ImageCapture and safely rejects blank frames.
-          return await captureCanvasDataUrl(bridge.canvas, {
+          const captured = await captureCanvasDataUrl(bridge.canvas, {
             budgetMs: fallbackBudget,
           });
+          if (captured) return captured;
+          // A static canvas can occasionally fail to emit its first MediaStream
+          // frame in headless Chromium. Fall back to a final synchronous copy;
+          // real cleared WebGL buffers still fail the blank-frame gate here.
+          try {
+            const copy = document.createElement("canvas");
+            copy.width = Math.max(1, bridge.canvas.width || 1);
+            copy.height = Math.max(1, bridge.canvas.height || 1);
+            const ctx = copy.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(bridge.canvas, 0, 0);
+              if (!frameLooksBlank(copy)) {
+                return downscaleCanvasToDataUrl(copy, 768, 0.72) || "";
+              }
+            }
+          } catch (_fallbackErr) { /* unavailable WebGL readback */ }
+          return "";
         };
         try {
           return await withTimeout(run(), budget + 400, "grabFromRerunCaptureBridge");
@@ -3724,7 +4403,11 @@
         // components/models behind the data, read from the run's real artifacts.
         if (meta.run_id) {
           try {
-            const prov = await loadJson("/api/artifacts/provenance/" + encodeURIComponent(meta.run_id));
+            const provQuery = artifactSourceQuery(meta.run_id).toString();
+            const prov = await loadJson(
+              "/api/artifacts/provenance/" + encodeURIComponent(meta.run_id) +
+              (provQuery ? "?" + provQuery : "")
+            );
             if (prov && prov.summary) meta.provenance = String(prov.summary).slice(0, 800);
             // Grounded original-input resolution (source frames if stored; else the
             // earliest stored visuals + augment engine + what the VLM labeled).
@@ -4749,9 +5432,11 @@
         if (host) host._previewObjectUrl = objectUrl;
         return objectUrl;
       }
-      async function showArtifactPreview(simViz, render) {
+      async function showArtifactPreview(simViz, render, is_current_request) {
         const host = document.getElementById("artifactPreviewHost");
         if (!host) return;
+        const isCurrent = () => typeof is_current_request !== "function" || is_current_request();
+        if (!isCurrent()) return;
         const previewUrl = String((simViz && simViz.artifact_preview_url) || "");
         const downloadUrl = String((simViz && simViz.artifact_download_url) || previewUrl || "");
         const safeRender = String(render || "");
@@ -4783,11 +5468,20 @@
           host.hidden = false;
           host.innerHTML = `<p class="hint">Loading image preview…</p>`;
           try {
-            const src = await authenticatedPreviewObjectUrl(previewUrl, host);
+            const src = await authenticatedPreviewObjectUrl(previewUrl, null);
+            if (!isCurrent()) {
+              try { URL.revokeObjectURL(src); } catch (_err) { /* ignore */ }
+              return;
+            }
+            if (host._previewObjectUrl) {
+              try { URL.revokeObjectURL(host._previewObjectUrl); } catch (_err) { /* ignore */ }
+            }
+            host._previewObjectUrl = src;
             host.innerHTML =
               `<img alt="artifact image" src="${src}" data-preview-url="${escapeHtml(previewUrl)}" />` +
               downloadHtml;
           } catch (err) {
+            if (!isCurrent()) return;
             host.innerHTML =
               `<p class="preview-error">Image preview failed: ${escapeHtml(String((err && err.message) || err))}.</p>` +
               downloadHtml;
@@ -4798,11 +5492,20 @@
           host.hidden = false;
           host.innerHTML = `<p class="hint">Loading video preview…</p>`;
           try {
-            const src = await authenticatedPreviewObjectUrl(previewUrl, host);
+            const src = await authenticatedPreviewObjectUrl(previewUrl, null);
+            if (!isCurrent()) {
+              try { URL.revokeObjectURL(src); } catch (_err) { /* ignore */ }
+              return;
+            }
+            if (host._previewObjectUrl) {
+              try { URL.revokeObjectURL(host._previewObjectUrl); } catch (_err) { /* ignore */ }
+            }
+            host._previewObjectUrl = src;
             host.innerHTML =
               `<video controls playsinline src="${src}" data-preview-url="${escapeHtml(previewUrl)}"></video>` +
               downloadHtml;
           } catch (err) {
+            if (!isCurrent()) return;
             host.innerHTML =
               `<p class="preview-error">Video preview failed: ${escapeHtml(String((err && err.message) || err))}. ` +
               `Sign in again if auth expired, then retry Play.</p>` +
@@ -4815,13 +5518,16 @@
             const resp = await fetchWithTimeout(previewUrl, { credentials: "include" }, 12000);
             if (!resp.ok) throw new Error("preview fetch failed");
             const text = await resp.text();
+            if (!isCurrent()) return;
             host.hidden = false;
             host.innerHTML = `<pre style="white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;max-height:min(70vh,720px);overflow:auto;">${escapeHtml(text.slice(0, 20000))}</pre>`;
             return;
           } catch (_err) {
+            if (!isCurrent()) return;
             // fall through to download link
           }
         }
+        if (!isCurrent()) return;
         host.hidden = false;
         host.innerHTML = `<p>Artifact render: <strong>${escapeHtml(safeRender || "download")}</strong>. <a href="${escapeHtml(downloadUrl)}" target="_blank" rel="noopener">Download artifact</a></p>`;
       }
@@ -5263,6 +5969,12 @@
         const ctrl = new AbortController();
         const timer = window.setTimeout(() => ctrl.abort(), ms);
         const req = init || {};
+        const externalSignal = req.signal;
+        const relayAbort = () => ctrl.abort();
+        if (externalSignal) {
+          if (externalSignal.aborted) ctrl.abort();
+          else externalSignal.addEventListener("abort", relayAbort, { once: true });
+        }
         const headers = withMobileAuth({
           ...(req.headers || {}),
         });
@@ -5276,6 +5988,7 @@
           });
         } finally {
           window.clearTimeout(timer);
+          if (externalSignal) externalSignal.removeEventListener("abort", relayAbort);
         }
       }
       async function apiJson(path, init) {
@@ -5291,7 +6004,7 @@
           headers,
         };
         const pathText = String(path || "");
-        const timeoutMs = (
+        const timeoutMs = pathText.startsWith("/api/artifacts/") ? 60000 : (
           pathText === "/api/chat" ||
           pathText === "/api/workflows/submit" ||
           pathText === "/api/infra/provision"
@@ -5351,8 +6064,11 @@
               + "Click Describe this again — the next capture uses a smaller frame."
             );
           }
+          const structuredError = data && data.error && typeof data.error === "object"
+            ? String(data.error.message || data.error.code || "")
+            : "";
           const detail =
-            (data && (data.detail || data.error || data.message)) ||
+            structuredError || (data && (data.detail || data.error || data.message)) ||
             (rawText && rawText.length < 300 ? rawText : "") ||
             resp.statusText ||
             "request failed";
@@ -5496,12 +6212,22 @@
       let knownAvailableRuns = [];
       let discoveredArtifactRuns = [];
       let mergedRunsCache = [];
+      let activeRunEntryKey = "";
+      let autoLoadedPreferredKey = "";
+      let runSearchRequestId = 0;
+      let artifactLoadRequestId = 0;
+      let artifactListRequestId = 0;
+      let artifactListAbortController = null;
+      let runDetailsRequestId = 0;
+      let runDetailsAbortController = null;
+      let activeRunResourceScope = null;
+      let activeArtifactBrowseScope = null;
       let activeArtifactRunRef = "";
       // Load the whole run list into the picker by default so every run shows
       // without the operator having to guess a search fragment. The server still
       // supports (q=) search for buckets larger than this, and the "Find run" /
       // Stages search boxes union those server matches on top.
-      const ARTIFACT_RUN_LIST_LIMIT = 2000;
+      const ARTIFACT_RUN_LIST_LIMIT = 200;
       function selectedRunIdFromUi() {
         const select = document.getElementById("runIdSelect");
         const stages = document.getElementById("stagesRunSelect");
@@ -5540,17 +6266,26 @@
           String((run && run.run_id) || "").toLowerCase().includes(lowered)
         );
         if (matches.length === 1) return String(matches[0].run_ref || matches[0].run_id || "").trim();
+        if (matches.length > 1) {
+          const selectedMatch = matches.find((run) =>
+            String((run && (run.entry_key || run.run_ref || run.run_id)) || "").trim() === fallback
+          );
+          if (selectedMatch) return fallback;
+        }
         // Allow loading a pasted id that is not yet in the cached list.
         return query;
       }
       function resolveRunSelection(value) {
         const requested = String(value || "").trim();
-        const match = mergedRunsCache.find((run) =>
-          String((run && run.run_ref) || "").trim() === requested
-        );
+        const match = mergedRunsCache.find((run) => {
+          const entryKey = String((run && run.entry_key) || "").trim();
+          const runRef = String((run && run.run_ref) || "").trim();
+          return entryKey === requested || runRef === requested;
+        });
         return {
           run_id: String((match && match.run_id) || requested).trim(),
           run_ref: String((match && match.run_ref) || "").trim(),
+          entry_key: String((match && match.entry_key) || "").trim(),
         };
       }
       // Effective run timestamp for display + sort: when the run STARTED
@@ -5559,6 +6294,28 @@
       // the run's start — not the newest artifact write or when it was last opened.
       function effectiveRunTs(run) {
         return String((run && (run.started_at || run.last_modified || run.activity_at)) || "");
+      }
+      function normalizeRunSource(run, fallbackSource) {
+        const explicit = String((run && run.source_type) || "").trim();
+        if (explicit) return explicit;
+        if (fallbackSource === "discovered") return "artifact_storage";
+        if (String((run && run.run_id) || "") === "franka-demo") return "local_demo";
+        return "workflow_history";
+      }
+      function runSourceLabel(sourceType, run) {
+        const explicit = String((run && run.source_label) || "").trim();
+        if (explicit) return explicit;
+        return {
+          local_demo: "local demo",
+          workflow_history: "workflow history",
+          artifact_storage: "S3 artifacts",
+        }[sourceType] || String(sourceType || "run").replaceAll("_", " ");
+      }
+      function runEntryIdentity(runId, sourceType, run) {
+        const bucket = String((run && run.bucket) || "").trim();
+        const project = String((run && run.project_id) || "").trim();
+        const resolvedPrefix = String((run && run.resolved_prefix) || "").trim();
+        return [sourceType, project, bucket, resolvedPrefix, runId].join("|");
       }
       function mergeRunsLatestFirst(knownRuns, discoveredRuns) {
         const map = new Map();
@@ -5573,18 +6330,27 @@
         const ingest = (run, source, forcedKey) => {
           const runId = String((run && run.run_id) || run || "").trim();
           if (!runId) return;
+          const sourceType = normalizeRunSource(run, source);
           const runRef = String((run && run.run_ref) || "").trim();
-          const identity = String(forcedKey || runRef || runId);
+          const identity = String(
+            forcedKey || runRef || runEntryIdentity(runId, sourceType, run)
+          );
           const prev = map.get(identity) || {
             run_id: runId,
+            entry_key: identity,
             run_ref: runRef,
             source_prefix: String((run && run.source_prefix) || ""),
             started_at: "",
             last_modified: "",
             activity_at: "",
-            has_viewable: false,
+            has_viewable: null,
+            summary_complete: null,
             artifact_count: 0,
-            source: source,
+            project_id: "",
+            bucket: "",
+            resolved_prefix: "",
+            source_type: sourceType,
+            source_label: runSourceLabel(sourceType, run),
           };
           // Run start: keep the EARLIEST across sources (submit time / earliest
           // artifact write). This is the displayed date.
@@ -5597,9 +6363,16 @@
           // Tracked separately so it never inflates the run's displayed date.
           const activityTs = String((run && (run.activity_at || run.rrd_updated_at || run.updated_at || run.submitted_at)) || "");
           if (activityTs && activityTs > String(prev.activity_at || "")) prev.activity_at = activityTs;
-          if (run && run.has_viewable) prev.has_viewable = true;
+          if (run && run.has_viewable === true) prev.has_viewable = true;
+          else if (run && run.has_viewable === false && prev.has_viewable !== true) prev.has_viewable = false;
+          if (run && run.summary_complete === true) prev.summary_complete = true;
+          else if (run && run.summary_complete === false && prev.summary_complete !== true) prev.summary_complete = false;
           if (run && run.artifact_count) prev.artifact_count = Number(run.artifact_count) || prev.artifact_count;
+          if (run && run.project_id) prev.project_id = String(run.project_id || "");
+          if (run && run.bucket) prev.bucket = String(run.bucket || "");
+          if (run && run.resolved_prefix) prev.resolved_prefix = String(run.resolved_prefix || "");
           if (run && run.stage) prev.stage = String(run.stage || "");
+          prev.entry_key = identity;
           if (runRef) prev.run_ref = runRef;
           if (run && run.source_prefix) prev.source_prefix = String(run.source_prefix || "");
           prev.source = prev.source === "both" || (prev.source && prev.source !== source) ? "both" : source;
@@ -5617,50 +6390,160 @@
         return [...map.values()].sort((a, b) => {
           const cmp = effectiveRunTs(b).localeCompare(effectiveRunTs(a));
           if (cmp !== 0) return cmp;
+          const priority = { artifact_storage: 0, local_demo: 1, workflow_history: 2 };
+          const sourceCmp = (priority[a.source_type] ?? 9) - (priority[b.source_type] ?? 9);
+          if (sourceCmp !== 0) return sourceCmp;
           return String(b.run_id || "").localeCompare(String(a.run_id || ""));
         });
       }
       function fillRunSelectOptionsRich(select, runs, current) {
         if (!select) return;
         const previous = String(select.value || "").trim();
+        const runIdCounts = new Map();
+        for (const run of runs) {
+          const runId = String((run && run.run_id) || run || "").trim();
+          if (runId) runIdCounts.set(runId, Number(runIdCounts.get(runId) || 0) + 1);
+        }
         const placeholder = select.id === "stagesRunSelect"
           ? "(select run)"
           : "(select run — latest first)";
         select.innerHTML = '<option value="">' + placeholder + '</option>';
+        let selectedSet = false;
         for (const run of runs) {
           const runId = String((run && run.run_id) || run || "").trim();
           if (!runId) continue;
           const runRef = String((run && run.run_ref) || "").trim();
-          const selector = runRef || runId;
+          const entryKey = String((run && run.entry_key) || "").trim();
+          // Legacy/history entries may not have a run_ref. When the basename is
+          // duplicated across sources, keep each option addressable with its
+          // source-qualified entry identity instead of emitting duplicate values.
+          const selector = runRef || (runIdCounts.get(runId) > 1 ? entryKey : runId) || runId;
           const opt = document.createElement("option");
           opt.value = selector;
+          opt.dataset.entryKey = String((run && run.entry_key) || "");
+          opt.dataset.runId = runId;
+          opt.dataset.runRef = runRef;
+          opt.dataset.sourceType = String((run && run.source_type) || "workflow_history");
+          opt.dataset.sourceLabel = String((run && run.source_label) || "workflow history");
+          opt.dataset.bucket = String((run && run.bucket) || "");
+          opt.dataset.projectId = String((run && run.project_id) || "");
+          opt.dataset.resolvedPrefix = String((run && run.resolved_prefix) || "");
           const bits = [runId];
-          if (run && run.has_viewable) bits.push("viewable");
+          bits.push(String((run && run.source_label) || "workflow history"));
+          if (run && run.project_id) bits.push("project " + String(run.project_id));
+          if (run && run.bucket) bits.push("bucket " + String(run.bucket));
+          if (run && run.resolved_prefix) bits.push("prefix " + String(run.resolved_prefix));
+          if (run && run.source_type === "artifact_storage" && run.has_viewable === true) bits.push("viewable");
+          else if (run && run.source_type === "artifact_storage" && (run.has_viewable == null || run.summary_complete === false)) bits.push("viewability unknown");
           if (run && run.artifact_count) bits.push(String(run.artifact_count) + " artifacts");
           const shownTs = effectiveRunTs(run);
           if (shownTs) bits.push(shownTs.slice(0, 19));
           if (run && run.source_prefix) bits.push(String(run.source_prefix));
           opt.textContent = bits.length > 1 ? (runId + " · " + bits.slice(1).join(" · ")) : runId;
-          if (selector === current || runId === current || (!current && selector === previous)) opt.selected = true;
+          const currentText = String(current || "");
+          if (
+            (!selectedSet && currentText && (
+              run.entry_key === currentText || selector === currentText || runId === currentText
+            )) ||
+            (!selectedSet && !currentText && selector === previous)
+          ) {
+            opt.selected = true;
+            selectedSet = true;
+          }
           select.appendChild(opt);
         }
+      }
+      function runEntryFromSelect(select) {
+        if (!select || !select.selectedOptions || !select.selectedOptions.length) return null;
+        const option = select.selectedOptions[0];
+        const runId = String(option.dataset.runId || option.value || "").trim();
+        if (!runId) return null;
+        const key = String(option.dataset.entryKey || "");
+        return mergedRunsCache.find((item) => String(item.entry_key || "") === key) || {
+          run_id: runId,
+          entry_key: key,
+          run_ref: String(option.dataset.runRef || ""),
+          source_type: String(option.dataset.sourceType || "workflow_history"),
+          source_label: String(option.dataset.sourceLabel || "workflow history"),
+          bucket: String(option.dataset.bucket || ""),
+          project_id: String(option.dataset.projectId || ""),
+          resolved_prefix: String(option.dataset.resolvedPrefix || ""),
+        };
+      }
+      function preferredRunEntry(runId) {
+        const rid = String(runId || "").trim();
+        if (!rid) return null;
+        const exact = mergedRunsCache.find((item) =>
+          String(item.entry_key || "") === rid || String(item.run_ref || "") === rid
+        );
+        if (exact) return exact;
+        if (activeRunEntryKey) {
+          const active = mergedRunsCache.find((item) => item.entry_key === activeRunEntryKey && item.run_id === rid);
+          if (active) return active;
+        }
+        const matches = mergedRunsCache.filter((item) => String(item.run_id || "") === rid);
+        return matches.length === 1 ? matches[0] : null;
+      }
+      function clearVisibleRunState(message) {
+        artifactLoadRequestId += 1;
+        artifactListRequestId += 1;
+        if (artifactListAbortController) {
+          artifactListAbortController.abort();
+          artifactListAbortController = null;
+        }
+        runDetailsRequestId += 1;
+        if (runDetailsAbortController) {
+          runDetailsAbortController.abort();
+          runDetailsAbortController = null;
+        }
+        activeRunId = "";
+        activeRunEntryKey = "";
+        activeArtifactRunRef = "";
+        activeRunResourceScope = null;
+        autoLoadedPreferredKey = "";
+        activeArtifactRender = "";
+        currentLichtblickSimViz = null;
+        const replacements = {
+          runSummary: "Select a run to load its result.",
+          stageList: "",
+          runLog: "No run selected.",
+          stageDetail: "",
+          artifactList: "<p>Select a run to list its artifacts.</p>",
+          artifactProvenance: "",
+        };
+        for (const [id, value] of Object.entries(replacements)) {
+          const node = document.getElementById(id);
+          if (!node) continue;
+          if (id === "artifactList") node.innerHTML = value;
+          else node.textContent = value;
+        }
+        hideArtifactPreview();
+        updateRenderedDataSummary(null);
+        showRerunPlaceholder(message || "Select a run to load its viewer content.", { force: true });
       }
       function filterStagesRunSelect(query) {
         const select = document.getElementById("stagesRunSelect");
         const hint = document.getElementById("stagesRunSearchHint");
         const needle = String(query || "").trim().toLowerCase();
-        const current = String((select && select.value) || activeRunId || "").trim();
+        let current = String((select && select.value) || activeRunId || "").trim();
         const filtered = !needle
           ? mergedRunsCache
           : mergedRunsCache.filter((run) =>
               String((run && run.run_id) || "").toLowerCase().includes(needle)
             );
-        fillRunSelectOptionsRich(select, filtered, current);
+        const result = document.getElementById("stagesRunSearchResult");
+        if (result && needle && activeRunId && !String(activeRunId).toLowerCase().includes(needle)) {
+          result.textContent = "Search results are separate from the currently loaded run " + activeRunId + ".";
+          current = "";
+        } else if (result && !needle) {
+          result.textContent = activeRunId ? "Currently loaded run: " + activeRunId + "." : "";
+        }
+        fillRunSelectOptionsRich(select, filtered, activeRunEntryKey || current);
         if (hint) {
           if (!needle) {
-            hint.textContent = "Type to filter runs by name.";
+            hint.textContent = "Searches discovered NPA workflow/artifact runs across accessible projects and buckets.";
           } else if (!filtered.length) {
-            hint.textContent = "No runs match [" + needle + "]. Paste a full run ID and Load.";
+            hint.textContent = "No discovered NPA runs match [" + needle + "]. Load performs an exact server lookup.";
           } else {
             hint.textContent = String(filtered.length) + " run" + (filtered.length === 1 ? "" : "s") + " match [" + needle + "].";
           }
@@ -5672,9 +6555,25 @@
         return filtered;
       }
       function applyMergedRunSelectors(current) {
-        const merged = mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
+        // Once an access action selects a project/bucket, keep the existing
+        // browser scoped to those S3 results instead of mixing in unrelated
+        // local/workflow-history runs.
+        const merged = activeArtifactBrowseScope
+          ? mergeRunsLatestFirst([], discoveredArtifactRuns)
+          : mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns);
         mergedRunsCache = merged;
-        const chosen = String(activeArtifactRunRef || current || activeRunId || "").trim();
+        const chosen = String(
+          activeRunEntryKey || activeArtifactRunRef || current || activeRunId || ""
+        ).trim();
+        const selectedEntry = merged.find((item) =>
+          item.entry_key === chosen || item.run_ref === chosen
+        );
+        const chosenRun = String(
+          activeRunId ||
+          ((selectedEntry || {}).run_id) ||
+          current ||
+          ""
+        ).trim();
         // Filter the Rerun-tab run picker by the "Find run (name or ID)" box.
         const runFilter = runFilterValue().toLowerCase();
         const runList = runFilter
@@ -5693,59 +6592,167 @@
         } else {
           fillRunSelectOptionsRich(document.getElementById("stagesRunSelect"), merged, chosen);
         }
-        syncRunChooserFields(chosen);
+        syncRunChooserFields(chosenRun, activeRunEntryKey || activeArtifactRunRef);
         return merged;
       }
-      async function refreshArtifactRuns(query) {
+      async function refreshArtifactRuns(query, options) {
         // Discover runs generically across the whole bucket. When a search query
         // is given, ask the SERVER to search ALL runs by name/ID (not just the
         // newest page) so old runs beyond the default limit are still findable,
         // and union the matches into the discovered list.
-        const q = String(query || "").trim();
-        const url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
-        const data = await apiJson(url);
-        const runs = Array.isArray(data.runs) ? data.runs : [];
+        const q = typeof query === "string" ? query.trim() : "";
+        const opts = options && typeof options === "object" ? options : {};
+        if (opts.resourceBucket || opts.projectId) {
+          activeArtifactBrowseScope = {
+            resourceBucket: String(opts.resourceBucket || "").trim(),
+            projectId: String(opts.projectId || "").trim(),
+          };
+        }
+        const scope = activeArtifactBrowseScope || {};
+        // A background/default refresh must not supersede an in-flight q=
+        // request and leave the user's filtered picker empty.
+        const requestId = ++runSearchRequestId;
+        const runs = [];
+        let data = null;
+        let cursor = "";
+        do {
+          let url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
+          if (scope.projectId) url += "&project_id=" + encodeURIComponent(scope.projectId);
+          if (scope.resourceBucket) url += "&resource_bucket=" + encodeURIComponent(scope.resourceBucket);
+          if (cursor) url += "&cursor=" + encodeURIComponent(cursor);
+          data = await apiJson(url, opts.signal ? { signal: opts.signal } : undefined);
+          if (requestId !== runSearchRequestId || (opts.isCurrent && !opts.isCurrent())) return false;
+          runs.push(...(Array.isArray(data.runs) ? data.runs : []));
+          cursor = String(data.next_cursor || "");
+        } while (cursor);
         if (q) {
-          const byId = new Map((discoveredArtifactRuns || []).map((r) => [String((r && (r.run_ref || r.run_id)) || ""), r]));
-          for (const r of runs) byId.set(String((r && (r.run_ref || r.run_id)) || ""), r);
+          const identity = (r) => String((r && r.run_ref) || "") || [
+            String((r && r.source_type) || "artifact_storage"),
+            String((r && r.project_id) || ""),
+            String((r && r.bucket) || ""),
+            String((r && r.resolved_prefix) || ""),
+            String((r && r.run_id) || ""),
+          ].join("|");
+          const byId = new Map((discoveredArtifactRuns || []).map((r) => [identity(r), r]));
+          for (const r of runs) byId.set(identity(r), r);
           discoveredArtifactRuns = [...byId.values()];
         } else {
           discoveredArtifactRuns = runs;
         }
         // API already returns latest-first; keep that order when merging.
-        const merged = applyMergedRunSelectors(activeRunId);
+        const merged = applyMergedRunSelectors(activeRunEntryKey || activeRunId);
         const status = document.getElementById("artifactDiscoverStatus");
         if (status) {
-          const trunc = data.truncated ? " (truncated)" : "";
+          const trunc = data.pagination_complete === false ? " (discovery incomplete)" : "";
+          const scoped = scope.resourceBucket
+            ? " · project " + String(scope.projectId || "unknown") + " · bucket " + String(scope.resourceBucket)
+            : "";
           status.textContent =
             "Runs (latest first): " + String(merged.length) +
-            " consolidated · discovered " + String(data.total_runs || 0) + trunc;
+            " consolidated · discovered " + String(data.total_runs || 0) + trunc +
+            (data.access && data.access.status ? " · access " + String(data.access.status) : "") + scoped;
         }
-        return true;
+        return { data, runs, merged };
       }
-      async function loadArtifactsForSelectedRun(explicitRunId) {
+      async function loadArtifactsForSelectedRun(explicitRunId, priorPage, explicitEntry, requestContext) {
         // explicitRunId is optional; guard against event objects passed by
         // click handlers (bindClick calls fn(event)).
         const requestedRun = (typeof explicitRunId === "string" && explicitRunId.trim())
           ? explicitRunId.trim()
           : selectedRunIdFromUi();
         if (!requestedRun) throw new Error("Select a run or enter a run_id first");
+        const selection = resolveRunSelection(requestedRun);
+        const entry = (explicitEntry && typeof explicitEntry === "object")
+          ? explicitEntry
+          : preferredRunEntry(selection.run_ref || selection.run_id);
+        let runId = String((entry && entry.run_id) || selection.run_id || requestedRun).trim();
+        let runRef = String((entry && entry.run_ref) || selection.run_ref || "").trim();
+        const context = requestContext && typeof requestContext === "object" ? requestContext : {};
         // No path prefix: the server locates the run by id across the whole run root.
-        const data = await apiJson("/api/artifacts/run/" + encodeURIComponent(requestedRun));
-        const runId = String(data.run_id || requestedRun).trim();
-        const runRef = String(data.run_ref || "").trim();
+        const previous = priorPage && Array.isArray(priorPage.artifacts) ? priorPage.artifacts : [];
+        const params = new URLSearchParams();
+        if (priorPage && priorPage.next_cursor) {
+          params.set("cursor", String(priorPage.next_cursor));
+          params.set("resolved_prefix", String(priorPage.resolved_prefix || ""));
+          params.set("resource_bucket", String(priorPage.bucket || ""));
+          params.set("source_selected", "1");
+          if (priorPage.project_id) params.set("project_id", String(priorPage.project_id));
+        } else if (entry && entry.bucket) {
+          params.set("resource_bucket", String(entry.bucket));
+          params.set("source_selected", "1");
+          if (entry.project_id) params.set("project_id", String(entry.project_id));
+          if (entry.resolved_prefix) params.set("resolved_prefix", String(entry.resolved_prefix));
+        }
+        const query = params.toString();
+        const listRequestId = ++artifactListRequestId;
+        if (artifactListAbortController) artifactListAbortController.abort();
+        const localController = context.signal ? null : new AbortController();
+        artifactListAbortController = localController;
+        const signal = context.signal || (localController && localController.signal);
+        const requestIsCurrent = () => listRequestId === artifactListRequestId &&
+          (!context.isCurrent || context.isCurrent());
+        let data = null;
+        try {
+          const runSelector = runRef || runId;
+          data = await apiJson(
+            "/api/artifacts/run/" + encodeURIComponent(runSelector) + (query ? "?" + query : ""),
+            signal ? { signal } : undefined
+          );
+        } catch (err) {
+          if (!requestIsCurrent() || (signal && signal.aborted)) return false;
+          const searchResult = document.getElementById("stagesRunSearchResult");
+          if (searchResult) {
+            const current = activeRunId ? " Currently loaded run remains " + activeRunId + "." : " No run is currently loaded.";
+            searchResult.textContent = "Exact NPA run lookup failed for " + runId + ": " + String((err && err.message) || err) + "." + current;
+          }
+          throw err;
+        }
+        if (!requestIsCurrent()) return false;
+        runId = String(data.run_id || runId).trim();
+        runRef = String(data.run_ref || runRef).trim();
+        activeRunId = runId;
         activeArtifactRunRef = runRef;
-        syncRunChooserFields(runId);
+        activeRunEntryKey = String((entry && entry.entry_key) || runRef || "");
+        syncRunChooserFields(runId, activeRunEntryKey || runRef);
+        const searchResult = document.getElementById("stagesRunSearchResult");
+        if (searchResult) searchResult.textContent = "Loaded discovered NPA run: " + runId + ".";
+        if (previous.length) {
+          const merged = new Map(previous.map((item) => [String((item && item.s3_uri) || (item && item.key) || ""), item]));
+          for (const item of (Array.isArray(data.artifacts) ? data.artifacts : [])) {
+            merged.set(String((item && item.s3_uri) || (item && item.key) || ""), item);
+          }
+          data.artifacts = [...merged.values()];
+        }
         const list = document.getElementById("artifactList");
         if (!list) return false;
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
+        activeRunResourceScope = {
+          run_id: runId,
+          bucket: String(data.bucket || (entry && entry.bucket) || ""),
+          project_id: String(data.project_id || (entry && entry.project_id) || ""),
+          resolved_prefix: String(data.resolved_prefix || ""),
+          source_selected: true,
+        };
+        const detailOptions = {
+          entry,
+          resourceBucket: activeRunResourceScope.bucket,
+          projectId: activeRunResourceScope.project_id,
+          resolvedPrefix: activeRunResourceScope.resolved_prefix,
+          sourceSelected: true,
+          preserveOnError: true,
+        };
         if (!artifacts.length) {
           const prov = document.getElementById("artifactProvenance");
           if (prov) prov.innerHTML = "";
+          const unavailable = Array.isArray(data.access && data.access.unavailable_projects)
+            ? data.access.unavailable_projects.map((item) => String((item && (item.name || item.id)) || "")).filter(Boolean)
+            : [];
           list.innerHTML =
             "<p>No S3 artifacts found for <code>" + escapeHtml(runId) + "</code>.</p>" +
             "<p>This run may predate S3 upload support, may belong to a destroyed VM, or may have used a different artifact prefix.</p>" +
-            "<p>Discovery scope: <code>" + escapeHtml(String(data.prefix || "sim2real-b")) + "</code></p>";
+            "<p>Discovery scope: <code>" + escapeHtml(String((data.access && data.access.scope) || data.prefix || "single_project")) + "</code>" +
+            (unavailable.length ? " · unavailable projects: " + escapeHtml(unavailable.join(", ")) : "") + "</p>";
+          await loadRunDetails(runId, detailOptions);
           return true;
         }
         renderArtifactDerivedRunDetails(runId, artifacts);
@@ -5757,6 +6764,7 @@
           list.innerHTML =
             "<p>No artifacts for <code>" + escapeHtml(runId) + "</code> at the selected Stage/Type.</p>" +
             "<p>Clear the Stage and Type filters to show all " + String(artifacts.length) + " artifacts.</p>";
+          await loadRunDetails(runId, detailOptions);
           return true;
         }
         const counts = artifacts.reduce((acc, item) => {
@@ -5766,6 +6774,9 @@
         }, {});
         const countText = Object.keys(counts).sort().map((key) => key + "=" + counts[key]).join(" · ");
         const preferredKey = preferred ? String(preferred.key || "") : "";
+        const nextPageHtml = data.truncated && data.next_cursor
+          ? '<div style="margin-top:8px;"><button class="btn" type="button" data-action="load-more-artifacts">Load next artifact page</button></div>'
+          : "";
         list.innerHTML =
           '<div style="font-size:12px;color:#475569;margin:0 0 8px;">Showing ' +
           String(displayArtifacts.length) + " of " + String(artifacts.length) +
@@ -5792,19 +6803,36 @@
             // Inline image preview so browsing a stage (e.g. Source frames) shows
             // the actual data, not just filenames. Lazy-loaded via the auth proxy.
             (render === "image" && s3uri
-              ? '<div class="artifact-thumb" data-thumb-uri="' + escapeHtml(s3uri) +
-                '" data-run-id="' + escapeHtml(runId) + '" data-key="' + escapeHtml(key) +
+              ? '<div class="artifact-thumb" role="button" tabindex="0" aria-label="Open artifact ' + escapeHtml(basename) +
+                '" data-thumb-uri="' + escapeHtml(s3uri) +
+                '" data-run-id="' + escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) +
+                '" data-key="' + escapeHtml(key) +
                 '"><span class="hint">&hellip;</span></div>'
               : "") +
             '<div style="margin-top:6px;"><button class="btn' + primary + '" type="button" data-action="load-artifact" data-run-id="' +
             escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
             '" data-render="' + escapeHtml(render) + '">' + actionLabel + '</button>' +
             ' <button class="btn" type="button" data-action="download-artifact" data-run-id="' +
-            escapeHtml(runId) + '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
+            escapeHtml(runId) + '" data-run-ref="' + escapeHtml(runRef) +
+            '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
             '" data-name="' + escapeHtml(basename) + '">Download</button></div>' +
             '</div>'
           );
-        }).join("");
+        }).join("") + nextPageHtml;
+        const loadMore = list.querySelector("button[data-action='load-more-artifacts']");
+        if (loadMore) {
+          loadMore.addEventListener("click", async (event) => {
+            event.preventDefault();
+            loadMore.disabled = true;
+            await loadArtifactsForSelectedRun(runRef || runId, {
+              artifacts,
+              next_cursor: data.next_cursor,
+              resolved_prefix: data.resolved_prefix,
+              bucket: data.bucket,
+              project_id: data.project_id,
+            });
+          });
+        }
         list.querySelectorAll("button[data-action='load-artifact']").forEach((btn) => {
           btn.addEventListener("click", async (event) => {
             event.preventDefault();
@@ -5822,6 +6850,7 @@
             event.preventDefault();
             downloadArtifact(
               String(btn.getAttribute("data-run-id") || "").trim(),
+              String(btn.getAttribute("data-run-ref") || "").trim(),
               String(btn.getAttribute("data-key") || "").trim(),
               String(btn.getAttribute("data-s3-uri") || "").trim(),
               String(btn.getAttribute("data-name") || "").trim()
@@ -5833,57 +6862,52 @@
         list.querySelectorAll(".artifact-thumb[data-thumb-uri]").forEach((node) => {
           const uri = String(node.getAttribute("data-thumb-uri") || "").trim();
           if (uri) {
-            const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(uri);
+            const run = String(node.getAttribute("data-run-id") || "").trim();
+            const runRef = String(node.getAttribute("data-run-ref") || "").trim();
+            const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(uri) +
+              (runRef || run ? "&run_id=" + encodeURIComponent(runRef || run) : "");
             authenticatedPreviewObjectUrl(url, null).then((src) => {
               node.innerHTML = '<img alt="artifact" src="' + src + '" />';
             }).catch(() => { node.innerHTML = '<span class="hint">no preview</span>'; });
           }
-          node.addEventListener("click", (event) => {
+          const openArtifactThumbnail = (event) => {
             event.preventDefault();
             loadArtifact({
               run_id: String(node.getAttribute("data-run-id") || "").trim(),
+              run_ref: String(node.getAttribute("data-run-ref") || "").trim(),
               key: String(node.getAttribute("data-key") || "").trim(),
               s3_uri: uri,
             }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
+          };
+          node.addEventListener("click", openArtifactThumbnail);
+          node.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") openArtifactThumbnail(event);
           });
         });
-        if (preferred && String(preferred.render || "") === "rerun" && !isMobileLayout()) {
+        const preferredRender = String((preferred && preferred.render) || "");
+        const preferredLoadKey = [
+          String((entry && entry.entry_key) || runId),
+          String((preferred && preferred.key) || ""),
+        ].join("|");
+        const shouldLoadPreferred = preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
+          !(preferredRender === "rerun" && isMobileLayout()) &&
+          preferredLoadKey !== autoLoadedPreferredKey;
+        if (shouldLoadPreferred) {
+          autoLoadedPreferredKey = preferredLoadKey;
           await loadArtifact({
             run_id: runId,
             run_ref: runRef,
             key: String(preferred.key || "").trim(),
             s3_uri: String(preferred.s3_uri || "").trim(),
-          });
-          renderArtifactDerivedRunDetails(runId, artifacts);
-        } else {
-          renderArtifactDerivedRunDetails(runId, artifacts);
+          }, signal ? { signal } : undefined);
         }
+        if (!requestIsCurrent()) return false;
+        await loadRunDetails(runId, detailOptions);
+        if (artifactListAbortController === localController) artifactListAbortController = null;
         return true;
       }
       function renderArtifactDerivedRunDetails(runId, artifacts) {
         const list = Array.isArray(artifacts) ? artifacts : [];
-        const keys = list.map((item) => String(item.key || ""));
-        const hasAny = (patterns) => countMatching(patterns) > 0;
-        function countMatching(patterns) {
-          return keys.filter((key) => patterns.some((pattern) => pattern && key.includes(pattern))).length;
-        }
-        function artifactStageKey(key) {
-          const runMarker = "/" + runId + "/";
-          let scoped = String(key || "");
-          const idx = scoped.indexOf(runMarker);
-          if (idx >= 0) {
-            scoped = scoped.slice(idx + runMarker.length);
-          } else if (runId && scoped.startsWith(runId + "/")) {
-            // Empty-prefix keys carry the run id as the leading segment.
-            scoped = scoped.slice(String(runId).length + 1);
-          }
-          const parts = scoped.split("/").filter(Boolean);
-          const first = parts[0] || "artifacts";
-          if (first === "reports") return "reports";
-          if (first === "eval" && parts[1]) return "eval/" + parts[1];
-          if (["actions", "vlm_eval", "training_signal", "envs"].includes(first) && parts[1]) return first + "/" + parts[1];
-          return first;
-        }
         function artifactStageLabel(stageKey) {
           const labels = {
             "stage_01_trigger": "Trigger",
@@ -5904,39 +6928,63 @@
           return cleaned.slice(0, 1).toUpperCase() + cleaned.slice(1);
         }
         const grouped = new Map();
-        for (const key of keys) {
-          const stageKey = artifactStageKey(key);
+        const wrapper = runStageWrapper(list, runId);
+        for (const item of list) {
+          const stageKey = deriveArtifactStage(String((item && item.key) || ""), runId, wrapper);
           grouped.set(stageKey, (grouped.get(stageKey) || 0) + 1);
         }
         const stages = Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([stageKey, count]) => {
+          const reason = String(count) + " artifact" + (count === 1 ? " was" : "s were") +
+            " observed under `" + stageKey + "`; execution status is unavailable.";
           return {
+            evidence_version: "npa.stage-evidence/v1",
             id: stageKey.replace(/[^a-zA-Z0-9._-]+/g, "-"),
             stage_key: stageKey,
             label: artifactStageLabel(stageKey),
-            status: "succeeded",
-            summary: String(count) + " artifact" + (count === 1 ? "" : "s") + " found under `" + stageKey + "`.",
+            status: "observed_output",
+            status_label: "Observed output",
+            artifact_count: count,
+            evidence_type: "artifact_observation",
+            evidence_source: "artifact_listing",
+            authority: "observed",
+            confidence: "high",
+            diagnostic_reason: reason,
+            evidence: {
+              type: "artifact_observation", source: "artifact_listing", authority: "observed",
+              confidence: "high", reason, observed_at: "",
+            },
+            summary: reason,
           };
         });
-        const reportReady = hasAny(["reports/sim2real-report.json"]);
-        const rrdReady = hasAny(["reports/sim2real.rrd"]);
         const now = new Date().toISOString();
         renderRunDetails({
           run: {
             run_id: runId,
-            status: reportReady ? "completed" : "artifact-backed",
-            result: rrdReady ? "rerun_ready" : "artifacts_listed",
+            source_type: "artifact_storage",
+            source_label: "S3 artifacts",
+            status: "status_unavailable",
+            status_label: "Status unavailable",
+            result: "artifacts_available",
             updated_at: now,
             stages,
+            stage_summary: {
+              evidence_version: "npa.stage-evidence/v1",
+              text: String(stages.length) + " observed group" + (stages.length === 1 ? "" : "s") +
+                " · execution status unavailable",
+              displayed_stage_count: stages.length,
+              observed_stage_count: stages.length,
+              authoritative_stage_count: 0,
+              execution_status_available: false,
+              succeeded_count: 0,
+              failed_count: 0,
+              not_run_count: 0,
+            },
             logs: [
               {
                 timestamp: now,
                 level: "info",
-                message: "Derived stage timeline from " + String(list.length) + " S3 artifacts.",
-              },
-              {
-                timestamp: now,
-                level: rrdReady ? "info" : "warn",
-                message: rrdReady ? "Run-specific Rerun recording is available." : "Rerun recording not found in listed artifacts.",
+                message: "Observed " + String(list.length) +
+                  " S3 artifacts; artifact presence does not establish execution success.",
               },
             ],
           },
@@ -5953,6 +7001,19 @@
         // in the dropdown, so re-deriving from the UI could pick the wrong run).
         loadArtifactsForSelectedRun(String(runId || "").trim()).catch(() => false);
       }
+      function artifactSourceQuery(runId) {
+        const rid = String(runId || activeRunId || "").trim();
+        const entry = preferredRunEntry(activeArtifactRunRef || rid) || {};
+        const scope = activeRunResourceScope && activeRunResourceScope.run_id === rid
+          ? activeRunResourceScope
+          : entry;
+        const params = new URLSearchParams();
+        if (scope.bucket) params.set("resource_bucket", String(scope.bucket));
+        if (scope.project_id) params.set("project_id", String(scope.project_id));
+        if (scope.resolved_prefix) params.set("resolved_prefix", String(scope.resolved_prefix));
+        if (scope.source_selected || scope.bucket) params.set("source_selected", "1");
+        return params;
+      }
       async function renderArtifactProvenance(runId, artifacts) {
         // Honest, per-stage provenance for the loaded run: which pipeline stages
         // produced artifacts, how many, the producing component/model, and — for
@@ -5967,7 +7028,11 @@
         );
         let prov = null;
         try {
-          prov = await apiJson("/api/artifacts/provenance/" + encodeURIComponent(runId));
+          const query = artifactSourceQuery(runId).toString();
+          prov = await apiJson(
+            "/api/artifacts/provenance/" + encodeURIComponent(runId) +
+            (query ? "?" + query : "")
+          );
         } catch (_err) {
           prov = null;
         }
@@ -6053,15 +7118,16 @@
         }
         applyLichtblickSimViz(simViz);
       }
-      async function downloadArtifact(runId, key, s3uri, name) {
+      async function downloadArtifact(runId, runRef, key, s3uri, name) {
         // Every artifact is directly downloadable: stream it from S3 through the
         // agent and save it under its real filename, independent of render type
         // and without mutating the viewer state.
         const params = new URLSearchParams();
         if (s3uri) {
           params.set("s3_uri", s3uri);
+          if (runRef || runId) params.set("run_id", runRef || runId);
         } else {
-          if (runId) params.set("run_id", runId);
+          if (runRef || runId) params.set("run_id", runRef || runId);
           params.set("key", key);
         }
         const fallbackName = (String(key || "").split("/").pop()) || "artifact.bin";
@@ -6087,9 +7153,15 @@
       let artifactLoadGeneration = 0;
       let refreshGeneration = 0;
       async function loadArtifact(payload) {
+        const requestId = ++artifactLoadRequestId;
         const loadGeneration = ++artifactLoadGeneration;
         // Invalidate any status refresh that started for the previous artifact.
         refreshGeneration += 1;
+        const requestContext = arguments.length > 1 ? arguments[1] : null;
+        const context = requestContext && typeof requestContext === "object" ? requestContext : {};
+        const isCurrent = () => requestId === artifactLoadRequestId &&
+          loadGeneration === artifactLoadGeneration &&
+          (!context.isCurrent || context.isCurrent());
         const body = {
           run_id: String((payload && payload.run_id) || "").trim(),
           run_ref: String((payload && payload.run_ref) || "").trim(),
@@ -6100,8 +7172,9 @@
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
+          ...(context.signal ? { signal: context.signal } : {}),
         });
-        if (loadGeneration !== artifactLoadGeneration) return false;
+        if (!isCurrent()) return false;
         const simViz = data.sim_viz || {};
         // The selected object has its own short-lived capability. Install it
         // before any soft-swap/remount so Rerun's WASM loader never falls back
@@ -6124,7 +7197,7 @@
           return true;
         }
         await activateMainTab("rerun", { skipEnsure: true });
-        if (loadGeneration !== artifactLoadGeneration) return false;
+        if (!isCurrent()) return false;
         if (render === "rerun") {
           setRenderMode("rerun");
           hideArtifactPreview();
@@ -6133,6 +7206,15 @@
           if (!(await swapRerunRecordingInPlace(String(simViz.camera || "workspace"), loadedRunId))) {
             rerunIframeLoaded = false;
             await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
+            // A boot-time mount may have been in flight when the source-aware
+            // switch cleared the old frame. The single-flight promise can finish
+            // successfully for that superseded frame, so verify the DOM target
+            // before declaring the selected run mounted and retry once if needed.
+            const selectedFrame = document.getElementById("rerunFrame");
+            if (!selectedFrame || !selectedFrame.getAttribute("src")) {
+              rerunIframeLoaded = false;
+              await mountRerunIframeUntilSuccess(String(simViz.camera || "workspace"), 8, loadedRunId);
+            }
           }
         } else if (render === "mcap" || render === "lichtblick") {
           hideArtifactPreview();
@@ -6140,12 +7222,21 @@
           mountLichtblickIframe(simViz);
         } else {
           // Keep the Rerun iframe mounted; switch viewer pane instead of tearing down wasm.
-          await showArtifactPreview(simViz, render);
+          await showArtifactPreview(simViz, render, isCurrent);
         }
-        if (loadGeneration !== artifactLoadGeneration) return false;
-        // Loading/viewing an artifact must not spam the chat log; the viewer +
-        // rendered-data summary already reflect the loaded artifact.
-        await refresh();
+        if (!isCurrent()) return false;
+        // Apply the load response directly. A general refresh can race a newer
+        // artifact selection and repaint an older render mode after the newer
+        // request wins; the load response already contains selector/status data.
+        updateRunSelector(simViz);
+        const simRunId = document.getElementById("simRunId");
+        const simStage = document.getElementById("simStage");
+        const simCamera = document.getElementById("simCamera");
+        if (simRunId) simRunId.textContent = String(simViz.run_id || loadedRunId || "-");
+        if (simStage) simStage.textContent = String(simViz.stage || "artifact-loaded");
+        if (simCamera) simCamera.textContent = String(simViz.camera || "workspace");
+        lastSimVizStatus = simViz;
+        updateSimvizCta(simViz);
         return true;
       }
       let voxelDatasetRun = "";
@@ -6178,7 +7269,11 @@
         if (grid) grid.innerHTML = '<p class="hint">Loading dataset for <code>' + escapeHtml(runId) + '</code>…</p>';
         let data = null;
         try {
-          data = await loadJson("/api/fiftyone/dataset/" + encodeURIComponent(runId));
+          const query = artifactSourceQuery(runId).toString();
+          data = await loadJson(
+            "/api/fiftyone/dataset/" + encodeURIComponent(runId) +
+            (query ? "?" + query : "")
+          );
         } catch (err) {
           if (grid) grid.innerHTML = '<p class="preview-error">Dataset load failed: ' + escapeHtml(String((err && err.message) || err)) + "</p>";
           return;
@@ -6333,7 +7428,8 @@
         for (const node of grid.querySelectorAll(".voxel-thumb[data-thumb-uri]")) {
           const uri = String(node.getAttribute("data-thumb-uri") || "").trim();
           if (!uri) { node.innerHTML = '<span class="hint">no preview</span>'; continue; }
-          const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(uri);
+          const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(uri) +
+            (voxelDatasetRun ? "&run_id=" + encodeURIComponent(voxelDatasetRun) : "");
           authenticatedPreviewObjectUrl(url, null).then((src) => {
             node.innerHTML = '<img alt="sample" src="' + src + '" />';
           }).catch(() => { node.innerHTML = '<span class="hint">no preview</span>'; });
@@ -6521,8 +7617,9 @@
           props: (cubeEl && cubeEl.checked) ? ["cube"] : []
         };
       }
-      function syncRunChooserFields(runId) {
+      function syncRunChooserFields(runId, entryKey) {
         const chosen = String(runId || "").trim();
+        const chosenKey = String(entryKey || "").trim();
         // Keep stagesRunInput operator-owned (search/paste). Syncing the active
         // run_id into it re-filters the Stages dropdown on the next refresh.
         const runInput = document.getElementById("runIdInput");
@@ -6531,13 +7628,25 @@
           const select = document.getElementById(id);
           if (!select || !chosen) continue;
           if (document.activeElement === select) continue;
-          if (Array.from(select.options).some((opt) => opt.value === chosen)) {
-            select.value = chosen;
+          const matching = Array.from(select.options).find((opt) =>
+            String(opt.dataset.runId || opt.value || "") === chosen &&
+            (!chosenKey ||
+              String(opt.dataset.entryKey || "") === chosenKey ||
+              String(opt.dataset.runRef || "") === chosenKey)
+          );
+          if (matching) {
+            matching.selected = true;
           }
         }
       }
       function updateRunSelector(simViz) {
-        const current = String((simViz && (simViz.artifact_run_ref || simViz.active_run_ref || simViz.active_run_id || simViz.run_id)) || activeArtifactRunRef || activeRunId || "").trim();
+        const currentRun = String(
+          (simViz && (simViz.active_run_id || simViz.run_id)) || activeRunId || ""
+        ).trim();
+        const currentRef = String(
+          (simViz && (simViz.artifact_run_ref || simViz.active_run_ref)) ||
+          activeArtifactRunRef || ""
+        ).trim();
         if (Array.isArray(simViz && simViz.available_runs) && simViz.available_runs.length) {
           knownAvailableRuns = simViz.available_runs.map((item) => ({
             run_id: String((item && item.run_id) || "").trim(),
@@ -6546,35 +7655,105 @@
             last_modified: String((item && item.last_modified) || "").trim(),
             activity_at: String((item && (item.activity_at || item.rrd_updated_at)) || "").trim(),
             stage: String((item && item.stage) || "").trim(),
+            source_type: String((item && item.source_type) || "workflow_history").trim(),
+            source_label: String((item && item.source_label) || "Workflow history").trim(),
+            bucket: String((item && item.bucket) || "").trim(),
+            project_id: String((item && item.project_id) || "").trim(),
+            resolved_prefix: String((item && item.resolved_prefix) || "").trim(),
           })).filter((item) => item.run_id);
         } else {
           const ids = Array.isArray(simViz && simViz.available_run_ids)
             ? simViz.available_run_ids.map(String)
             : [];
-          knownAvailableRuns = ids.map((runId) => ({ run_id: runId, last_modified: "" }));
+          knownAvailableRuns = ids.map((runId) => ({
+            run_id: runId,
+            last_modified: "",
+            source_type: runId === "franka-demo" ? "local_demo" : "workflow_history",
+            source_label: runId === "franka-demo" ? "Local demo" : "Workflow history",
+          }));
         }
-        applyMergedRunSelectors(current);
+        if (currentRef) activeArtifactRunRef = currentRef;
+        if (currentRun && simViz && simViz.bucket) {
+          activeRunEntryKey = currentRef || runEntryIdentity(
+            currentRun, "artifact_storage", simViz
+          );
+        }
+        applyMergedRunSelectors(activeRunEntryKey || currentRef || currentRun);
       }
-      async function loadSelectedRun(runId) {
-        const chosen = String(runId || "").trim();
+      async function loadSelectedRun(entryOrRunId) {
+        const supplied = entryOrRunId && typeof entryOrRunId === "object" ? entryOrRunId : null;
+        const selection = supplied
+          ? {
+              run_id: String(supplied.run_id || "").trim(),
+              run_ref: String(supplied.run_ref || "").trim(),
+              entry_key: String(supplied.entry_key || "").trim(),
+            }
+          : resolveRunSelection(entryOrRunId);
+        const chosen = String(selection.run_id || "").trim();
         if (!chosen) {
           throw new Error("Enter or select a run_id first");
         }
-        const selection = resolveRunSelection(chosen);
-        activeArtifactRunRef = selection.run_ref;
-        syncRunChooserFields(selection.run_id);
+        let entry = supplied || preferredRunEntry(selection.entry_key || selection.run_ref || chosen);
+        if (!entry) {
+          await refreshArtifactRuns(chosen).catch(() => false);
+          entry = preferredRunEntry(chosen);
+        }
+        // A pasted id absent from workflow history is treated as an artifact run:
+        // server-side discovery is the safe generic load path and cannot mutate or
+        // submit a workflow in the deployment project.
+        if (!entry) {
+          entry = {
+            run_id: chosen,
+            source_type: chosen === "franka-demo" ? "local_demo" : "artifact_storage",
+            source_label: chosen === "franka-demo" ? "Local demo" : "S3 artifacts",
+            entry_key: runEntryIdentity(
+              chosen,
+              chosen === "franka-demo" ? "local_demo" : "artifact_storage",
+              {}
+            ),
+          };
+        }
         const input = document.getElementById("runIdInput");
-        if (input) input.value = selection.run_id;
-        await loadRunData(selection);
+        if (input) input.value = chosen;
+        activeArtifactRunRef = String((entry && entry.run_ref) || selection.run_ref || "");
+        if (entry.source_type === "artifact_storage") {
+          const searchResult = document.getElementById("stagesRunSearchResult");
+          if (searchResult) {
+            searchResult.textContent = "Checking exact discovered NPA run: " + chosen + "…" +
+              (activeRunId ? " Currently loaded run remains " + activeRunId + " until lookup succeeds." : "");
+          }
+          return loadArtifactsForSelectedRun(chosen, null, entry, { pendingSelection: true });
+        }
+        clearVisibleRunState("Loading " + chosen + "…");
+        activeRunId = chosen;
+        activeRunEntryKey = String(entry.entry_key || "");
+        syncRunChooserFields(chosen, activeRunEntryKey || activeArtifactRunRef);
+        if (entry.source_type === "local_demo") {
+          const data = await apiJson("/api/sim-viz/load-franka-demo", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          await loadRunDetails(chosen);
+          if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {
+            await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), chosen);
+          }
+          await refresh();
+          return data;
+        }
+        return loadWorkflowHistoryRun(chosen, activeArtifactRunRef);
       }
       function normalizeStageStatus(value) {
-        const raw = String(value || "pending").trim().toLowerCase();
+        const raw = String(value || "status_unavailable").trim().toLowerCase();
         if (["succeeded", "success", "done", "complete", "completed"].includes(raw)) return "succeeded";
         if (["failed", "error", "blocked"].includes(raw)) return "failed";
-        if (["running", "active", "submitted"].includes(raw)) return "running";
+        if (["running", "active", "in_progress", "in-progress"].includes(raw)) return "running";
         if (["queued"].includes(raw)) return "queued";
-        if (["not_run", "not-run", "skipped", "not launched", "not_launched"].includes(raw)) return "not_run";
-        return "pending";
+        if (["pending", "planned", "submitted", "created", "waiting"].includes(raw)) return "pending";
+        if (["skipped", "skip"].includes(raw)) return "skipped";
+        if (["not_run", "not-run", "not run", "not launched", "not_launched"].includes(raw)) return "not_run";
+        if (["observed_output", "observed-output", "artifacts_available", "artifacts available"].includes(raw)) return "observed_output";
+        return "status_unavailable";
       }
       function formatStageStatusLabel(statusClass) {
         const labels = {
@@ -6583,9 +7762,42 @@
           running: "Running",
           queued: "Queued",
           pending: "Pending",
+          skipped: "Skipped",
           not_run: "Not run",
+          observed_output: "Observed output",
+          status_unavailable: "Status unavailable",
         };
-        return labels[statusClass] || String(statusClass || "Pending");
+        return labels[statusClass] || String(statusClass || "Status unavailable");
+      }
+      function conservativeStageSummary(run, stages) {
+        const supplied = run && run.stage_summary && typeof run.stage_summary === "object"
+          ? run.stage_summary
+          : null;
+        if (supplied && String(supplied.text || "").trim()) return String(supplied.text);
+        const rows = Array.isArray(stages) ? stages : [];
+        if (!rows.length) return "No stage evidence available";
+        const counts = new Map();
+        let observed = 0;
+        for (const stage of rows) {
+          const status = normalizeStageStatus(stage && stage.status);
+          counts.set(status, (counts.get(status) || 0) + 1);
+          if (Number((stage && stage.artifact_count) || 0) > 0) observed += 1;
+        }
+        const execution = ["succeeded", "failed", "running", "queued", "pending", "skipped", "not_run"]
+          .reduce((total, key) => total + (counts.get(key) || 0), 0);
+        if (!execution && observed) {
+          return String(observed) + " observed group" + (observed === 1 ? "" : "s") +
+            " · execution status unavailable";
+        }
+        const labels = {
+          succeeded: "succeeded", failed: "failed", running: "running", queued: "queued",
+          pending: "pending", skipped: "skipped", not_run: "not run",
+          observed_output: "observed output", status_unavailable: "status unavailable",
+        };
+        return Object.keys(labels)
+          .filter((key) => counts.get(key))
+          .map((key) => String(counts.get(key)) + " " + labels[key])
+          .join(" · ");
       }
       async function showStageDetail(runId, stageKey, stageLabel) {
         const host = document.getElementById("stageDetail");
@@ -6594,9 +7806,19 @@
         if (host) host.innerHTML = '<p class="hint">Describing <strong>' + escapeHtml(label) + '</strong>…</p>';
         let data = null;
         try {
+          const entry = preferredRunEntry(rid) || {};
+          const scope = activeRunResourceScope && activeRunResourceScope.run_id === rid
+            ? activeRunResourceScope
+            : entry;
+          const params = new URLSearchParams();
+          params.set("stage_key", String(stageKey || ""));
+          if (scope.bucket) params.set("resource_bucket", String(scope.bucket));
+          if (scope.project_id) params.set("project_id", String(scope.project_id));
+          if (scope.resolved_prefix) params.set("resolved_prefix", String(scope.resolved_prefix));
+          if (scope.source_selected || scope.bucket) params.set("source_selected", "1");
           data = await loadJson(
             "/api/artifacts/stage/" + encodeURIComponent(rid) +
-            "?stage_key=" + encodeURIComponent(String(stageKey || ""))
+            "?" + params.toString()
           );
         } catch (err) {
           if (host) host.innerHTML = '<p class="preview-error">Stage inspect failed: ' +
@@ -6630,7 +7852,8 @@
               const render = String(a.render || "");
               const base = key.split("/").pop() || key;
               const isVideo = render === "video";
-              return '<div class="stage-thumb" data-run-id="' + escapeHtml(rid) +
+              return '<div class="stage-thumb" role="button" tabindex="0" aria-label="Open artifact ' + escapeHtml(base) +
+                '" data-run-id="' + escapeHtml(rid) +
                 '" data-key="' + escapeHtml(key) + '" data-s3-uri="' + escapeHtml(s3uri) +
                 '" data-thumb-uri="' + escapeHtml(isVideo ? "" : s3uri) +
                 '" title="' + escapeHtml(base) + '">' +
@@ -6667,7 +7890,8 @@
           host.querySelectorAll(".stage-thumb").forEach((node) => {
             const thumbUri = String(node.getAttribute("data-thumb-uri") || "").trim();
             if (thumbUri) {
-              const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(thumbUri);
+              const url = "/api/artifacts/download?s3_uri=" + encodeURIComponent(thumbUri) +
+                (runId ? "&run_id=" + encodeURIComponent(runId) : "");
               authenticatedPreviewObjectUrl(url, null).then((src) => {
                 const ph = node.querySelector(".hint");
                 if (ph) ph.remove();
@@ -6680,13 +7904,17 @@
                 if (ph) ph.textContent = "no preview";
               });
             }
-            node.addEventListener("click", (event) => {
+            const openStageThumbnail = (event) => {
               event.preventDefault();
               loadArtifact({
                 run_id: String(node.getAttribute("data-run-id") || "").trim(),
                 key: String(node.getAttribute("data-key") || "").trim(),
                 s3_uri: String(node.getAttribute("data-s3-uri") || "").trim(),
               }).catch((err) => showToast("Load failed: " + String((err && err.message) || err), "error"));
+            };
+            node.addEventListener("click", openStageThumbnail);
+            node.addEventListener("keydown", (event) => {
+              if (event.key === "Enter" || event.key === " ") openStageThumbnail(event);
             });
           });
           host.querySelectorAll("button[data-sd-action='load']").forEach((btn) => {
@@ -6720,10 +7948,16 @@
         if (!summary || !stagesHost || !logHost) return;
         const runId = String(run.run_id || "");
         const result = String(run.result || "pending");
-        const status = String(run.status || "idle");
+        const status = String(run.status_label || run.status || "Status unavailable");
         const updatedAt = String(run.updated_at || run.submitted_at || "");
+        const sourceLabel = String(run.source_label || run.source_type || "");
+        const projectId = String(run.project_id || "");
+        const bucket = String(run.bucket || "");
         summary.innerHTML =
-          '<span class="pill">run <strong>' + escapeHtml(runId || "none") + '</strong></span>' +
+          '<span class="pill">currently loaded run <strong>' + escapeHtml(runId || "none") + '</strong></span>' +
+          (sourceLabel ? '<span class="pill">source <strong>' + escapeHtml(sourceLabel) + '</strong></span>' : "") +
+          (projectId ? '<span class="pill">project <strong>' + escapeHtml(projectId) + '</strong></span>' : "") +
+          (bucket ? '<span class="pill">bucket <strong>' + escapeHtml(bucket) + '</strong></span>' : "") +
           '<span class="pill">status <strong>' + escapeHtml(status) + '</strong></span>' +
           '<span class="pill">result <strong>' + escapeHtml(result) + '</strong></span>' +
           '<span class="pill">updated <strong>' + escapeHtml(updatedAt || "-") + '</strong></span>';
@@ -6741,32 +7975,46 @@
             activateMainTab("rerun").catch((err) => console.warn("open rerun from stages failed", err));
           });
         } else {
-          const succeeded = stages.filter((stage) => normalizeStageStatus(stage.status) === "succeeded").length;
           const activeIdx = stages.findIndex((stage) => ["running", "queued"].includes(normalizeStageStatus(stage.status)));
-          const progress = '<div class="stage-progress">' + String(succeeded) + "/" + String(stages.length) + " stages succeeded</div>";
+          const progress = '<div class="stage-progress">' + escapeHtml(conservativeStageSummary(run, stages)) + "</div>";
           stagesHost.innerHTML = progress + stages.map((stage, idx) => {
             const statusClass = normalizeStageStatus(stage.status);
-            const statusLabel = formatStageStatusLabel(statusClass);
+            const statusLabel = String(stage.status_label || formatStageStatusLabel(statusClass));
             const label = String(stage.label || stage.id || "");
             const stageSummary = String(stage.summary || "");
+            const evidence = (stage.evidence && typeof stage.evidence === "object") ? stage.evidence : {};
+            const evidenceSource = String(stage.evidence_source || evidence.source || "");
+            const authority = String(stage.authority || evidence.authority || "unknown");
+            const confidence = String(stage.confidence || evidence.confidence || "unknown");
+            const artifactCount = Number(stage.artifact_count || 0);
+            const reason = String(stage.diagnostic_reason || evidence.reason || "");
+            const evidenceBits = [];
+            if (evidenceSource) evidenceBits.push("source " + evidenceSource);
+            evidenceBits.push(authority);
+            if (confidence && confidence !== "unknown") evidenceBits.push(confidence + " confidence");
+            if (artifactCount) evidenceBits.push(String(artifactCount) + " artifact" + (artifactCount === 1 ? "" : "s"));
+            const evidenceHtml = '<div class="stage-evidence" title="' + escapeHtml(reason) + '">Evidence: ' +
+              escapeHtml(evidenceBits.join(" · ")) + (reason ? " · " + escapeHtml(reason) : "") + "</div>";
             const active = idx === activeIdx ? " is-active" : "";
             const stageKey = String(stage.stage_key || "");
             const clickable = stageKey
               ? ' data-stage-key="' + escapeHtml(stageKey) + '" data-stage-label="' + escapeHtml(label) +
+                '" role="button" tabindex="0" aria-label="Inspect stage ' + escapeHtml(label) +
                 '" style="cursor:pointer;" title="Describe this stage and inspect its artifacts"'
               : "";
             return (
               '<div class="stage-item' + active + '"' + clickable + '>' +
               '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusLabel) + '</span>' +
               '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
-              '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div></div>' +
+              '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div>' +
+              evidenceHtml + '</div>' +
               '</div>'
             );
           }).join("");
           // Selecting a stage in the timeline scopes the artifact browser to that
           // workflow-progress step and lists its artifacts.
           for (const node of stagesHost.querySelectorAll(".stage-item[data-stage-key]")) {
-            node.addEventListener("click", async () => {
+            const inspectStage = async () => {
               const stageKey = String(node.getAttribute("data-stage-key") || "").trim();
               const stageLabel = String(node.getAttribute("data-stage-label") || stageKey).trim();
               for (const sib of stagesHost.querySelectorAll(".stage-item")) sib.classList.remove("is-selected");
@@ -6789,6 +8037,13 @@
                 const list = document.getElementById("artifactList");
                 if (list) list.textContent = "Load stage artifacts failed: " + String((err && err.message) || err);
               }
+            };
+            node.addEventListener("click", inspectStage);
+            node.addEventListener("keydown", (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                inspectStage();
+              }
             });
           }
         }
@@ -6802,21 +8057,68 @@
             }).join("\n")
           : "No log entries yet.";
       }
-      async function loadRunDetails(runId) {
+      async function loadRunDetails(runId, options) {
         const target = String(runId || activeRunId || "").trim();
-        // No prefix needed: the server resolves the run by id across the whole
-        // run root and returns its real artifact-backed stages.
+        const opts = options && typeof options === "object" ? options : {};
+        const entry = opts.entry || preferredRunEntry(target) || {};
+        const params = new URLSearchParams();
+        const resourceBucket = String(opts.resourceBucket || entry.bucket || "").trim();
+        const projectId = String(opts.projectId || entry.project_id || "").trim();
+        const resolvedPrefix = String(opts.resolvedPrefix || entry.resolved_prefix || "").trim();
+        const sourceSelected = Boolean(opts.sourceSelected || entry.bucket);
+        if (resourceBucket) params.set("resource_bucket", resourceBucket);
+        if (projectId) params.set("project_id", projectId);
+        if (resolvedPrefix) params.set("resolved_prefix", resolvedPrefix);
+        if (sourceSelected) params.set("source_selected", "1");
+        const query = params.toString();
         const path = target
-          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target)
+          ? "/api/workflows/sim2real/runs/" + encodeURIComponent(target) + (query ? "?" + query : "")
           : "/api/workflows/sim2real/status";
+        const requestId = ++runDetailsRequestId;
+        if (runDetailsAbortController) runDetailsAbortController.abort();
+        const controller = new AbortController();
+        runDetailsAbortController = controller;
         try {
-          const data = await loadJson(path);
+          const data = await apiJson(path, { signal: controller.signal });
+          if (requestId !== runDetailsRequestId || (target && activeRunId !== target)) return null;
           renderRunDetails(data);
           return data.run || data;
         } catch (err) {
+          if (requestId !== runDetailsRequestId || controller.signal.aborted || (target && activeRunId !== target)) {
+            return null;
+          }
+          if (opts.preserveOnError) return null;
           renderRunDetails({ run: { run_id: target, status: "unknown", result: "unavailable", logs: [{ timestamp: new Date().toISOString(), level: "error", message: String(err && err.message ? err.message : err) }], stages: [] } });
           return null;
+        } finally {
+          if (requestId === runDetailsRequestId) runDetailsAbortController = null;
         }
+      }
+      async function loadWorkflowHistoryRun(runId, runRef) {
+        const targetRunId = String(runId || "").trim();
+        const targetRunRef = String(runRef || "").trim();
+        if (!targetRunId) {
+          throw new Error("Enter or select a run_id first");
+        }
+        const data = await apiJson("/api/sim-viz/load-run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ run_id: targetRunId, run_ref: targetRunRef }),
+        });
+        syncRerunRecordingCapability(data && data.sim_viz);
+        activeRunId = targetRunId;
+        activeArtifactRunRef = String(data.run_ref || targetRunRef || "").trim();
+        appendChat("assistant", "Loaded run context (workflow history) — **run_id**: `" + targetRunId + "`.");
+        await loadRunDetails(targetRunId, {
+          entry: preferredRunEntry(activeArtifactRunRef || targetRunId) || {},
+        });
+        if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {
+          await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), targetRunId);
+        } else {
+          showRerunPlaceholder("No .rrd recording for this run yet (workflow history). See stages and logs below.", { force: true });
+        }
+        await refresh();
+        return data;
       }
       async function loadRunData(explicitSelection) {
         const requested = explicitSelection && typeof explicitSelection === "object" &&
@@ -6828,21 +8130,9 @@
         if (!runId) {
           throw new Error("Enter or select a run_id first");
         }
-        const data = await apiJson("/api/sim-viz/load-run", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ run_id: runId, run_ref: runRef }),
-        });
-        syncRerunRecordingCapability(data && data.sim_viz);
-        activeRunId = runId;
-        appendChat("assistant", "Loaded run context — **run_id**: `" + runId + "`.");
-        await loadRunDetails(runId);
-        if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {
-          await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), runId);
-        } else {
-          showRerunPlaceholder("No .rrd recording for this run yet. See run stages and logs below.", { force: true });
-        }
-        await refresh();
+        return loadSelectedRun(
+          preferredRunEntry(runRef || runId) || { run_id: runId, run_ref: runRef }
+        );
       }
       async function selectCamera(camera) {
         const selected = String(camera || "");
@@ -7056,8 +8346,11 @@
           const artifactsPromise = refreshArtifactRuns().catch((_artifactErr) => {
             // artifact discovery is optional when S3 credentials are missing.
           });
+          const accessPromise = refreshAccess(false).catch((accessErr) => {
+            console.warn("access discovery failed", accessErr);
+          });
           if (document.body.classList.contains("mobile-agent")) {
-            await Promise.all([refreshPromise, artifactsPromise, warmPromise]);
+            await Promise.all([refreshPromise, artifactsPromise, accessPromise, warmPromise]);
             hideRerunBundleCover();
             setStatus("Ready");
             showToast("Mobile chat ready", "success");
@@ -7066,7 +8359,7 @@
             // Ready before the heavy Rerun wasm warm+mount (Chat/Lichtblick are usable
             // immediately). The Rerun cover logic still runs synchronously below so its
             // clear-when-canvas-ready behavior stays deterministic.
-            await Promise.all([refreshPromise, artifactsPromise]);
+            await Promise.all([refreshPromise, artifactsPromise, accessPromise]);
             setStatus("Ready");
             showToast("Workbench ready", "success");
             // Pre-warm the Lichtblick SPA bundle so opening it later only swaps the data

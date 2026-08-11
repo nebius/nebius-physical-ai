@@ -155,6 +155,47 @@ def test_cleanup_explicit_skip_is_not_failure_and_preserves_unattested_sky() -> 
     assert not tf_cache.exists()
 
 
+def test_full_cleanup_accepts_exact_receipt_scope_after_alias_removal(
+    monkeypatch,
+) -> None:
+    from npa import teardown_receipts
+
+    monkeypatch.setattr("npa.clients.config.resolve_environment", lambda _project: None)
+    monkeypatch.setattr(
+        cleanup_cli,
+        "_storage_iam_full_check",
+        lambda *_a, **_k: ("verified absent", False, "verified_absent", "owned"),
+    )
+    teardown_receipts.record_teardown_event(
+        phase="project_destroy_workflows",
+        resource="all",
+        terminal_state="completed",
+        project_id="project-a",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "cleanup",
+            "--project",
+            "project-a",
+            "--full",
+            "--yes",
+            "--include-sky",
+            "--skip-jobs",
+            "--attest-no-active-jobs",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 2, result.output
+    assert "durably receipted project" not in result.output
+    assert __import__("json").loads(result.output)["managed_job_queue_state"] == (
+        "SKIPPED_BY_OPERATOR"
+    )
+    assert __import__("json").loads(result.output)["verification_unresolved"] is False
+
+
 def test_project_cleanup_preserves_global_runtime_and_provider_cache(
     monkeypatch,
 ) -> None:

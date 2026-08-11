@@ -96,6 +96,64 @@ def test_exact_create_provenance_supports_custom_run_scoped_storage_account_name
     assert observation.account_name == name
 
 
+def test_project_store_binding_ownership_beats_lossy_compatibility_view(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from npa.cli import storage as storage_module
+    from npa.clients import credentials as credentials_module
+
+    path = tmp_path / "credentials.yaml"
+    generation = {
+        "service_account_id": "serviceaccount-storage",
+        "service_account_name": "lerobot-training",
+        "service_account_project_id": "project-a",
+        "service_account_managed_by": "npa",
+        "binding": {
+            "group_id": "group-storage",
+            "access_permit_id": "permit-storage",
+            "group_managed_by": "npa",
+            "access_permit_managed_by": "npa",
+        },
+    }
+    path.write_text(
+        yaml.safe_dump(
+            {
+                # Compatibility views intentionally omit narrow-binding
+                # provenance and must never shadow the authoritative record.
+                "storage_iam": {
+                    key: generation[key]
+                    for key in (
+                        "service_account_id",
+                        "service_account_name",
+                        "service_account_project_id",
+                        "service_account_managed_by",
+                    )
+                },
+                "project_credentials": {
+                    "schema_version": "npa.project-credentials.v2",
+                    "projects": {
+                        "project-a": {"storage_iam": {"generations": [generation]}}
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", path)
+
+    record, note = storage_module._storage_service_account_record(
+        account_id="serviceaccount-storage", project_id="project-a"
+    )
+
+    assert note == ""
+    assert record is not None
+    assert record.binding_managed_by_npa is True
+    assert (record.group_id, record.access_permit_id) == (
+        "group-storage",
+        "permit-storage",
+    )
+
+
 def _stub_iam(monkeypatch) -> list[str]:
     from npa.clients import nebius as nebius_module
 

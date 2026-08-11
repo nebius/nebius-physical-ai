@@ -251,14 +251,18 @@ def _structure_is_empty(value: object) -> bool:
     return False
 
 
+def _npa_state_dir() -> Path:
+    """Resolve the active local state root at operation time."""
+
+    configured = os.environ.get("NPA_CONFIG_DIR", "").strip()
+    return Path(configured).expanduser() if configured else Path.home() / ".npa"
+
+
 def _full_empty_state(npa_dir: Path) -> list[Path]:
     """Return empty, known NPA-owned state that full cleanup can prune."""
 
-    from npa.clients.config import CONFIG_PATH
-    from npa.clients.credentials import CREDENTIALS_PATH
-
     found: list[Path] = []
-    for path in (CONFIG_PATH, CREDENTIALS_PATH):
+    for path in (npa_dir / "config.yaml", npa_dir / "credentials.yaml"):
         if _yaml_file_is_empty(path):
             found.append(path)
     for base_name in ("agents", "workbenches", "clusters"):
@@ -291,13 +295,10 @@ def _full_empty_state(npa_dir: Path) -> list[Path]:
 def _prune_full_empty_state(npa_dir: Path) -> list[tuple[str, Path]]:
     """Prune only empty config/known dirs, then ~/.npa if truly empty."""
 
-    from npa.clients.config import CONFIG_PATH
-    from npa.clients.credentials import CREDENTIALS_PATH
-
     removed: list[tuple[str, Path]] = []
     for label, path in (
-        ("config file", CONFIG_PATH),
-        ("credentials file", CREDENTIALS_PATH),
+        ("config file", npa_dir / "config.yaml"),
+        ("credentials file", npa_dir / "credentials.yaml"),
     ):
         if not _yaml_file_is_empty(path):
             continue
@@ -333,9 +334,7 @@ def _prune_full_empty_state(npa_dir: Path) -> list[tuple[str, Path]]:
 
 
 def _collect_residue(*, include_sky: bool) -> list[_Residue]:
-    from npa.clients.config import CONFIG_PATH
-
-    npa_dir = CONFIG_PATH.parent
+    npa_dir = _npa_state_dir()
     residue: list[_Residue] = []
     for label, path in (
         ("SkyPilot venv", npa_dir / "skypilot-venv"),
@@ -351,8 +350,7 @@ def _collect_residue(*, include_sky: bool) -> list[_Residue]:
             )
     if include_sky:
         sky_home = Path(
-            os.environ.get("NPA_SKY_STATE_DIR", "").strip()
-            or (Path.home() / ".sky")
+            os.environ.get("NPA_SKY_STATE_DIR", "").strip() or (Path.home() / ".sky")
         )
         if sky_home.exists() and not sky_home.is_symlink():
             sky_identity: os.stat_result | None
@@ -919,9 +917,11 @@ def cleanup_cmd(
         prune_teardown_receipts,
         record_teardown_event,
     )
+
     receipt_alias = project
     receipt_project_id = ""
     if project:
+        environment = None
         try:
             from npa.clients.config import resolve_environment
 
@@ -930,9 +930,13 @@ def cleanup_cmd(
                 str(environment.project_id or "") if environment is not None else ""
             )
         except Exception:  # noqa: BLE001 - exact immutable ID is valid for receipt audit
-            if project.startswith("project-"):
-                receipt_alias = ""
-                receipt_project_id = project
+            environment = None
+        if not receipt_project_id and project.startswith("project-"):
+            # After the alias is deliberately forgotten, the immutable project
+            # ID remains a valid receipt scope. This is read-only recovery
+            # evidence and must never recreate configuration for the project.
+            receipt_alias = ""
+            receipt_project_id = project
 
     if list_receipts or prune_receipts:
         if list_receipts and prune_receipts:
@@ -1023,7 +1027,7 @@ def cleanup_cmd(
         verification_unresolved = bool(
             iam_partial
             or job_note
-            or job_queue_state == "SKIPPED_BY_OPERATOR"
+            or (job_queue_state == "SKIPPED_BY_OPERATOR" and not attestation_safe)
             or cleanup_failed
             or unresolved_receipts
         )
@@ -1065,9 +1069,7 @@ def cleanup_cmd(
             )
         )
 
-    from npa.clients.config import CONFIG_PATH
-
-    npa_dir = CONFIG_PATH.parent
+    npa_dir = _npa_state_dir()
     residue = _collect_residue(include_sky=include_sky)
     terraform_residue = collect_terraform_residue()
     empty_dirs = _empty_alias_dirs(npa_dir, project)
@@ -1138,7 +1140,8 @@ def cleanup_cmd(
     if attest_no_active_jobs:
         if not skip_jobs or not project or not receipt_project_id:
             raise typer.BadParameter(
-                "--attest-no-active-jobs requires --skip-jobs and an exact configured project."
+                "--attest-no-active-jobs requires --skip-jobs and an exact configured "
+                "or durably receipted project."
             )
         if not prior_workflow_terminal:
             raise typer.BadParameter(
@@ -1199,10 +1202,8 @@ def cleanup_cmd(
             terminal_state=(
                 "not_submitted"
                 if job_queue_state == "PROJECT_NOT_SUBMITTED"
-                else
-                "verified_absent"
-                if not job_ids and not job_note
-                and not skip_jobs
+                else "verified_absent"
+                if not job_ids and not job_note and not skip_jobs
                 else "operator_attested"
                 if attestation_safe
                 else "skipped_by_operator"
@@ -1231,7 +1232,11 @@ def cleanup_cmd(
         if skip_jobs:
             typer.echo(
                 "Managed jobs: SKIPPED_BY_OPERATOR"
-                + (" (explicit terminal-evidence attestation accepted)" if attestation_safe else "")
+                + (
+                    " (explicit terminal-evidence attestation accepted)"
+                    if attestation_safe
+                    else ""
+                )
             )
         else:
             _report_managed_jobs(job_ids, job_note)
@@ -1342,7 +1347,9 @@ def cleanup_cmd(
 
     removed_bin = False
     cleanup_failed = False
-    sky_audit_safe = (not skip_jobs and not job_ids and not job_note) or attestation_safe
+    sky_audit_safe = (
+        not skip_jobs and not job_ids and not job_note
+    ) or attestation_safe
     sky_preserved_by_skip = False
     try:
         record_teardown_event(
@@ -1372,8 +1379,7 @@ def cleanup_cmd(
         if (
             project
             and not full
-            and residue_item.label
-            in {"SkyPilot venv", "Terraform provider cache"}
+            and residue_item.label in {"SkyPilot venv", "Terraform provider cache"}
         ):
             shared_runtime_preserved = True
             emit(

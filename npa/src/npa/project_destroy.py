@@ -32,26 +32,30 @@ _BENIGN_INVENTORY_DIAGNOSTIC = re.compile(
 def _project_bucket_name(project_id: str, state_bucket: str) -> str:
     """Resolve storage only from state or exact project-scoped credentials."""
 
+    from npa.clients.storage_validation import bucket_name
+
     saved = str(state_bucket or "").strip()
     if saved:
-        return saved
+        return bucket_name(saved)
     from npa.clients.project_credential_store import project_credential_record
 
     record = project_credential_record(project_id, migrate_legacy=False)
     storage = record.get("storage")
     if isinstance(storage, Mapping):
-        return str(storage.get("bucket") or storage.get("s3_bucket") or "").strip()
+        return bucket_name(storage.get("bucket") or storage.get("s3_bucket") or "")
     # Compatibility adapter for callers/tests that supply a proven legacy view
     # without a writable store. Exact ownership remains mandatory.
     from npa.clients.credentials import load_credentials
 
     legacy = load_credentials(environ={})
     if legacy.s3_project_id == project_id:
-        return str(legacy.s3_bucket or "").strip()
+        return bucket_name(legacy.s3_bucket)
     return ""
 
 
-def _project_storage_iam_generation_ids(project: str, project_id: str) -> tuple[str, ...]:
+def _project_storage_iam_generation_ids(
+    project: str, project_id: str
+) -> tuple[str, ...]:
     """Return every exact NPA-owned storage principal generation for a project."""
 
     from npa.clients.project_credential_store import project_credential_record
@@ -110,7 +114,9 @@ def _project_storage_iam_logical_names(project_id: str) -> tuple[str, ...]:
                     names.add(name)
     for receipt in list_teardown_receipts(project_id=project_id, legacy="exclude"):
         identity = receipt.get("identity")
-        receipt_iam = identity.get("storage_iam") if isinstance(identity, Mapping) else None
+        receipt_iam = (
+            identity.get("storage_iam") if isinstance(identity, Mapping) else None
+        )
         if not isinstance(receipt_iam, Mapping):
             continue
         generations = receipt_iam.get("generations")
@@ -153,12 +159,41 @@ def _verify_storage_iam_stable_absence(
         if present:
             raise RuntimeError(
                 "storage IAM stable-absence verification found owned generation or "
-                "same-name replacement: "
-                + ", ".join(sorted(present))
+                "same-name replacement: " + ", ".join(sorted(present))
             )
         if index + 1 < PROJECT_STABLE_ABSENCE_OBSERVATIONS:
             time.sleep(PROJECT_DELETE_VERIFY_INTERVAL_SECONDS)
-    return {"stable_absence_observations": len(observations), "logical_names": list(names)}
+    return {
+        "stable_absence_observations": len(observations),
+        "logical_names": list(names),
+    }
+
+
+def _verify_bucket_stable_absence(
+    *, project_id: str, bucket_name: str
+) -> dict[str, Any]:
+    """Reject a stale completion receipt when the logical bucket is present."""
+
+    from npa.clients.nebius import get_bucket_by_name, get_project_identity
+
+    observations = 0
+    for index in range(PROJECT_STABLE_ABSENCE_OBSERVATIONS):
+        observations += 1
+        project = get_project_identity(project_id)
+        if project is not None:
+            item = get_bucket_by_name(project_id, bucket_name)
+            if item is not None:
+                bucket_id = str((item.get("metadata") or {}).get("id") or "")
+                raise RuntimeError(
+                    "bucket stable-absence verification found a present logical "
+                    f"replacement {bucket_name!r} ({bucket_id or 'unknown-id'})"
+                )
+        if index + 1 < PROJECT_STABLE_ABSENCE_OBSERVATIONS:
+            time.sleep(PROJECT_DELETE_VERIFY_INTERVAL_SECONDS)
+    return {
+        "stable_absence_observations": observations,
+        "logical_name": bucket_name,
+    }
 
 
 @dataclass(frozen=True)
@@ -388,6 +423,7 @@ def build_project_destroy_plan(
             bucket_commands,
             "Delete and verify the exact state bucket.",
             ("workflows", "agents", "controller", "clusters"),
+            {"project_id": project_id, "logical_name": bucket_name},
         ),
         DestroyPhase(
             "storage_iam",
@@ -557,6 +593,25 @@ def build_receipt_project_delete_plan(
                 else "",
                 "provider_inventory": "required_before_mutation",
             },
+        ),
+        DestroyPhase(
+            "final_audit",
+            (
+                (
+                    "npa",
+                    "cleanup",
+                    "--project",
+                    project_id,
+                    "--full",
+                    "--yes",
+                    "--include-sky",
+                    "--skip-jobs",
+                    "--attest-no-active-jobs",
+                    "--json",
+                ),
+            ),
+            "Finish the exact-project local secret and operational-residue audit after alias removal.",
+            ("delete_project",),
         ),
     ]
 
@@ -922,23 +977,52 @@ def execute_project_destroy(
             on_phase(phase.name)
         if f"project_destroy_{phase.name}" in completed_receipt_phases:
             prior_evidence: dict[str, Any] = {"durable_prior_completion": True}
-            if phase.name == "storage_iam":
+            if phase.name == "bucket":
+                bucket_name = str(phase.metadata.get("logical_name") or "").strip()
+                if not bucket_name:
+                    from npa.clients.storage_validation import (
+                        bucket_name as normalize_bucket,
+                    )
+
+                    for command in phase.commands:
+                        if "--name" in command:
+                            position = command.index("--name") + 1
+                            if position < len(command):
+                                bucket_name = normalize_bucket(command[position])
+                                break
+                if bucket_name:
+                    try:
+                        prior_evidence.update(
+                            _verify_bucket_stable_absence(
+                                project_id=project_id, bucket_name=bucket_name
+                            )
+                        )
+                    except (OSError, RuntimeError, ValueError):
+                        # A false prior absence or same-name replacement must
+                        # re-enter the exact-project guarded delete phase.
+                        pass
+                    else:
+                        statuses[phase.name] = "completed"
+                        results.append(
+                            {
+                                "phase": phase.name,
+                                "status": "completed",
+                                "commands": [],
+                                "errors": [],
+                                "warnings": [],
+                                "recovery_commands": [],
+                                "blocked_by": [],
+                                "evidence": {**prior_evidence, "command_results": []},
+                            }
+                        )
+                        continue
+            elif phase.name == "storage_iam":
                 raw_ids = phase.metadata.get("generation_ids", [])
                 raw_names = phase.metadata.get("logical_names", [])
                 id_values = raw_ids if isinstance(raw_ids, (list, tuple)) else ()
-                name_values = (
-                    raw_names if isinstance(raw_names, (list, tuple)) else ()
-                )
-                ids = tuple(
-                    str(value)
-                    for value in id_values
-                    if str(value).strip()
-                )
-                names = tuple(
-                    str(value)
-                    for value in name_values
-                    if str(value).strip()
-                )
+                name_values = raw_names if isinstance(raw_names, (list, tuple)) else ()
+                ids = tuple(str(value) for value in id_values if str(value).strip())
+                names = tuple(str(value) for value in name_values if str(value).strip())
                 if ids or names:
                     try:
                         prior_evidence.update(

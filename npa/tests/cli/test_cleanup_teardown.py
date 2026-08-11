@@ -433,9 +433,7 @@ def test_bucket_then_iam_teardown_retires_exact_setup_journal(
     assert resources["service_account"]["id"] == "serviceaccount-storage"
     assert list(resources["access_keys"]) == ["accesskey-storage"]
 
-    assert storage_cli._remove_storage_service_account_record(
-        "serviceaccount-storage"
-    )
+    assert storage_cli._remove_storage_service_account_record("serviceaccount-storage")
     assert not credentials_path.exists()
 
 
@@ -624,17 +622,30 @@ def test_bucket_delete_reports_a_missing_bucket_without_failing(
     monkeypatch.setattr(
         credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
     )
+    lookups: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        nebius_module, "get_bucket_by_name", lambda project_id, name: None
+        nebius_module,
+        "get_bucket_by_name",
+        lambda project_id, name: lookups.append((project_id, name)) or None,
     )
 
     result = runner.invoke(
         app,
-        ["storage", "bucket", "delete", "--name", "gone", "--project-id", "p", "--yes"],
+        [
+            "storage",
+            "bucket",
+            "delete",
+            "--name",
+            "s3://gone/prefix/",
+            "--project-id",
+            "p",
+            "--yes",
+        ],
     )
 
     assert result.exit_code == 0, result.output
     assert "does not exist" in result.output
+    assert lookups == [("p", "gone")]
 
 
 def test_bucket_delete_missing_bucket_still_requires_confirmation_before_local_prune(

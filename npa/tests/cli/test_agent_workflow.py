@@ -348,7 +348,8 @@ def test_bootstrap_embeds_workflow_endpoints() -> None:
     assert "stages-panel" in bundled
     assert "<h3>Stages</h3>" in bundled
     assert "Sim2Real Run Monitor" not in bundled
-    assert "Pick a run" in bundled and "pipeline timeline, result, and logs." in bundled
+    assert "Pick a discovered NPA workflow/artifact run" in bundled
+    assert "evidence-backed timeline and artifacts." in bundled
     assert "formatStageStatusLabel" in bundled
     assert "data.ok === false" in bundled  # submitWorkflowYaml must not treat blocked as success
     assert 'ok": bool(validation.get("ok"))' in source or '"ok": bool(validation.get("ok"))' in source

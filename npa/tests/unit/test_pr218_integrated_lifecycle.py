@@ -1137,10 +1137,10 @@ def test_destroy_bucket_fallback_requires_exact_project_credentials(
         ),
     )
 
-    assert project_destroy._project_bucket_name("project-a", "") == "s3://bucket-a/"
+    assert project_destroy._project_bucket_name("project-a", "") == "bucket-a"
     assert project_destroy._project_bucket_name("project-b", "") == ""
     assert (
-        project_destroy._project_bucket_name("project-b", "state-owned")
+        project_destroy._project_bucket_name("project-b", "s3://state-owned/prefix/")
         == "state-owned"
     )
 
@@ -1177,6 +1177,86 @@ def test_destroy_retry_uses_durable_completed_phase_without_rerunning_inventory(
 
     assert result["status"] == "success"
     assert result["phases"][0]["evidence"]["durable_prior_completion"] is True
+
+
+def test_receipt_project_delete_plan_finishes_alias_free_full_audit() -> None:
+    from npa import project_destroy
+
+    phases = project_destroy.build_receipt_project_delete_plan(
+        project="forgotten",
+        project_id="project-a",
+        tenant_id="tenant-a",
+        receipt_id="receipt-a",
+    )
+
+    assert [phase.name for phase in phases] == [
+        "network",
+        "delete_project",
+        "final_audit",
+    ]
+    assert phases[-1].commands == (
+        (
+            "npa",
+            "cleanup",
+            "--project",
+            "project-a",
+            "--full",
+            "--yes",
+            "--include-sky",
+            "--skip-jobs",
+            "--attest-no-active-jobs",
+            "--json",
+        ),
+    )
+
+
+def test_destroy_retry_rechecks_bucket_receipt_and_deletes_present_replacement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from npa import project_destroy, teardown_receipts
+
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_environment",
+        lambda _project: SimpleNamespace(
+            project_id="project-a", tenant_id="tenant-a", region="us-central1"
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_project_identity",
+        lambda *_a, **_k: object(),
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_bucket_by_name",
+        lambda *_a, **_k: {"metadata": {"id": "bucket-replacement"}},
+    )
+    teardown_receipts.record_teardown_event(
+        phase="project_destroy_bucket",
+        resource="demo",
+        terminal_state="completed",
+        project_alias="demo",
+        project_id="project-a",
+    )
+    calls: list[list[str]] = []
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        calls.append(list(command))
+        return subprocess.CompletedProcess(
+            command, 0, stdout='{"verified_absent":true}', stderr=""
+        )
+
+    phase = DestroyPhase(
+        "bucket",
+        (("npa", "bucket-delete"),),
+        "bucket",
+        metadata={"logical_name": "bucket-a"},
+    )
+    result = project_destroy.execute_project_destroy("demo", [phase], runner=run)
+
+    assert result["status"] == "success"
+    assert calls == [["npa", "bucket-delete"]]
 
 
 def test_incident_cleanup_order_continues_independent_phases_and_project_delete(
@@ -1298,6 +1378,7 @@ def test_project_creation_proof_survives_local_alias_change(
 def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receipt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from npa import project_destroy
     from npa.cli.agent_iam import report_agent_iam
     from npa.cli.main import app
     from npa.clients import config, nebius
@@ -1466,6 +1547,22 @@ def test_incident_end_to_end_recovers_iam_then_deletes_owned_project_from_receip
         nebius,
         "delete_project",
         lambda project_id, **_kwargs: order.append(f"delete-project:{project_id}"),
+    )
+    monkeypatch.setattr(
+        project_destroy,
+        "_run",
+        lambda command, _runner: subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "result": "fully_cleaned",
+                    "operational_residue_present": False,
+                    "verification_unresolved": False,
+                }
+            ),
+            stderr="",
+        ),
     )
     deleted = CliRunner().invoke(
         app,

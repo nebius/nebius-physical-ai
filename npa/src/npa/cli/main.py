@@ -268,10 +268,10 @@ def destroy_project_cmd(
         tenant_id=operation_tenant_id,
         region=operation_region,
         resource_type="project-teardown",
-        # A receipt recovery intentionally has a narrower topology than the
-        # original full-project plan. Give it a distinct durable operation
-        # identity so it cannot collide with (or rewrite) that earlier journal.
-        requested_name=(f"{project}:{receipt_id}" if receipt_id else project),
+        # Receipt recovery resumes the same exact-project lifecycle operation.
+        # A distinct operation would conflict with the still-authoritative
+        # project lease after an interrupted post-alias-removal final audit.
+        requested_name=project,
         ownership_source="project-destroy-cli",
         resume_command="",
         resume_argv=(

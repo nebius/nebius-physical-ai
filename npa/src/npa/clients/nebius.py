@@ -1562,9 +1562,7 @@ def _ensure_editors_membership_impl(
     )
 
 
-def ensure_editors_membership(
-    tenant_id: str, sa_id: str
-) -> StorageIamBindingEvidence:
+def ensure_editors_membership(tenant_id: str, sa_id: str) -> StorageIamBindingEvidence:
     """Reconcile the explicit broad fallback and type terminal failure evidence."""
 
     try:
@@ -1638,7 +1636,9 @@ def ensure_storage_capability_binding(
 
     forbid_destructive_provisioning("ensure_storage_capability_binding")
     if not all((project_id, tenant_id, bucket_id, service_account_id)):
-        raise NebiusError("storage IAM verification requires exact project, tenant, bucket, and service-account IDs")
+        raise NebiusError(
+            "storage IAM verification requires exact project, tenant, bucket, and service-account IDs"
+        )
 
     changed = False
     group_created = False
@@ -1670,8 +1670,6 @@ def ensure_storage_capability_binding(
                 tenant_id,
                 "--name",
                 group_name,
-                "--description",
-                "NPA bucket-scoped storage principals",
             ]
         )
         changed = group_created = True
@@ -1689,7 +1687,9 @@ def ensure_storage_capability_binding(
     )
     items = permits.get("items", permits.get("access_permits", []))
     if not isinstance(items, list):
-        raise NebiusError("Storage IAM access-permit inventory returned an invalid schema")
+        raise NebiusError(
+            "Storage IAM access-permit inventory returned an invalid schema"
+        )
     matching = [
         item
         for item in items
@@ -2458,8 +2458,8 @@ def bootstrap_environment(
             f"{', '.join(STORAGE_REQUIRED_S3_ACTIONS)}. Supported binding choices: "
             f"bucket-scoped {STORAGE_RUNTIME_ROLE}; verified existing editors "
             "membership; or explicit editors compatibility fallback only when the "
-            "provider reports the narrow role unsupported."
-            , failed
+            "provider reports the narrow role unsupported.",
+            failed,
         ) from exc
 
     _status("Setting up access key for S3...")
@@ -2515,7 +2515,9 @@ def bootstrap_environment(
         "iam_binding_group_id": binding.group_id,
         "iam_binding_group_name": binding.group_name,
         "iam_binding_access_permit_id": binding.access_permit_id,
-        "iam_binding_compatibility_fallback": str(binding.compatibility_fallback).lower(),
+        "iam_binding_compatibility_fallback": str(
+            binding.compatibility_fallback
+        ).lower(),
     }
     _status(
         "Storage permission contract: "

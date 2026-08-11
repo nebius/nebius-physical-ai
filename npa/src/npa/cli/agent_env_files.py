@@ -52,6 +52,7 @@ def _write_agent_operator_profile(
     tenant_id: str,
     region: str,
     tf_api_key: str,
+    nebius_ai_key: str = "",
     s3_bucket: str,
     s3_prefix: str = "",
     s3_endpoint: str,
@@ -75,6 +76,8 @@ def _write_agent_operator_profile(
     credentials_payload: dict[str, Any] = {"tokens": {}}
     tokens = credentials_payload["tokens"]
     if isinstance(tokens, dict):
+        if nebius_ai_key.strip():
+            tokens["NEBIUS_AI_CLOUD_KEY"] = nebius_ai_key.strip()
         if tf_api_key.strip():
             tokens["NEBIUS_TOKEN_FACTORY_KEY"] = tf_api_key.strip()
     storage_payload = {
@@ -123,6 +126,7 @@ def _write_agent_nebius_env(
     endpoint: str,
     access_key: str,
     secret_key: str,
+    iam_token: str = "",
 ) -> None:
     """Stage long-lived Nebius project credentials on the agent VM.
 
@@ -133,6 +137,7 @@ def _write_agent_nebius_env(
     token-file sources ``get_iam_token()`` reads. Copying the operator's
     short-lived token here would go stale on the long-lived VM.
     """
+    del iam_token
     if not (project_id.strip() and access_key.strip() and secret_key.strip()):
         return
     env_lines = [
@@ -142,6 +147,10 @@ def _write_agent_nebius_env(
         f"NEBIUS_TENANT_ID={tenant_id.strip()}",
         f"NEBIUS_REGION={region.strip() or 'eu-north1'}",
         f"NEBIUS_SERVICE_ACCOUNT_ID={service_account_id.strip()}",
+        "NEBIUS_PROFILE=cursor-sa",
+        "NPA_NEBIUS_PROFILE=cursor-sa",
+        "NPA_NEBIUS_CONFIG=/root/.nebius/config.yaml",
+        "NPA_NEBIUS_CREDENTIAL_SOURCE=instance_metadata",
         f"NEBIUS_S3_BUCKET={bucket.strip()}",
         f"NEBIUS_S3_ENDPOINT={endpoint.strip()}",
         f"AWS_ACCESS_KEY_ID={access_key.strip()}",

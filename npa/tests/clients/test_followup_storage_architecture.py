@@ -105,7 +105,9 @@ def test_reused_key_existing_grant_persistent_403_is_terminal_no_sleep(
             tenant_id="tenant-a",
             region="us-central1",
             bucket_name="bucket-stable",
-            convergence_sleep=lambda _delay: pytest.fail("terminal denial must not sleep"),
+            convergence_sleep=lambda _delay: pytest.fail(
+                "terminal denial must not sleep"
+            ),
         )
 
 
@@ -145,7 +147,9 @@ def test_unknown_iam_inventory_fails_closed_before_key_or_probe(monkeypatch) -> 
     monkeypatch.setattr(
         nebius,
         "_run_json",
-        lambda *_a, **_k: (_ for _ in ()).throw(nebius.NebiusError("schema unreadable")),
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            nebius.NebiusError("schema unreadable")
+        ),
     )
     with pytest.raises(nebius.NebiusError, match="inventory is unreadable"):
         nebius.ensure_storage_capability_binding(
@@ -160,7 +164,9 @@ def test_bootstrap_reused_key_and_new_binding_reports_typed_propagation(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(nebius, "get_iam_token", lambda: "iam")
-    monkeypatch.setattr(nebius, "ensure_service_account", lambda *_a, **_k: "sa-existing")
+    monkeypatch.setattr(
+        nebius, "ensure_service_account", lambda *_a, **_k: "sa-existing"
+    )
     monkeypatch.setattr(nebius, "ensure_bucket", lambda *_a, **_k: None)
     monkeypatch.setattr(
         nebius,
@@ -169,7 +175,9 @@ def test_bootstrap_reused_key_and_new_binding_reports_typed_propagation(
     )
     monkeypatch.setattr(nebius, "_existing_editors_binding", lambda *_a: None)
     monkeypatch.setattr(
-        nebius, "ensure_storage_capability_binding", lambda **_k: _binding(nebius.IamBindingState.CREATED)
+        nebius,
+        "ensure_storage_capability_binding",
+        lambda **_k: _binding(nebius.IamBindingState.CREATED),
     )
     monkeypatch.setattr(
         nebius,
@@ -257,7 +265,11 @@ def test_editors_fallback_only_for_provider_unsupported_role(monkeypatch) -> Non
     assert result.compatibility_fallback is True
     create_group = calls[1]
     assert create_group[create_group.index("--parent-id") + 1] == "tenant-a"
-    assert create_group[create_group.index("--name") + 1] == nebius.storage_binding_group_name("project-a")
+    assert create_group[
+        create_group.index("--name") + 1
+    ] == nebius.storage_binding_group_name("project-a")
+    # Nebius CLI 0.12.254's group-create schema has no description field.
+    assert "--description" not in create_group
 
 
 def test_insufficient_binding_rejected_before_key(monkeypatch) -> None:
@@ -276,7 +288,9 @@ def test_insufficient_binding_rejected_before_key(monkeypatch) -> None:
         lambda **_k: (_ for _ in ()).throw(nebius.NebiusError("insufficient role")),
     )
     key_calls: list[bool] = []
-    monkeypatch.setattr(nebius, "ensure_access_key", lambda *_a, **_k: key_calls.append(True))
+    monkeypatch.setattr(
+        nebius, "ensure_access_key", lambda *_a, **_k: key_calls.append(True)
+    )
 
     with pytest.raises(nebius.StorageIamBindingError) as raised:
         nebius.bootstrap_environment("project-a", "tenant-a", "eu-test1")
@@ -343,7 +357,10 @@ def test_legacy_migration_requires_exact_proof_and_prunes_only_deleted_project(
     path.write_text(
         yaml.safe_dump(
             {
-                "storage": {"bucket": "s3://bucket-a/", "aws_secret_access_key": "secret-a"},
+                "storage": {
+                    "bucket": "s3://bucket-a/",
+                    "aws_secret_access_key": "secret-a",
+                },
                 "storage_iam": {
                     "service_account_id": "sa-a",
                     "service_account_project_id": "project-a",
@@ -352,17 +369,26 @@ def test_legacy_migration_requires_exact_proof_and_prunes_only_deleted_project(
             }
         )
     )
-    assert project_credential_record("project-a", path=path)["storage"]["bucket"] == "s3://bucket-a/"
-    write_project_credentials("project-b", {"storage": {"bucket": "s3://bucket-b/"}}, path=path)
+    assert (
+        project_credential_record("project-a", path=path)["storage"]["bucket"]
+        == "s3://bucket-a/"
+    )
+    write_project_credentials(
+        "project-b", {"storage": {"bucket": "s3://bucket-b/"}}, path=path
+    )
     assert forget_project_credentials("project-a", path=path)
     remaining = yaml.safe_load(path.read_text())["project_credentials"]["projects"]
     assert set(remaining) == {"project-b"}
     assert "secret-a" not in path.read_text()
 
 
-def test_ambiguous_legacy_credentials_fail_closed_and_remain_recoverable(tmp_path: Path) -> None:
+def test_ambiguous_legacy_credentials_fail_closed_and_remain_recoverable(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "credentials.yaml"
-    original = {"storage": {"bucket": "s3://ambiguous/", "aws_secret_access_key": "keep-me"}}
+    original = {
+        "storage": {"bucket": "s3://ambiguous/", "aws_secret_access_key": "keep-me"}
+    }
     path.write_text(yaml.safe_dump(original))
     with pytest.raises(AmbiguousLegacyCredentialError):
         project_credential_record("project-a", path=path)
@@ -386,9 +412,10 @@ def test_destructive_read_does_not_migrate_legacy_credentials(tmp_path: Path) ->
     before = path.read_bytes()
 
     with operation_intent(OperationIntent.DESTROY):
-        assert project_credential_record(
-            "project-a", path=path, migrate_legacy=False
-        ) == {}
+        assert (
+            project_credential_record("project-a", path=path, migrate_legacy=False)
+            == {}
+        )
 
     assert path.read_bytes() == before
 
@@ -429,7 +456,9 @@ def test_verified_terminal_run_survives_missing_storage_and_alias(
     assert result["resolution_source"] == "project_run_terminal_ledger"
 
 
-def test_storage_iam_receipt_keeps_replacement_generations(tmp_path: Path, monkeypatch) -> None:
+def test_storage_iam_receipt_keeps_replacement_generations(
+    tmp_path: Path, monkeypatch
+) -> None:
     from npa import teardown_receipts
 
     monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
@@ -449,7 +478,9 @@ def test_storage_iam_receipt_keeps_replacement_generations(tmp_path: Path, monke
         )
     receipt = teardown_receipts.list_teardown_receipts(project_id="project-a")[0]
     generations = receipt["identity"]["storage_iam"]["generations"]
-    assert {(item["service_account_id"], tuple(item["iam_key_ids"])) for item in generations} == {
+    assert {
+        (item["service_account_id"], tuple(item["iam_key_ids"])) for item in generations
+    } == {
         ("sa-old", ("key-old",)),
         ("sa-new", ("key-new",)),
     }

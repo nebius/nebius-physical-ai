@@ -303,6 +303,27 @@ def test_journal_is_private_atomic_secret_free_and_identity_guarded(
         )
 
 
+def test_operation_owned_replacement_ids_are_preserved_as_generations(
+    journal_root: Path,
+) -> None:
+    operation = _prepare()
+    common = {
+        "resource_type": "storage_service_account",
+        "requested_name": "npa-storage",
+        "project_id": "project-a",
+        "ownership": "created_by_this_operation",
+        "ownership_source": "provider-create-response",
+    }
+    operation.record_resource(provider_id="serviceaccount-old", **common)
+    operation.record_resource(provider_id="serviceaccount-new", **common)
+
+    resources = json.loads(operation.path.read_text(encoding="utf-8"))["resources"]
+    assert [(item["provider_id"], item["generation"]) for item in resources] == [
+        ("serviceaccount-old", 1),
+        ("serviceaccount-new", 2),
+    ]
+
+
 def test_immutable_plan_conflict_names_sanitized_nested_fields(
     journal_root: Path,
 ) -> None:

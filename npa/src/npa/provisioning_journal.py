@@ -350,7 +350,10 @@ def _read_project_lease(path: Path) -> dict[str, Any]:
         raise OperationJournalError(
             f"invalid project lifecycle lease {path}: {exc}"
         ) from exc
-    if not isinstance(payload, dict) or payload.get("schema_version") != PROJECT_LEASE_SCHEMA_VERSION:
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != PROJECT_LEASE_SCHEMA_VERSION
+    ):
         raise OperationJournalError(
             f"invalid project lifecycle lease {path}: unsupported schema"
         )
@@ -748,7 +751,9 @@ class ProvisioningOperation:
                 now = utc_now()
                 payload["lifecycle"] = "interrupted"
                 payload["last_error_type"] = "ProcessExited"
-                payload["last_error"] = "operation owner process exited before convergence"
+                payload["last_error"] = (
+                    "operation owner process exited before convergence"
+                )
                 payload["updated_at"] = now
                 payload.setdefault("events", []).append(
                     {
@@ -878,9 +883,7 @@ class ProvisioningOperation:
                 "attempted": bool(attempted),
                 "completed": bool(completed),
                 "resources_removed": [resource_identity(item) for item in removed],
-                "resources_preserved": [
-                    resource_identity(item) for item in preserved
-                ],
+                "resources_preserved": [resource_identity(item) for item in preserved],
                 "resource_outcomes": [
                     {
                         **resource_identity(item),
@@ -899,12 +902,16 @@ class ProvisioningOperation:
             payload["updated_at"] = utc_now()
             _write_atomic(self.path, payload)
 
-    def record_failure(self, error: BaseException | str, *, error_type: str = "") -> None:
+    def record_failure(
+        self, error: BaseException | str, *, error_type: str = ""
+    ) -> None:
         """Persist the primary failure without changing or reopening its phase."""
 
         message = str(error or "provisioning failed")
         kind = error_type or (
-            type(error).__name__ if isinstance(error, BaseException) else "ProvisioningError"
+            type(error).__name__
+            if isinstance(error, BaseException)
+            else "ProvisioningError"
         )
         now = utc_now()
         with _locked_operation(self.operation_id):
@@ -990,7 +997,9 @@ class ProvisioningOperation:
         """Atomically retain the current recoverable phase as interrupted."""
 
         now = utc_now()
-        error_type = type(error).__name__ if isinstance(error, BaseException) else "Interrupted"
+        error_type = (
+            type(error).__name__ if isinstance(error, BaseException) else "Interrupted"
+        )
         message = str(error or "operation interrupted")
         with _locked_operation(self.operation_id):
             payload = _read_unlocked(self.path)
@@ -1095,7 +1104,7 @@ class ProvisioningOperation:
             "pre_existing",
         }:
             raise ValueError(f"unsupported resource ownership: {ownership!r}")
-        entry = {
+        entry: dict[str, Any] = {
             "resource_type": str(resource_type or ""),
             "provider_id": str(provider_id or ""),
             "requested_name": str(requested_name or ""),
@@ -1137,10 +1146,47 @@ class ProvisioningOperation:
                     and entry["provider_id"]
                     and saved_id != entry["provider_id"]
                 ):
-                    raise OperationIdentityError(
-                        f"operation resource identity changed for {entry['resource_type']} "
-                        f"{entry['requested_name']!r}"
+                    saved_project = str(saved.get("project_id") or "")
+                    same_owned_selector = (
+                        saved.get("ownership") == "created_by_this_operation"
+                        and entry["ownership"] == "created_by_this_operation"
+                        and (
+                            not saved_project
+                            or not entry["project_id"]
+                            or saved_project == entry["project_id"]
+                        )
                     )
+                    if not same_owned_selector:
+                        raise OperationIdentityError(
+                            f"operation resource identity changed for {entry['resource_type']} "
+                            f"{entry['requested_name']!r}"
+                        )
+                    # A retry may recreate an operation-owned logical resource
+                    # after the provider deleted the first immutable identity.
+                    # Preserve both exact IDs as cleanup generations; neither is
+                    # allowed to replace or select the other as authoritative.
+                    siblings = [
+                        item
+                        for item in resources
+                        if isinstance(item, dict)
+                        and item.get("resource_type") == entry["resource_type"]
+                        and item.get("requested_name") == entry["requested_name"]
+                    ]
+                    if "generation" not in saved:
+                        saved["generation"] = 1
+                        resources[match_index] = saved
+                    entry["generation"] = (
+                        max(
+                            (int(item.get("generation") or 1) for item in siblings),
+                            default=0,
+                        )
+                        + 1
+                    )
+                    resources.append(entry)
+                    payload["resources"] = resources
+                    payload["updated_at"] = utc_now()
+                    _write_atomic(self.path, payload)
+                    return
                 saved.update(
                     {
                         key: value
@@ -1332,7 +1378,10 @@ class ProvisioningOperation:
                     "no state was adopted"
                 )
             recorded_backend = item.get("backend_identity")
-            if isinstance(recorded_backend, Mapping) and dict(recorded_backend) != expected_backend:
+            if (
+                isinstance(recorded_backend, Mapping)
+                and dict(recorded_backend) != expected_backend
+            ):
                 raise OperationIdentityError(
                     "preserved Terraform state backend identity no longer matches "
                     f"operation {self.operation_id}; no state was adopted"
@@ -1540,7 +1589,10 @@ def operation_context(
             )
         yield current
         return
-    with _locked_project_execution(operation), _locked_execution(operation.operation_id):
+    with (
+        _locked_project_execution(operation),
+        _locked_execution(operation.operation_id),
+    ):
         # A concurrent retry may have completed while this caller waited for the
         # execution lock.  Never replay a terminal transaction with stale state.
         phase = str(operation.read().get("phase") or "")

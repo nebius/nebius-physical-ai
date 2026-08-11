@@ -188,15 +188,18 @@ def test_nurec_stage_docs_are_empty_for_a_data_factory_run(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------------
 # agent-side classification of the recording
 # ---------------------------------------------------------------------------------
-# These helpers live INSIDE the agent bootstrap template string (agent.py is
-# rendered into the agent VM backend, so they are not importable module
-# attributes). The established pattern for guarding them is source inspection --
+# These helpers live in the agent bootstrap template and its embedded viewer
+# runtime. The established pattern for guarding them is source inspection --
 # see npa/tests/cli/test_agent.py::
 # test_data_factory_recording_note_wired_in_apply_loaded_artifact.
 def _agent_source() -> str:
     from npa.cli import agent as agent_module
+    from npa.cli import agent_viewer_runtime as viewer_runtime_module
 
-    return Path(agent_module.__file__).read_text(encoding="utf-8")
+    return "\n".join(
+        Path(module.__file__).read_text(encoding="utf-8")
+        for module in (agent_module, viewer_runtime_module)
+    )
 
 
 def test_recording_identity_classifies_a_nurec_run() -> None:
@@ -250,9 +253,9 @@ def test_recording_identity_matches_a_path_segment_not_a_substring() -> None:
 def test_agent_wires_the_reconstruction_branch_before_the_generic_one() -> None:
     """The branch order still has to be checked in the bootstrap template source.
 
-    _apply_loaded_artifact lives inside the agent bootstrap string, so it is not an
-    importable attribute. If the generic Sim2Real branch ran first, a NuRec run
-    would claim a held-out-simulation camera it does not have.
+    _apply_loaded_artifact is embedded into the bootstrap backend. If the generic
+    Sim2Real branch ran first, a NuRec run would claim a held-out-simulation camera
+    it does not have.
     """
     source = _agent_source()
 
