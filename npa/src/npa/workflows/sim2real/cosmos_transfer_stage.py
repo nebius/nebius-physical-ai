@@ -54,6 +54,27 @@ def run_cosmos_transfer_component(
     )
     real = real_runner(client, input_uri, augment_prefix, frames_root, run_id)
     if real is not None:
+        frames = real.get("frames")
+        if not isinstance(frames, list) or not frames:
+            raise Sim2RealLoopError(
+                "real Cosmos-Transfer2.5 completed without a non-empty exact "
+                "frames list"
+            )
+        for index_no, frame in enumerate(frames):
+            if not isinstance(frame, dict) or not isinstance(frame.get("uri"), str):
+                raise Sim2RealLoopError(
+                    "real Cosmos-Transfer2.5 returned a malformed frame at "
+                    f"index {index_no}"
+                )
+            if not str(frame["uri"]).startswith(frames_root):
+                raise Sim2RealLoopError(
+                    "real Cosmos-Transfer2.5 returned a frame outside its "
+                    f"declared output prefix at index {index_no}"
+                )
+        if int(real.get("frame_count") or 0) != len(frames):
+            raise Sim2RealLoopError(
+                "real Cosmos-Transfer2.5 frame_count does not match frames"
+            )
         manifest.update(
             {
                 "status": "executed",
@@ -61,6 +82,7 @@ def run_cosmos_transfer_component(
                 "augmented_frames_uri": frames_root,
                 "augmented_video_uri": real["augmented_video_uri"],
                 "frame_count": real["frame_count"],
+                "frames": frames,
                 "video_bytes": real["video_bytes"],
                 "control_spec": real["spec"],
                 "input_conditioned": bool(real.get("input_conditioned", False)),
@@ -122,6 +144,7 @@ def run_cosmos_transfer_component(
                 "mode": "descriptor_stub",
                 "augmented_frames_uri": frames_root,
                 "frame_count": frame_count,
+                "frames": index,
             }
         )
 
@@ -342,6 +365,7 @@ def run_real_cosmos_transfer(
         "input_conditioned": bool(transfer.get("input_conditioned")),
         "input_video": str(transfer.get("input_video") or ""),
         "semantic_task": "Isaac-Lift-Cube-Franka-v0",
+        "frames": index,
     }
     if fixture is not None:
         result["fixture_provenance"] = fixture["provenance"]

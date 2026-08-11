@@ -830,9 +830,11 @@ def test_conditioned_execute_uses_input_and_shared_generic_publisher(
 
 
 def test_sim2real_engine_real_manifest_uses_gpu_mode(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from npa.clients.storage import StorageClient
+    from npa.workflows import sim2real_envgen
     from npa.workflows.sim2real import engine
 
     uploads: dict[str, bytes] = {}
@@ -853,6 +855,12 @@ def test_sim2real_engine_real_manifest_uses_gpu_mode(
         lambda *_args: {
             "augmented_video_uri": "s3://bucket/run/video/augmented.mp4",
             "frame_count": 1,
+            "frames": [
+                {
+                    "frame_id": "frame-00000",
+                    "uri": "s3://bucket/run/frames/frame-00000.png",
+                }
+            ],
             "video_bytes": 1234,
             "spec": "spec.json",
         },
@@ -867,6 +875,52 @@ def test_sim2real_engine_real_manifest_uses_gpu_mode(
 
     durable = json.loads(uploads["s3://bucket/run/manifest.json"])
     assert result["manifest"]["mode"] == durable["mode"] == "cosmos_transfer2.5_gpu"
+    assert durable["frames"] == [
+        {
+            "frame_id": "frame-00000",
+            "uri": "s3://bucket/run/frames/frame-00000.png",
+        }
+    ]
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(uploads["s3://bucket/run/manifest.json"])
+    assert sim2real_envgen.frame_uris_from_transfer_manifest(str(manifest_path)) == (
+        "s3://bucket/run/frames/frame-00000.png",
+    )
+
+
+def test_sim2real_real_transfer_without_exact_frames_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.clients.storage import StorageClient
+    from npa.workflows.sim2real import engine
+
+    class FakeStorage:
+        def upload_file(self, _local: str, uri: str) -> str:
+            return uri
+
+    monkeypatch.setattr(
+        StorageClient,
+        "from_environment",
+        staticmethod(FakeStorage),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_run_real_cosmos_transfer",
+        lambda *_args: {
+            "augmented_video_uri": "s3://bucket/run/video/augmented.mp4",
+            "frame_count": 1,
+            "video_bytes": 1234,
+            "spec": "spec.json",
+        },
+    )
+
+    with pytest.raises(engine.Sim2RealLoopError, match="non-empty exact frames"):
+        engine.run_cosmos2_transfer_component_from_s3(
+            input_uri="s3://bucket/input/",
+            output_uri="s3://bucket/run/result.json",
+            augmented_frames_uri="s3://bucket/run/frames/",
+            run_id="missing-lineage",
+        )
 
 
 def test_sim2real_engine_real_frame_index_uses_gpu_mode(
@@ -921,6 +975,7 @@ def test_sim2real_engine_real_frame_index_uses_gpu_mode(
     assert result is not None
     index = json.loads(uploads["s3://bucket/run/frames/index.json"])
     assert index["mode"] == "cosmos_transfer2.5_gpu"
+    assert result["frames"] == index["frames"]
 
 
 def test_sim2real_engine_frame_extraction_failure_uses_descriptor_fallback(

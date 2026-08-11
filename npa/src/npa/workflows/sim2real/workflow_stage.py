@@ -140,6 +140,13 @@ def _stage3(args: argparse.Namespace) -> None:
         raise RuntimeError(
             "Stage 3 did not produce real input-conditioned Cosmos Transfer output"
         )
+    frames = manifest.get("frames")
+    if (
+        not isinstance(frames, list)
+        or not frames
+        or int(manifest.get("frame_count") or 0) != len(frames)
+    ):
+        raise RuntimeError("Stage 3 did not publish its exact non-empty frame lineage")
     publish_component_record(
         root_uri=root,
         stage=3,
