@@ -752,6 +752,12 @@ def build_artifact_backed_stages(
                     stage["diagnostic_reason"] = observation["reason"]
                     stage["summary"] = observation["reason"] + " Execution status is unavailable."
             stages.append(stage)
+        # Once a durable workflow manifest supplies the execution graph, keep
+        # the timeline one-to-one with that graph. Unmatched top-level artifact
+        # directories remain browsable through the artifact inventory; turning
+        # them into extra pseudo-stages would make a completed N-state workflow
+        # appear to have additional stages with no physical job identity.
+        return stages
     elif workflow_stage_defs:
         for stage_id, label, patterns in workflow_stage_defs:
             matched = [

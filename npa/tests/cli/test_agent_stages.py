@@ -417,6 +417,40 @@ def test_authoritative_graph_is_workflow_specific_and_artifacts_do_not_turn_it_g
     assert all(not stage["id"].startswith("stage-0") for stage in stages)
 
 
+def test_authoritative_graph_does_not_append_unmatched_artifact_pseudo_stages() -> None:
+    parsed = parse_stage_evidence_documents(
+        [
+            {
+                "key": "runs/run-9/npa-workflow/manifest.json",
+                "payload": {
+                    "schema_version": "npa.workflow.run.v1",
+                    "workflow": "two-stage-inspection",
+                    "status": "succeeded",
+                    "steps": [
+                        {"state": "inspect", "status": "succeeded", "job_id": "41"},
+                        {"state": "publish", "status": "succeeded", "job_id": "42"},
+                    ],
+                },
+            }
+        ]
+    )
+    stages = build_artifact_backed_stages(
+        [
+            "runs/run-9/inspect/result.json",
+            "runs/run-9/reports/summary.json",
+            "runs/run-9/checkpoints/model.bin",
+        ],
+        run_id="run-9",
+        prefix="runs",
+        workflow_stage_defs=[],
+        overlay_unmatched=False,
+        authoritative_stages=parsed["stages"],
+    )
+
+    assert [stage["id"] for stage in stages] == ["inspect", "publish"]
+    assert [stage["job_id"] for stage in stages] == ["41", "42"]
+
+
 def test_status_document_overrides_manifest_snapshot_and_preserves_timestamps() -> None:
     parsed = parse_stage_evidence_documents(
         [

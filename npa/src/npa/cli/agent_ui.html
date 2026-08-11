@@ -7033,6 +7033,7 @@
             if (requestId !== runSearchRequestId || (opts.isCurrent && !opts.isCurrent())) return false;
             runs.push(...(Array.isArray(data.runs) ? data.runs : []));
             cursor = String(data.next_cursor || "");
+            if (opts.singlePage) cursor = "";
           } while (cursor);
         } finally {
           if (artifactRunsAbortController === localController) artifactRunsAbortController = null;
@@ -9534,7 +9535,11 @@
           const refreshPromise = refresh().catch((err) => {
             console.warn("initial refresh failed", err);
           });
-          const artifactsPromise = refreshArtifactRuns().catch((_artifactErr) => {
+          // First paint only needs the newest bounded page. Operators can still
+          // request exhaustive discovery explicitly, and exact run IDs bypass
+          // discovery entirely. Avoid walking a large historical bucket while
+          // an operator is trying to load a specific run.
+          const artifactsPromise = refreshArtifactRuns("", { singlePage: true }).catch((_artifactErr) => {
             // artifact discovery is optional when S3 credentials are missing.
           });
           const accessPromise = refreshAccess(false).catch((accessErr) => {
