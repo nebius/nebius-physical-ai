@@ -527,7 +527,10 @@ def test_training_manifest_records_real_loss_trajectory(tmp_path: Path) -> None:
                 "world_size": 2,
                 "distinct_gpu_count": 2,
                 "gpu_uuids": ["a", "b"],
-                "ranks": [{"cuda_device_name": "GPU"}],
+                "ranks": [
+                    {"rank": 0, "cuda_device_name": "GPU"},
+                    {"rank": 1, "cuda_device_name": "GPU"},
+                ],
                 "collective_sum": 3,
                 "collective_expected": 3,
                 "collective_ok": True,
@@ -535,6 +538,20 @@ def test_training_manifest_records_real_loss_trajectory(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    training_ranks = output / "training-ranks"
+    training_ranks.mkdir()
+    for rank in (0, 1):
+        (training_ranks / f"rank-{rank:04d}.json").write_text(
+            json.dumps(
+                {
+                    "rank": rank,
+                    "local_rank": rank,
+                    "world_size": 2,
+                    "status": "completed_vendor_training",
+                }
+            ),
+            encoding="utf-8",
+        )
     manifest = tmp_path / "manifest.json"
     script = render_training_manifest_script(
         output_dir=str(output),
@@ -555,6 +572,11 @@ def test_training_manifest_records_real_loss_trajectory(tmp_path: Path) -> None:
     assert payload["final_step_loss"] == pytest.approx(0.8)
     assert payload["aggregate_train_loss"] != payload["final_step_loss"]
     assert payload["loss_step_inference"] is None
+    assert payload["observed_ranks"] == [0, 1]
+    assert payload["training_observed_ranks"] == [0, 1]
+    assert payload["both_ranks_trained"] is True
+    assert payload["rank_zero_checkpoint_only"] is True
+    assert payload["checkpoint_upload_invocations"] == 1
 
 
 def test_text_loss_never_synthesizes_optimizer_steps_from_logging_interval() -> None:
@@ -597,6 +619,66 @@ def test_trivial_predictor_floor_and_positive_skill_score() -> None:
     assert weak["train_mean_predictor_mse"] == pytest.approx(1.0)
     assert weak["skill_score"] == pytest.approx(-4.0)
     assert skilled["skill_score"] == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize(
+    ("metric_gate", "loss_decreased", "outcome"),
+    [
+        (True, True, "improved"),
+        (True, False, "not_improved"),
+        (False, True, "not_improved"),
+    ],
+)
+def test_operational_learning_status_is_separate_and_never_promotes(
+    metric_gate: bool, loss_decreased: bool, outcome: str
+) -> None:
+    decision = learning.operational_learning_decision(
+        {"gate_passed": metric_gate}, {"loss_decreased": loss_decreased}
+    )
+    assert decision == {
+        "pipeline_status": "succeeded",
+        "learning_outcome": outcome,
+        "candidate_promoted": False,
+    }
+
+
+def test_not_improved_report_remains_valid_artifact_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = {
+        "schema": learning.REPORT_SCHEMA,
+        "status": "completed",
+        "pipeline_status": "succeeded",
+        "learning_outcome": "not_improved",
+        "candidate_promoted": False,
+        "run_id": "run",
+        "evaluation": {
+            "baseline_uri": "s3://bucket/baseline.json",
+            "posttrain_uri": "s3://bucket/trained.json",
+        },
+    }
+    baseline = {"arrays": {"uri": "s3://bucket/baseline.npz"}}
+    trained = {"arrays": {"uri": "s3://bucket/trained.npz"}}
+    documents = {
+        "s3://bucket/report.json": report,
+        "s3://bucket/baseline.json": baseline,
+        "s3://bucket/trained.json": trained,
+    }
+    arrays = {
+        "s3://bucket/baseline.npz": {"predicted": np.zeros((2, 1))},
+        "s3://bucket/trained.npz": {"predicted": np.ones((2, 1))},
+    }
+    monkeypatch.setattr(
+        learning, "_read_s3_json", lambda _client, uri: documents[uri]
+    )
+    monkeypatch.setattr(
+        learning, "validate_evaluation", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(learning, "_read_npz", lambda _client, uri: arrays[uri])
+
+    bundle = learning._evaluation_bundle(object(), "s3://bucket/report.json")
+    assert bundle[0]["learning_outcome"] == "not_improved"
+    assert bundle[0]["pipeline_status"] == "succeeded"
 
 
 @pytest.mark.parametrize(

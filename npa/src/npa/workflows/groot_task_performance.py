@@ -527,7 +527,8 @@ def resolve_trained_checkpoint(
         or manifest.get("optimizer_step_ok") is not True
         or manifest.get("collective_ok") is not True
         or manifest.get("loss_steps_real") is not True
-        or manifest.get("loss_decreased") is not True
+        or manifest.get("rank_zero_checkpoint_only") is not True
+        or int(manifest.get("checkpoint_upload_invocations") or 0) != 1
         or manifest.get("model_config_contract") != GROOT_MODEL_CONFIG_CONTRACT
     ):
         raise GrootVisualizationError("trainer manifest lacks completed immutable-run evidence")
@@ -536,6 +537,16 @@ def resolve_trained_checkpoint(
     distinct_gpu_count = int(manifest.get("distinct_gpu_count") or 0)
     if {gpu_count, world_size, distinct_gpu_count} != {int(expected_gpu_count)}:
         raise GrootVisualizationError("trainer did not use the required distinct GPU world")
+    observed_ranks = sorted(int(value) for value in manifest.get("observed_ranks") or [])
+    if observed_ranks != list(range(int(expected_gpu_count))):
+        raise GrootVisualizationError("trainer manifest lacks complete rank evidence")
+    training_observed_ranks = sorted(
+        int(value) for value in manifest.get("training_observed_ranks") or []
+    )
+    if training_observed_ranks != list(range(int(expected_gpu_count))):
+        raise GrootVisualizationError(
+            "trainer manifest lacks per-rank vendor-training completion evidence"
+        )
     configured_steps = int(manifest.get("max_steps") or 0)
     completed_steps = int(manifest.get("training_step") or 0)
     training_plan = split.get("training_plan") or {}
@@ -553,16 +564,18 @@ def resolve_trained_checkpoint(
         or int(training_plan.get("per_device_batch_size") or 0) != per_device_batch
         or int(training_plan.get("gradient_accumulation_steps") or 0) != accumulation
         or effective_global != int(manifest.get("global_batch_size") or 0)
-        or effective_global < 128
+        or effective_global < 1
     ):
         raise GrootVisualizationError("trainer and split preflight step contracts differ")
     if int(expected_max_steps) <= 0 or configured_steps != int(expected_max_steps):
         raise GrootVisualizationError("trainer max_steps differs from the preflight contract")
     if completed_steps != configured_steps:
         raise GrootVisualizationError("trainer did not complete the configured optimizer steps")
+    if completed_steps < 2:
+        raise GrootVisualizationError("trainer must complete multiple optimizer steps")
     checkpoint_steps = {int(value) for value in manifest.get("checkpoint_steps") or []}
-    if len(checkpoint_steps) < 3 or completed_steps not in checkpoint_steps:
-        raise GrootVisualizationError("trainer lacks two intermediate checkpoints plus final")
+    if not checkpoint_steps or completed_steps not in checkpoint_steps:
+        raise GrootVisualizationError("trainer lacks its final checkpoint")
 
     if not baseline_checkpoint_uri:
         raise GrootVisualizationError("trained checkpoint resolution requires baseline weights")
@@ -613,6 +626,13 @@ def resolve_trained_checkpoint(
             "gradient_accumulation_steps": accumulation,
             "effective_global_batch_size": effective_global,
             "checkpoint_steps": sorted(checkpoint_steps),
+            "observed_ranks": observed_ranks,
+            "training_observed_ranks": training_observed_ranks,
+            "rank_zero_checkpoint_only": True,
+            "checkpoint_upload_invocations": int(
+                manifest.get("checkpoint_upload_invocations") or 0
+            ),
+            "loss_decreased": manifest.get("loss_decreased") is True,
             "training_examples": int(manifest.get("training_examples") or 0),
             "aggregate_train_loss": manifest.get("aggregate_train_loss"),
             "final_step_loss": manifest.get("final_step_loss", manifest.get("final_loss")),

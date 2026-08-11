@@ -926,6 +926,9 @@ def build_run_summary(
         learning_viz = learning_doc.get("visualizations") or {}
         learning = {
             "badge": str(learning_doc.get("badge") or "Offline held-out policy evaluation"),
+            "pipeline_status": str(learning_doc.get("pipeline_status") or "unknown"),
+            "learning_outcome": str(learning_doc.get("learning_outcome") or "inconclusive"),
+            "candidate_promoted": learning_doc.get("candidate_promoted") is True,
             "evaluation_kind": str(learning_doc.get("evaluation_kind") or ""),
             "closed_loop": learning_doc.get("closed_loop") is True,
             "embodiment": str(learning_dataset.get("embodiment") or ""),

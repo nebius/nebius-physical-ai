@@ -138,6 +138,7 @@ from npa.cli.groot.finetune_runtime import run_local_finetune as _run_local_fine
 from npa.cli.groot.training_evidence import (
     render_distributed_probe,
     render_training_manifest_script,
+    render_training_rank_wrapper,
 )
 
 app = typer.Typer(
@@ -1512,6 +1513,7 @@ def _build_finetune_command(
     per_device_batch_size: int | None = None,
     gradient_accumulation_steps: int | None = None,
     dataloader_num_workers: int | None = None,
+    logging_steps: int | None = None,
     save_steps: int | None = None,
     save_total_limit: int | None = None,
     save_only_model: bool = False,
@@ -1557,10 +1559,10 @@ def _build_finetune_command(
     )
     tag = _normalize_embodiment_tag(robot_embodiment)
     if num_gpus > 1:
-        launcher = f"uv run --no-sync torchrun --nproc_per_node={num_gpus} --master_port=29500 gr00t/experiment/launch_finetune.py"
+        launcher = f"uv run --no-sync torchrun --nproc_per_node={num_gpus} --master_port=29500 /tmp/npa_groot_training_rank_wrapper.py"
         probe_launcher = f"uv run --no-sync torchrun --nproc_per_node={num_gpus} --master_port=29501 /tmp/npa_groot_distributed_probe.py"
     else:
-        launcher = "uv run python gr00t/experiment/launch_finetune.py"
+        launcher = "uv run python /tmp/npa_groot_training_rank_wrapper.py"
         probe_launcher = "uv run python /tmp/npa_groot_distributed_probe.py"
     nccl_env = ""
     if num_gpus > 1 and nccl_transport == NcclTransport.socket.value:
@@ -1610,6 +1612,8 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
     train_args += " \\\n  --use-relative-action false"
     if dataloader_num_workers is not None:
         train_args += f" \\\n  --dataloader-num-workers {dataloader_num_workers}"
+    if logging_steps is not None:
+        train_args += f" \\\n  --logging-steps {logging_steps}"
     if save_steps is not None:
         train_args += f" \\\n  --save-steps {save_steps}"
     if save_total_limit is not None:
@@ -1624,6 +1628,7 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
     model_revision = HF_MODEL_REVISIONS.get(base_model.split("@", 1)[0], "")
     manifest_path = f"{output_dir}/{GROOT_FINETUNE_MANIFEST}"
     probe_script = render_distributed_probe(output_dir)
+    training_rank_wrapper = render_training_rank_wrapper(output_dir)
     manifest_script = render_training_manifest_script(
         output_dir=output_dir,
         manifest_path=manifest_path,
@@ -1650,7 +1655,7 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
                 * int(gradient_accumulation_steps or 0)
             ),
             "max_steps": max_steps,
-            "logging_steps": None,
+            "logging_steps": logging_steps,
             "loss_step_contract": "actual trainer_state/global_step only; no synthetic mapping",
             "model_config_contract": {
                 "tune_projector": True,
@@ -1703,6 +1708,9 @@ fi
 mkdir -p {shlex.quote(output_dir)}
 cat > /tmp/npa_groot_distributed_probe.py <<'PY'
 {probe_script}
+PY
+cat > /tmp/npa_groot_training_rank_wrapper.py <<'PY'
+{training_rank_wrapper}
 PY
 {probe_launcher}
 {launcher} \
@@ -3484,6 +3492,9 @@ def finetune_cmd(
     dataloader_num_workers: int | None = typer.Option(
         None, "--dataloader-num-workers", help="Override dataloader workers."
     ),
+    logging_steps: int | None = typer.Option(
+        None, "--logging-steps", help="Emit a real trainer loss every N optimizer steps."
+    ),
     save_steps: int | None = typer.Option(
         None, "--save-steps", help="Override checkpoint save interval."
     ),
@@ -3514,6 +3525,8 @@ def finetune_cmd(
             "--gradient-accumulation-steps must be positive, got "
             f"{gradient_accumulation_steps}"
         )
+    if logging_steps is not None and logging_steps <= 0:
+        _fail(f"--logging-steps must be positive, got {logging_steps}")
     if (per_device_batch_size is None) != (gradient_accumulation_steps is None):
         _fail("per-device batch and gradient accumulation must be configured together")
     if per_device_batch_size is not None:
@@ -3596,6 +3609,7 @@ def finetune_cmd(
         per_device_batch_size=per_device_batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         dataloader_num_workers=dataloader_num_workers,
+        logging_steps=logging_steps,
         save_steps=save_steps,
         save_total_limit=save_total_limit,
         save_only_model=save_only_model,

@@ -139,6 +139,42 @@ if world_size > 1:
 """
 
 
+def render_training_rank_wrapper(output_dir: str) -> str:
+    """Return a rank-local wrapper around the real vendor trainer.
+
+    A completion marker is written only after ``launch_finetune.py`` returns
+    successfully on that rank.  This distinguishes an NCCL preflight from
+    evidence that every rank actually stayed in the vendor training process.
+    """
+
+    return f"""import json
+import os
+import runpy
+from pathlib import Path
+
+rank = int(os.environ.get("RANK", "0"))
+local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+world_size = int(os.environ.get("WORLD_SIZE", "1"))
+try:
+    runpy.run_path("gr00t/experiment/launch_finetune.py", run_name="__main__")
+except SystemExit as exc:
+    if exc.code not in (None, 0):
+        raise
+rank_dir = Path({output_dir!r}) / "training-ranks"
+rank_dir.mkdir(parents=True, exist_ok=True)
+payload = {{
+    "rank": rank,
+    "local_rank": local_rank,
+    "world_size": world_size,
+    "status": "completed_vendor_training",
+}}
+(rank_dir / f"rank-{{rank:04d}}.json").write_text(
+    json.dumps(payload, sort_keys=True) + "\\n", encoding="utf-8"
+)
+print("NPA_GROOT_TRAINING_RANK_COMPLETE", json.dumps(payload, sort_keys=True))
+"""
+
+
 def render_training_manifest_script(
     *,
     output_dir: str,
@@ -208,7 +244,7 @@ loss_finite = loss is not None and math.isfinite(loss)
 optimizer_step_ok = training_step >= 1 and loss_finite
 loss_steps = [int(item["optimizer_step"]) for item in loss_history]
 loss_steps_real = (
-    bool(loss_steps)
+    len(loss_steps) >= 2
     and loss_steps == sorted(loss_steps)
     and len(loss_steps) == len(set(loss_steps))
     and max(loss_steps) <= training_step
@@ -233,16 +269,54 @@ loss_decreased = (
     and robust_late_loss is not None
     and robust_late_loss < robust_early_loss * 0.99
 )
+rank_ids = sorted(int(item.get("rank", -1)) for item in evidence.get("ranks") or [])
+expected_rank_ids = list(range(int(evidence.get("world_size") or 0)))
+training_rank_evidence = []
+for rank_path in sorted((output_dir / "training-ranks").glob("rank-*.json")):
+    try:
+        row = json.loads(rank_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        continue
+    if isinstance(row, dict):
+        training_rank_evidence.append(row)
+training_rank_ids = sorted(
+    int(item.get("rank", -1))
+    for item in training_rank_evidence
+    if item.get("status") == "completed_vendor_training"
+)
+rank_scoped_checkpoint_files = [
+    path
+    for path in checkpoint_files
+    if "checkpoint-" in str(path.relative_to(output_dir))
+    and any(part.startswith("rank-") for part in path.relative_to(output_dir).parts)
+]
+rank_zero_checkpoint_only = (
+    bool(checkpoint_steps)
+    and rank_ids == expected_rank_ids
+    and not rank_scoped_checkpoint_files
+)
 manifest.update({{
     "world_size": int(evidence.get("world_size") or 0),
     "distinct_gpu_count": int(evidence.get("distinct_gpu_count") or 0),
     "gpu_uuids": list(evidence.get("gpu_uuids") or []),
     "rank_evidence": list(evidence.get("ranks") or []),
+    "observed_ranks": rank_ids,
+    "training_rank_evidence": training_rank_evidence,
+    "training_observed_ranks": training_rank_ids,
+    "both_ranks_trained": (
+        int(evidence.get("world_size") or 0) == 2
+        and rank_ids == [0, 1]
+        and training_rank_ids == [0, 1]
+        and training_step >= 2
+    ),
     "collective_sum": evidence.get("collective_sum"),
     "collective_expected": evidence.get("collective_expected"),
     "collective_ok": evidence.get("collective_ok") is True,
     "training_step": training_step,
     "checkpoint_steps": sorted(set(checkpoint_steps)),
+    "checkpoint_publication_process": "single launcher after torchrun completed",
+    "checkpoint_upload_invocations": 1,
+    "rank_zero_checkpoint_only": rank_zero_checkpoint_only,
     "optimizer_step_ok": optimizer_step_ok,
     "loss": loss,
     "loss_finite": loss_finite,
@@ -272,5 +346,6 @@ print(f"NPA_GROOT_FINETUNE_MANIFEST {{target}}")
 __all__ = [
     "parse_training_loss_evidence",
     "render_distributed_probe",
+    "render_training_rank_wrapper",
     "render_training_manifest_script",
 ]

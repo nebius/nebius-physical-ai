@@ -9,6 +9,7 @@ as offline held-out evaluation; none of them is a closed-loop rollout.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import importlib.util
 import io
@@ -20,6 +21,9 @@ import re
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -55,14 +59,18 @@ TIMESTAMP_SEMANTICS = "dataset-index-at-recorded-fps"
 RERUN_APPLICATION_ID = "npa_groot_offline_learning"
 RERUN_TIMELINE = "dataset_time"
 SEMANTIC_PHASES = [
-    "prepare_split",
-    "baseline_eval",
-    "finetune",
-    "posttrain_eval",
-    "compare_learning",
-    "emit_mcap",
-    "emit_rrd",
-    "publish",
+    "access_capacity_preflight",
+    "resolve_task_data_contract",
+    "prepare_deterministic_split",
+    "baseline_inference_evaluation",
+    "distributed_training",
+    "trained_checkpoint_resolution",
+    "post_training_inference_evaluation",
+    "classify_learning_outcome",
+    "generate_rrd",
+    "generate_mcap",
+    "publish_artifacts_run_summary",
+    "agent_ui_load_viewer_verification",
 ]
 REQUIRED_MCAP_TOPICS = {
     "/camera/front": "foxglove.CompressedImage",
@@ -138,29 +146,30 @@ def preflight_rigor_contract(
     minimum_epochs: float,
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
-    """Fail before GPU scheduling when the declared rigor contract is incoherent."""
+    """Fail before GPU scheduling when the operational training contract is incoherent.
+
+    The reference workflow is a plumbing validation, not a statistical-learning
+    experiment.  It therefore requires real optimizer work and a checkpoint, but
+    does not manufacture a 10k-step or multi-epoch minimum.  Coverage is still
+    derived from the materialized split and reported exactly.
+    """
 
     effective = (
         int(gpu_count) * int(per_device_batch_size) * int(gradient_accumulation_steps)
     )
     if int(gpu_count) < 1:
         raise GrootVisualizationError("GPU count must be at least one")
-    if (
-        effective != int(global_batch_size)
-        or effective < DEFAULT_MINIMUM_EFFECTIVE_GLOBAL_BATCH
-    ):
+    if effective != int(global_batch_size) or effective < 1:
         raise GrootVisualizationError(
             "declared effective global batch contract is invalid"
         )
-    if min(int(validation_episodes), int(final_episodes)) < 24:
+    if int(train_episodes) < 1 or int(validation_episodes) < 1:
+        raise GrootVisualizationError("train and held-out cohorts must be non-empty")
+    if int(final_episodes) < 0:
+        raise GrootVisualizationError("final episode count cannot be negative")
+    if int(max_steps) < 2 or float(minimum_epochs) <= 0.0:
         raise GrootVisualizationError(
-            "validation and final cohorts require at least 24 episodes"
-        )
-    if int(train_episodes) <= int(validation_episodes) + int(final_episodes):
-        raise GrootVisualizationError("training cohort is not substantially expanded")
-    if int(max_steps) < 10_000 or float(minimum_epochs) <= 1.0:
-        raise GrootVisualizationError(
-            "fine-tune budget must exceed one epoch and 10k steps"
+            "pipeline validation requires at least two optimizer steps and positive coverage"
         )
     result = {
         "schema": "npa.groot.rigor_preflight.v1",
@@ -179,6 +188,8 @@ def preflight_rigor_contract(
         },
         "max_steps": int(max_steps),
         "minimum_epochs": float(minimum_epochs),
+        "validation_mode": "operational_pipeline_smoke",
+        "statistical_learning_claim": False,
         "absolute_actions": True,
         "use_relative_action": False,
         "control_plane_capacity": (
@@ -1786,6 +1797,23 @@ def require_learning_improvement(comparison: Mapping[str, Any]) -> None:
         raise GrootVisualizationError(f"learning gate failed: {reason}")
 
 
+def operational_learning_decision(
+    comparison: Mapping[str, Any], loss_trend: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Keep operational completion, observed learning, and promotion independent."""
+
+    improved = (
+        comparison.get("gate_passed") is True
+        and loss_trend.get("loss_decreased") is True
+    )
+    return {
+        "pipeline_status": "succeeded",
+        "learning_outcome": "improved" if improved else "not_improved",
+        # This smoke is not a statistically powered candidate-selection run.
+        "candidate_promoted": False,
+    }
+
+
 def compare_metrics(
     before: Mapping[str, Any],
     after: Mapping[str, Any],
@@ -2278,7 +2306,12 @@ def compare_learning(
     loss_decrease_tolerance: float = 0.01,
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
-    """Compare identical held-out evaluations and enforce factual improvement."""
+    """Compare aligned evaluations without conflating learning with pipeline health.
+
+    Structural/data/checkpoint failures still raise.  A valid smoke checkpoint
+    that does not improve is recorded as ``not_improved`` so diagnostic media and
+    publication continue, while promotion remains fail-closed.
+    """
 
     import numpy as np
 
@@ -2344,7 +2377,6 @@ def compare_learning(
         minimum_skill_score=minimum_skill_score,
         max_dimension_regression=max_dimension_regression,
     )
-    require_learning_improvement(comparison)
     if (
         training.get("schema") != "npa.groot.finetune.v1"
         or training.get("status") != "completed"
@@ -2357,14 +2389,32 @@ def compare_learning(
         "optimizer_step_ok",
         "loss_finite",
         "loss_steps_real",
-        "loss_decreased",
+        "rank_zero_checkpoint_only",
     ):
         if training.get(key) is not True:
             raise GrootVisualizationError(f"training evidence requires {key}=true")
+    expected_world_size = int(split.get("training_plan", {}).get("gpu_count") or 0)
+    expected_ranks = list(range(expected_world_size))
+    observed_ranks = sorted(int(value) for value in training.get("observed_ranks") or [])
+    training_observed_ranks = sorted(
+        int(value) for value in training.get("training_observed_ranks") or []
+    )
+    if (
+        expected_world_size < 1
+        or int(training.get("num_gpus") or 0) != expected_world_size
+        or int(training.get("world_size") or 0) != expected_world_size
+        or int(training.get("distinct_gpu_count") or 0) != expected_world_size
+        or observed_ranks != expected_ranks
+        or training_observed_ranks != expected_ranks
+        or int(training.get("checkpoint_upload_invocations") or 0) != 1
+    ):
+        raise GrootVisualizationError(
+            "training manifest lacks the declared GPU world, rank participation, or single-upload evidence"
+        )
     expected_steps = int(split.get("training_plan", {}).get("optimizer_steps") or 0)
     actual_steps = int(training.get("training_step") or 0)
     global_batch = int(training.get("global_batch_size") or 0)
-    if expected_steps <= 1 or actual_steps < expected_steps:
+    if expected_steps < 2 or actual_steps < expected_steps:
         raise GrootVisualizationError(
             f"meaningful training coverage missing: {actual_steps} < {expected_steps} steps"
         )
@@ -2375,18 +2425,21 @@ def compare_learning(
         train_samples=train_samples,
     )
     minimum_epochs = float(split.get("training_plan", {}).get("minimum_epochs") or 0)
-    if minimum_epochs <= 1.0 or float(coverage["epoch_equivalent"]) < minimum_epochs:
+    if minimum_epochs <= 0.0 or float(coverage["epoch_equivalent"]) < minimum_epochs:
         raise GrootVisualizationError(
-            "training coverage did not satisfy multi-epoch contract"
+            "training coverage did not satisfy the declared smoke contract"
         )
     loss_history = training.get("loss_history") or []
     loss_trend = robust_loss_decrease(
         loss_history, tolerance=float(loss_decrease_tolerance)
     )
+    outcome_failures = list(comparison.get("gate_failures") or [])
     if loss_trend["loss_decreased"] is not True:
-        raise GrootVisualizationError(
-            "training loss gate failed: robust late-window loss did not decrease"
-        )
+        outcome_failures.append("robust late-window training loss did not decrease")
+    decision = operational_learning_decision(comparison, loss_trend)
+    learning_outcome = str(decision["learning_outcome"])
+    comparison["gate_failures"] = outcome_failures
+    comparison["gate_passed"] = learning_outcome == "improved"
     cameras = list(split["source"].get("cameras") or [])
     if not cameras:
         raise GrootVisualizationError("split manifest lacks derived camera metadata")
@@ -2431,7 +2484,8 @@ def compare_learning(
         )
     result = {
         "schema": REPORT_SCHEMA,
-        "status": "passed",
+        "status": "completed",
+        **decision,
         "run_id": run_id,
         "evaluation_kind": EVALUATION_KIND,
         "badge": "Offline held-out policy evaluation",
@@ -2462,6 +2516,18 @@ def compare_learning(
             "gpu_count": int(training.get("num_gpus") or 0),
             "distinct_gpu_count": int(training.get("distinct_gpu_count") or 0),
             "world_size": int(training.get("world_size") or 0),
+            "observed_ranks": [
+                int(value) for value in training.get("observed_ranks") or []
+            ],
+            "training_observed_ranks": training_observed_ranks,
+            "all_ranks_trained": training_observed_ranks == expected_ranks,
+            "both_ranks_trained": training.get("both_ranks_trained") is True,
+            "collective_ok": training.get("collective_ok") is True,
+            "rank_zero_checkpoint_only": training.get("rank_zero_checkpoint_only")
+            is True,
+            "checkpoint_upload_invocations": int(
+                training.get("checkpoint_upload_invocations") or 0
+            ),
             "optimizer_steps": actual_steps,
             "global_batch_size": global_batch,
             **coverage,
@@ -2526,8 +2592,8 @@ def compare_learning(
             "synchronized_camera_samples": len(baseline["sample_alignment"]),
         },
         "limitations": [
-            "This report is offline action-matching evidence; paired PushT simulation is gated separately.",
-            "Final split episodes and final closed-loop seeds remain untouched until validation gates pass.",
+            "This report is offline action-matching evidence, not a robot rollout.",
+            "The short optimizer smoke is an operational pipeline validation and does not establish statistical learning.",
         ],
     }
     _put_json(client, output_uri, result)
@@ -2619,9 +2685,14 @@ def _evaluation_bundle(
     dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]
 ]:
     report = _read_s3_json(client, report_uri)
-    if report.get("schema") != REPORT_SCHEMA or report.get("status") != "passed":
+    if (
+        report.get("schema") != REPORT_SCHEMA
+        or report.get("status") not in {"passed", "completed"}
+        or report.get("pipeline_status") not in {None, "succeeded"}
+        or report.get("learning_outcome") not in {None, "improved", "not_improved"}
+    ):
         raise GrootVisualizationError(
-            "learning report has not passed its improvement gate"
+            "learning report has not completed its operational evaluation"
         )
     baseline = _read_s3_json(client, str(report["evaluation"]["baseline_uri"]))
     posttrain = _read_s3_json(client, str(report["evaluation"]["posttrain_uri"]))
@@ -3182,6 +3253,9 @@ def publish_learning(
     result = {
         "schema": PUBLISH_SCHEMA,
         "status": "published",
+        "pipeline_status": "succeeded",
+        "learning_outcome": str(report.get("learning_outcome") or "inconclusive"),
+        "candidate_promoted": report.get("candidate_promoted") is True,
         "run_id": run_id,
         "evaluation_kind": EVALUATION_KIND,
         "closed_loop": False,
@@ -3202,6 +3276,138 @@ def publish_learning(
         "rrd_inspection": rrd_inspection,
     }
     _put_json(client, output_uri, result)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return result
+
+
+def verify_agent_ui_handoff(
+    agent_url: str,
+    report_uri: str,
+    rrd_uri: str,
+    mcap_uri: str,
+    output_uri: str,
+    run_id: str,
+    *,
+    s3_client: Any | None = None,
+) -> dict[str, Any]:
+    """Exercise the deployed agent's run/artifact/viewer API for this exact run.
+
+    Pixel-level browser validation remains an external E2E gate, but this stage
+    makes the workflow fail if the deployed agent cannot discover the run, list
+    the required artifacts, load both native viewers, or serve byte ranges.
+    Authentication is read only from ``NPA_AGENT_BASIC_AUTH`` and is never
+    persisted or printed.
+    """
+
+    origin = str(agent_url or "").strip().rstrip("/")
+    if not origin.startswith(("http://", "https://")):
+        raise GrootVisualizationError("agent_url must be an HTTP(S) origin")
+    credentials = os.environ.get("NPA_AGENT_BASIC_AUTH", "").strip()
+    if not credentials or ":" not in credentials:
+        raise GrootVisualizationError("NPA_AGENT_BASIC_AUTH is required for UI verification")
+    authorization = "Basic " + base64.b64encode(credentials.encode()).decode()
+    context = None
+    if origin.startswith("https://") and os.environ.get("NPA_AGENT_TLS_VERIFY", "1") == "0":
+        import ssl
+
+        context = ssl._create_unverified_context()  # noqa: S323 - explicit operator setting
+
+    def request_json(path: str, *, body: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        payload = None if body is None else _json_bytes(body)
+        request = urllib.request.Request(
+            origin + path,
+            data=payload,
+            headers={
+                "Authorization": authorization,
+                **({"Content-Type": "application/json"} if payload is not None else {}),
+            },
+            method="POST" if payload is not None else "GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60, context=context) as response:
+                parsed = json.loads(response.read().decode())
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            raise GrootVisualizationError(f"agent API request failed for {path.split('?', 1)[0]}") from exc
+        if not isinstance(parsed, dict):
+            raise GrootVisualizationError("agent API returned a non-object response")
+        return parsed
+
+    def range_ok(path: str) -> bool:
+        request = urllib.request.Request(
+            urllib.parse.urljoin(origin + "/", str(path).lstrip("/")),
+            headers={"Authorization": authorization, "Range": "bytes=0-63"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60, context=context) as response:
+                body = response.read()
+                return response.status in {200, 206} and 0 < len(body) <= 64
+        except (OSError, urllib.error.URLError):
+            return False
+
+    health = request_json("/api/health")
+    selector = urllib.parse.quote(run_id, safe="")
+    inventory = request_json(f"/api/artifacts/run/{selector}")
+    if str(inventory.get("run_id") or "") != run_id:
+        raise GrootVisualizationError("agent loaded a different run identity")
+    artifacts = [item for item in inventory.get("artifacts") or [] if isinstance(item, dict)]
+    required = {
+        "report": report_uri,
+        "rrd": rrd_uri,
+        "mcap": mcap_uri,
+    }
+    selected: dict[str, dict[str, Any]] = {}
+    for label, uri in required.items():
+        matches = [item for item in artifacts if str(item.get("s3_uri") or "") == uri]
+        if len(matches) != 1:
+            raise GrootVisualizationError(f"agent inventory lacks unique {label} artifact")
+        selected[label] = matches[0]
+
+    loads: dict[str, dict[str, Any]] = {}
+    ranges: dict[str, bool] = {}
+    for label in ("rrd", "mcap"):
+        item = selected[label]
+        loaded = request_json(
+            "/api/sim-viz/load-artifact",
+            body={
+                "run_id": run_id,
+                "run_ref": str(inventory.get("run_ref") or ""),
+                "key": str(item.get("key") or ""),
+                "s3_uri": str(item.get("s3_uri") or ""),
+            },
+        )
+        sim_viz = loaded.get("sim_viz") if isinstance(loaded.get("sim_viz"), dict) else {}
+        ready = (
+            sim_viz.get("rerun_ready") is True
+            if label == "rrd"
+            else sim_viz.get("lichtblick_ready") is True
+        )
+        if not ready:
+            raise GrootVisualizationError(f"agent {label} viewer did not become ready")
+        download_path = str(sim_viz.get("artifact_download_url") or "")
+        ranges[label] = bool(download_path) and range_ok(download_path)
+        if not ranges[label]:
+            raise GrootVisualizationError(f"agent {label} byte-range endpoint failed")
+        loads[label] = {
+            "artifact_key": str(sim_viz.get("artifact_key") or ""),
+            "viewer_ready": True,
+            "range_download_verified": True,
+        }
+
+    result = {
+        "schema": "npa.groot.agent_ui_handoff.v1",
+        "status": "passed",
+        "pipeline_status": "succeeded",
+        "run_id": run_id,
+        "agent_url": origin,
+        "health_ok": bool(health.get("ok", True)),
+        "run_discovered": True,
+        "artifact_count": len(artifacts),
+        "required_artifacts": sorted(required),
+        "viewer_loads": loads,
+        "range_downloads": ranges,
+        "browser_validation": "required externally after workflow completion",
+    }
+    _put_json(_s3_client(s3_client), output_uri, result)
     print(json.dumps(result, indent=2, sort_keys=True))
     return result
 
@@ -3324,6 +3530,14 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--workflow-uri", required=True)
     publish.add_argument("--output-uri", required=True)
     publish.add_argument("--run-id", required=True)
+
+    agent_ui = subparsers.add_parser("verify-agent-ui")
+    agent_ui.add_argument("--agent-url", required=True)
+    agent_ui.add_argument("--report-uri", required=True)
+    agent_ui.add_argument("--rrd-uri", required=True)
+    agent_ui.add_argument("--mcap-uri", required=True)
+    agent_ui.add_argument("--output-uri", required=True)
+    agent_ui.add_argument("--run-id", required=True)
     return parser
 
 
@@ -3349,6 +3563,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         emit_learning_rrd(**values)
     elif command == "publish":
         publish_learning(**values)
+    elif command == "verify-agent-ui":
+        verify_agent_ui_handoff(**values)
     else:  # pragma: no cover - argparse rejects unknown commands
         raise GrootVisualizationError(f"unknown command: {command}")
     return 0

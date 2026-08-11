@@ -7297,6 +7297,9 @@
         const grid = document.createElement("div");
         grid.className = "summary-grid";
         const fields = learning ? [
+          ["Pipeline status", String(learning.pipeline_status || "unknown").toUpperCase()],
+          ["Learning outcome", String(learning.learning_outcome || "inconclusive").toUpperCase()],
+          ["Candidate promoted", String(Boolean(learning.candidate_promoted)).toUpperCase()],
           ["Dataset / embodiment", learning.embodiment || "unknown"],
           ["Train / held-out", String(learning.train_episodes || 0) + " / " + String(learning.heldout_episodes || 0) + " episodes"],
           ["Held-out samples", learning.heldout_samples || 0],
@@ -7335,10 +7338,11 @@
           const regressionCount = Array.isArray(learning.per_dimension)
             ? learning.per_dimension.filter((item) => item && item.improved === false).length
             : 0;
+          const outcome = String(learning.learning_outcome || "inconclusive");
           comparison.textContent = "Before → after action error: " +
             Number(learning.baseline_value || 0).toPrecision(6) + " → " +
             Number(learning.posttrain_value || 0).toPrecision(6) +
-            " · primary metric improved" +
+            " · learning outcome " + outcome +
             (regressionCount ? " · " + String(regressionCount) + " per-dimension regression(s) disclosed" : " · no per-dimension regressions");
           host.appendChild(comparison);
           const actions = document.createElement("div");

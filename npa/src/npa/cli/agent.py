@@ -7138,32 +7138,33 @@ def sim_viz_load_artifact(payload: dict | None = None):
         resolved_ref = ""
         resolution = None
         if requested_uri:
+            if not (requested_run_ref or requested_run):
+                raise HTTPException(
+                    status_code=400,
+                    detail="run_id is required with s3_uri so the object can be authorized",
+                )
             bucket, key = parse_s3_uri(requested_uri)
             key = _safe_artifact_key(key)
             s3_uri = requested_uri
             selector = requested_run_ref or requested_run
-            if selector:
-                resolution = resolve_run_artifacts(
-                    _agent_s3_buckets(s3, settings),
-                    base_prefix=settings.get("prefix", ""),
-                    run_ref_or_id=selector,
-                    s3=s3,
-                )
-                if resolution is None or not any(
-                    item.key == key and item.s3_uri == requested_uri
-                    for item in resolution.artifacts
-                ):
-                    raise HTTPException(status_code=400, detail="artifact URI is outside the selected run")
-                run_id = resolution.run_id
-                bucket = resolution.bucket
-                resolved_ref = resolution.run_ref
-            else:
-                bucket, key, authorized_run = _authorize_agent_artifact_uri(
-                    s3=s3, settings=settings, uri=requested_uri
-                )
-                run_guess = str(authorized_run or _run_id_for_key(key, ""))
-                run_id = validate_run_id(run_guess) if run_guess else "artifact"
-                s3_uri = f"s3://{{bucket}}/{{key}}"
+            run_id, bucket, artifact = _resolved_artifact_for_content(
+                s3,
+                settings,
+                run_id=selector,
+                key=key,
+                requested_bucket=bucket,
+            )
+            key = str(artifact.key)
+            s3_uri = str(artifact.s3_uri)
+            resolution = resolve_run_artifacts(
+                _agent_s3_buckets(s3, settings),
+                base_prefix=settings.get("prefix", ""),
+                run_ref_or_id=selector,
+                s3=s3,
+            )
+            if resolution is None:
+                raise HTTPException(status_code=404, detail="run_id not found")
+            resolved_ref = resolution.run_ref
         else:
             key = _safe_artifact_key(requested_key)
             resolution = resolve_run_artifacts(

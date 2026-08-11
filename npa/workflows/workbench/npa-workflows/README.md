@@ -91,7 +91,7 @@ below (see `npa/src/npa/orchestration/npa_workflow/blueprints.py`). Deploy guide
 | `sonic-eval.yaml` | SONIC eval |
 | `sonic-export-eval.yaml` | Export → eval |
 | `sonic-locomotion-finetuning.yaml` | Retarget → train → mjlab |
-| `groot-1-7-finetune.yaml` | PushT contract + trivial/noise floors → parameterized 1-to-many-GPU GR00T N1.7 training with three checkpoint probes → offline and paired closed-loop validation gates → untouched paired final outcomes → video/MCAP/Rerun → inspected publication |
+| `groot-1-7-finetune.yaml` | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | `cosmos3-reason.yaml` | Cosmos3 reason |
 | `byof.yaml` | BYOF via `run_byof_repo.py` |
 | `byof-maniskill.yaml` | OSS registry: ManiSkill pinned image + PickCube smoke |

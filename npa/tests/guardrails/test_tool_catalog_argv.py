@@ -76,6 +76,7 @@ NON_CLI_ARGV = frozenset(
         "workflow.groot.emit_learning_mcap",
         "workflow.groot.emit_learning_rrd",
         "workflow.groot.publish_learning",
+        "workflow.groot.verify_agent_ui",
     }
 )
 
@@ -119,6 +120,7 @@ AUDITED_ELSEWHERE = frozenset(
         "workflow.groot.emit_learning_mcap",
         "workflow.groot.emit_learning_rrd",
         "workflow.groot.publish_learning",
+        "workflow.groot.verify_agent_ui",
     }
 )
 
