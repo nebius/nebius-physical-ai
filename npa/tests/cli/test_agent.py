@@ -964,11 +964,11 @@ def test_lichtblick_recovers_proxy_stripped_remote_file_size() -> None:
     assert 'headers:{Range:"bytes=0-0"}' in script
     assert 'get("npa.size")' in script
     assert 'response.headers.get("content-length")' in script
-    assert "const knownSize=responseSize>0?responseSize:hintedSize" in script
+    assert "const knownSize=responseSize>0?responseSize:sizeHint" in script
     assert 'probe.headers.get("content-range")' in script
     assert 'headers.set("content-length",recoveredSize)' in script
     assert "new Response(null" in script
-    assert 'Object.defineProperty(window,"fetch"' in script
+    assert 'Object.defineProperty(scope,"fetch"' in script
     assert "set(_value){}" in script
     assert "Access-Control-Allow-Origin" not in script
 

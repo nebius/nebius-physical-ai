@@ -93,7 +93,8 @@ def test_artifact_run_load_is_independent_from_rerun_preview() -> None:
     assert 'id="artifactRoleFilter"' in ui
 
     load_fn = ui.split("async function loadRunData")[1].split("async function selectCamera")[0]
-    assert "await loadArtifactsForSelectedRun(runId)" in load_fn
+    assert "await loadArtifactsForSelectedRun(runRef || runId" in load_fn
+    assert "deferPreferredViewer: true" in load_fn
     assert "No RRD/MCAP recording; use the artifacts below" in load_fn
 
 
