@@ -380,10 +380,20 @@ def normalize_resources(
             continue
         value = resources[key]
         if key == "accelerators":
-            if accel_override:
-                value = accel_override
-            elif str(value).strip() in overrides:
-                value = overrides[str(value).strip()]
+            selected_override = accel_override or overrides.get(str(value).strip(), "")
+            # A cluster-specific product name should not silently collapse a
+            # multi-GPU request. Accept either an exact ``NAME:COUNT`` override
+            # or a name-only override that preserves the profile's count.
+            if (
+                selected_override
+                and ":" not in selected_override
+                and isinstance(value, str)
+                and ":" in value
+            ):
+                _declared_name, declared_count = value.rsplit(":", 1)
+                value = f"{selected_override}:{declared_count}"
+            elif selected_override:
+                value = selected_override
         if key == "memory" and isinstance(value, str):
             stripped = value.strip()
             if stripped.lower().endswith("gi"):
