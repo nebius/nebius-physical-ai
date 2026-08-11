@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,23 @@ def test_token_unknown_config_raises() -> None:
         resolve_tokens("{{config.missing}}", config={}, run={"id": "x"})
 
 
+def test_base64_token_transform_keeps_shell_metacharacters_as_data() -> None:
+    hostile = '"; echo INJECTED; $(touch /tmp/never) #'
+    text = resolve_tokens(
+        'export VALUE_B64="{{config.value|base64}}"',
+        config={"value": hostile},
+        run={"id": "x"},
+    )
+    encoded = base64.b64encode(hostile.encode()).decode()
+    assert text == f'export VALUE_B64="{encoded}"'
+    assert "INJECTED" not in text
+
+
+def test_unknown_token_transform_fails_closed() -> None:
+    with pytest.raises(TokenError, match="unsupported token transform"):
+        resolve_tokens("{{config.value|shell}}", config={"value": "x"}, run={"id": "x"})
+
+
 def test_state_output_token() -> None:
     text = resolve_tokens(
         "{{state.decide.uri}}",
@@ -67,6 +85,16 @@ def test_named_loop_token() -> None:
         loop_iterations={"outer-loop": 2, "inner-loop": 3},
     )
     assert text == "outer-2/iter-3"
+
+
+def test_named_loop_token_supports_safe_transform() -> None:
+    text = resolve_tokens(
+        "{{loop.outer-loop|base64}}",
+        config={},
+        run={"id": "run-1"},
+        loop_iterations={"outer-loop": 2},
+    )
+    assert text == base64.b64encode(b"2").decode()
 
 
 def test_sim2real_plan_expands_loops() -> None:

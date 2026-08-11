@@ -102,9 +102,9 @@ A conclusion in a PR description is not a control. Encode it:
 - `npa/src/npa/deploy/images.py` — add restricted tools to
   `OMNIVERSE_RESTRICTED_TOOLS` so `publicly_publishable_tools()` and `publish_public`
   exclude them, and so resolving them from a public registry fails loudly. That set is
-  currently **empty**, and deliberately kept that way rather than deleted — a mechanism
-  that is removed when unused has to be rebuilt and re-reviewed under time pressure. Its
-  tests monkeypatch a synthetic restricted tool in, so it cannot rot while unused.
+  currently contains the build-your-own `cosmos3-serving` image. The name is retained
+  for compatibility with the original Omniverse guard; membership covers any vendor
+  runtime whose public redistribution conditions are not satisfied.
 - For a solution's weights/datasets, record the license and the runtime-fetch
   requirement in the capability table from the onboarding skill.
 

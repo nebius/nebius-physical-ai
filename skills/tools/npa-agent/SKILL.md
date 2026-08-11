@@ -222,10 +222,121 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
 
 ### Artifact-first discovery + load
 
-- `GET /api/artifacts/runs?prefix=&limit=100` discovers run prefixes from storage.
-- `GET /api/artifacts/run/{run_id}` lists **all** artifacts for that run with `render` hints.
+- `GET /api/artifacts/runs?prefix=&limit=100` discovers artifact-backed run
+  prefixes from every bounded native S3 page in every project bucket with
+  verified effective list access. The Agent access panel's
+  **List artifacts** / **Browse / preview** actions add the selected
+  `project_id` and `resource_bucket`; the backend verifies that pair against
+  effective access before searching and returns the selected provenance. Follow
+  `next_cursor` until it is empty; `pagination_complete=false` means a bounded
+  source scan or access scope was incomplete. Category/state/source-cache roots
+  are not runs.
+- `GET /api/artifacts/run/{run_id}` returns an S3-native artifact page with
+  `render` hints. Follow `next_cursor` with the returned `resolved_prefix` and
+  `bucket` (as `resource_bucket`) until `truncated=false`; the UI exposes this
+  as **Load next artifact page** so large runs do not block the backend.
 - `POST /api/sim-viz/load-artifact` loads an explicit artifact (`s3_uri` or `run_id` + `key`).
 - Unknown types are still listed and selectable (`render="download"` fallback).
+
+Exact lookup returns `409 ambiguous_run_id` when the same ID has multiple
+`(project_id, bucket, resolved_prefix)` sources, `404 run_not_discovered` only
+after complete effective-scope discovery, and an access/incomplete error when a
+source could not be searched. Select the returned source explicitly rather than
+accepting an arbitrary first match.
+
+The search field is exclusively for discovered NPA workflow/artifact runs.
+Directories under `/home/ubuntu/codex-runs/...` identify Codex maintenance jobs
+on an operator machine; they are not NPA run IDs and are never published into
+customer artifact storage merely to make them searchable.
+
+`artifacts/run` returns exactly one native S3 page per request, capped at 1,000
+objects. Its `count`, `artifacts`, and `preferred` fields are page-local. Clients
+that previously treated the first response as the complete run must follow
+`next_cursor` with the same `resolved_prefix` and `resource_bucket`; cursors are
+opaque and stable only for the S3 listing they came from. The UI does this via
+**Load next artifact page**. A run that changes while pages are being followed
+inherits native S3 listing consistency and may require a fresh first-page load.
+
+### Stage evidence contract
+
+`GET /api/workflows/sim2real/runs/{run_id}` and the matching status endpoint
+return `npa.stage-evidence/v1` rows. Pass the discovered `project_id`,
+`resource_bucket`, and `resolved_prefix` when selecting a cross-project run;
+stage-detail requests preserve the same verified scope.
+
+- Explicit workflow manifests, durable status records, reports, and agent event
+  state may establish `Succeeded`, `Failed`, `Running`, `Skipped`, `Pending`, or
+  `Not run`, with authoritative provenance.
+- Artifact presence establishes only `Observed output`; missing output establishes
+  neither an attempt nor an outcome. `Not run` requires an authoritative graph or
+  status record that says so.
+- Artifact-only runs show only observed logical groups and use summaries such as
+  `6 observed groups · execution status unavailable`. Never attach the canonical
+  Sim2Real graph to an unrelated run or report `N/M succeeded` without a grounded
+  denominator and explicit success evidence.
+- Unknown artifact layouts remain visible. The local Franka fixture is labeled as
+  demo evidence and must be cleared before another run is rendered. Browser loads
+  abort and generation-check stale detail requests so a prior graph cannot return.
+- Each row exposes status label, evidence type/source, authority/confidence,
+  diagnostic reason, timestamps, and artifact count. Inline artifact JSON is
+  recursively credential-redacted before it is returned to the UI.
+
+### `GET /api/access`
+
+Returns the non-secret effective access report used by artifact discovery and
+the UI's **Agent access** panel:
+
+```json
+{
+  "apiVersion": "npa.agent.access/v1",
+  "identity": {
+    "tenant_id": "<tenant-id>",
+    "deployment_project_id": "<project-id>",
+    "deployment_project_name": "<project-alias>",
+    "service_account_id": "<service-account-id>",
+    "credential_source": "instance_metadata",
+    "credential_profile": "cursor-sa",
+    "credential_config": "/root/.nebius/config.yaml"
+  },
+  "status": "partial",
+  "scope": "partial_tenant",
+  "projects": []
+}
+```
+
+Effective access is evaluated in layers: list projects visible under the tenant,
+list object-storage resources separately for each project, then verify S3 list
+and read access without writing. A denied/unavailable project remains in the
+report and does not hide accessible projects. If tenant/project listing is not
+permitted, the configured deployment project and bucket may remain usable, but
+a tenant-configured agent reports `partial_tenant`; it never silently calls that
+fallback healthy `single_project` scope. Use
+`GET /api/access?refresh=true` after IAM changes.
+`npa agent verify-live` validates this schema and the matching UI wiring on a
+bootstrapped VM.
+
+The VM service account therefore needs tenant project-list visibility,
+per-project `storage bucket list`, and S3 `ListBucket`/`GetObject` for projects
+that should be searchable. `npa agent deploy` continues to request the existing
+tenant editors-group membership when the operator can manage IAM; when that is
+not possible, bootstrap reuses available credentials and the access report shows
+their actual narrower reach.
+
+Bootstrap creates and verifies the root `cursor-sa` profile against the exact
+attached service-account ID, scrubs ambient/static IAM-token variables for
+inventory commands, and verifies tenant project listing before calling a
+tenant-configured deployment successful. Short-lived bootstrap IAM tokens are
+not staged into the backend systemd environment.
+
+Tenant-wide access is read-only at the agent product boundary. This is enforced
+by the application, not by structurally read-only IAM credentials: the attached
+service account may still hold tenant-level editors-group grants and must be
+handled as privileged. Workflow submission and artifact writes remain scoped by
+the application to the configured home/deployment project; artifact deletion is
+not exposed. An
+arbitrary caller-supplied S3 URI is still limited to configured buckets. The
+only cross-project exception is an exact object key selected from a requested
+discovered run; it is verified against effective bucket access before loading.
 
 ### `GET /api/sim-viz/rrd-blob`
 
