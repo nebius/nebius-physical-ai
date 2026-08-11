@@ -7714,17 +7714,26 @@
         const shouldLoadPreferred = preferred && ["rerun", "mcap", "video", "image", "json", "text", "download"].includes(preferredRender) &&
           !(preferredRender === "rerun" && isMobileLayout()) &&
           preferredLoadKey !== autoLoadedPreferredKey;
+        // Render the authoritative workflow timeline before attempting the
+        // preferred viewer. A slow or temporarily unavailable Rerun mount must
+        // not erase the exact run's stages and physical job identities.
+        await loadRunDetails(runId, detailOptions);
         if (shouldLoadPreferred) {
           autoLoadedPreferredKey = preferredLoadKey;
-          await loadArtifact({
-            run_id: runId,
-            run_ref: runRef,
-            key: String(preferred.key || "").trim(),
-            s3_uri: String(preferred.s3_uri || "").trim(),
-          }, signal ? { signal } : undefined);
+          try {
+            await loadArtifact({
+              run_id: runId,
+              run_ref: runRef,
+              key: String(preferred.key || "").trim(),
+              s3_uri: String(preferred.s3_uri || "").trim(),
+            }, signal ? { signal } : undefined);
+          } catch (viewerErr) {
+            showToast("Run loaded; preferred viewer failed: " + String(
+              (viewerErr && viewerErr.message) || viewerErr
+            ), "error");
+          }
         }
         if (!requestIsCurrent()) return false;
-        await loadRunDetails(runId, detailOptions);
         if (artifactListAbortController === localController) artifactListAbortController = null;
         return true;
       }

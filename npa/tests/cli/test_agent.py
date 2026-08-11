@@ -1606,6 +1606,8 @@ def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts()
     assert "await loadArtifactsForSelectedRun(runRef || runId, null, exactEntry" in source
     assert "if (loaded && activeArtifactInventory.length)" in source
     assert 'refreshArtifactRuns("", { singlePage: true })' in source
+    assert "Render the authoritative workflow timeline before attempting" in source
+    assert 'showToast("Run loaded; preferred viewer failed: "' in source
 
 
 def test_artifact_backed_training_run_loads_without_rerun_recording() -> None:
