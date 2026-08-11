@@ -1,8 +1,9 @@
 # Digest pinned 2026-06-02. Tag: python:3.11-slim-trixie.
 FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
 
-ARG SIM2REAL_CONTROL_VERSION=0.1.0
+ARG SIM2REAL_CONTROL_VERSION=0.1.1
 ARG NPA_SOURCE_SHA
+ARG DEBIAN_SNAPSHOT=20260801T000000Z
 
 LABEL npa.tool="sim2real-control" \
       npa.version="${SIM2REAL_CONTROL_VERSION}" \
@@ -15,6 +16,42 @@ ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && install -d -m 0755 -o ubuntu -g ubuntu /workspace /opt/npa
+
+# SkyPilot's Kubernetes bootstrap replaces the image command, installs/starts sshd,
+# and uses passwordless sudo before a workflow stage can run.  Bake that closure here:
+# relying on a pod-time apt download makes a transient package mirror part of every
+# stage's availability, while omitting sudo makes the container exit before SkyPilot can
+# even inspect it (live compositional attempt 6).  The Debian snapshot keeps the system
+# dependency closure reproducible; the final workflow still pins this image by digest.
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+      /etc/apt/sources.list.d/*.sources \
+    && printf '%s\n' \
+      'Types: deb' \
+      "URIs: https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/" \
+      'Suites: trixie trixie-updates' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/debian.sources \
+    && printf '%s\n' \
+      'Types: deb' \
+      "URIs: https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/" \
+      'Suites: trixie-security' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/debian-security.sources \
+    && printf 'Acquire::Check-Valid-Until "false";\n' \
+      > /etc/apt/apt.conf.d/99snapshot \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      curl netcat-openbsd openssh-client openssh-server procps rsync sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' \
+      > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && install -d -m 0755 /var/run/sshd \
+    && python3 --version \
+    && rsync --version >/dev/null \
+    && sudo -V >/dev/null
 
 WORKDIR /workspace
 

@@ -40,11 +40,18 @@ def _build_text(tool: str) -> str:
             parts.append(script.read_text(encoding="utf-8"))
     return "\n".join(parts)
 
+
 # Images whose stages are submitted through SkyPilot (npa.workflow / workbench
 # workflows) and therefore must be schedulable in a pod. This list grows as the raw
 # SkyPilot task catalog is retired: once a tool's only workflow surface is an
 # npa.workflow spec, its image MUST be able to host a SkyPilot task.
-SKYPILOT_HOSTED_IMAGES = ("cosmos3-reason", "isaac-lab", "lerobot", "sonic")
+SKYPILOT_HOSTED_IMAGES = (
+    "cosmos3-reason",
+    "isaac-lab",
+    "lerobot",
+    "sim2real-control",
+    "sonic",
+)
 
 #: Images built on an Isaac base, where /isaac-sim is mode 750 owned by
 #: isaac-sim:isaac-sim and the runtime user therefore has to join that GROUP (a
@@ -98,7 +105,9 @@ def test_the_prereq_guard_is_not_satisfied_by_the_dockerfile_alone() -> None:
     the guard would silently stop checking anything - which is exactly what happened when
     the layer was factored out.
     """
-    dockerfile_only = (DOCKER_ROOT / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    dockerfile_only = (DOCKER_ROOT / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
     combined = _build_text("isaac-lab")
     assert len(combined) > len(dockerfile_only), "no scripts were followed"
     moved = [
@@ -182,7 +191,11 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
         # directories Isaac boots, fails to save its user config, and then renders nothing
         # while burning CPU — live job 271 stalled for 45 minutes that way, which is far
         # harder to diagnose than a pod that never starts.
-        for kit_dir in ("/isaac-sim/kit/data", "/isaac-sim/kit/logs", "/isaac-sim/kit/cache"):
+        for kit_dir in (
+            "/isaac-sim/kit/data",
+            "/isaac-sim/kit/logs",
+            "/isaac-sim/kit/cache",
+        ):
             assert kit_dir in text, (
                 f"{tool}: {kit_dir} must exist and belong to the runtime user, or Kit stalls"
             )
@@ -193,7 +206,11 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
 
 
 def test_in_cluster_build_script_is_executable_and_generic() -> None:
-    script = Path(__file__).resolve().parents[3] / "scripts" / "build-workbench-image-in-cluster.sh"
+    script = (
+        Path(__file__).resolve().parents[3]
+        / "scripts"
+        / "build-workbench-image-in-cluster.sh"
+    )
     assert script.is_file(), script
     text = script.read_text(encoding="utf-8")
     # No hardcoded registry/bucket/project identifiers.

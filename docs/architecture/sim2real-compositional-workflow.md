@@ -50,9 +50,12 @@ image must equal the payload's immutable digest.
 CPU contract/bookkeeping states use the dedicated digest-pinned
 `npa-sim2real-control` image. Its Python-slim base, exact source, and
 resolver-closed S3 dependency set are intentionally separate from Genesis,
-Isaac, CUDA, and trainer images. Importing a focused stage adapter also leaves
-the archived controller facade unloaded. This keeps a cold CPU pull small and
-prevents control-plane success from depending on GPU-runtime packaging.
+Isaac, CUDA, and trainer images. The image also bakes the standard non-root
+SkyPilot Kubernetes bootstrap closure from a fixed Debian snapshot; no task
+depends on installing sshd or rsync from a mutable mirror after scheduling.
+Importing a focused stage adapter also leaves the archived controller facade
+unloaded. This keeps a cold CPU pull small and prevents control-plane success
+from depending on GPU-runtime packaging.
 
 `config.require_baked_npa` makes the renderer reject mutable or missing images
 and replaces source-tarball/package bootstrap with a baked-source attestation.
