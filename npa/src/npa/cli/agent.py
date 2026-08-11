@@ -1377,6 +1377,7 @@ if [ -s /mnt/cloud-metadata/token ]; then
   # token. Scrub any operator/bootstrap token inherited by SSH before verifying.
   expected_sa={expected_agent_service_account_id}
   expected_tenant={expected_agent_tenant_id}
+  expected_project={nebius_parent_id}
   inventory_env=(env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN -u TF_VAR_iam_token -u NPA_REUSE_IAM_TOKEN HOME=/root NEBIUS_PROFILE={nebius_profile})
   whoami_json="$(sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam whoami --format json)"
   if [ -n "$expected_sa" ] && ! python3 -c 'import json, sys; expected = sys.argv[1]; matches = lambda value: any(map(matches, value.values())) if isinstance(value, dict) else any(map(matches, value)) if isinstance(value, list) else isinstance(value, str) and value == expected; raise SystemExit(0 if matches(json.load(sys.stdin)) else 1)' "$expected_sa" <<<"$whoami_json"; then
@@ -1384,7 +1385,12 @@ if [ -s /mnt/cloud-metadata/token ]; then
     exit 1
   fi
   if [ -n "$expected_tenant" ]; then
-    sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam project list --parent-id "$expected_tenant" --all --format json >/dev/null
+    # Tenant inventory is optional for a deliberately project-scoped agent.
+    # If tenant-wide listing is denied, prove access to the exact deployment
+    # project instead of forcing a broad tenant editors grant.
+    if ! sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam project list --parent-id "$expected_tenant" --all --format json >/dev/null 2>&1; then
+      sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam project get --id "$expected_project" --format json >/dev/null
+    fi
   fi
 fi
 sudo mkdir -p /opt/npa-agent

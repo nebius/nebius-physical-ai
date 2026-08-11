@@ -2808,7 +2808,7 @@ def test_agent_nebius_env_uses_metadata_profile_without_static_iam_token() -> No
     assert "synthetic-stale-token" not in env_text
 
 
-def test_bootstrap_verifies_attached_identity_and_tenant_inventory() -> None:
+def test_bootstrap_verifies_attached_identity_with_project_scoped_fallback() -> None:
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
@@ -2817,6 +2817,8 @@ def test_bootstrap_verifies_attached_identity_and_tenant_inventory() -> None:
     assert "isinstance(value, str) and value == expected" in source
     assert '[[ "$whoami_json" != *"$expected_sa"* ]]' not in source
     assert "iam project list --parent-id \"$expected_tenant\" --all" in source
+    assert "iam project get --id \"$expected_project\"" in source
+    assert "forcing a broad tenant editors grant" in source
     assert "env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN" in source
 
 
