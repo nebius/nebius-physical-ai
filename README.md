@@ -310,6 +310,8 @@ Architecture context:
 Every Workbench tool ships as a container image in a Nebius container registry —
 a primary in `eu-north1` and a mirror in `us-central1`. Resolve the registry
 through `npa configure` or `npa.deploy.images`; never hardcode a registry id.
+The publicly redistributable subset is also mirrored to GHCR for anonymous
+external pulls.
 
 ```bash
 # Log Docker into the registry (tokens expire; a 401 on pull means refresh)
@@ -317,10 +319,15 @@ REGISTRY_HOST=cr.eu-north1.nebius.cloud npa/scripts/nebius_registry_docker_login
 
 # Build and push an image with the canonical tag for its tool
 npa/docker/workbench/lerobot/build.sh --registry "$NPA_REGISTRY" --push
+
+# Pull a published image without Nebius registry credentials
+export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
+docker pull "${NPA_REGISTRY}/npa-retargeting:0.1.1"
 ```
 
 | Reference | What it tells you |
 | --- | --- |
+| [Public Workbench image catalog](docs/workbench/container-image-catalog.md) | Exact GHCR image names, published tags, pull command, build dates, and intentional exclusions |
 | [Image ↔ GPU compatibility matrix](docs/workbench/image-gpu-compatibility-matrix.md) | Every image against every Nebius GPU platform, and which cells are verified on real hardware |
 | [Container packaging contract](docs/workbench/container-packaging.md) | Tiers, non-root users, ports, and redistribution classes each image must satisfy |
 | [Container golden evals](docs/security/container-golden-evals.md) | The real capability test each image must pass — not an import probe |
@@ -329,10 +336,12 @@ npa/docker/workbench/lerobot/build.sh --registry "$NPA_REGISTRY" --push
 | [Image reproducibility](docs/security/image-reproducibility.md) | The two-tag strategy (`cuda12`, `cuda13-b300`) and how tags are pinned |
 
 Every image declares a `redistribution` class in the packaging contract, which
-decides whether it may leave the owning org. All workbench images are currently
-`public`; the `restricted` class is kept for the next runtime we cannot ship.
-Set the class when you add an image — the packaging-contract test fails a build
-that bakes a non-redistributable runtime while claiming `public`.
+decides whether it may leave the owning org. Public images may be mirrored to
+GHCR; restricted images remain build-your-own in an operator-owned registry.
+`cosmos3-serving` is currently restricted because its pinned base embeds a
+runtime under NVIDIA's Deep Learning Container License. Set the class when you
+add an image — the packaging-contract test fails a build that bakes a
+non-redistributable runtime while claiming `public`.
 
 ---
 
