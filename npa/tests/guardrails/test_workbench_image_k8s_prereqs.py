@@ -228,7 +228,6 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
     assert "ARG UBUNTU_SNAPSHOT=20260801T053000Z" in dockerfile
     assert "install_workflow_runtime_prereqs.sh" in dockerfile
     assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
-    assert "sudo -n true" in dockerfile
 
     installer = (
         DOCKER_ROOT / "common" / "install_workflow_runtime_prereqs.sh"
@@ -237,6 +236,7 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
     assert "ubuntu:22.04" in installer
     assert "sudo" in installer and "rsync" in installer
     assert "NOPASSWD" in installer
+    assert "sudo -n true" in installer
 
 
 def test_in_cluster_build_script_is_executable_and_generic() -> None:

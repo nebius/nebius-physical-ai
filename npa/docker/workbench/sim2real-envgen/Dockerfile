@@ -30,9 +30,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
       -r /opt/npa/sim2real-genesis-requirements.txt \
     && python -m pip check \
     && python -m pip install --no-deps -e /opt/npa \
-    && python -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py \
-    && su ubuntu -s /bin/bash -c \
-      'test "$(id -u)" -ne 0 && sudo -n true && rsync --version >/dev/null'
+    && python -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py
 
 ENV PATH=/opt/npa/venv/bin:$PATH \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \

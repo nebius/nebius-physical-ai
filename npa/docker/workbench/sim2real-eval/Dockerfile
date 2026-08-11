@@ -45,9 +45,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && python -m pip install --no-deps -e /opt/npa \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
     && python -c "from npa.genesis.env_pick_place import EnvConfig, FrankaPickPlaceEnv; assert EnvConfig(action_space='cartesian').action_space == 'cartesian'; assert FrankaPickPlaceEnv.__name__ == 'FrankaPickPlaceEnv'" \
-    && chown -R ubuntu:ubuntu /workspace /opt/npa/src /opt/npa/pyproject.toml \
-    && su ubuntu -s /bin/bash -c \
-      'test "$(id -u)" -ne 0 && sudo -n true && rsync --version >/dev/null'
+    && chown -R ubuntu:ubuntu /workspace /opt/npa/src /opt/npa/pyproject.toml
 
 USER ubuntu
 
