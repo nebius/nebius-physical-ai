@@ -430,6 +430,8 @@ def submit_cmd(
                 controller_backend=controller_backend.value,
                 infra=infra,
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin or None,
                 submit_timeout=submit_timeout,
                 poll_seconds=poll_seconds,
                 max_wait_seconds=max_wait_seconds,
@@ -687,6 +689,8 @@ def _run_npa_workflow_runtime(
     controller_backend: str,
     infra: str,
     isolated_config_dir: Path | None,
+    config_path: Path | None,
+    sky_bin: str | None,
     submit_timeout: int,
     poll_seconds: int,
     max_wait_seconds: int,
@@ -723,6 +727,8 @@ def _run_npa_workflow_runtime(
         infra=infra,
         controller_backend=controller_backend,
         isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+        sky_bin=sky_bin,
         resume=resume,
     )
     try:

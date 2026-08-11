@@ -54,7 +54,9 @@ def fake_runtime(mocker):
                     "status": "succeeded",
                 },
             ],
-            decisions=[{"decision": "promote_checkpoint", "uri": "s3://b/gate/decision.json"}],
+            decisions=[
+                {"decision": "promote_checkpoint", "uri": "s3://b/gate/decision.json"}
+            ],
             run_prefix_uri="s3://b/prefix",
             runtime_state_uri="s3://b/prefix/npa-workflow/runtime.json",
         )
@@ -66,7 +68,13 @@ def fake_runtime(mocker):
     return captured
 
 
-def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
+def test_submit_runtime_passes_options_and_emits_json(
+    fake_runtime, tmp_path: Path
+) -> None:
+    sky_config = tmp_path / "sky.yaml"
+    sky_config.write_text("kubernetes: {}\n", encoding="utf-8")
+    sky_bin = tmp_path / "sky"
+    sky_bin.write_text("#!/bin/sh\n", encoding="utf-8")
     result = RUNNER.invoke(
         app,
         [
@@ -77,6 +85,10 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
             "--run-id",
             "rt-cli-1",
             "--runtime",
+            "--config-path",
+            str(sky_config),
+            "--sky-bin",
+            str(sky_bin),
             "--registry",
             "cr.example.invalid/reg",
             "--poll-seconds",
@@ -103,6 +115,8 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
     assert options.max_concurrency == 2
     assert options.cancel_on_timeout is False
     assert options.resume is False
+    assert options.config_path == sky_config
+    assert options.sky_bin == str(sky_bin)
     # --var reaches the spec's config, not just the renderer.
     assert fake_runtime["spec"].config["max_images"] == "1"
     assert fake_runtime["render_options"].registry == "cr.example.invalid/reg"
@@ -136,7 +150,15 @@ def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
 def test_submit_runtime_text_output_lists_waves_and_decisions(fake_runtime) -> None:
     result = RUNNER.invoke(
         app,
-        ["workbench", "workflow", "submit", str(FANOUT), "--run-id", "rt-cli-2", "--runtime"],
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-cli-2",
+            "--runtime",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert "status: succeeded" in result.output
@@ -243,7 +265,15 @@ def test_plan_only_wins_over_runtime(mocker, monkeypatch) -> None:
 def test_plan_spec_waves_text_and_json() -> None:
     text_result = RUNNER.invoke(
         app,
-        ["workbench", "workflow", "plan-spec", str(FANOUT), "--run-id", "w1", "--waves"],
+        [
+            "workbench",
+            "workflow",
+            "plan-spec",
+            str(FANOUT),
+            "--run-id",
+            "w1",
+            "--waves",
+        ],
     )
     assert text_result.exit_code == 0, text_result.output
     assert "waves: 2" in text_result.output

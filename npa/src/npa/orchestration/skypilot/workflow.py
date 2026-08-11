@@ -99,7 +99,7 @@ def _controller_region_from_infra(
     value = (infra or "").strip()
     for prefix in ("k8s/", "kubernetes/"):
         if value.startswith(prefix):
-            context = value[len(prefix):].strip()
+            context = value[len(prefix) :].strip()
             return context or None
     return None
 
@@ -147,7 +147,9 @@ def submit_workflow(
             controller_region=_controller_region_from_infra(infra, controller_backend),
         )
         generated_config_path = submission_dir / "skypilot-config.yaml"
-        generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
+        generated_config_path.write_text(
+            yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
+        )
         env = sky_environment(runtime_config.isolated_config_dir)
         for key, value in (extra_env or {}).items():
             if value:
@@ -202,7 +204,10 @@ def submit_workflow(
         return WorkflowResult(
             status="SUBMITTED",
             job_id=job_id,
-            log_paths={"submission_dir": str(submission_dir), "config": str(generated_config_path)},
+            log_paths={
+                "submission_dir": str(submission_dir),
+                "config": str(generated_config_path),
+            },
             returncode=result.returncode,
             stdout=result.stdout,
             stderr=result.stderr,
@@ -210,7 +215,9 @@ def submit_workflow(
         )
     except subprocess.TimeoutExpired as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
-        raise SkyPilotSubmitError(f"sky jobs launch timed out after {timeout}s") from exc
+        raise SkyPilotSubmitError(
+            f"sky jobs launch timed out after {timeout}s"
+        ) from exc
     except SkyPilotSubmitError:
         _cleanup_owned_submission_dir(owned_submission_dir)
         raise
@@ -223,7 +230,9 @@ def submit_workflow(
         SkyPilotVersionError,
     ) as exc:
         _cleanup_owned_submission_dir(owned_submission_dir)
-        raise SkyPilotSubmitError(f"SkyPilot workflow submission failed: {exc}") from exc
+        raise SkyPilotSubmitError(
+            f"SkyPilot workflow submission failed: {exc}"
+        ) from exc
 
 
 def workflow_status(
@@ -243,7 +252,14 @@ def workflow_status(
         global_config_path=config_path,
         isolated_config_dir=isolated_config_dir,
     )
-    cmd = [str(ensure_skypilot_version(runtime_config.sky_bin)), "jobs", "queue", "--all", "--output", "json"]
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "queue",
+        "--all",
+        "--output",
+        "json",
+    ]
     if runtime_config.global_config_path is not None:
         cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
     result = subprocess.run(
@@ -305,6 +321,8 @@ def workflow_task_statuses(
         "--output",
         "json",
     ]
+    if runtime_config.global_config_path is not None:
+        cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
     result = subprocess.run(
         cmd,
         env=sky_environment(runtime_config.isolated_config_dir),
@@ -341,15 +359,18 @@ def find_job_ids_by_name(
         global_config_path=config_path,
         isolated_config_dir=isolated_config_dir,
     )
+    cmd = [
+        str(ensure_skypilot_version(runtime_config.sky_bin)),
+        "jobs",
+        "queue",
+        "--all",
+        "--output",
+        "json",
+    ]
+    if runtime_config.global_config_path is not None:
+        cmd[3:3] = ["--config", str(runtime_config.global_config_path)]
     result = subprocess.run(
-        [
-            str(ensure_skypilot_version(runtime_config.sky_bin)),
-            "jobs",
-            "queue",
-            "--all",
-            "--output",
-            "json",
-        ],
+        cmd,
         env=sky_environment(runtime_config.isolated_config_dir),
         cwd=_stable_sky_cwd(runtime_config.isolated_config_dir),
         text=True,
@@ -441,7 +462,9 @@ def _wait_for_healthy_jobs_controller(
             check=False,
         )
         if result.returncode != 0:
-            raise SkyPilotSubmitError(f"SkyPilot controller health check failed: {_command_detail(result)}")
+            raise SkyPilotSubmitError(
+                f"SkyPilot controller health check failed: {_command_detail(result)}"
+            )
         controllers = _jobs_controller_statuses(result.stdout)
         if require_existing and not controllers:
             last_summary = "no jobs-controller found"
@@ -453,16 +476,23 @@ def _wait_for_healthy_jobs_controller(
             ]
             if not unhealthy:
                 return
-            last_summary = ", ".join(f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy)
+            last_summary = ", ".join(
+                f"{name}={status or 'UNKNOWN'}" for name, status in unhealthy
+            )
         if time.monotonic() >= deadline:
-            raise SkyPilotSubmitError(f"SkyPilot jobs controller not healthy before launch: {last_summary}")
+            raise SkyPilotSubmitError(
+                f"SkyPilot jobs controller not healthy before launch: {last_summary}"
+            )
         time.sleep(max(interval, 0.1))
 
 
 def _jobs_controller_statuses(output: str) -> list[tuple[str, str]]:
     payload = _json_payload_from_output(output)
     if payload is None:
-        raise SkyPilotSubmitError("SkyPilot controller health check returned non-json output")
+        raise SkyPilotSubmitError(
+            "SkyPilot controller health check returned non-json output"
+        )
+    clusters: Any
     if isinstance(payload, list):
         clusters = payload
     elif isinstance(payload, dict):
@@ -600,9 +630,15 @@ def _cleanup_owned_submission_dir(path: Path | None) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _format_submit_error(cmd: list[str], result: subprocess.CompletedProcess[str]) -> str:
+def _format_submit_error(
+    cmd: list[str], result: subprocess.CompletedProcess[str]
+) -> str:
     detail = _command_detail(result)
-    prefix = "SkyPilot auth failure during jobs launch" if _looks_like_auth_error(detail) else "sky jobs launch failed"
+    prefix = (
+        "SkyPilot auth failure during jobs launch"
+        if _looks_like_auth_error(detail)
+        else "sky jobs launch failed"
+    )
     return f"{prefix}: {' '.join(cmd)}: {detail}"
 
 
@@ -612,7 +648,18 @@ def _command_detail(result: subprocess.CompletedProcess[str]) -> str:
 
 def _looks_like_auth_error(detail: str) -> bool:
     normalized = detail.lower()
-    return any(token in normalized for token in ("auth", "credential", "unauthorized", "forbidden", "permission denied", "401", "403"))
+    return any(
+        token in normalized
+        for token in (
+            "auth",
+            "credential",
+            "unauthorized",
+            "forbidden",
+            "permission denied",
+            "401",
+            "403",
+        )
+    )
 
 
 def _status_from_queue_payload(output: str, job_id: str) -> str:

@@ -260,9 +260,16 @@ def build_manifest(
                 "name": stage,
                 "sky_job_id": str(job_id or ""),
                 "sky_task_id": "",
-                "log_uri": _join_s3_uri(state.bucket, state.prefix, "logs", stage, "run.log"),
-                "status_uri": _join_s3_uri(state.bucket, state.prefix, "logs", stage, "status.json"),
-                "artifact_uri": _join_s3_uri(state.bucket, state.prefix, "artifacts", stage) + "/",
+                "log_uri": _join_s3_uri(
+                    state.bucket, state.prefix, "logs", stage, "run.log"
+                ),
+                "status_uri": _join_s3_uri(
+                    state.bucket, state.prefix, "logs", stage, "status.json"
+                ),
+                "artifact_uri": _join_s3_uri(
+                    state.bucket, state.prefix, "artifacts", stage
+                )
+                + "/",
             }
             for stage in stages
         },
@@ -308,7 +315,9 @@ def read_stage_log(state: WorkflowS3Config, stage: str) -> str:
 
 
 def list_artifacts(state: WorkflowS3Config, stage: str | None = None) -> list[str]:
-    prefix = "/".join(part for part in (state.prefix, "artifacts", stage or "") if part).strip("/")
+    prefix = "/".join(
+        part for part in (state.prefix, "artifacts", stage or "") if part
+    ).strip("/")
     if prefix and not prefix.endswith("/"):
         prefix += "/"
     objects: list[str] = []
@@ -359,7 +368,9 @@ def list_runs(
                 }
             )
             if len(runs) >= limit:
-                return sorted(runs, key=lambda item: str(item.get("updated_at", "")), reverse=True)
+                return sorted(
+                    runs, key=lambda item: str(item.get("updated_at", "")), reverse=True
+                )
     return sorted(runs, key=lambda item: str(item.get("updated_at", "")), reverse=True)
 
 
@@ -378,7 +389,9 @@ def get_json(state: WorkflowS3Config, *parts: str) -> dict[str, Any]:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise WorkflowStateError(f"Invalid JSON at {_join_s3_uri(state.bucket, _key(state.prefix, *parts))}") from exc
+        raise WorkflowStateError(
+            f"Invalid JSON at {_join_s3_uri(state.bucket, _key(state.prefix, *parts))}"
+        ) from exc
     if not isinstance(payload, dict):
         raise WorkflowStateError("Workflow state JSON must be an object")
     return payload
@@ -389,7 +402,9 @@ def get_text(state: WorkflowS3Config, *parts: str) -> str:
     try:
         response = state.client().get_object(Bucket=state.bucket, Key=key)
     except Exception as exc:  # boto3 exposes provider-specific ClientError payloads.
-        raise WorkflowStateError(f"S3 object not found or unreadable: {_join_s3_uri(state.bucket, key)}") from exc
+        raise WorkflowStateError(
+            f"S3 object not found or unreadable: {_join_s3_uri(state.bucket, key)}"
+        ) from exc
     return response["Body"].read().decode("utf-8", errors="replace")
 
 
@@ -421,11 +436,26 @@ def cancel_workflow_job(
     job_id: str,
     run_id: str,
     cluster: str = "",
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
     timeout: int = 900,
     poll_seconds: float = 10.0,
 ) -> dict[str, Any]:
+    from npa.orchestration.skypilot._bin import resolve_config
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    runtime = resolve_config(
+        sky_bin=sky_bin,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
+    executable = str(runtime.sky_bin)
+    env = sky_environment(runtime.isolated_config_dir)
+    if runtime.global_config_path is not None:
+        env["SKYPILOT_GLOBAL_CONFIG"] = str(runtime.global_config_path)
     cancel = subprocess.run(
-        [sky_bin, "jobs", "cancel", "--yes", str(job_id)],
+        [executable, "jobs", "cancel", "--yes", str(job_id)],
+        env=env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -434,7 +464,8 @@ def cancel_workflow_job(
     )
     cluster_name = cluster or run_id
     down = subprocess.run(
-        [sky_bin, "down", "--yes", cluster_name],
+        [executable, "down", "--yes", cluster_name],
+        env=env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -445,7 +476,8 @@ def cancel_workflow_job(
     last_status = ""
     while time.monotonic() < deadline:
         status = subprocess.run(
-            [sky_bin, "status", "--refresh"],
+            [executable, "status", "--refresh"],
+            env=env,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -569,7 +601,7 @@ def _instrument_stage_doc(
 
 
 def _instrumented_run_script(original_run: str) -> str:
-    prelude = r'''set -euo pipefail
+    prelude = r"""set -euo pipefail
 npa_workflow_python="$(command -v python3 || command -v python || true)"
 npa_workflow_mount_root="${NPA_WORKFLOW_MOUNT_ROOT:-/mnt/npa-workflow-state}"
 npa_workflow_prefix="${NPA_WORKFLOW_S3_PREFIX:?NPA_WORKFLOW_S3_PREFIX is required}"
@@ -688,21 +720,25 @@ npa_workflow_write_manifest
 npa_workflow_write_status "RUNNING" "SEAM" "" ""
 exec > >(npa_workflow_redact_stream | tee -a "${npa_workflow_log_dir}/run.log") 2>&1
 trap npa_workflow_finalize EXIT
-'''
+"""
     if original_run.strip():
         return prelude + "\n" + original_run.rstrip() + "\n"
     return prelude + "\n"
 
 
 def _join_s3_uri(bucket: str, *parts: str) -> str:
-    key = "/".join(part.strip("/") for part in parts if part is not None and part.strip("/") != "")
+    key = "/".join(
+        part.strip("/") for part in parts if part is not None and part.strip("/") != ""
+    )
     if parts and str(parts[-1]).endswith("/"):
         key = key.rstrip("/") + "/"
     return f"s3://{bucket}/{key}" if key else f"s3://{bucket}/"
 
 
 def _key(prefix: str, *parts: str) -> str:
-    return "/".join(part.strip("/") for part in (prefix, *parts) if part and part.strip("/"))
+    return "/".join(
+        part.strip("/") for part in (prefix, *parts) if part and part.strip("/")
+    )
 
 
 def _is_nebius_endpoint(endpoint_url: str) -> bool:

@@ -315,6 +315,70 @@ def _fake_clock():
     return clock
 
 
+def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
+    tmp_path: Path, mocker
+) -> None:
+    """Every live control call must use the same run-local Sky state/config."""
+
+    spec = load_spec(_write_spec(tmp_path, TRIGGER_SPEC))
+    isolated = tmp_path / "isolated-sky"
+    config_path = tmp_path / "sky.yaml"
+    sky_bin = tmp_path / "sky"
+    options = RuntimeOptions(
+        isolated_config_dir=isolated,
+        config_path=config_path,
+        sky_bin=str(sky_bin),
+        infra="k8s/test-context",
+    )
+    executor = SkyPilotWaveExecutor(
+        spec,
+        run_id="rt-isolated",
+        options=options,
+        output_checker=lambda _uri: True,
+    )
+    submit = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=FakeResult(),
+    )
+    status = mocker.patch(
+        "npa.orchestration.skypilot.workflow.workflow_status",
+        return_value=FakeResult(status="SUCCEEDED"),
+    )
+    timeline = mocker.patch(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses",
+        return_value=[],
+    )
+    lookup = mocker.patch(
+        "npa.orchestration.skypilot.workflow.find_job_ids_by_name",
+        return_value=["1"],
+    )
+
+    rendered = tmp_path / "rendered.yaml"
+    rendered.write_text("name: isolated\n", encoding="utf-8")
+    executor._submit(rendered, "isolated-job")
+    executor._status("1")
+    executor._timeline("1")
+    assert executor._job_ids_by_name("isolated-job") == ["1"]
+
+    expected = {
+        "isolated_config_dir": isolated,
+        "config_path": config_path,
+        "sky_bin": str(sky_bin),
+    }
+    submit.assert_called_once_with(
+        rendered,
+        "isolated-job",
+        **expected,
+        controller_backend="kubernetes",
+        infra="k8s/test-context",
+        secret_envs=[],
+        timeout=1800,
+    )
+    status.assert_called_once_with("1", **expected)
+    timeline.assert_called_once_with("1", **expected)
+    lookup.assert_called_once_with("isolated-job", **expected)
+
+
 def test_successful_job_without_declared_output_fails_closed(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     executor = _executor(spec, output_checker=lambda _uri: False)

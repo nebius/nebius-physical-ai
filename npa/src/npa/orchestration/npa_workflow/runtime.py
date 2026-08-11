@@ -145,6 +145,8 @@ class RuntimeOptions:
     infra: str = ""
     controller_backend: str = "kubernetes"
     isolated_config_dir: Path | None = None
+    config_path: Path | None = None
+    sky_bin: str | None = None
     resume: bool = False
 
 
@@ -740,7 +742,12 @@ class SkyPilotWaveExecutor:
             )
 
             def lookup(name: str) -> list[str]:
-                return find_job_ids_by_name(name)
+                return find_job_ids_by_name(
+                    name,
+                    isolated_config_dir=self.options.isolated_config_dir,
+                    config_path=self.options.config_path,
+                    sky_bin=self.options.sky_bin,
+                )
         else:
             lookup = self._name_lookup_fn
 
@@ -803,6 +810,8 @@ class SkyPilotWaveExecutor:
             path,
             job_name,
             isolated_config_dir=self.options.isolated_config_dir,
+            config_path=self.options.config_path,
+            sky_bin=self.options.sky_bin,
             controller_backend=cast(
                 Literal["kubernetes", "nebius"], self.options.controller_backend
             ),
@@ -819,7 +828,14 @@ class SkyPilotWaveExecutor:
         else:
             status_fn = self._status_fn
 
-        return status_fn(job_id)
+        if self._status_fn is not None:
+            return status_fn(job_id)
+        return status_fn(
+            job_id,
+            isolated_config_dir=self.options.isolated_config_dir,
+            config_path=self.options.config_path,
+            sky_bin=self.options.sky_bin,
+        )
 
     def _timeline(self, job_id: str) -> list[dict[str, Any]]:
         if self._timeline_fn is None:
@@ -832,7 +848,16 @@ class SkyPilotWaveExecutor:
             timeline_fn = self._timeline_fn
 
         try:
-            return list(timeline_fn(job_id))
+            if self._timeline_fn is not None:
+                return list(timeline_fn(job_id))
+            return list(
+                timeline_fn(
+                    job_id,
+                    isolated_config_dir=self.options.isolated_config_dir,
+                    config_path=self.options.config_path,
+                    sky_bin=self.options.sky_bin,
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - evidence collection is best-effort
             self._log(f"timeline unavailable for job {job_id}: {exc}")
             return []
@@ -849,8 +874,17 @@ class SkyPilotWaveExecutor:
                 return
 
             def canceller(**kwargs: Any) -> Any:  # type: ignore[misc]
-                runtime = resolve_config()
-                return cancel_workflow_job(sky_bin=str(runtime.sky_bin), **kwargs)
+                runtime = resolve_config(
+                    sky_bin=self.options.sky_bin,
+                    global_config_path=self.options.config_path,
+                    isolated_config_dir=self.options.isolated_config_dir,
+                )
+                return cancel_workflow_job(
+                    sky_bin=str(runtime.sky_bin),
+                    isolated_config_dir=runtime.isolated_config_dir,
+                    config_path=runtime.global_config_path,
+                    **kwargs,
+                )
 
         try:
             canceller(job_id=str(job_id), run_id=job_name, cluster=job_name)
