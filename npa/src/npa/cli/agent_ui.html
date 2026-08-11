@@ -7398,7 +7398,7 @@
         // click handlers (bindClick calls fn(event)).
         const requestedRun = (typeof explicitRunId === "string" && explicitRunId.trim())
           ? explicitRunId.trim()
-          : selectedArtifactRunIdFromUi();
+          : selectedRunIdFromUi();
         if (!requestedRun) throw new Error("Select a run or enter a run_id first");
         const selection = resolveRunSelection(requestedRun);
         const entry = (explicitEntry && typeof explicitEntry === "object")
@@ -9209,7 +9209,7 @@
         const requested = explicitSelection && typeof explicitSelection === "object" &&
           Object.prototype.hasOwnProperty.call(explicitSelection, "run_id")
           ? explicitSelection
-          : resolveRunSelection(selectedArtifactRunIdFromUi());
+          : resolveRunSelection(selectedRunIdFromUi());
         const runId = String(requested.run_id || "").trim();
         const runRef = String(requested.run_ref || "").trim();
         if (!runId) {

@@ -1677,8 +1677,9 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
 
 def test_groot_learning_recording_activates_real_rrd_and_truthful_note() -> None:
     from npa.cli import agent as agent_module
+    from npa.cli import agent_viewer_runtime
 
-    source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    source = Path(agent_viewer_runtime.__file__).read_text(encoding="utf-8")
     branch = source.split('if render == "rerun":', 1)[1].split('elif render == "mcap":', 1)[0]
     assert "is_groot_learning_recording(key)" in branch
     assert 'sim_viz["preview_entity"] = "camera/front"' in branch
