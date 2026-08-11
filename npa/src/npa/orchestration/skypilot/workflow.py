@@ -283,8 +283,22 @@ def workflow_status(
         )
 
     status = _status_from_queue_payload(result.stdout, job_id)
+    if not status:
+        # A successful queue response is authoritative: if the recorded id is
+        # absent, the managed-jobs controller has lost (or garbage-collected) its
+        # execution record.  Treating this as UNKNOWN makes an unbounded runtime
+        # poll forever and prevents the durable NPA ledger from resubmitting the
+        # incomplete wave after a controller restart.
+        return WorkflowResult(
+            status="FAILED_CONTROLLER",
+            job_id=job_id,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=f"managed job {job_id} is absent from the successful queue response",
+        )
     return WorkflowResult(
-        status=status or "UNKNOWN",
+        status=status,
         job_id=job_id,
         returncode=result.returncode,
         stdout=result.stdout,

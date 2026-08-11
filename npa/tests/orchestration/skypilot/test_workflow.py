@@ -551,6 +551,25 @@ def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
     assert result.job_id == "42"
 
 
+def test_workflow_status_marks_missing_job_as_controller_failure(
+    monkeypatch, tmp_path
+) -> None:
+    """A lost controller database must not leave an unbounded poll at UNKNOWN."""
+
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "FAILED_CONTROLLER"
+    assert result.job_id == "42"
+    assert "absent" in result.error
+
+
 @pytest.mark.parametrize(
     "operation",
     [
