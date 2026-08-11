@@ -263,6 +263,55 @@ def test_run_summary_prioritizes_closed_loop_task_performance() -> None:
     assert performance["improvement_gate_passed"] is True
 
 
+def test_run_summary_recognizes_operational_two_gpu_report() -> None:
+    report = {
+        "schema": "npa.groot.learning.v1",
+        "status": "completed",
+        "pipeline_status": "succeeded",
+        "learning_outcome": "not_improved",
+        "candidate_promoted": False,
+        "evaluation_kind": "offline_heldout_policy_evaluation",
+        "closed_loop": False,
+        "dataset": {
+            "embodiment": "NEW_EMBODIMENT",
+            "camera_names": ["front"],
+            "source_resolution": "640x480",
+            "train_episodes": 2,
+            "heldout_episodes": 1,
+            "heldout_samples": 201,
+            "split_hash": "split-sha256",
+            "leakage_free": True,
+        },
+        "training": {
+            "gpu_count": 2,
+            "optimizer_steps": 4,
+            "training_examples": 8,
+            "epoch_equivalent": 0.0199,
+            "checkpoint_uri": "s3://bucket/run/checkpoints/candidate/checkpoint-4/",
+        },
+        "evaluation": {
+            "metric_name": "action_mse",
+            "baseline_value": 0.1,
+            "posttrain_value": 0.2,
+        },
+    }
+    summary = build_run_summary(
+        RUN_ID,
+        [_artifact("reports/two-gpu-pipeline-report.json")],
+        {"reports/two-gpu-pipeline-report.json": report},
+    )
+
+    assert summary["completion_status"] == "completed"
+    assert summary["accelerator_count"] == 2
+    assert summary["training_steps"] == 4
+    assert summary["learning"]["pipeline_status"] == "succeeded"
+    assert summary["learning"]["learning_outcome"] == "not_improved"
+    assert summary["learning"]["candidate_promoted"] is False
+    assert "reports/two-gpu-pipeline-report.json" in ARTIFACT_CONTENT_MODULE.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_ui_makes_task_performance_primary() -> None:
     source = AGENT_UI.read_text(encoding="utf-8")
     assert "Robot task performance" in source

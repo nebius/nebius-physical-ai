@@ -9085,6 +9085,9 @@
             const authority = String(stage.authority || evidence.authority || "unknown");
             const confidence = String(stage.confidence || evidence.confidence || "unknown");
             const artifactCount = Number(stage.artifact_count || 0);
+            const managedJobId = String(stage.job_id || "").trim();
+            const managedJobName = String(stage.job_name || "").trim();
+            const skyStatus = String(stage.sky_status || "").trim();
             const reason = String(stage.diagnostic_reason || evidence.reason || "");
             const evidenceBits = [];
             if (evidenceSource) evidenceBits.push("source " + evidenceSource);
@@ -9093,6 +9096,12 @@
             if (artifactCount) evidenceBits.push(String(artifactCount) + " artifact" + (artifactCount === 1 ? "" : "s"));
             const evidenceHtml = '<div class="stage-evidence" title="' + escapeHtml(reason) + '">Evidence: ' +
               escapeHtml(evidenceBits.join(" · ")) + (reason ? " · " + escapeHtml(reason) : "") + "</div>";
+            const physicalJobHtml = managedJobId
+              ? '<div class="stage-physical-job">Physical managed job ID: <code>' + escapeHtml(managedJobId) +
+                '</code>' + (skyStatus ? ' · ' + escapeHtml(skyStatus) : '') +
+                (managedJobName ? ' · <span title="' + escapeHtml(managedJobName) + '">' + escapeHtml(managedJobName) + '</span>' : '') +
+                '</div>'
+              : '';
             const active = idx === activeIdx ? " is-active" : "";
             const stageKey = String(stage.stage_key || "");
             const clickable = stageKey
@@ -9105,7 +9114,7 @@
               '<span class="stage-status ' + escapeHtml(statusClass) + '">' + escapeHtml(statusLabel) + '</span>' +
               '<div><div class="stage-label">' + escapeHtml(label) + '</div>' +
               '<div class="stage-summary">' + escapeHtml(stageSummary || String(stage.id || "")) + '</div>' +
-              evidenceHtml + '</div>' +
+              physicalJobHtml + evidenceHtml + '</div>' +
               '</div>'
             );
           }).join("");

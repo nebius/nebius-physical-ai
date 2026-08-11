@@ -915,8 +915,10 @@ def build_run_summary(
             "success_definition": str(success.get("predicate") or ""),
             "episodes": paired.get("episodes") or [],
         }
-    learning_doc = _doc("reports/learning-rigor-report.json") or _doc(
-        "reports/learning-report.json"
+    learning_doc = (
+        _doc("reports/two-gpu-pipeline-report.json")
+        or _doc("reports/learning-rigor-report.json")
+        or _doc("reports/learning-report.json")
     )
     learning: dict[str, Any] = {}
     if learning_doc.get("schema") == "npa.groot.learning.v1":

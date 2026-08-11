@@ -345,7 +345,15 @@ def test_authoritative_manifest_preserves_all_explicit_statuses_with_provenance(
                 "status": "running",
                 "updated_at": "2026-08-07T01:02:03Z",
                 "steps": [
-                    {"state": "prepare", "status": "ok", "returncode": 0},
+                    {
+                        "state": "prepare",
+                        "status": "ok",
+                        "returncode": 0,
+                        "job_id": "33",
+                        "job_name": "run-8-01-prepare",
+                        "sky_status": "SUCCEEDED",
+                        "wave_key": "001|serial|:prepare:-",
+                    },
                     {"state": "train", "status": "failed", "returncode": 17},
                     {"state": "evaluate", "status": "running"},
                     {"state": "optional", "status": "skipped"},
@@ -368,6 +376,11 @@ def test_authoritative_manifest_preserves_all_explicit_statuses_with_provenance(
         "publish": "pending",
     }
     assert by_id["publish"]["status_label"] == "Submitted"
+    assert by_id["prepare"]["job_id"] == "33"
+    assert by_id["prepare"]["job_name"] == "run-8-01-prepare"
+    assert by_id["prepare"]["sky_status"] == "SUCCEEDED"
+    assert by_id["prepare"]["wave_key"] == "001|serial|:prepare:-"
+    assert "job_id" not in by_id["train"]
     assert all(stage["authority"] == "authoritative" for stage in by_id.values())
     assert all(stage["evidence_source"].endswith("/npa-workflow/manifest.json") for stage in by_id.values())
 

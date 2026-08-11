@@ -72,6 +72,7 @@ def _summary_documents_for_run(s3, bucket: str, artifacts: list) -> dict:
         "checkpoints/npa_groot_finetune_manifest.json",
         "reports/learning-report.json",
         "reports/learning-rigor-report.json",
+        "reports/two-gpu-pipeline-report.json",
         "reports/task-performance-report.json",
     }
     documents = {}
