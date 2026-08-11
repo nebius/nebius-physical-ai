@@ -8355,44 +8355,7 @@ def _health(
     return response.status_code == 200, response.status_code
 
 
-def _artifact_only_http_probe(client: httpx.Client) -> dict[str, Any]:
-    """Exercise artifact-only live APIs using GETs and prove state is unchanged."""
-
-    def get_json(path: str) -> dict[str, Any]:
-        response = client.get(path)
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise DeploymentIdentityError(f"{path} returned a non-object payload")
-        return payload
-
-    before = get_json("/api/health")
-    before_digest = str(before.get("state_sha256") or "")
-    if not re.fullmatch(r"[0-9a-f]{64}", before_digest):
-        raise DeploymentIdentityError("artifact-only health is missing state_sha256")
-    session = get_json("/api/session")
-    runs = get_json("/api/artifacts/runs?prefix=&limit=100")
-    tools = get_json("/api/tools")
-    workflow = get_json("/api/workflows/sim2real/status")
-    infra = get_json("/api/infra/k8s")
-    if not isinstance(runs.get("runs"), list):
-        raise DeploymentIdentityError("artifact discovery did not return a runs list")
-    if not isinstance(tools.get("tool_refs"), list):
-        raise DeploymentIdentityError("tool catalog did not return tool_refs")
-    after = get_json("/api/health")
-    after_digest = str(after.get("state_sha256") or "")
-    if after_digest != before_digest:
-        raise DeploymentIdentityError(
-            "artifact-only live verification mutated durable session state"
-        )
-    return {
-        "state_sha256": before_digest,
-        "run_count": len(runs["runs"]),
-        "tool_ref_count": len(tools["tool_refs"]),
-        "session": session,
-        "workflow": workflow,
-        "infra": infra,
-    }
+_artifact_only_http_probe = agent_resources.artifact_only_http_probe
 
 
 def _verify_artifact_only_live(

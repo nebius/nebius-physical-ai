@@ -12,6 +12,8 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+from npa.cli.agent_deployment import DeploymentIdentityError
+
 DiscoveryRunner = Callable[[list[str]], tuple[int, str, str]]
 
 _SECRET_KEY_RE = re.compile(
@@ -26,6 +28,45 @@ _SAFE_K8S_REFERENCE_KEYS = {
     "env_secret_names",
     "k8s_env_secret_names",
 }
+
+
+def artifact_only_http_probe(client: Any) -> dict[str, Any]:
+    """Exercise artifact-only live APIs using GETs and prove state is unchanged."""
+
+    def get_json(path: str) -> dict[str, Any]:
+        response = client.get(path)
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise DeploymentIdentityError(f"{path} returned a non-object payload")
+        return payload
+
+    before = get_json("/api/health")
+    before_digest = str(before.get("state_sha256") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", before_digest):
+        raise DeploymentIdentityError("artifact-only health is missing state_sha256")
+    session = get_json("/api/session")
+    runs = get_json("/api/artifacts/runs?prefix=&limit=100")
+    tools = get_json("/api/tools")
+    workflow = get_json("/api/workflows/sim2real/status")
+    infra = get_json("/api/infra/k8s")
+    if not isinstance(runs.get("runs"), list):
+        raise DeploymentIdentityError("artifact discovery did not return a runs list")
+    if not isinstance(tools.get("tool_refs"), list):
+        raise DeploymentIdentityError("tool catalog did not return tool_refs")
+    after_digest = str(get_json("/api/health").get("state_sha256") or "")
+    if after_digest != before_digest:
+        raise DeploymentIdentityError(
+            "artifact-only live verification mutated durable session state"
+        )
+    return {
+        "state_sha256": before_digest,
+        "run_count": len(runs["runs"]),
+        "tool_ref_count": len(tools["tool_refs"]),
+        "session": session,
+        "workflow": workflow,
+        "infra": infra,
+    }
 
 
 def _is_safe_k8s_config_key(key: str) -> bool:
