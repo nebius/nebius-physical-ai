@@ -6614,6 +6614,7 @@
       let activeRunEntryKey = "";
       let autoLoadedPreferredKey = "";
       let runSearchRequestId = 0;
+      let artifactRunsAbortController = null;
       let artifactLoadRequestId = 0;
       let artifactListRequestId = 0;
       let artifactListAbortController = null;
@@ -7013,19 +7014,29 @@
         // A background/default refresh must not supersede an in-flight q=
         // request and leave the user's filtered picker empty.
         const requestId = ++runSearchRequestId;
+        if (!opts.signal && artifactRunsAbortController) {
+          artifactRunsAbortController.abort();
+        }
+        const localController = opts.signal ? null : new AbortController();
+        if (localController) artifactRunsAbortController = localController;
+        const signal = opts.signal || (localController && localController.signal);
         const runs = [];
         let data = null;
         let cursor = "";
-        do {
-          let url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
-          if (scope.projectId) url += "&project_id=" + encodeURIComponent(scope.projectId);
-          if (scope.resourceBucket) url += "&resource_bucket=" + encodeURIComponent(scope.resourceBucket);
-          if (cursor) url += "&cursor=" + encodeURIComponent(cursor);
-          data = await apiJson(url, opts.signal ? { signal: opts.signal } : undefined);
-          if (requestId !== runSearchRequestId || (opts.isCurrent && !opts.isCurrent())) return false;
-          runs.push(...(Array.isArray(data.runs) ? data.runs : []));
-          cursor = String(data.next_cursor || "");
-        } while (cursor);
+        try {
+          do {
+            let url = "/api/artifacts/runs?limit=" + ARTIFACT_RUN_LIST_LIMIT + (q ? "&q=" + encodeURIComponent(q) : "");
+            if (scope.projectId) url += "&project_id=" + encodeURIComponent(scope.projectId);
+            if (scope.resourceBucket) url += "&resource_bucket=" + encodeURIComponent(scope.resourceBucket);
+            if (cursor) url += "&cursor=" + encodeURIComponent(cursor);
+            data = await apiJson(url, signal ? { signal } : undefined);
+            if (requestId !== runSearchRequestId || (opts.isCurrent && !opts.isCurrent())) return false;
+            runs.push(...(Array.isArray(data.runs) ? data.runs : []));
+            cursor = String(data.next_cursor || "");
+          } while (cursor);
+        } finally {
+          if (artifactRunsAbortController === localController) artifactRunsAbortController = null;
+        }
         if (q) {
           const identity = (r) => String((r && r.run_ref) || "") || [
             String((r && r.source_type) || "artifact_storage"),
@@ -9238,11 +9249,75 @@
           throw new Error("Enter or select a run_id first");
         }
         operatorMediaPreviewActive = false;
-        const data = await loadSelectedRun(
-          preferredRunEntry(runRef || runId) || { run_id: runId, run_ref: runRef }
+        // Exact run loading takes precedence over the best-effort, whole-bucket
+        // discovery that starts during page boot. Stop that pagination before it
+        // can monopolize storage reads, then resolve the pasted run_id directly.
+        // This keeps direct-by-ID loading responsive even in buckets with many
+        // historical runs while the explicit Discover action remains exhaustive.
+        runSearchRequestId += 1;
+        if (artifactRunsAbortController) {
+          artifactRunsAbortController.abort();
+          artifactRunsAbortController = null;
+        }
+        const preferredEntry = preferredRunEntry(runRef || runId);
+        const exactEntry = preferredEntry && preferredEntry.source_type === "artifact_storage"
+          ? preferredEntry
+          : {
+              run_id: runId,
+              run_ref: runRef,
+              source_type: "artifact_storage",
+              source_label: "S3 artifacts",
+            };
+        if (!preferredEntry || preferredEntry.source_type === "artifact_storage") {
+          try {
+            const loaded = await loadArtifactsForSelectedRun(runRef || runId, null, exactEntry, {
+              pendingSelection: true,
+            });
+            if (loaded && activeArtifactInventory.length) {
+              const hasRecording = activeArtifactInventory.some((item) =>
+                ["rerun", "mcap"].includes(String((item && item.render) || ""))
+              );
+              if (!hasRecording) {
+                updateRenderedDataSummary({
+                  run_id: runId,
+                  preview_status: "no_previewable_recording",
+                  output_artifact_count: activeArtifactInventory.filter((item) =>
+                    String((item && item.role) || "output") === "output"
+                  ).length,
+                });
+                showRerunPlaceholder("No RRD/MCAP recording; use the artifacts below.", {
+                  force: true,
+                  state: "no-preview-artifacts",
+                });
+              }
+              return { run_id: runId, artifacts_loaded: true };
+            }
+          } catch (_artifactErr) {
+            // Workflow history/local runtime remains a valid fallback when the
+            // exact artifact source is unavailable.
+          }
+        }
+        // For workflow-history runs, start the traditional runtime load first so
+        // it owns visible-state reset, then list exact artifacts concurrently.
+        // Artifact evidence can render without waiting for viewer/history calls.
+        const dataPromise = loadSelectedRun(
+          preferredEntry || { run_id: runId, run_ref: runRef }
         );
-        await loadArtifactsForSelectedRun(runId).catch(() => false);
+        const artifactsPromise = preferredEntry && preferredEntry.source_type === "workflow_history"
+          ? loadArtifactsForSelectedRun(runRef || runId, null, exactEntry, {
+              pendingSelection: true,
+            }).catch(() => false)
+          : Promise.resolve(false);
+        const data = await dataPromise;
+        await artifactsPromise;
         if (!(data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready))) {
+          updateRenderedDataSummary({
+            run_id: runId,
+            preview_status: "no_previewable_recording",
+            output_artifact_count: activeArtifactInventory.filter((item) =>
+              String((item && item.role) || "output") === "output"
+            ).length,
+          });
           showRerunPlaceholder("No RRD/MCAP recording; use the artifacts below.", {
             force: true,
             state: "no-preview-artifacts",

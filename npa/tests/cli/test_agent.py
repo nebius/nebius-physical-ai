@@ -1597,6 +1597,16 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     assert "artifactPrefixValue" not in source
 
 
+def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts() -> None:
+    source = _agent_ui_bundle()
+
+    assert "let artifactRunsAbortController = null;" in source
+    assert "artifactRunsAbortController.abort();" in source
+    assert "Exact run loading takes precedence" in source
+    assert "await loadArtifactsForSelectedRun(runRef || runId, null, exactEntry" in source
+    assert "if (loaded && activeArtifactInventory.length)" in source
+
+
 def test_artifact_backed_training_run_loads_without_rerun_recording() -> None:
     source = _agent_ui_bundle()
     backend = Path(__file__).resolve().parents[2].joinpath("src/npa/cli/agent.py").read_text(
