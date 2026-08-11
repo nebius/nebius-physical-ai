@@ -3353,7 +3353,13 @@
               if (!selectedRun) return;
               const selectedEntry = runEntryFromSelect(document.getElementById("runIdSelect")) ||
                 runEntryFromSelect(document.getElementById("stagesRunSelect"));
-              await loadArtifactsForSelectedRun(selectedRun, null, selectedEntry);
+              // A filter/sort change only re-renders the inventory. Do not let
+              // its asynchronous refresh auto-open the preferred object after
+              // the operator has already selected a different video/image/data
+              // preview; that would silently replace the chosen evidence.
+              await loadArtifactsForSelectedRun(selectedRun, null, selectedEntry, {
+                deferPreferredViewer: true,
+              });
             });
           }
         }
