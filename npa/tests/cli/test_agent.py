@@ -27,6 +27,14 @@ from npa.cli.agent import (
 runner = CliRunner()
 
 
+def test_artifact_only_timeout_allows_preserved_run_inventory() -> None:
+    from npa.cli.agent import ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS
+
+    # S3-backed workflow status can legitimately take more than the generic
+    # 30-second HTTP default while it inventories a large preserved run.
+    assert ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS >= 60.0
+
+
 def test_staged_agent_source_is_readable_by_unprivileged_runtime(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -8460,6 +8460,9 @@ def _health(
 _artifact_only_http_probe = agent_resources.artifact_only_http_probe
 
 
+ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS = 60.0
+
+
 def _verify_artifact_only_live(
     *,
     record: dict[str, Any],
@@ -8476,7 +8479,7 @@ def _verify_artifact_only_live(
             base_url=agent_base,
             auth=(auth_user, auth_password),
             verify=tls_verify,
-            timeout=30.0,
+            timeout=ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS,
         ) as client:
             result = _artifact_only_http_probe(client)
     except (httpx.HTTPError, DeploymentIdentityError) as exc:
@@ -8548,7 +8551,7 @@ def _verify_artifact_only_live(
             base_url=agent_base,
             auth=(auth_user, auth_password),
             verify=tls_verify,
-            timeout=30.0,
+            timeout=ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS,
         ) as client:
             final = client.get("/api/health")
             final.raise_for_status()
