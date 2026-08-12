@@ -3,10 +3,8 @@ from __future__ import annotations
 from npa.cli import agent as agent_module
 from npa.cli.agent import rendered_agent_ui_html
 
-import base64
 import json
 import re
-import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -491,15 +489,20 @@ def test_backend_loss_at_apply_boundary_blocks_before_remote_mutation(
 
 def test_write_agent_nebius_env_omits_operator_iam_token(monkeypatch) -> None:
     """The staged VM env must carry S3 keys but NO copied operator IAM token."""
-    import base64 as _b64
-
     from npa.cli.agent import _write_agent_nebius_env
 
     commands: list[str] = []
+    staged: list[str] = []
 
     class _FakeSSH:
-        def run_or_raise(self, command: str):
+        def upload_private_text(self, content: str, _remote_path: str):
+            staged.append(content)
+
+        def run_or_raise(self, command: str, **_kwargs):
             commands.append(command)
+            return ""
+
+        def run(self, _command: str):
             return ""
 
     _write_agent_nebius_env(
@@ -516,11 +519,10 @@ def test_write_agent_nebius_env_omits_operator_iam_token(monkeypatch) -> None:
         secret_key="sk-val",
     )
 
-    # Exactly one SSH command (write nebius.env); no second token-file/profile block.
+    # Exactly one atomic install command; credential bytes travel via private SFTP.
     assert len(commands) == 1
-    match = re.search(r"echo ([A-Za-z0-9+/=]+) \| base64 -d", commands[0])
-    assert match, commands[0]
-    staged_env = _b64.b64decode(match.group(1)).decode("utf-8")
+    assert "ak-id" not in commands[0] and "sk-val" not in commands[0]
+    staged_env = staged[0]
 
     # S3 access key stays (HMAC, not replaceable by an SA bearer token).
     assert "AWS_ACCESS_KEY_ID=ak-id" in staged_env
@@ -2480,7 +2482,11 @@ def test_bootstrap_emitted_ui_script_is_valid_javascript(monkeypatch) -> None:
             if "npa-agent-bootstrap" in _remote_path:
                 captured["setup_script"] = text
 
-        def run_or_raise(self, _command: str) -> None:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                captured["setup_script"] = content
+
+        def run_or_raise(self, _command: str, **_kwargs) -> None:
             return None
 
         def run(self, _command: str) -> None:
@@ -2734,8 +2740,14 @@ def test_agent_nebius_env_uses_metadata_profile_without_static_iam_token() -> No
     commands: list[str] = []
 
     class SSH:
-        def run_or_raise(self, command: str) -> None:
+        def upload_private_text(self, content: str, _remote_path: str) -> None:
+            commands.append(content)
+
+        def run_or_raise(self, command: str, **_kwargs) -> None:
             commands.append(command)
+
+        def run(self, _command: str) -> None:
+            return None
 
     agent_module._write_agent_nebius_env(
         SSH(),
@@ -2752,9 +2764,8 @@ def test_agent_nebius_env_uses_metadata_profile_without_static_iam_token() -> No
         iam_token="synthetic-stale-token",
     )
 
-    assert len(commands) == 1
-    encoded = shlex.split(commands[0])[1]
-    env_text = base64.b64decode(encoded).decode("utf-8")
+    assert len(commands) == 2
+    env_text = commands[0]
     assert "NEBIUS_PROFILE=cursor-sa" in env_text
     assert "NPA_NEBIUS_CONFIG=/root/.nebius/config.yaml" in env_text
     assert "NPA_NEBIUS_CREDENTIAL_SOURCE=instance_metadata" in env_text
@@ -3549,13 +3560,25 @@ def test_agent_setup_passes_concrete_defaults_to_deploy(monkeypatch, tmp_path) -
     assert captured["no_public_https"] is False
 
 
-def _stub_agent_deploy_cloud_calls(monkeypatch, tmp_path):
+def _stub_agent_deploy_cloud_calls(
+    monkeypatch, tmp_path, *, credential_sentinels: bool = False
+):
     """Stub every cloud side effect in `deploy_cmd`; return captured calls."""
     calls: dict = {}
+    access_key = (
+        "NPA_PR218_ACCESS_SENTINEL_DO_NOT_PERSIST"
+        if credential_sentinels
+        else "ak-agent"
+    )
+    secret_key = (
+        "NPA_PR218_SECRET_SENTINEL_DO_NOT_PERSIST"
+        if credential_sentinels
+        else "sk-agent"
+    )
     creds = {
         "service_account_id": "sa-agent",
-        "nebius_api_key": "ak-agent",
-        "nebius_secret_key": "sk-agent",
+        "nebius_api_key": access_key,
+        "nebius_secret_key": secret_key,
         "s3_bucket": "npa-agent-state",
         "s3_endpoint": "https://storage.us-central1.nebius.cloud",
     }
@@ -3634,6 +3657,51 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
         "s3_bucket": "npa-agent-state",
         "s3_endpoint": "https://storage.us-central1.nebius.cloud",
     }
+
+
+def test_agent_deploy_keeps_s3_sentinels_out_of_terraform_and_agent_record(
+    monkeypatch, tmp_path
+) -> None:
+    import yaml
+
+    from npa.cli import agent as agent_module
+    from npa.clients import config as config_module
+
+    key_file = _write_agent_setup_config(tmp_path, monkeypatch)
+    calls = _stub_agent_deploy_cloud_calls(
+        monkeypatch, tmp_path, credential_sentinels=True
+    )
+
+    result = runner.invoke(
+        app,
+        ["setup", "--project", "dev", "--ssh-public-key-path", str(key_file)],
+    )
+
+    assert result.exit_code == 0, result.output
+    terraform_payload = json.dumps(calls["merged_vars"], sort_keys=True)
+    access_sentinel = "NPA_PR218_ACCESS_SENTINEL_DO_NOT_PERSIST"
+    secret_sentinel = "NPA_PR218_SECRET_SENTINEL_DO_NOT_PERSIST"
+    assert access_sentinel not in terraform_payload
+    assert secret_sentinel not in terraform_payload
+    assert calls["bootstrap"]["s3_access_key"] == access_sentinel
+    assert calls["bootstrap"]["s3_secret_key"] == secret_sentinel
+    saved = yaml.safe_load(config_module.CONFIG_PATH.read_text(encoding="utf-8"))
+    agent_record = saved["projects"]["dev"]["agents"]["agent"]
+    assert "credentials" not in agent_record
+    assert access_sentinel not in json.dumps(agent_record)
+    assert secret_sentinel not in json.dumps(agent_record)
+
+    template = (
+        Path(agent_module.provisioner.__file__).parent
+        / "terraform"
+        / "cloud_init.yaml.tpl"
+    ).read_text(encoding="utf-8")
+    protected_write_files = template.split(
+        '%{ if workbench_type != "agent" ~}', 1
+    )[1].split("%{ endif ~}", 1)[0]
+    assert "write_files:" in protected_write_files
+    assert "${aws_access_key}" in protected_write_files
+    assert "${aws_secret_key}" in protected_write_files
 
 
 def test_agent_setup_keeps_public_https_enabled(monkeypatch, tmp_path) -> None:

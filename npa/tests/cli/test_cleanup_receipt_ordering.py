@@ -50,7 +50,7 @@ def test_active_jobs_preserve_both_skypilot_state_stores(
     assert event["verification"]["nonterminal_job_ids"] == ["8"]
 
 
-def test_verified_job_audit_is_durable_before_skypilot_state_removal(
+def test_verified_job_audit_is_durable_before_isolated_runtime_removal(
     monkeypatch, tmp_path: Path
 ) -> None:  # noqa: ANN001
     home = _home(monkeypatch, tmp_path)
@@ -78,10 +78,13 @@ def test_verified_job_audit_is_durable_before_skypilot_state_removal(
     result = runner.invoke(app, ["cleanup", "--yes", "--json"])
 
     assert result.exit_code == 0, result.output
-    assert observed == ["verified_absent", "verified_absent"]
-    assert not sky.exists() and not venv.exists()
+    # The isolated NPA SkyPilot virtualenv may be removed only after the audit;
+    # machine-shared ~/.sky is never project cleanup residue.
+    assert observed == ["verified_absent"]
+    assert sky.exists() and not venv.exists()
     payload = json.loads(result.output)
     assert payload["audit_receipts_are_operational_residue"] is False
+    assert payload["operational_residue_present"] is False
     phases = teardown_receipts.latest_phase_states()
     assert phases["workflow_audit"]["terminal_state"] == "verified_absent"
     assert phases["local_cleanup"]["terminal_state"] == "completed"

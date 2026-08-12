@@ -92,7 +92,7 @@ def _project_storage_iam_generation_ids(
             if str(row.get("project_id") or project_id).strip() != project_id:
                 continue
             account_id = str(row.get("service_account_id") or "").strip()
-            if row.get("ownership") == "npa" and account_id:
+            if row.get("ownership") in {"npa", "npa-recovery-attested"} and account_id:
                 ids.add(account_id)
     return tuple(sorted(ids))
 
@@ -212,6 +212,100 @@ class DestroyPhase:
             "requires": list(self.requires),
             "metadata": dict(self.metadata),
         }
+
+
+@dataclass(frozen=True)
+class ResumeVerification:
+    """Decision for a durably completed phase seen during teardown resume.
+
+    A receipt is evidence that an earlier attempt converged, never current-state
+    evidence.  Only an affirmative phase verifier may skip replay; every other
+    phase re-enters its ordinary identity-scoped command path.
+    """
+
+    skip: bool
+    evidence: dict[str, Any] = field(default_factory=dict)
+
+
+def _verify_completed_phase_for_resume(
+    phase: DestroyPhase, *, project: str, project_id: str
+) -> ResumeVerification:
+    """Re-verify stable absence for phases that can safely avoid replay."""
+
+    prior = {"durable_prior_completion": True, "resume_contract": "reverify_or_replay"}
+    if phase.name == "bucket":
+        bucket_name = str(phase.metadata.get("logical_name") or "").strip()
+        if not bucket_name:
+            from npa.clients.storage_validation import bucket_name as normalize_bucket
+
+            for command in phase.commands:
+                if "--name" in command:
+                    position = command.index("--name") + 1
+                    if position < len(command):
+                        bucket_name = normalize_bucket(command[position])
+                        break
+        if bucket_name:
+            try:
+                evidence = _verify_bucket_stable_absence(
+                    project_id=project_id, bucket_name=bucket_name
+                )
+            except (OSError, RuntimeError, ValueError):
+                return ResumeVerification(False, prior)
+            return ResumeVerification(True, {**prior, **evidence})
+    if phase.name == "storage_iam":
+        raw_ids = phase.metadata.get("generation_ids", [])
+        raw_names = phase.metadata.get("logical_names", [])
+        ids = tuple(
+            str(value)
+            for value in (raw_ids if isinstance(raw_ids, (list, tuple)) else ())
+            if str(value).strip()
+        )
+        names = tuple(
+            str(value)
+            for value in (raw_names if isinstance(raw_names, (list, tuple)) else ())
+            if str(value).strip()
+        )
+        if ids or names:
+            try:
+                evidence = _verify_storage_iam_stable_absence(
+                    project_id=project_id, account_ids=ids, names=names
+                )
+            except (OSError, RuntimeError, ValueError):
+                return ResumeVerification(False, prior)
+            return ResumeVerification(True, {**prior, **evidence})
+    if phase.name == "delete_project":
+        from npa.clients.nebius import NebiusError, get_project_identity
+
+        observations = 0
+        try:
+            for index in range(PROJECT_STABLE_ABSENCE_OBSERVATIONS):
+                if get_project_identity(project_id) is not None:
+                    return ResumeVerification(False, prior)
+                observations += 1
+                if index + 1 < PROJECT_STABLE_ABSENCE_OBSERVATIONS:
+                    time.sleep(PROJECT_DELETE_VERIFY_INTERVAL_SECONDS)
+        except (NebiusError, OSError, RuntimeError, ValueError):
+            return ResumeVerification(False, prior)
+        return ResumeVerification(
+            True,
+            {
+                **prior,
+                "stable_absence_observations": observations,
+                "project_id": project_id,
+            },
+        )
+    if phase.name == "forget_alias":
+        from npa.clients.config import resolve_environment
+
+        try:
+            current = resolve_environment(project)
+        except (OSError, RuntimeError, ValueError):
+            return ResumeVerification(False, prior)
+        if current is None:
+            return ResumeVerification(
+                True, {**prior, "current_alias_state": "verified_absent"}
+            )
+    return ResumeVerification(False, prior)
 
 
 def build_project_destroy_plan(
@@ -372,21 +466,6 @@ def build_project_destroy_plan(
         )
         for account_id in storage_iam_ids
     )
-    if not storage_iam_commands:
-        storage_iam_commands = (
-            (
-                "npa",
-                "storage",
-                "service-account",
-                "delete",
-                "--project",
-                project,
-                "--project-id",
-                project_id,
-                "--yes",
-                "--json",
-            ),
-        )
     phases = [
         DestroyPhase(
             "workflows",
@@ -538,8 +617,8 @@ def build_project_destroy_plan(
                         "--json",
                     ),
                 ),
-                "Remove remaining exact-project secrets and shared SkyPilot state only after "
-                "owned jobs/controllers are stopped, then prove no operational residue remains.",
+                "Remove remaining exact-project secrets after owned jobs/controllers are "
+                "stopped; shared machine SkyPilot state remains preserved.",
                 ("forget_alias",),
             ),
         ]
@@ -744,9 +823,17 @@ def _delete_owned_empty_project(
             time.sleep(PROJECT_DELETE_VERIFY_INTERVAL_SECONDS)
     except NebiusError as exc:
         raise RuntimeError(f"exact provider project deletion failed: {exc}") from exc
-    if after is not None or absent_observations < PROJECT_STABLE_ABSENCE_OBSERVATIONS:
+    if after is not None:
         raise RuntimeError(
-            "provider accepted deletion but exact project remains present"
+            "provider accepted deletion but exact project remains present; "
+            f"last_observation=present stable_absence_observations={absent_observations}"
+        )
+    if absent_observations < PROJECT_STABLE_ABSENCE_OBSERVATIONS:
+        raise RuntimeError(
+            "provider accepted deletion and the last observation was absent, but stable "
+            "absence could not be established before the verification deadline; "
+            f"last_observation=absent stable_absence_observations={absent_observations} "
+            f"required={PROJECT_STABLE_ABSENCE_OBSERVATIONS}"
         )
     record_teardown_event(
         phase="project",
@@ -973,90 +1060,15 @@ def execute_project_destroy(
         if isinstance(event, dict) and event.get("terminal_state") == "completed"
     }
     for phase in phases:
+        resume_evidence: dict[str, Any] = {}
         if on_phase:
             on_phase(phase.name)
         if f"project_destroy_{phase.name}" in completed_receipt_phases:
-            prior_evidence: dict[str, Any] = {"durable_prior_completion": True}
-            if phase.name == "bucket":
-                bucket_name = str(phase.metadata.get("logical_name") or "").strip()
-                if not bucket_name:
-                    from npa.clients.storage_validation import (
-                        bucket_name as normalize_bucket,
-                    )
-
-                    for command in phase.commands:
-                        if "--name" in command:
-                            position = command.index("--name") + 1
-                            if position < len(command):
-                                bucket_name = normalize_bucket(command[position])
-                                break
-                if bucket_name:
-                    try:
-                        prior_evidence.update(
-                            _verify_bucket_stable_absence(
-                                project_id=project_id, bucket_name=bucket_name
-                            )
-                        )
-                    except (OSError, RuntimeError, ValueError):
-                        # A false prior absence or same-name replacement must
-                        # re-enter the exact-project guarded delete phase.
-                        pass
-                    else:
-                        statuses[phase.name] = "completed"
-                        results.append(
-                            {
-                                "phase": phase.name,
-                                "status": "completed",
-                                "commands": [],
-                                "errors": [],
-                                "warnings": [],
-                                "recovery_commands": [],
-                                "blocked_by": [],
-                                "evidence": {**prior_evidence, "command_results": []},
-                            }
-                        )
-                        continue
-            elif phase.name == "storage_iam":
-                raw_ids = phase.metadata.get("generation_ids", [])
-                raw_names = phase.metadata.get("logical_names", [])
-                id_values = raw_ids if isinstance(raw_ids, (list, tuple)) else ()
-                name_values = raw_names if isinstance(raw_names, (list, tuple)) else ()
-                ids = tuple(str(value) for value in id_values if str(value).strip())
-                names = tuple(str(value) for value in name_values if str(value).strip())
-                if ids or names:
-                    try:
-                        prior_evidence.update(
-                            _verify_storage_iam_stable_absence(
-                                project_id=project_id,
-                                account_ids=ids,
-                                names=names,
-                            )
-                        )
-                    except (OSError, RuntimeError, ValueError):
-                        # A replacement or delayed generation invalidates the
-                        # prior completion. Re-enter the guarded exact-ID phase;
-                        # it still cannot delete an ownership-unproven name hit.
-                        pass
-                    else:
-                        statuses[phase.name] = "completed"
-                        results.append(
-                            {
-                                "phase": phase.name,
-                                "status": "completed",
-                                "commands": [],
-                                "errors": [],
-                                "warnings": [],
-                                "recovery_commands": [],
-                                "blocked_by": [],
-                                "evidence": {**prior_evidence, "command_results": []},
-                            }
-                        )
-                        continue
-                else:
-                    # Legacy receipts without an identity set cannot justify
-                    # skipping current exact-project reconciliation.
-                    pass
-            else:
+            resume = _verify_completed_phase_for_resume(
+                phase, project=project, project_id=project_id
+            )
+            resume_evidence = dict(resume.evidence)
+            if resume.skip:
                 statuses[phase.name] = "completed"
                 results.append(
                     {
@@ -1067,14 +1079,14 @@ def execute_project_destroy(
                         "warnings": [],
                         "recovery_commands": [],
                         "blocked_by": [],
-                        "evidence": {**prior_evidence, "command_results": []},
+                        "evidence": {**resume.evidence, "command_results": []},
                     }
                 )
                 continue
         commands = list(phase.commands)
         phase_errors: list[str] = []
         phase_warnings: list[str] = []
-        phase_evidence: dict[str, Any] = {}
+        phase_evidence: dict[str, Any] = dict(resume_evidence)
         command_results: list[dict[str, Any]] = []
         executed: list[list[str]] = []
         recovery_commands: list[list[str]] = []
@@ -1202,6 +1214,14 @@ def execute_project_destroy(
                         )
                     except (OSError, RuntimeError, ValueError) as exc:
                         phase_errors.append(str(exc))
+                else:
+                    phase_evidence.update(
+                        {
+                            "outcome": "verified_nothing_to_do",
+                            "identity_source": "exact_project_records_and_receipts",
+                            "generation_ids": [],
+                        }
+                    )
         phase_status = (
             "skipped_dependency"
             if blocked_by

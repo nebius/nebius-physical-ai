@@ -7,12 +7,39 @@ them there keep working.
 
 from __future__ import annotations
 
-import base64
 import json
 import shlex
+import uuid
 from typing import Any
 
 from npa.clients.ssh import SSHClient
+
+
+def _stage_private_text(
+    ssh: SSHClient,
+    *,
+    content: str,
+    target: str,
+    owner: str = "root:root",
+) -> None:
+    """Stage a secret over SFTP, then atomically install it owner-only."""
+
+    nonce = uuid.uuid4().hex
+    remote_source = f"/tmp/.npa-private-{nonce}"
+    remote_target = f"{target}.npa-{nonce}"
+    ssh.upload_private_text(content, remote_source)
+    command = (
+        "set -eu; "
+        f"sudo install -m 600 -o {shlex.quote(owner.split(':', 1)[0])} "
+        f"-g {shlex.quote(owner.split(':', 1)[1])} "
+        f"{shlex.quote(remote_source)} {shlex.quote(remote_target)}; "
+        f"sudo mv -f {shlex.quote(remote_target)} {shlex.quote(target)}; "
+        f"rm -f {shlex.quote(remote_source)}"
+    )
+    try:
+        ssh.run_or_raise(command, label=f"stage private {target}")
+    finally:
+        ssh.run(f"rm -f {shlex.quote(remote_source)} {shlex.quote(remote_target)}")
 
 
 def _write_agent_s3_env(
@@ -37,10 +64,10 @@ def _write_agent_s3_env(
         f"AWS_REGION={region.strip() or 'eu-north1'}",
         "",
     ]
-    env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
-    ssh.run_or_raise(
-        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/s3.env >/dev/null "
-        "&& sudo chmod 600 /opt/npa-agent/s3.env"
+    _stage_private_text(
+        ssh,
+        content="\n".join(env_lines),
+        target="/opt/npa-agent/s3.env",
     )
 
 def _write_agent_operator_profile(
@@ -90,28 +117,31 @@ def _write_agent_operator_profile(
         credentials_payload["storage"] = storage_payload
     if service_account_id.strip():
         credentials_payload["nebius"] = {"service_account_id": service_account_id.strip()}
-    config_b64 = base64.b64encode(json.dumps(config_payload, indent=2).encode("utf-8")).decode("ascii")
-    creds_b64 = base64.b64encode(json.dumps(credentials_payload, indent=2).encode("utf-8")).decode("ascii")
     user_home = f"/home/{ssh_user}"
     targets = [
         (f"{user_home}/.npa", f"{ssh_user}:{ssh_user}"),
         ("/root/.npa", "root:root"),
     ]
-    commands: list[str] = []
     for npa_dir, owner in targets:
         config_path = f"{npa_dir}/config.yaml"
         creds_path = f"{npa_dir}/credentials.yaml"
-        commands.extend(
-            [
-                f"sudo mkdir -p {shlex.quote(npa_dir)}",
-                f"echo {shlex.quote(config_b64)} | base64 -d | sudo tee {shlex.quote(config_path)} >/dev/null",
-                f"echo {shlex.quote(creds_b64)} | base64 -d | sudo tee {shlex.quote(creds_path)} >/dev/null",
-                f"sudo chown -R {shlex.quote(owner)} {shlex.quote(npa_dir)}",
-                f"sudo chmod 700 {shlex.quote(npa_dir)}",
-                f"sudo chmod 600 {shlex.quote(config_path)} {shlex.quote(creds_path)}",
-            ]
+        ssh.run_or_raise(
+            f"sudo install -d -m 700 -o {shlex.quote(owner.split(':', 1)[0])} "
+            f"-g {shlex.quote(owner.split(':', 1)[1])} {shlex.quote(npa_dir)}",
+            label=f"prepare private {npa_dir}",
         )
-    ssh.run_or_raise(" && ".join(commands))
+        _stage_private_text(
+            ssh,
+            content=json.dumps(config_payload, indent=2) + "\n",
+            target=config_path,
+            owner=owner,
+        )
+        _stage_private_text(
+            ssh,
+            content=json.dumps(credentials_payload, indent=2) + "\n",
+            target=creds_path,
+            owner=owner,
+        )
 
 def _write_agent_nebius_env(
     ssh: SSHClient,
@@ -158,8 +188,8 @@ def _write_agent_nebius_env(
         f"AWS_REGION={region.strip() or 'eu-north1'}",
         "",
     ]
-    env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
-    ssh.run_or_raise(
-        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/nebius.env >/dev/null "
-        "&& sudo chmod 600 /opt/npa-agent/nebius.env"
+    _stage_private_text(
+        ssh,
+        content="\n".join(env_lines),
+        target="/opt/npa-agent/nebius.env",
     )

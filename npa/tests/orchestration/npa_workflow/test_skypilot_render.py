@@ -494,7 +494,12 @@ def test_resolve_task_image_uses_override() -> None:
     assert image == "cr.example/custom:1"
 
 
-def test_first_party_image_rejects_uid_zero_pod_override() -> None:
+def test_first_party_image_rejects_uid_zero_pod_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "NPA_REGISTRY", "cr.us-central1.nebius.cloud/project"
+    )
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     for profile in spec.resources.values():
         if isinstance(profile, dict):

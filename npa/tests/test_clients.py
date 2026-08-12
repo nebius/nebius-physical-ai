@@ -335,6 +335,45 @@ def test_ssh_download_file_uses_sftp(tmp_path: Path, mocker) -> None:
     paramiko_client.close.assert_called_once()
 
 
+def test_ssh_private_text_is_owner_only_before_secret_write(mocker) -> None:
+    events: list[object] = []
+
+    class RemoteFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            events.append("file_closed")
+
+        def write(self, content: str) -> None:
+            events.append(("write", content))
+
+        def flush(self) -> None:
+            events.append("flush")
+
+    sftp = mocker.MagicMock()
+    sftp.open.side_effect = lambda path, mode: (
+        events.append(("open", path, mode)) or RemoteFile()
+    )
+    sftp.chmod.side_effect = lambda path, mode: events.append(
+        ("chmod", path, mode)
+    )
+    paramiko_client = mocker.MagicMock()
+    paramiko_client.open_sftp.return_value = sftp
+    mocker.patch("paramiko.SSHClient", return_value=paramiko_client)
+
+    client = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="key"))
+    assert client.upload_private_text("SECRET-SENTINEL", "/tmp/private") == "/tmp/private"
+
+    assert events[:3] == [
+        ("open", "/tmp/private", "wx"),
+        ("chmod", "/tmp/private", 0o600),
+        ("write", "SECRET-SENTINEL"),
+    ]
+    sftp.close.assert_called_once()
+    paramiko_client.close.assert_called_once()
+
+
 def test_nebius_run_invokes_cli_and_maps_errors(mocker) -> None:
     mocker.patch("shutil.which", return_value="/usr/bin/nebius")
     mocker.patch("npa.clients.nebius._warn_if_nebius_version_mismatch")

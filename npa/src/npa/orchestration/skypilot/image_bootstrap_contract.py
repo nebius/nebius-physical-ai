@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass
 import hashlib
 import json
@@ -18,6 +18,7 @@ from typing import Any
 CONTRACT_VERSION = "skypilot-0.12.2-v1"
 ATTESTATION_LABEL = "org.nebius.npa.skypilot-bootstrap-contract"
 FIRST_PARTY_REPOSITORY_PREFIX = "npa-"
+CANONICAL_PUBLIC_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 PROBE_TIMEOUT_SECONDS = 180
 
 
@@ -127,14 +128,41 @@ def immutable_image_reference(image: str, digest: str) -> str:
     return f"{parsed.name}@{normalized}"
 
 
-def is_first_party_image(image: str) -> bool:
+def is_trusted_npa_image(
+    image: str, *, allowed_registries: Iterable[str] | None = None
+) -> bool:
+    """Verify both an allowed registry namespace and the NPA repository prefix."""
+
     try:
         parsed = parse_oci_reference(image)
     except ImageBootstrapContractError:
         return False
-    return parsed.repository.rsplit("/", 1)[-1].startswith(
+    if not parsed.repository.rsplit("/", 1)[-1].startswith(
         FIRST_PARTY_REPOSITORY_PREFIX
-    )
+    ):
+        return False
+    configured = list(allowed_registries or ())
+    if allowed_registries is None:
+        configured.extend(
+            value
+            for value in (
+                os.environ.get("NPA_PUBLIC_REGISTRY", ""),
+                os.environ.get("NPA_REGISTRY", ""),
+            )
+            if value.strip()
+        )
+    namespaces = {CANONICAL_PUBLIC_REGISTRY}
+    for registry in configured:
+        candidate = str(registry or "").strip().rstrip("/")
+        if candidate.startswith("docker:"):
+            candidate = candidate[len("docker:") :]
+        try:
+            normalized = parse_oci_reference(candidate + "/npa-placeholder").name
+        except ImageBootstrapContractError:
+            continue
+        namespaces.add(normalized.rsplit("/", 1)[0])
+    image_name = parsed.name
+    return any(image_name.startswith(namespace + "/") for namespace in namespaces)
 
 
 def verify_attestation(
@@ -180,6 +208,9 @@ def probe_name(digest: str, nonce: str = "") -> str:
 
 
 Runner = Callable[[list[str], Mapping[str, str]], subprocess.CompletedProcess[str]]
+TerminalObserver = Callable[
+    [list[str], Mapping[str, str]], subprocess.CompletedProcess[str]
+]
 
 
 def _run(argv: list[str], env: Mapping[str, str]) -> subprocess.CompletedProcess[str]:
@@ -193,6 +224,47 @@ def _run(argv: list[str], env: Mapping[str, str]) -> subprocess.CompletedProcess
     )
 
 
+def _observe_terminal_phase(
+    argv: list[str], env: Mapping[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Stream one pod watch and stop immediately at Succeeded or Failed."""
+
+    process = subprocess.Popen(
+        argv,
+        env=dict(env),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    phases: list[str] = []
+    terminal = ""
+    try:
+        assert process.stdout is not None
+        for raw in process.stdout:
+            phase = raw.strip()
+            if phase:
+                phases.append(phase)
+            if phase in {"Succeeded", "Failed"}:
+                terminal = phase
+                process.terminate()
+                break
+        try:
+            _stdout, stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            _stdout, stderr = process.communicate()
+    except BaseException:
+        process.kill()
+        process.communicate()
+        raise
+    return subprocess.CompletedProcess(
+        argv,
+        0 if terminal else (process.returncode or 1),
+        terminal or "\n".join(phases),
+        stderr,
+    )
+
+
 def probe_image_capabilities(
     *,
     image: str,
@@ -200,6 +272,7 @@ def probe_image_capabilities(
     context: str,
     kubeconfig: str = "",
     runner: Runner = _run,
+    terminal_observer: TerminalObserver = _observe_terminal_phase,
     nonce_factory: Callable[[], str] = lambda: secrets.token_hex(8),
 ) -> ImageContractEvidence:
     """Run and exactly clean one bounded capability pod for an unattested image."""
@@ -292,20 +365,33 @@ def probe_image_capabilities(
         )
 
     primary = ""
+    observation_indeterminate = False
     interrupted: BaseException | None = None
     try:
-        wait = runner(
+        wait = terminal_observer(
             [
                 *common,
-                "wait",
-                f"pod/{name}",
-                "--for=jsonpath={.status.phase}=Succeeded",
-                f"--timeout={PROBE_TIMEOUT_SECONDS}s",
+                "get",
+                "pod",
+                name,
+                "--watch",
+                f"--request-timeout={PROBE_TIMEOUT_SECONDS}s",
+                "-o",
+                'jsonpath={.status.phase}{"\\n"}',
             ],
             env,
         )
-        if wait.returncode != 0:
+        terminal_phase = (wait.stdout or "").strip().splitlines()[-1:] or [""]
+        terminal_phase = terminal_phase[0]
+        if terminal_phase == "Failed":
+            primary = _probe_failure_diagnostic(
+                common=common, name=name, runner=runner, env=env
+            )
+        elif terminal_phase != "Succeeded":
+            observation_indeterminate = True
             primary = (wait.stderr or wait.stdout).strip()
+            if not primary:
+                primary = "probe observation ended without a terminal pod phase"
     except BaseException as exc:  # cleanup must run even on operator interruption
         interrupted = exc
         primary = f"probe wait interrupted: {type(exc).__name__}"
@@ -364,7 +450,7 @@ def probe_image_capabilities(
             image=immutable,
             digest=digest,
             contract_version=CONTRACT_VERSION,
-            state="incompatible",
+            state="indeterminate" if observation_indeterminate else "incompatible",
             source="ephemeral_capability_probe",
             cleanup=cleanup,
             detail=primary[:500],
@@ -386,6 +472,43 @@ def probe_image_capabilities(
         ),
         cleanup=cleanup,
     )
+
+
+def _probe_failure_diagnostic(
+    *, common: list[str], name: str, runner: Runner, env: Mapping[str, str]
+) -> str:
+    """Return bounded terminal diagnostics without losing container fidelity."""
+
+    result = runner([*common, "get", "pod", name, "-o", "json"], env)
+    if result.returncode != 0:
+        return "probe pod entered Failed; terminal diagnostics could not be read"
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, ValueError):
+        return "probe pod entered Failed; terminal diagnostics were malformed"
+    status = payload.get("status") if isinstance(payload, Mapping) else {}
+    status = status if isinstance(status, Mapping) else {}
+    parts = ["probe pod entered Failed"]
+    for key in ("reason", "message"):
+        value = str(status.get(key) or "").strip()
+        if value:
+            parts.append(f"{key}={value}")
+    rows = status.get("containerStatuses")
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            state = row.get("state")
+            terminated = state.get("terminated") if isinstance(state, Mapping) else None
+            if not isinstance(terminated, Mapping):
+                continue
+            fields = [f"container={str(row.get('name') or 'probe')}"]
+            for key in ("reason", "message", "exitCode"):
+                value = terminated.get(key)
+                if value not in (None, ""):
+                    fields.append(f"{key}={value}")
+            parts.append(" ".join(fields))
+    return "; ".join(parts)[:500]
 
 
 def _probe_evidence(

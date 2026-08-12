@@ -329,6 +329,7 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
 ) -> None:
     digest = "sha256:" + "a" * 64
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NPA_REGISTRY", "cr.us-central1.nebius.cloud/u000")
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.resolve_registry_credentials",
         lambda *_args, **_kwargs: ("iam", "opaque"),

@@ -76,7 +76,9 @@ target branch to the dev VM before live tests.
    profile) — that token went stale and forced re-bootstrap. S3 access keys and
    the service API keys (Token Factory / HF / NGC) are still staged: object
    storage is HMAC-based and cannot use an IAM bearer token, and the product keys
-   are independent of the SA. On-VM Terraform (`npa cluster …`) mints a fresh
+   are independent of the SA. They are staged only after VM creation through the
+   verified SSH channel; they never enter Terraform/cloud-init/user-data.
+   On-VM Terraform (`npa cluster …`) mints a fresh
    token at run time via `nebius iam get-access-token`.
 
 4. **Smoke gate (default “done” for fresh deploy).**

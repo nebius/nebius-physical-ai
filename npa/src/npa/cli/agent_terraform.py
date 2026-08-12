@@ -8,7 +8,7 @@ re-exported from ``npa.cli.agent`` for the existing call sites and tests.
 from __future__ import annotations
 
 import shutil
-from typing import Any
+from typing import Any, Mapping
 
 import typer
 
@@ -169,6 +169,7 @@ def _apply_agent_terraform(
     name: str,
     merged_vars: dict[str, str],
     env_region: str,
+    backend_credentials: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Apply agent Terraform and durably verify its remote state."""
 
@@ -181,13 +182,24 @@ def _apply_agent_terraform(
         _looks_like_compute_permission_denied,
     )
 
+    backend = dict(backend_credentials or {})
+    backend_access_key = str(
+        backend.get("access_key") or merged_vars.get("nebius_api_key", "")
+    )
+    backend_secret_key = str(
+        backend.get("secret_key") or merged_vars.get("nebius_secret_key", "")
+    )
+    backend_session_token = str(
+        backend.get("session_token") or merged_vars.get("s3_session_token", "")
+    )
+
     def revalidate_backend() -> None:
         _ensure_terraform_state_bucket(
             project_id=str(merged_vars.get("nebius_project_id", "")),
             bucket_name=str(merged_vars.get("s3_bucket", "")),
             endpoint=str(merged_vars.get("s3_endpoint", "")),
-            access_key=str(merged_vars.get("nebius_api_key", "")),
-            secret_key=str(merged_vars.get("nebius_secret_key", "")),
+            access_key=backend_access_key,
+            secret_key=backend_secret_key,
             region=env_region,
             project_alias=project,
             agent_name=name,
@@ -204,9 +216,9 @@ def _apply_agent_terraform(
     provisioner.init(
         tf_dir=tf_dir,
         backend_config={
-            "access_key": merged_vars.get("nebius_api_key", ""),
-            "secret_key": merged_vars.get("nebius_secret_key", ""),
-            "session_token": merged_vars.get("s3_session_token", ""),
+            "access_key": backend_access_key,
+            "secret_key": backend_secret_key,
+            "session_token": backend_session_token,
             "region": env_region,
             "endpoint": merged_vars.get("s3_endpoint", ""),
             "addressing_style": "path",

@@ -88,7 +88,8 @@ def test_cleanup_yes_removes_only_local_caches(monkeypatch: pytest.MonkeyPatch, 
 
     assert result.exit_code == 0, result.output
     assert not venv.exists()
-    assert not sky.exists()
+    assert sky.exists()
+    assert "Preserved shared SkyPilot state" in result.output
 
 
 def test_exact_never_submitted_project_cleanup_with_keep_sky_skips_default_queue(
@@ -142,6 +143,33 @@ def test_cleanup_keep_sky_leaves_skypilot_state(monkeypatch: pytest.MonkeyPatch,
     assert result.exit_code == 0, result.output
     assert not venv.exists()
     assert sky.exists()
+
+
+@pytest.mark.parametrize(
+    ("selected", "owner_project", "expected"),
+    [
+        ("project-a", "", "no controller owner"),
+        ("project-a", "project-b", "another or unselected project"),
+        ("project-a", "project-a", "selected project owns a controller"),
+    ],
+)
+def test_global_sky_state_is_never_authorized_by_controller_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+    selected: str,
+    owner_project: str,
+    expected: str,
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "npa.controller_ownership.controller_owner",
+        lambda: SimpleNamespace(project_id=owner_project) if owner_project else None,
+    )
+
+    reason = cleanup_cli._shared_sky_preservation_reason(selected)
+
+    assert expected in reason
+    assert "do not prove exclusive ownership" in reason
 
 
 def test_cleanup_reports_iam_but_never_deletes_it(npa_home: Path) -> None:

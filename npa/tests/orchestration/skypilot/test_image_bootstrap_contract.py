@@ -14,7 +14,8 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
     ImageContractEvidence,
     cache_key,
     immutable_image_reference,
-    is_first_party_image,
+    is_trusted_npa_image,
+    _observe_terminal_phase,
     load_cached_evidence,
     parse_oci_reference,
     probe_image_capabilities,
@@ -27,7 +28,14 @@ DIGEST = "sha256:" + "a" * 64
 IMAGE = "registry.example/npa-fiftyone:validation"
 
 
-def _pod_payload(name: str, probe_id: str, *, uid: str = "uid-owned", image: str = "") -> str:
+def _pod_payload(
+    name: str,
+    probe_id: str,
+    *,
+    uid: str = "uid-owned",
+    image: str = "",
+    failed: str = "",
+) -> str:
     return json.dumps(
         {
             "metadata": {
@@ -40,6 +48,27 @@ def _pod_payload(name: str, probe_id: str, *, uid: str = "uid-owned", image: str
                 },
             },
             "spec": {"containers": [{"image": image or f"registry.example/npa-fiftyone@{DIGEST}"}]},
+            "status": (
+                {
+                    "phase": "Failed",
+                    "reason": "ContainerFailure",
+                    "message": failed,
+                    "containerStatuses": [
+                        {
+                            "name": "probe",
+                            "state": {
+                                "terminated": {
+                                    "reason": "Error",
+                                    "message": failed,
+                                    "exitCode": 17,
+                                }
+                            },
+                        }
+                    ],
+                }
+                if failed
+                else {"phase": "Succeeded"}
+            ),
         }
     )
 
@@ -53,14 +82,51 @@ def _successful_runner(calls: list[list[str]], *, wait_error: str = "", delete_e
         if action == "get":
             name = argv[5]
             probe_id = name.rsplit("-", 1)[-1]
-            return subprocess.CompletedProcess(argv, 0, _pod_payload(name, probe_id), "")
-        if action == "wait":
-            return subprocess.CompletedProcess(argv, int(bool(wait_error)), "", wait_error)
+            return subprocess.CompletedProcess(
+                argv, 0, _pod_payload(name, probe_id, failed=wait_error), ""
+            )
         if action == "delete":
             return subprocess.CompletedProcess(argv, int(bool(delete_error)), "", delete_error)
         raise AssertionError(argv)
 
     return runner
+
+
+def _terminal_observer(phase: str = "Succeeded", detail: str = ""):
+    def observe(argv, _env):
+        return subprocess.CompletedProcess(argv, 0 if phase else 1, phase, detail)
+
+    return observe
+
+
+def test_default_watch_observer_terminates_immediately_on_failed(monkeypatch) -> None:
+    events: list[str] = []
+
+    class Process:
+        stdout = iter(["Pending\n", "Running\n", "Failed\n", "Succeeded\n"])
+        returncode = None
+
+        def terminate(self):
+            events.append("terminate")
+            self.returncode = -15
+
+        def communicate(self, timeout=None):  # noqa: ANN001
+            events.append(f"communicate:{timeout}")
+            return "", ""
+
+        def kill(self):
+            events.append("kill")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.subprocess.Popen",
+        lambda *_a, **_k: Process(),
+    )
+
+    result = _observe_terminal_phase(["kubectl", "get"], {})
+
+    assert result.returncode == 0
+    assert result.stdout == "Failed"
+    assert events == ["terminate", "communicate:5"]
 
 
 def test_root_and_compliant_non_root_probe_share_exact_contract() -> None:
@@ -71,6 +137,7 @@ def test_root_and_compliant_non_root_probe_share_exact_contract() -> None:
         digest=DIGEST,
         context="ctx-exact",
         runner=_successful_runner(calls),
+        terminal_observer=_terminal_observer(),
         nonce_factory=lambda: "a" * 16,
     )
     assert evidence.ok
@@ -108,10 +175,30 @@ def test_missing_capability_or_bad_entrypoint_fails_closed(failure: str) -> None
         digest=DIGEST,
         context="ctx-exact",
         runner=_successful_runner(calls, wait_error=failure),
+        terminal_observer=_terminal_observer("Failed"),
         nonce_factory=lambda: "b" * 16,
     )
     assert evidence.state == "incompatible"
     assert evidence.cleanup == "verified"
+    assert failure in evidence.detail
+    assert "exitCode=17" in evidence.detail
+
+
+def test_terminal_timeout_is_indeterminate_and_still_cleans_up() -> None:
+    calls: list[list[str]] = []
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx-exact",
+        runner=_successful_runner(calls),
+        terminal_observer=_terminal_observer("", "timed out waiting for terminal phase"),
+        nonce_factory=lambda: "f" * 16,
+    )
+
+    assert evidence.state == "indeterminate"
+    assert "timed out" in evidence.detail
+    assert evidence.cleanup == "verified"
+    assert any(argv[3] == "delete" for argv in calls)
 
 
 def test_probe_transport_and_cleanup_failures_are_indeterminate() -> None:
@@ -132,6 +219,7 @@ def test_probe_transport_and_cleanup_failures_are_indeterminate() -> None:
         digest=DIGEST,
         context="ctx",
         runner=_successful_runner(calls, delete_error="RBAC denied"),
+        terminal_observer=_terminal_observer(),
         nonce_factory=lambda: "d" * 16,
     )
     assert cleanup_failure.state == "indeterminate"
@@ -189,7 +277,25 @@ def test_shared_oci_parser_handles_registry_ports_and_tags(reference: str, expec
     parsed = parse_oci_reference(reference)
     assert parsed.name == expected
     assert immutable_image_reference(reference, DIGEST) == f"{expected}@{DIGEST}"
-    assert is_first_party_image(reference)
+    assert is_trusted_npa_image(reference, allowed_registries=[expected.rsplit("/", 1)[0]])
+
+
+@pytest.mark.parametrize(
+    ("reference", "allowed", "trusted"),
+    [
+        ("ghcr.io/nebius/nebius-physical-ai/npa-tool:tag", (), True),
+        (f"ghcr.io/nebius/nebius-physical-ai/npa-tool@{DIGEST}", (), True),
+        ("evil.example/nebius/nebius-physical-ai/npa-tool:tag", (), False),
+        ("ghcr.io/foreign/npa-tool:tag", (), False),
+        ("registry.example:5000/team/npa-tool:tag", ("registry.example:5000/team",), True),
+        ("registry.example:5000/other/npa-tool:tag", ("registry.example:5000/team",), False),
+        ("registry.example:5000/team/tool:tag", ("registry.example:5000/team",), False),
+    ],
+)
+def test_trusted_npa_image_binds_registry_namespace_and_repository(
+    reference: str, allowed: tuple[str, ...], trusted: bool
+) -> None:
+    assert is_trusted_npa_image(reference, allowed_registries=allowed) is trusted
 
 
 @pytest.mark.parametrize(
@@ -208,7 +314,7 @@ def test_shared_oci_parser_handles_registry_ports_and_tags(reference: str, expec
 def test_malformed_oci_references_fail_closed(reference: str) -> None:
     with pytest.raises(ImageBootstrapContractError):
         parse_oci_reference(reference)
-    assert not is_first_party_image(reference)
+    assert not is_trusted_npa_image(reference)
 
 
 def test_embedded_digest_must_match_resolved_digest() -> None:
@@ -235,6 +341,7 @@ def test_same_digest_concurrent_probes_have_unique_owned_pods() -> None:
                 digest=DIGEST,
                 context="ctx",
                 runner=runner,
+                terminal_observer=_terminal_observer(),
                 nonce_factory=lambda: nonce,
             )
         )
@@ -270,6 +377,7 @@ def test_probe_retries_already_exists_with_a_new_nonce() -> None:
         digest=DIGEST,
         context="ctx",
         runner=runner,
+        terminal_observer=_terminal_observer(),
         nonce_factory=lambda: next(nonces),
     )
     assert evidence.ok
@@ -299,6 +407,7 @@ def test_replacement_identity_is_refused_and_never_deleted() -> None:
         digest=DIGEST,
         context="ctx",
         runner=runner,
+        terminal_observer=_terminal_observer(),
         nonce_factory=lambda: "5" * 16,
     )
     assert evidence.state == "indeterminate"
@@ -310,10 +419,11 @@ def test_operator_interruption_cleans_only_the_owned_probe() -> None:
     calls: list[list[str]] = []
 
     def runner(argv, env):
-        if argv[3] == "wait":
-            calls.append(argv)
-            raise KeyboardInterrupt
         return _successful_runner(calls)(argv, env)
+
+    def interrupt(argv, _env):
+        calls.append(argv)
+        raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):
         probe_image_capabilities(
@@ -321,6 +431,7 @@ def test_operator_interruption_cleans_only_the_owned_probe() -> None:
             digest=DIGEST,
             context="ctx",
             runner=runner,
+            terminal_observer=interrupt,
             nonce_factory=lambda: "6" * 16,
         )
     deletes = [argv for argv in calls if argv[3] == "delete"]
@@ -332,10 +443,11 @@ def test_operator_interruption_preserves_primary_when_cleanup_fails() -> None:
     calls: list[list[str]] = []
 
     def runner(argv, env):
-        if argv[3] == "wait":
-            calls.append(argv)
-            raise KeyboardInterrupt
         return _successful_runner(calls, delete_error="cleanup denied")(argv, env)
+
+    def interrupt(argv, _env):
+        calls.append(argv)
+        raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt) as caught:
         probe_image_capabilities(
@@ -343,6 +455,7 @@ def test_operator_interruption_preserves_primary_when_cleanup_fails() -> None:
             digest=DIGEST,
             context="ctx",
             runner=runner,
+            terminal_observer=interrupt,
             nonce_factory=lambda: "7" * 16,
         )
     notes = getattr(caught.value, "__notes__", [])

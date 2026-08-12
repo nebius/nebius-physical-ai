@@ -2208,7 +2208,7 @@ def _preflight_image_bootstrap_contracts(
     from npa.orchestration.skypilot.image_bootstrap_contract import (
         CONTRACT_VERSION,
         ImageBootstrapContractError,
-        is_first_party_image,
+        is_trusted_npa_image,
         load_cached_evidence,
         probe_image_capabilities,
         store_cached_evidence,
@@ -2245,7 +2245,7 @@ def _preflight_image_bootstrap_contracts(
                 if attested.ok:
                     evidence = attested
                 elif (
-                    is_first_party_image(image) or "version mismatch" in attested.detail
+                    is_trusted_npa_image(image) or "version mismatch" in attested.detail
                 ):
                     # NPA images are governed by the build-time attestation
                     # policy. Missing metadata is missing evidence, not a reason

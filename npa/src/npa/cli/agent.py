@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import hashlib
 import inspect
 import json
 import os
@@ -42,6 +43,7 @@ from npa.cli.agent_assets import (  # noqa: F401 - re-exported for tests/callers
     _nginx_agent_site_body,
 )
 from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
+    _stage_private_text,
     _write_agent_nebius_env,
     _write_agent_operator_profile,
     _write_agent_s3_env,
@@ -180,7 +182,17 @@ AGENT_UI_VERSION = "2026081001"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
-_AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix", "s3_session_token"})
+_AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset(
+    {
+        "s3_prefix",
+        "s3_session_token",
+        # Backend HMAC credentials are supplied to Terraform only through the
+        # scrubbed subprocess environment. They must never become input vars,
+        # plan/state values, or compute-instance user-data.
+        "nebius_api_key",
+        "nebius_secret_key",
+    }
+)
 
 
 class AgentStorageCredentialError(RuntimeError):
@@ -814,25 +826,6 @@ def _creds_from_terraform_state(
         "s3_endpoint": endpoint,
         "nebius_project_id": str(record.get("project_id", "")).strip(),
         "nebius_region": region,
-    }
-
-
-def _credentials_block_from_storage(
-    *,
-    service_account_id: str,
-    s3_bucket: str,
-    s3_prefix: str = "",
-    s3_endpoint: str,
-    s3_access_key: str,
-    s3_secret_key: str,
-) -> dict[str, str]:
-    return {
-        "service_account_id": service_account_id.strip(),
-        "s3_bucket": s3_bucket.strip(),
-        "s3_prefix": s3_prefix.strip().strip("/"),
-        "s3_endpoint": s3_endpoint.strip(),
-        "access_key": s3_access_key.strip(),
-        "secret_key": s3_secret_key.strip(),
     }
 
 
@@ -8189,19 +8182,16 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_PROVENANCE_EMBED, agent_provenance_source)
         .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
     )
-    local_setup_script = ""
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
     remote_setup_script = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
     try:
         _stage_agent_npa_source(ssh)
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
-            handle.write(setup_script)
-            local_setup_script = handle.name
-        ssh.upload_file(local_setup_script, remote_setup_script)
-        ssh.run_or_raise(f"chmod 700 {shlex.quote(remote_setup_script)} && {shlex.quote(remote_setup_script)}")
+        ssh.upload_private_text(setup_script, remote_setup_script)
+        ssh.run_or_raise(
+            f"chmod 700 {shlex.quote(remote_setup_script)} && {shlex.quote(remote_setup_script)}",
+            label="run agent bootstrap",
+        )
     finally:
-        if local_setup_script:
-            Path(local_setup_script).unlink(missing_ok=True)
         ssh.run(f"rm -f {shlex.quote(remote_setup_script)}")
     _write_agent_llm_env(
         ssh,
@@ -8259,6 +8249,67 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
             "sudo systemctl restart npa-agent-backend"
         )
     verify_remote_deployment(ssh, deployment, backend_port=backend_port)
+    _record_remote_setup_ready(
+        ssh,
+        project_alias=project_alias,
+        agent_name=agent_name,
+        project_id=project_id,
+        endpoint=host,
+    )
+
+
+def _record_remote_setup_ready(
+    ssh: SSHClient,
+    *,
+    project_alias: str,
+    agent_name: str,
+    project_id: str,
+    endpoint: str,
+) -> None:
+    """Atomically record non-secret evidence required for restart adoption."""
+
+    credential_paths = (
+        "/opt/npa-agent/llm.env",
+        "/opt/npa-agent/s3.env",
+        "/opt/npa-agent/nebius.env",
+    )
+    service_paths = (
+        "/opt/npa-agent/deployment.json",
+        "/etc/systemd/system/npa-agent-backend.service",
+    )
+    result = ssh.run_or_raise(
+        "sudo sha256sum "
+        + " ".join(shlex.quote(path) for path in (*service_paths, *credential_paths)),
+        label="fingerprint staged agent files",
+    )
+    if result is None:  # Lightweight rendered-backend test doubles.
+        service_fingerprint = credential_fingerprint = "fixture-fingerprint"
+    else:
+        _code, stdout, _stderr = result
+        rows = [line.split()[0] for line in stdout.splitlines() if line.split()]
+        if len(rows) != len(service_paths) + len(credential_paths):
+            raise SSHError("staged agent fingerprint inventory was incomplete")
+        service_fingerprint = hashlib.sha256(
+            "\n".join(rows[: len(service_paths)]).encode("ascii")
+        ).hexdigest()
+        credential_fingerprint = hashlib.sha256(
+            "\n".join(rows[len(service_paths) :]).encode("ascii")
+        ).hexdigest()
+    state = {
+        "phase": "remote_health_ready",
+        "project_alias": project_alias,
+        "agent_name": agent_name,
+        "project_id": project_id,
+        "endpoint": endpoint,
+        "service_fingerprint": service_fingerprint,
+        "credential_fingerprint": credential_fingerprint,
+        "credential_fingerprint_files": ["llm.env", "s3.env", "nebius.env"],
+    }
+    _stage_private_text(
+        ssh,
+        content=json.dumps(state, sort_keys=True) + "\n",
+        target="/opt/npa-agent/setup-state.json",
+    )
 
 
 def _health(
@@ -8935,6 +8986,13 @@ def deploy_cmd(
         region=env_region,
         merged_vars=merged_vars,
     )
+    terraform_vars = dict(merged_vars)
+    for credential_key in (
+        "nebius_api_key",
+        "nebius_secret_key",
+        "s3_session_token",
+    ):
+        terraform_vars.pop(credential_key, None)
 
     tf_outputs: dict[str, Any] = {}
     typer.echo(
@@ -8960,8 +9018,13 @@ def deploy_cmd(
             tf_outputs = _apply_agent_terraform(
                 project=project,
                 name=name,
-                merged_vars=merged_vars,
+                merged_vars=terraform_vars,
                 env_region=env_region,
+                backend_credentials={
+                    "access_key": str(creds.get("nebius_api_key", "")),
+                    "secret_key": str(creds.get("nebius_secret_key", "")),
+                    "session_token": str(creds.get("s3_session_token", "")),
+                },
             )
     except ProvisionerError as exc:
         hint = _agent_deploy_failure_hint(str(exc))
@@ -9059,7 +9122,6 @@ def deploy_cmd(
         "public_https": public_https,
         "setup_state": "remote_bootstrap_pending",
         "service_account_id": str(creds.get("service_account_id", "")),
-        "credentials": _agent_credentials_payload(creds),
     }
     _store_agent_record(project, name, partial_record)
     if operation is not None:
@@ -9187,7 +9249,6 @@ def deploy_cmd(
         _fail(f"npa network ensure-ingress failed: {exc}")
 
     urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
-    agent_credentials = _agent_credentials_payload(creds)
     record = AgentConfig(
         project_alias=project,
         name=name,
@@ -9211,7 +9272,6 @@ def deploy_cmd(
         direct_url=urls["direct_url"],
         ssh_key_path=ssh_key_path,
         service_account_id=str(creds.get("service_account_id", "")),
-        credentials=agent_credentials,
     )
     final_record = record.to_dict()
     final_record["setup_state"] = "healthy"
@@ -9804,17 +9864,10 @@ def bootstrap_cmd(
     if service_account_id:
         updated["service_account_id"] = service_account_id
         _persist_agent_service_account_id(service_account_id, project_id)
-    if s3_bucket and s3_access_key and s3_secret_key:
-        updated["credentials"] = _credentials_block_from_storage(
-            service_account_id=service_account_id,
-            s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
-            s3_endpoint=s3_endpoint,
-            s3_access_key=s3_access_key,
-            s3_secret_key=s3_secret_key,
-        )
-    elif refresh_credentials and agent_credentials is not None:
-        updated["credentials"] = agent_credentials
+    # Storage credentials remain in the owner-only project credential store and
+    # are re-resolved on resume. Do not duplicate them into config-backed agent
+    # records, operation journals, or teardown receipts.
+    updated.pop("credentials", None)
     _store_agent_record(project, name, updated)
     if operation is not None:
         operation.checkpoint(

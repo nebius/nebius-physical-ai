@@ -1448,10 +1448,10 @@ def build_skypilot_task_doc(
     task_config = normalize_task_config(scheduler_task.get("resources") or {})
     if image and task_config:
         from npa.orchestration.skypilot.image_bootstrap_contract import (
-            is_first_party_image,
+            is_trusted_npa_image,
         )
 
-        if is_first_party_image(image) and _contains_uid_zero_override(task_config):
+        if is_trusted_npa_image(image) and _contains_uid_zero_override(task_config):
             raise NpaWorkflowRenderError(
                 "first-party workflow images must satisfy the SkyPilot bootstrap "
                 "contract as their declared image user; runAsUser: 0 overrides are forbidden"

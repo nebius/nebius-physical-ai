@@ -1026,6 +1026,52 @@ def test_owned_project_delete_waits_for_eventual_provider_absence(
     assert sleeps == [project_destroy.PROJECT_DELETE_VERIFY_INTERVAL_SECONDS] * 3
 
 
+def test_owned_project_delete_timeout_reports_unstable_absence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa import project_destroy
+    from npa.clients import config, nebius
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "tenant_id": "tenant-a",
+                        "region": "eu-test1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "CONFIG_PATH", config_path)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    _owned_project_operation()
+    present = nebius.ProjectIdentity("project-a", "demo", "tenant-a", "eu-test1")
+    observations = iter([present, None])
+    monkeypatch.setattr(
+        nebius, "get_project_identity", lambda *_a, **_k: next(observations)
+    )
+    monkeypatch.setattr(nebius, "list_project_dependencies", lambda *_a, **_k: {})
+    monkeypatch.setattr(nebius, "delete_project", lambda *_a, **_k: None)
+    ticks = iter([0.0, 181.0])
+    monkeypatch.setattr(project_destroy.time, "monotonic", lambda: next(ticks))
+
+    result = execute_project_destroy(
+        "demo", [DestroyPhase("delete_project", (), "delete")]
+    )
+
+    assert result["status"] == "partial"
+    error = result["phases"][0]["errors"][0]
+    assert "stable absence could not be established" in error
+    assert "last_observation=absent" in error
+    assert "stable_absence_observations=1" in error
+
+
 def test_owned_project_not_found_retry_is_idempotent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1145,7 +1191,7 @@ def test_destroy_bucket_fallback_requires_exact_project_credentials(
     )
 
 
-def test_destroy_retry_uses_durable_completed_phase_without_rerunning_inventory(
+def test_destroy_retry_replays_completed_phase_without_current_state_verifier(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from types import SimpleNamespace
@@ -1167,16 +1213,166 @@ def test_destroy_retry_uses_durable_completed_phase_without_rerunning_inventory(
         project_id="project-a",
     )
 
+    calls: list[list[str]] = []
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout='{"runs": []}', stderr="")
+
     result = project_destroy.execute_project_destroy(
         "demo",
         [DestroyPhase("workflows", (("npa", "workflow-list"),), "inventory")],
+        runner=run,
+    )
+
+    assert result["status"] == "success"
+    assert calls == [["npa", "workflow-list"]]
+
+
+def test_destroy_resume_replays_recreated_resources_before_project_delete(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from npa import project_destroy, teardown_receipts
+
+    monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_environment",
+        lambda _project: SimpleNamespace(
+            project_id="project-a", tenant_id="tenant-a", region="us-central1"
+        ),
+    )
+    for name in ("workflows", "agents", "controller", "clusters"):
+        teardown_receipts.record_teardown_event(
+            phase=f"project_destroy_{name}",
+            resource="demo",
+            terminal_state="completed",
+            project_alias="demo",
+            project_id="project-a",
+        )
+    calls: list[str] = []
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN202
+        calls.append(command[1])
+        stdout = '{"runs": []}' if command[1] == "workflow-list" else "{}"
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(
+        project_destroy,
+        "_delete_owned_empty_project",
+        lambda **_kwargs: calls.append("delete-project") or {"outcome": "deleted"},
+    )
+    phases = [
+        DestroyPhase("workflows", (("npa", "workflow-list"),), "workflows"),
+        DestroyPhase("agents", (("npa", "agent-destroy"),), "agents", ("workflows",)),
+        DestroyPhase(
+            "controller", (("npa", "controller-destroy"),), "controller", ("workflows",)
+        ),
+        DestroyPhase(
+            "clusters",
+            (("npa", "cluster-destroy"),),
+            "clusters",
+            ("workflows", "controller"),
+        ),
+        DestroyPhase(
+            "delete_project",
+            (),
+            "project",
+            ("workflows", "agents", "controller", "clusters"),
+        ),
+    ]
+
+    result = project_destroy.execute_project_destroy("demo", phases, runner=run)
+
+    assert result["status"] == "success"
+    assert calls == [
+        "workflow-list",
+        "agent-destroy",
+        "controller-destroy",
+        "cluster-destroy",
+        "delete-project",
+    ]
+    assert all(
+        phase["evidence"].get("resume_contract") == "reverify_or_replay"
+        for phase in result["phases"][:4]
+    )
+
+
+def test_storage_iam_without_exact_generation_is_explicit_nothing_to_do(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa import project_destroy
+
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_environment",
+        lambda _project: SimpleNamespace(
+            project_id="project-a", tenant_id="tenant-a", region="us-central1"
+        ),
+    )
+    phase = DestroyPhase(
+        "storage_iam",
+        (),
+        "storage",
+        metadata={"generation_ids": [], "logical_names": []},
+    )
+
+    result = project_destroy.execute_project_destroy(
+        "demo",
+        [phase],
         runner=lambda *_a, **_k: (_ for _ in ()).throw(
-            AssertionError("completed inventory must not be rerun")
+            AssertionError("identity-less destructive command must not run")
         ),
     )
 
     assert result["status"] == "success"
-    assert result["phases"][0]["evidence"]["durable_prior_completion"] is True
+    assert result["phases"][0]["commands"] == []
+    assert result["phases"][0]["evidence"] == {
+        "outcome": "verified_nothing_to_do",
+        "identity_source": "exact_project_records_and_receipts",
+        "generation_ids": [],
+        "command_results": [],
+    }
+
+
+def test_destroy_plan_never_emits_identityless_storage_iam_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from npa import project_destroy
+
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_environment",
+        lambda _project: SimpleNamespace(
+            project_id="project-a", tenant_id="tenant-a", region="us-central1"
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.clients.config.resolve_terraform_state",
+        lambda _project: SimpleNamespace(bucket=""),
+    )
+    monkeypatch.setattr("npa.cli.agent.resolve_project_agents", lambda _project: {})
+    monkeypatch.setattr("npa.cluster.state.list_local_clusters", lambda: [])
+    monkeypatch.setattr(
+        "npa.controller_ownership.controller_owner", lambda *_args: None
+    )
+    monkeypatch.setattr("npa.provisioning_journal.list_operations", lambda **_kwargs: [])
+    monkeypatch.setattr(project_destroy, "_project_bucket_name", lambda *_a: "")
+    monkeypatch.setattr(
+        project_destroy, "_project_storage_iam_generation_ids", lambda *_a: ()
+    )
+    monkeypatch.setattr(
+        project_destroy, "_project_storage_iam_logical_names", lambda *_a: ()
+    )
+
+    phases = project_destroy.build_project_destroy_plan("demo")
+    storage = next(phase for phase in phases if phase.name == "storage_iam")
+
+    assert storage.commands == ()
+    assert storage.metadata["generation_ids"] == []
 
 
 def test_receipt_project_delete_plan_finishes_alias_free_full_audit() -> None:
@@ -2068,8 +2264,10 @@ def test_full_mocked_project_lifecycle_is_exact_isolated_and_idempotent(
         "controllers": {"cluster-unrelated-id"},
         "clusters": {"cluster-unrelated-id"},
         "buckets": {"bucket-unrelated"},
-        "service_accounts": {"serviceaccount-unrelated"},
-        "access_keys": {"accesskey-unrelated"},
+        # No exact owned storage-IAM generation was recorded, so teardown
+        # refuses to infer ownership from a familiar local/provider name.
+        "service_accounts": {"serviceaccount-target", "serviceaccount-unrelated"},
+        "access_keys": {"accesskey-target", "accesskey-unrelated"},
     }
     saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert saved["default_project"] == "unrelated"

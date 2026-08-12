@@ -97,7 +97,8 @@ def test_cleanup_yes_removes_local_caches_but_keeps_tokens(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     assert not sky_venv.exists()
     assert not tf_cache.exists()
-    assert not sky_home.exists()
+    assert sky_home.exists()
+    assert "Preserved shared SkyPilot state" in result.output
     assert not empty_alias.exists()
     # sky_bin cleared from config; tokens untouched.
     saved_config = yaml.safe_load(config_module.CONFIG_PATH.read_text()) or {}

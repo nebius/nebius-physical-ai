@@ -371,6 +371,29 @@ def _collect_residue(*, include_sky: bool) -> list[_Residue]:
     return residue
 
 
+def _shared_sky_preservation_reason(project_id: str = "") -> str:
+    """Explain why controller ownership cannot authorize global-state deletion."""
+
+    from npa.controller_ownership import controller_owner
+
+    try:
+        owner = controller_owner()
+    except (OSError, RuntimeError, ValueError):
+        owner = None
+    owner_project = str(getattr(owner, "project_id", "") or "")
+    selected = str(project_id or "")
+    if not owner_project:
+        scope = "no controller owner is recorded"
+    elif selected and owner_project == selected:
+        scope = "the selected project owns a controller"
+    else:
+        scope = "another or unselected project owns a controller"
+    return (
+        f"{scope}; managed-job audit and controller ownership do not prove exclusive "
+        "ownership of machine-global SkyPilot state"
+    )
+
+
 def _remove_exact_residue(item: _Residue) -> str:
     """Remove only the inode inventoried by this cleanup run."""
 
@@ -836,7 +859,10 @@ def cleanup_cmd(
     include_sky: bool = typer.Option(
         True,
         "--include-sky/--keep-sky",
-        help="Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs run).",
+        help=(
+            "Include machine-shared ~/.sky in the audit. It is always preserved; "
+            "project teardown removes only separately isolated, affirmatively owned state."
+        ),
     ),
     full: bool = typer.Option(
         False,
@@ -1017,7 +1043,8 @@ def cleanup_cmd(
         from npa.teardown_receipts import TERMINAL_STATES
 
         operational_residue = bool(
-            local_state not in {"fully_clean", "fully_cleaned"}
+            local_state
+            not in {"fully_clean", "fully_cleaned", "preserved_shared_sky"}
             or project_credential_residue_items
         )
         unresolved_receipts = any(
@@ -1322,7 +1349,10 @@ def cleanup_cmd(
     if not yes:
         emit("")
         rerun = "--full --yes" if full else "--yes"
-        emit(f"Re-run with {rerun} to remove them (or --keep-sky to leave ~/.sky).")
+        emit(
+            f"Re-run with {rerun} to remove owned residue. Machine-shared ~/.sky "
+            "is always preserved."
+        )
         emit(iam_message or _iam_note())
         if output_json:
             emit_json(
@@ -1378,13 +1408,20 @@ def cleanup_cmd(
     for residue_item in residue:
         if (
             project
-            and not full
             and residue_item.label in {"SkyPilot venv", "Terraform provider cache"}
         ):
             shared_runtime_preserved = True
             emit(
                 f"Preserved shared {residue_item.label} at {residue_item.path}: "
                 "project-scoped cleanup does not own global runtime/cache state."
+            )
+            continue
+        if residue_item.label == "SkyPilot state (~/.sky)":
+            shared_runtime_preserved = True
+            sky_preserved_by_skip = True
+            emit(
+                f"Preserved shared {residue_item.label} at {residue_item.path}: "
+                f"{_shared_sky_preservation_reason(receipt_project_id)}."
             )
             continue
         if (
@@ -1541,7 +1578,9 @@ def cleanup_cmd(
             },
             verification={
                 "remaining_terraform_count": len(collect_terraform_residue()),
-                "sky_state_preserved": not sky_audit_safe,
+                "sky_state_preserved": bool(
+                    sky_preserved_by_skip or not sky_audit_safe
+                ),
                 "shared_runtime_preserved": shared_runtime_preserved,
                 "managed_job_verification": job_queue_state,
             },

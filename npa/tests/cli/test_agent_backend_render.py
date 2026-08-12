@@ -35,7 +35,11 @@ def _render_backend_body(monkeypatch) -> str:
                 except UnicodeDecodeError:
                     pass
 
-        def run_or_raise(self, _command: str) -> None:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                captured["setup_script"] = content
+
+        def run_or_raise(self, _command: str, **_kwargs) -> None:
             return None
 
         def run(self, _command: str) -> None:
@@ -428,7 +432,11 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
                 except UnicodeDecodeError:
                     pass
 
-        def run_or_raise(self, _command: str) -> None:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                captured["setup_script"] = content
+
+        def run_or_raise(self, _command: str, **_kwargs) -> None:
             return None
 
         def run(self, _command: str) -> None:
@@ -481,7 +489,11 @@ def _capture_setup_script(monkeypatch, *, preload_stock_demo: bool = True) -> st
                 except UnicodeDecodeError:
                     pass
 
-        def run_or_raise(self, _command: str) -> None:
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                captured["setup_script"] = content
+
+        def run_or_raise(self, _command: str, **_kwargs) -> None:
             return None
 
         def run(self, _command: str) -> None:

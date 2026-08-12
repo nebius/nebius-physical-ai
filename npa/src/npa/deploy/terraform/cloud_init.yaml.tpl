@@ -7,6 +7,7 @@ users:
     ssh_authorized_keys:
       - ${ssh_public_key}
 
+%{ if workbench_type != "agent" ~}
 write_files:
 %{ if workbench_type == "fiftyone" ~}
   - path: /etc/apt/apt.conf.d/99npa-network
@@ -107,6 +108,7 @@ write_files:
       MUJOCO_GL=egl
       PYOPENGL_PLATFORM=egl
       PYTHONUNBUFFERED=1
+%{ endif ~}
 %{ endif ~}
 
 runcmd:

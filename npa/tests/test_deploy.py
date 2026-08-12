@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -198,6 +199,49 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
     assert "$DEPLOY_ROOT/checkpoints" in container_branch
     assert "Installing LeRobot ${lerobot_version}" not in container_branch
     assert "lerobot[pusht,libero]" not in container_branch
+
+
+def test_agent_cloud_init_renders_without_s3_secrets(tmp_path: Path) -> None:
+    terraform = shutil.which("terraform")
+    if terraform is None:
+        pytest.skip("terraform is required to parse the deployment template")
+    template = PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl"
+    config = tmp_path / "main.tf"
+    config.write_text(
+        f'''locals {{
+  rendered = templatefile({json.dumps(str(template))}, {{
+    ssh_user = "ubuntu"
+    ssh_public_key = "ssh-ed25519 fixture"
+    workbench_type = "agent"
+    server_port = 8088
+    lerobot_version = "0.6.0"
+    fiftyone_version = "1.8.0"
+    s3_bucket = "fixture-bucket"
+    s3_endpoint = "https://storage.invalid"
+    aws_access_key = "NPA_PR218_ACCESS_SENTINEL_DO_NOT_PERSIST"
+    aws_secret_key = "NPA_PR218_SECRET_SENTINEL_DO_NOT_PERSIST"
+    nebius_region = "us-central1"
+  }})
+}}
+output "rendered" {{
+  value = local.rendered
+}}
+''',
+        encoding="utf-8",
+    )
+
+    rendered = subprocess.run(
+        [terraform, "apply", "-auto-approve", "-no-color"],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert rendered.returncode == 0, rendered.stderr
+    assert "NPA_PR218_ACCESS_SENTINEL_DO_NOT_PERSIST" not in rendered.stdout
+    assert "NPA_PR218_SECRET_SENTINEL_DO_NOT_PERSIST" not in rendered.stdout
+    assert "write_files:" not in rendered.stdout
 
 
 def test_terraform_outputs_use_compute_and_cpu_names_with_legacy_aliases() -> None:

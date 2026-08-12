@@ -16,7 +16,9 @@ exits 2 when IAM is present/unverified or provider verification fails.
 Options
 --yes  -y  Remove the local caches (otherwise just report). Local only: this never deletes cloud resources -- see the printed runbook for
     those.
---include-sky  --keep-sky  Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs run). [default: include-sky]
+--include-sky  --keep-sky  Include machine-shared ~/.sky in the audit. It is always preserved; project teardown removes only separately isolated, affirmatively
+    owned state.
+    [default: include-sky]
 --full  Broaden --yes to also remove locally saved HF, Token Factory, and NGC credentials, validated NPA Terraform residue, and empty
     config/known ~/.npa state. Also read-only verifies recorded storage IAM; an unverified/present account makes cleanup partial (exit
     2).
@@ -36,7 +38,7 @@ Options
 | Option | Description |
 | --- | --- |
 | `--yes` | -y  Remove the local caches (otherwise just report). Local only: this never deletes cloud resources -- see the printed runbook for those. |
-| `--include-sky` | --keep-sky  Also remove SkyPilot's own ~/.sky state cache (safe once no clusters/jobs run). [default: include-sky] |
+| `--include-sky` | --keep-sky  Include machine-shared ~/.sky in the audit. It is always preserved; project teardown removes only separately isolated, affirmatively owned state. [default: include-sky] |
 | `--full` | Broaden --yes to also remove locally saved HF, Token Factory, and NGC credentials, validated NPA Terraform residue, and empty config/known ~/.npa state. Also read-only verifies recorded storage IAM; an unverified/present account makes cleanup partial (exit 2). |
 | `--project` | <str>  Scope per-alias state and the --full read-only storage-IAM check to this NPA project alias. |
 | `--skip-jobs` | Do not query the SkyPilot managed-job queue. |
