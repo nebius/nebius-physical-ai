@@ -295,3 +295,56 @@ def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monke
 
     assert captured["job_name"].endswith("outer-02-iter-01")
     assert captured["out_s3_prefix"].endswith("/byo-rollouts/outer-02-iter-01")
+
+
+def test_inline_rollout_provenance_reaches_main_component_record(tmp_path, monkeypatch):
+    image = "reg/runtime@sha256:" + "a" * 64
+    proof = {
+        "mode": "npa_workflow_skypilot_task",
+        "job_name": "managed-wave-stage-07",
+        "image": image,
+        "gpu_product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+        "owner": "standard_npa_workflow_runtime",
+    }
+
+    monkeypatch.setattr(
+        pr,
+        "build_isaac_rollout_job_manifest",
+        lambda **_kwargs: {"kind": "Job"},
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.isaac_job_payload.execute_manifest_container_inline",
+        lambda _manifest: proof,
+    )
+    monkeypatch.setattr(pr, "latest_checkpoint_uri", lambda *a, **k: "")
+    monkeypatch.setattr(pr, "_download_rollout_metadata", lambda *a, **k: {})
+    monkeypatch.setattr(pr, "materialize_rollout_dirs", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.byo_isaac_trainer.read_generated_train_envs",
+        lambda *a, **k: (
+            [
+                {
+                    "difficulty": difficulty,
+                    "scenario_config_digest": f"cfg-{difficulty}",
+                }
+                for difficulty in ("easy", "medium", "hard")
+            ],
+            "",
+        ),
+    )
+    monkeypatch.setenv("NPA_SIM2REAL_INLINE_TASK", "1")
+    monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", image)
+    monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bucket")
+    monkeypatch.setenv("NPA_SIM2REAL_PREFIX", "sim2real")
+    monkeypatch.setenv("NPA_TASK_IMAGE", image)
+
+    pr._LAST_GPU_PROVENANCE = {}
+    result = pr.run_isaac_rollout_job(
+        tmp_path / "actions" / "train" / "outer-01" / "iter-01",
+        run_id="run",
+        rollout_count=1,
+        steps_per_rollout=1,
+    )
+
+    assert result == []
+    assert pr._LAST_GPU_PROVENANCE == proof

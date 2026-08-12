@@ -931,6 +931,8 @@ def run_isaac_rollout_job(
     rollout_count: int,
     steps_per_rollout: int,
 ) -> list[str]:
+    global _LAST_GPU_PROVENANCE
+
     task = _env("NPA_SIM2REAL_ISAAC_TASK", DEFAULT_ISAAC_TASK)
     image = _env("NPA_SIM2REAL_ISAAC_IMAGE") or _env("ISAAC_IMAGE")
     from npa.workflows.sim2real.k8s_components import _image_pull_policy
