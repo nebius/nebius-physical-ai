@@ -466,9 +466,9 @@ def resolve_task_image(
     for prefix in options.image_overrides:
         if prefix == "*":
             continue
-        if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(prefix) > len(
-            best_override
-        ):
+        if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(
+            prefix
+        ) > len(best_override):
             best_override = prefix
     if best_override:
         return str(options.image_overrides[best_override] or "").strip()

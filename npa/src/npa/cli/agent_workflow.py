@@ -2034,9 +2034,9 @@ def extract_sim2real_params(user_text: str) -> dict[str, Any]:
     if gpu_count and gpu_count > 0:
         params["gpu_count"] = gpu_count
     for field, labels in _SIM2REAL_URI_FIELDS:
-        value = _named_uri(text, labels)
-        if value:
-            params[field] = value
+        uri_value = _named_uri(text, labels)
+        if uri_value:
+            params[field] = uri_value
     task = _named_text(text, r"isaac(?:\s+lab)?\s+task")
     if task:
         params["isaac_task"] = task
@@ -2213,7 +2213,8 @@ def resolve_workflow_infrastructure(
                 if entry
                 else "no configured, local, or cloud Kubernetes backend is available"
             )
-    raw = entry.get("raw") if isinstance(entry.get("raw"), dict) else {}
+    raw_value = entry.get("raw")
+    raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
     available_raw = raw.get("available_accelerators")
     available = (
         [str(value).strip() for value in available_raw if str(value).strip()]

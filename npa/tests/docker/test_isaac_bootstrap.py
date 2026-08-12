@@ -610,9 +610,15 @@ def test_oss_deps_include_every_undeclared_isaac_dependency(
 
 
 def test_isaac_image_normalizes_bootstrap_scripts_for_the_non_root_user() -> None:
-    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
-    assert "find /opt/npa/docker/workbench/common -type d -exec chmod 0755" in dockerfile
-    assert "find /opt/npa/docker/workbench/common -type f -exec chmod 0644" in dockerfile
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "find /opt/npa/docker/workbench/common -type d -exec chmod 0755" in dockerfile
+    )
+    assert (
+        "find /opt/npa/docker/workbench/common -type f -exec chmod 0644" in dockerfile
+    )
     assert "chmod 0755 /opt/npa/docker/workbench/common/*.sh" in dockerfile
 
 
