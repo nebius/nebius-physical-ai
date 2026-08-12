@@ -67,7 +67,7 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
       cy.get("#loadRunData").click();
       cy.get("#artifactRunSummary", { timeout: 180000 }).should("contain.text", activeRun);
       cy.get("#statusBar", { timeout: 300000 }).should("contain.text", "Load run data done");
-      cy.get("#stageList .stage-item", { timeout: 180000 }).should("have.length", 12);
+      cy.get("#stageList .stage-item", { timeout: 180000 }).should("have.length", 7);
     });
   });
 
@@ -92,7 +92,7 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
       .and("contain.text", "offline held-out (not rollout)");
   });
 
-  it("shows every terminal workflow stage and physical managed-job ID", () => {
+  it("proves all physical jobs while showing the semantic offline provenance stages", () => {
     agentReq(`/api/workflows/sim2real/runs/${encodeURIComponent(activeRun)}`).then((resp) => {
       expect(resp.status, "run details status").to.eq(200);
       const run = resp.body.run || resp.body;
@@ -104,12 +104,18 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
       expect(new Set(stages.map((stage) => String(stage.job_id))).size, "one physical job per serial stage")
         .to.eq(12);
     });
-    cy.get("#stageList .stage-item", { timeout: 180000 }).should("have.length", 12);
+    cy.get("#stageList .stage-item", { timeout: 180000 }).should("have.length", 7);
     cy.get("#stageList .stage-status").each(($status) => {
       expect($status.text()).to.eq("Succeeded");
     });
-    cy.get("#stageList .stage-physical-job").should("have.length", 12)
-      .and("contain.text", "Physical managed job ID:");
+    cy.get("#stageList")
+      .should("contain.text", "Prepare leakage-free split")
+      .and("contain.text", "Offline baseline")
+      .and("contain.text", "Multi-GPU policy training")
+      .and("contain.text", "Offline post-training evaluation")
+      .and("contain.text", "Classify learning outcome")
+      .and("contain.text", "Synchronized diagnostics")
+      .and("contain.text", "Validate and publish");
   });
 
   it("lists and range-serves every required diagnostic artifact", () => {

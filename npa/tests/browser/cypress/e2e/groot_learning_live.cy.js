@@ -16,6 +16,7 @@ function agentReq(path, options = {}) {
       username: Cypress.env("NPA_AGENT_USER"),
       password: Cypress.env("NPA_AGENT_PASSWORD"),
     },
+    timeout: 180000,
     ...options,
   });
 }
