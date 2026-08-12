@@ -1048,6 +1048,7 @@ def test_lichtblick_nginx_inline_javascript_has_no_nginx_variables_or_controls()
 
     for script in (_lichtblick_default_layout_script(), _lichtblick_worker_script()):
         assert "$" not in script
+        assert "\\" not in script
         assert not [char for char in script if ord(char) < 32 or ord(char) == 127]
 
 
