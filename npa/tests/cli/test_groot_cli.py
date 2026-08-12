@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -1415,7 +1416,7 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     )
     script = shlex.split(cmd)[2]
 
-    assert "uv run --no-sync torchrun --nproc_per_node=2" in cmd
+    assert "uv run --no-sync torchrun --standalone --nproc_per_node=2" in cmd
     assert f"uv sync --python {GROOT_VENV}/bin/python" in cmd
     assert f"uv pip install --quiet --python {GROOT_VENV}/bin/python boto3" in cmd
     assert "import boto3, wandb" in cmd
@@ -1470,6 +1471,41 @@ def test_groot_finetune_s3_paths_build_pytorch_command(mocker) -> None:
     assert "training.log" in script
     assert GROOT_FINETUNE_MANIFEST in cmd
     assert "upload_file" in cmd
+
+
+def test_two_same_node_finetunes_use_unique_temp_dirs_and_standalone_rendezvous(
+    mocker,
+) -> None:
+    mocker.patch("npa.cli.groot.time.time_ns", side_effect=[101, 202])
+    kwargs = {
+        "input_path": "s3://bucket/datasets/train/",
+        "output_path": "s3://bucket/checkpoints/candidate/",
+        "base_model": DEFAULT_MODEL,
+        "robot_embodiment": "NEW_EMBODIMENT",
+        "num_gpus": 2,
+        "config": "",
+        "endpoint_url": "https://storage.example",
+        "max_steps": 4,
+        "global_batch_size": 2,
+        "per_device_batch_size": 1,
+        "gradient_accumulation_steps": 1,
+        "logging_steps": 1,
+        "save_steps": 4,
+        "save_total_limit": 1,
+    }
+    commands = [
+        _build_finetune_command(run_id=f"run-{index}", **kwargs)
+        for index in (1, 2)
+    ]
+    assert "finetune-101" in commands[0]
+    assert "finetune-202" in commands[1]
+    for command in commands:
+        assert "mktemp -d /tmp/npa-groot-finetune.XXXXXX" in command
+        assert "torchrun --standalone --nproc_per_node=2" in command
+        assert "--master_port=29500" not in command
+        assert "--master_port=29501" not in command
+        assert "/tmp/npa_groot_distributed_probe.py" not in command
+        assert "/tmp/npa_groot_training_rank_wrapper.py" not in command
 
 
 def test_groot_finetune_maps_effective_batch_and_absolute_action_mode(mocker) -> None:
@@ -1528,7 +1564,7 @@ def test_groot_finetune_s3_continuation_syncs_upstream_environment(mocker) -> No
 
     download_marker = "npa_s3_download_done"
     sync = f"uv sync --python {GROOT_VENV}/bin/python"
-    launcher = "uv run --no-sync torchrun --nproc_per_node=7"
+    launcher = "uv run --no-sync torchrun --standalone --nproc_per_node=7"
     assert "checkpoints/candidate" in cmd
     assert download_marker in cmd
     assert sync in cmd
@@ -1653,12 +1689,15 @@ def test_groot_finetune_local_runtime_uses_real_two_gpu_launcher(mocker) -> None
     assert payload["groot_repo_ref"] == GROOT_REPO_REF
     command = local.call_args.args[0]
     script = shlex.split(command)[2]
-    assert "uv run --no-sync torchrun --nproc_per_node=2" in command
+    assert "uv run --no-sync torchrun --standalone --nproc_per_node=2" in command
     assert f"uv sync --python {GROOT_VENV}/bin/python" in command
     assert f"uv pip install --quiet --python {GROOT_VENV}/bin/python boto3" in command
     assert "import boto3, wandb" in command
     assert "NPA_GROOT_TRAIN_ENV_SYNC_OK" in command
-    assert "--master_port=29501 /tmp/npa_groot_distributed_probe.py" in command
+    assert 'mktemp -d /tmp/npa-groot-finetune.XXXXXX' in command
+    assert 'trap \'rm -rf -- "$runtime_dir"\' EXIT' in script
+    assert '"$runtime_dir/npa_groot_distributed_probe.py"' in command
+    assert "--master_port=29501" not in command
     assert "export NCCL_P2P_DISABLE=1" in command
     assert "export NCCL_SHM_DISABLE=1" in command
     assert "--num-gpus 2" in command
@@ -1666,6 +1705,38 @@ def test_groot_finetune_local_runtime_uses_real_two_gpu_launcher(mocker) -> None
     assert GROOT_FINETUNE_MANIFEST in command
     resolve_ssh.assert_not_called()
     ssh_cls.assert_not_called()
+
+
+def test_two_concurrent_finetunes_use_unique_temp_paths_and_safe_rendezvous() -> None:
+    def build(index: int) -> str:
+        return _build_finetune_command(
+            input_path="s3://bucket/datasets/train/",
+            output_path="s3://bucket/checkpoints/candidate/",
+            base_model=DEFAULT_MODEL,
+            robot_embodiment="NEW_EMBODIMENT",
+            num_gpus=2,
+            config="",
+            endpoint_url="https://storage.example",
+            run_id=f"concurrent-{index}",
+            global_batch_size=2,
+            per_device_batch_size=1,
+            gradient_accumulation_steps=1,
+            max_steps=1,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        commands = list(pool.map(build, (1, 2)))
+
+    output_dirs = {
+        re.search(r"/checkpoints/finetune-(\d+)", command).group(1)
+        for command in commands
+    }
+    assert len(output_dirs) == 2
+    for command in commands:
+        assert 'mktemp -d /tmp/npa-groot-finetune.XXXXXX' in command
+        assert 'trap \'rm -rf -- "$runtime_dir"\' EXIT' in shlex.split(command)[2]
+        assert command.count("torchrun --standalone") == 2
+        assert "--master_port=" not in command
 
 
 @pytest.mark.parametrize("num_gpus", ["0", "-1"])

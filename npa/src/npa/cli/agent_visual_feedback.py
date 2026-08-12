@@ -24,74 +24,25 @@ MAX_IMAGE_DATA_URL_CHARS = 2_500_000
 
 VISUAL_KINDS = frozenset({"rerun", "foxglove", "video", "image", "data", "unknown"})
 
-GROOT_LEARNING_RERUN_NOTE = (
-    "Offline held-out GR00T policy evaluation loaded (not a rollout). "
-    "The Rerun blueprint aligns the real dataset camera/front frames with expert "
-    "and baseline/post-training predicted actions, action error, held-out metrics, "
-    "training loss, and split/checkpoint provenance. Dataset FPS/index time is not "
-    "wall-clock sensor time."
-)
-GROOT_LEARNING_MCAP_NOTE = (
-    "Offline held-out GR00T policy-evaluation MCAP loaded (not a rollout). It "
-    "contains the real dataset camera, aligned expert and model-predicted actions, "
-    "per-sample error, held-out before/after metrics, training loss, and provenance "
-    "on dataset index time. The same file is published for both embedded viewers."
-)
-GROOT_TASK_PERFORMANCE_NOTE = (
-    "Closed-loop PushT task-performance replay loaded. Both panels are live "
-    "gym-pusht simulation rollouts driven by immutable GR00T checkpoint outputs "
-    "on the same seed. This is simulated task execution, not physical hardware."
-)
-
-
 def is_offline_groot_learning_context(
     visual_context: Mapping[str, Any] | None,
 ) -> bool:
     """Recognize legacy and operational GR00T offline-evaluation recordings."""
 
-    facts = " ".join(
-        str((visual_context or {}).get(key) or "")
-        for key in ("run_id", "artifact_key", "note", "provenance", "origin")
+    context = visual_context if isinstance(visual_context, Mapping) else {}
+    contract = context.get("artifact_contract")
+    contract = contract if isinstance(contract, Mapping) else {}
+    authoritative = (
+        context.get("artifact_contract_authoritative") is True
+        or contract.get("authoritative") is True
+    )
+    evaluation_kind = str(
+        context.get("evaluation_kind") or contract.get("evaluation_kind") or ""
     ).lower()
-    groot_recording = any(
-        marker in facts
-        for marker in (
-            "groot-learning",
-            "groot17-learning",
-            "groot-offline-evaluation",
-            "groot17-two-gpu-pipeline",
-        )
-    )
-    offline_evidence = any(
-        marker in facts
-        for marker in ("heldout", "held-out", "offline evaluation", "offline-evaluation")
-    )
-    return groot_recording and offline_evidence
-
-
-def task_performance_visual_fact_block(
-    visual_context: Mapping[str, Any] | None,
-) -> str:
-    """Return fail-closed facts for a closed-loop simulated task replay."""
-
-    facts = " ".join(
-        str((visual_context or {}).get(key) or "")
-        for key in ("run_id", "artifact_key", "note", "provenance", "origin")
-    ).lower()
-    if not (
-        ("task-performance" in facts or "closed-loop" in facts)
-        and ("groot" in facts or "pusht" in facts)
-    ):
-        return ""
-    return (
-        "\n\nNON-NEGOTIABLE FACTS FOR THIS TASK-PERFORMANCE REPLAY:\n"
-        "- It is closed-loop PushT execution in gym-pusht simulation, not physical hardware.\n"
-        "- Baseline and trained panels use the same deterministic seed and initial state.\n"
-        "- Every applied action comes from the loaded GR00T checkpoint; no scripted controller is used.\n"
-        "- Camera pixels are current env.render() frames after physics transitions, not dataset video.\n"
-        "- Recognize visible goal coverage, success/failure, score, and termination labels; "
-        "never call the simulated pusher a physical robot."
-    )
+    closed_loop = context.get("closed_loop")
+    if closed_loop is None:
+        closed_loop = contract.get("closed_loop")
+    return authoritative and "offline" in evaluation_kind and closed_loop is False
 
 
 def learning_visual_fact_block(visual_context: Mapping[str, Any] | None) -> str:
@@ -268,6 +219,8 @@ def _meta_blob(meta: Mapping[str, Any] | None) -> str:
         "text_excerpt",
         "provenance",
         "origin",
+        "evaluation_kind",
+        "artifact_contract_authoritative",
     ):
         value = meta.get(key)
         if value is None:
@@ -320,7 +273,46 @@ def learning_visual_reply_needs_correction(
     if not is_offline_groot_learning_context(meta):
         return False
     lowered = str(reply or "").lower()
-    return any(phrase in lowered for phrase in _LEARNING_REPLY_CONTRADICTIONS)
+    return any(_contains_affirmative_phrase(lowered, phrase) for phrase in _LEARNING_REPLY_CONTRADICTIONS)
+
+
+def _contains_affirmative_phrase(text: str, phrase: str) -> bool:
+    """Find a claim while respecting nearby grammatical negation."""
+    for match in re.finditer(re.escape(phrase), text, flags=re.IGNORECASE):
+        prefix = text[max(0, match.start() - 48) : match.start()]
+        if re.search(
+            r"(?:\bnot\b|\bnever\b|\bno\b|\bwithout\b|isn['’]?t|aren['’]?t|doesn['’]?t)\s+(?:\w+\s+){0,4}$",
+            prefix,
+        ):
+            continue
+        return True
+    return False
+
+
+def has_quality_captured_frame(meta: Mapping[str, Any] | None) -> bool:
+    values = meta if isinstance(meta, Mapping) else {}
+    quality = str(values.get("frame_quality") or "").strip().lower()
+    capture = str(values.get("capture") or "").strip().lower()
+    blank = values.get("frame_blank") is True or quality in {"blank", "uniform", "unavailable"}
+    return (
+        values.get("has_image") is True
+        and capture in {"frame", "captured-frame", "screenshot", "quality-captured-frame"}
+        and quality in {"captured", "rendered", "nonblank", "quality-captured"}
+        and not blank
+    )
+
+
+def metadata_only_visual_reply(meta: Mapping[str, Any] | None) -> str:
+    values = meta if isinstance(meta, Mapping) else {}
+    run_id = str(values.get("run_id") or "unknown run").strip()
+    artifact = str(values.get("artifact_key") or "unknown artifact").strip()
+    camera = str(values.get("camera") or "not reported").strip()
+    return (
+        "I could verify only run/artifact metadata: "
+        f"run `{run_id}`, artifact `{artifact}`, primary camera `{camera}`. "
+        "No quality-captured frame was available, so I did not inspect pixels and "
+        "cannot truthfully describe objects, colors, image quality, motion, or task outcome."
+    )
 
 
 def truthful_learning_visual_reply(meta: Mapping[str, Any] | None) -> str:
@@ -331,97 +323,15 @@ def truthful_learning_visual_reply(meta: Mapping[str, Any] | None) -> str:
     low-resolution frame's visual style.
     """
     values = meta if isinstance(meta, Mapping) else {}
-    origin = str(values.get("origin") or "").strip()
-    provenance = str(values.get("provenance") or "").strip()
-    source = origin or (
-        "The camera observation comes from the persisted episode-disjoint held-out "
-        "dataset and is aligned with expert actions and real model predictions."
-    )
-    stage = "Synchronized learning replay"
-    if provenance and "Synchronized learning replay" not in provenance:
-        stage = "the artifact-backed learning replay"
+    if not has_quality_captured_frame(values):
+        return metadata_only_visual_reply(values)
+    camera = str(values.get("camera") or "the report-selected primary camera").strip()
     return (
-        "### What I see\n\n"
-        "A non-blank Rerun frame with a low-resolution `camera/front` observation and "
-        "the labeled learning panels: expert versus baseline/post-training predicted "
-        "actions, per-sample absolute/squared action error, held-out before/after "
-        "metrics, training loss, and evaluation provenance. The camera frame's simple "
-        "appearance does not establish that it is synthetic.\n\n"
-        "### Where it comes from\n\n"
-        f"The recording was produced by **{stage}**. {source}\n\n"
-        "### Likely meaning\n\n"
-        "This is an offline held-out policy comparison. The plots show how real model "
-        "predictions differ from expert actions and how the primary held-out metric "
-        "changed after training. A single replay frame does not demonstrate motion, "
-        "task success, or closed-loop control.\n\n"
-        "### Operator feedback\n\n"
-        "The viewer is substantive and synchronized: camera evidence, action traces, "
-        "errors, before/after metrics, training loss, and provenance are present. "
-        "Treat it as offline evaluation evidence, not a robot or simulator rollout.\n\n"
-        "### Next actions\n\n"
-        "Scrub `dataset_time`, compare both action dimensions before and after training, "
-        "inspect error peaks against `camera/front`, and use the MCAP/video views for "
-        "the same aligned samples. Run closed-loop evaluation only when a compatible "
-        "simulator or robot execution path is available."
-    )
-
-
-def task_performance_visual_reply_needs_correction(
-    reply: str | None,
-    meta: Mapping[str, Any] | None,
-) -> bool:
-    """Reject physical-hardware claims or omission of required operator sections."""
-
-    facts = _meta_blob(meta)
-    is_task = ("task-performance" in facts or "closed-loop" in facts) and (
-        "groot" in facts or "pusht" in facts
-    )
-    if not is_task:
-        return False
-    lowered = str(reply or "").lower()
-    physical_claim = any(
-        phrase in lowered
-        for phrase in (
-            "physical robot",
-            "real robot hardware",
-            "hardware camera",
-            "on the real robot",
-        )
-    ) and not any(
-        phrase in lowered for phrase in ("not physical", "no physical", "simulated")
-    )
-    headings = all(
-        heading in lowered
-        for heading in ("what i see", "likely meaning", "operator feedback", "next actions")
-    )
-    return physical_claim or not headings
-
-
-def truthful_task_performance_visual_reply(meta: Mapping[str, Any] | None) -> str:
-    """Grounded fallback for the nonblank simulated paired-rollout viewer."""
-
-    values = meta if isinstance(meta, Mapping) else {}
-    artifact = str(values.get("artifact_key") or "the task-performance recording")
-    return (
-        "### What I see\n\n"
-        "A non-blank, synchronized PushT task-performance view labeled **Simulated**. "
-        "The baseline and trained panels show the circular pusher, gray T-shaped object, "
-        "green T-shaped goal, same episode seed, step/horizon, task-native coverage score, "
-        "final success/failure, and termination reason. Aggregate panels report paired "
-        "success rates, task-score deltas, and the confidence interval.\n\n"
-        "### Likely meaning\n\n"
-        "This is genuine closed-loop simulator evidence: each checkpoint controls its own "
-        "current gym-pusht environment from the same initial condition. Outcome labels and "
-        "goal coverage establish task behavior; training/offline MSE is secondary. This is "
-        "not physical-robot footage.\n\n"
-        "### Operator feedback\n\n"
-        "Compare object motion and coverage at the same timeline position, then check whether "
-        "the trained outcome and paired confidence interval support the displayed conclusion. "
-        f"The active artifact is `{artifact}`.\n\n"
-        "### Next actions\n\n"
-        "Use the seed selector to inspect trained wins and representative failures, scrub near "
-        "termination, inspect action/object/goal topics in Lichtblick, and download the JSON "
-        "report before promoting the checkpoint."
+        "A quality-captured viewer frame was supplied to the multimodal model. The "
+        "original answer was rejected because it contradicted authoritative run metadata, "
+        f"so I will not invent replacement pixel details. Metadata proves that `{camera}` "
+        "is aligned with expert and baseline/post-training predictions on an offline "
+        "held-out dataset timeline. It does not prove motion, task success, or closed-loop control."
     )
 
 

@@ -1560,7 +1560,7 @@ def _build_finetune_command(
 
     output_is_s3 = _is_s3_uri(output_path)
     output_dir = (
-        f"{GROOT_DATA_MOUNT}/checkpoints/finetune-{int(time.time())}"
+        f"{GROOT_DATA_MOUNT}/checkpoints/finetune-{int(time.time_ns())}"
         if output_is_s3
         else output_path
     )
@@ -1573,11 +1573,11 @@ def _build_finetune_command(
     )
     tag = _normalize_embodiment_tag(robot_embodiment)
     if num_gpus > 1:
-        launcher = f"uv run --no-sync torchrun --nproc_per_node={num_gpus} --master_port=29500 /tmp/npa_groot_training_rank_wrapper.py"
-        probe_launcher = f"uv run --no-sync torchrun --nproc_per_node={num_gpus} --master_port=29501 /tmp/npa_groot_distributed_probe.py"
+        launcher = f'uv run --no-sync torchrun --standalone --nproc_per_node={num_gpus} "$runtime_dir/npa_groot_training_rank_wrapper.py"'
+        probe_launcher = f'uv run --no-sync torchrun --standalone --nproc_per_node={num_gpus} "$runtime_dir/npa_groot_distributed_probe.py"'
     else:
-        launcher = "uv run python /tmp/npa_groot_training_rank_wrapper.py"
-        probe_launcher = "uv run python /tmp/npa_groot_distributed_probe.py"
+        launcher = 'uv run python "$runtime_dir/npa_groot_training_rank_wrapper.py"'
+        probe_launcher = 'uv run python "$runtime_dir/npa_groot_distributed_probe.py"'
     nccl_env = ""
     if num_gpus > 1 and nccl_transport == NcclTransport.socket.value:
         nccl_env = f"""\
@@ -1671,6 +1671,8 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
             ),
             "max_steps": max_steps,
             "logging_steps": logging_steps,
+            "save_steps": save_steps,
+            "save_total_limit": save_total_limit,
             "loss_step_contract": "actual trainer_state/global_step only; no synthetic mapping",
             "model_config_contract": {
                 "tune_projector": True,
@@ -1691,6 +1693,8 @@ echo NPA_GROOT_NCCL_TRANSPORT socket
     script = f"""\
 set -euo pipefail
 cd {GROOT_REPO}
+runtime_dir=$(mktemp -d /tmp/npa-groot-finetune.XXXXXX)
+trap 'rm -rf -- "$runtime_dir"' EXIT
 {training_env}
 mkdir -p {GROOT_DATA_CACHE} {GROOT_CHECKPOINT_CACHE} {GROOT_DATA_MOUNT}/checkpoints {GROOT_CONFIG_CACHE}
 # Finetuning must not rely on the Hugging Face checkpoint downloader's
@@ -1721,10 +1725,10 @@ if [ -n "$modality_config_path" ]; then
   modality_config_arg=(--modality-config-path "$modality_config_path")
 fi
 mkdir -p {shlex.quote(output_dir)}
-cat > /tmp/npa_groot_distributed_probe.py <<'PY'
+cat > "$runtime_dir/npa_groot_distributed_probe.py" <<'PY'
 {probe_script}
 PY
-cat > /tmp/npa_groot_training_rank_wrapper.py <<'PY'
+cat > "$runtime_dir/npa_groot_training_rank_wrapper.py" <<'PY'
 {training_rank_wrapper}
 PY
 {probe_launcher}

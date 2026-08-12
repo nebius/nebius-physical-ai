@@ -429,51 +429,6 @@
         background: rgba(255, 255, 255, 0.78);
         font-size: 13px;
       }
-      .task-performance-summary {
-        border-color: #0f766e;
-        background: linear-gradient(145deg, #ecfeff, #f0fdf4);
-      }
-      .task-performance-summary .learning-badge { background: #0f766e; }
-      .task-performance-summary .task-conclusion {
-        margin-top: 9px;
-        padding: 9px 10px;
-        border-left: 5px solid #0f766e;
-        background: #fff;
-        font-weight: 800;
-      }
-      .paired-rollout-primary {
-        margin-top: 10px;
-        padding: 10px;
-        border: 1px solid rgba(15, 118, 110, 0.35);
-        border-radius: 10px;
-        background: #07111f;
-        color: #e2e8f0;
-      }
-      .paired-rollout-toolbar {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        flex-wrap: wrap;
-        margin-bottom: 8px;
-      }
-      .paired-rollout-toolbar select { min-width: 260px; padding: 6px; }
-      .paired-rollout-videos {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px;
-      }
-      .paired-rollout-videos video { width: 100%; max-height: 520px; background: #000; }
-      .paired-rollout-label { font-weight: 800; margin-bottom: 4px; }
-      .failure-gallery {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 6px;
-        margin-top: 9px;
-      }
-      .failure-gallery button { text-align: left; white-space: normal; }
-      @media (max-width: 850px) {
-        .paired-rollout-videos { grid-template-columns: 1fr; }
-      }
       .artifact-list:empty {
         display: flex;
         align-items: center;
@@ -4716,6 +4671,13 @@
           capture: imageDataUrl ? "frame" : (textExcerpt ? "text" : "metadata-only"),
           has_image: Boolean(imageDataUrl),
         };
+        if (activeLearningArtifactContract && activeLearningArtifactContract.authoritative === true) {
+          meta.artifact_contract = activeLearningArtifactContract;
+          meta.artifact_contract_authoritative = true;
+          meta.evaluation_kind = String(activeLearningArtifactContract.evaluation_kind || "");
+          meta.closed_loop = Boolean(activeLearningArtifactContract.closed_loop);
+          meta.camera = String(activeLearningArtifactContract.primary_camera || meta.camera || "");
+        }
         // Grounded pipeline provenance: which stage produced this visual and the
         // components/models behind the data, read from the run's real artifacts.
         if (meta.run_id) {
@@ -4773,14 +4735,11 @@
           );
         }
         const blob = (meta.artifact_key + " " + meta.note + " " + meta.run_id + " " + meta.camera).toLowerCase();
-        const isLearningEval = /groot17-learning|groot-learning/.test(blob) && /heldout|held-out|eval/.test(blob);
-        const isTaskPerformance = /task-performance|closed-loop/.test(blob) && /groot|pusht/.test(blob);
+        const isLearningEval = meta.artifact_contract_authoritative === true && /offline/.test(String(meta.evaluation_kind || "").toLowerCase()) && meta.closed_loop === false;
         if (/gr00t|groot|isaac|omniverse|heldout|policy|rollout|genesis|cosmos|g1|trajectory|skeleton|locomotion|sonic/.test(blob)) {
           promptLines.push("");
           promptLines.push("Domain hints from metadata (not pixel labels):");
-          if (isTaskPerformance) {
-            promptLines.push("- This is a closed-loop PushT task-performance replay in gym-pusht simulation. Baseline and trained checkpoints control matched current environment states; it is not physical hardware.");
-          } else if (isLearningEval) {
+          if (isLearningEval) {
             promptLines.push("- This is explicitly an offline held-out policy evaluation, not a simulator/robot rollout or closed-loop execution. Describe only the dataset camera and metric/action panels actually visible; do not infer synthetic imagery or task behavior from the GR00T name.");
           } else {
             if (/gr00t|groot/.test(blob)) promptLines.push("- Metadata suggests foundation-policy / GR00T-style sim views — do not call structured sim frames blank.");
@@ -4798,16 +4757,6 @@
             "- The camera pixels come from the persisted held-out LeRobot observation videos. Their simple appearance or 96x96 resolution is not evidence that they are synthetic.",
             "- The grounded Original input block records episode-disjoint held-out camera videos. Never say the original input is absent when that block says original_present/evidence exists.",
             "- This is offline model inference aligned to expert actions. Never describe motion, control behavior, task success, a simulator rollout, or closed-loop execution that the frame does not prove."
-          );
-        }
-        if (isTaskPerformance) {
-          promptLines.push(
-            "",
-            "Factual task-performance constraints (must not be contradicted):",
-            "- The platform is Simulated gym-pusht, never a physical robot or hardware camera.",
-            "- Baseline and trained panels use the same seed/initial state and every applied action comes from the corresponding GR00T model.",
-            "- Camera pixels are current env.render() frames after live physics transitions, not training-dataset replay.",
-            "- Identify visible pusher/object/goal, coverage or task score, final outcome, and termination reason when present."
           );
         }
         promptLines.push(
@@ -5404,7 +5353,14 @@
         const pinned = pinLichtblickDsToSameOrigin(url) || "/lichtblick/";
         try {
           const viewer = new URL(pinned, window.location.origin);
-          viewer.searchParams.set("npa.layout", lichtblickLayoutKind(simViz));
+          const layoutKind = lichtblickLayoutKind(simViz);
+          viewer.searchParams.set("npa.layout", layoutKind);
+          if (layoutKind === "learning") {
+            const contract = learningArtifactContractFor(simViz);
+            viewer.searchParams.set("npa.camera", String(contract.primary_camera || ""));
+          } else {
+            viewer.searchParams.delete("npa.camera");
+          }
           return /^https?:\/\//i.test(pinned)
             ? viewer.toString()
             : viewer.pathname + viewer.search + viewer.hash;
@@ -5412,9 +5368,25 @@
           return pinned;
         }
       }
+      function learningArtifactContractFor(simViz) {
+        const embedded = simViz && simViz.artifact_contract && typeof simViz.artifact_contract === "object"
+          ? simViz.artifact_contract
+          : null;
+        return embedded && embedded.authoritative === true
+          ? embedded
+          : (activeLearningArtifactContract && activeLearningArtifactContract.authoritative === true
+            ? activeLearningArtifactContract
+            : {});
+      }
       function lichtblickLayoutKind(simViz) {
+        const contract = learningArtifactContractFor(simViz);
         const artifactKey = String((simViz && simViz.artifact_key) || "").toLowerCase();
-        return /(?:^|\/)(?:groot-learning|groot-offline-evaluation)\.mcap$/.test(artifactKey)
+        const matches = contract.matches && Array.isArray(contract.matches.mcap)
+          ? contract.matches.mcap
+          : [];
+        return contract.authoritative === true && matches.some((path) => (
+          artifactKey === String(path).toLowerCase() || artifactKey.endsWith("/" + String(path).toLowerCase())
+        ))
           ? "learning"
           : "sim2real";
       }
@@ -6634,6 +6606,7 @@
       let activeArtifactRunRef = "";
       let activeArtifactInventoryRunId = "";
       let activeArtifactInventory = [];
+      let activeLearningArtifactContract = null;
       // Load the whole run list into the picker by default so every run shows
       // without the operator having to guess a search fragment. The server still
       // supports (q=) search for buckets larger than this, and the "Find run" /
@@ -7131,187 +7104,11 @@
         }
         return grouped;
       }
-      function renderTaskPerformanceSummary(host, performance, summary, artifacts) {
-        host.classList.add("learning-summary", "task-performance-summary");
-        const title = document.createElement("div");
-        title.className = "summary-title";
-        title.textContent = "Robot task performance — " + String(performance.task_name || "unknown task") + " — " + String(summary.run_id || "unknown");
-        host.appendChild(title);
-        const badge = document.createElement("div");
-        badge.className = "learning-badge";
-        badge.textContent = String(performance.badge || "Simulated");
-        host.appendChild(badge);
-        const grid = document.createElement("div");
-        grid.className = "summary-grid";
-        const percent = (value) => (100 * Number(value || 0)).toFixed(1) + "%";
-        const fields = [
-          ["Task goal", performance.task_goal || "unknown"],
-          ["Platform", String(performance.environment || "unknown") + " " + String(performance.environment_version || "") + " · " + String(performance.badge || "Simulated")],
-          ["Embodiment", performance.embodiment || "unknown"],
-          ["Paired episodes", String(performance.paired_episodes || 0) + " · same initial conditions=" + String(Boolean(performance.same_initial_conditions))],
-          ["Baseline success", percent(performance.baseline_success_rate)],
-          ["Trained success", percent(performance.trained_success_rate)],
-          ["Absolute success delta", (100 * Number(performance.success_rate_delta || 0)).toFixed(1) + " percentage points"],
-          ["Task score", Number(performance.baseline_task_score || 0).toFixed(4) + " → " + Number(performance.trained_task_score || 0).toFixed(4) + " (Δ " + Number(performance.task_score_delta || 0).toFixed(4) + ")"],
-          ["Paired confidence", "95% CI [" + Number(performance.ci_low || 0).toFixed(4) + ", " + Number(performance.ci_high || 0).toFixed(4) + "]"],
-          ["Paired test", String(performance.paired_test || "unknown") + " · p=" + Number(performance.p_value || 1).toPrecision(4)],
-          ["Actions", String((performance.action_semantics || []).join("; ")) + " · " + String((performance.action_units || []).join("; "))],
-          ["Task success", performance.success_definition || "unknown"],
-          ["Baseline checkpoint", performance.baseline_checkpoint || "unknown"],
-          ["Trained checkpoint", performance.trained_checkpoint || "unknown"],
-        ];
-        for (const [label, value] of fields) {
-          const node = document.createElement("div");
-          node.className = "summary-item";
-          const strong = document.createElement("strong");
-          strong.textContent = label + ": ";
-          node.appendChild(strong);
-          node.appendChild(document.createTextNode(String(value)));
-          grid.appendChild(node);
-        }
-        host.appendChild(grid);
-        const conclusion = document.createElement("div");
-        conclusion.className = "task-conclusion";
-        conclusion.textContent = String(performance.conclusion || (performance.improvement_gate_passed ? "PASS" : "FAIL"));
-        host.appendChild(conclusion);
-
-        const inventory = Array.isArray(artifacts) ? artifacts : [];
-        const episodes = Array.isArray(performance.episodes) ? performance.episodes : [];
-        const replay = document.createElement("div");
-        replay.className = "paired-rollout-primary";
-        const toolbar = document.createElement("div");
-        toolbar.className = "paired-rollout-toolbar";
-        const label = document.createElement("strong");
-        label.textContent = "Paired closed-loop rollout by seed:";
-        const selector = document.createElement("select");
-        selector.id = "taskPerformanceSeedSelector";
-        for (const episode of episodes) {
-          const option = document.createElement("option");
-          option.value = String(episode.seed);
-          option.textContent = "seed " + String(episode.seed) + " · " + String(episode.outcome_category || "paired") + " · Δscore " + Number(episode.task_score_delta || 0).toFixed(4);
-          selector.appendChild(option);
-        }
-        const outcome = document.createElement("span");
-        outcome.id = "taskPerformanceSeedOutcome";
-        toolbar.append(label, selector, outcome);
-        replay.appendChild(toolbar);
-        const videos = document.createElement("div");
-        videos.className = "paired-rollout-videos";
-        const baselineBox = document.createElement("div");
-        const baselineLabel = document.createElement("div");
-        baselineLabel.className = "paired-rollout-label";
-        baselineLabel.textContent = "BASELINE · Simulated";
-        const baselineVideo = document.createElement("video");
-        baselineVideo.id = "taskPerformanceBaselineVideo";
-        baselineVideo.controls = true;
-        baselineVideo.muted = true;
-        baselineVideo.playsInline = true;
-        const trainedBox = document.createElement("div");
-        const trainedLabel = document.createElement("div");
-        trainedLabel.className = "paired-rollout-label";
-        trainedLabel.textContent = "TRAINED · Simulated";
-        const trainedVideo = document.createElement("video");
-        trainedVideo.id = "taskPerformanceTrainedVideo";
-        trainedVideo.controls = true;
-        trainedVideo.muted = true;
-        trainedVideo.playsInline = true;
-        baselineBox.append(baselineLabel, baselineVideo);
-        trainedBox.append(trainedLabel, trainedVideo);
-        videos.append(baselineBox, trainedBox);
-        replay.appendChild(videos);
-        host.appendChild(replay);
-        const updatePair = () => {
-          const seed = String(selector.value || "");
-          const episode = episodes.find((item) => String(item.seed) === seed) || {};
-          const baseline = inventory.find((item) => String(item.key || "").includes("/rollouts/baseline/seed-" + seed + ".mp4"));
-          const trained = inventory.find((item) => String(item.key || "").includes("/rollouts/trained/seed-" + seed + ".mp4"));
-          baselineVideo.src = baseline ? artifactContentUrl(summary.run_id, baseline, false) : "";
-          trainedVideo.src = trained ? artifactContentUrl(summary.run_id, trained, false) : "";
-          outcome.textContent = "baseline " + String(Boolean(episode.baseline_success)).toUpperCase() + " / trained " + String(Boolean(episode.trained_success)).toUpperCase() + " · " + String(episode.baseline_termination_reason || "") + " / " + String(episode.trained_termination_reason || "");
-        };
-        selector.addEventListener("change", updatePair);
-        if (episodes.length) {
-          const preferred = episodes.find((item) => item.outcome_category === "trained_win") || episodes.find((item) => item.outcome_category === "both_failure") || episodes[0];
-          selector.value = String(preferred.seed);
-          updatePair();
-        }
-
-        const failures = episodes.filter((item) => !item.baseline_success || !item.trained_success);
-        if (failures.length) {
-          const heading = document.createElement("div");
-          heading.className = "summary-title";
-          heading.style.marginTop = "10px";
-          heading.textContent = "Failure gallery · termination and final goal coverage";
-          host.appendChild(heading);
-          const gallery = document.createElement("div");
-          gallery.className = "failure-gallery";
-          for (const episode of failures.slice(0, 8)) {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = "btn";
-            button.textContent = "seed " + String(episode.seed) + " · baseline " + String(episode.baseline_termination_reason) + " coverage=" + Number(episode.baseline_final_coverage || 0).toFixed(3) + " · trained " + String(episode.trained_termination_reason) + " coverage=" + Number(episode.trained_final_coverage || 0).toFixed(3);
-            button.addEventListener("click", () => { selector.value = String(episode.seed); updatePair(); replay.scrollIntoView({ behavior: "smooth", block: "center" }); });
-            gallery.appendChild(button);
-          }
-          host.appendChild(gallery);
-        }
-        const diagnostics = document.createElement("details");
-        const learning = summary.learning && typeof summary.learning === "object" ? summary.learning : {};
-        const horizon = learning.per_horizon_mse && typeof learning.per_horizon_mse === "object" ? learning.per_horizon_mse : {};
-        diagnostics.innerHTML = "<summary><strong>Required offline rigor and secondary training diagnostics</strong></summary>" +
-          "<p>Closed-loop outcomes remain the primary task proof. The candidate must also pass the nontrivial offline skill, repeat-noise, per-dimension, per-horizon, and robust-loss prerequisites.</p>" +
-          "<p><strong>Train-mean floor:</strong> " + Number(learning.train_mean_predictor_mse || 0).toFixed(6) +
-          " · <strong>skill:</strong> " + Number(learning.baseline_skill_score || 0).toFixed(4) + " → " + Number(learning.posttrain_skill_score || 0).toFixed(4) +
-          " · <strong>noise multiple:</strong> " + Number(learning.repeat_noise_multiple || 0).toFixed(1) + "×" +
-          " · <strong>horizons:</strong> " + String((horizon.posttrain || []).length) +
-          " · <strong>offline gate:</strong> " + String(Boolean(learning.gate_passed)).toUpperCase() + "</p>";
-        host.appendChild(diagnostics);
-        const actions = document.createElement("div");
-        actions.className = "learning-replay-actions";
-        const candidates = [
-          ["Open task RRD", inventory.find((item) => String(item.key || "").endsWith("/reports/task-performance.rrd")), "load"],
-          ["Open task MCAP", inventory.find((item) => String(item.key || "").endsWith("/reports/task-performance.mcap")), "load"],
-          ["Play labeled comparison", inventory.find((item) => String(item.key || "").endsWith("/reports/paired-task-performance.mp4")), "preview"],
-          ["Open JSON report", inventory.find((item) => String(item.key || "").endsWith("/reports/task-performance-report.json")), "preview"],
-          ["Open offline rigor RRD", inventory.find((item) => String(item.key || "").endsWith("/reports/offline-learning.rrd")), "load"],
-          ["Open offline rigor MCAP", inventory.find((item) => String(item.key || "").endsWith("/reports/offline-learning.mcap")), "load"],
-          ["Open offline rigor report", inventory.find((item) => String(item.key || "").endsWith("/reports/learning-rigor-report.json")), "preview"],
-        ];
-        for (const [buttonLabel, item, mode] of candidates) {
-          if (!item) continue;
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "btn btn-primary";
-          button.textContent = buttonLabel;
-          button.addEventListener("click", () => Promise.resolve(mode === "load" ? loadArtifact(item) : previewArtifact(item)).catch((err) => showToast(String(err), "error")));
-          actions.appendChild(button);
-        }
-        const rawToggle = document.createElement("button");
-        rawToggle.type = "button";
-        rawToggle.id = "rawArtifactsToggle";
-        rawToggle.className = "btn";
-        rawToggle.textContent = "Show grouped raw artifacts";
-        rawToggle.addEventListener("click", () => {
-          const raw = document.getElementById("artifactList");
-          if (!raw) return;
-          raw.hidden = !raw.hidden;
-          rawToggle.textContent = raw.hidden ? "Show grouped raw artifacts" : "Hide grouped raw artifacts";
-        });
-        actions.appendChild(rawToggle);
-        host.appendChild(actions);
-      }
       function renderArtifactRunSummary(summary, artifacts) {
         const host = document.getElementById("artifactRunSummary");
         if (!host) return;
         host.replaceChildren();
         if (!summary || typeof summary !== "object") return;
-        const performance = summary.task_performance && typeof summary.task_performance === "object" && summary.task_performance.task_name
-          ? summary.task_performance
-          : null;
-        if (performance) {
-          renderTaskPerformanceSummary(host, performance, summary, artifacts);
-          return;
-        }
         const learning = summary.learning && typeof summary.learning === "object" && summary.learning.evaluation_kind
           ? summary.learning
           : null;
@@ -7337,7 +7134,8 @@
           ["Held-out samples", learning.heldout_samples || 0],
           ["Training coverage", Number(learning.epoch_equivalent || 0).toFixed(3) + "× · " + String(learning.optimizer_steps || 0) + " steps · " + String(learning.training_examples || 0) + " examples"],
           ["Training GPUs", learning.gpu_count || 0],
-          ["Checkpoint", learning.checkpoint_uri || "unknown"],
+          ["Checkpoint provenance", learning.checkpoint_uri || "unknown"],
+          ["Finite training loss", summary.finite_loss ? String(summary.loss) + " · " + String(summary.loss_point_count || 0) + " optimizer points" : "not available"],
           ["Baseline " + String(learning.metric_name || "action_mse"), Number(learning.baseline_value || 0).toPrecision(6)],
           ["Post-training " + String(learning.metric_name || "action_mse"), Number(learning.posttrain_value || 0).toPrecision(6)],
           ["Improvement", Number(learning.absolute_improvement || 0).toPrecision(6) + " absolute · " + Number(learning.relative_improvement_percent || 0).toFixed(2) + "% relative"],
@@ -7365,6 +7163,14 @@
         }
         host.appendChild(grid);
         if (learning) {
+          const lossTimeline = document.createElement("div");
+          lossTimeline.id = "learningLossTimeline";
+          lossTimeline.className = "learning-comparison";
+          const lossPoints = Array.isArray(summary.loss_history) ? summary.loss_history : [];
+          lossTimeline.textContent = lossPoints.length
+            ? "Training loss timeline · " + lossPoints.map((point) => "step " + String(point.optimizer_step) + ": " + String(point.loss)).join(" · ")
+            : "Training loss timeline unavailable from validated evidence.";
+          host.appendChild(lossTimeline);
           const comparison = document.createElement("div");
           comparison.className = "learning-comparison";
           const regressionCount = Array.isArray(learning.per_dimension)
@@ -7381,9 +7187,9 @@
           actions.className = "learning-replay-actions";
           const list = Array.isArray(artifacts) ? artifacts : [];
           const candidates = [
-            ["Open in Rerun", list.find((item) => String(item.render || "") === "rerun"), "load"],
-            ["Open MCAP", list.find((item) => String(item.render || "") === "mcap"), "load"],
-            ["Play comparison video", list.find((item) => String(item.render || "") === "video" && String(item.key || "").includes("offline-heldout-comparison")), "preview"],
+            ["Open GR00T offline RRD", learningArtifactForSemantic(list, "rrd"), "load"],
+            ["Open GR00T offline MCAP", learningArtifactForSemantic(list, "mcap"), "load"],
+            ["Play offline comparison video", learningArtifactForSemantic(list, "comparison_video"), "preview"],
           ];
           for (const [label, item, mode] of candidates) {
             if (!item) continue;
@@ -7497,6 +7303,10 @@
         const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
         activeArtifactInventoryRunId = runId;
         activeArtifactInventory = artifacts;
+        const contractCandidate = data && data.summary && data.summary.learning && data.summary.learning.artifact_contract;
+        activeLearningArtifactContract = contractCandidate && contractCandidate.authoritative === true
+          ? contractCandidate
+          : null;
         renderArtifactRunSummary(data && data.summary, artifacts);
         const learningSummary = data && data.summary && data.summary.learning && data.summary.learning.evaluation_kind;
         if (data && data.no_recording) {
@@ -7754,45 +7564,45 @@
         if (artifactListAbortController === localController) artifactListAbortController = null;
         return true;
       }
+      function learningStagesFromContract() {
+        const contract = activeLearningArtifactContract;
+        if (!contract || contract.authoritative !== true || !Array.isArray(contract.stages)) return [];
+        const matches = contract.matches && typeof contract.matches === "object" ? contract.matches : {};
+        return contract.stages.map((stage) => {
+          const semantics = Array.isArray(stage.semantics) ? stage.semantics : [];
+          const count = semantics.reduce((total, semantic) => total + (Array.isArray(matches[semantic]) ? matches[semantic].length : 0), 0);
+          return {
+            id: String(stage.id || "learning-stage"),
+            stage_key: String(stage.id || "learning-stage"),
+            label: String(stage.label || "Learning stage"),
+            status: count > 0 ? "succeeded" : "pending",
+            summary: String(stage.description || "") + " " + String(count) + " authoritative artifact match" + (count === 1 ? "" : "es") + ".",
+            artifact_count: count,
+          };
+        });
+      }
+      function learningArtifactForSemantic(artifacts, semantic) {
+        const contract = activeLearningArtifactContract;
+        const matches = contract && contract.matches && Array.isArray(contract.matches[semantic])
+          ? contract.matches[semantic]
+          : [];
+        return (Array.isArray(artifacts) ? artifacts : []).find((item) => {
+          const key = String((item && item.key) || "");
+          return matches.some((path) => key === String(path) || key.endsWith("/" + String(path)));
+        });
+      }
       function renderArtifactDerivedRunDetails(runId, artifacts) {
         const list = Array.isArray(artifacts) ? artifacts : [];
-        const keys = list.map((item) => String(item.key || ""));
-        const hasAny = (patterns) => countMatching(patterns) > 0;
-        function countMatching(patterns) {
-          return keys.filter((key) => patterns.some((pattern) => pattern && key.includes(pattern))).length;
-        }
-        const isLearningRun = hasAny([
-          "reports/learning-report.json",
-          "reports/groot-learning.rrd",
-          "eval/baseline/evaluation.json",
-          "eval/posttrain/evaluation.json",
-        ]);
-        if (isLearningRun) {
-          const definitions = [
-            ["split", "Prepare leakage-free split", ["reports/split/manifest.json", "/data/train/", "/data/heldout/"], "Episode-disjoint manifests, train-only statistics, and content hashes."],
-            ["baseline", "Baseline held-out inference", ["eval/baseline/evaluation.json", "checkpoints/baseline/"], "Real starting-checkpoint Gr00tPolicy forwards on held-out episodes."],
-            ["train", "Multi-GPU policy training", ["checkpoints/posttrain/npa_groot_finetune_manifest.json"], "Complete train-cohort pass with optimizer, rank, collective, and loss evidence."],
-            ["post-eval", "Post-training held-out inference", ["eval/posttrain/evaluation.json"], "Identical held-out model-forward evaluation on the trained checkpoint."],
-            ["compare", "Compare learning", ["reports/learning-report.json", "offline-heldout-comparison.mp4"], "Before/after action error, per-dimension visibility, and factual improvement gate."],
-            ["replay", "Synchronized learning replay", ["reports/groot-learning.mcap", "reports/groot-learning.rrd"], "Camera, predicted/expert actions, errors, metrics, loss, and provenance."],
-            ["publish", "Validate and publish", ["reports/publish-manifest.json"], "Independent parse, hashes, artifact index, and submitted workflow provenance."],
-          ];
-          const stages = definitions.map(([id, label, patterns, description]) => {
-            const count = countMatching(patterns);
-            return {
-              id,
-              stage_key: id,
-              label,
-              status: count > 0 ? "succeeded" : "pending",
-              summary: description + " " + String(count) + " matching artifact" + (count === 1 ? "" : "s") + ".",
-            };
-          });
+        const learningStages = learningStagesFromContract();
+        if (learningStages.length) {
+          const stages = learningStages;
           const complete = stages.every((stage) => stage.status === "succeeded");
+          const rrdReady = Boolean(activeLearningArtifactContract.matches && Array.isArray(activeLearningArtifactContract.matches.rrd) && activeLearningArtifactContract.matches.rrd.length);
           renderRunDetails({
             run: {
               run_id: runId,
               status: complete ? "completed" : "artifact-backed",
-              result: hasAny(["reports/groot-learning.rrd"]) ? "learning_replay_ready" : "learning_artifacts_listed",
+              result: rrdReady ? "learning_replay_ready" : "learning_artifacts_listed",
               updated_at: new Date().toISOString(),
               stages,
               logs: [{
@@ -7928,34 +7738,7 @@
         return params;
       }
       function learningStageTimelineFromArtifacts(artifacts) {
-        const list = Array.isArray(artifacts) ? artifacts : [];
-        const keys = list.map((item) => String((item && item.key) || ""));
-        const isLearningRun = keys.some((key) =>
-          key.includes("reports/learning-report.json") ||
-          key.includes("reports/groot-learning.rrd") ||
-          key.includes("eval/baseline/evaluation.json") ||
-          key.includes("eval/posttrain/evaluation.json")
-        );
-        if (!isLearningRun) return [];
-        const definitions = [
-          ["split", "Prepare leakage-free split", ["reports/split/manifest.json", "/data/train/", "/data/heldout/"], "Episode-disjoint manifests, train-only statistics, and content hashes."],
-          ["baseline", "Baseline held-out inference", ["eval/baseline/evaluation.json", "checkpoints/baseline/"], "Real starting-checkpoint Gr00tPolicy forwards on held-out episodes."],
-          ["train", "Multi-GPU policy training", ["checkpoints/posttrain/npa_groot_finetune_manifest.json"], "Complete train-cohort pass with optimizer, rank, collective, and loss evidence."],
-          ["post-eval", "Post-training held-out inference", ["eval/posttrain/evaluation.json"], "Identical held-out model-forward evaluation on the trained checkpoint."],
-          ["compare", "Compare learning", ["reports/learning-report.json", "offline-heldout-comparison.mp4"], "Before/after action error, per-dimension visibility, and factual improvement gate."],
-          ["replay", "Synchronized learning replay", ["reports/groot-learning.mcap", "reports/groot-learning.rrd"], "Camera, predicted/expert actions, errors, metrics, loss, and provenance."],
-          ["publish", "Validate and publish", ["reports/publish-manifest.json"], "Independent parse, hashes, artifact index, and submitted workflow provenance."],
-        ];
-        return definitions.map(([id, label, patterns, description]) => {
-          const count = keys.filter((key) => patterns.some((pattern) => key.includes(pattern))).length;
-          return {
-            id,
-            stage_key: id,
-            label,
-            status: count > 0 ? "succeeded" : "pending",
-            summary: description + " " + String(count) + " matching artifact" + (count === 1 ? "" : "s") + ".",
-          };
-        });
+        return learningStagesFromContract();
       }
       async function renderArtifactProvenance(runId, artifacts) {
         // Honest, per-stage provenance for the loaded run: which pipeline stages
@@ -7966,29 +7749,14 @@
         const host = document.getElementById("artifactProvenance");
         if (!host) return false;
         const list = Array.isArray(artifacts) ? artifacts : [];
-        const learningKeys = list.map((item) => String((item && item.key) || ""));
-        const isLearningRun = learningKeys.some((key) =>
-          key.includes("reports/learning-report.json") ||
-          key.includes("reports/groot-learning.rrd") ||
-          key.includes("eval/baseline/evaluation.json") ||
-          key.includes("eval/posttrain/evaluation.json")
-        );
-        if (isLearningRun) {
-          const definitions = [
-            ["Prepare leakage-free split", ["reports/split/manifest.json", "/data/train/", "/data/heldout/"], "Deterministic episode split · train-only statistics"],
-            ["Baseline held-out inference", ["eval/baseline/evaluation.json", "checkpoints/baseline/"], "GR00T N1.7 starting checkpoint · real Gr00tPolicy forwards"],
-            ["Multi-GPU policy training", ["checkpoints/posttrain/npa_groot_finetune_manifest.json"], "GR00T N1.7 fine-tune · distributed optimizer and rank evidence"],
-            ["Post-training held-out inference", ["eval/posttrain/evaluation.json"], "Trained checkpoint · identical held-out model-forward protocol"],
-            ["Compare learning", ["reports/learning-report.json", "offline-heldout-comparison.mp4"], "Action MSE/MAE · per-dimension regressions · improvement gate"],
-            ["Synchronized learning replay", ["reports/groot-learning.mcap", "reports/groot-learning.rrd"], "Rerun + MCAP · camera, predicted/expert actions, error, metrics"],
-            ["Validate and publish", ["reports/publish-manifest.json", "/workflow.yaml"], "Independent schemas, hashes, index, and workflow provenance"],
-          ];
-          const rows = definitions.map(([label, patterns, component]) => {
-            const count = learningKeys.filter((key) => patterns.some((pattern) => key.includes(pattern))).length;
+        const learningStages = learningStagesFromContract();
+        if (learningStages.length) {
+          const rows = learningStages.map((stage) => {
+            const count = Number(stage.artifact_count || 0);
             return '<div class="prov-row">' +
-              '<span class="prov-stage">' + escapeHtml(label) + '</span>' +
+              '<span class="prov-stage">' + escapeHtml(String(stage.label || "")) + '</span>' +
               '<span class="prov-count">' + String(count) + ' artifact' + (count === 1 ? '' : 's') + '</span>' +
-              '<span class="prov-comp">' + escapeHtml(component) + '</span>' +
+              '<span class="prov-comp">' + escapeHtml(String(stage.summary || "")) + '</span>' +
               '</div>';
           }).join("");
           host.innerHTML =

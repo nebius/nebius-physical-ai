@@ -495,11 +495,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
         image_tool="groot",
         notes=(
-            "Runs two real pinned GR00T N1.7 checkpoints serially on the same "
-            "reserved >=20-seed gym-pusht closed-loop benchmark. It proves the "
-            "canonical task contract, requires paired task-outcome evidence, "
-            "then emits actual rollout video, named MCAP topics, and a native "
-            "Rerun performance blueprint. No smoke override weakens the gate."
+            "Runs deterministic offline held-out baseline inference, configurable "
+            "one-to-many-GPU GR00T training (live evidence used two GPUs), and "
+            "post-training inference on the identical split. It emits RRD/MCAP "
+            "diagnostics and reports learning outcome separately from pipeline "
+            "status; it is not closed-loop or physical-robot task evidence."
         ),
     ),
     # --- Multi-stage GPU ---

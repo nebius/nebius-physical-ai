@@ -131,21 +131,23 @@ def test_provenance_uses_truthful_learning_phases_for_groot_offline_eval() -> No
         f"{root}/data/heldout/videos/chunk-000/observation.image/episode_000000.mp4",
         f"{root}/reports/split/manifest.json",
         f"{root}/checkpoints/baseline/model.safetensors",
-        f"{root}/eval/baseline/evaluation.json",
-        f"{root}/checkpoints/posttrain/model.safetensors",
-        f"{root}/eval/posttrain/evaluation.json",
-        f"{root}/reports/learning-report.json",
+        f"{root}/offline/baseline/evaluation.json",
+        f"{root}/checkpoints/candidate/checkpoint-4/model.safetensors",
+        f"{root}/checkpoints/candidate/npa_groot_finetune_manifest.json",
+        f"{root}/offline/trained/evaluation.json",
+        f"{root}/reports/two-gpu-pipeline-report.json",
         f"{root}/reports/offline-heldout-comparison.mp4",
-        f"{root}/reports/groot-learning.rrd",
-        f"{root}/reports/groot-learning.mcap",
+        f"{root}/reports/groot-offline-evaluation.rrd",
+        f"{root}/reports/groot-offline-evaluation.mcap",
         f"{root}/reports/publish-manifest.json",
         f"{root}/workflow.yaml",
     ]
 
     def read_learning(key: str):
-        if key.endswith("reports/learning-report.json"):
+        if key.endswith("reports/two-gpu-pipeline-report.json"):
             return {
-                "evaluation_kind": "offline_heldout_policy_evaluation",
+                "schema": "npa.groot.learning.v1",
+                "evaluation_kind": "offline held-out policy evaluation",
                 "closed_loop": False,
                 "dataset": {
                     "camera_names": ["front"],
@@ -153,6 +155,7 @@ def test_provenance_uses_truthful_learning_phases_for_groot_offline_eval() -> No
                     "heldout_episodes": 1,
                     "fps": 10,
                 },
+                "provenance": {"primary_camera": "front"},
                 "training": {"distinct_gpu_count": 7, "coverage_criterion": "one complete pass"},
                 "evaluation": {"metric_name": "action_mse", "real_model_forward": True},
             }
@@ -175,6 +178,28 @@ def test_provenance_uses_truthful_learning_phases_for_groot_offline_eval() -> No
     assert prov["origin"]["original_present"] is True
     assert "96x96 native" in prov["origin"]["summary"]
     assert "not a simulator/robot rollout" in prov["origin"]["summary"]
+
+
+def test_groot_filename_without_authoritative_metadata_is_not_semantic_proof() -> None:
+    run = "ambiguous-groot-name"
+    root = f"arbitrary/{run}"
+    keys = [
+        f"{root}/reports/two-gpu-pipeline-report.json",
+        f"{root}/reports/groot-offline-evaluation.rrd",
+    ]
+
+    prov = build_run_provenance(
+        keys,
+        run_id=run,
+        read_json=lambda _key: {
+            "schema": "attacker.chosen.v1",
+            "evaluation_kind": "offline held-out policy evaluation",
+            "closed_loop": False,
+        },
+    )
+
+    assert "Offline held-out GR00T" not in prov["summary"]
+    assert all(component["stage"] != "Synchronized learning replay" for component in prov["components"])
 
 
 def test_provenance_carries_origin() -> None:

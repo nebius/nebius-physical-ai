@@ -4,9 +4,9 @@ from npa.cli import agent as agent_module
 from npa.cli.agent import rendered_agent_ui_html
 
 import json
+import subprocess
 import re
 import shutil
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -959,8 +959,10 @@ def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
     assert "window.location.origin" in source
     # The iframe URL always flows through the rewrite.
     assert "const pinned = pinLichtblickDsToSameOrigin(url) || \"/lichtblick/\";" in source
-    assert 'viewer.searchParams.set("npa.layout", lichtblickLayoutKind(simViz));' in source
-    assert "groot-offline-evaluation" in source
+    assert 'viewer.searchParams.set("npa.layout", layoutKind);' in source
+    assert 'viewer.searchParams.set("npa.camera"' in source
+    assert "learningArtifactContractFor" in source
+    assert "contract.matches.mcap" in source
 
 
 def test_lichtblick_recovers_proxy_stripped_remote_file_size() -> None:
@@ -1025,16 +1027,91 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
         v for k, v in learning_layout["configById"].items() if k.startswith("Image!")
     )
     assert learning_layout["layout"].startswith("Image!")
-    assert learning_image["imageMode"]["imageTopic"] == "/camera/front"
+    assert (
+        learning_image["imageMode"]["imageTopic"]
+        == "/camera/__NPA_PRIMARY_CAMERA__"
+    )
     script = agent_site_module._lichtblick_default_layout_script()
-    assert 'get("npa.layout")==="learning"' in script
+    assert 'query.get("npa.layout")!=="learning"' in script
+    assert 'query.get("npa.camera")' in script
+    assert 'imageTopic="/camera/"+camera' in script
     assert 'window.Worker=function(scriptUrl,options)' in script
     assert 'new URL("/lichtblick/npa-worker.js"' in script
     assert 'target.pathname.startsWith("/lichtblick/recordings/")' in script
     worker = agent_site_module._lichtblick_worker_script()
-    assert 'importScripts(target)' in worker
+    assert 'importScripts(target.href)' in worker
+    assert 'target.origin!==self.location.origin' in worker
+    assert 'target.search||target.hash' in worker
+    assert 'decoded.split("/").some((part)=>part==="."||part==="..")' in worker
+    assert 'decoded.startsWith("/lichtblick/recordings/")' in worker
+    for forbidden in ("javascript:", "data:", "https://foreign.invalid/worker.js", "//foreign.invalid/worker.js", "/api/private.js", "/lichtblick/%252e%252e/api.js"):
+        assert forbidden not in worker
     assert 'url.pathname.startsWith("/lichtblick/recordings/")' in worker
+    assert 'Content-Security-Policy "default-src \'none\'; script-src \'self\'; connect-src \'self\'"' in source
     assert "location = /lichtblick/npa-worker.js {{" in source
+
+
+def test_lichtblick_worker_accepts_only_same_origin_lichtblick_javascript() -> None:
+    from npa.cli import agent_site as agent_site_module
+
+    worker = agent_site_module._lichtblick_worker_script()
+    harness = r"""
+const target = process.argv[1];
+global.self = {
+  location: new URL("https://agent.example/lichtblick/npa-worker.js?npa.target=" + encodeURIComponent(target)),
+  fetch: async () => new Response(null, {status: 200}),
+};
+global.importScripts = (url) => process.stdout.write("IMPORTED=" + url);
+eval(Buffer.from(process.argv[2], "base64").toString("utf8"));
+"""
+    encoded_worker = base64.b64encode(worker.encode("utf-8")).decode("ascii")
+    allowed = [
+        "/lichtblick/static/js/main.abc123.js",
+        "https://agent.example/lichtblick/assets/mcap.worker.js",
+    ]
+    for target in allowed:
+        result = subprocess.run(
+            ["node", "-e", harness, target, encoded_worker],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.startswith("IMPORTED=https://agent.example/lichtblick/")
+
+    rejected = [
+        "//foreign.invalid/worker.js",
+        "https://foreign.invalid/worker.js",
+        "https://user:password@agent.example/lichtblick/worker.js",
+        "javascript:alert(1)",
+        "data:text/javascript,alert(1)",
+        "/api/private.js",
+        "/lichtblick/recordings/run.mcap",
+        "/lichtblick/npa-worker.js",
+        "/lichtblick/%252e%252e/api/private.js",
+        "/lichtblick/worker.js?next=/lichtblick/good.js",
+        "/lichtblick/worker.js%3fnext=/lichtblick/good.js",
+        "/lichtblick/worker.js#fragment",
+        "/lichtblick\\worker.js",
+        "/lichtblick/worker.js\x01",
+    ]
+    for target in rejected:
+        result = subprocess.run(
+            ["node", "-e", harness, target, encoded_worker],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, target
+        assert "invalid Lichtblick worker target" in result.stderr
+
+
+def test_lichtblick_anonymous_routes_do_not_disable_api_authentication() -> None:
+    source = _agent_source()
+    api_block = source.split("location /api/ {{", 1)[1].split("location /assets/api/", 1)[0]
+    assert "auth_basic off" not in api_block
+    assert "location = /lichtblick/npa-worker.js {{" in source
+    assert "location /lichtblick/recordings/ {{" in source
 
 
 def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
@@ -1732,12 +1809,14 @@ def test_groot_learning_recording_activates_real_rrd_and_truthful_note() -> None
 
     source = Path(agent_viewer_runtime.__file__).read_text(encoding="utf-8")
     branch = source.split('if render == "rerun":', 1)[1].split('elif render == "mcap":', 1)[0]
-    assert "is_groot_learning_recording(key)" in branch
-    assert 'sim_viz["preview_entity"] = "camera/front"' in branch
-    assert 'sim_viz["visualization_note"] = GROOT_LEARNING_RERUN_NOTE' in branch
+    assert "if is_learning:" in branch
+    assert 'sim_viz["preview_entity"] = f"heldout/camera/{camera}"' in branch
+    assert "validated primary camera is {camera}" in branch
+    assert "Offline held-out GR00T policy evaluation loaded (not a rollout)." in branch
+    assert "finite training loss, and provenance" in branch
     assert (
         "Offline held-out GR00T policy evaluation loaded (not a rollout)"
-        in agent_module._embedded_agent_visual_feedback_source()
+        in agent_module._embedded_agent_viewer_runtime_source()
     )
     assert 'rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")' in branch
     assert "shutil.copy2(local_path, rrd_tmp)" in branch

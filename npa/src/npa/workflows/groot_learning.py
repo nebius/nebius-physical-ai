@@ -53,14 +53,13 @@ SPLIT_SCHEMA = "npa.groot.episode_split.v1"
 EVAL_SCHEMA = "npa.groot.offline_eval.v1"
 REPORT_SCHEMA = "npa.groot.learning.v1"
 PUBLISH_SCHEMA = "npa.groot.learning_publish.v1"
-PROBE_SELECTION_SCHEMA = "npa.groot.offline_checkpoint_selection.v1"
+CHECKPOINT_REF_SCHEMA = "npa.groot.checkpoint_ref.v1"
 EVALUATION_KIND = "offline held-out policy evaluation"
 TIMESTAMP_SEMANTICS = "dataset-index-at-recorded-fps"
 RERUN_APPLICATION_ID = "npa_groot_offline_learning"
 RERUN_TIMELINE = "dataset_time"
 SEMANTIC_PHASES = [
     "access_capacity_preflight",
-    "resolve_task_data_contract",
     "prepare_deterministic_split",
     "baseline_inference_evaluation",
     "distributed_training",
@@ -143,6 +142,8 @@ def preflight_rigor_contract(
     validation_episodes: int,
     final_episodes: int,
     max_steps: int,
+    save_steps: int,
+    save_total_limit: int,
     minimum_epochs: float,
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
@@ -171,6 +172,10 @@ def preflight_rigor_contract(
         raise GrootVisualizationError(
             "pipeline validation requires at least two optimizer steps and positive coverage"
         )
+    if int(save_steps) != int(max_steps) or int(save_total_limit) < 1:
+        raise GrootVisualizationError(
+            "the final optimizer step must be saved as an available checkpoint"
+        )
     result = {
         "schema": "npa.groot.rigor_preflight.v1",
         "status": "passed",
@@ -187,6 +192,11 @@ def preflight_rigor_contract(
             "final": int(final_episodes),
         },
         "max_steps": int(max_steps),
+        "checkpoint_schedule": {
+            "save_steps": int(save_steps),
+            "save_total_limit": int(save_total_limit),
+            "final_step_checkpoint_required": True,
+        },
         "minimum_epochs": float(minimum_epochs),
         "validation_mode": "operational_pipeline_smoke",
         "statistical_learning_claim": False,
@@ -1341,6 +1351,7 @@ def _evaluate_checkpoint(
     embodiment: str,
     action_horizon: int,
     seed: int,
+    runtime: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run upstream GR00T inference and retain aligned expert/predicted arrays."""
 
@@ -1352,23 +1363,28 @@ def _evaluate_checkpoint(
     from gr00t.eval.open_loop_eval import parse_action_gr00t, parse_observation_gr00t
     from gr00t.policy.gr00t_policy import Gr00tPolicy
 
-    if not torch.cuda.is_available():
-        raise GrootVisualizationError("real GR00T evaluation requires a CUDA GPU")
-    _load_custom_modality_config(heldout_path)
-    tag = EmbodimentTag.resolve(embodiment)
-    _seed_stochastic_sources(seed)
-    policy = Gr00tPolicy(
-        embodiment_tag=tag,
-        model_path=str(checkpoint_path),
-        device="cuda:0",
-    )
-    modality = policy.get_modality_config()
-    loader = LeRobotEpisodeLoader(
-        dataset_path=heldout_path,
-        modality_configs=modality,
-        video_backend="torchcodec",
-        video_backend_kwargs=None,
-    )
+    if runtime is None:
+        if not torch.cuda.is_available():
+            raise GrootVisualizationError("real GR00T evaluation requires a CUDA GPU")
+        _load_custom_modality_config(heldout_path)
+        tag = EmbodimentTag.resolve(embodiment)
+        _seed_stochastic_sources(seed)
+        policy = Gr00tPolicy(
+            embodiment_tag=tag,
+            model_path=str(checkpoint_path),
+            device="cuda:0",
+        )
+        modality = policy.get_modality_config()
+        loader = LeRobotEpisodeLoader(
+            dataset_path=heldout_path,
+            modality_configs=modality,
+            video_backend="torchcodec",
+            video_backend_kwargs=None,
+        )
+    else:
+        policy = runtime["policy"]
+        loader = runtime["loader"]
+        tag = runtime["tag"]
     state_keys = list(loader.modality_configs["state"].modality_keys)
     action_keys = list(loader.modality_configs["action"].modality_keys)
     model_modality = {
@@ -1493,6 +1509,7 @@ def _evaluate_checkpoint(
         "evaluation_seed": int(seed),
         "prediction_sha256": _prediction_sha256(predicted_all),
         "gpu_name": torch.cuda.get_device_name(0),
+        "_runtime": {"policy": policy, "loader": loader, "tag": tag},
     }
 
 
@@ -1508,6 +1525,9 @@ def evaluate(
     baseline_checkpoint_uri: str = "",
     action_horizon: int = 16,
     evaluation_seeds: Sequence[int] = (1701, 1701, 2718, 3141, 5772),
+    evaluation_repeats: int = 5,
+    expected_checkpoint_sha256: str = "",
+    expected_checkpoint_step: int = 0,
     s3_client: Any | None = None,
 ) -> dict[str, Any]:
     """Initialize (baseline only) and evaluate a real checkpoint on held-out data."""
@@ -1575,21 +1595,50 @@ def evaluate(
                 **_checkpoint_identity(checkpoint_path),
             }
             resolved_checkpoint_uri = str(checkpoint_artifact["uri"])
+            if (
+                len(expected_checkpoint_sha256) != 64
+                or checkpoint_artifact.get("sha256") != expected_checkpoint_sha256
+                or int(checkpoint_step or 0) != int(expected_checkpoint_step)
+            ):
+                raise GrootVisualizationError(
+                    "post-training checkpoint differs from the resolved immutable reference"
+                )
         resolved_model_contract = checkpoint_model_config_contract(checkpoint_path)
-        seeds = [int(value) for value in evaluation_seeds]
+        repeats_requested = int(evaluation_repeats)
+        if repeats_requested < 4:
+            raise GrootVisualizationError(
+                "evaluation_repeats must preserve one duplicate and two independent seeds"
+            )
+        seed_pool = [int(value) for value in evaluation_seeds]
+        while len(seed_pool) < repeats_requested:
+            seed_pool.append(5772 + 7919 * (len(seed_pool) - 4))
+        seeds = seed_pool[:repeats_requested]
         if len(seeds) < 4 or len(seeds) == len(set(seeds)):
             raise GrootVisualizationError(
                 "evaluation requires a duplicated determinism seed and at least two independent seeds"
             )
-        repeats = [
+        # Load one immutable checkpoint/policy and one held-out dataset per
+        # evaluation stage. Each forward is independently reseeded below, so
+        # reuse avoids five redundant multi-GB model constructions without
+        # weakening deterministic seed isolation.
+        first_runtime_result = _evaluate_checkpoint(
+            checkpoint_path=checkpoint_path,
+            heldout_path=heldout_path,
+            embodiment=embodiment,
+            action_horizon=int(action_horizon),
+            seed=seeds[0],
+        )
+        runtime_objects = first_runtime_result.pop("_runtime", None)
+        repeats = [first_runtime_result] + [
             _evaluate_checkpoint(
                 checkpoint_path=checkpoint_path,
                 heldout_path=heldout_path,
                 embodiment=embodiment,
                 action_horizon=int(action_horizon),
                 seed=seed,
+                runtime=runtime_objects,
             )
-            for seed in seeds
+            for seed in seeds[1:]
         ]
         raw = repeats[0]
         same_seed = [item for item in repeats if item["evaluation_seed"] == seeds[0]]
@@ -1643,6 +1692,9 @@ def evaluate(
         "fps": raw["fps"],
         "metrics": {**raw["metrics"], **floors},
         "repeat_evaluation": {
+            "configured_repeats": repeats_requested,
+            "policy_constructions": 1,
+            "cost_note": "GPU model-forward cost scales linearly with evaluation_repeats",
             "seeds": seeds,
             "same_seed_deterministic": deterministic,
             "prediction_sha256": [item["prediction_sha256"] for item in repeats],
@@ -1691,12 +1743,36 @@ def baseline_eval(
 
 def posttrain_eval(
     split_manifest_uri: str,
-    checkpoint_uri: str,
+    checkpoint_ref_uri: str,
     output_uri: str,
     arrays_uri: str,
     run_id: str,
     **kwargs: Any,
 ) -> dict[str, Any]:
+    client = _s3_client(kwargs.get("s3_client"))
+    reference = _read_s3_json(client, checkpoint_ref_uri)
+    checkpoint = reference.get("checkpoint")
+    training = reference.get("training")
+    if (
+        reference.get("schema") != CHECKPOINT_REF_SCHEMA
+        or reference.get("status") != "resolved"
+        or reference.get("run_id") != run_id
+        or not isinstance(checkpoint, Mapping)
+        or not isinstance(training, Mapping)
+    ):
+        raise GrootVisualizationError(
+            "post-training evaluation requires this run's resolved checkpoint reference"
+        )
+    checkpoint_uri = str(checkpoint.get("uri") or "")
+    checkpoint_sha256 = str(checkpoint.get("sha256") or "")
+    checkpoint_step = int(checkpoint.get("resolved_checkpoint_step") or 0)
+    if (
+        not re.search(rf"/checkpoint-{checkpoint_step}/?$", checkpoint_uri)
+        or len(checkpoint_sha256) != 64
+        or checkpoint_step <= 0
+        or int(training.get("optimizer_steps") or 0) != checkpoint_step
+    ):
+        raise GrootVisualizationError("resolved checkpoint reference is internally inconsistent")
     return evaluate(
         split_manifest_uri,
         checkpoint_uri,
@@ -1704,6 +1780,8 @@ def posttrain_eval(
         arrays_uri,
         run_id,
         "posttrain",
+        expected_checkpoint_sha256=checkpoint_sha256,
+        expected_checkpoint_step=checkpoint_step,
         **kwargs,
     )
 
@@ -2181,6 +2259,16 @@ def _comparison_video_frames(
         )
     if count <= 0:
         raise GrootVisualizationError("comparison video has no aligned held-out frames")
+    source_width = max(int(image.width) for image in images[:count])
+    source_height = max(int(image.height) for image in images[:count])
+    camera_x, camera_y = 24, 76
+    plot_x = camera_x + source_width + 32
+    canvas_width = max(640, plot_x + 488)
+    canvas_height = max(360, camera_y + source_height + 52)
+    # yuv420p requires even dimensions; padding is truthful and never scales or
+    # crops the native camera pixels.
+    canvas_width += canvas_width % 2
+    canvas_height += canvas_height % 2
     destination.parent.mkdir(parents=True, exist_ok=True)
     container = av.open(str(destination), mode="w")
     try:
@@ -2188,18 +2276,24 @@ def _comparison_video_frames(
             stream = container.add_stream("libx264", rate=max(1, round(fps)))
         except Exception:  # noqa: BLE001 - image may only ship the MPEG-4 encoder
             stream = container.add_stream("mpeg4", rate=max(1, round(fps)))
-        stream.width = 640
-        stream.height = 360
+        stream.width = canvas_width
+        stream.height = canvas_height
         stream.pix_fmt = "yuv420p"
         font = ImageFont.load_default()
         history = min(50, count)
         for index in range(count):
-            canvas = Image.new("RGB", (640, 360), (15, 20, 28))
+            canvas = Image.new("RGB", (canvas_width, canvas_height), (15, 20, 28))
             draw = ImageDraw.Draw(canvas)
             native = images[index]
-            canvas.paste(native, (24, 76))
+            canvas.paste(native, (camera_x, camera_y))
             draw.rectangle(
-                (23, 75, 24 + native.width, 76 + native.height), outline=(120, 160, 190)
+                (
+                    camera_x - 1,
+                    camera_y - 1,
+                    camera_x + native.width,
+                    camera_y + native.height,
+                ),
+                outline=(120, 160, 190),
             )
             draw.text(
                 (20, 18),
@@ -2214,13 +2308,13 @@ def _comparison_video_frames(
                 font=font,
             )
             draw.text(
-                (152, 76),
+                (plot_x, 76),
                 f"sample {index}   expert / baseline / posttrain",
                 fill=(235, 240, 245),
                 font=font,
             )
             start = max(0, index - history + 1)
-            plot = (154, 105, 615, 245)
+            plot = (plot_x + 2, 105, plot_x + 463, 245)
             draw.rectangle(plot, outline=(70, 85, 105))
             _draw_series(
                 draw,
@@ -2243,25 +2337,25 @@ def _comparison_video_frames(
             error_before = float(np.mean(np.abs(expert[index] - baseline[index])))
             error_after = float(np.mean(np.abs(expert[index] - posttrain[index])))
             draw.text(
-                (152, 265),
+                (plot_x, 265),
                 f"expert action: {np.round(expert[index], 3).tolist()}",
                 fill=(90, 210, 130),
                 font=font,
             )
             draw.text(
-                (152, 283),
+                (plot_x, 283),
                 f"baseline: {np.round(baseline[index], 3).tolist()}  abs err {error_before:.4f}",
                 fill=(240, 110, 100),
                 font=font,
             )
             draw.text(
-                (152, 301),
+                (plot_x, 301),
                 f"posttrain: {np.round(posttrain[index], 3).tolist()}  abs err {error_after:.4f}",
                 fill=(95, 160, 250),
                 font=font,
             )
             draw.text(
-                (20, 332),
+                (20, canvas_height - 28),
                 f"held-out MSE {baseline_mse:.6f} -> {posttrain_mse:.6f}; dataset-index time at {fps:g} FPS",
                 fill=(220, 225, 230),
                 font=font,
@@ -2276,9 +2370,16 @@ def _comparison_video_frames(
     if not destination.is_file() or destination.stat().st_size <= 0:
         raise GrootVisualizationError("comparison video encoder produced no artifact")
     return {
-        "resolution": "640x360",
+        "resolution": f"{canvas_width}x{canvas_height}",
         "source_resolution": f"{images[0].width}x{images[0].height}",
         "native_camera_scale": "1:1",
+        "native_resolution_preserved": True,
+        "camera_region": {
+            "x": camera_x,
+            "y": camera_y,
+            "width": source_width,
+            "height": source_height,
+        },
         "frames": count,
         "fps": fps,
         "label": EVALUATION_KIND,
@@ -2294,7 +2395,6 @@ def compare_learning(
     video_uri: str,
     run_id: str,
     *,
-    selection_uri: str = "",
     minimum_relative_improvement: float = DEFAULT_MINIMUM_RELATIVE_IMPROVEMENT,
     minimum_skill_score: float = DEFAULT_MINIMUM_SKILL_SCORE,
     repeat_noise_multiple: float = DEFAULT_REPEAT_NOISE_MULTIPLE,
@@ -2314,26 +2414,6 @@ def compare_learning(
     client = _s3_client(s3_client)
     split = _read_s3_json(client, split_manifest_uri)
     baseline = _read_s3_json(client, baseline_uri)
-    if selection_uri:
-        selection = _read_s3_json(client, selection_uri)
-        if (
-            selection.get("schema") != PROBE_SELECTION_SCHEMA
-            or selection.get("status") != "selected"
-            or selection.get("run_id") != run_id
-            or selection.get("final_test_consumed") is not False
-        ):
-            raise GrootVisualizationError("offline checkpoint selection is invalid")
-        selected_step = int(selection.get("selected_optimizer_step") or 0)
-        selected_rows = [
-            item
-            for item in selection.get("learning_curve") or []
-            if int(item.get("optimizer_step") or 0) == selected_step
-        ]
-        if len(selected_rows) != 1:
-            raise GrootVisualizationError(
-                "offline checkpoint selection has no unique probe"
-            )
-        posttrain_uri = str(selected_rows[0]["uri"])
     posttrain = _read_s3_json(client, posttrain_uri)
     training = _read_s3_json(client, training_manifest_uri)
     validate_evaluation(baseline, phase="baseline", run_id=run_id)
@@ -2567,7 +2647,6 @@ def compare_learning(
             },
             "baseline_uri": baseline_uri,
             "posttrain_uri": posttrain_uri,
-            "checkpoint_selection_uri": selection_uri or None,
         },
         "visualizations": {
             "comparison_video": {**video_artifact, **video_meta},
@@ -2591,84 +2670,6 @@ def compare_learning(
             "This report is offline action-matching evidence, not a robot rollout.",
             "The short optimizer smoke is an operational pipeline validation and does not establish statistical learning.",
         ],
-    }
-    _put_json(client, output_uri, result)
-    print(json.dumps(result, indent=2, sort_keys=True))
-    return result
-
-
-def select_offline_checkpoint(
-    baseline_uri: str,
-    candidate_uris: Sequence[str],
-    output_uri: str,
-    run_id: str,
-    *,
-    minimum_skill_score: float = DEFAULT_MINIMUM_SKILL_SCORE,
-    s3_client: Any | None = None,
-) -> dict[str, Any]:
-    """Select a saved checkpoint using validation-only offline evidence."""
-
-    client = _s3_client(s3_client)
-    baseline = _read_s3_json(client, baseline_uri)
-    validate_evaluation(baseline, phase="baseline", run_id=run_id)
-    if len(candidate_uris) < 3:
-        raise GrootVisualizationError(
-            "checkpoint selection requires at least two intermediate probes and a final probe"
-        )
-    curve: list[dict[str, Any]] = []
-    for uri in candidate_uris:
-        candidate = _read_s3_json(client, uri)
-        validate_evaluation(candidate, phase="posttrain", run_id=run_id)
-        if candidate.get("split_hash") != baseline.get("split_hash"):
-            raise GrootVisualizationError(
-                "checkpoint probes do not share one validation split"
-            )
-        step = candidate.get("checkpoint", {}).get("resolved_checkpoint_step")
-        if not isinstance(step, int) or step <= 0:
-            raise GrootVisualizationError(
-                "checkpoint probe did not resolve checkpoint-N"
-            )
-        curve.append(
-            {
-                "optimizer_step": step,
-                "uri": uri,
-                "checkpoint": candidate["checkpoint"],
-                "mse": float(candidate["metrics"]["mse"]),
-                "skill_score": float(candidate["metrics"]["skill_score"]),
-                "per_horizon_mse": candidate["metrics"]["per_horizon_mse"],
-                "same_seed_deterministic": candidate["repeat_evaluation"][
-                    "same_seed_deterministic"
-                ],
-            }
-        )
-    if len({int(item["optimizer_step"]) for item in curve}) != len(curve):
-        raise GrootVisualizationError(
-            "checkpoint probes do not represent distinct optimizer steps"
-        )
-    eligible = [
-        item
-        for item in curve
-        if float(item["skill_score"]) >= float(minimum_skill_score)
-    ]
-    if not eligible:
-        raise GrootVisualizationError(
-            "no checkpoint probe beats the configured skill floor"
-        )
-    selected = min(
-        eligible, key=lambda item: (float(item["mse"]), int(item["optimizer_step"]))
-    )
-    result = {
-        "schema": PROBE_SELECTION_SCHEMA,
-        "status": "selected",
-        "run_id": run_id,
-        "baseline_uri": baseline_uri,
-        "final_test_consumed": False,
-        "selection_split": "validation",
-        "minimum_skill_score": float(minimum_skill_score),
-        "learning_curve": sorted(curve, key=lambda item: int(item["optimizer_step"])),
-        "checkpoint": selected["checkpoint"],
-        "selected_optimizer_step": selected["optimizer_step"],
-        "selection_predicate": "lowest validation MSE among checkpoints above skill floor",
     }
     _put_json(client, output_uri, result)
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -2699,18 +2700,8 @@ def _evaluation_bundle(
     return report, baseline, posttrain, before_arrays, after_arrays
 
 
-def _evaluated_checkpoint_curve(
-    client: Any, report: Mapping[str, Any]
-) -> list[dict[str, Any]]:
-    """Return factual validation points for checkpoints evaluated by this run.
-
-    Longer training recipes may evaluate several intermediate checkpoints and
-    persist a selection curve.  The operational smoke intentionally writes and
-    evaluates only its final checkpoint, so that final evaluation is the honest
-    one-point curve.  Keeping that point explicit prevents the required RRD and
-    MCAP checkpoint-provenance channels from disappearing merely because no
-    checkpoint-selection stage was needed.
-    """
+def _evaluated_checkpoint_curve(report: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return the one factual checkpoint evaluated by the shipped workflow."""
 
     evaluation = report.get("evaluation")
     training = report.get("training")
@@ -2718,14 +2709,6 @@ def _evaluated_checkpoint_curve(
         raise GrootVisualizationError(
             "learning report lacks evaluation/training evidence"
         )
-    selection_uri = str(evaluation.get("checkpoint_selection_uri") or "").strip()
-    if selection_uri:
-        selection = _read_s3_json(client, selection_uri)
-        curve = selection.get("learning_curve")
-        if not isinstance(curve, list) or not curve:
-            raise GrootVisualizationError("checkpoint selection has no learning curve")
-        return [dict(item) for item in curve if isinstance(item, Mapping)]
-
     step = int(training.get("resolved_checkpoint_step") or 0)
     mse_value = evaluation.get("posttrain_value")
     skill_score_value = evaluation.get("candidate_skill_score")
@@ -2757,11 +2740,19 @@ def _validate_learning_mcap(
     info = summarize_mcap(path)
     if not info.valid_magic or info.size_bytes <= 0 or info.message_count <= 0:
         raise GrootVisualizationError("learning MCAP is empty or invalid")
-    if not (0 < info.start_time_ns < 1_000_000_000):
+    if not info.timestamps_in_int64_domain:
+        raise GrootVisualizationError(
+            "learning MCAP timestamps exceed the nonnegative int64 domain"
+        )
+    if not info.channels_monotonic:
+        raise GrootVisualizationError(
+            "learning MCAP timestamps are not monotonic within each channel"
+        )
+    if info.start_time_ns != 1:
         raise GrootVisualizationError(
             "learning MCAP must use one relative dataset-index clock, not wall time"
         )
-    if not (info.start_time_ns < info.end_time_ns < 1_000_000_000_000):
+    if info.end_time_ns < info.start_time_ns:
         raise GrootVisualizationError("learning MCAP relative timeline is invalid")
     required_topics = {
         topic.replace("/camera/front", f"/camera/{camera_name}"): schema
@@ -2783,6 +2774,62 @@ def _validate_learning_mcap(
         )
     if metadata.get("timestamps") != TIMESTAMP_SEMANTICS:
         raise GrootVisualizationError("learning MCAP timestamp semantics are missing")
+    if metadata.get("timeline_origin") != "relative-zero-plus-1ns":
+        raise GrootVisualizationError("learning MCAP timeline origin is missing")
+    if metadata.get("training_loss_clock") != "optimizer_step-as-seconds":
+        raise GrootVisualizationError("learning MCAP training clock is missing")
+    if metadata.get("is_robot_capture_time") != "false":
+        raise GrootVisualizationError("learning MCAP capture-time semantics are invalid")
+    if metadata.get("primary_camera") != camera_name:
+        raise GrootVisualizationError("learning MCAP primary-camera provenance mismatch")
+    if not str(metadata.get("timebase_id") or "").startswith("sha256:"):
+        raise GrootVisualizationError("learning MCAP timebase identity is missing")
+    try:
+        dataset_sample_count = int(metadata.get("dataset_sample_count") or 0)
+        dataset_end_time_ns = int(metadata.get("dataset_end_time_ns") or -1)
+        declared_end_time_ns = int(metadata.get("declared_end_time_ns") or -1)
+        dataset_fps = float(metadata.get("fps") or 0.0)
+    except (TypeError, ValueError) as exc:
+        raise GrootVisualizationError(
+            "learning MCAP timeline metadata is malformed"
+        ) from exc
+    if (
+        dataset_sample_count <= 0
+        or not math.isfinite(dataset_fps)
+        or dataset_fps <= 0
+        or dataset_end_time_ns < info.start_time_ns
+        or declared_end_time_ns < dataset_end_time_ns
+        or declared_end_time_ns != info.end_time_ns
+    ):
+        raise GrootVisualizationError(
+            "learning MCAP metadata/timeline relationship is invalid"
+        )
+    aligned_topics = (
+        f"/camera/{camera_name}",
+        "/policy/predicted_action",
+        "/expert/action",
+        "/metrics/action_error",
+    )
+    if any(info.channels.get(topic) != dataset_sample_count for topic in aligned_topics):
+        raise GrootVisualizationError(
+            "learning MCAP aligned channel counts differ from the dataset timebase"
+        )
+    camera_range = info.channel_time_ranges.get(f"/camera/{camera_name}") or {}
+    if camera_range != {
+        "start_time_ns": info.start_time_ns,
+        "end_time_ns": dataset_end_time_ns,
+    }:
+        raise GrootVisualizationError(
+            "learning MCAP camera range differs from the dataset timebase"
+        )
+    if any(
+        value["start_time_ns"] < info.start_time_ns
+        or value["end_time_ns"] > declared_end_time_ns
+        for value in info.channel_time_ranges.values()
+    ):
+        raise GrootVisualizationError(
+            "learning MCAP channel range exceeds the declared relative timeline"
+        )
     return info.to_dict()
 
 
@@ -2878,7 +2925,7 @@ def emit_learning_mcap(
             predicted_records.append(predicted_record)
             expert_records.append(expert_record)
             error_records.append(error_record)
-        checkpoint_curve = _evaluated_checkpoint_curve(client, report)
+        checkpoint_curve = _evaluated_checkpoint_curve(report)
         metric_documents = {
             "policy/predicted_action": predicted_records,
             "expert/action": expert_records,
@@ -2946,14 +2993,33 @@ def emit_learning_mcap(
             path.write_text(json.dumps(records), encoding="utf-8")
             metric_inputs.append(MetricsInput(path=path, name=name))
         log_path = root / "offline-evaluation.log"
-        log_path.write_text(
+        log_text = (
             "Offline held-out policy evaluation; not a closed-loop rollout.\n"
             f"split_hash={report['dataset']['split_hash']}\n"
             f"checkpoint={report['training']['checkpoint_uri']}\n"
             f"action_mse={report['evaluation']['baseline_value']} -> "
-            f"{report['evaluation']['posttrain_value']}\n",
-            encoding="utf-8",
+            f"{report['evaluation']['posttrain_value']}\n"
         )
+        log_path.write_text(log_text, encoding="utf-8")
+        step_ns = int(1_000_000_000 / float(baseline["fps"]))
+        dataset_end_time_ns = max(
+            int(frame.timestamp_ns or timeline_origin_ns) for frame in frame_inputs
+        )
+        declared_timestamps = [
+            int(
+                record.get("_timestamp_ns")
+                or timeline_origin_ns
+                + (metric_index if len(records) == 1 else offset) * step_ns
+            )
+            for metric_index, records in enumerate(metric_documents.values())
+            for offset, record in enumerate(records)
+        ]
+        declared_timestamps.extend(
+            timeline_origin_ns + index * step_ns
+            for index, line in enumerate(log_text.splitlines())
+            if line.strip()
+        )
+        declared_end_time_ns = max(dataset_end_time_ns, *declared_timestamps)
         output = root / "groot-learning.mcap"
         write_run_mcap(
             output=output,
@@ -2971,6 +3037,9 @@ def emit_learning_mcap(
                 "split_hash": str(report["dataset"]["split_hash"]),
                 "timestamps": TIMESTAMP_SEMANTICS,
                 "timebase_id": str(timebase["id"]),
+                "dataset_sample_count": str(len(entries)),
+                "dataset_end_time_ns": str(dataset_end_time_ns),
+                "declared_end_time_ns": str(declared_end_time_ns),
                 "episode_boundaries_sha256": _sha256_bytes(
                     _json_bytes({"episode_boundaries": timebase["episode_boundaries"]})
                 ),
@@ -2978,6 +3047,7 @@ def emit_learning_mcap(
                 "timeline_origin": "relative-zero-plus-1ns",
                 "is_robot_capture_time": "false",
                 "source_resolution": str(report["dataset"]["source_resolution"]),
+                "primary_camera": primary_camera,
                 "producer": "npa.groot.offline-learning",
             },
         )
@@ -3028,23 +3098,17 @@ def _learning_blueprint(rrb: Any, camera_name: str = "front") -> Any:
                 ),
                 rrb.TimeSeriesView(
                     origin="metrics",
-                    contents="metrics/**",
+                    # Per-horizon diagnostics intentionally use their own
+                    # action_horizon_index clock. Keep them out of this default
+                    # dataset_time view so Rerun never opens an empty/error panel.
+                    contents=[
+                        "metrics/heldout_before/**",
+                        "metrics/heldout_after/**",
+                    ],
                     name="Held-out before / after",
                 ),
             ),
-            rrb.Vertical(
-                rrb.TimeSeriesView(
-                    origin="train",
-                    contents="train/**",
-                    name="Training loss",
-                ),
-                rrb.TimeSeriesView(
-                    origin="validation",
-                    contents="validation/**",
-                    name="Checkpoint validation curve",
-                ),
-                rrb.TextDocumentView(origin="provenance", name="Evaluation provenance"),
-            ),
+            rrb.TextDocumentView(origin="provenance", name="Evaluation provenance"),
             column_shares=[2.1, 1.7, 1.2],
         ),
         rrb.BlueprintPanel(state=rrb.PanelState.Hidden),
@@ -3115,7 +3179,7 @@ def emit_learning_rrd(
             optimizer_step = float(item["optimizer_step"])
             _set_rerun_time(rr, recording, "optimizer_step", optimizer_step)
             rr.log("train/loss", rr.Scalars(float(item["loss"])), recording=recording)
-        for item in _evaluated_checkpoint_curve(client, report):
+        for item in _evaluated_checkpoint_curve(report):
             _set_rerun_time(
                 rr, recording, "optimizer_step", float(item["optimizer_step"])
             )
@@ -3251,6 +3315,35 @@ def publish_learning(
         or workflow.get("apiVersion") != "npa.workflow/v0.0.1"
     ):
         raise GrootVisualizationError("submitted workflow is not v0.0.1")
+    provenance = report.get("provenance")
+    dataset = report.get("dataset")
+    visualizations = report.get("visualizations")
+    if not all(isinstance(value, Mapping) for value in (provenance, dataset, visualizations)):
+        raise GrootVisualizationError("learning report lacks modality provenance")
+    primary_camera = str(provenance.get("primary_camera") or "").strip()
+    camera_names = [str(value) for value in dataset.get("camera_names") or []]
+    timebase_cameras = [
+        str(value)
+        for value in (visualizations.get("timebase") or {}).get("camera_names") or []
+    ]
+    video_cameras = {
+        str(item.get("camera_name") or "")
+        for item in provenance.get("heldout_source_videos") or []
+        if isinstance(item, Mapping)
+    }
+    if (
+        not re.fullmatch(r"[A-Za-z0-9_.-]+", primary_camera)
+        or primary_camera not in camera_names
+        or primary_camera not in timebase_cameras
+        or primary_camera not in video_cameras
+    ):
+        raise GrootVisualizationError(
+            "primary camera is missing or inconsistent across report modality provenance"
+        )
+    expected_rrd_entities = [
+        entity.replace("heldout/camera/front", f"heldout/camera/{primary_camera}")
+        for entity in REQUIRED_RRD_ENTITIES
+    ]
     with tempfile.TemporaryDirectory(prefix="npa-groot-learning-publish-") as tmp:
         root = Path(tmp)
         mcap_path = root / "groot-learning.mcap"
@@ -3259,17 +3352,27 @@ def publish_learning(
         _download(client, mcap_uri, mcap_path)
         _download(client, rrd_uri, rrd_path)
         _download(client, video_uri, video_path)
-        mcap_inspection = _validate_learning_mcap(mcap_path, run_id=run_id)
+        mcap_inspection = _validate_learning_mcap(
+            mcap_path, run_id=run_id, camera_name=primary_camera
+        )
         rrd_inspection = inspect_rrd(
             rrd_path,
             application_id=RERUN_APPLICATION_ID,
             recording_id=run_id,
-            expected_entities=REQUIRED_RRD_ENTITIES,
+            expected_entities=expected_rrd_entities,
             timeline=RERUN_TIMELINE,
         )
         images, _fps = _decode_video(video_path, max_frames=1)
-        if images[0].size != (640, 360):
-            raise GrootVisualizationError("comparison video resolution is not 640x360")
+        expected_resolution = str(
+            (visualizations.get("comparison_video") or {}).get("resolution")
+            or visualizations.get("comparison_video_resolution")
+            or ""
+        )
+        match = re.fullmatch(r"([1-9][0-9]*)x([1-9][0-9]*)", expected_resolution)
+        if match is None or images[0].size != (int(match.group(1)), int(match.group(2))):
+            raise GrootVisualizationError(
+                "comparison video resolution does not match report provenance"
+            )
         hashes = {
             "mcap": _sha256_bytes(mcap_path.read_bytes()),
             "rrd": _sha256_bytes(rrd_path.read_bytes()),
@@ -3283,9 +3386,10 @@ def publish_learning(
             "mcap_topics": sorted(mcap_inspection["channels"]),
             "rrd_uri": rrd_uri,
             "rrd_bytes": rrd_inspection["bytes"],
-            "rrd_entities": REQUIRED_RRD_ENTITIES,
+            "rrd_entities": expected_rrd_entities,
             "comparison_video_uri": video_uri,
-            "comparison_video_resolution": "640x360",
+            "comparison_video_resolution": expected_resolution,
+            "primary_camera": primary_camera,
         }
     )
     _put_json(client, report_uri, report)
@@ -3338,6 +3442,7 @@ def verify_agent_ui_handoff(
     persisted or printed.
     """
 
+    client = _s3_client(s3_client)
     origin = str(agent_url or "").strip().rstrip("/")
     if not origin.startswith(("http://", "https://")):
         raise GrootVisualizationError("agent_url must be an HTTP(S) origin")
@@ -3449,7 +3554,7 @@ def verify_agent_ui_handoff(
         "range_downloads": ranges,
         "browser_validation": "required externally after workflow completion",
     }
-    _put_json(_s3_client(s3_client), output_uri, result)
+    _put_json(client, output_uri, result)
     print(json.dumps(result, indent=2, sort_keys=True))
     return result
 
@@ -3470,6 +3575,8 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--validation-episodes", type=int, required=True)
     preflight.add_argument("--final-episodes", type=int, required=True)
     preflight.add_argument("--max-steps", type=int, required=True)
+    preflight.add_argument("--save-steps", type=int, required=True)
+    preflight.add_argument("--save-total-limit", type=int, required=True)
     preflight.add_argument("--minimum-epochs", type=float, required=True)
 
     split = subparsers.add_parser("prepare-split")
@@ -3507,14 +3614,16 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.add_argument("--base-model", required=True)
     baseline.add_argument("--run-id", required=True)
     baseline.add_argument("--action-horizon", type=int, default=16)
+    baseline.add_argument("--evaluation-repeats", type=int, default=5)
 
     posttrain = subparsers.add_parser("posttrain-eval")
     posttrain.add_argument("--split-manifest-uri", required=True)
-    posttrain.add_argument("--checkpoint-uri", required=True)
+    posttrain.add_argument("--checkpoint-ref-uri", required=True)
     posttrain.add_argument("--output-uri", required=True)
     posttrain.add_argument("--arrays-uri", required=True)
     posttrain.add_argument("--run-id", required=True)
     posttrain.add_argument("--action-horizon", type=int, default=16)
+    posttrain.add_argument("--evaluation-repeats", type=int, default=5)
 
     compare = subparsers.add_parser("compare-learning")
     compare.add_argument("--split-manifest-uri", required=True)
@@ -3524,7 +3633,6 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--output-uri", required=True)
     compare.add_argument("--video-uri", required=True)
     compare.add_argument("--run-id", required=True)
-    compare.add_argument("--selection-uri", default="")
     compare.add_argument(
         "--minimum-relative-improvement",
         type=float,
@@ -3542,17 +3650,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_DIMENSION_REGRESSION,
     )
     compare.add_argument("--loss-decrease-tolerance", type=float, default=0.01)
-
-    select = subparsers.add_parser("select-offline-checkpoint")
-    select.add_argument("--baseline-uri", required=True)
-    select.add_argument(
-        "--candidate-uri", dest="candidate_uris", action="append", required=True
-    )
-    select.add_argument("--output-uri", required=True)
-    select.add_argument("--run-id", required=True)
-    select.add_argument(
-        "--minimum-skill-score", type=float, default=DEFAULT_MINIMUM_SKILL_SCORE
-    )
 
     mcap = subparsers.add_parser("emit-mcap")
     mcap.add_argument("--report-uri", required=True)
@@ -3597,8 +3694,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         posttrain_eval(**values)
     elif command == "compare-learning":
         compare_learning(**values)
-    elif command == "select-offline-checkpoint":
-        select_offline_checkpoint(**values)
     elif command == "emit-mcap":
         emit_learning_mcap(**values)
     elif command == "emit-rrd":

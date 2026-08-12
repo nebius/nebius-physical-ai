@@ -101,6 +101,87 @@ _RENDER_ORDER = {
 }
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 
+# This is the authoritative artifact/semantic contract for the shipped GR00T
+# offline workflow.  Backend responses serialize this contract for the browser;
+# the UI must not maintain a second collection of filename heuristics.
+GROOT_ARTIFACT_CONTRACT_SCHEMA = "npa.groot.artifacts/v1"
+GROOT_ARTIFACT_PATHS: dict[str, tuple[str, ...]] = {
+    "split_manifest": ("reports/split/manifest.json",),
+    "report": (
+        "reports/two-gpu-pipeline-report.json",
+        "reports/learning-rigor-report.json",
+        "reports/learning-report.json",
+    ),
+    "rrd": (
+        "reports/groot-offline-evaluation.rrd",
+        "reports/groot-learning.rrd",
+    ),
+    "mcap": (
+        "reports/groot-offline-evaluation.mcap",
+        "reports/groot-learning.mcap",
+    ),
+    "baseline_evaluation": (
+        "offline/baseline/evaluation.json",
+        "eval/baseline/evaluation.json",
+    ),
+    "trained_evaluation": (
+        "offline/trained/evaluation.json",
+        "eval/posttrain/evaluation.json",
+    ),
+    "training_manifest": (
+        "checkpoints/candidate/npa_groot_finetune_manifest.json",
+        "checkpoints/npa_groot_finetune_manifest.json",
+    ),
+    "checkpoint_reference": ("reports/trained-checkpoint.json",),
+    "comparison_video": ("reports/offline-heldout-comparison.mp4",),
+    "publish_manifest": ("reports/publish-manifest.json",),
+    "workflow_spec": ("workflow.yaml",),
+}
+GROOT_ARTIFACT_STAGES: tuple[dict[str, Any], ...] = (
+    {
+        "id": "split",
+        "label": "Prepare leakage-free split",
+        "semantics": ("split_manifest",),
+        "description": "Episode-disjoint train/held-out split with train-only statistics.",
+    },
+    {
+        "id": "baseline",
+        "label": "Offline baseline",
+        "semantics": ("baseline_evaluation",),
+        "description": "Deterministic held-out action prediction before training.",
+    },
+    {
+        "id": "train",
+        "label": "Multi-GPU policy training",
+        "semantics": ("training_manifest", "checkpoint_reference"),
+        "description": "Optimizer loss and selected candidate-checkpoint provenance.",
+    },
+    {
+        "id": "posttrain",
+        "label": "Offline post-training evaluation",
+        "semantics": ("trained_evaluation", "report"),
+        "description": "Held-out action prediction after training; not a rollout.",
+    },
+    {
+        "id": "compare",
+        "label": "Classify learning outcome",
+        "semantics": ("report", "comparison_video"),
+        "description": "Before/after action error and outcome, separate from pipeline status.",
+    },
+    {
+        "id": "diagnostics",
+        "label": "Synchronized diagnostics",
+        "semantics": ("rrd", "mcap", "comparison_video"),
+        "description": "RRD/MCAP diagnostics aligned to the held-out dataset timeline.",
+    },
+    {
+        "id": "publish",
+        "label": "Validate and publish",
+        "semantics": ("publish_manifest", "workflow_spec"),
+        "description": "Independent artifact inspection, hashes, and submitted workflow provenance.",
+    },
+)
+
 # Bucket roots owned by infrastructure tooling are never user workflow runs.
 # Keep this list deliberately narrow and structural: these are canonical state
 # roots, not customer-selected bucket/run names or a deployment allowlist.
@@ -364,19 +445,52 @@ def _merge_staging_resolutions(
     outputs remain separate and therefore fail closed.
     """
 
+    grouped: dict[tuple[str, str], list[RunResolution]] = {}
+    for match in matches:
+        grouped.setdefault((match.bucket, match.run_id), []).append(match)
+    merged: list[RunResolution] = []
+    for same_run in grouped.values():
+        merged.extend(_merge_staging_resolution_group(same_run))
+    return merged
+
+
+def _merge_staging_resolution_group(
+    matches: list[RunResolution],
+) -> list[RunResolution]:
+    """Merge one bucket/run-id group without crossing authorization roots."""
+    by_source: dict[tuple[str, str], RunResolution] = {}
+    for match in matches:
+        source_key = (match.source_prefix, match.run_id)
+        existing = by_source.get(source_key)
+        if existing is None:
+            by_source[source_key] = match
+            continue
+        artifacts = {artifact.key: artifact for artifact in existing.artifacts}
+        for artifact in match.artifacts:
+            previous = artifacts.get(artifact.key)
+            if previous is not None and previous != artifact:
+                return matches
+            artifacts[artifact.key] = artifact
+        by_source[source_key] = RunResolution(
+            run_id=match.run_id,
+            bucket=match.bucket,
+            source_prefix=match.source_prefix,
+            artifacts=sorted(artifacts.values(), key=lambda item: item.key),
+        )
+    unique = list(by_source.values())
     authoritative = [
         match
-        for match in matches
+        for match in unique
         if any(artifact.role == "output" for artifact in match.artifacts)
     ]
     staging = [
         match
-        for match in matches
+        for match in unique
         if match.artifacts
         and all(artifact.role == "input" for artifact in match.artifacts)
     ]
-    if len(authoritative) != 1 or len(authoritative) + len(staging) != len(matches):
-        return matches
+    if len(authoritative) != 1 or len(authoritative) + len(staging) != len(unique):
+        return unique
     primary = authoritative[0]
     artifacts = {
         artifact.key: artifact
@@ -415,7 +529,10 @@ def _merge_staging_summaries(runs: list[RunSummary]) -> list[RunSummary]:
         merged.append(
             dataclass_replace(
                 primary,
-                last_modified=max(run.last_modified for run in same_id),
+                last_modified=max(
+                    (run.last_modified for run in same_id if run.last_modified),
+                    default=primary.last_modified,
+                ),
                 started_at=min(
                     (run.started_at for run in same_id if run.started_at),
                     default=primary.started_at,
@@ -846,6 +963,105 @@ def safe_content_disposition(key: str, *, attachment: bool) -> str:
     return f'{disposition}; filename="{safe_artifact_filename(key)}"'
 
 
+def _relative_artifact_key(artifact: Artifact) -> str:
+    relative = str(artifact.relative_key or "").strip().strip("/").lower()
+    if relative:
+        return relative
+    key = str(artifact.key or "").strip().strip("/").lower()
+    for aliases in GROOT_ARTIFACT_PATHS.values():
+        for alias in aliases:
+            if key == alias or key.endswith("/" + alias):
+                return alias
+    return key
+
+
+def groot_artifact_contract(
+    artifacts: list[Artifact],
+    learning_report: dict[str, Any],
+) -> dict[str, Any]:
+    """Serialize path matches only after report metadata establishes semantics.
+
+    A matching filename is useful for locating an object, but it is not enough
+    to classify an arbitrary run as GR00T.  The report schema, evaluation kind,
+    and provenance establish that meaning; retained aliases are then matched
+    through this one Python-owned table.
+    """
+    report: dict[str, Any] = (
+        learning_report if isinstance(learning_report, dict) else {}
+    )
+    authoritative = (
+        report.get("schema") == "npa.groot.learning.v1"
+        and str(report.get("evaluation_kind") or "").strip()
+        == "offline held-out policy evaluation"
+        and report.get("closed_loop") is False
+    )
+    inventory = {_relative_artifact_key(item): item for item in artifacts}
+    matches: dict[str, list[str]] = {}
+    for semantic, aliases in GROOT_ARTIFACT_PATHS.items():
+        matches[semantic] = [
+            alias for alias in aliases if alias.lower() in inventory
+        ]
+
+    dataset_value = report.get("dataset")
+    dataset: dict[str, Any] = dataset_value if isinstance(dataset_value, dict) else {}
+    provenance_value = report.get("provenance")
+    provenance: dict[str, Any] = (
+        provenance_value if isinstance(provenance_value, dict) else {}
+    )
+    camera_names = [
+        str(value).strip()
+        for value in dataset.get("camera_names") or []
+        if str(value).strip()
+    ]
+    primary_camera = str(provenance.get("primary_camera") or "").strip()
+    camera_valid = bool(primary_camera and primary_camera in camera_names)
+    if authoritative and not camera_valid:
+        # A semantically valid report with contradictory modality provenance is
+        # not safe input for a viewer camera/topic selection.
+        authoritative = False
+
+    return {
+        "schema": GROOT_ARTIFACT_CONTRACT_SCHEMA,
+        "authoritative": authoritative,
+        "evaluation_kind": str(report.get("evaluation_kind") or ""),
+        "closed_loop": report.get("closed_loop") is True,
+        "primary_camera": primary_camera if camera_valid else "",
+        "camera_names": camera_names,
+        "paths": {key: list(value) for key, value in GROOT_ARTIFACT_PATHS.items()},
+        "matches": matches if authoritative else {},
+        "stages": [
+            {**stage, "semantics": list(stage["semantics"])}
+            for stage in GROOT_ARTIFACT_STAGES
+        ],
+    }
+
+
+def _finite_loss_history(
+    value: Any,
+    *,
+    step_keys: tuple[str, ...] = ("optimizer_step", "step"),
+) -> list[dict[str, Any]] | None:
+    """Return validated optimizer-step loss points, or ``None`` if malformed."""
+    if not isinstance(value, list) or not value:
+        return None
+    points: list[dict[str, Any]] = []
+    previous = 0
+    for raw in value:
+        if not isinstance(raw, dict):
+            return None
+        step_value = next((raw.get(key) for key in step_keys if raw.get(key) is not None), None)
+        try:
+            step = int(str(step_value))
+            loss = float(str(raw.get("loss")))
+        except (TypeError, ValueError):
+            return None
+        if step <= previous or step <= 0 or not math.isfinite(loss):
+            return None
+        points.append({"optimizer_step": step, "loss": loss})
+        previous = step
+    return points
+
+
 def build_run_summary(
     run_id: str,
     artifacts: list[Artifact],
@@ -864,68 +1080,46 @@ def build_run_summary(
                 return value
         return {}
 
+    def _semantic_doc(semantic: str) -> tuple[str, dict[str, Any]]:
+        for path in GROOT_ARTIFACT_PATHS[semantic]:
+            document = _doc(path)
+            if document:
+                return path, document
+        return "", {}
+
     root_manifest = _doc("manifest.json")
     workflow_manifest = _doc("npa-workflow/manifest.json")
     training = _doc("evidence/training.json")
     capacity = _doc("evidence/capacity.json")
     collective = _doc("evidence/collective.json")
-    checkpoint = _doc("checkpoints/npa_groot_finetune_manifest.json")
-    task_performance_doc = _doc("reports/task-performance-report.json")
-    task_performance: dict[str, Any] = {}
-    if task_performance_doc.get("schema") == "npa.groot.task_performance.v1":
-        task = task_performance_doc.get("task") or {}
-        platform = task_performance_doc.get("platform") or {}
-        paired = task_performance_doc.get("paired_evaluation") or {}
-        performance = task_performance_doc.get("performance") or {}
-        evidence = performance.get("primary_evidence") or {}
-        action = task_performance_doc.get("action") or {}
-        success = task_performance_doc.get("success_definition") or {}
-        task_performance = {
-            "task_name": str(task.get("name") or ""),
-            "task_goal": str(task.get("goal") or ""),
-            "badge": str(platform.get("label") or "Simulated"),
-            "physical_robot": platform.get("physical_robot") is True,
-            "simulation": platform.get("simulation") is True,
-            "environment": str((platform.get("environment") or {}).get("id") or ""),
-            "environment_version": str(
-                (platform.get("environment") or {}).get("version") or ""
-            ),
-            "embodiment": str((platform.get("embodiment") or {}).get("name") or ""),
-            "paired_episodes": int(paired.get("episode_count") or 0),
-            "same_initial_conditions": paired.get("same_initial_conditions") is True,
-            "baseline_checkpoint": str((paired.get("baseline_checkpoint") or {}).get("uri") or ""),
-            "trained_checkpoint": str((paired.get("trained_checkpoint") or {}).get("uri") or ""),
-            "baseline_success_rate": float(performance.get("baseline_success_rate") or 0.0),
-            "trained_success_rate": float(performance.get("trained_success_rate") or 0.0),
-            "success_rate_delta": float(performance.get("success_rate_delta") or 0.0),
-            "baseline_task_score": float(performance.get("baseline_task_score") or 0.0),
-            "trained_task_score": float(performance.get("trained_task_score") or 0.0),
-            "task_score_delta": float(performance.get("task_score_delta") or 0.0),
-            "primary_metric": str(performance.get("primary_metric") or ""),
-            "confidence_level": float(evidence.get("confidence_level") or 0.95),
-            "ci_low": float(evidence.get("ci_low") or 0.0),
-            "ci_high": float(evidence.get("ci_high") or 0.0),
-            "paired_test": str(evidence.get("paired_test") or ""),
-            "p_value": float(evidence.get("p_value") or 1.0),
-            "conclusion": str(performance.get("conclusion") or ""),
-            "improvement_gate_passed": performance.get("improvement_gate_passed") is True,
-            "action_semantics": [str(value) for value in action.get("semantics") or []],
-            "action_units": [str(value) for value in action.get("units") or []],
-            "action_range": action.get("range") or [],
-            "success_definition": str(success.get("predicate") or ""),
-            "episodes": paired.get("episodes") or [],
-        }
-    learning_doc = (
-        _doc("reports/two-gpu-pipeline-report.json")
-        or _doc("reports/learning-rigor-report.json")
-        or _doc("reports/learning-report.json")
-    )
+    checkpoint_path, checkpoint = _semantic_doc("training_manifest")
+    learning_path, learning_doc = _semantic_doc("report")
     learning: dict[str, Any] = {}
     if learning_doc.get("schema") == "npa.groot.learning.v1":
-        learning_dataset = learning_doc.get("dataset") or {}
-        learning_training = learning_doc.get("training") or {}
-        learning_eval = learning_doc.get("evaluation") or {}
-        learning_viz = learning_doc.get("visualizations") or {}
+        learning_dataset_value = learning_doc.get("dataset")
+        learning_dataset: dict[str, Any] = (
+            learning_dataset_value
+            if isinstance(learning_dataset_value, dict)
+            else {}
+        )
+        learning_training_value = learning_doc.get("training")
+        learning_training: dict[str, Any] = (
+            learning_training_value
+            if isinstance(learning_training_value, dict)
+            else {}
+        )
+        learning_eval_value = learning_doc.get("evaluation")
+        learning_eval: dict[str, Any] = (
+            learning_eval_value
+            if isinstance(learning_eval_value, dict)
+            else {}
+        )
+        learning_viz_value = learning_doc.get("visualizations")
+        learning_viz: dict[str, Any] = (
+            learning_viz_value
+            if isinstance(learning_viz_value, dict)
+            else {}
+        )
         learning = {
             "badge": str(learning_doc.get("badge") or "Offline held-out policy evaluation"),
             "pipeline_status": str(learning_doc.get("pipeline_status") or "unknown"),
@@ -985,21 +1179,24 @@ def build_run_summary(
             is True,
             "semantic_phases": [str(value) for value in learning_doc.get("semantic_phases") or []],
         }
+        learning["artifact_contract"] = groot_artifact_contract(
+            artifacts, learning_doc
+        )
     workflow = str(
         root_manifest.get("workflow_name")
         or workflow_manifest.get("workflow")
         or workflow_manifest.get("name")
         or ""
     )
-    steps = workflow_manifest.get("steps") if isinstance(workflow_manifest.get("steps"), list) else []
+    steps_value = workflow_manifest.get("steps")
+    steps: list[Any] = steps_value if isinstance(steps_value, list) else []
     tool_ref = ""
     for step in steps:
         if isinstance(step, dict) and step.get("tool_ref"):
             tool_ref = str(step["tool_ref"])
             break
     status = str(
-        task_performance_doc.get("status")
-        or learning_doc.get("status")
+        learning_doc.get("status")
         or training.get("status")
         or training.get("terminal_status")
         or checkpoint.get("status")
@@ -1028,16 +1225,71 @@ def build_run_summary(
         or checkpoint.get("max_steps")
         or 0
     )
-    loss_value = (
-        (learning_doc.get("training") or {}).get("final_loss")
-        if learning
-        else training.get("train_loss")
+    report_training_value = learning_doc.get("training")
+    report_training: dict[str, Any] = (
+        report_training_value if isinstance(report_training_value, dict) else {}
     )
-    try:
-        loss = float(loss_value) if loss_value is not None else None
-    except (TypeError, ValueError):
-        loss = None
-    finite_loss = bool(training.get("loss_finite")) and loss is not None and math.isfinite(loss)
+    loss_sources = (
+        (learning_path, report_training, "final_loss", "report"),
+        (checkpoint_path, checkpoint, "train_loss", "training_manifest"),
+        ("evidence/training.json", training, "train_loss", "generic_training"),
+    )
+    loss: float | None = None
+    loss_history: list[dict[str, Any]] = []
+    loss_source = ""
+    loss_error = "no_loss_evidence"
+    for source, payload, final_key, source_kind in loss_sources:
+        if not payload:
+            continue
+        raw_history = payload.get("loss_history")
+        if raw_history is None:
+            raw_history = payload.get("losses")
+        final_value = payload.get(final_key)
+        if final_value is None and source_kind == "training_manifest":
+            final_value = payload.get("final_step_loss")
+        if final_value is None and source.endswith("manifest.json"):
+            final_value = payload.get("final_loss")
+        # Presence at a higher-precedence source is intentional: malformed or
+        # non-finite evidence must remain visible as invalid, never be hidden by
+        # a weaker fallback document.
+        if raw_history is None and final_value is None:
+            continue
+        loss_source = source
+        parsed_history = _finite_loss_history(raw_history)
+        try:
+            candidate_loss = float(final_value) if final_value is not None else None
+        except (TypeError, ValueError):
+            candidate_loss = None
+        if (
+            parsed_history
+            and candidate_loss is not None
+            and math.isfinite(candidate_loss)
+            and math.isclose(candidate_loss, parsed_history[-1]["loss"], rel_tol=1e-9, abs_tol=1e-12)
+        ):
+            loss = candidate_loss
+            loss_history = parsed_history
+            loss_error = ""
+        else:
+            loss_error = "malformed_or_nonfinite_loss_evidence"
+        break
+    # The generic training evidence contract predates per-step trajectories and
+    # may honestly contain only a finite terminal loss.  Preserve that signal
+    # for non-GR00T summaries, while reports/manifests claiming a trajectory
+    # remain subject to the stricter history/final-value consistency check.
+    terminal_only_loss = (
+        loss_source == "evidence/training.json"
+        and not loss_history
+        and training.get("loss_finite") is True
+    )
+    if terminal_only_loss:
+        try:
+            terminal = float(str(training.get("train_loss")))
+        except (TypeError, ValueError):
+            terminal = math.nan
+        if math.isfinite(terminal):
+            loss = terminal
+            loss_error = ""
+    finite_loss = loss is not None and (bool(loss_history) or terminal_only_loss)
     counts = artifact_inventory_counts(artifacts)
     has_recording = any(item.render in {"rerun", "mcap"} for item in artifacts)
     summary = {
@@ -1051,6 +1303,10 @@ def build_run_summary(
         "training_steps": training_steps,
         "loss": loss if finite_loss else None,
         "finite_loss": finite_loss,
+        "loss_history": loss_history if finite_loss else [],
+        "loss_point_count": len(loss_history) if finite_loss else 0,
+        "loss_source": loss_source,
+        "loss_validation_error": loss_error,
         "artifact_count": len(artifacts),
         "output_artifact_count": counts["output"],
         "input_artifact_count": counts["input"],
@@ -1065,8 +1321,6 @@ def build_run_summary(
     }
     if learning:
         summary["learning"] = learning
-    if task_performance:
-        summary["task_performance"] = task_performance
     return summary
 
 
@@ -1407,40 +1661,9 @@ def _list_artifact_run_index(
         for (parent, run_id), payload in summaries.items()
         if not needle or needle in run_id.lower()
     ]
-    # Some runners stage source/data beneath ``<workflow>/<run>/`` and publish
-    # checkpoints/manifests beneath ``<run>/``. Consolidate only that provable
-    # input-only + authoritative-output shape; unrelated duplicate run basenames
-    # remain source-qualified and ambiguous.
-    grouped: dict[str, list[RunSummary]] = {}
-    for run in runs:
-        grouped.setdefault(run.run_id, []).append(run)
-    consolidated: list[RunSummary] = []
-    for same_id in grouped.values():
-        canonical = [item for item in same_id if item.canonical_score >= 1_000]
-        noncanonical = [item for item in same_id if item not in canonical]
-        if (
-            len(same_id) > 1
-            and len(canonical) == 1
-            and all(item.output_artifact_count == 0 for item in noncanonical)
-        ):
-            owner = canonical[0]
-            consolidated.append(
-                dataclass_replace(
-                    owner,
-                    last_modified=max(item.last_modified for item in same_id),
-                    started_at=min(item.started_at for item in same_id),
-                    artifact_count=sum(item.artifact_count for item in same_id),
-                    has_viewable=any(item.has_viewable is True for item in same_id),
-                    output_artifact_count=sum(item.output_artifact_count for item in same_id),
-                    input_artifact_count=sum(item.input_artifact_count for item in same_id),
-                    metadata_artifact_count=sum(item.metadata_artifact_count for item in same_id),
-                    namespaces=tuple(sorted({item.resolved_prefix for item in same_id})),
-                    canonical_score=sum(item.canonical_score for item in same_id),
-                )
-            )
-        else:
-            consolidated.extend(same_id)
-    runs = consolidated
+    # Keep one fail-closed implementation for the staging + authoritative
+    # output shape.  All other duplicate basenames remain source-qualified.
+    runs = _merge_staging_summaries(runs)
     runs.sort(
         key=lambda item: (
             item.last_modified,
@@ -1945,6 +2168,7 @@ def find_run_artifacts_across_buckets(
         raise ArtifactDiscoveryError(
             "run source discovery was incomplete; select an exact source"
         )
+    matches = _merge_staging_resolutions(matches)
     if not matches:
         return "", []
     if len(matches) > 1:
@@ -2123,10 +2347,16 @@ def resolve_run_artifacts(
         # A run_ref is a stable selector, not an authorization capability. Prove
         # that its exact bucket/prefix tuple is present in the server-discovered
         # bounded run index before listing objects beneath a caller-supplied path.
-        matches = find_run_artifact_matches(
-            bucket, base_prefix=base_prefix, run_id=run_id, s3=s3
+        exact_source_matches = _merge_staging_resolutions(
+            find_run_artifact_matches(
+                bucket, base_prefix=base_prefix, run_id=run_id, s3=s3
+            )
         )
-        exact = [item for item in matches if item.source_prefix == source_prefix]
+        exact = [
+            item
+            for item in exact_source_matches
+            if item.source_prefix == source_prefix
+        ]
         if not exact:
             return None
         if len(exact) > 1:
@@ -2148,6 +2378,7 @@ def resolve_run_artifacts(
         raise ArtifactDiscoveryError(
             "run source discovery was incomplete; select a server-discovered exact source"
         )
+    matches = _merge_staging_resolutions(matches)
     if not matches:
         return None
     if len(matches) > 1:
@@ -2166,21 +2397,10 @@ def find_run_artifacts(bucket: str, *, base_prefix: str, run_id: str, s3=None) -
     matches = find_run_artifact_matches(
         bucket, base_prefix=base_prefix, run_id=run_id, s3=s3
     )
+    matches = _merge_staging_resolutions(matches)
     if not matches:
         return []
     if len(matches) > 1:
-        canonical = [
-            item
-            for item in matches
-            if sum(_artifact_output_signal_score(artifact.relative_key) for artifact in item.artifacts)
-            >= 1_000
-        ]
-        noncanonical = [item for item in matches if item not in canonical]
-        if len(canonical) == 1 and all(
-            all(artifact.role == "input" for artifact in item.artifacts)
-            for item in noncanonical
-        ):
-            return [artifact for item in matches for artifact in item.artifacts]
         raise AmbiguousRunError(run_id, [item.run_ref for item in matches])
     return matches[0].artifacts
 

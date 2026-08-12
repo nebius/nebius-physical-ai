@@ -145,17 +145,17 @@ def _lichtblick_default_layout_json() -> str:
 def _lichtblick_learning_layout_json() -> str:
     """Return the replay-first layout for offline policy-learning MCAPs.
 
-    Learning recordings do not contain a reconstructed point cloud.  Reusing the
-    Sim2Real 3D layout therefore opens a mostly empty viewer and binds its Image
-    panel to the wrong topic (``/camera`` instead of ``/camera/front``).  Give the
-    factual held-out camera the full canvas; predicted/expert/error series remain
-    available in the Topics sidebar and in the companion Rerun blueprint.
+    Learning recordings do not contain a reconstructed point cloud. The injected
+    page script replaces the placeholder Image topic with the report-validated
+    ``npa.camera`` query value. Give that factual held-out camera the full canvas;
+    predicted/expert/error series remain available in the Topics sidebar and in
+    the companion Rerun blueprint.
     """
 
     layout = {
         "configById": {
             "Image!npalearningcamera": {
-                "imageMode": {"imageTopic": "/camera/front"}
+                "imageMode": {"imageTopic": "/camera/__NPA_PRIMARY_CAMERA__"}
             }
         },
         "globalVariables": {},
@@ -213,8 +213,14 @@ def _lichtblick_default_layout_script() -> str:
         'wrapped.searchParams.set("npa.target",absolute);'
         'return new NativeWorker(wrapped.href,options);};window.Worker.prototype=NativeWorker.prototype;}'
         "return "
-        '(new URLSearchParams(window.location.search).get("npa.layout")==="learning"?'
-        f"{learning}:{sim2real});}})()"
+        '(()=>{const query=new URLSearchParams(window.location.search);'
+        'if(query.get("npa.layout")!=="learning")return '
+        f"{sim2real};"
+        f"const selected={learning};"
+        'const camera=String(query.get("npa.camera")||"");'
+        'if(!/^[A-Za-z0-9_.-]+$/.test(camera))throw new Error("invalid primary camera");'
+        'selected.configById["Image!npalearningcamera"].imageMode.imageTopic="/camera/"+camera;'
+        'return selected;})()})()'
     )
 
 
@@ -222,15 +228,25 @@ def _lichtblick_worker_script() -> str:
     """Return the same-origin classic-worker bootstrap for remote MCAP reads.
 
     Serving this from ``/lichtblick/`` (instead of a blob URL) preserves the
-    upstream worker bundle's relative webpack chunk path. The target is supplied
-    by the viewer page, is imported only inside the authenticated same-origin
-    viewer, and the fetch override remains restricted to the recording alias.
+    upstream worker bundle's relative webpack chunk path. The query value is
+    untrusted input even on an anonymous viewer route, so validate it as one
+    same-origin Lichtblick JavaScript asset before calling ``importScripts``.
     """
 
     return (
         '(()=>{const params=new URLSearchParams(self.location.search);'
         'const sizeHint=Number(params.get("npa.size")||0);'
-        'const target=params.get("npa.target")||"";'
+        'const rawTarget=params.get("npa.target")||"";'
+        'const reject=(message)=>{throw new Error("invalid Lichtblick worker target: "+message);};'
+        'if(!rawTarget)reject("missing");if(/[\\\\\u0000-\u001f\u007f]/.test(rawTarget))reject("characters");'
+        'if(rawTarget.startsWith("//")||rawTarget.includes("#"))reject("authority or fragment");'
+        'let target;try{target=new URL(rawTarget,self.location.origin);}catch(_error){reject("url");}'
+        'if(!/^https?:$/.test(target.protocol)||target.origin!==self.location.origin)reject("origin");'
+        'if(target.username||target.password||target.search||target.hash)reject("components");'
+        'let decoded=target.pathname;for(let depth=0;depth<3;depth++){let next;try{next=decodeURIComponent(decoded);}catch(_error){reject("encoding");}'
+        'if(next===decoded)break;decoded=next;}'
+        'if(decoded.includes("\\\\")||decoded.includes("?")||decoded.includes("#")||/[\u0000-\u001f\u007f]/.test(decoded)||decoded.split("/").some((part)=>part==="."||part===".."))reject("path");'
+        'if(!decoded.startsWith("/lichtblick/")||decoded.startsWith("/lichtblick/recordings/")||decoded==="/lichtblick/npa-worker.js"||!decoded.endsWith(".js"))reject("asset path");'
         'let fetchDelegate=self.fetch.bind(self);const npaFetch=async(input,init)=>{'
         'const response=await fetchDelegate(input,init);try{'
         'const rawUrl=typeof input==="string"?input:String((input&&input.url)||input||"");'
@@ -252,7 +268,7 @@ def _lichtblick_worker_script() -> str:
         '}catch(_error){}return response;};'
         'Object.defineProperty(self,"fetch",{configurable:true,enumerable:true,'
         'get(){return npaFetch;},set(_value){}});'
-        'if(!target)throw new Error("missing Lichtblick worker target");importScripts(target);})()'
+        'importScripts(target.href);})()'
     )
 
 
@@ -378,6 +394,8 @@ def nginx_agent_site_body(
     default_type application/javascript;
     add_header Cache-Control "no-store" always;
     add_header Cross-Origin-Resource-Policy "same-origin" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Content-Security-Policy "default-src 'none'; script-src 'self'; connect-src 'self'" always;
     return 200 '{lichtblick_worker}';
   }}
   location = /lichtblick/ {{
@@ -397,6 +415,8 @@ def nginx_agent_site_body(
     sub_filter_types text/html;
     sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';
     add_header Cache-Control "no-store" always;
+    add_header Content-Security-Policy "default-src 'self' blob: data:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'" always;
+    add_header X-Content-Type-Options "nosniff" always;
   }}
   location /lichtblick/ {{
     auth_basic off;
@@ -407,6 +427,8 @@ def nginx_agent_site_body(
     proxy_read_timeout 300s;
     proxy_send_timeout 300s;
     add_header Cache-Control "public, max-age=3600" always;
+    add_header Content-Security-Policy "default-src 'self' blob: data:; script-src 'self' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'" always;
+    add_header X-Content-Type-Options "nosniff" always;
   }}
   location / {{
     root /opt/npa-agent;

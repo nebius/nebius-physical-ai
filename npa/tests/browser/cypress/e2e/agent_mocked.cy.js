@@ -1657,32 +1657,57 @@ describe("NPA agent UI with mocked APIs", () => {
   });
 
   it("presents a learning run as a replay-first held-out evaluation", () => {
-    const LEARNING_RUN = "groot17-learning-20260807T205005Z-e14c8117-r1";
+    const LEARNING_RUN = "groot17-two-gpu-pipeline-20260811t0131z-fb45c49d-r11";
     const artifacts = [
-      { key: `${LEARNING_RUN}/reports/groot-learning.rrd`, s3_uri: `s3://mock/${LEARNING_RUN}/reports/groot-learning.rrd`, render: "rerun", role: "output", size: 8192 },
-      { key: `${LEARNING_RUN}/reports/groot-learning.mcap`, s3_uri: `s3://mock/${LEARNING_RUN}/reports/groot-learning.mcap`, render: "mcap", role: "output", size: 16384 },
+      { key: `${LEARNING_RUN}/reports/groot-offline-evaluation.rrd`, s3_uri: `s3://mock/${LEARNING_RUN}/reports/groot-offline-evaluation.rrd`, render: "rerun", role: "output", size: 8192 },
+      { key: `${LEARNING_RUN}/reports/groot-offline-evaluation.mcap`, s3_uri: `s3://mock/${LEARNING_RUN}/reports/groot-offline-evaluation.mcap`, render: "mcap", role: "output", size: 16384 },
       { key: `${LEARNING_RUN}/reports/offline-heldout-comparison.mp4`, s3_uri: `s3://mock/${LEARNING_RUN}/reports/offline-heldout-comparison.mp4`, render: "video", role: "output", size: 4096 },
-      { key: `${LEARNING_RUN}/reports/learning-report.json`, s3_uri: `s3://mock/${LEARNING_RUN}/reports/learning-report.json`, render: "json", role: "output", size: 2048 },
-      { key: `${LEARNING_RUN}/frames/front/000001.png`, s3_uri: `s3://mock/${LEARNING_RUN}/frames/front/000001.png`, render: "image", role: "output", size: 800 },
-      { key: `${LEARNING_RUN}/frames/front/000002.png`, s3_uri: `s3://mock/${LEARNING_RUN}/frames/front/000002.png`, render: "image", role: "output", size: 810 },
+      { key: `${LEARNING_RUN}/reports/two-gpu-pipeline-report.json`, s3_uri: `s3://mock/${LEARNING_RUN}/reports/two-gpu-pipeline-report.json`, render: "json", role: "output", size: 2048 },
+      { key: `${LEARNING_RUN}/offline/baseline/evaluation.json`, s3_uri: `s3://mock/${LEARNING_RUN}/offline/baseline/evaluation.json`, render: "json", role: "output", size: 1800 },
+      { key: `${LEARNING_RUN}/offline/trained/evaluation.json`, s3_uri: `s3://mock/${LEARNING_RUN}/offline/trained/evaluation.json`, render: "json", role: "output", size: 1800 },
+      { key: `${LEARNING_RUN}/checkpoints/candidate/npa_groot_finetune_manifest.json`, s3_uri: `s3://mock/${LEARNING_RUN}/checkpoints/candidate/npa_groot_finetune_manifest.json`, render: "json", role: "output", size: 1900 },
+      { key: `${LEARNING_RUN}/reports/trained-checkpoint.json`, s3_uri: `s3://mock/${LEARNING_RUN}/reports/trained-checkpoint.json`, render: "json", role: "output", size: 1900 },
     ];
+    const artifactContract = {
+      schema: "npa.groot.artifacts/v1",
+      authoritative: true,
+      evaluation_kind: "offline held-out policy evaluation",
+      closed_loop: false,
+      primary_camera: "front",
+      matches: {
+        report: ["reports/two-gpu-pipeline-report.json"],
+        rrd: ["reports/groot-offline-evaluation.rrd"],
+        mcap: ["reports/groot-offline-evaluation.mcap"],
+        baseline_evaluation: ["offline/baseline/evaluation.json"],
+        trained_evaluation: ["offline/trained/evaluation.json"],
+        training_manifest: ["checkpoints/candidate/npa_groot_finetune_manifest.json"],
+        checkpoint_reference: ["reports/trained-checkpoint.json"],
+        comparison_video: ["reports/offline-heldout-comparison.mp4"],
+      },
+      stages: [
+        { id: "baseline", label: "Offline baseline", semantics: ["baseline_evaluation"], description: "Held-out before training." },
+        { id: "train", label: "Multi-GPU policy training", semantics: ["training_manifest", "checkpoint_reference"], description: "Real optimizer evidence." },
+        { id: "posttrain", label: "Offline post-training evaluation", semantics: ["trained_evaluation", "report"], description: "Held-out after training." },
+        { id: "diagnostics", label: "Synchronized diagnostics", semantics: ["rrd", "mcap", "comparison_video"], description: "Native diagnostics." },
+      ],
+    };
     const learning = {
       badge: "Offline held-out policy evaluation",
-      evaluation_kind: "offline_heldout_policy_evaluation",
+      evaluation_kind: "offline held-out policy evaluation",
       closed_loop: false,
       embodiment: "NEW_EMBODIMENT",
       camera_names: ["front"],
       source_resolution: "96x96",
-      train_episodes: 24,
-      heldout_episodes: 6,
-      heldout_samples: 766,
+      train_episodes: 2,
+      heldout_episodes: 1,
+      heldout_samples: 68,
       split_hash: "split-sha256",
       leakage_free: true,
-      gpu_count: 8,
-      optimizer_steps: 420,
-      training_examples: 3360,
-      epoch_equivalent: 1.0018,
-      checkpoint_uri: "s3://mock/checkpoints/finetuned",
+      gpu_count: 2,
+      optimizer_steps: 4,
+      training_examples: 8,
+      epoch_equivalent: 0.0346,
+      checkpoint_uri: `s3://mock/${LEARNING_RUN}/checkpoints/candidate/checkpoint-4/`,
       metric_name: "action_mse",
       baseline_value: 0.125,
       posttrain_value: 0.075,
@@ -1690,6 +1715,7 @@ describe("NPA agent UI with mocked APIs", () => {
       relative_improvement_percent: 40,
       improved: true,
       per_dimension: [{ dimension: 0, improved: true }, { dimension: 1, improved: false }],
+      artifact_contract: artifactContract,
     };
     const simViz = {
       run_id: LEARNING_RUN,
@@ -1718,7 +1744,20 @@ describe("NPA agent UI with mocked APIs", () => {
         count: artifacts.length,
         artifacts,
         preferred: artifacts[0],
-        summary: { run_id: LEARNING_RUN, has_recording: true, learning },
+        summary: {
+          run_id: LEARNING_RUN,
+          has_recording: true,
+          finite_loss: true,
+          loss: 1.3203,
+          loss_point_count: 4,
+          loss_history: [
+            { optimizer_step: 1, loss: 1.2812 },
+            { optimizer_step: 2, loss: 1.3516 },
+            { optimizer_step: 3, loss: 1.3281 },
+            { optimizer_step: 4, loss: 1.3203 },
+          ],
+          learning,
+        },
       },
     }).as("learningArtifacts");
     cy.intercept("POST", "/api/sim-viz/load-run", {
@@ -1738,16 +1777,19 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactRunSummary").should("have.class", "learning-summary");
     cy.get("#artifactRunSummary").should("contain.text", "Policy learning summary");
     cy.get("#artifactRunSummary .learning-badge").should("contain.text", "Offline held-out policy evaluation");
-    cy.get("#artifactRunSummary").should("contain.text", "24 / 6 episodes");
-    cy.get("#artifactRunSummary").should("contain.text", "420 steps");
+    cy.get("#artifactRunSummary").should("contain.text", "2 / 1 episodes");
+    cy.get("#artifactRunSummary").should("contain.text", "4 steps");
     cy.get("#artifactRunSummary").should("contain.text", "96x96 native");
     cy.get("#artifactRunSummary").should("contain.text", "offline held-out (not rollout)");
     cy.get("#artifactRunSummary").should("contain.text", "0.125000 → 0.075000");
     cy.get("#artifactRunSummary").should("contain.text", "1 per-dimension regression(s) disclosed");
-    cy.get("#artifactRunSummary .learning-replay-actions").should("contain.text", "Open in Rerun");
-    cy.get("#artifactRunSummary .learning-replay-actions").should("contain.text", "Open MCAP");
-    cy.get("#artifactRunSummary .learning-replay-actions").should("contain.text", "Play comparison video");
-    cy.contains("#artifactRunSummary button", "Play comparison video").click();
+    cy.get("#artifactRunSummary").should("contain.text", "4 optimizer points");
+    cy.get("#learningLossTimeline").should("contain.text", "step 1: 1.2812").and("contain.text", "step 4: 1.3203");
+    cy.get("#artifactRunSummary .learning-replay-actions").should("contain.text", "Open GR00T offline RRD");
+    cy.get("#artifactRunSummary .learning-replay-actions").should("contain.text", "Open GR00T offline MCAP");
+    cy.get("#artifactRunSummary .learning-replay-actions").should("contain.text", "Play offline comparison video");
+    cy.get("#artifactRunSummary").should("not.contain.text", "VLM").and("not.contain.text", "reward").and("not.contain.text", "robot rollout");
+    cy.contains("#artifactRunSummary button", "Play offline comparison video").click();
     cy.get("#rerunPlaceholder").should("have.attr", "hidden");
     cy.get("#viewerPaneRerun").should("have.class", "is-inactive-viewer");
     cy.get("#viewerPaneMedia").should("have.class", "is-active-viewer");
@@ -1760,9 +1802,8 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#artifactList").should("not.be.visible");
     cy.get("#rawArtifactsToggle").click();
     cy.get("#artifactList").should("be.visible");
-    cy.get("#artifactList").should("contain.text", "2 native frames");
-    cy.get("#artifactList").should("contain.text", "Source resolution: 96x96 native; preview is not enlarged.");
-    cy.get("#artifactList .artifact-card[data-render='image']").should("have.length", 1);
+    cy.get("#artifactList").should("contain.text", "reports/two-gpu-pipeline-report.json");
+    cy.get("#artifactList").should("contain.text", "offline/baseline/evaluation.json");
   });
 
   it("surfaces an old run beyond the newest page via server-side (q=) search", () => {

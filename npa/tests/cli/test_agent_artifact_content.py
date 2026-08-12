@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from npa.workflows.artifacts import (
+    GROOT_ARTIFACT_PATHS,
     INLINE_TEXT_MAX_BYTES,
     Artifact,
     ArtifactDiscoveryError,
@@ -191,6 +192,10 @@ def test_run_summary_parses_safe_completed_training_fields_without_recording() -
         "training_steps": 1,
         "loss": 1.03125,
         "finite_loss": True,
+        "loss_history": [],
+        "loss_point_count": 0,
+        "loss_source": "evidence/training.json",
+        "loss_validation_error": "",
         "artifact_count": 6,
         "output_artifact_count": 5,
         "input_artifact_count": 1,
@@ -201,7 +206,7 @@ def test_run_summary_parses_safe_completed_training_fields_without_recording() -
     }
 
 
-def test_run_summary_prioritizes_closed_loop_task_performance() -> None:
+def test_unshipped_task_performance_report_does_not_override_run_summary() -> None:
     report = {
         "schema": "npa.groot.task_performance.v1",
         "status": "passed",
@@ -252,15 +257,8 @@ def test_run_summary_prioritizes_closed_loop_task_performance() -> None:
     summary = build_run_summary(
         RUN_ID, artifacts, {"reports/task-performance-report.json": report}
     )
-    performance = summary["task_performance"]
-    assert summary["completion_status"] == "passed"
-    assert performance["task_name"] == "PushT"
-    assert performance["badge"] == "Simulated"
-    assert performance["physical_robot"] is False
-    assert performance["paired_episodes"] == 24
-    assert performance["trained_success_rate"] == 0.4
-    assert performance["ci_low"] == 0.1
-    assert performance["improvement_gate_passed"] is True
+    assert "task_performance" not in summary
+    assert summary["completion_status"] == "unknown"
 
 
 def test_run_summary_recognizes_operational_two_gpu_report() -> None:
@@ -270,7 +268,7 @@ def test_run_summary_recognizes_operational_two_gpu_report() -> None:
         "pipeline_status": "succeeded",
         "learning_outcome": "not_improved",
         "candidate_promoted": False,
-        "evaluation_kind": "offline_heldout_policy_evaluation",
+        "evaluation_kind": "offline held-out policy evaluation",
         "closed_loop": False,
         "dataset": {
             "embodiment": "NEW_EMBODIMENT",
@@ -282,12 +280,20 @@ def test_run_summary_recognizes_operational_two_gpu_report() -> None:
             "split_hash": "split-sha256",
             "leakage_free": True,
         },
+        "provenance": {"primary_camera": "front"},
         "training": {
             "gpu_count": 2,
             "optimizer_steps": 4,
             "training_examples": 8,
             "epoch_equivalent": 0.0199,
             "checkpoint_uri": "s3://bucket/run/checkpoints/candidate/checkpoint-4/",
+            "final_loss": 1.3203,
+            "loss_history": [
+                {"optimizer_step": 1, "loss": 1.2812},
+                {"optimizer_step": 2, "loss": 1.3516},
+                {"optimizer_step": 3, "loss": 1.3281},
+                {"optimizer_step": 4, "loss": 1.3203},
+            ],
         },
         "evaluation": {
             "metric_name": "action_mse",
@@ -307,20 +313,131 @@ def test_run_summary_recognizes_operational_two_gpu_report() -> None:
     assert summary["learning"]["pipeline_status"] == "succeeded"
     assert summary["learning"]["learning_outcome"] == "not_improved"
     assert summary["learning"]["candidate_promoted"] is False
-    assert "reports/two-gpu-pipeline-report.json" in ARTIFACT_CONTENT_MODULE.read_text(
-        encoding="utf-8"
+    assert summary["finite_loss"] is True
+    assert summary["loss_point_count"] == 4
+    assert summary["loss_source"] == "reports/two-gpu-pipeline-report.json"
+    assert summary["learning"]["artifact_contract"]["authoritative"] is True
+    assert summary["learning"]["artifact_contract"]["primary_camera"] == "front"
+    artifact_content_source = ARTIFACT_CONTENT_MODULE.read_text(encoding="utf-8")
+    assert "GROOT_ARTIFACT_PATHS[\"report\"]" in artifact_content_source
+    assert summary["loss_source"] == GROOT_ARTIFACT_PATHS["report"][0]
+
+
+def test_real_workflow_layout_serializes_one_authoritative_path_contract() -> None:
+    report = {
+        "schema": "npa.groot.learning.v1",
+        "evaluation_kind": "offline held-out policy evaluation",
+        "closed_loop": False,
+        "dataset": {"camera_names": ["wrist_rgb"]},
+        "provenance": {"primary_camera": "wrist_rgb"},
+        "training": {
+            "final_loss": 0.75,
+            "loss_history": [
+                {"optimizer_step": 1, "loss": 1.0},
+                {"optimizer_step": 2, "loss": 0.75},
+            ],
+        },
+    }
+    paths = [
+        "reports/two-gpu-pipeline-report.json",
+        "reports/groot-offline-evaluation.rrd",
+        "reports/groot-offline-evaluation.mcap",
+        "offline/baseline/evaluation.json",
+        "offline/trained/evaluation.json",
+        "checkpoints/candidate/npa_groot_finetune_manifest.json",
+        "reports/trained-checkpoint.json",
+    ]
+    summary = build_run_summary(
+        RUN_ID,
+        [_artifact(path) for path in paths],
+        {"reports/two-gpu-pipeline-report.json": report},
     )
+    contract = summary["learning"]["artifact_contract"]
+    assert contract["authoritative"] is True
+    assert contract["primary_camera"] == "wrist_rgb"
+    assert contract["matches"]["rrd"] == ["reports/groot-offline-evaluation.rrd"]
+    assert contract["matches"]["mcap"] == ["reports/groot-offline-evaluation.mcap"]
+    assert contract["matches"]["baseline_evaluation"] == [
+        "offline/baseline/evaluation.json"
+    ]
+    assert contract["matches"]["trained_evaluation"] == [
+        "offline/trained/evaluation.json"
+    ]
+    assert summary["loss_history"] == [
+        {"optimizer_step": 1, "loss": 1.0},
+        {"optimizer_step": 2, "loss": 0.75},
+    ]
 
 
-def test_ui_makes_task_performance_primary() -> None:
+@pytest.mark.parametrize(
+    "loss_history,final_loss",
+    [
+        ([{"optimizer_step": 1, "loss": float("nan")}], float("nan")),
+        ([{"optimizer_step": 2, "loss": 1.0}, {"optimizer_step": 1, "loss": 0.5}], 0.5),
+        ([{"optimizer_step": 1, "loss": 1.0}], 0.5),
+    ],
+)
+def test_gr00t_loss_evidence_fails_closed_when_malformed_or_nonfinite(
+    loss_history: list[dict], final_loss: float
+) -> None:
+    report = {
+        "schema": "npa.groot.learning.v1",
+        "evaluation_kind": "offline held-out policy evaluation",
+        "closed_loop": False,
+        "dataset": {"camera_names": ["front"]},
+        "provenance": {"primary_camera": "front"},
+        "training": {"loss_history": loss_history, "final_loss": final_loss},
+    }
+    summary = build_run_summary(
+        RUN_ID,
+        [_artifact("reports/two-gpu-pipeline-report.json")],
+        {"reports/two-gpu-pipeline-report.json": report},
+    )
+    assert summary["finite_loss"] is False
+    assert summary["loss"] is None
+    assert summary["loss_history"] == []
+    assert summary["loss_validation_error"] == "malformed_or_nonfinite_loss_evidence"
+
+
+def test_candidate_training_manifest_is_a_real_loss_source_without_report_history() -> None:
+    report = {
+        "schema": "npa.groot.learning.v1",
+        "evaluation_kind": "offline held-out policy evaluation",
+        "closed_loop": False,
+        "dataset": {"camera_names": ["front"]},
+        "provenance": {"primary_camera": "front"},
+        "training": {},
+    }
+    manifest = {
+        "loss_history": [
+            {"optimizer_step": 1, "loss": 1.2},
+            {"optimizer_step": 4, "loss": 1.1},
+        ],
+        "final_step_loss": 1.1,
+    }
+    summary = build_run_summary(
+        RUN_ID,
+        [
+            _artifact("reports/two-gpu-pipeline-report.json"),
+            _artifact("checkpoints/candidate/npa_groot_finetune_manifest.json"),
+        ],
+        {
+            "reports/two-gpu-pipeline-report.json": report,
+            "checkpoints/candidate/npa_groot_finetune_manifest.json": manifest,
+        },
+    )
+    assert summary["finite_loss"] is True
+    assert summary["loss"] == 1.1
+    assert summary["loss_source"].startswith("checkpoints/candidate/")
+
+
+def test_ui_makes_operational_offline_learning_primary() -> None:
     source = AGENT_UI.read_text(encoding="utf-8")
-    assert "Robot task performance" in source
-    assert 'id = "taskPerformanceSeedSelector"' in source
-    assert "paired-rollout-videos" in source
-    assert "Failure gallery" in source
-    assert "Required offline rigor and secondary training diagnostics" in source
-    assert "Open offline rigor RRD" in source
-    assert "Show grouped raw artifacts" in source
+    assert "Policy learning summary" in source
+    assert "Open GR00T offline RRD" in source
+    assert "Open GR00T offline MCAP" in source
+    assert "Training loss timeline" in source
+    assert "artifact_contract" in source
 
 
 def test_secure_content_endpoint_contract_is_s3_only_and_range_aware() -> None:
@@ -356,7 +473,10 @@ def test_load_artifact_s3_uri_requires_inventory_run_id_with_stable_error() -> N
     block = source.split("def sim_viz_load_artifact", 1)[1].split(
         "def _foxglove_convert_run", 1
     )[0]
-    assert "run_id is required with s3_uri so the object can be authorized" in block
+    assert '"code": "run_id_required_for_s3_uri"' in block
+    assert '"contract_version": "npa.agent.load-artifact.v2"' in block
+    assert '"migration"' in block
+    assert '"required_fields": ["run_id", "s3_uri"]' in block
     assert "_resolved_artifact_for_content(" in block
     assert '"error": "artifact storage request failed"' in block
     assert '"error": str(exc)' not in block

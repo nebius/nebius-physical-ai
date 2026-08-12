@@ -1566,7 +1566,7 @@ def format_foxglove_status(state: dict[str, Any]) -> str:
             lines.append(
                 "- No recording is loaded yet: pick an `.mcap`/`.bag` artifact in "
                 "**Runs & artifacts** (Type = Foxglove), or "
-                "`POST /api/foxglove/load-artifact` with `s3_uri` / `run_id`+`key`."
+                "`POST /api/foxglove/load-artifact` with `run_id`+`s3_uri` or `run_id`+`key`."
             )
     else:
         lines.append(

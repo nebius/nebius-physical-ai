@@ -92,6 +92,107 @@ def test_seeded_cuda_evaluation_configures_deterministic_cublas(
     assert cudnn.deterministic is True
 
 
+def test_configurable_evaluation_repeats_reuse_one_policy_with_seed_isolation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    split = {
+        "schema": learning.SPLIT_SCHEMA,
+        "run_id": "run",
+        "split_hash": "sha256:split",
+        "integrity": {"leakage_free": True},
+        "source": {"embodiment": "NEW_EMBODIMENT"},
+        "train": {"uri": "s3://bucket/train"},
+        "heldout": {"uri": "s3://bucket/heldout"},
+    }
+    monkeypatch.setattr(learning, "_read_s3_json", lambda *_args: split)
+
+    def fake_download(_client: object, uri: str, path: Path) -> None:
+        if uri.endswith("train"):
+            (path / "meta").mkdir(parents=True)
+            (path / "meta" / "stats.json").write_text(
+                json.dumps({"action": {"mean": [1.0]}}), encoding="utf-8"
+            )
+
+    monkeypatch.setattr(learning, "_download_prefix", fake_download)
+    monkeypatch.setattr(
+        learning,
+        "_initialize_baseline_checkpoint",
+        lambda **kwargs: (kwargs["output_path"].mkdir(parents=True), (kwargs["output_path"] / "model.safetensors").write_bytes(b"x")),
+    )
+    monkeypatch.setattr(
+        learning,
+        "_upload_directory",
+        lambda *_args: {"uri": "s3://bucket/baseline", "sha256": "a" * 64},
+    )
+    monkeypatch.setattr(
+        learning, "checkpoint_model_config_contract", lambda *_args: learning.GROOT_MODEL_CONFIG_CONTRACT
+    )
+    monkeypatch.setattr(
+        learning,
+        "_put_bytes",
+        lambda _client, uri, payload: {"uri": uri, "bytes": len(payload)},
+    )
+    monkeypatch.setattr(learning, "_put_json", lambda *_args: None)
+    calls: list[tuple[int, object]] = []
+    runtime = {"policy": object(), "loader": object(), "tag": object()}
+
+    def fake_evaluate(**kwargs: object) -> dict:
+        seed = int(kwargs["seed"])
+        supplied_runtime = kwargs.get("runtime")
+        calls.append((seed, supplied_runtime))
+        prediction = np.asarray([[float(seed)]], dtype=np.float32)
+        return {
+            "expert": np.asarray([[0.0]], dtype=np.float32),
+            "predicted": prediction,
+            "states": np.asarray([[0.0]], dtype=np.float32),
+            "horizon_indices": np.asarray([0], dtype=np.int64),
+            "samples": [{"sample_index": 0}],
+            "metrics": {
+                "mse": float(seed * seed),
+                "mae": float(seed),
+                "per_dimension_mse": [float(seed * seed)],
+                "per_dimension_mae": [float(seed)],
+                "per_dimension_max_abs_error": [float(seed)],
+                "per_horizon_mse": [float(seed * seed)],
+                "per_horizon_counts": [1],
+            },
+            "episode_metrics": [{"episode_index": 0}],
+            "episode_count": 1,
+            "sample_count": 1,
+            "action_dimensions": 1,
+            "forward_calls": 1,
+            "fps": 10.0,
+            "action_horizon": 1,
+            "evaluation_seed": seed,
+            "prediction_sha256": f"seed-{seed}",
+            "gpu_name": "test-gpu",
+            "_runtime": runtime,
+        }
+
+    monkeypatch.setattr(learning, "_evaluate_checkpoint", fake_evaluate)
+    result = learning.evaluate(
+        "s3://bucket/split.json",
+        "",
+        "s3://bucket/eval.json",
+        "s3://bucket/actions.npz",
+        "run",
+        "baseline",
+        base_model="nvidia/GR00T-N1.7-3B",
+        baseline_checkpoint_uri="s3://bucket/baseline",
+        action_horizon=1,
+        evaluation_seeds=(11, 11, 22, 33),
+        evaluation_repeats=4,
+        s3_client=object(),
+    )
+
+    assert [seed for seed, _runtime in calls] == [11, 11, 22, 33]
+    assert calls[0][1] is None
+    assert all(supplied is runtime for _seed, supplied in calls[1:])
+    assert result["repeat_evaluation"]["configured_repeats"] == 4
+    assert result["repeat_evaluation"]["policy_constructions"] == 1
+    assert "scales linearly" in result["repeat_evaluation"]["cost_note"]
+
+
 def test_deterministic_split_is_episode_disjoint_and_stable() -> None:
     first = learning.deterministic_episode_split(
         206, train_episodes=24, heldout_episodes=6, seed="groot17-learning-v1"
@@ -133,6 +234,95 @@ def test_camera_names_are_derived_from_dataset_modality_metadata() -> None:
         {"name": "overhead", "original_key": "observation.images.overhead"},
         {"name": "wrist_rgb", "original_key": "observation.images.wrist"},
     ]
+
+
+@pytest.mark.parametrize("steps", [2, 4, 1000, 10000])
+def test_preflight_couples_final_checkpoint_to_configured_optimizer_steps(
+    monkeypatch: pytest.MonkeyPatch, steps: int
+) -> None:
+    stored: dict[str, object] = {}
+    monkeypatch.setattr(
+        learning,
+        "_put_json",
+        lambda _client, _uri, payload: stored.update(payload),
+    )
+    result = learning.preflight_rigor_contract(
+        "s3://bucket/preflight.json",
+        "run",
+        gpu_type="RTXPRO6000",
+        gpu_count=2,
+        global_batch_size=2,
+        per_device_batch_size=1,
+        gradient_accumulation_steps=1,
+        train_episodes=2,
+        validation_episodes=1,
+        final_episodes=0,
+        max_steps=steps,
+        save_steps=steps,
+        save_total_limit=1,
+        minimum_epochs=0.001,
+        s3_client=object(),
+    )
+    assert result["max_steps"] == steps
+    assert result["checkpoint_schedule"]["save_steps"] == steps
+
+
+def test_preflight_rejects_checkpoint_schedule_before_gpu_work() -> None:
+    with pytest.raises(
+        learning.GrootVisualizationError, match="final optimizer step must be saved"
+    ):
+        learning.preflight_rigor_contract(
+            "s3://bucket/preflight.json",
+            "run",
+            gpu_type="RTXPRO6000",
+            gpu_count=2,
+            global_batch_size=2,
+            per_device_batch_size=1,
+            gradient_accumulation_steps=1,
+            train_episodes=2,
+            validation_episodes=1,
+            final_episodes=0,
+            max_steps=8,
+            save_steps=4,
+            save_total_limit=1,
+            minimum_epochs=0.001,
+            s3_client=object(),
+        )
+
+
+def test_posttrain_evaluation_consumes_resolved_checkpoint_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference = {
+        "schema": learning.CHECKPOINT_REF_SCHEMA,
+        "status": "resolved",
+        "run_id": "run",
+        "checkpoint": {
+            "uri": "s3://bucket/candidate/checkpoint-17/",
+            "sha256": "a" * 64,
+            "resolved_checkpoint_step": 17,
+        },
+        "training": {"optimizer_steps": 17},
+    }
+    monkeypatch.setattr(learning, "_read_s3_json", lambda *_args: reference)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        learning,
+        "evaluate",
+        lambda *args, **kwargs: captured.update(args=args, kwargs=kwargs) or {"ok": True},
+    )
+    result = learning.posttrain_eval(
+        "s3://bucket/split.json",
+        "s3://bucket/ref.json",
+        "s3://bucket/eval.json",
+        "s3://bucket/actions.npz",
+        "run",
+        s3_client=object(),
+    )
+    assert result == {"ok": True}
+    assert captured["args"][1] == "s3://bucket/candidate/checkpoint-17/"
+    assert captured["kwargs"]["expected_checkpoint_step"] == 17
+    assert captured["kwargs"]["expected_checkpoint_sha256"] == "a" * 64
 
 
 def test_episode_timebase_covers_every_episode_and_is_contiguous() -> None:
@@ -311,7 +501,7 @@ class _Blueprint:
         return make
 
 
-def test_rrd_blueprint_has_camera_action_error_metric_loss_and_provenance_panels() -> (
+def test_rrd_blueprint_has_only_panels_that_render_on_the_default_timeline() -> (
     None
 ):
     rrb = _Blueprint()
@@ -322,9 +512,15 @@ def test_rrd_blueprint_has_camera_action_error_metric_loss_and_provenance_panels
         "actions",
         "error",
         "metrics",
-        "train",
         "provenance",
     } <= origins
+    assert "train" not in origins
+    assert "validation" not in origins
+    metrics = next(view for view in rrb.views if view.get("origin") == "metrics")
+    assert metrics["contents"] == [
+        "metrics/heldout_before/**",
+        "metrics/heldout_after/**",
+    ]
     assert set(learning.REQUIRED_RRD_ENTITIES) >= {
         "heldout/camera/front",
         "actions/expert/dim_0",
@@ -357,7 +553,6 @@ def test_learning_rrd_is_closed_with_a_parseable_footer(
             "baseline_value": 2.0,
             "posttrain_value": 1.0,
             "candidate_skill_score": 0.1,
-            "checkpoint_selection_uri": None,
             "per_horizon_mse": {
                 "baseline": [2.0],
                 "posttrain": [1.0],
@@ -436,11 +631,9 @@ def test_learning_rrd_is_closed_with_a_parseable_footer(
 
 def test_operational_smoke_uses_final_evaluation_as_checkpoint_curve() -> None:
     curve = learning._evaluated_checkpoint_curve(
-        object(),
         {
             "training": {"resolved_checkpoint_step": 4},
             "evaluation": {
-                "checkpoint_selection_uri": None,
                 "posttrain_value": 12.5,
                 "candidate_skill_score": -0.25,
             },
@@ -496,12 +689,21 @@ def test_learning_mcap_topics_use_real_camera_log_and_metric_schemas(
         metadata={
             "evaluation_kind": learning.EVALUATION_KIND,
             "timestamps": learning.TIMESTAMP_SEMANTICS,
+            "timeline_origin": "relative-zero-plus-1ns",
+            "training_loss_clock": "optimizer_step-as-seconds",
+            "is_robot_capture_time": "false",
+            "primary_camera": "front",
+            "timebase_id": "sha256:test-timebase",
+            "dataset_sample_count": "1",
+            "dataset_end_time_ns": "1",
+            "declared_end_time_ns": str(1 + (len(inputs) - 1) * 100_000_000),
         },
     )
     inspected = learning._validate_learning_mcap(output, run_id="run")
     assert set(learning.REQUIRED_MCAP_TOPICS) <= set(inspected["channels"])
     assert inspected["start_time_ns"] == 1
-    assert inspected["end_time_ns"] < 1_000_000_000_000
+    assert inspected["timestamps_in_int64_domain"] is True
+    assert inspected["channels_monotonic"] is True
 
 
 def test_comparison_video_preserves_native_camera_pixels_and_truthful_label(
@@ -527,6 +729,148 @@ def test_comparison_video_preserves_native_camera_pixels_and_truthful_label(
     assert meta["source_resolution"] == "8x6"
     assert meta["native_camera_scale"] == "1:1"
     assert meta["label"] == learning.EVALUATION_KIND
+
+
+@pytest.mark.parametrize("size", [(1280, 720), (720, 1280), (641, 361)])
+def test_comparison_video_canvas_never_crops_large_or_portrait_native_frames(
+    tmp_path: Path, size: tuple[int, int]
+) -> None:
+    pytest.importorskip("av")
+    image_module = pytest.importorskip("PIL.Image")
+    image = image_module.new("RGB", size, (10, 20, 30))
+    actions = np.zeros((1, 1), dtype=np.float32)
+    meta = learning._comparison_video_frames(
+        [image],
+        10.0,
+        tmp_path / f"comparison-{size[0]}x{size[1]}.mp4",
+        expert=actions,
+        baseline=actions,
+        posttrain=actions,
+        baseline_mse=0.0,
+        posttrain_mse=0.0,
+    )
+    canvas_width, canvas_height = (int(value) for value in meta["resolution"].split("x"))
+    region = meta["camera_region"]
+    assert canvas_width >= region["x"] + size[0]
+    assert canvas_height >= region["y"] + size[1]
+    assert region["width"] == size[0]
+    assert region["height"] == size[1]
+    assert meta["native_resolution_preserved"] is True
+    assert meta["native_camera_scale"] == "1:1"
+
+
+@pytest.mark.parametrize("camera", ["front", "overhead_rgb"])
+def test_publish_learning_uses_report_primary_camera_everywhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, camera: str
+) -> None:
+    report_uri = "s3://bucket/run/reports/two-gpu-pipeline-report.json"
+    output_uri = "s3://bucket/run/reports/publish-manifest.json"
+    report = {
+        "schema": learning.REPORT_SCHEMA,
+        "run_id": "run",
+        "learning_outcome": "not_improved",
+        "candidate_promoted": False,
+        "dataset": {"camera_names": [camera]},
+        "provenance": {
+            "primary_camera": camera,
+            "heldout_source_videos": [{"camera_name": camera}],
+        },
+        "visualizations": {
+            "timebase": {"camera_names": [camera]},
+            "comparison_video": {"resolution": "640x360"},
+        },
+    }
+    stored: dict[str, dict] = {}
+    calls: dict[str, object] = {}
+    monkeypatch.setattr(learning, "_read_s3_json", lambda *_args: report)
+    monkeypatch.setattr(
+        learning,
+        "_read_s3_bytes",
+        lambda *_args: b"apiVersion: npa.workflow/v0.0.1\nkind: Workflow\n",
+    )
+    monkeypatch.setattr(
+        learning, "_download", lambda _client, _uri, path: path.write_bytes(b"artifact")
+    )
+    monkeypatch.setattr(
+        learning,
+        "_validate_learning_mcap",
+        lambda _path, *, run_id, camera_name: calls.update(
+            mcap_camera=camera_name, mcap_run=run_id
+        )
+        or {"size_bytes": 8, "channels": {f"/camera/{camera_name}": 1}},
+    )
+    monkeypatch.setattr(
+        learning,
+        "inspect_rrd",
+        lambda _path, **kwargs: calls.update(rrd_entities=kwargs["expected_entities"])
+        or {"bytes": 8},
+    )
+    monkeypatch.setattr(
+        learning,
+        "_decode_video",
+        lambda *_args, **_kwargs: ([SimpleNamespace(size=(640, 360))], 10.0),
+    )
+    monkeypatch.setattr(
+        learning,
+        "_head_artifact",
+        lambda _client, uri: {"uri": uri, "bytes": 8},
+    )
+    monkeypatch.setattr(
+        learning,
+        "_put_json",
+        lambda _client, uri, payload: stored.__setitem__(uri, payload),
+    )
+
+    result = learning.publish_learning(
+        report_uri,
+        "s3://bucket/run/reports/groot-offline-evaluation.mcap",
+        "s3://bucket/run/reports/groot-offline-evaluation.rrd",
+        "s3://bucket/run/reports/offline-heldout-comparison.mp4",
+        "s3://bucket/run/workflow.yaml",
+        output_uri,
+        "run",
+        s3_client=object(),
+    )
+
+    assert calls["mcap_camera"] == camera
+    assert f"heldout/camera/{camera}" in calls["rrd_entities"]
+    assert stored[report_uri]["visualizations"]["primary_camera"] == camera
+    assert f"/camera/{camera}" in result["mcap_inspection"]["channels"]
+
+
+def test_publish_learning_rejects_missing_or_mismatched_primary_camera(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = {
+        "schema": learning.REPORT_SCHEMA,
+        "run_id": "run",
+        "dataset": {"camera_names": ["front"]},
+        "provenance": {
+            "primary_camera": "overhead",
+            "heldout_source_videos": [{"camera_name": "front"}],
+        },
+        "visualizations": {
+            "timebase": {"camera_names": ["front"]},
+            "comparison_video": {"resolution": "640x360"},
+        },
+    }
+    monkeypatch.setattr(learning, "_read_s3_json", lambda *_args: report)
+    monkeypatch.setattr(
+        learning,
+        "_read_s3_bytes",
+        lambda *_args: b"apiVersion: npa.workflow/v0.0.1\nkind: Workflow\n",
+    )
+    with pytest.raises(learning.GrootVisualizationError, match="primary camera"):
+        learning.publish_learning(
+            "s3://bucket/report.json",
+            "s3://bucket/report.mcap",
+            "s3://bucket/report.rrd",
+            "s3://bucket/report.mp4",
+            "s3://bucket/workflow.yaml",
+            "s3://bucket/publish.json",
+            "run",
+            s3_client=object(),
+        )
 
 
 def test_training_manifest_records_real_loss_trajectory(tmp_path: Path) -> None:
@@ -614,18 +958,34 @@ def test_text_loss_without_steps_or_trainer_config_fails_closed() -> None:
         )
 
 
+def test_loss_step_provenance_is_truthful_for_aggregate_only_and_empty_logs() -> None:
+    aggregate = parse_training_loss_evidence(
+        "{'train_loss': 0.91}\n", training_step=4, logging_steps=1
+    )
+    assert aggregate["loss_step_source"] == "aggregate_train_loss_only"
+    assert aggregate["loss_step_inference"] is None
+    assert aggregate["loss_history"] == []
+    empty = parse_training_loss_evidence("", training_step=4, logging_steps=1)
+    assert empty["loss_step_source"] == "no_loss_records"
+    assert empty["loss_logging_cadence_matches"] is None
+
+
 def test_learning_ui_is_replay_first_groups_frames_and_never_upscales() -> None:
     source = (
         Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent_ui.html"
     ).read_text(encoding="utf-8")
     assert "Policy learning summary" in source
     assert "Offline held-out policy evaluation" in source
-    assert "Open in Rerun" in source and "Open MCAP" in source
+    assert "Open GR00T offline RRD" in source
+    assert "Open GR00T offline MCAP" in source
     assert "groupArtifactSequences" in source
     assert "native; preview is not enlarged" in source
     assert "width: auto" in source and "object-fit: contain" in source
-    assert "Prepare leakage-free split" in source
-    assert "Synchronized learning replay" in source
+    path_contract = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "workflows" / "artifacts.py"
+    ).read_text(encoding="utf-8")
+    assert "Prepare leakage-free split" in path_contract
+    assert "Synchronized diagnostics" in path_contract
 
 
 def test_trivial_predictor_floor_and_positive_skill_score() -> None:

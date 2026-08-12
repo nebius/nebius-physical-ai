@@ -7,6 +7,14 @@ Source of truth: `npa/src/npa/orchestration/npa_workflow/catalog.py`.
 This table must list every `TOOL_CATALOG` key (enforced by
 `npa/tests/orchestration/npa_workflow/test_catalog_doc_sync.py`).
 
+Catalog reachability is fail-closed: every entry is consumed by a shipped spec
+except the explicitly public composition primitives `infra.fleet.deploy`,
+`infra.soperator.deploy`, `workbench.cosmos2.transfer`,
+`workbench.foxglove.convert`, `workbench.insights.record`,
+`workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`, and
+`workbench.sim2real.run`. The reusable-only list is machine-checked against
+`PUBLIC_REUSABLE_TOOLREFS`; accidental dead entries fail the guardrail.
+
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
 | `infra.fleet.deploy` | `npa fleet deploy` | `config.fleet_spec` | fleet deploy JSON | no |
@@ -39,28 +47,12 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workflow.groot.prepare_split` | `npa.workflows.groot_learning prepare-split` | source GR00T LeRobot dataset | hashed, episode-disjoint train/held-out datasets + split manifest with train-only statistics | no |
 | `workflow.groot.preflight_rigor` | `npa.workflows.groot_learning preflight-rigor` | declared GPU, batch, split, and training-budget configuration | fail-fast absolute-action, effective-batch, cohort, and optimizer-step contract | no |
 | `workbench.groot.baseline_eval` | `npa.workflows.groot_learning baseline-eval` | split manifest, train/held-out datasets, pinned N1.7 base model | zero-update custom-embodiment checkpoint + real held-out predictions/expert actions/metrics | yes (real `Gr00tPolicy.get_action` forwards) |
-| `workbench.groot.probe_2500_eval` | `npa.workflows.groot_learning posttrain-eval` | exact `checkpoint-2500` and unchanged validation split | deterministic repeated model forwards, trivial floors, skill score, and per-horizon errors | yes (real `Gr00tPolicy.get_action` forwards) |
-| `workbench.groot.probe_5000_eval` | `npa.workflows.groot_learning posttrain-eval` | exact `checkpoint-5000` and unchanged validation split | deterministic repeated model forwards, trivial floors, skill score, and per-horizon errors | yes (real `Gr00tPolicy.get_action` forwards) |
-| `workbench.groot.probe_10000_eval` | `npa.workflows.groot_learning posttrain-eval` | exact `checkpoint-10000` and unchanged validation split | deterministic repeated model forwards, trivial floors, skill score, and per-horizon errors | yes (real `Gr00tPolicy.get_action` forwards) |
-| `workflow.groot.select_offline_checkpoint` | `npa.workflows.groot_learning select-offline-checkpoint` | baseline plus at least two intermediate and final validation probes | validation-only checkpoint learning curve and selected exact weight identity; final-test seeds remain untouched | no |
 | `workbench.groot.finetune` | `npa workbench groot finetune --runtime local` | GR00T-format LeRobot dataset at `config.data_uri`, pinned N1.7 base model, positive `config.gpu_count` | vendor checkpoints + `npa_groot_finetune_manifest.json` at `config.checkpoint_uri` | yes (real upstream multi-GPU trainer) |
-| `workflow.groot.resolve_task_contract` | `npa.workflows.groot_task_performance resolve-task-contract` | converted PushT data plus immutable `lerobot/pusht` revision | proven observation/action/embodiment/task/environment contract and live-frame probe | no |
-| `workbench.groot.evaluate_baseline_closed_loop` | `npa.workflows.groot_task_performance evaluate-closed-loop --phase baseline` | proven contract and identity-pinned baseline checkpoint | model-controlled per-seed PushT episodes, trajectories, native simulator videos, outcomes | yes (real `Gr00tPolicy.get_action` + gym-pusht physics) |
 | `workflow.groot.resolve_trained_checkpoint` | `npa.workflows.groot_task_performance resolve-trained-checkpoint` | split/training manifests and uploaded trainer output | step-contract-checked immutable checkpoint reference | no |
-| `workbench.groot.evaluate_baseline_closed_loop.validation` | `npa.workflows.groot_task_performance evaluate-closed-loop --phase baseline` | proven contract and baseline checkpoint | selection-only baseline simulator episodes | yes (real `Gr00tPolicy.get_action` + gym-pusht physics) |
-| `workbench.groot.evaluate_trained_closed_loop.validation` | `npa.workflows.groot_task_performance evaluate-closed-loop --phase trained` | resolved candidate checkpoint | matched selection-only candidate simulator episodes | yes (real `Gr00tPolicy.get_action` + gym-pusht physics) |
-| `workflow.groot.analyze_validation_outcomes` | `npa.workflows.groot_task_performance analyze-paired-outcomes` | paired validation reports | fail-closed selection evidence | no |
-| `workflow.groot.select_checkpoint` | `npa.workflows.groot_task_performance select-checkpoint` | passed validation report and candidate reference | validation-selected immutable checkpoint reference | no |
-| `workbench.groot.evaluate_trained_closed_loop.selected` | `npa.workflows.groot_task_performance evaluate-closed-loop --phase trained` | selected checkpoint and untouched final seeds | matched model-controlled final PushT episodes, trajectories, native simulator videos, outcomes | yes (real `Gr00tPolicy.get_action` + gym-pusht physics) |
-| `workflow.groot.analyze_paired_outcomes` | `npa.workflows.groot_task_performance analyze-paired-outcomes` | baseline/trained closed-loop evaluation reports | paired outcome report, bootstrap CI, sign-randomization test, fail-closed improvement gate | no |
-| `workflow.groot.render_task_rollouts` | `npa.workflows.groot_task_performance render-task-rollouts` | passed paired report and actual rollout videos | synchronized labeled side-by-side task comparison video and selection manifest | no |
-| `workflow.groot.emit_task_mcap` | `npa.workflows.groot_task_performance emit-mcap` | paired report, trajectory data, actual rollout frames | inspected MCAP with rollout camera/action/object/goal/progress/success and aggregate topics | no |
-| `workflow.groot.emit_task_rrd` | `npa.workflows.groot_task_performance emit-rrd` | paired report, trajectory data, actual rollout frames | task-first native Rerun recording with paired cameras, goal trajectory, progress, outcomes, and CI | no |
-| `workflow.groot.publish_task_performance` | `npa.workflows.groot_task_performance publish` | report, comparison video, MCAP, RRD, exact workflow | independently decoded and inspected terminal publish manifest | no |
-| `workbench.groot.posttrain_eval` | `npa.workflows.groot_learning posttrain-eval` | trained checkpoint and unchanged held-out split | aligned real held-out predictions/expert actions plus aggregate/per-dimension errors | yes (real `Gr00tPolicy.get_action` forwards) |
+| `workbench.groot.posttrain_eval` | `npa.workflows.groot_learning posttrain-eval` | resolved immutable checkpoint reference and unchanged held-out split | aligned real held-out predictions/expert actions plus aggregate/per-dimension errors | yes (real `Gr00tPolicy.get_action` forwards) |
 | `workflow.groot.compare_learning` | `npa.workflows.groot_learning compare-learning` | baseline/post evaluations, split and real training manifest | structurally fail-closed report with separate pipeline status and `improved`/`not_improved` outcome, plus offline held-out comparison video | no |
-| `workflow.groot.emit_learning_mcap` | `npa.workflows.groot_learning emit-mcap` | completed learning report and aligned evaluation tensors, including `not_improved` | inspected camera/action/error/metric `groot-learning.mcap` | no |
-| `workflow.groot.emit_learning_rrd` | `npa.workflows.groot_learning emit-rrd` | completed learning report and aligned evaluation tensors, including `not_improved` | native-archetype `groot-learning.rrd` with camera/action/error blueprint | no |
+| `workflow.groot.emit_learning_mcap` | `npa.workflows.groot_learning emit-mcap` | completed learning report and aligned evaluation tensors, including `not_improved` | inspected camera/action/error/metric `reports/groot-offline-evaluation.mcap` | no |
+| `workflow.groot.emit_learning_rrd` | `npa.workflows.groot_learning emit-rrd` | completed learning report and aligned evaluation tensors, including `not_improved` | native-archetype `reports/groot-offline-evaluation.rrd` with camera/action/error blueprint | no |
 | `workflow.groot.publish_learning` | `npa.workflows.groot_learning publish` | learning report, MCAP, RRD, video, exact workflow YAML | hashed `publish-manifest.json` and validated report index | no |
 | `workflow.groot.verify_agent_ui` | `npa.workflows.groot_learning verify-agent-ui` | exact run report, RRD, MCAP, deployed agent URL, runtime-only Basic auth | run discovery, artifact association, Rerun/Lichtblick readiness, and byte-range verification report | no |
 | `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` | `config.onnx_uri` | no |

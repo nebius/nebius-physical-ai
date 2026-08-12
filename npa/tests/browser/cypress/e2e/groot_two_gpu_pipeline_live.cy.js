@@ -219,6 +219,16 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
       });
     };
     waitForDescribePaint(0);
+    cy.get("#rerunFrame", { timeout: 180000 }).should(($frame) => {
+      assertViewerDocument($frame, "Rerun");
+      const doc = $frame[0].contentDocument;
+      const text = String((doc && doc.body && doc.body.innerText) || "");
+      expect(text, "no Rerun view-instantiation errors")
+        .not.to.match(/failed to instantiate|failed to load view|unknown component/i);
+      expect(text, "optimizer-clock panels are not misleadingly empty on dataset_time")
+        .not.to.include("Checkpoint validation curve")
+        .and.not.to.include("Training loss");
+    });
     cy.window().then({ timeout: 30000 }, (win) => {
       return win.__NPA_AGENT_TEST__.captureVisualContext();
     }).then((captured) => {

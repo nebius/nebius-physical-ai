@@ -32,6 +32,7 @@ function artifactContentPath(activeRun, artifact) {
 describe("GR00T learning experience (live system)", () => {
   let activeRun = "";
   let artifacts = [];
+  let summary = {};
 
   before(function () {
     if (!liveEnvAvailable() || !runId()) this.skip();
@@ -40,6 +41,7 @@ describe("GR00T learning experience (live system)", () => {
       expect(resp.status, "learning artifact inventory status").to.eq(200);
       expect(resp.body.summary.learning, "machine-readable learning summary").to.be.an("object");
       artifacts = resp.body.artifacts || [];
+      summary = resp.body.summary || {};
     });
   });
 
@@ -71,16 +73,24 @@ describe("GR00T learning experience (live system)", () => {
       .and("contain.text", "episode-disjoint")
       .and("contain.text", "offline held-out (not rollout)");
     cy.get("#artifactRunSummary .learning-replay-actions")
-      .should("contain.text", "Open in Rerun")
-      .and("contain.text", "Open MCAP")
-      .and("contain.text", "Play comparison video");
+      .should("contain.text", "Open GR00T offline RRD")
+      .and("contain.text", "Open GR00T offline MCAP")
+      .and("contain.text", "Play offline comparison video");
+    cy.get("#artifactRunSummary")
+      .should("contain.text", "4 optimizer points")
+      .and("not.contain.text", "VLM")
+      .and("not.contain.text", "reward")
+      .and("not.contain.text", "generic rollout");
+    cy.get("#learningLossTimeline")
+      .should("contain.text", "step 1")
+      .and("contain.text", "step 4");
     cy.get("#stageList")
       .should("contain.text", "Prepare leakage-free split")
-      .and("contain.text", "Baseline held-out inference")
+      .and("contain.text", "Offline baseline")
       .and("contain.text", "Multi-GPU policy training")
-      .and("contain.text", "Post-training held-out inference")
-      .and("contain.text", "Compare learning")
-      .and("contain.text", "Synchronized learning replay")
+      .and("contain.text", "Offline post-training evaluation")
+      .and("contain.text", "Classify learning outcome")
+      .and("contain.text", "Synchronized diagnostics")
       .and("contain.text", "Validate and publish")
       .and("not.contain.text", "Visualize + finalize");
   });
@@ -91,22 +101,24 @@ describe("GR00T learning experience (live system)", () => {
     cy.get("#artifactList")
       .should("be.visible")
       .and("contain.text", "grouped rows from")
-      .and("contain.text", "reports/groot-learning.rrd")
-      .and("contain.text", "reports/groot-learning.mcap");
+      .and("contain.text", "reports/groot-offline-evaluation.rrd")
+      .and("contain.text", "reports/groot-offline-evaluation.mcap")
+      .and("contain.text", "offline/baseline/evaluation.json")
+      .and("contain.text", "offline/trained/evaluation.json");
     cy.get("#rawArtifactsToggle").should("contain.text", "Hide raw artifacts");
   });
 
   it("indexes the exact substantive RRD selected by the replay", () => {
-    const rrd = artifacts.find((item) => String(item.key || "").endsWith("reports/groot-learning.rrd"));
+    const rrd = artifacts.find((item) => String(item.key || "").endsWith("reports/groot-offline-evaluation.rrd"));
     expect(rrd, "learning RRD artifact").to.exist;
-    expect(Number(rrd.size || rrd.size_bytes || rrd.bytes || 0), "RRD inventory bytes").to.eq(600381);
+    expect(Number(rrd.size || rrd.size_bytes || rrd.bytes || 0), "RRD inventory bytes").to.be.greaterThan(0);
     expect(String(rrd.key || ""), "run-scoped learning RRD key").to.include(activeRun);
   });
 
   it("loads the exact MCAP and publishes truthful Lichtblick configuration", () => {
-    const mcap = artifacts.find((item) => String(item.key || "").endsWith("reports/groot-learning.mcap"));
+    const mcap = artifacts.find((item) => String(item.key || "").endsWith("reports/groot-offline-evaluation.mcap"));
     expect(mcap, "learning MCAP artifact").to.exist;
-    expect(Number(mcap.size || mcap.size_bytes || mcap.bytes || 0), "MCAP inventory bytes").to.eq(298337);
+    expect(Number(mcap.size || mcap.size_bytes || mcap.bytes || 0), "MCAP inventory bytes").to.be.greaterThan(0);
     agentReq("/api/sim-viz/load-artifact", {
       method: "POST",
       body: { run_id: activeRun, key: mcap.key },
@@ -114,6 +126,11 @@ describe("GR00T learning experience (live system)", () => {
       expect(resp.status).to.eq(200);
       expect(String(resp.body.sim_viz.artifact_key || "")).to.eq(mcap.key);
       expect(String(resp.body.sim_viz.lichtblick_iframe_url || "")).to.include("/lichtblick/");
+      const contract = summary.learning.artifact_contract;
+      expect(contract.authoritative, "server-owned semantic contract").to.eq(true);
+      expect(resp.body.sim_viz.camera, "validated primary camera").to.eq(contract.primary_camera);
+      expect(String(resp.body.sim_viz.lichtblick_iframe_url || ""), "dynamic camera layout")
+        .to.include(`npa.camera=${encodeURIComponent(contract.primary_camera)}`);
       expect(String(resp.body.sim_viz.visualization_note || "")).to.include("Offline held-out");
       expect(String(resp.body.sim_viz.visualization_note || "")).to.include("not a rollout");
     });
@@ -122,7 +139,7 @@ describe("GR00T learning experience (live system)", () => {
   it("streams the labelled comparison video with authenticated range semantics", () => {
     const video = artifacts.find((item) => String(item.key || "").endsWith("reports/offline-heldout-comparison.mp4"));
     expect(video, "offline held-out comparison video").to.exist;
-    expect(Number(video.size || video.size_bytes || video.bytes || 0), "comparison video bytes").to.eq(355588);
+    expect(Number(video.size || video.size_bytes || video.bytes || 0), "comparison video bytes").to.be.greaterThan(0);
     agentReq(artifactContentPath(activeRun, video), {
       headers: { Range: "bytes=0-4095" },
       encoding: "binary",

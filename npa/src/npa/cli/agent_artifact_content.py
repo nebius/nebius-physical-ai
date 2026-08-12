@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 # This module is source-embedded after the backend and artifact helpers are
 # defined. Names intentionally resolve in that generated backend namespace.
@@ -69,12 +70,9 @@ def _summary_documents_for_run(s3, bucket: str, artifacts: list) -> dict:
         "evidence/training.json",
         "evidence/capacity.json",
         "evidence/collective.json",
-        "checkpoints/npa_groot_finetune_manifest.json",
-        "reports/learning-report.json",
-        "reports/learning-rigor-report.json",
-        "reports/two-gpu-pipeline-report.json",
-        "reports/task-performance-report.json",
     }
+    candidates.update(GROOT_ARTIFACT_PATHS["training_manifest"])
+    candidates.update(GROOT_ARTIFACT_PATHS["report"])
     documents = {}
     for artifact in artifacts:
         relative = str(getattr(artifact, "relative_key", "") or "").strip().lstrip("/")
@@ -178,8 +176,7 @@ def _artifact_content_response(
     category = artifact_category_for_relative_key(
         str(artifact.relative_key or ""), role=str(artifact.role or "output")
     )
-    head = s3.head_object(Bucket=run_bucket, Key=str(artifact.key))
-    total = int(head.get("ContentLength") or artifact.size or 0)
+    total = int(artifact.size or 0)
     inline_media = render in {"image", "video"}
     attachment = bool(download or not inline_media)
     content_type = artifact_media_type(str(artifact.key))
@@ -195,6 +192,8 @@ def _artifact_content_response(
         "X-NPA-Run-Id": normalized_run,
     }
     if request.method == "HEAD":
+        head = s3.head_object(Bucket=run_bucket, Key=str(artifact.key))
+        total = int(head.get("ContentLength") or 0)
         headers["Content-Length"] = str(total)
         return Response(status_code=200, media_type=content_type, headers=headers)
 
@@ -211,6 +210,16 @@ def _artifact_content_response(
                 Range=f"bytes=0-{end}",
             )
             raw = obj["Body"].read(INLINE_TEXT_MAX_BYTES + 1)
+            content_range = str(obj.get("ContentRange") or "")
+            range_match = re.fullmatch(r"bytes \d+-\d+/(\d+)", content_range)
+            actual_total = int(range_match.group(1)) if range_match else int(
+                obj.get("ContentLength") or len(raw)
+            )
+            if actual_total != total:
+                raise HTTPException(
+                    status_code=409,
+                    detail="artifact changed since inventory discovery; list the run again",
+                )
         else:
             raw = b""
         preview = build_text_preview(
@@ -258,6 +267,30 @@ def _artifact_content_response(
         content_length = end - start + 1
         headers["Content-Range"] = f"bytes {start}-{end}/{total}"
     obj = s3.get_object(**get_kwargs)
+    actual_length = int(obj.get("ContentLength") or 0)
+    actual_range = str(obj.get("ContentRange") or "")
+    if selected_range is not None:
+        match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", actual_range)
+        if match is None:
+            obj["Body"].close()
+            raise HTTPException(status_code=502, detail="S3 range response omitted Content-Range")
+        actual_start, actual_end, actual_total = (int(value) for value in match.groups())
+        if actual_total != total or (actual_start, actual_end) != selected_range:
+            obj["Body"].close()
+            raise HTTPException(
+                status_code=409,
+                detail="artifact changed since inventory discovery; list the run again",
+            )
+        headers["Content-Range"] = actual_range
+        content_length = actual_end - actual_start + 1
+    else:
+        if actual_length != total:
+            obj["Body"].close()
+            raise HTTPException(
+                status_code=409,
+                detail="artifact changed since inventory discovery; list the run again",
+            )
+        content_length = actual_length
     headers["Content-Length"] = str(content_length)
     return StreamingResponse(
         _artifact_stream(obj["Body"]),

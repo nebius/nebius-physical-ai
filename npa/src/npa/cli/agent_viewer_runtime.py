@@ -18,9 +18,6 @@ from pathlib import Path
 if __name__ == "npa.cli.agent_viewer_runtime":
     (
         DEFAULT_SIM_VIZ,
-        GROOT_LEARNING_CAMERA_LABEL,
-        GROOT_LEARNING_MCAP_NOTE,
-        GROOT_LEARNING_RERUN_NOTE,
         GROOT_TRAINING_CAMERA_LABEL,
         LICHTBLICK_RECORDING_HTTP_PATH,
         MCAP_RECORDING_PATH,
@@ -47,10 +44,9 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         _sim_viz_load_response,
         _sim2real_pipeline_camera_label,
         _wait_rerun_web_viewer_healthy,
-        is_groot_learning_recording,
         is_groot_training_recording,
         is_neural_reconstruction_recording,
-    ) = (None,) * 33
+    ) = (None,) * 29
 # NPA_EMBED_STANDALONE_END
 
 
@@ -235,6 +231,7 @@ def _apply_loaded_artifact(
     source_identity: tuple[str, str, str] = ("", "", ""),
     run_ref: str = "",
     requested_camera: str = "",
+    artifact_contract: dict | None = None,
 ) -> dict:
     now = _now_iso()
     sim_viz = dict(DEFAULT_SIM_VIZ)
@@ -244,6 +241,17 @@ def _apply_loaded_artifact(
     # Never let a previous RRD's binding survive a later media load.
     sim_viz.pop("served_recording_sha256", None)
     camera = str(sim_viz.get("camera") or "workspace")
+    contract = artifact_contract if isinstance(artifact_contract, dict) else {}
+    contract_matches = contract.get("matches") if isinstance(contract.get("matches"), dict) else {}
+    learning_paths = {
+        str(path)
+        for semantic in ("rrd", "mcap")
+        for path in contract_matches.get(semantic) or []
+    }
+    is_learning = contract.get("authoritative") is True and any(
+        str(key).endswith("/" + path) or str(key) == path for path in learning_paths
+    )
+    contract_camera = str(contract.get("primary_camera") or "").strip()
     # Keep the data-factory exclusion on one line: npa/tests/cli/test_agent.py
     # guards that exact expression as source text.
     if (
@@ -252,8 +260,8 @@ def _apply_loaded_artifact(
         and not is_neural_reconstruction_recording(key)
     ):
         camera = _sim2real_pipeline_camera_label(camera)
-    elif render == "rerun" and is_groot_learning_recording(key):
-        camera = GROOT_LEARNING_CAMERA_LABEL
+    elif render == "rerun" and is_learning:
+        camera = contract_camera
     elif render == "rerun" and is_groot_training_recording(key):
         # A training-telemetry recording must not inherit a previous policy
         # rollout's held-out camera label or preview entity.
@@ -264,8 +272,10 @@ def _apply_loaded_artifact(
     if requested_camera:
         if _is_sim2real_pipeline_recording(key):
             camera = _sim2real_pipeline_camera_label(requested_camera)
-        elif is_groot_learning_recording(key):
-            camera = GROOT_LEARNING_CAMERA_LABEL
+        elif is_learning:
+            if requested_camera != contract_camera:
+                raise ValueError("requested camera differs from validated GR00T provenance")
+            camera = contract_camera
         elif is_groot_training_recording(key):
             camera = GROOT_TRAINING_CAMERA_LABEL
         else:
@@ -284,6 +294,10 @@ def _apply_loaded_artifact(
             "artifact_run_ref": str(run_ref or ""),
             "mode": "static",
             "camera": camera,
+            "artifact_contract": contract if is_learning else {},
+            "artifact_contract_authoritative": bool(is_learning),
+            "evaluation_kind": str(contract.get("evaluation_kind") or "") if is_learning else "",
+            "closed_loop": bool(contract.get("closed_loop")) if is_learning else False,
             "bucket": str(resource_bucket or "").strip(),
             "project_id": str(project_id or "").strip(),
             "resolved_prefix": str(resolved_prefix or "").strip(),
@@ -307,9 +321,14 @@ def _apply_loaded_artifact(
             str(sim_viz.get("camera") or "workspace"), recording_path=capability_path
         )
         sim_viz["rerun_ready"] = bool(capability_path) and rerun_ready
-        if is_groot_learning_recording(key):
-            sim_viz["preview_entity"] = "camera/front"
-            sim_viz["visualization_note"] = GROOT_LEARNING_RERUN_NOTE
+        if is_learning:
+            sim_viz["preview_entity"] = f"heldout/camera/{camera}"
+            sim_viz["visualization_note"] = (
+                "Offline held-out GR00T policy evaluation loaded (not a rollout). "
+                f"The validated primary camera is {camera}. The Rerun recording aligns "
+                "persisted held-out frames with expert and baseline/post-training "
+                "predictions, action error, finite training loss, and provenance."
+            )
         elif is_groot_training_recording(key):
             sim_viz["preview_entity"] = GROOT_TRAINING_CAMERA_LABEL
             sim_viz["visualization_note"] = (
@@ -359,10 +378,16 @@ def _apply_loaded_artifact(
             sim_viz["lichtblick_iframe_url"] = _lichtblick_iframe_url(
                 mcap_url=mcap_url,
                 mcap_size=MCAP_RECORDING_PATH.stat().st_size,
+                primary_camera=camera if is_learning else "",
             )
             sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
-            if is_groot_learning_recording(key):
-                sim_viz["visualization_note"] = GROOT_LEARNING_MCAP_NOTE
+            if is_learning:
+                sim_viz["visualization_note"] = (
+                    "Offline held-out GR00T policy-evaluation MCAP loaded (not a rollout). "
+                    f"The validated primary camera topic is /camera/{camera}; aligned "
+                    "expert/model actions, errors, held-out metrics, loss, and provenance "
+                    "use explicit dataset-index/optimizer-step time domains."
+                )
             elif is_groot_training_recording(key):
                 sim_viz["visualization_note"] = (
                     "GR00T training telemetry MCAP loaded in the embedded Lichtblick "

@@ -36,6 +36,9 @@ config:
   save_steps: "4"
   save_total_limit: "1"
   action_horizon: "16"
+  # Five repeats are the deterministic default (one duplicate-seed check plus
+  # independent seeds). GPU inference cost scales linearly with this value.
+  evaluation_repeats: "5"
   minimum_relative_improvement: "0.10"
   minimum_skill_score: "0.05"
   repeat_noise_multiple: "3.0"
@@ -44,14 +47,12 @@ config:
   agent_url: https://agent.example.invalid
 
   rigor_preflight_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/access-capacity-preflight.json"
-  task_contract_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/task-data-contract.json"
   train_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/train/"
   heldout_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/heldout/"
   final_data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/final-unused/"
   data_uri: "{{config.train_data_uri}}"
   split_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/split/manifest.json"
   candidate_checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/candidate/"
-  checkpoint_uri: "{{config.candidate_checkpoint_uri}}checkpoint-4/"
   training_manifest_uri: "{{config.candidate_checkpoint_uri}}npa_groot_finetune_manifest.json"
   candidate_checkpoint_ref_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/trained-checkpoint.json"
   offline_baseline_eval_uri: "s3://{{config.bucket}}/{{config.prefix}}/offline/baseline/evaluation.json"
@@ -78,6 +79,9 @@ resources:
     kubernetes:
       pod_config:
         spec:
+          # The pinned upstream GR00T image writes its uv environment, model cache,
+          # and checkpoint tree below root-owned image paths during startup.
+          # Cluster admission, read-only inputs, and Trivy remain required gates.
           securityContext: {runAsUser: 0, runAsGroup: 0}
   evaluator-gpu:
     cloud: kubernetes
@@ -87,6 +91,8 @@ resources:
     kubernetes:
       pod_config:
         spec:
+          # Baseline initialization and the pinned torchcodec/GR00T evaluator write
+          # train-stat-derived processor files below the root-owned checkpoint tree.
           securityContext: {runAsUser: 0, runAsGroup: 0}
   artifact-cpu:
     cloud: kubernetes
@@ -102,16 +108,6 @@ states:
     resources: artifact-cpu
     outputs:
       - {uri: "{{config.rigor_preflight_uri}}", schema: npa.groot.rigor_preflight.v1}
-    next: resolve_task_data_contract
-
-  resolve_task_data_contract:
-    description: Resolve the actual dataset, task, observation/action, embodiment, and camera contract.
-    toolRef: workflow.groot.resolve_task_contract
-    resources: artifact-cpu
-    inputs:
-      - {uri: "{{config.source_data_uri}}", schema: nvidia.groot.lerobot.v2}
-    outputs:
-      - {uri: "{{config.task_contract_uri}}", schema: npa.groot.task_contract.v1}
     next: prepare_deterministic_split
 
   prepare_deterministic_split:
@@ -151,7 +147,7 @@ states:
     next: trained_checkpoint_resolution
 
   trained_checkpoint_resolution:
-    description: Resolve checkpoint-4, verify all ranks and rank-zero publication, and prove trained weights differ.
+    description: Resolve the final checkpoint-N from the completed trainer manifest, verify all ranks and rank-zero publication, and prove trained weights differ.
     toolRef: workflow.groot.resolve_trained_checkpoint
     resources: artifact-cpu
     inputs:
@@ -169,7 +165,6 @@ states:
     resources: evaluator-gpu
     inputs:
       - {uri: "{{config.candidate_checkpoint_ref_uri}}", schema: npa.groot.checkpoint_ref.v1}
-      - {uri: "{{config.checkpoint_uri}}", schema: nvidia.groot.n1.7.finetuned-checkpoint}
     outputs:
       - {uri: "{{config.offline_candidate_eval_uri}}", schema: npa.groot.offline_eval.v1}
       - {uri: "{{config.offline_candidate_arrays_uri}}", schema: numpy.npz}

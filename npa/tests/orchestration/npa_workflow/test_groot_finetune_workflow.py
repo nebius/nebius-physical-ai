@@ -20,7 +20,6 @@ SPEC_PATH = REPO_ROOT / "npa/workflows/workbench/npa-workflows/groot-1-7-finetun
 
 STATES = [
     "access_capacity_preflight",
-    "resolve_task_data_contract",
     "prepare_deterministic_split",
     "baseline_inference_evaluation",
     "distributed_training",
@@ -34,7 +33,6 @@ STATES = [
 ]
 TOOL_REFS = [
     "workflow.groot.preflight_rigor",
-    "workflow.groot.resolve_task_contract",
     "workflow.groot.prepare_split",
     "workbench.groot.baseline_eval",
     "workbench.groot.finetune",
@@ -75,10 +73,12 @@ def test_groot_workflow_is_short_honest_operational_pipeline() -> None:
     assert spec.config["action_representation"] == "ABSOLUTE"
 
     preflight = plan.steps[0]
-    trainer = plan.steps[4]
-    resolver = plan.steps[5]
-    posttrain = plan.steps[6]
+    trainer = plan.steps[3]
+    resolver = plan.steps[4]
+    posttrain = plan.steps[5]
     assert _option_value(preflight.argv, "--max-steps") == "4"
+    assert _option_value(preflight.argv, "--save-steps") == "4"
+    assert _option_value(preflight.argv, "--save-total-limit") == "1"
     assert trainer.resources_profile["accelerators"] == "RTXPRO6000:2"
     assert _option_value(trainer.argv, "--num-gpus") == "2"
     assert _option_value(trainer.argv, "--logging-steps") == "1"
@@ -87,8 +87,9 @@ def test_groot_workflow_is_short_honest_operational_pipeline() -> None:
         "/checkpoints/candidate/"
     )
     assert _option_value(resolver.argv, "--expected-gpu-count") == "2"
-    assert _option_value(posttrain.argv, "--checkpoint-uri").endswith(
-        "/checkpoint-4/"
+    assert "--checkpoint-uri" not in posttrain.argv
+    assert _option_value(posttrain.argv, "--checkpoint-ref-uri").endswith(
+        "/reports/trained-checkpoint.json"
     )
     override_values = [
         trainer.argv[index + 1]
@@ -134,7 +135,7 @@ def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(monkeypatch) ->
             prepared.spec, prepared.plan.steps, run_id="groot-operational-render"
         )
         assert [task["name"] for task in scheduler["tasks"]] == STATES
-        assert scheduler["tasks"][4]["resources"]["accelerators"] == "RTXPRO6000:2"
+        assert scheduler["tasks"][3]["resources"]["accelerators"] == "RTXPRO6000:2"
 
         documents = [
             doc
@@ -144,16 +145,16 @@ def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(monkeypatch) ->
         assert len(documents) == len(STATES) + 1
         by_name = {stage["name"]: stage for stage in documents[1:]}
         assert "groot_learning preflight-rigor" in by_name[STATES[0]]["run"]
-        assert "groot_learning prepare-split" in by_name[STATES[2]]["run"]
-        assert "workbench groot finetune" in by_name[STATES[4]]["run"]
-        assert "groot_learning posttrain-eval" in by_name[STATES[6]]["run"]
-        assert "groot_learning compare-learning" in by_name[STATES[7]]["run"]
-        assert "groot_learning emit-rrd" in by_name[STATES[8]]["run"]
-        assert "groot_learning emit-mcap" in by_name[STATES[9]]["run"]
-        assert "groot_learning publish" in by_name[STATES[10]]["run"]
-        assert "groot_learning verify-agent-ui" in by_name[STATES[11]]["run"]
-        assert "[viz]" in by_name[STATES[8]]["setup"]
-        assert by_name[STATES[4]]["config"]["kubernetes"]["pod_config"]["spec"][
+        assert "groot_learning prepare-split" in by_name[STATES[1]]["run"]
+        assert "workbench groot finetune" in by_name[STATES[3]]["run"]
+        assert "groot_learning posttrain-eval" in by_name[STATES[5]]["run"]
+        assert "groot_learning compare-learning" in by_name[STATES[6]]["run"]
+        assert "groot_learning emit-rrd" in by_name[STATES[7]]["run"]
+        assert "groot_learning emit-mcap" in by_name[STATES[8]]["run"]
+        assert "groot_learning publish" in by_name[STATES[9]]["run"]
+        assert "groot_learning verify-agent-ui" in by_name[STATES[10]]["run"]
+        assert "[viz]" in by_name[STATES[7]]["setup"]
+        assert by_name[STATES[3]]["config"]["kubernetes"]["pod_config"]["spec"][
             "securityContext"
         ] == {"runAsUser": 0, "runAsGroup": 0}
     finally:
@@ -175,11 +176,11 @@ def test_groot_workflow_gpu_count_matrix(gpu_count: int) -> None:
     plan = build_plan(spec, run_id=run_id)
     scheduler = build_scheduler_plan(spec, plan.steps, run_id=run_id)
 
-    trainer = plan.steps[4]
+    trainer = plan.steps[3]
     assert trainer.resources_profile["accelerators"] == f"RTXPRO6000:{gpu_count}"
     assert _option_value(trainer.argv, "--num-gpus") == str(gpu_count)
     assert _option_value(trainer.argv, "--global-batch-size") == str(gpu_count)
     assert _option_value(trainer.argv, "--gradient-accumulation-steps") == "1"
-    assert scheduler["tasks"][4]["resources"]["accelerators"] == (
+    assert scheduler["tasks"][3]["resources"]["accelerators"] == (
         f"RTXPRO6000:{gpu_count}"
     )

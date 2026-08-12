@@ -1419,13 +1419,20 @@ def _lichtblick_recording_url(*, cache_bust: bool = False) -> str:
     return url
 
 
-def _lichtblick_iframe_url(*, mcap_url: str = "", mcap_size: int = 0) -> str:
+def _lichtblick_iframe_url(
+    *, mcap_url: str = "", mcap_size: int = 0, primary_camera: str = ""
+) -> str:
     # Lichtblick opens a remote MCAP the same way the standalone tool does; the MCAP is
     # co-served same-origin under /lichtblick/recordings/ so the browser fetch needs no CORS.
     source = mcap_url or _lichtblick_recording_url()
     size_hint = max(0, int(mcap_size or 0))
     size_query = f"&npa.size={{size_hint}}" if size_hint else ""
-    return f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}{{size_query}}"
+    camera = str(primary_camera or "").strip()
+    camera_query = f"&npa.camera={{quote(camera, safe='')}}" if camera else ""
+    return (
+        f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}"
+        f"{{size_query}}{{camera_query}}"
+    )
 
 
 def _publish_mcap_recording(source: Path) -> Path:
@@ -4953,7 +4960,6 @@ def chat(payload: dict):
         system_content += "\\n\\n" + visual_block
     if visual_turn:
         system_content += learning_visual_fact_block(visual_context)
-        system_content += task_performance_visual_fact_block(visual_context)
     if origin_reply:
         # Ground the "Where it comes from" / original-input story with real facts.
         system_content += (
@@ -5018,9 +5024,6 @@ def chat(payload: dict):
     reply, reasoning = _split_reasoning(message)
     if visual_turn and learning_visual_reply_needs_correction(reply, visual_context):
         reply = truthful_learning_visual_reply(visual_context)
-        reasoning = None
-    if visual_turn and task_performance_visual_reply_needs_correction(reply, visual_context):
-        reply = truthful_task_performance_visual_reply(visual_context)
         reasoning = None
     if not reply and reasoning:
         reply = reasoning
@@ -7143,7 +7146,21 @@ def sim_viz_load_artifact(payload: dict | None = None):
             if not (requested_run_ref or requested_run):
                 raise HTTPException(
                     status_code=400,
-                    detail="run_id is required with s3_uri so the object can be authorized",
+                    detail={{
+                        "schema": "npa.agent.api_error/v1",
+                        "contract_version": "npa.agent.load-artifact.v2",
+                        "code": "run_id_required_for_s3_uri",
+                        "message": "run_id or server-issued run_ref is required with s3_uri",
+                        "migration": {{
+                            "required_fields": ["run_id", "s3_uri"],
+                            "preferred_fields": ["run_ref", "key"],
+                            "discover_via": [
+                                "GET /api/artifacts/runs",
+                                "GET /api/artifacts/run/{{run_id_or_run_ref}}",
+                            ],
+                            "security_boundary": "only server-discovered inventory objects may be loaded",
+                        }},
+                    }},
                 )
             bucket, key = parse_s3_uri(requested_uri)
             key = _safe_artifact_key(key)
@@ -7191,6 +7208,17 @@ def sim_viz_load_artifact(payload: dict | None = None):
         source_bucket, source_project, source_prefix = _artifact_source_metadata(
             _agent_access_report(), bucket, key, run_id
         )
+        run_summary = build_run_summary(
+            run_id,
+            resolution.artifacts,
+            _summary_documents_for_run(s3, bucket, resolution.artifacts),
+        )
+        learning_summary = run_summary.get("learning")
+        learning_contract = (
+            learning_summary.get("artifact_contract")
+            if isinstance(learning_summary, dict)
+            else None
+        )
         sim_viz = _apply_loaded_artifact(
             state=state,
             run_id=run_id,
@@ -7200,6 +7228,7 @@ def sim_viz_load_artifact(payload: dict | None = None):
             local_path=local_path,
             source_identity=(source_bucket, source_project, source_prefix),
             run_ref=resolved_ref,
+            artifact_contract=learning_contract,
         )
         return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri, "run_ref": resolved_ref}}
     except AmbiguousRunError as exc:

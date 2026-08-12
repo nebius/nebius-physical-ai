@@ -18,6 +18,11 @@ def parse_training_loss_evidence(
 ) -> dict[str, Any]:
     """Separate real optimizer-step losses from the end-of-run aggregate."""
 
+    if int(training_step) < 0:
+        raise ValueError("training_step must be nonnegative")
+    if logging_steps is not None and int(logging_steps) <= 0:
+        raise ValueError("logging_steps must be positive when supplied")
+
     decoded_lines: list[Mapping[str, Any]] = []
     for line in training_log.splitlines():
         candidate = line.strip()
@@ -38,7 +43,8 @@ def parse_training_loss_evidence(
         if isinstance(item.get("train_loss"), (int, float))
         and math.isfinite(float(item["train_loss"]))
     ]
-    source_records = list(trainer_log_history or []) or decoded_lines
+    state_records = list(trainer_log_history or [])
+    source_records = state_records or decoded_lines
     loss_history: list[dict[str, Any]] = []
     missing_step: list[float] = []
     for item in source_records:
@@ -49,7 +55,7 @@ def parse_training_loss_evidence(
             (
                 int(item[key])
                 for key in ("optimizer_step", "global_step", "step")
-                if isinstance(item.get(key), (int, float)) and int(item[key]) >= 0
+                if isinstance(item.get(key), (int, float)) and int(item[key]) > 0
             ),
             None,
         )
@@ -67,12 +73,35 @@ def parse_training_loss_evidence(
         )
 
     loss_history.sort(key=lambda item: int(item["optimizer_step"]))
+    steps = [int(item["optimizer_step"]) for item in loss_history]
+    if len(steps) != len(set(steps)):
+        raise ValueError("per-step loss evidence contains duplicate optimizer steps")
+    if steps and max(steps) > int(training_step):
+        raise ValueError("loss evidence exceeds the trainer's completed global step")
+    if loss_history:
+        loss_step_source = (
+            "trainer_state.log_history.explicit_global_step"
+            if state_records
+            else "training_log.explicit_optimizer_or_global_step"
+        )
+    elif aggregate_losses:
+        loss_step_source = "aggregate_train_loss_only"
+    else:
+        loss_step_source = "no_loss_records"
+    cadence_matches = None
+    if logging_steps is not None and steps:
+        cadence = int(logging_steps)
+        cadence_matches = all(
+            step % cadence == 0 or step == int(training_step) for step in steps
+        )
     return {
         "loss_history": loss_history,
         "aggregate_train_loss": aggregate_losses[-1] if aggregate_losses else None,
         "final_step_loss": loss_history[-1]["loss"] if loss_history else None,
-        "loss_step_source": ("trainer_state_or_logged_step"),
+        "loss_step_source": loss_step_source,
         "loss_step_inference": None,
+        "declared_logging_steps": logging_steps,
+        "loss_logging_cadence_matches": cadence_matches,
     }
 
 

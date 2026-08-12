@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from npa.workflows.artifacts import GROOT_ARTIFACT_PATHS, groot_artifact_contract
+
 _LOG = logging.getLogger(__name__)
 
 # Canonical stage order + the component that produces each stage's artifacts.
@@ -52,11 +54,14 @@ def build_run_provenance(
 ) -> dict[str, Any]:
     """Return {run_id, components:[...], summary} describing where the run's data
     came from and which components produced it."""
-    if _is_groot_learning_run(keys, run_id):
+    report_key, report = _authoritative_groot_learning_report(
+        keys, run_id=run_id, read_json=read_json
+    )
+    if report_key:
         return _build_groot_learning_provenance(
             keys,
             run_id=run_id,
-            read_json=read_json,
+            report=report,
         )
     present: set[str] = set()
     counts: dict[str, int] = {}
@@ -82,7 +87,7 @@ def build_run_provenance(
     for stage, base in _STAGE_COMPONENTS:
         if stage not in present:
             continue
-        entry = dict(base)
+        entry: dict[str, Any] = dict(base)
         entry["stage_key"] = stage
         entry["artifact_count"] = counts.get(stage, 0)
         if stage == "cosmos_augmented":
@@ -156,20 +161,36 @@ def _scoped_key(key: str, run_id: str) -> str:
     return text[len(prefix):] if run_id and text.startswith(prefix) else text
 
 
-def _is_groot_learning_run(keys: list[str], run_id: str) -> bool:
-    scoped = {_scoped_key(key, run_id) for key in keys}
-    return (
-        "reports/learning-report.json" in scoped
-        and any(key.startswith("eval/baseline/") for key in scoped)
-        and any(key.startswith("eval/posttrain/") for key in scoped)
-    )
+def _authoritative_groot_learning_report(
+    keys: list[str],
+    *,
+    run_id: str,
+    read_json: Callable[[str], dict | None] | None,
+) -> tuple[str, dict[str, Any]]:
+    """Resolve GR00T semantics from report metadata, never a filename alone."""
+    if not read_json:
+        return "", {}
+    scoped = {str(_scoped_key(key, run_id)): key for key in keys}
+    for path in GROOT_ARTIFACT_PATHS["report"]:
+        report_key = scoped.get(path)
+        if not report_key:
+            continue
+        try:
+            candidate = read_json(report_key)
+        except Exception:  # noqa: BLE001 - provenance is best-effort context
+            _LOG.debug("Unable to read GR00T learning report provenance", exc_info=True)
+            continue
+        report = candidate if isinstance(candidate, dict) else {}
+        if groot_artifact_contract([], report)["authoritative"] is True:
+            return report_key, report
+    return "", {}
 
 
 def _build_groot_learning_provenance(
     keys: list[str],
     *,
     run_id: str,
-    read_json: Callable[[str], dict | None] | None,
+    report: dict[str, Any],
 ) -> dict[str, Any]:
     """Describe the real GR00T learning phases without data-factory labels.
 
@@ -184,21 +205,22 @@ def _build_groot_learning_provenance(
     def _count(*prefixes: str) -> int:
         return sum(1 for relative, _ in scoped if any(relative.startswith(prefix) for prefix in prefixes))
 
-    report_key = next(
-        (key for relative, key in scoped if relative == "reports/learning-report.json"),
-        "",
+    def _count_semantics(*semantics: str) -> int:
+        return _count(
+            *(path for semantic in semantics for path in GROOT_ARTIFACT_PATHS[semantic])
+        )
+    training_value = report.get("training")
+    training: dict[str, Any] = (
+        training_value if isinstance(training_value, dict) else {}
     )
-    report: dict[str, Any] = {}
-    if read_json and report_key:
-        try:
-            candidate = read_json(report_key)
-            if isinstance(candidate, dict):
-                report = candidate
-        except Exception:  # noqa: BLE001 - provenance remains best effort
-            _LOG.debug("Unable to read GR00T learning report provenance", exc_info=True)
-    training = report.get("training") if isinstance(report.get("training"), dict) else {}
-    evaluation = report.get("evaluation") if isinstance(report.get("evaluation"), dict) else {}
-    dataset = report.get("dataset") if isinstance(report.get("dataset"), dict) else {}
+    evaluation_value = report.get("evaluation")
+    evaluation: dict[str, Any] = (
+        evaluation_value if isinstance(evaluation_value, dict) else {}
+    )
+    dataset_value = report.get("dataset")
+    dataset: dict[str, Any] = (
+        dataset_value if isinstance(dataset_value, dict) else {}
+    )
     gpu_count = training.get("distinct_gpu_count") or training.get("gpu_count")
     gpu_detail = f"{gpu_count} GPUs" if gpu_count else "multi-GPU"
     components = [
@@ -215,7 +237,8 @@ def _build_groot_learning_provenance(
             "stage_key": "baseline_eval",
             "component": "GR00T N1.7 starting checkpoint",
             "runtime": "GPU (Nebius K8s)",
-            "artifact_count": _count("eval/baseline/", "checkpoints/baseline/"),
+            "artifact_count": _count_semantics("baseline_evaluation")
+            + _count("checkpoints/baseline/"),
             "detail": "real Gr00tPolicy forwards on held-out episodes",
         },
         {
@@ -223,7 +246,7 @@ def _build_groot_learning_provenance(
             "stage_key": "finetune",
             "component": "GR00T N1.7 distributed fine-tune",
             "runtime": f"GPU (Nebius K8s, {gpu_detail})",
-            "artifact_count": _count("checkpoints/posttrain/"),
+            "artifact_count": _count("checkpoints/candidate/"),
             "detail": str(training.get("coverage_criterion") or "training cohort coverage recorded"),
         },
         {
@@ -231,7 +254,7 @@ def _build_groot_learning_provenance(
             "stage_key": "posttrain_eval",
             "component": "Trained GR00T N1.7 checkpoint",
             "runtime": "GPU (Nebius K8s)",
-            "artifact_count": _count("eval/posttrain/"),
+            "artifact_count": _count_semantics("trained_evaluation"),
             "detail": "identical held-out model-forward protocol",
         },
         {
@@ -239,7 +262,7 @@ def _build_groot_learning_provenance(
             "stage_key": "compare_learning",
             "component": "Before/after action-error gate",
             "runtime": "CPU",
-            "artifact_count": _count("reports/learning-report.json", "reports/offline-heldout-comparison.mp4"),
+            "artifact_count": _count_semantics("report", "comparison_video"),
             "detail": (
                 f"{evaluation.get('metric_name') or 'primary metric'} improvement with "
                 "per-dimension regressions disclosed"
@@ -250,7 +273,7 @@ def _build_groot_learning_provenance(
             "stage_key": "emit_replay",
             "component": "Rerun + MCAP synchronized evaluation replay",
             "runtime": "CPU",
-            "artifact_count": _count("reports/groot-learning.rrd", "reports/groot-learning.mcap"),
+            "artifact_count": _count_semantics("rrd", "mcap"),
             "detail": "camera, expert/predicted actions, errors, metrics, loss, and provenance",
         },
         {
@@ -258,11 +281,15 @@ def _build_groot_learning_provenance(
             "stage_key": "publish",
             "component": "Schema/hash/index validator",
             "runtime": "CPU",
-            "artifact_count": _count("reports/publish-manifest.json", "workflow.yaml"),
+            "artifact_count": _count_semantics("publish_manifest", "workflow_spec"),
             "detail": "public-safe artifact index and submitted workflow provenance",
         },
     ]
-    components = [component for component in components if component["artifact_count"] > 0]
+    components = [
+        component
+        for component in components
+        if int(str(component["artifact_count"])) > 0
+    ]
     summary = (
         "Offline held-out GR00T policy evaluation (not a rollout): "
         + "; ".join(
@@ -296,7 +323,10 @@ def _build_groot_learning_origin(
         {"key": key, "stage": "data/heldout", "kind": "video"}
         for key in heldout_videos
     ]
-    camera_names = dataset.get("camera_names") if isinstance(dataset.get("camera_names"), list) else []
+    camera_names_value = dataset.get("camera_names")
+    camera_names: list[Any] = (
+        camera_names_value if isinstance(camera_names_value, list) else []
+    )
     cameras = ", ".join(str(name) for name in camera_names) or "recorded camera"
     resolution = str(dataset.get("source_resolution") or "native dataset resolution")
     heldout_episodes = dataset.get("heldout_episodes") or len(heldout_videos)

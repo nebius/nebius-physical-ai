@@ -15,8 +15,8 @@ candidate.
 The serial graph is:
 
 ```text
-access_capacity_preflight -> resolve_task_data_contract ->
-prepare_deterministic_split -> baseline_inference_evaluation ->
+access_capacity_preflight -> prepare_deterministic_split ->
+baseline_inference_evaluation ->
 distributed_training -> trained_checkpoint_resolution ->
 post_training_inference_evaluation -> classify_learning_outcome ->
 generate_rrd -> generate_mcap -> publish_artifacts_run_summary ->
@@ -38,7 +38,9 @@ npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" \
 
 The default trainer requests two GPUs, one sample per device, no gradient
 accumulation, four optimizer steps, logging every step, and one final
-`checkpoint-4`. `gpu_count` remains parameterized. Whenever it changes, keep:
+`checkpoint-N` resolved from the trainer manifest (`N=4` for the defaults).
+`save_steps` must equal `max_steps`, and the CPU preflight rejects an impossible
+checkpoint schedule before GPU work. `gpu_count` remains parameterized. Whenever it changes, keep:
 
 ```text
 global_batch_size = gpu_count * per_device_batch_size * gradient_accumulation_steps
@@ -81,6 +83,10 @@ leakage-free held-out split. Both call the real `Gr00tPolicy.get_action` path.
 The report includes trivial predictor floors, repeat-noise evidence,
 per-dimension and per-horizon errors, real loss history, checkpoint identity,
 and an honest `improved` or `not_improved` classification.
+`evaluation_repeats` defaults to five: a duplicated seed proves determinism and
+the remaining seeds measure repeat spread. GPU forward cost scales linearly with
+this configurable value; one checkpoint/policy instance is reused while every
+forward remains explicitly reseeded.
 
 ## Outputs and viewers
 
@@ -94,9 +100,8 @@ Important outputs include:
 
 ```text
 reports/access-capacity-preflight.json
-reports/task-data-contract.json
 reports/split/manifest.json
-checkpoints/candidate/checkpoint-4/
+checkpoints/candidate/checkpoint-<resolved-step>/
 reports/trained-checkpoint.json
 reports/two-gpu-pipeline-report.json
 reports/offline-heldout-comparison.mp4

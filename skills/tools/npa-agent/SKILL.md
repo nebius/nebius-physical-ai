@@ -255,7 +255,10 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
   `render` hints. Follow `next_cursor` with the returned `resolved_prefix` and
   `bucket` (as `resource_bucket`) until `truncated=false`; the UI exposes this
   as **Load next artifact page** so large runs do not block the backend.
-- `POST /api/sim-viz/load-artifact` loads an explicit artifact (`s3_uri` or `run_id` + `key`).
+- `POST /api/sim-viz/load-artifact` loads only a discovered inventory object. Send
+  `run_id` (or server-issued `run_ref`) with `s3_uri`, or send `run_id` + `key`.
+  URI-only requests return versioned error `npa.agent.api_error/v1` with code
+  `run_id_required_for_s3_uri`; this deliberately prevents arbitrary S3 reads.
 - Unknown types are still listed and selectable (`render="download"` fallback).
 
 Exact lookup returns `409 ambiguous_run_id` when the same ID has multiple
