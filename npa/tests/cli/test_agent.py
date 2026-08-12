@@ -1032,27 +1032,79 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     assert 'query.get("npa.layout")!=="learning"' in script
     assert 'query.get("npa.camera")' in script
     assert 'imageTopic="/camera/"+camera' in script
-    assert "window.Worker=" not in script
-    assert "/lichtblick/npa-worker.js" not in source
-    assert "npa.target" not in source
+    assert 'window.Worker=function(scriptUrl,options)' in script
+    assert 'new URL("/lichtblick/npa-worker.js"' in script
+    assert "location = /lichtblick/npa-worker.js {{" in source
+    assert "npa.target" in source
 
 
 def test_lichtblick_nginx_inline_javascript_has_no_nginx_variables_or_controls() -> None:
     """Inline nginx directive values cannot contain raw controls or bare ``$``."""
 
-    from npa.cli.agent_site import _lichtblick_default_layout_script
+    from npa.cli.agent_site import (
+        _lichtblick_default_layout_script,
+        _lichtblick_worker_script,
+    )
 
-    script = _lichtblick_default_layout_script()
-    assert "$" not in script
-    assert not [char for char in script if ord(char) < 32 or ord(char) == 127]
+    for script in (_lichtblick_default_layout_script(), _lichtblick_worker_script()):
+        assert "$" not in script
+        assert not [char for char in script if ord(char) < 32 or ord(char) == 127]
+
+
+def test_lichtblick_worker_accepts_only_same_origin_lichtblick_javascript() -> None:
+    from npa.cli.agent_site import _lichtblick_worker_script
+
+    worker = _lichtblick_worker_script()
+    harness = r"""
+const target = process.argv[1];
+global.self = {
+  location: new URL("https://agent.example/lichtblick/npa-worker.js?npa.size=217423&npa.target=" + encodeURIComponent(target)),
+  fetch: async () => new Response(null, {status: 200, headers: {"accept-ranges": "bytes"}}),
+};
+global.importScripts = (url) => process.stdout.write("IMPORTED=" + url);
+eval(Buffer.from(process.argv[2], "base64").toString("utf8"));
+"""
+    encoded = base64.b64encode(worker.encode()).decode()
+    allowed = "/lichtblick/assets/mcap.worker.js"
+    result = subprocess.run(
+        ["node", "-e", harness, allowed, encoded],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "IMPORTED=https://agent.example/lichtblick/assets/mcap.worker.js"
+    for target in (
+        "//foreign.invalid/worker.js",
+        "https://foreign.invalid/worker.js",
+        "https://user:password@agent.example/lichtblick/worker.js",
+        "javascript:alert(1)",
+        "data:text/javascript,alert(1)",
+        "/api/private.js",
+        "/lichtblick/recordings/run.mcap",
+        "/lichtblick/npa-worker.js",
+        "/lichtblick/%252e%252e/api/private.js",
+        "/lichtblick/worker.js?next=/lichtblick/good.js",
+        "/lichtblick/worker.js%3fnext=/lichtblick/good.js",
+        "/lichtblick/worker.js#fragment",
+        "/lichtblick\\worker.js",
+        "/lichtblick/worker.js\x01",
+    ):
+        rejected = subprocess.run(
+            ["node", "-e", harness, target, encoded],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert rejected.returncode != 0, target
+        assert "invalid Lichtblick worker target" in rejected.stderr
 
 
 def test_lichtblick_anonymous_routes_do_not_disable_api_authentication() -> None:
     source = _agent_source()
     api_block = source.split("location /api/ {{", 1)[1].split("location /assets/api/", 1)[0]
     assert "auth_basic off" not in api_block
-    assert "location = /lichtblick/npa-worker.js {{" not in source
-    assert "npa.target" not in source
+    assert "location = /lichtblick/npa-worker.js {{" in source
     assert "location /lichtblick/recordings/ {{" in source
 
 
