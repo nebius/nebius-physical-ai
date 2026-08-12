@@ -1041,6 +1041,8 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     worker = agent_site_module._lichtblick_worker_script()
     assert 'importScripts(target.href)' in worker
     assert 'target.origin!==self.location.origin' in worker
+    assert 'target.protocol!=="http:"&&target.protocol!=="https:"' in worker
+    assert "char.charCodeAt(0)" in worker
     assert 'target.search||target.hash' in worker
     assert 'decoded.split("/").some((part)=>part==="."||part==="..")' in worker
     assert 'decoded.startsWith("/lichtblick/recordings/")' in worker
@@ -1049,6 +1051,19 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     assert 'url.pathname.startsWith("/lichtblick/recordings/")' in worker
     assert 'Content-Security-Policy "default-src \'none\'; script-src \'self\'; connect-src \'self\'"' in source
     assert "location = /lichtblick/npa-worker.js {{" in source
+
+
+def test_lichtblick_nginx_inline_javascript_has_no_nginx_variables_or_controls() -> None:
+    """Inline nginx directive values cannot contain raw controls or bare ``$``."""
+
+    from npa.cli.agent_site import (
+        _lichtblick_default_layout_script,
+        _lichtblick_worker_script,
+    )
+
+    for script in (_lichtblick_default_layout_script(), _lichtblick_worker_script()):
+        assert "$" not in script
+        assert not [char for char in script if ord(char) < 32 or ord(char) == 127]
 
 
 def test_lichtblick_worker_accepts_only_same_origin_lichtblick_javascript() -> None:
