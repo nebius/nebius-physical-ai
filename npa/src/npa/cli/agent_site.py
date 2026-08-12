@@ -167,52 +167,17 @@ def _lichtblick_learning_layout_json() -> str:
 
 
 def _lichtblick_default_layout_script() -> str:
-    """Install range-size shims and select the truthful default layout.
+    """Select a validated primary-camera layout without replacing workers.
 
-    Lichtblick discovers a remote file's size from the ``Content-Length`` header
-    on an initial full GET. Browser automation proxies (including Cypress) may
-    remove that header while preserving the response body and byte-range
-    semantics. The remote MCAP reader runs in a classic Web Worker, so install
-    the same narrowly scoped recovery in both the page and classic workers. The
-    artifact's server-observed byte size is carried in the viewer URL; a 0-0
-    range probe is the fallback for other same-origin recordings. Neither shim
-    grants a cross-origin read.
+    The recording alias is a normal same-origin nginx static response with
+    native ``Content-Length`` and byte-range semantics. Let Lichtblick create
+    its versioned worker asset directly; an extra query-controlled worker
+    importer is unnecessary and would expand the anonymous script surface.
     """
 
     learning = _lichtblick_learning_layout_json()
     sim2real = _lichtblick_default_layout_json()
     return (
-        '(()=>{const hintedSize=Number(new URLSearchParams(window.location.search).get("npa.size")||0);'
-        'const installFetchShim=(scope,sizeHint)=>{let fetchDelegate=scope.fetch.bind(scope);'
-        'const npaFetch=async(input,init)=>{'
-        "const response=await fetchDelegate(input,init);try{"
-        'const rawUrl=typeof input==="string"?input:String((input&&input.url)||input||"");'
-        "const target=new URL(rawUrl,scope.location.href);"
-        'const supplied=new Headers((init&&init.headers)||(input instanceof Request?input.headers:undefined));'
-        'if(target.origin===scope.location.origin&&target.pathname.startsWith("/lichtblick/recordings/")&&'
-        'target.pathname.endsWith(".mcap")&&!supplied.has("range")&&'
-        'response.headers.get("accept-ranges")==="bytes"){'
-        'const responseSize=Number(response.headers.get("content-length")||0);'
-        'const knownSize=responseSize>0?responseSize:sizeHint;'
-        'let recoveredSize=Number.isSafeInteger(knownSize)&&knownSize>0?String(knownSize):"";'
-        "if(!recoveredSize){"
-        'const probe=await fetchDelegate(target.toString(),{cache:"no-store",credentials:"same-origin",'
-        'headers:{Range:"bytes=0-0"}});const contentRange=probe.headers.get("content-range")||"";'
-        'const match=/\\/(\\d+)/.exec(contentRange);recoveredSize=match?match[1]:"";}if(recoveredSize){'
-        'const headers=new Headers(response.headers);headers.set("content-length",recoveredSize);'
-        'return new Response(null,{status:response.status,'
-        "statusText:response.statusText,headers});}}}catch(_error){}return response;};"
-        'Object.defineProperty(scope,"fetch",{configurable:true,enumerable:true,get(){return npaFetch;},'
-        'set(_value){}});};installFetchShim(window,hintedSize);'
-        'if(Number.isSafeInteger(hintedSize)&&hintedSize>0&&typeof window.Worker==="function"){'
-        'const NativeWorker=window.Worker;window.Worker=function(scriptUrl,options){'
-        'if(options&&options.type==="module")return new NativeWorker(scriptUrl,options);'
-        'const absolute=new URL(String(scriptUrl),window.location.href).href;'
-        'const wrapped=new URL("/lichtblick/npa-worker.js",window.location.origin);'
-        'wrapped.searchParams.set("npa.size",String(hintedSize));'
-        'wrapped.searchParams.set("npa.target",absolute);'
-        'return new NativeWorker(wrapped.href,options);};window.Worker.prototype=NativeWorker.prototype;}'
-        "return "
         '(()=>{const query=new URLSearchParams(window.location.search);'
         'if(query.get("npa.layout")!=="learning")return '
         f"{sim2real};"
@@ -222,57 +187,7 @@ def _lichtblick_default_layout_script() -> str:
         '"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-".includes(char)))'
         'throw new Error("invalid primary camera");'
         'selected.configById["Image!npalearningcamera"].imageMode.imageTopic="/camera/"+camera;'
-        'return selected;})()})()'
-    )
-
-
-def _lichtblick_worker_script() -> str:
-    """Return the same-origin classic-worker bootstrap for remote MCAP reads.
-
-    Serving this from ``/lichtblick/`` (instead of a blob URL) preserves the
-    upstream worker bundle's relative webpack chunk path. The query value is
-    untrusted input even on an anonymous viewer route, so validate it as one
-    same-origin Lichtblick JavaScript asset before calling ``importScripts``.
-    """
-
-    return (
-        '(()=>{const params=new URLSearchParams(self.location.search);'
-        'const sizeHint=Number(params.get("npa.size")||0);'
-        'const rawTarget=params.get("npa.target")||"";'
-        'const reject=(message)=>{throw new Error("invalid Lichtblick worker target: "+message);};'
-        'const hasUnsafeChar=(value)=>value.includes("\\\\")||value.split("").some((char)=>'
-        '{const code=char.charCodeAt(0);return code<32||code===127;});'
-        'if(!rawTarget)reject("missing");if(hasUnsafeChar(rawTarget))reject("characters");'
-        'if(rawTarget.startsWith("//")||rawTarget.includes("#"))reject("authority or fragment");'
-        'let target;try{target=new URL(rawTarget,self.location.origin);}catch(_error){reject("url");}'
-        'if((target.protocol!=="http:"&&target.protocol!=="https:")||target.origin!==self.location.origin)reject("origin");'
-        'if(target.username||target.password||target.search||target.hash)reject("components");'
-        'let decoded=target.pathname;for(let depth=0;depth<3;depth++){let next;try{next=decodeURIComponent(decoded);}catch(_error){reject("encoding");}'
-        'if(next===decoded)break;decoded=next;}'
-        'if(hasUnsafeChar(decoded)||decoded.includes("?")||decoded.includes("#")||decoded.split("/").some((part)=>part==="."||part===".."))reject("path");'
-        'if(!decoded.startsWith("/lichtblick/")||decoded.startsWith("/lichtblick/recordings/")||decoded==="/lichtblick/npa-worker.js"||!decoded.endsWith(".js"))reject("asset path");'
-        'let fetchDelegate=self.fetch.bind(self);const npaFetch=async(input,init)=>{'
-        'const response=await fetchDelegate(input,init);try{'
-        'const rawUrl=typeof input==="string"?input:String((input&&input.url)||input||"");'
-        'const url=new URL(rawUrl,self.location.href);'
-        'const supplied=new Headers((init&&init.headers)||(input instanceof Request?input.headers:undefined));'
-        'if(url.origin===self.location.origin&&url.pathname.startsWith("/lichtblick/recordings/")&&'
-        'url.pathname.endsWith(".mcap")&&!supplied.has("range")&&'
-        'response.headers.get("accept-ranges")==="bytes"){'
-        'const responseSize=Number(response.headers.get("content-length")||0);'
-        'const knownSize=responseSize>0?responseSize:sizeHint;'
-        'let recoveredSize=Number.isSafeInteger(knownSize)&&knownSize>0?String(knownSize):"";'
-        'if(!recoveredSize){const probe=await fetchDelegate(url.toString(),{cache:"no-store",'
-        'credentials:"same-origin",headers:{Range:"bytes=0-0"}});'
-        'const contentRange=probe.headers.get("content-range")||"";'
-        'const match=/\\/(\\d+)/.exec(contentRange);recoveredSize=match?match[1]:"";}'
-        'if(recoveredSize){const headers=new Headers(response.headers);'
-        'headers.set("content-length",recoveredSize);return new Response(null,{'
-        'status:response.status,statusText:response.statusText,headers});}}'
-        '}catch(_error){}return response;};'
-        'Object.defineProperty(self,"fetch",{configurable:true,enumerable:true,'
-        'get(){return npaFetch;},set(_value){}});'
-        'importScripts(target.href);})()'
+        'return selected;})()'
     )
 
 
@@ -286,7 +201,6 @@ def nginx_agent_site_body(
     """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
     foxglove_locations = foxglove_nginx_locations()
     lichtblick_default_layout = _lichtblick_default_layout_script()
-    lichtblick_worker = _lichtblick_worker_script()
     lichtblick_layout_placeholder = LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER
     return f"""  auth_basic "NPA Agent";
   auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
@@ -392,15 +306,6 @@ def nginx_agent_site_body(
     # /lichtblick/ and the UI pins ds.url to window.location.origin, so the fetch is
     # same-origin — which also makes Accept-Ranges readable without Expose-Headers.
     add_header Cross-Origin-Resource-Policy "same-origin" always;
-  }}
-  location = /lichtblick/npa-worker.js {{
-    auth_basic off;
-    default_type application/javascript;
-    add_header Cache-Control "no-store" always;
-    add_header Cross-Origin-Resource-Policy "same-origin" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Content-Security-Policy "default-src 'none'; script-src 'self'; connect-src 'self'" always;
-    return 200 '{lichtblick_worker}';
   }}
   location = /lichtblick/ {{
     # Exact-match the viewer document so we can inject the sim2real default layout
