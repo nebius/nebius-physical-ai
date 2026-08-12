@@ -29,6 +29,9 @@ security:
     - "1000"
     - "10001"
   forbid_secrets_in_dockerfile: true
+  # Public images may not grant passwordless root unless a narrowly scoped,
+  # reviewed runtime bootstrap requirement is recorded on that image entry.
+  forbid_unexplained_passwordless_root: true
   secret_patterns:
     - "(?i)(api[_-]?key|secret[_-]?key|password)\\s*=\\s*['\\\"][^'\\\"]+['\\\"]"
     - "(?i)BEGIN (RSA |OPENSSH )?PRIVATE KEY"
@@ -134,6 +137,7 @@ images:
     dockerfile: lerobot/Dockerfile
     tier: service
     ports: [8080]
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     redistribution: public
   lerobot-policy:
     dockerfile: lerobot-policy/Dockerfile
@@ -153,6 +157,7 @@ images:
   wan2-2:
     dockerfile: wan2-2/Dockerfile
     tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
     redistribution: public
     notes: >-
       Immutable Apache-2.0 Wan source plus an OSS CPU dependency base. CUDA
@@ -164,6 +169,7 @@ images:
     dockerfile: sonic/Dockerfile
     isaac_runtime_fetch: true
     tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     redistribution: public
   sonic-mujoco:
     dockerfile: sonic/Dockerfile.mujoco
@@ -177,6 +183,7 @@ images:
   cosmos2-transfer:
     dockerfile: cosmos2-transfer/Dockerfile
     tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     notes: >-
       Complete source build at immutable commit
       67d56b7d550a3911024a32dc23ae0bae5258e633 on digest-pinned public
@@ -190,6 +197,7 @@ images:
   cosmos3:
     dockerfile: cosmos3/Dockerfile
     tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     notes: >-
       Cosmos 3 omni-model generation, released additively as 1.2.2-cu130-r2;
       the immutable 1.2.2-cu130 image remains rollback provenance. Bakes
@@ -221,10 +229,12 @@ images:
   cosmos3-reason:
     dockerfile: cosmos3-reason/Dockerfile
     tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     redistribution: public
   cosmos-curate:
     dockerfile: cosmos-curate/Dockerfile
     tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     notes: "Mode-based entrypoint; no model weights baked in (fetch-models mode uses HF_TOKEN)."
     # Upstream cosmos-curate is Apache-2.0 and its source is redistributable; the
     # weights it would otherwise need are fetched at run time with the operator's
@@ -233,6 +243,7 @@ images:
   cosmos-evaluator:
     dockerfile: cosmos-evaluator/Dockerfile
     tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     notes: "Mode-based entrypoint; the wired checks need no model weights."
     redistribution: public
   lerobot-vlm-rl:
@@ -252,6 +263,11 @@ images:
     dockerfile: fiftyone/Dockerfile
     tier: interactive
     ports: [5151]
+    passwordless_root_exemption: >-
+      SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
+      as the non-root ubuntu user. The image deletes all build-time SSH host keys,
+      disables password and root login, and does not start sshd by default; host
+      keys exist only ephemerally when the orchestrator explicitly starts SSH.
     redistribution: public
   cosmos:
     dockerfile: cosmos/Dockerfile

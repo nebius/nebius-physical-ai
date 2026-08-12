@@ -1305,6 +1305,25 @@ def test_bootstrap_embeds_cameras_panel() -> None:
     )
 
 
+def test_ui_renders_tenant_resource_states_and_refresh_control() -> None:
+    source = _agent_ui_bundle()
+    for marker in (
+        'id="tenantResourcesPanel"',
+        '<h3>Tenant resources</h3>',
+        'id="tenantResourcesRefresh"',
+        'id="tenantResourceCategories"',
+        "refreshTenantResources",
+        'loadJson("/api/resources" + suffix)',
+        "Accessible / discovered",
+        "Configured references",
+        "Discovery succeeded; no resources were returned",
+        "resource-status-error",
+        "request_error",
+    ):
+        assert marker in source
+    assert 'bindClick("tenantResourcesRefresh"' in source
+
+
 def test_bootstrap_stock_camera_defaults_match_scene_assets() -> None:
     from npa.cli import agent as agent_module
     from npa.genesis.scene_assets import (
@@ -2045,6 +2064,26 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp({"ok": True})
         if url_s.endswith("/api/infra/k8s"):
             return _Resp({"ok": True, "agent_npa_ready": True})
+        if "/api/resources" in url_s:
+            return _Resp(
+                {
+                    "ok": True,
+                    "categories": [
+                        {
+                            "id": "project",
+                            "status": "configured",
+                            "configured_count": 1,
+                            "discovered_count": 0,
+                        },
+                        {
+                            "id": "network",
+                            "status": "empty",
+                            "configured_count": 0,
+                            "discovered_count": 0,
+                        },
+                    ],
+                }
+            )
         if url_s.endswith("/api/workflows/sim2real/status"):
             workflow_status_timeouts.append(float(_kwargs["timeout"]))
             return _Resp({"latest_submit": {"run_id": "agent-run-123"}, "sim_viz": {"stage": "demo"}})
@@ -2070,8 +2109,11 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<label>Search NPA workflow/artifact runs</label>'
                 '<input id="stagesRunInput" />'
                 '<button id="stagesLoadRun"></button></div></div>'
-                "<script>function loadSelectedRun(){} function syncRunChooserFields(){} "
-                "function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>"
+                '<div id="tenantResourcesPanel"><h3>Tenant resources</h3>'
+                '<button id="tenantResourcesRefresh"></button>'
+                'Accessible / discovered; Configured references</div>'
+                '<script>function loadSelectedRun(){} function syncRunChooserFields(){} '
+                'function filterStagesRunSelect(){} function resolveStagesRunChoice(){}</script>'
                 '<div id="renderModeVideo"></div><div id="artifactPreviewHost"></div>'
                 '<div id="viewerPaneMedia"></div><div id="rerunBundleCover"></div>'
                 '<button id="renderModeFoxglove"></button>'
@@ -2082,17 +2124,18 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 '<button id="chatDrawerToggle" class="chat-fab"></button>'
                 '<button id="chatDrawerClose"></button>'
                 '<form id="chatForm"></form><div id="mobileChatAuth"></div>'
-                "<script>function wireUi(){} function sendChat(){} function activateMainTab(){} "
-                "function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} "
-                "function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} "
-                "function safeHideRerunBundleCover(){} function captureVisualContext(){} "
-                "function describeVisual(){} function enqueueChatJob(){} function processChatQueue(){} "
-                "function queueChatText(){} function waitForQualityRerunFrame(){} "
-                "function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} "
-                "function pickBestIframeCanvas(){} function sampleFrameStats(){} "
-                "function openFullChatTab(){} "
-                "do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; "
-                "async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } "
+                '<script>function wireUi(){} function sendChat(){} function activateMainTab(){} '
+                'function authenticatedPreviewObjectUrl(){} function waitUntilRerunPastBundleSplash(){} '
+                'function scheduleRerunBundleUncover(){} function swapRerunRecordingInPlace(){} '
+                'function safeHideRerunBundleCover(){} function captureVisualContext(){} '
+                'function describeVisual(){} function enqueueChatJob(){} function processChatQueue(){} '
+                'function queueChatText(){} function waitForQualityRerunFrame(){} '
+                'function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} '
+                'function pickBestIframeCanvas(){} function sampleFrameStats(){} '
+                'function openFullChatTab(){} '
+                'function refreshTenantResources(){ fetch("/api/resources"); } '
+                'do not prefetch .rrd bytes; skipUserAppend; Describe this — capturing; '
+                'async function loadArtifact(payload){ await swapRerunRecordingInPlace(); } '
                 '<button id="openFullChatTab"></button>'
                 "async function refresh(){} "
                 "handle.add_receiver(recordingUrl, false); "
@@ -2765,7 +2808,7 @@ def test_agent_nebius_env_uses_metadata_profile_without_static_iam_token() -> No
     assert "synthetic-stale-token" not in env_text
 
 
-def test_bootstrap_verifies_attached_identity_and_tenant_inventory() -> None:
+def test_bootstrap_verifies_attached_identity_with_project_scoped_fallback() -> None:
     from npa.cli import agent as agent_module
 
     source = Path(agent_module.__file__).read_text(encoding="utf-8")
@@ -2774,6 +2817,8 @@ def test_bootstrap_verifies_attached_identity_and_tenant_inventory() -> None:
     assert "isinstance(value, str) and value == expected" in source
     assert '[[ "$whoami_json" != *"$expected_sa"* ]]' not in source
     assert "iam project list --parent-id \"$expected_tenant\" --all" in source
+    assert "iam project get --id \"$expected_project\"" in source
+    assert "forcing a broad tenant editors grant" in source
     assert "env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN" in source
 
 

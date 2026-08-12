@@ -140,7 +140,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "cosmos-curate": "0.1.2",
     "cosmos-evaluator": "0.1.2",
     "groot": "0.1.0",
-    "fiftyone": "1.15.0",
+    "fiftyone": "1.15.0.post1",
     "sonic": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "retargeting": "0.1.1",
     "envgen": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",

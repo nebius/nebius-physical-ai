@@ -28,6 +28,12 @@ be used for new evidence.
 
 ## Submit and resume
 
+Before provisioning or submitting an Isaac state, load
+`skills/atomic/third-party-eula-preflight/SKILL.md` and require explicit
+operator acceptance of the named NVIDIA Omniverse Kit and Isaac Sim terms.
+Detached runs without that acceptance fail before work is created and report
+the exact resume command; the workflow never infers or bakes acceptance.
+
 Submit with `--runtime --resume`. Pass tenant-specific data only through
 `--var`, isolated config, and secret envs. For a no-deadline run pass
 `--max-wait-seconds 0`; the runtime still records wave/job status in

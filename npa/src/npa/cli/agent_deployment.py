@@ -361,9 +361,10 @@ def load_runtime_deployment(path: Path = DEPLOYMENT_MANIFEST_PATH) -> dict[str, 
 def verify_remote_deployment(
     ssh: _SshRunner, expected: Mapping[str, str], *, backend_port: int = 8787
 ) -> dict[str, Any]:
-    """Read the backend directly over loopback and require the exact expected identity."""
+    """Wait for the restarted backend, then require the exact expected identity."""
     result = ssh.run_or_raise(
-        f"curl -fsS http://127.0.0.1:{int(backend_port)}/deployment",
+        "curl --retry 30 --retry-connrefused --retry-delay 1 --max-time 2 "
+        f"-fsS http://127.0.0.1:{int(backend_port)}/deployment",
     )
     # Lightweight render-test doubles historically return None. Production SSHClient
     # always returns the documented tuple and is checked strictly below.

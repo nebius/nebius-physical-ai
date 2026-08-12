@@ -130,6 +130,80 @@ def test_chat_completion_http_error_wrapped() -> None:
     assert "429" in str(exc.value)
 
 
+def test_chat_completion_retries_transient_transport_error(monkeypatch) -> None:
+    attempts = 0
+    sleeps: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ReadTimeout("slow model response", request=request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "recovered caption"}}]},
+        )
+
+    monkeypatch.setattr("npa.clients.token_factory.time.sleep", sleeps.append)
+    text = _client(handler).chat_completion_text(
+        model="m", messages=[{"role": "user", "content": "x"}]
+    )
+
+    assert text == "recovered caption"
+    assert attempts == 2
+    assert sleeps == [1]
+
+
+@pytest.mark.parametrize("error_type", [httpx.DecodingError, httpx.TooManyRedirects])
+def test_non_transport_request_errors_are_wrapped_without_retry(error_type) -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise error_type("request failed", request=request)
+
+    with pytest.raises(TokenFactoryError) as exc:
+        _client(handler).chat_completion(model="m", messages=[{"role": "user", "content": "x"}])
+    assert "Token Factory request failed" in str(exc.value)
+    assert attempts == 1
+
+
+def test_chat_completion_retries_consecutive_read_timeouts_with_backoff(monkeypatch) -> None:
+    attempts = 0
+    sleeps: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise httpx.ReadTimeout("slow", request=request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr("npa.clients.token_factory.time.sleep", sleeps.append)
+    assert _client(handler).chat_completion_text(
+        model="m", messages=[{"role": "user", "content": "x"}]
+    ) == "ok"
+    assert attempts == 3
+    assert sleeps == [1, 2]
+
+
+def test_http_status_error_is_not_retried(monkeypatch) -> None:
+    attempts = 0
+    sleeps: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(503, text="unavailable")
+
+    monkeypatch.setattr("npa.clients.token_factory.time.sleep", sleeps.append)
+    with pytest.raises(TokenFactoryError):
+        _client(handler).chat_completion(model="m", messages=[{"role": "user", "content": "x"}])
+    assert attempts == 1
+    assert sleeps == []
+
+
 def test_list_models_returns_ids() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url) == "https://api.tokenfactory.nebius.com/v1/models"

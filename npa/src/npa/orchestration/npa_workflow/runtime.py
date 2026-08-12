@@ -144,6 +144,7 @@ class RuntimeOptions:
     submit_timeout: int = 1800
     infra: str = ""
     controller_backend: str = "kubernetes"
+    config_path: Path | None = None
     isolated_config_dir: Path | None = None
     config_path: Path | None = None
     sky_bin: str | None = None

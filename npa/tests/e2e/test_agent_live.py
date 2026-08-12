@@ -4,6 +4,7 @@ import os
 
 import httpx
 import pytest
+import yaml
 
 from .agent_live_helpers import (
     RERUN_STATIC_CANDIDATES,
@@ -500,6 +501,49 @@ def test_agent_chat_grounded_field(ctx: AgentLiveContext) -> None:
     assert payload.get("grounded") is True
     apis_used = payload.get("apis_used")
     assert isinstance(apis_used, list) and apis_used
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected_template", "expected_config"),
+    [
+        (
+            "create PAIDF YAML: fan out 4 robot clip variants on 4 GPUs with grade threshold 70%",
+            "physical-ai-data-factory",
+            {"n_augmentations": "4", "grade_threshold": "0.7"},
+        ),
+        (
+            "create sim-to-real YAML for Franka on Isaac with 5000 environments, "
+            "3 inner iterations and success threshold 80%",
+            "sim2real-staged",
+            {"env_count": "5000", "inner_iterations": "3", "success_threshold": "0.8"},
+        ),
+    ],
+)
+def test_agent_chat_generates_grounded_parameterized_workflow_yaml(
+    ctx: AgentLiveContext,
+    prompt: str,
+    expected_template: str,
+    expected_config: dict[str, str],
+) -> None:
+    chat = ctx.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": prompt}]},
+        timeout=30.0,
+    )
+    chat.raise_for_status()
+    payload = chat.json()
+    assert payload.get("ok") is True
+    assert payload.get("grounded") is True
+    workflow_yaml = str(payload.get("workflow_yaml") or "")
+    assert workflow_yaml
+    spec = yaml.safe_load(workflow_yaml)
+    assert spec["apiVersion"] == "npa.workflow/v0.0.1"
+    assert expected_template in str(spec["metadata"]["name"])
+    for key, value in expected_config.items():
+        assert spec["config"][key] == value
+    validate = ctx.post("/api/workflows/validate", json={"yaml": workflow_yaml}, timeout=30.0)
+    validate.raise_for_status()
+    assert validate.json().get("runnable") is True
 
 
 def test_agent_chat_sim_assets_intent(ctx: AgentLiveContext) -> None:

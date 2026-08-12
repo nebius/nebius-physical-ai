@@ -82,6 +82,8 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("what does cosmos support for finetuning") == "cosmos_capabilities"
     assert match_chat_intent("what does lancedb expose") == "lancedb_capabilities"
     assert match_chat_intent("run on live infra in tmux loop with gpu compatibility checks") == "live_infra_loop"
+    assert match_chat_intent("show my tenant resources") == "tenant_resources"
+    assert match_chat_intent("what resources can I access in this project?") == "tenant_resources"
 
 
 def test_public_chat_session_payload_never_exposes_memory_locator() -> None:
@@ -283,6 +285,45 @@ def test_component_capabilities_reply_is_targeted() -> None:
     assert "Data ingest" in lancedb_reply
 
 
+def test_tenant_resources_reply_is_zero_token_grounded_inventory() -> None:
+    state = {
+        "resources": {
+            "context": {
+                "project_alias": "demo",
+                "project_id": "project-test",
+                "tenant_id": "tenant-test",
+                "region": "us-central1",
+                "profile": "cursor-sa",
+            },
+            "categories": [
+                {
+                    "id": "compute",
+                    "label": "Compute",
+                    "status": "discovered",
+                    "configured": [],
+                    "discovered": [{"name": "agent-demo"}],
+                    "configured_count": 0,
+                    "discovered_count": 1,
+                },
+                {
+                    "id": "storage",
+                    "label": "Object storage",
+                    "status": "error",
+                    "configured": [{"name": "configured-bucket"}],
+                    "discovered": [],
+                    "configured_count": 1,
+                    "discovered_count": 0,
+                    "error": {"kind": "permission_denied", "message": "Not enumerable."},
+                },
+            ],
+        }
+    }
+    reply = build_grounded_reply("tenant_resources", state, [])
+    assert "**Tenant resources**" in reply
+    assert "**discovered_resources**: `1`" in reply
+    assert "permission_denied" in reply
+
+
 def test_live_infra_loop_reply_mentions_registry_and_gpu_checks() -> None:
     state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
     reply = build_grounded_reply("live_infra_loop", state, ["workbench.cosmos2.transfer"])
@@ -414,7 +455,8 @@ def test_author_workflow_from_goal_composes_cosmos_from_live_catalog() -> None:
     result = author_workflow_from_goal(
         "write me a 2 step npa yaml that uses cosmos", tool_refs=frozenset(TOOL_CATALOG)
     )
-    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert result["runnable"] is False
+    assert result["context_errors"]
     assert len(result["states"]) == 2
     assert result["tool_refs"] and all(ref in TOOL_CATALOG for ref in result["tool_refs"])
     assert any("cosmos" in ref for ref in result["tool_refs"])
@@ -432,8 +474,9 @@ def test_author_workflow_semantically_chains_curate_train_eval() -> None:
         tool_refs=frozenset(TOOL_CATALOG),
     )
 
-    assert result["runnable"] is True, result.get("validation") or result.get("plan")
-    assert result["yaml"], "runnable authoring must return the validated YAML"
+    assert result["runnable"] is False
+    assert result["yaml"], "valid structure remains available for operator repair"
+    assert result["context_errors"]
     refs = result["tool_refs"]
     assert len(refs) == 3
     assert "curat" in refs[0]
@@ -471,7 +514,8 @@ def test_author_workflow_keeps_semantic_flow_when_requested_count_differs() -> N
         tool_refs=frozenset(TOOL_CATALOG),
     )
 
-    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert result["runnable"] is False
+    assert result["context_errors"]
     assert len(result["tool_refs"]) == 4
     assert "curat" in result["tool_refs"][0]
     assert "train" in result["tool_refs"][1]
@@ -490,7 +534,8 @@ def test_author_workflow_understands_paraphrased_semantic_flow() -> None:
         tool_refs=frozenset(TOOL_CATALOG),
     )
 
-    assert result["runnable"] is True, result.get("validation") or result.get("plan")
+    assert result["runnable"] is False
+    assert result["context_errors"]
     assert len(result["tool_refs"]) == 3
     assert "curat" in result["tool_refs"][0]
     assert "train" in result["tool_refs"][1]

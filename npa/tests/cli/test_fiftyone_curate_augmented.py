@@ -16,7 +16,7 @@ def test_curate_augmented_help_documents_flags() -> None:
     result = runner.invoke(app, ["workbench", "fiftyone", "curate-augmented", "--help"])
     output = strip_ansi(result.output)
     assert result.exit_code == 0
-    for flag in ("--augment-uri", "--report-uri", "--dedup-threshold"):
+    for flag in ("--augment-uri", "--report-uri", "--curator-report-uri", "--dedup-threshold"):
         assert flag in output
 
 
@@ -79,6 +79,8 @@ def test_curate_augmented_invokes_curate_and_emits_summary(mocker) -> None:
             "s3://b/p/curation/report.json",
             "--dedup-threshold",
             "0.2",
+            "--curator-report-uri",
+            "s3://b/p/curation/cosmos_curator.json",
             "--output",
             "json",
         ],
@@ -86,7 +88,10 @@ def test_curate_augmented_invokes_curate_and_emits_summary(mocker) -> None:
 
     assert result.exit_code == 0
     curate.assert_called_once_with(
-        "s3://b/p/cosmos_augmented/", "s3://b/p/curation/report.json", dedup_threshold=0.2
+        "s3://b/p/cosmos_augmented/",
+        "s3://b/p/curation/report.json",
+        dedup_threshold=0.2,
+        curator_report_uri="s3://b/p/curation/cosmos_curator.json",
     )
     payload = json.loads(result.output)
     assert payload["engine"] == "fiftyone-brain"

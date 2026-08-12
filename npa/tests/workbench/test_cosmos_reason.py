@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 
 from npa.workbench.cosmos import reason as reason_module
 
@@ -24,6 +26,24 @@ from npa.workbench.cosmos.reason import (
     task_description_from_manifest,
     vlm_k8s_component,
 )
+
+
+def test_reason_import_in_minimal_component_image_does_not_load_httpx() -> None:
+    code = """
+import importlib.abc
+import sys
+
+class BlockHttpx(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "httpx" or fullname.startswith("httpx."):
+            raise RuntimeError("httpx must not be imported")
+        return None
+
+sys.meta_path.insert(0, BlockHttpx())
+import npa.workbench.cosmos.reason
+"""
+    env = {**os.environ, "NPA_SKIP_EAGER_IMPORTS": "1"}
+    subprocess.run([sys.executable, "-c", code], env=env, check=True)
 
 
 def test_resolve_cosmos_reason_alias_defaults_to_reason2() -> None:

@@ -81,6 +81,12 @@ COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
+# Prepared checkouts can materialize scripts as 0700 and data files as 0600.
+# Normalize this copied bootstrap directory before executing any of its scripts.
+RUN find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
+    && find /opt/npa/docker/workbench/common -type f -exec chmod 0644 {} + \
+    && chmod 0755 /opt/npa/docker/workbench/common/*.sh
+
 # python3.11 + PyTorch cu128 (sm_120 for Blackwell) + the complete OSS dependency closure
 # + the bootstrap, the /isaac-sim/python.sh shim and the SkyPilot k8s prerequisites. The
 # script ends by asserting that the bootstrap REFUSES without EULA acceptance and that no

@@ -39,6 +39,7 @@ from npa.clients.network import (
 )
 from npa.clients.ssh import SSHClient, SSHError
 from npa.agent_backend.shipping import render_shipped_backend_install
+from npa.cli import agent_resources
 from npa.cli.agent_access import (
     ACCESS_SCHEMA,
     ACCESS_STATES,
@@ -119,10 +120,8 @@ DEFAULT_AGENT_NAME = "agent"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
-# Cost-ordered ladder (cheapest-capable first). Per-turn cost-tier routing
-# (see agent_routing.build_model_ladder) reorders this for each request, but the
-# default configured order still surfaces the cheap workhorse ahead of the
-# branded reasoner so no-routing paths and the /models picker default cheap.
+# Cost-ordered ladder; per-turn routing reorders it, while no-routing paths and
+# the model picker retain the cheap workhorse as their default.
 DEFAULT_LLM_MODELS = (
     "Qwen/Qwen3-32B",
     "meta-llama/Llama-3.3-70B-Instruct",
@@ -1378,6 +1377,7 @@ if [ -s /mnt/cloud-metadata/token ]; then
   # token. Scrub any operator/bootstrap token inherited by SSH before verifying.
   expected_sa={expected_agent_service_account_id}
   expected_tenant={expected_agent_tenant_id}
+  expected_project={nebius_parent_id}
   inventory_env=(env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN -u TF_VAR_iam_token -u NPA_REUSE_IAM_TOKEN HOME=/root NEBIUS_PROFILE={nebius_profile})
   whoami_json="$(sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam whoami --format json)"
   if [ -n "$expected_sa" ] && ! python3 -c 'import json, sys; expected = sys.argv[1]; matches = lambda value: any(map(matches, value.values())) if isinstance(value, dict) else any(map(matches, value)) if isinstance(value, list) else isinstance(value, str) and value == expected; raise SystemExit(0 if matches(json.load(sys.stdin)) else 1)' "$expected_sa" <<<"$whoami_json"; then
@@ -1385,7 +1385,12 @@ if [ -s /mnt/cloud-metadata/token ]; then
     exit 1
   fi
   if [ -n "$expected_tenant" ]; then
-    sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam project list --parent-id "$expected_tenant" --all --format json >/dev/null
+    # Tenant inventory is optional for a deliberately project-scoped agent.
+    # If tenant-wide listing is denied, prove access to the exact deployment
+    # project instead of forcing a broad tenant editors grant.
+    if ! sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam project list --parent-id "$expected_tenant" --all --format json >/dev/null 2>&1; then
+      sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam project get --id "$expected_project" --format json >/dev/null
+    fi
   fi
 fi
 sudo mkdir -p /opt/npa-agent
@@ -1454,7 +1459,12 @@ FOXGLOVE_DATA_DIR = FOXGLOVE_ROOT / "data"
 FOXGLOVE_KEEP_PUBLISHED = 3
 
 {_AGENT_STATE_EMBED}
-
+from npa.cli.agent_resources import (
+    assemble_k8s_backend_inventory,
+    build_resource_inventory,
+    discover_mk8s_accelerators,
+    run_resource_discovery_command,
+)
 {_AGENT_S3_GUARD_EMBED}
 
 {_AGENT_RRD_PROXY_EMBED}
@@ -3400,8 +3410,7 @@ def _sim_viz_runs(state: dict) -> list[dict]:
     )
 
 def _resolve_workflow_yaml(payload: dict) -> str:
-    # Do not fall back to the shared stored draft — empty/omitted yaml must 400
-    # so validate/plan cannot leak another tab's draft.
+    # Empty/omitted YAML must 400 so validate/plan cannot leak another tab's draft.
     return str(payload.get("yaml") or "").strip()
 
 def _agent_npa_ready() -> tuple[bool, str]:
@@ -3441,62 +3450,12 @@ def _agent_project_alias(requested: str = "") -> str:
 def _agent_k8s_backends(project: str = "") -> dict:
     config = _load_agent_config_yaml()
     alias = _agent_project_alias(project)
-    projects = config.get("projects")
-    if not isinstance(projects, dict):
-        projects = {{}}
-    project_block = projects.get(alias)
-    if not isinstance(project_block, dict):
-        project_block = {{}}
-    configured: list[dict] = []
-    kube_block = project_block.get("kubernetes")
-    if isinstance(kube_block, dict) and kube_block:
-        configured.append({{
-            "source": "project_config",
-            "project": alias,
-            "cluster_name": str(kube_block.get("cluster_name") or kube_block.get("name") or ""),
-            "context": str(kube_block.get("context") or kube_block.get("context_name") or ""),
-            "kubeconfig": str(kube_block.get("kubeconfig") or kube_block.get("kubeconfig_path") or ""),
-            "gpu_profile": str(kube_block.get("gpu_profile") or ""),
-            "raw": {{k: v for k, v in kube_block.items() if k not in {{"token", "secret", "password"}}}},
-        }})
-    clusters_root = Path.home() / ".npa" / "clusters"
-    local_clusters: list[dict] = []
-    if clusters_root.is_dir():
-        for item in sorted(clusters_root.iterdir()):
-            if not item.is_dir():
-                continue
-            kubeconfig = item / "kubeconfig"
-            state_path = item / "state.json"
-            local_clusters.append({{
-                "source": "local_state",
-                "cluster_name": item.name,
-                "context": item.name,
-                "kubeconfig": str(kubeconfig),
-                "kubeconfig_exists": kubeconfig.is_file(),
-                "state_exists": state_path.is_file(),
-            }})
     ready, reason = _agent_npa_ready()
-    cloud_clusters = _agent_cloud_mk8s_clusters(alias)
-    return {{
-        "ok": True,
-        "project": alias,
-        "configured": configured,
-        "local_clusters": local_clusters,
-        "cloud_clusters": cloud_clusters,
-        "has_infra": bool(
-            configured
-            or any(item.get("kubeconfig_exists") for item in local_clusters)
-            or cloud_clusters
-        ),
-        "agent_npa_ready": ready,
-        "agent_npa_error": reason,
-        "terraform_dir": str(NPA_CLUSTER_TERRAFORM_DIR),
-        "options": [
-            "POST /api/infra/provision to let the agent create the minimal Kubernetes backend.",
-            "Add projects.<alias>.kubernetes to ~/.npa/config.yaml on the agent to use an existing backend.",
-            "Pass project/cluster_name in the workflow submit payload to target a known backend.",
-        ],
-    }}
+    return assemble_k8s_backend_inventory(
+        config=config, alias=alias, clusters_root=Path.home() / ".npa" / "clusters",
+        cloud_clusters=_agent_cloud_mk8s_clusters(alias), npa_ready=ready,
+        npa_error=reason, terraform_dir=NPA_CLUSTER_TERRAFORM_DIR,
+    )
 
 
 def _agent_command_env() -> dict:
@@ -3505,6 +3464,8 @@ def _agent_command_env() -> dict:
     env.setdefault("NPA_TERRAFORM_BIN", shutil.which("terraform") or "terraform")
     env.setdefault("NPA_KUBECTL_BIN", shutil.which("kubectl") or "kubectl")
     env.setdefault("NPA_NEBIUS_BIN", shutil.which("nebius") or "nebius")
+    if Path("/mnt/cloud-metadata/token").is_file():
+        env.setdefault("NEBIUS_PROFILE", "cursor-sa")
     if not env.get("TF_VAR_ssh_public_key"):
         for candidate in ("/home/ubuntu/.ssh/id_ed25519.pub", "/root/.ssh/id_ed25519.pub"):
             if os.path.isfile(candidate) and os.access(candidate, os.R_OK):
@@ -3539,10 +3500,16 @@ def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
     nebius_bin = shutil.which("nebius") or "/usr/local/bin/nebius"
     if not Path(nebius_bin).exists() and shutil.which(nebius_bin) is None:
         return []
+    command_env = _agent_command_env()
+    command: list[str] = [nebius_bin]
+    if Path("/mnt/cloud-metadata/token").is_file():
+        for key in ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE"):
+            command_env.pop(key, None)
+        command.extend(["--profile", "cursor-sa"])
     try:
         proc = subprocess.run(
-            [nebius_bin, "mk8s", "cluster", "list", "--parent-id", parent_id, "--format", "json"],
-            env=_agent_command_env(),
+            [*command, "mk8s", "cluster", "list", "--parent-id", parent_id, "--format", "json"],
+            env=command_env,
             text=True,
             capture_output=True,
             timeout=30,
@@ -3562,14 +3529,28 @@ def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
             continue
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {{}}
         status = item.get("status") if isinstance(item.get("status"), dict) else {{}}
+        cluster_id = str(metadata.get("id") or "")
+        raw = discover_mk8s_accelerators(cluster_id, command, command_env) if cluster_id else {{}}
         clusters.append({{
             "source": "nebius_mk8s",
-            "id": str(metadata.get("id") or ""),
+            "id": cluster_id,
             "name": str(metadata.get("name") or ""),
             "status": str(status.get("state") or status.get("status") or ""),
-            "raw_status": {{k: v for k, v in status.items() if k not in {{"token", "secret", "password"}}}},
+            "raw": raw,
         }})
     return clusters
+
+
+def _tenant_resource_inventory(*, force_refresh: bool = False) -> dict:
+    return build_resource_inventory(
+        config=_load_agent_config_yaml(), env=dict(os.environ), state=_load_state(),
+        tool_refs=TOOL_REFS, generated_at=_now_iso(),
+        runner=lambda command: run_resource_discovery_command(
+            command, command_env=_agent_command_env()
+        ),
+        metadata_token_available=Path("/mnt/cloud-metadata/token").is_file(),
+        force_refresh=force_refresh,
+    )
 
 
 def _run_agent_npa_json(args: list[str], *, timeout_s: int = 300) -> dict:
@@ -4393,6 +4374,9 @@ def _maybe_toolground_chat_reply(
     elif intent in {"infra_backends", "mk8s_provision"}:
         state["infra"] = _agent_k8s_backends()
         _save_state(state)
+    elif intent == "tenant_resources":
+        state["resources"] = _tenant_resource_inventory()
+        apis_used.append("resources")
     elif intent == "list_recordings":
         try:
             runs_payload = sim_viz_runs()
@@ -4450,22 +4434,24 @@ def _maybe_toolground_chat_reply(
         "create_data_factory_workflow",
     }}:
         draft = None
-        # Prefer catalog-composed authoring when the goal names a real tool
-        # (e.g. "npa yaml that uses cosmos"): compose from the LIVE catalog and
-        # self-validate/plan — no hardcoded template. Fall back to the template
-        # catalog for generic/simple requests or if composition is not runnable.
-        if intent == "create_workflow" and goal_requests_catalog_composition(user_text):
+        # Prefer catalog composition when a goal names a real tool; otherwise
+        # fall back to the intent-specific templates.
+        if goal_requests_catalog_composition(user_text):
             from npa.cli.agent_workflow import author_workflow_from_goal
 
             authored = author_workflow_from_goal(user_text, tool_refs=frozenset(TOOL_REFS))
-            if authored.get("runnable") and authored.get("matched_tool_refs"):
+            if authored.get("matched_tool_refs"):
                 draft = authored
         if draft is None:
+            infra_context = _agent_k8s_backends()
+            s3_context = _agent_s3_settings()
             draft = generate_workflow_draft(
                 user_text=user_text,
                 intent=intent,
+                bucket=str(s3_context.get("bucket") or ""),
                 tool_refs=frozenset(TOOL_REFS),
                 capabilities={{"tool_refs": list(TOOL_REFS)}},
+                infrastructure=infra_context,
             )
         yaml_text = str(draft.get("yaml") or "").strip()
         validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {{}}
@@ -4477,7 +4463,13 @@ def _maybe_toolground_chat_reply(
         _save_state(state)
         apis_used.extend(["workflows/draft", "workflows/validate", "workflows/plan"])
         if not runnable:
-            fail_reason = str(validation.get("error") or plan.get("error") or "validate+plan gate did not pass")
+            context_errors = draft.get("context_errors") if isinstance(draft.get("context_errors"), list) else []
+            fail_reason = str(
+                validation.get("error")
+                or plan.get("error")
+                or ("; ".join(str(item) for item in context_errors) if context_errors else "")
+                or "validate+plan gate did not pass"
+            )
             reply = (
                 "**Could not generate runnable workflow YAML yet.**\\n"
                 f"- **reason**: `{{fail_reason}}`\\n"
@@ -4493,6 +4485,7 @@ def _maybe_toolground_chat_reply(
             plan=plan,
             runnable=runnable,
             dropped_stages_note=drop_note,
+            warnings=draft.get("warnings") if isinstance(draft.get("warnings"), list) else [],
         )
         return reply, _dedupe(apis_used), suggested_apis, yaml_text, validation, intent
     if intent in {{
@@ -7528,6 +7521,12 @@ def list_k8s_infra(project: str = ""):
     return _agent_k8s_backends(project)
 
 
+@app.get("/resources")
+@app.get("/tenant-resources")
+def tenant_resources(refresh: bool = False):
+    return _tenant_resource_inventory(force_refresh=bool(refresh))
+
+
 @app.post("/infra/provision")
 @app.post("/infra/k8s/provision")
 @app.post("/infra/mk8s/provision")
@@ -8356,44 +8355,7 @@ def _health(
     return response.status_code == 200, response.status_code
 
 
-def _artifact_only_http_probe(client: httpx.Client) -> dict[str, Any]:
-    """Exercise artifact-only live APIs using GETs and prove state is unchanged."""
-
-    def get_json(path: str) -> dict[str, Any]:
-        response = client.get(path)
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise DeploymentIdentityError(f"{path} returned a non-object payload")
-        return payload
-
-    before = get_json("/api/health")
-    before_digest = str(before.get("state_sha256") or "")
-    if not re.fullmatch(r"[0-9a-f]{64}", before_digest):
-        raise DeploymentIdentityError("artifact-only health is missing state_sha256")
-    session = get_json("/api/session")
-    runs = get_json("/api/artifacts/runs?prefix=&limit=100")
-    tools = get_json("/api/tools")
-    workflow = get_json("/api/workflows/sim2real/status")
-    infra = get_json("/api/infra/k8s")
-    if not isinstance(runs.get("runs"), list):
-        raise DeploymentIdentityError("artifact discovery did not return a runs list")
-    if not isinstance(tools.get("tool_refs"), list):
-        raise DeploymentIdentityError("tool catalog did not return tool_refs")
-    after = get_json("/api/health")
-    after_digest = str(after.get("state_sha256") or "")
-    if after_digest != before_digest:
-        raise DeploymentIdentityError(
-            "artifact-only live verification mutated durable session state"
-        )
-    return {
-        "state_sha256": before_digest,
-        "run_count": len(runs["runs"]),
-        "tool_ref_count": len(tools["tool_refs"]),
-        "session": session,
-        "workflow": workflow,
-        "infra": infra,
-    }
+_artifact_only_http_probe = agent_resources.artifact_only_http_probe
 
 
 def _verify_artifact_only_live(
@@ -9832,6 +9794,13 @@ def verify_live_cmd(
         "ensureFoxgloveViewer",
         "mountFoxgloveViewer",
         "/api/foxglove/config",
+        'id="tenantResourcesPanel"',
+        "<h3>Tenant resources</h3>",
+        'id="tenantResourcesRefresh"',
+        "refreshTenantResources",
+        "/api/resources",
+        "Accessible / discovered",
+        "Configured references",
     ):
         if marker not in ui_html:
             _fail(f"UI html missing wiring marker: {marker}")
@@ -9986,6 +9955,21 @@ def verify_live_cmd(
         _fail("infra discovery endpoint did not return ok=true")
     if not infra_payload.get("agent_npa_ready"):
         _fail(f"agent NPA runtime is not ready: {infra_payload.get('agent_npa_error')}")
+    try:
+        resources_resp = httpx.get(
+            f"{agent_base}/api/resources?refresh=true",
+            auth=(auth_user, auth_password),
+            timeout=60.0,
+            verify=tls_verify,
+        )
+        resources_resp.raise_for_status()
+        resources_payload = resources_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"tenant resource inventory endpoint failed: {exc}")
+    try:
+        agent_resources.validate_resource_inventory(resources_payload)
+    except ValueError as exc:
+        _fail(str(exc))
     try:
         wf_submit = httpx.post(
             f"{agent_base}/api/workflows/submit",

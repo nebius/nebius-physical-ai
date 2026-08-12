@@ -40,12 +40,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libsm6 \
       libxext6 \
       libxrender1 \
+      netcat-openbsd \
+      openssh-server \
+      patch \
       procps \
+      rsync \
+      sudo \
     && (apt-get install -y --no-install-recommends libcurl4t64 \
         || apt-get install -y --no-install-recommends libcurl4) \
+    && rm -f /etc/ssh/ssh_host_* \
+    && printf '%s\n' \
+      'PasswordAuthentication no' \
+      'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-container.conf \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/fiftyone \
       /opt/fiftyone/db \

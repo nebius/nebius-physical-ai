@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -23,6 +24,7 @@ import httpx
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 DEFAULT_API_KEY_ENV = "NEBIUS_TOKEN_FACTORY_KEY"
 DEFAULT_TIMEOUT_S = 120.0
+DEFAULT_TRANSPORT_ATTEMPTS = 3
 DEFAULT_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
 # NVIDIA Cosmos3 Super-Reasoner: hosted vision-language physical-AI reasoner.
@@ -236,15 +238,25 @@ class TokenFactoryClient:
         owns_client = self._http_client is None
         client = self._http_client or httpx.Client(timeout=self._config.timeout_s)
         try:
-            response = client.request(method, url, headers=self._headers(), json=json_body)
-            response.raise_for_status()
-            return response.json()
+            for attempt in range(1, DEFAULT_TRANSPORT_ATTEMPTS + 1):
+                try:
+                    response = client.request(method, url, headers=self._headers(), json=json_body)
+                except httpx.TransportError as exc:
+                    if attempt == DEFAULT_TRANSPORT_ATTEMPTS:
+                        raise TokenFactoryError(f"Token Factory request failed: {exc}") from exc
+                    time.sleep(attempt)
+                    continue
+                response.raise_for_status()
+                return response.json()
         except httpx.HTTPStatusError as exc:
             raise TokenFactoryError(
                 f"Token Factory request failed ({exc.response.status_code}): "
                 f"{_truncate(exc.response.text)}"
             ) from exc
-        except httpx.HTTPError as exc:
+        except httpx.RequestError as exc:
+            # Non-transport request failures (for example DecodingError and
+            # TooManyRedirects) are not safe POST retries, but they remain part
+            # of the public TokenFactoryError contract.
             raise TokenFactoryError(f"Token Factory request failed: {exc}") from exc
         except json.JSONDecodeError as exc:  # pragma: no cover - defensive
             raise TokenFactoryError("Token Factory returned non-JSON response") from exc

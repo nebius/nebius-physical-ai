@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
+import sys
 import tempfile
 import time
 from dataclasses import asdict
@@ -26,7 +28,9 @@ from npa.workflows.sim2real.capture import runtime_parameter_metadata
 from npa.workflows.sim2real.constants import (
     DEFAULT_VLM_SEAM_EVIDENCE,
     SCHEMA_E2E_REPORT,
+    SIM_BACKEND_ISAAC,
 )
+from npa.serverless_common.env import require_isaac_eula_acceptance
 from npa.workflows.sim2real.models import (
     ComponentRecord,
     Sim2RealLoopConfig,
@@ -140,6 +144,15 @@ def _signal_training_imports():
 def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
     """Run stages 1-6 and persist workflow state."""
 
+    if (
+        config.sim_backend == SIM_BACKEND_ISAAC
+        and not config.byo_eval_command
+        and (config.k8s_context or config.k8s_kubeconfig)
+    ):
+        require_isaac_eula_acceptance(
+            context=f"Sim2Real run {config.run_id}",
+            resume_command=shlex.join([sys.executable, *sys.argv]),
+        )
     config.validate()
     local_dir = config.output_dir or Path(
         tempfile.mkdtemp(prefix=f"npa-{config.run_id}-")

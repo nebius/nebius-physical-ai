@@ -343,8 +343,13 @@ def _install_package(state: VenvState, package_spec: str) -> None:
     if result.returncode == 0:
         # SkyPilot 0.12.2 declares click<8.2, but pip can still resolve a newer
         # Click that breaks `sky launch --docker` flag parsing (backend_name=False).
-        # Re-pin after install so bootstrap stays launchable.
+        # Kubernetes client 36 also changed model type strings from
+        # ``dict(str, str)`` to ``dict[str, str]``; SkyPilot 0.12.2 tries to
+        # import the latter as a model module while validating pod_config and
+        # fails before creating any Kubernetes workload. Re-pin both runtime
+        # edges after install so bootstrap stays launchable.
         _pin_skypilot_click(state)
+        _pin_skypilot_kubernetes(state)
         return
     detail = _combined_output(result) or "no output"
     if _looks_like_network_failure(detail):
@@ -374,6 +379,26 @@ def _pin_skypilot_click(state: VenvState) -> None:
         )
     raise SkyPilotBootstrapError(
         f"pip failed while pinning click for SkyPilot: {detail}. "
+        "Suggested action: inspect the pip error above, fix the environment, and rerun bootstrap."
+    )
+
+
+def _pin_skypilot_kubernetes(state: VenvState) -> None:
+    """Keep the Kubernetes client compatible with SkyPilot's pod validator."""
+
+    result = _run_no_raise(
+        [str(state.python_bin), "-m", "pip", "install", "kubernetes<36"]
+    )
+    if result.returncode == 0:
+        return
+    detail = _combined_output(result) or "no output"
+    if _looks_like_network_failure(detail):
+        raise SkyPilotBootstrapError(
+            f"Network failure while pinning kubernetes for SkyPilot: {detail}. "
+            "Suggested action: verify package index connectivity and rerun bootstrap."
+        )
+    raise SkyPilotBootstrapError(
+        f"pip failed while pinning kubernetes for SkyPilot: {detail}. "
         "Suggested action: inspect the pip error above, fix the environment, and rerun bootstrap."
     )
 

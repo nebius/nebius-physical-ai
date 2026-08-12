@@ -60,6 +60,7 @@ config:
 
   # --- Augmentation + grading knobs (Stage 1 + Evaluate loop) ---
   n_augmentations: "2"            # augmented variants sampled per source video
+  augment_subject: "the input robot clips"  # included in sampled Cosmos prompts
   refinement_iterations: "2"      # max evaluate/validate passes before promote
   grade_threshold: "0.5"          # min Cosmos Evaluator score to promote (else loop_back)
   default_decision: promote_checkpoint
@@ -144,9 +145,16 @@ states:
       per-run config manifest that drives the augment stage.
     resources: cpu
     run:
-      shell: >
-        python3 -c "from npa.workflows.data_factory_stages import generate_configs;
-        generate_configs('{{config.configs_uri}}', '{{config.n_augmentations}}', '{{run.id}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import generate_configs;
+          generate_configs(*sys.argv[1:])
+        - "{{config.configs_uri}}"
+        - "{{config.n_augmentations}}"
+        - "{{run.id}}"
+        - "{{config.augment_subject}}"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1
@@ -305,15 +313,11 @@ states:
       the report's curation_engine is "fiftyone-brain"; otherwise it degrades to
       the report-only counts path so the pipeline never regresses.
     needs: [cosmos-curate]
+    toolRef: workbench.fiftyone.curate_augmented
     resources: cpu
     inputs:
       - uri: "{{config.lance_uri}}"
         schema: npa.cosmos2.transfer.v1
-    run:
-      shell: >
-        python3 -c "from npa.workflows.data_factory_stages import curate;
-        curate('{{config.augment_uri}}', '{{config.curation_report_uri}}',
-        curator_report_uri='{{config.curator_report_uri}}')"
     outputs:
       - uri: "{{config.curation_report_uri}}"
         schema: npa.fiftyone.curation.v1
@@ -324,18 +328,12 @@ states:
       Build a Rerun recording (reports/sim2real.rrd) from the run's input +
       augmented frames and captions so the run renders in the NPA agent's
       embedded Rerun viewer (the agent prefers reports/sim2real.rrd).
-      rerun-sdk is npa's optional `viz` extra, and this stage runs on the default
-      image with a plain `pip install -e` of the staged source, so the extra is not
-      there -- install it first or the stage fails at import. The pin matches
-      pyproject's `viz` extra; a guardrail test keeps the two together.
+      The renderer routes this toolRef to the prebuilt, version-pinned
+      npa-rerun-viewer image, so restricted-egress execution performs no runtime
+      package installation.
     needs: [curate]
     resources: cpu
-    run:
-      shell: >
-        python3 -c "import rerun" 2>/dev/null ||
-        python3 -m pip install --quiet "rerun-sdk==0.31.4";
-        python3 -c "from npa.workflows.data_factory_viz import build_run_rrd;
-        print(build_run_rrd('{{config.run_root_uri}}', '{{config.rrd_uri}}'))"
+    toolRef: workbench.nurec.visualize
     outputs:
       - uri: "{{config.rrd_uri}}"
         schema: npa.sim2real.rerun.v1

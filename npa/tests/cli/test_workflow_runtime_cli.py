@@ -127,6 +127,71 @@ def test_submit_runtime_passes_options_and_emits_json(
     assert payload["runtime_state_uri"].endswith("/npa-workflow/runtime.json")
 
 
+def test_submit_runtime_passes_per_tool_image_override(fake_runtime) -> None:
+    image = "cr.example.invalid/reg/npa-fiftyone:fixed"
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-tool-image",
+            "--runtime",
+            "--tool-image",
+            f"workbench.fiftyone.curate_augmented={image}",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    options = fake_runtime["render_options"]
+    assert options.image_overrides == {
+        "workbench.fiftyone.curate_augmented": image,
+    }
+
+
+def test_submit_rejects_malformed_per_tool_image_override() -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--tool-image",
+            "workbench.fiftyone.curate_augmented",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--tool-image must be TOOL_REF=IMAGE" in result.output
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ("workbench.fiftyone.curate_augmented", "must be TOOL_REF=IMAGE"),
+        (
+            "workbench.fiftyone.curate_augmented=registry/fiftyone:test",
+            "supported only for npa.workflow/v0.0.1",
+        ),
+    ],
+)
+def test_legacy_skypilot_submit_rejects_tool_image_instead_of_ignoring_it(
+    tmp_path: Path, override: str, message: str
+) -> None:
+    legacy = tmp_path / "legacy.yaml"
+    legacy.write_text("name: legacy\nresources:\n  cloud: kubernetes\nrun: echo ok\n")
+    result = RUNNER.invoke(
+        app,
+        ["workbench", "workflow", "submit", str(legacy), "--tool-image", override],
+    )
+    assert result.exit_code == 1
+    assert message in result.output
+
+
 def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
     result = RUNNER.invoke(
         app,
@@ -233,6 +298,33 @@ def test_submit_without_runtime_uses_the_one_shot_path(mocker, monkeypatch) -> N
     # The parallel group is flattened into today's serial pipeline.
     assert "execution: serial" in str(submitted["content"])
     assert "caption-shard-c" in str(submitted["content"])
+
+
+def test_submit_can_preserve_managed_registry_secret(mocker, monkeypatch) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    refresh = mocker.patch(
+        "npa.cli.workbench.workflow._refresh_kubernetes_pull_secrets"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(status="SUBMITTED", job_id="9", returncode=0),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "managed-registry-secret",
+            "--no-refresh-registry-secret",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    refresh.assert_not_called()
 
 
 def test_plan_only_wins_over_runtime(mocker, monkeypatch) -> None:

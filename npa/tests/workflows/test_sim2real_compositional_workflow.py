@@ -7,6 +7,7 @@ import sys
 import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.orchestration.npa_workflow.detect import detect_submit_format
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
@@ -48,6 +49,16 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
         "k8s_submit",
     ):
         assert forbidden not in rendered_commands
+
+
+def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
+    for tool_ref in (
+        "workbench.sim2real.run",
+        "workbench.sim2real.policy_rollouts",
+        "workbench.sim2real.heldout_eval",
+        "workbench.sim2real.finalize",
+    ):
+        assert tool_ref not in TOOL_CATALOG
 
 
 def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:

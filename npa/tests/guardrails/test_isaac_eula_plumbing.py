@@ -356,3 +356,92 @@ def test_sim2real_isaac_jobs_do_not_invent_acceptance(monkeypatch, module_name, 
     env = _job_env(module_name, builder)
     for var in EULA_VARS:
         assert var not in env, f"{module_name}: {var} must not be invented"
+
+
+def _generic_heldout_job_env(
+    monkeypatch: pytest.MonkeyPatch, *, accepted: bool
+) -> dict[str, str]:
+    from npa.workflows.sim2real import engine
+    from npa.workflows.sim2real_loop import Sim2RealLoopConfig
+
+    for var in EULA_VARS:
+        if accepted:
+            monkeypatch.setenv(var, "YES")
+        else:
+            monkeypatch.delenv(var, raising=False)
+    manifest = engine._component_job_manifest(
+        "reg/npa-isaac-lab:t",
+        component="heldout_eval",
+        env={},
+        config=Sim2RealLoopConfig(run_id="r", sim_backend="isaac"),
+        namespace="default",
+        job_name="j",
+        timeout_s=60,
+    )
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
+    return {entry["name"]: entry["value"] for entry in container["env"]}
+
+
+def test_generic_sim2real_heldout_job_forwards_operator_acceptance(monkeypatch) -> None:
+    env = _generic_heldout_job_env(monkeypatch, accepted=True)
+    assert {var: env[var] for var in EULA_VARS} == dict.fromkeys(EULA_VARS, "YES")
+
+
+def test_generic_sim2real_heldout_job_does_not_invent_acceptance(monkeypatch) -> None:
+    env = _generic_heldout_job_env(monkeypatch, accepted=False)
+    for var in EULA_VARS:
+        assert var not in env
+
+
+def test_isaac_preflight_refuses_before_remote_sim2real_provisioning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.serverless_common.env import MissingIsaacEulaAcceptanceError
+    from npa.workflows.sim2real import engine
+    from npa.workflows.sim2real_loop import Sim2RealLoopConfig
+
+    for var in EULA_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(
+        engine.sys,
+        "argv",
+        ["-m", "npa.cli.main", "workbench", "sim2real", "run", "--run-id", "r"],
+    )
+    output_dir = tmp_path / "must-not-exist"
+    config = Sim2RealLoopConfig(
+        run_id="r",
+        output_dir=output_dir,
+        sim_backend="isaac",
+        k8s_context="remote-context",
+    )
+
+    with pytest.raises(MissingIsaacEulaAcceptanceError) as caught:
+        engine.run_preamble(config)
+
+    message = str(caught.value)
+    assert "No expensive action has begun" in message
+    assert "NVIDIA Omniverse Licence Agreement" in message
+    assert "NVIDIA Isaac Sim Additional Software and Materials Licence" in message
+    assert "NVIDIA Software Licence Agreement" in message
+    assert (
+        "OMNI_KIT_ACCEPT_EULA=YES ISAACSIM_ACCEPT_EULA=YES "
+        f"{engine.sys.executable} -m npa.cli.main workbench sim2real run --run-id r"
+    ) in message
+    assert not output_dir.exists()
+
+
+def test_isaac_preflight_accepts_only_documented_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.serverless_common.env import (
+        MissingIsaacEulaAcceptanceError,
+        require_isaac_eula_acceptance,
+    )
+
+    monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", "yes")
+    monkeypatch.setenv("ISAACSIM_ACCEPT_EULA", "TRUE")
+    require_isaac_eula_acceptance(context="test", resume_command="npa test")
+
+    monkeypatch.setenv("ISAACSIM_ACCEPT_EULA", "no")
+    with pytest.raises(MissingIsaacEulaAcceptanceError, match="ISAACSIM_ACCEPT_EULA"):
+        require_isaac_eula_acceptance(context="test", resume_command="npa test")

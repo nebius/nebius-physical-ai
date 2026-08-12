@@ -534,7 +534,9 @@ def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) 
     assert tf_vars["image_family"] == DEFAULT_CPU_IMAGE_FAMILY
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-fiftyone"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith("/npa-fiftyone:1.15.0")
+    assert deploy_container.call_args.kwargs["image_ref"].endswith(
+        "/npa-fiftyone:1.15.0.post1"
+    )
     assert deploy_container.call_args.kwargs["gpu"] is False
     wb_cfg = write_config.call_args_list[0].args[0]["projects"]["proj"]["workbenches"]["curate-container"]
     assert wb_cfg["runtime"] == "container"

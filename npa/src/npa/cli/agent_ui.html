@@ -507,6 +507,60 @@
       .empty-state {
         padding: 12px 0;
       }
+      .resource-panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+      }
+      .resource-context, .resource-summary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .resource-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 10px;
+        margin-top: 12px;
+      }
+      .resource-category {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-soft);
+        padding: 10px;
+        min-width: 0;
+      }
+      .resource-category-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .resource-category h4 { margin: 0; font-size: 14px; }
+      .resource-status {
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+      .resource-status-discovered { background: var(--ok-bg); color: var(--ok-text); }
+      .resource-status-configured { background: #dbeafe; color: #1e3a8a; }
+      .resource-status-empty { background: #eef2f7; color: var(--muted); }
+      .resource-status-error { background: #fee2e2; color: var(--danger-text); }
+      .resource-items { margin: 8px 0 0; padding-left: 18px; font-size: 12px; }
+      .resource-items li { margin: 4px 0; overflow-wrap: anywhere; }
+      .resource-error {
+        margin-top: 8px;
+        padding: 8px;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        background: #fff1f2;
+        color: var(--danger-text);
+        font-size: 12px;
+      }
       .render-mode-tabs {
         display: inline-flex;
         gap: 6px;
@@ -1810,6 +1864,20 @@
             <button id="chatActionWorkflow" class="btn quick-pill" type="button">2-step Sim2Real YAML</button>
           </div>
         </section>
+        <section class="panel" id="tenantResourcesPanel" data-testid="tenant-resources-panel">
+          <div class="resource-panel-head">
+            <div>
+              <h3>Tenant resources</h3>
+              <p class="hint">Configured project references and read-only resources discoverable by this agent's staged Nebius profile.</p>
+            </div>
+            <button id="tenantResourcesRefresh" class="btn" type="button">Refresh inventory</button>
+          </div>
+          <div id="tenantResourceContext" class="resource-context" aria-label="Configured tenant context"></div>
+          <div id="tenantResourceSummary" class="resource-summary" aria-live="polite">
+            <span class="pill">Loading inventory…</span>
+          </div>
+          <div id="tenantResourceCategories" class="resource-grid" aria-live="polite"></div>
+        </section>
         <section class="panel workflow-panel">
           <h3>Workflow YAML</h3>
           <p class="hint">npa.workflow/v0.0.1-beta specs — generate via chat, upload, validate, plan, or submit.</p>
@@ -2833,6 +2901,9 @@
         });
       }
       function wireUi() {
+        bindClick("tenantResourcesRefresh", async () => {
+          await refreshTenantResources(true);
+        }, "Refresh tenant resources");
         const chatForm = document.getElementById("chatForm");
         if (chatForm) {
           chatForm.addEventListener("submit", (event) => {
@@ -3182,6 +3253,85 @@
           .replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;")
           .replace(/'/g, "&#39;");
+      }
+      function resourceItemLabel(item) {
+        const row = (item && typeof item === "object") ? item : {};
+        const primary = String(row.name || row.id || row.kind || "resource");
+        const details = [];
+        if (row.name && row.id && String(row.id) !== String(row.name)) details.push(String(row.id));
+        if (row.status) details.push("status=" + String(row.status));
+        if (row.count !== undefined && row.count !== null) details.push("count=" + String(row.count));
+        if (row.source) details.push("source=" + String(row.source));
+        return escapeHtml(primary) + (details.length ? " <span class=\"muted\">(" + escapeHtml(details.join(", ")) + ")</span>" : "");
+      }
+      function renderTenantResources(payload) {
+        const data = (payload && typeof payload === "object") ? payload : {};
+        const context = (data.context && typeof data.context === "object") ? data.context : {};
+        const summary = (data.summary && typeof data.summary === "object") ? data.summary : {};
+        const categories = Array.isArray(data.categories) ? data.categories : [];
+        const contextHost = document.getElementById("tenantResourceContext");
+        const summaryHost = document.getElementById("tenantResourceSummary");
+        const categoryHost = document.getElementById("tenantResourceCategories");
+        if (contextHost) {
+          const entries = [
+            ["project", context.project_alias],
+            ["project ID", context.project_id],
+            ["tenant ID", context.tenant_id],
+            ["region", context.region],
+            ["profile", context.profile],
+            ["profile health", context.profile_status],
+          ];
+          contextHost.innerHTML = entries.map(([label, value]) => (
+            '<span class="pill"><strong>' + escapeHtml(label) + ":</strong>&nbsp;" + escapeHtml(value || "not configured") + "</span>"
+          )).join("");
+        }
+        if (summaryHost) {
+          summaryHost.innerHTML = [
+            ["discovered", summary.discovered_resources || 0],
+            ["configured refs", summary.configured_resources || 0],
+            ["empty categories", summary.empty_categories || 0],
+            ["discovery errors", summary.error_categories || 0],
+          ].map(([label, value]) => '<span class="pill"><strong>' + escapeHtml(label) + ":</strong>&nbsp;" + escapeHtml(String(value)) + "</span>").join("");
+        }
+        if (!categoryHost) return;
+        if (!categories.length) {
+          categoryHost.innerHTML = '<div class="resource-category"><span class="resource-status resource-status-empty">empty</span><p class="hint" style="margin-top:8px;">No resource categories were returned.</p></div>';
+          return;
+        }
+        categoryHost.innerHTML = categories.map((category) => {
+          const status = ["discovered", "configured", "empty", "error"].includes(String(category.status)) ? String(category.status) : "error";
+          const configured = Array.isArray(category.configured) ? category.configured : [];
+          const discovered = Array.isArray(category.discovered) ? category.discovered : [];
+          const error = (category.error && typeof category.error === "object") ? category.error : null;
+          let body = "";
+          if (discovered.length) {
+            body += '<div class="hint" style="margin-top:8px;"><strong>Accessible / discovered</strong></div><ul class="resource-items">' + discovered.map((item) => "<li>" + resourceItemLabel(item) + "</li>").join("") + "</ul>";
+          }
+          if (configured.length) {
+            body += '<div class="hint" style="margin-top:8px;"><strong>Configured references</strong></div><ul class="resource-items">' + configured.map((item) => "<li>" + resourceItemLabel(item) + "</li>").join("") + "</ul>";
+          }
+          if (!discovered.length && !configured.length && !error) {
+            body += '<p class="hint" style="margin-top:8px;">Discovery succeeded; no resources were returned for this category.</p>';
+          }
+          if (error) {
+            body += '<div class="resource-error"><strong>' + escapeHtml(error.kind || "discovery_error") + ":</strong> " + escapeHtml(error.message || "Resource discovery failed.") + "</div>";
+          }
+          return '<article class="resource-category" data-resource-category="' + escapeHtml(category.id || "unknown") + '"><div class="resource-category-head"><h4>' + escapeHtml(category.label || category.id || "Resources") + '</h4><span class="resource-status resource-status-' + status + '">' + escapeHtml(status) + "</span></div>" + body + "</article>";
+        }).join("");
+      }
+      async function refreshTenantResources(force) {
+        const suffix = force ? "?refresh=true" : "";
+        try {
+          const payload = await loadJson("/api/resources" + suffix);
+          renderTenantResources(payload);
+          return payload;
+        } catch (err) {
+          const categoryHost = document.getElementById("tenantResourceCategories");
+          if (categoryHost) {
+            categoryHost.innerHTML = '<div class="resource-category"><div class="resource-category-head"><h4>Inventory request</h4><span class="resource-status resource-status-error">error</span></div><div class="resource-error"><strong>request_error:</strong> ' + escapeHtml(String((err && err.message) || err)) + "</div></div>";
+          }
+          throw err;
+        }
       }
       function renderInlineMarkdownLite(text) {
         let value = escapeHtml(text);
