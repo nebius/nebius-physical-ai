@@ -126,8 +126,8 @@ def test_augment_runs_real_cosmos_transfer() -> None:
     assert "--input-uri" in argv and "--output-uri" in argv
     assert spec["config"]["trigger_uri"] == spec["config"]["input_uri"]
     description = states["augment"]["description"].lower()
-    assert "supported video" in description
-    assert "no bundled upstream media" in description
+    assert "input/conditioning.mp4" in description
+    assert "no bundled or geometric fallback" in description
 
 
 def test_input_conditioned_cosmos_toolref_fails_closed_without_input() -> None:
@@ -197,7 +197,9 @@ def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
     assert states["curate"]["needs"] == ["cosmos-curate"]
     assert states["curate"]["toolRef"] == "workbench.fiftyone.curate_augmented"
     fiftyone_argv = TOOL_CATALOG["workbench.fiftyone.curate_augmented"].argv_template
+    assert fiftyone_argv[:4] == ["npa", "workbench", "fiftyone", "curate-augmented"]
     assert "--curator-report-uri" in fiftyone_argv
+    assert "--require-fiftyone" in fiftyone_argv
 
 
 def test_quality_gate_reads_the_evaluator_report() -> None:

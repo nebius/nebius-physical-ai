@@ -22,6 +22,12 @@ WORKFLOWS = Path(__file__).resolve().parents[3] / ".github" / "workflows"
 LOGIN_SCRIPT = "npa/scripts/ci_source_registry_login.sh"
 PUBLISH = WORKFLOWS / "publish-public-images.yml"
 HEALTH = WORKFLOWS / "public-mirror-health.yml"
+SELECTED_PUBLISHER = (
+    Path(__file__).resolve().parents[3]
+    / ".github"
+    / "scripts"
+    / "publish_selected_public_image.py"
+)
 
 
 def _steps(path: Path) -> list[dict]:
@@ -111,6 +117,22 @@ def test_only_the_publish_workflow_can_write_to_ghcr() -> None:
         "publishing is irreversible; it must never be triggered by a push or a schedule"
     )
     assert spec["permissions"].get("packages") == "write"
+
+
+def test_publishers_are_serialized_without_cancelling_an_active_release() -> None:
+    """GHCR tags have no compare-and-swap; one target gets one publisher."""
+    spec = yaml.safe_load(PUBLISH.read_text(encoding="utf-8"))
+    concurrency = spec.get("concurrency")
+    assert concurrency == {
+        "group": "publish-public-images-${{ inputs.target || github.repository }}",
+        "cancel-in-progress": False,
+    }
+
+
+def test_selected_publisher_copies_the_digest_pinned_preflight_result() -> None:
+    text = SELECTED_PUBLISHER.read_text(encoding="utf-8")
+    assert "item = publishable[0]" in text
+    assert "copied = _crane_copy(item)" in text
 
 
 def test_visibility_guidance_requires_a_completed_copy_phase() -> None:

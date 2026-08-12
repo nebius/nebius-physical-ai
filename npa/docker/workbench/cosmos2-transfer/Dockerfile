@@ -78,7 +78,7 @@ RUN set -eux; \
     printf '%s\n' "${COSMOS_PYTHON_VERSION}" > .python-version; \
     uv sync --locked --no-dev --no-editable --extra=cu128 \
       --python "${COSMOS_PYTHON_VERSION}"; \
-    uv pip install --python .venv/bin/python --no-deps --require-hashes \
+    uv pip install --python .venv/bin/python --no-deps \
       --requirement /tmp/cosmos2-security-overrides.txt; \
     .venv/bin/python -c 'import defusedxml, importlib.metadata, msgpack, nltk, numpy; assert importlib.metadata.version("defusedxml") == "0.7.1"; assert importlib.metadata.version("nltk") == "3.10.0"; assert importlib.metadata.version("pip") == "26.2"; assert importlib.metadata.version("msgpack") == "1.2.1"; assert importlib.metadata.version("setuptools") == "83.0.0"; assert tuple(map(int, numpy.__version__.split(".")[:1])) >= (2,)'; \
     .venv/bin/python -m pip --version; \
@@ -119,7 +119,8 @@ LABEL org.opencontainers.image.title="NPA Cosmos Transfer 2.5" \
       org.opencontainers.image.description="Cosmos Transfer 2.5 source runtime; model weights are operator-fetched at run time" \
       org.opencontainers.image.source="https://github.com/nvidia-cosmos/cosmos-transfer2.5" \
       org.opencontainers.image.revision="${COSMOS_TRANSFER_REVISION}" \
-      org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-Deep-Learning-Container"
+      org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-Deep-Learning-Container" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/opt/cosmos/model-cache/huggingface \

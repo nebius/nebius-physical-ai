@@ -72,9 +72,7 @@ TOOL_REF_PIP_EXTRAS: dict[str, str] = {
     "workbench.sonic": "sonic",
 }
 
-# Spec-selectable extras are a deliberately closed set. This is declarative
-# metadata, not a package string passthrough, so a workflow cannot install an
-# arbitrary dependency from configuration.
+# Declarative metadata, never a package-string passthrough.
 DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 
 #: toolRef prefix -> third-party pip requirements the tool shells out to, with the executable
@@ -240,18 +238,28 @@ class SkypilotRenderOptions:
 
     registry: str = ""
     image_overrides: Mapping[str, str] = field(default_factory=dict)
+    # Exact tag/reference -> registry-resolved immutable digest reference. Submit
+    # populates this only after pull + bootstrap-contract verification.
+    image_digest_pins: Mapping[str, str] = field(default_factory=dict)
     default_setup: bool = True
     execution: str = "serial"
     aws_endpoint_url: str = field(default_factory=_default_aws_endpoint_url)
     include_aws_endpoint: bool = True
     gpu_target: str = ""
     image_variant: str = ""
+    # Accelerator specs resolved against the live cluster at submit time, keyed by
+    # the spec's own accelerator string. NPA_WORKFLOW_GPU_ACCELERATOR still wins.
+    gpu_accelerator_overrides: Mapping[str, str] = field(default_factory=dict)
     # When False (``--plan-only``), embed placeholders instead of minting live
     # Nebius registry tokens into rendered YAML that may be printed to stdout.
     materialize_registry_secrets: bool = True
 
 
-def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_resources(
+    resources: Mapping[str, Any],
+    *,
+    accelerator_overrides: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     """Map an npa.workflow resource profile onto a SkyPilot ``resources`` block.
 
     On Kubernetes, exact ``cpus`` / ``memory`` often fail prechecks when no node
@@ -263,9 +271,11 @@ def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
 
     # Cluster-specific GPU product override: SkyPilot k8s matches on the node's
     # advertised accelerator name, which varies by cluster (e.g. RTXPRO6000 vs
-    # RTXPRO-6000-BLACKWELL-SERVER-EDITION). Let operators override the spec's
-    # accelerators at submit time without editing the committed blueprint.
+    # RTXPRO-6000-BLACKWELL-SERVER-EDITION). A blanket env override still wins so
+    # operators can retarget without editing the committed blueprint; otherwise
+    # submit-time resolution supplies a per-profile remap.
     accel_override = str(_os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR") or "").strip()
+    overrides = dict(accelerator_overrides or {})
 
     out: dict[str, Any] = {}
     # NOTE: `num_nodes` is deliberately absent. SkyPilot puts it at the TASK level, next
@@ -275,8 +285,11 @@ def normalize_resources(resources: Mapping[str, Any]) -> dict[str, Any]:
         if key not in resources or resources[key] in (None, ""):
             continue
         value = resources[key]
-        if key == "accelerators" and accel_override:
-            value = accel_override
+        if key == "accelerators":
+            if accel_override:
+                value = accel_override
+            elif str(value).strip() in overrides:
+                value = overrides[str(value).strip()]
         if key == "memory" and isinstance(value, str):
             stripped = value.strip()
             if stripped.lower().endswith("gi"):
@@ -432,6 +445,20 @@ def normalize_task_config(resources: Mapping[str, Any]) -> dict[str, Any]:
     return {"kubernetes": selected} if selected else {}
 
 
+def _contains_uid_zero_override(value: object) -> bool:
+    """Return whether Kubernetes config explicitly forces a container to UID 0."""
+
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if str(key) == "runAsUser" and str(child).strip() == "0":
+                return True
+            if _contains_uid_zero_override(child):
+                return True
+    elif isinstance(value, (list, tuple)):
+        return any(_contains_uid_zero_override(child) for child in value)
+    return False
+
+
 def tool_image_key(tool_ref: str) -> str | None:
     """Return the CONTAINER_IMAGE_NAMES key for a toolRef, if known."""
 
@@ -457,43 +484,41 @@ def resolve_task_image(
     """Resolve a fully-qualified image ref for one planned step."""
 
     if tool_ref in options.image_overrides:
-        return str(options.image_overrides[tool_ref] or "").strip()
-    # Match the override surface to the renderer's other per-tool maps: an operator
-    # overriding ``workbench.fiftyone`` expects every FiftyOne action to use that
-    # image.  Exact matches above remain the most specific choice, and the longest
-    # matching prefix wins when both a tool family and a sub-family are provided.
-    best_override = ""
-    for prefix in options.image_overrides:
-        if prefix == "*":
-            continue
-        if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(prefix) > len(
-            best_override
-        ):
-            best_override = prefix
-    if best_override:
-        return str(options.image_overrides[best_override] or "").strip()
-    if "*" in options.image_overrides:
-        return str(options.image_overrides["*"] or "").strip()
+        resolved = str(options.image_overrides[tool_ref] or "").strip()
+    else:
+        # A family override such as ``workbench.fiftyone`` applies to its actions.
+        # Exact matches above win, and the longest boundary-safe prefix is next.
+        best_override = ""
+        for prefix in options.image_overrides:
+            if prefix == "*":
+                continue
+            if (
+                (tool_ref == prefix or tool_ref.startswith(prefix + "."))
+                and len(prefix) > len(best_override)
+            ):
+                best_override = prefix
+        if best_override:
+            resolved = str(options.image_overrides[best_override] or "").strip()
+        elif "*" in options.image_overrides:
+            resolved = str(options.image_overrides["*"] or "").strip()
+        else:
+            resolved = str(resources.get("image") or "").strip()
+            if not resolved:
+                tool = tool_image_key(tool_ref)
+                if not tool:
+                    return ""
+                from npa.deploy.images import container_image_for_tool
 
-    explicit = str(resources.get("image") or "").strip()
-    if explicit:
-        return explicit
-
-    tool = tool_image_key(tool_ref)
-    if not tool:
-        return ""
-
-    from npa.deploy.images import container_image_for_tool
-
-    kwargs: dict[str, Any] = {}
-    if options.registry:
-        kwargs["registry"] = options.registry
-    if tool == "sonic":
-        if options.gpu_target:
-            kwargs["gpu_target"] = options.gpu_target
-        if options.image_variant:
-            kwargs["image_variant"] = options.image_variant
-    return container_image_for_tool(tool, **kwargs)
+                kwargs: dict[str, Any] = {}
+                if options.registry:
+                    kwargs["registry"] = options.registry
+                if tool == "sonic":
+                    if options.gpu_target:
+                        kwargs["gpu_target"] = options.gpu_target
+                    if options.image_variant:
+                        kwargs["image_variant"] = options.image_variant
+                resolved = container_image_for_tool(tool, **kwargs)
+    return str(options.image_digest_pins.get(resolved, resolved)).strip()
 
 
 #: How long to wait for a self-hosted model server to answer /health, and how often to ask.
@@ -1252,14 +1277,101 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
                     if name not in seen:
                         seen.add(name)
                         hints.append(name)
-        if tool_ref == "workbench.byof.repo" and any(
-            value.startswith("byof-solution-smoke-wan22-") for value in step.argv
-        ):
-            for name in ("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS", "HF_TOKEN"):
-                if name not in seen:
-                    seen.add(name)
-                    hints.append(name)
     return tuple(hints)
+
+
+def resolve_src_s3_uri() -> str:
+    """Return the staged npa source prefix, preferring the environment over config."""
+
+    import os
+
+    value = (
+        os.environ.get("NPA_SRC_S3_URI")
+        or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
+        or ""
+    ).strip()
+    if value:
+        return value
+    try:
+        from npa.clients.config import resolve_workflow_src_s3_uri
+
+        return resolve_workflow_src_s3_uri()
+    except Exception:  # noqa: BLE001 - a missing/unreadable config is just "unset"
+        return ""
+
+
+def plan_images(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> list[str]:
+    """Return the distinct container images a plan's steps will pull, in order."""
+
+    images: list[str] = []
+    for step in steps:
+        scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
+        image = resolve_task_image(
+            str(scheduler_task.get("tool_ref") or ""),
+            scheduler_task.get("resources") or {},
+            options=options,
+        )
+        image = str(image or "").strip()
+        if image and image not in images:
+            images.append(image)
+    return images
+
+
+def plan_image_pull_secrets(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> dict[str, tuple[str, ...]]:
+    """Return declared Kubernetes pull-secret names for each exact image path.
+
+    If an image is also used by a non-Kubernetes step, its mapping is empty: a
+    Kubernetes secret cannot prove that VM execution path can pull the image.
+    """
+
+    paths: dict[str, list[tuple[str, ...] | None]] = {}
+    for step in steps:
+        task = build_scheduler_task(spec, step, run_id=run_id)
+        resources = task.get("resources") or {}
+        image = str(
+            resolve_task_image(
+                str(task.get("tool_ref") or ""), resources, options=options
+            )
+            or ""
+        ).strip()
+        if not image:
+            continue
+        cloud = str(resources.get("cloud") or "").strip().casefold()
+        if cloud not in {"kubernetes", "k8s"}:
+            paths.setdefault(image, []).append(None)
+            continue
+        kubernetes = resources.get("kubernetes")
+        kubernetes = kubernetes if isinstance(kubernetes, dict) else {}
+        pod_config = kubernetes.get("pod_config")
+        pod_config = pod_config if isinstance(pod_config, dict) else {}
+        pod_spec = pod_config.get("spec")
+        pod_spec = pod_spec if isinstance(pod_spec, dict) else {}
+        raw_names = pod_spec.get("imagePullSecrets")
+        raw_names = raw_names if isinstance(raw_names, list) else []
+        names = tuple(
+            str(item.get("name") or "").strip()
+            for item in raw_names
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        )
+        paths.setdefault(image, []).append(names)
+    return {
+        image: ()
+        if any(item is None for item in authorities)
+        else tuple(dict.fromkeys(name for item in authorities for name in (item or ())))
+        for image, authorities in paths.items()
+    }
 
 
 def build_skypilot_task_doc(
@@ -1272,7 +1384,10 @@ def build_skypilot_task_doc(
     """Build one SkyPilot task document from a planned step."""
 
     scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
-    resources = normalize_resources(scheduler_task.get("resources") or {})
+    resources = normalize_resources(
+        scheduler_task.get("resources") or {},
+        accelerator_overrides=options.gpu_accelerator_overrides,
+    )
     image = resolve_task_image(
         str(scheduler_task.get("tool_ref") or ""),
         scheduler_task.get("resources") or {},
@@ -1333,6 +1448,16 @@ def build_skypilot_task_doc(
     if num_nodes > 1:
         doc["num_nodes"] = num_nodes
     task_config = normalize_task_config(scheduler_task.get("resources") or {})
+    if image and task_config:
+        from npa.orchestration.skypilot.image_bootstrap_contract import (
+            is_trusted_npa_image,
+        )
+
+        if is_trusted_npa_image(image) and _contains_uid_zero_override(task_config):
+            raise NpaWorkflowRenderError(
+                "first-party workflow images must satisfy the SkyPilot bootstrap "
+                "contract as their declared image user; runAsUser: 0 overrides are forbidden"
+            )
     if task_config:
         doc["config"] = task_config
     setup = render_setup_for_tool(
@@ -1344,19 +1469,17 @@ def build_skypilot_task_doc(
         doc["setup"] = setup
     # When no workbench image is pinned, point setup at an existing S3 copy of
     # the npa package (SkyPilot local file_mounts create new buckets and fail
-    # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa.
+    # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
+    # it once with `npa configure --src-s3-uri` so the next shell still finds it.
     import os
 
-    src_uri = (
-        os.environ.get("NPA_SRC_S3_URI")
-        or os.environ.get("NPA_E2E_NPA_SRC_S3_URI")
-        or ""
-    ).strip()
+    src_uri = resolve_src_s3_uri()
     if not image:
         if not src_uri:
             raise NpaWorkflowRenderError(
                 f"planned step {scheduler_task['name']!r} has no workbench image "
-                "and NPA_SRC_S3_URI is unset; set NPA_SRC_S3_URI=s3://bucket/prefix/npa "
+                "and NPA_SRC_S3_URI is unset; set NPA_SRC_S3_URI=s3://bucket/prefix/npa, "
+                "persist it with `npa configure --src-s3-uri s3://bucket/prefix/npa`, "
                 "or pass --image <registry>/npa-<tool>:<tag>"
             )
         envs["NPA_SRC_S3_URI"] = src_uri
@@ -1441,24 +1564,15 @@ def _inject_nebius_registry_docker_secrets(
                 f"credentials' registry {creds_server!r} (e.g. the primary workbench "
                 f"registry), or set SKYPILOT_DOCKER_* for {server!r}."
             )
-    username = (
-        os.environ.get("SKYPILOT_DOCKER_USERNAME")
-        or os.environ.get("NPA_REGISTRY_USERNAME")
-        or "iam"
+    from npa.orchestration.skypilot.registry_preflight import (
+        resolve_registry_credentials,
     )
+
+    username, password = resolve_registry_credentials(server, mint=False)
     if materialize:
-        password = (
-            os.environ.get("SKYPILOT_DOCKER_PASSWORD")
-            or os.environ.get("NPA_REGISTRY_PASSWORD")
-            or ""
-        )
         if not password:
             try:
-                from npa.workflows.sim2real.registry_auth import (
-                    mint_nebius_registry_token,
-                )
-
-                password = mint_nebius_registry_token()
+                username, password = resolve_registry_credentials(server, mint=True)
             except Exception as exc:  # noqa: BLE001
                 raise NpaWorkflowRenderError(
                     "Nebius registry image requires SKYPILOT_DOCKER_PASSWORD "
@@ -1473,6 +1587,20 @@ def _inject_nebius_registry_docker_secrets(
     secrets.setdefault("SKYPILOT_DOCKER_SERVER", server)
     secrets.setdefault("SKYPILOT_DOCKER_USERNAME", username)
     secrets.setdefault("SKYPILOT_DOCKER_PASSWORD", password)
+    if cloud in {"kubernetes", "k8s"}:
+        config = doc.setdefault("config", {})
+        if not isinstance(config, dict):
+            raise NpaWorkflowRenderError("SkyPilot task config must be a mapping")
+        kubernetes = config.setdefault("kubernetes", {})
+        if not isinstance(kubernetes, dict):
+            raise NpaWorkflowRenderError("SkyPilot kubernetes config must be a mapping")
+        pod_config = kubernetes.setdefault("pod_config", {})
+        spec = pod_config.setdefault("spec", {})
+        pull_secrets = spec.setdefault("imagePullSecrets", [])
+        if not isinstance(pull_secrets, list):
+            raise NpaWorkflowRenderError("pod imagePullSecrets must be a list")
+        if {"name": "npa-nebius-registry"} not in pull_secrets:
+            pull_secrets.append({"name": "npa-nebius-registry"})
 
 
 def render_skypilot_yaml(

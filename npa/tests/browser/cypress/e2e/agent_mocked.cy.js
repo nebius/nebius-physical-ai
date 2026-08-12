@@ -57,6 +57,29 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.contains("Sim2Real Run Monitor").should("not.exist");
   });
 
+  it("separates source, conditioning, and augmented PAIDF data", () => {
+    cy.get("#tabVoxel").should("contain.text", "Dataset & provenance").click();
+    cy.get("#voxelRunInput").clear().type(DF_MOCK_RUN_ID);
+    cy.get("#voxelLoadRun").click();
+    cy.wait("@dfDataset");
+
+    cy.get("#voxelReview").should("have.class", "is-real").and("contain.text", "Real FiftyOne Brain review");
+    cy.get("#voxelSummary")
+      .should("contain.text", "source input 1")
+      .and("contain.text", "derived conditioning 1")
+      .and("contain.text", "synthetic/augmented 1")
+      .and("contain.text", "User-supplied input");
+    cy.get("#voxelGrid .voxel-group").should("have.length", 3).then(($groups) => {
+      expect($groups.eq(0).text()).to.include("User-supplied input (1)");
+      expect($groups.eq(1).text()).to.include("Derived conditioning data (1)");
+      expect($groups.eq(2).text()).to.include("Synthetic / augmented data (1)");
+    });
+    cy.get('#voxelGrid .voxel-card[data-role="source_input"]').should("contain.text", "source.mp4");
+    cy.get('#voxelGrid .voxel-card[data-role="derived_conditioning"]').should("contain.text", "conditioning-frame-0001.png");
+    cy.get('#voxelGrid .voxel-card[data-role="synthetic_augmented"]').should("contain.text", "aug0");
+    cy.get("#panelVoxel").should("not.contain.text", "FiftyOne-style");
+  });
+
   it("renders artifact-only groups without fabricated outcomes and clears demo state", () => {
     // First render the isolated local fixture so the switch proves its graph is
     // cleared before the storage-backed response arrives.

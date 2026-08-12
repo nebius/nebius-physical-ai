@@ -79,6 +79,19 @@ def test_every_shipped_catalog_spec_has_one_live_matrix_case() -> None:
     assert not duplicates, f"duplicate SUBMIT_LIVE_MATRIX cases: {duplicates}"
 
 
+def test_plan_only_cases_have_machine_checked_justifications() -> None:
+    for case in SUBMIT_LIVE_MATRIX:
+        if case.plan_only:
+            assert case.plan_only_justification.strip(), (
+                f"{case.spec} is plan-only without an explicit justification"
+            )
+            assert len(case.plan_only_justification.split()) >= 5
+        else:
+            assert not case.plan_only_justification, (
+                f"{case.spec} executes live and must not carry a plan-only exemption"
+            )
+
+
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
     plan_only = {
         "adversarial-scenario-hardening.yaml",
@@ -319,6 +332,16 @@ def test_physical_ai_data_factory_registered_for_live_infra() -> None:
     matrix_case = next((c for c in SUBMIT_LIVE_MATRIX if c.spec == spec), None)
     assert matrix_case is not None, "physical-ai-data-factory.yaml missing from SUBMIT_LIVE_MATRIX"
     assert matrix_case.requires_token_factory
+    assert matrix_case.tier == "multi"
+    assert matrix_case.runtime
+    assert not matrix_case.plan_only
+    assert dict(matrix_case.config_vars)["n_augmentations"] == "1"
+    assert dict(matrix_case.image_overrides) == {
+        "workbench.cosmos2.transfer_execute": "cosmos2-transfer",
+        "workbench.cosmos_evaluator.evaluate": "cosmos-evaluator",
+        "workbench.cosmos_curate.curate": "cosmos-curate",
+        "workbench.fiftyone.curate_augmented": "fiftyone",
+    }
     helpers = _load_live_helpers()
     assert spec in helpers.DYNAMIC_SPECS, "dynamic-gate spec must be in DYNAMIC_SPECS"
     assert helpers.assume_decision_for(spec) == "promote_checkpoint"
@@ -455,6 +478,10 @@ def test_image_tool_is_a_known_container_image(monkeypatch) -> None:
     for case in (c for c in SUBMIT_LIVE_MATRIX if c.image_tool):
         image = container_image_for_tool(case.image_tool, registry="cr.example.invalid/reg")
         assert image.startswith("cr.example.invalid/reg/"), case.spec
+    for case in (c for c in SUBMIT_LIVE_MATRIX if c.image_overrides):
+        for _tool_ref, tool in case.image_overrides:
+            image = container_image_for_tool(tool, registry="cr.example.invalid/reg")
+            assert image.startswith("cr.example.invalid/reg/"), case.spec
 
 
 def test_runtime_and_one_shot_selections_are_disjoint(monkeypatch) -> None:
@@ -492,7 +519,11 @@ def test_slow_cases_carry_their_own_deadline() -> None:
         "the GPU sweep pulls an ~8 GB image and trains; it needs a longer per-wave "
         "deadline than the CPU cases"
     )
-    for case in (c for c in SUBMIT_LIVE_MATRIX if c.runtime and not c.image_tool):
+    for case in (
+        c
+        for c in SUBMIT_LIVE_MATRIX
+        if c.runtime and not c.image_tool and not c.image_overrides
+    ):
         assert case.max_wait_seconds == 0, (
             f"{case.spec} should inherit the env deadline instead of pinning one"
         )

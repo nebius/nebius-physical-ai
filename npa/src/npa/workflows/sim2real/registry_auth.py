@@ -38,7 +38,9 @@ def _registry_server_from_image(image: str) -> str:
     return ""
 
 
-def docker_config_json(*, registry_servers: Sequence[str], token: str) -> dict[str, Any]:
+def docker_config_json(
+    *, registry_servers: Sequence[str], token: str, username: str = "iam"
+) -> dict[str, Any]:
     """Return a dockerconfigjson whose ``auths`` covers every given registry host.
 
     A pull secret holds exactly one dockerconfigjson and ``kubectl apply`` replaces
@@ -47,7 +49,6 @@ def docker_config_json(*, registry_servers: Sequence[str], token: str) -> dict[s
     than host-scoped.
     """
 
-    username = "iam"
     auth = base64.b64encode(f"{username}:{token}".encode("utf-8")).decode("ascii")
     return {
         "auths": {
@@ -73,6 +74,8 @@ def ensure_nebius_registry_pull_secret(
     kubeconfig: str = "",
     k8s_context: str = "",
     nebius_cli: str = "nebius",
+    username: str = "iam",
+    token: str = "",
 ) -> None:
     """Apply a fresh docker-registry secret so orchestrator pulls do not 401.
 
@@ -91,7 +94,7 @@ def ensure_nebius_registry_pull_secret(
     ]
     if not servers:
         return
-    token = mint_nebius_registry_token(nebius_cli=nebius_cli)
+    token = token or mint_nebius_registry_token(nebius_cli=nebius_cli)
     payload = {
         "apiVersion": "v1",
         "kind": "Secret",
@@ -99,7 +102,11 @@ def ensure_nebius_registry_pull_secret(
         "type": "kubernetes.io/dockerconfigjson",
         "data": {
             ".dockerconfigjson": base64.b64encode(
-                json.dumps(docker_config_json(registry_servers=servers, token=token)).encode(
+                json.dumps(
+                    docker_config_json(
+                        registry_servers=servers, token=token, username=username
+                    )
+                ).encode(
                     "utf-8"
                 )
             ).decode("ascii")

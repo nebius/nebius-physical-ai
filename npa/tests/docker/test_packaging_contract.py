@@ -135,6 +135,33 @@ def test_packaging_contract_file_exists() -> None:
     assert contract["images"]
 
 
+def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None:
+    contract = _load_contract()
+    for name, item in contract["images"].items():
+        version = item.get("skypilot_bootstrap_contract")
+        if not version:
+            continue
+        dockerfile = WORKBENCH_DOCKER / item["dockerfile"]
+        text = dockerfile.read_text(encoding="utf-8")
+        assert version == "skypilot-0.12.2-v1", name
+        assert (
+            f'org.nebius.npa.skypilot-bootstrap-contract="{version}"' in text
+        ), name
+        for package in ("openssh-server", "rsync", "sudo"):
+            assert package in text, f"{name}: missing {package}"
+        assert "NOPASSWD" in text or _final_user(text) in {None, "root", "0"}, name
+        entrypoints = _entrypoints(text)
+        assert entrypoints, f"{name}: contract images need a forwarding entrypoint"
+        script_matches = re.findall(r'ENTRYPOINT\s+\["([^"]+)"\]', text)
+        assert script_matches, name
+        script = dockerfile.parent / Path(script_matches[-1]).name
+        assert script.is_file(), f"{name}: entrypoint source not found: {script}"
+        entrypoint_text = script.read_text(encoding="utf-8")
+        assert (
+            'exec "$@"' in entrypoint_text or 'exec "$MODE" "$@"' in entrypoint_text
+        ), name
+
+
 def test_fiftyone_image_has_skypilot_kubernetes_prerequisites() -> None:
     """The workflow image must survive SkyPilot's non-root pod bootstrap."""
     text = (WORKBENCH_DOCKER / "fiftyone" / "Dockerfile").read_text(encoding="utf-8")
@@ -163,8 +190,6 @@ def test_public_images_explain_passwordless_root(image_name: str) -> None:
             f"{image_name}: public image grants passwordless root without a narrow "
             "passwordless_root_exemption in packaging-contract.yaml"
         )
-
-
 def test_first_class_pinned_dockerfiles_are_covered_by_contract() -> None:
     """A pin plus an in-tree same-name Dockerfile may not bypass legal review.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from importlib.metadata import version
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -32,6 +33,21 @@ def _stub_hf_model_access(monkeypatch):
 
     monkeypatch.setattr(huggingface, "validate_hf_access", _ok)
 
+    from npa.clients import storage_setup, storage_validation
+    from npa.clients.storage_validation import StorageProbeResult
+
+    probe = StorageProbeResult(
+        True,
+        "ok",
+        "Writable S3 verified with a cleaned write/delete probe.",
+        cleanup_attempted=True,
+        cleanup_succeeded=True,
+    )
+    monkeypatch.setattr(storage_setup, "probe_storage_write", lambda **_kwargs: probe)
+    monkeypatch.setattr(
+        storage_validation, "probe_storage_write", lambda **_kwargs: probe
+    )
+
 
 @pytest.mark.parametrize(
     ("args", "expected"),
@@ -57,6 +73,22 @@ def test_help_smoke(args: list[str], expected: str) -> None:
 
     assert result.exit_code == 0
     assert expected in result.output
+
+
+def test_configure_help_exposes_no_secret_value_flags() -> None:
+    result = runner.invoke(app, ["configure", "--help"])
+
+    assert result.exit_code == 0
+    assert "--save-env-credentials" in result.output
+    for forbidden in (
+        "--hf-token",
+        "--ngc-api-key",
+        "--token-factory-key",
+        "--aws-access-key-id",
+        "--aws-secret-access-key",
+        "--secret",
+    ):
+        assert forbidden not in result.output
 
 
 def test_no_args_shows_top_level_help() -> None:
@@ -106,8 +138,14 @@ def test_configure_show_includes_storage_and_registry() -> None:
     assert "~/.npa/config.yaml" in result.output
 
 
-def _stub_nebius_defaults(monkeypatch, *, project="", tenant="", registry="") -> None:
-    """Stop configure from touching real Nebius infra for profile-derived defaults."""
+def _stub_nebius_defaults(
+    monkeypatch, *, project="", tenant="", registry="", project_name=""
+) -> list[tuple[str, str]]:
+    """Stop configure from touching real Nebius infra for profile-derived defaults.
+
+    Returns the list that records ``set_profile_project`` calls, so tests can
+    assert whether configure re-pointed the operator's Nebius CLI profile.
+    """
     import npa.clients.nebius as nebius_module
 
     monkeypatch.setattr(nebius_module, "current_project_id", lambda: project)
@@ -115,6 +153,981 @@ def _stub_nebius_defaults(monkeypatch, *, project="", tenant="", registry="") ->
     monkeypatch.setattr(
         nebius_module, "discover_container_registry", lambda project_id: registry
     )
+    monkeypatch.setattr(
+        nebius_module, "get_project_tenant_id", lambda project_id: tenant
+    )
+    monkeypatch.setattr(
+        nebius_module, "get_project_name", lambda project_id: project_name
+    )
+    monkeypatch.setattr(nebius_module, "list_tenants", lambda: [])
+    bound: list[tuple[str, str]] = []
+
+    def _set_profile_project(project_id, tenant_id=""):
+        bound.append((project_id, tenant_id))
+        return True
+
+    monkeypatch.setattr(nebius_module, "set_profile_project", _set_profile_project)
+    return bound
+
+
+def test_configure_discovers_and_writes_multiple_projects(
+    monkeypatch, tmp_path
+) -> None:
+    """With discoverable projects, configure picks from a list (no id typing)."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(
+        monkeypatch, project="project-prod", tenant="tenant-a", registry=""
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "list_projects_in_tenant",
+        lambda tenant_id: [
+            {
+                "id": "project-prod",
+                "name": "prod",
+                "tenant_id": "tenant-a",
+                "region": "eu-north1",
+            },
+            {
+                "id": "project-dev",
+                "name": "dev",
+                "tenant_id": "tenant-a",
+                "region": "us-central1",
+            },
+        ],
+    )
+
+    def _must_not_provision(*_a, **_k):
+        raise AssertionError("storage must not provision when the user opts out")
+
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _must_not_provision)
+
+    # select both, default = prod, decline storage, then HF/TF/NGC (all skipped).
+    answers = "\n".join(["1,2", "prod", "N", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    assert cfg["default_project"] == "prod"
+    assert set(cfg["projects"]) == {"prod", "dev"}
+    assert cfg["projects"]["prod"]["project_id"] == "project-prod"
+    assert cfg["projects"]["prod"]["tenant_id"] == "tenant-a"
+    assert cfg["projects"]["prod"]["region"] == "eu-north1"
+    assert cfg["projects"]["dev"]["project_id"] == "project-dev"
+    assert cfg["projects"]["dev"]["region"] == "us-central1"
+    # No storage stanza was written (opted out).
+    creds = yaml.safe_load(creds_path.read_text())
+    assert not creds.get("storage")
+    # Opting out warns that the agent / Physical AI Data Factory need storage.
+    assert "Physical AI Data Factory" in result.output
+
+
+def test_configure_discovery_prefers_eu_north1_registry(monkeypatch, tmp_path) -> None:
+    """Discovery must not pin a project-local non-eu-north1 registry.
+
+    Regression: `_select_discovered_projects` saved whatever registry the
+    project happened to have, so a us-central1-only project got a project-local
+    registry that does NOT hold the npa-* workbench images — breaking later
+    workbench deploys with image-not-found. It must fall back to the eu-north1
+    first-party default just like the manual-entry path does.
+    """
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(
+        monkeypatch,
+        project="project-1",
+        tenant="tenant-1",
+        registry="cr.us-central1.nebius.cloud/u00xyz",
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "list_projects_in_tenant",
+        lambda tenant_id: [
+            {
+                "id": "project-1",
+                "name": "solo",
+                "tenant_id": "tenant-1",
+                "region": "us-central1",
+            }
+        ],
+    )
+
+    def _must_not_provision(*_a, **_k):
+        raise AssertionError("storage must not provision when the user opts out")
+
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _must_not_provision)
+
+    # select the single project, decline storage, then HF/TF/NGC (all skipped).
+    answers = "\n".join(["1", "N", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    stanza = cfg["projects"]["solo"]
+    # The project's region is preserved (placement follows the project), but the
+    # registry falls back to the eu-north1 first-party default, not the
+    # project-local us-central1 registry.
+    assert stanza["region"] == "us-central1"
+    assert stanza["container_registry"].startswith("cr.eu-north1.nebius.cloud/")
+    assert "us-central1" not in stanza["container_registry"]
+
+
+def test_configure_rerun_updates_the_existing_alias_for_a_project(
+    monkeypatch, tmp_path
+) -> None:
+    """A re-run must update the stanza this project already has, not add a new one.
+
+    Regression: the discovery path always derived the alias from the Nebius
+    project name and repointed `default_project` at it, so a config whose alias
+    was `prod` gained a second `tle-workbench` stanza — one without the
+    `workbenches` endpoints or `terraform_state` pointer the deploy paths read.
+    """
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "prod",
+                "projects": {
+                    "prod": {
+                        "project_id": "project-1",
+                        "tenant_id": "tenant-1",
+                        "region": "eu-north1",
+                        "terraform_state": {"bucket": "tfstate-prod"},
+                        "workbenches": {"b200": {"endpoint": "http://vm:8080"}},
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    monkeypatch.setattr(
+        nebius_module,
+        "list_projects_in_tenant",
+        lambda tenant_id: [
+            {
+                "id": "project-1",
+                "name": "tle-workbench",
+                "tenant_id": "tenant-1",
+                "region": "eu-north1",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("opted out of storage")),
+    )
+
+    answers = "\n".join(["1", "N", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    assert cfg["default_project"] == "prod"
+    assert set(cfg["projects"]) == {"prod"}
+    assert cfg["projects"]["prod"]["terraform_state"] == {"bucket": "tfstate-prod"}
+    assert (
+        cfg["projects"]["prod"]["workbenches"]["b200"]["endpoint"] == "http://vm:8080"
+    )
+
+
+def test_configure_never_writes_a_project_into_another_projects_alias(
+    monkeypatch, tmp_path
+) -> None:
+    """A derived alias that collides with a different project must not merge into it."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "prod",
+                "projects": {
+                    "prod": {
+                        "project_id": "project-old",
+                        "tenant_id": "tenant-1",
+                        "terraform_state": {"bucket": "tfstate-old"},
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-new", tenant="tenant-1")
+    monkeypatch.setattr(
+        nebius_module,
+        "list_projects_in_tenant",
+        lambda tenant_id: [
+            {
+                "id": "project-new",
+                "name": "prod",  # same slug as the existing alias, different project
+                "tenant_id": "tenant-1",
+                "region": "eu-north1",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("opted out of storage")),
+    )
+
+    answers = "\n".join(["1", "N", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    # The old stanza keeps its own project and Terraform state.
+    assert cfg["projects"]["prod"]["project_id"] == "project-old"
+    assert cfg["projects"]["prod"]["terraform_state"] == {"bucket": "tfstate-old"}
+    new_alias = cfg["default_project"]
+    assert new_alias != "prod"
+    assert cfg["projects"][new_alias]["project_id"] == "project-new"
+    assert "terraform_state" not in cfg["projects"][new_alias]
+
+
+def test_configure_show_prints_the_saved_configuration(monkeypatch, tmp_path) -> None:
+    """--show printed only the empty template, not what is actually configured."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "tle-workbench",
+                "projects": {
+                    "tle-workbench": {
+                        "project_id": "project-1",
+                        "tenant_id": "tenant-1",
+                        "region": "us-central1",
+                        "container_registry": "cr.eu-north1.nebius.cloud/registry",
+                    },
+                    "other": {"project_id": "project-2"},
+                },
+            }
+        )
+    )
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {"HF_TOKEN": "hf_secret"},
+                "storage": {
+                    "bucket": "s3://npa-bucket-test/",
+                    "endpoint_url": "https://storage.eu-north1.nebius.cloud",
+                    "access_key_id": "AKTEST",
+                    "secret_access_key": "SKTEST",
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+
+    result = runner.invoke(app, ["configure", "--show"])
+
+    assert result.exit_code == 0, result.output
+    # The values the PAIDF quickstart placeholders need.
+    assert "tle-workbench" in result.output
+    assert "project-1" in result.output
+    assert "tenant-1" in result.output
+    assert "us-central1" in result.output
+    assert "cr.eu-north1.nebius.cloud/registry" in result.output
+    assert "s3://npa-bucket-test/" in result.output
+    assert "other" in result.output  # the non-default alias is listed too
+    # Secrets are reported as present, never echoed.
+    assert "hf_secret" not in result.output
+    assert "AKTEST" not in result.output
+    assert "HF token:" in result.output
+    assert "NGC API key:" in result.output
+
+
+def test_configure_show_env_emits_shell_assignments(monkeypatch, tmp_path) -> None:
+    """The runbook eval's this instead of asking for three hand-substitutions."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.cluster import state as state_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "tle-workbench",
+                "projects": {
+                    "tle-workbench": {
+                        "project_id": "project-1",
+                        "tenant_id": "tenant-1",
+                        "region": "us-central1",
+                        "container_registry": "cr.eu-north1.nebius.cloud/registry",
+                    }
+                },
+            }
+        )
+    )
+    credentials_path = tmp_path / "credentials.yaml"
+    credentials_path.write_text(
+        yaml.safe_dump(
+            {
+                "tokens": {"HF_TOKEN": "hf_secret"},
+                "storage": {
+                    "bucket": "s3://npa-bucket-test/checkpoints/",
+                    "endpoint_url": "https://storage.eu-north1.nebius.cloud",
+                    "access_key_id": "AKTEST",
+                    "secret_access_key": "SKTEST",
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+    monkeypatch.setattr(
+        state_module,
+        "list_local_clusters",
+        lambda: [SimpleNamespace(name="npa-cluster")],
+    )
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_PROJECT_ALIAS"] == "tle-workbench"
+    assert values["NPA_PROJECT_ID"] == "project-1"
+    assert values["NPA_REGION"] == "us-central1"
+    # The bare bucket name is what `--var bucket=` wants, not the s3:// URI.
+    assert values["NPA_BUCKET"] == "npa-bucket-test"
+    assert values["NPA_BUCKET_URI"] == "s3://npa-bucket-test/checkpoints/"
+    assert values["NPA_KUBE_CONTEXT"] == "npa-cluster"
+    # No secrets, and no prose that would break `eval`.
+    assert "hf_secret" not in result.output
+    assert "AKTEST" not in result.output
+    assert "Credential setup" not in result.output
+
+
+def test_configure_show_env_is_eval_safe_in_clean_subprocess(tmp_path) -> None:
+    """Machine stdout stays shell-only even when credential diagnostics exist."""
+
+    import os
+    import subprocess
+    import sys
+
+    import yaml
+
+    home = tmp_path / "home with spaces"
+    npa_dir = home / ".npa"
+    npa_dir.mkdir(parents=True)
+    (npa_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "project alias",
+                "projects": {
+                    "project alias": {
+                        "project_id": "project-1",
+                        "tenant_id": "tenant-1",
+                        "region": "eu-north1",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (npa_dir / "credentials.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "storage": {
+                    "bucket": "s3://bucket/with-prefix/",
+                    "endpoint_url": "https://storage.eu-north1.nebius.cloud",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (npa_dir / "credentials.yaml").chmod(0o600)
+    stderr_path = tmp_path / "stderr.txt"
+    script = (
+        'set -eu; output="$("$NPA_TEST_PYTHON" -m npa.cli.main configure --show --env '
+        '2>"$NPA_TEST_ERR")"; '
+        'eval "$output"; test "$NPA_PROJECT_ALIAS" = "project alias"; '
+        'test "$NPA_BUCKET" = bucket; printf "%s" "$output"'
+    )
+    env = {
+        "HOME": str(home),
+        "PATH": os.environ["PATH"],
+        "NPA_TEST_PYTHON": sys.executable,
+        "NPA_TEST_ERR": str(stderr_path),
+        "HF_TOKEN": "hf_never-print-this",
+    }
+    completed = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-c", script],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Credential environment sources detected" not in completed.stdout
+    assert "hf_never-print-this" not in completed.stdout
+    assert "Credential environment sources detected" in stderr_path.read_text()
+
+
+def test_configure_show_env_scopes_kube_context_to_configured_project(
+    monkeypatch, tmp_path
+) -> None:
+    """--show --env must not emit an unrelated project's cluster context.
+
+    Regression: `_saved_kube_context` returned the most recent local cluster of
+    any project, so a runbook could `eval` a context pointing at the wrong infra.
+    """
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    from npa.cluster import state as state_module
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_project": "mine",
+                "projects": {
+                    "mine": {"project_id": "project-1", "region": "us-central1"}
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(
+        state_module,
+        "list_local_clusters",
+        # The unrelated cluster is listed last (most recent) on purpose.
+        lambda: [
+            SimpleNamespace(name="my-cluster", project_id="project-1"),
+            SimpleNamespace(name="someone-elses", project_id="project-OTHER"),
+        ],
+    )
+
+    result = runner.invoke(app, ["configure", "--show", "--env"])
+
+    assert result.exit_code == 0, result.output
+    values = dict(
+        line.split("=", 1) for line in result.output.strip().splitlines() if "=" in line
+    )
+    assert values["NPA_KUBE_CONTEXT"] == "my-cluster"
+    assert "someone-elses" not in result.output
+
+
+def test_configure_stores_hf_and_ngc_tokens_without_prompting(
+    monkeypatch, tmp_path
+) -> None:
+    """Scripted setup persists environment secrets without putting them in argv."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setenv("HF_TOKEN", "hf_test")
+    monkeypatch.setenv("NGC_API_KEY", "nvapi-test")
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "v1.test")
+
+    result = runner.invoke(
+        app,
+        [
+            "configure",
+            "--show",
+            "--save-env-credentials",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert all(
+        secret not in result.output for secret in ("hf_test", "nvapi-test", "v1.test")
+    )
+    saved = yaml.safe_load(creds_path.read_text())
+    assert saved["tokens"]["HF_TOKEN"] == "hf_test"
+    assert saved["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "v1.test"
+    assert saved["ngc"]["api_key"] == "nvapi-test"
+
+
+def test_configure_env_no_interactive_confirms_persistence(
+    monkeypatch, tmp_path
+) -> None:
+    """Noninteractive persistence is explicit and does not expose a secret argv."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setenv("HF_TOKEN", "hf_flagvalue")
+
+    result = runner.invoke(
+        app,
+        ["configure", "--save-env-credentials", "--no-interactive"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "saved to" in result.output
+    # The whole "Credential setup" template no longer prints as if nothing happened.
+    assert "Credential setup" not in result.output
+    assert (
+        yaml.safe_load(creds_path.read_text())["tokens"]["HF_TOKEN"] == "hf_flagvalue"
+    )
+
+
+def test_configure_no_tokens_no_interactive_still_shows_template(
+    monkeypatch, tmp_path
+) -> None:
+    """With nothing stored, `--no-interactive` still prints the setup guidance."""
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+
+    result = runner.invoke(app, ["configure", "--no-interactive"])
+
+    assert result.exit_code == 0, result.output
+    assert "Credential setup" in result.output
+
+
+def test_configure_noninteractive_detected_env_is_truthful_when_not_persisted(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    credentials_path = tmp_path / "credentials.yaml"
+    secret = "hf_process_only_secret"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", credentials_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setenv("HF_TOKEN", secret)
+
+    result = runner.invoke(app, ["configure", "--no-interactive"])
+
+    assert result.exit_code == 0, result.output
+    assert "HF_TOKEN" in result.output
+    assert "persistence: skipped" in result.output
+    assert "--save-env-credentials" in result.output
+    assert secret not in result.output
+    assert not credentials_path.exists()
+
+
+def test_prompt_setup_tokens_keeps_flagged_tokens_without_reprompting() -> None:
+    """A token passed via flag is kept, not re-prompted (an empty Enter would wipe it) — bug 6."""
+    from types import SimpleNamespace
+
+    existing = SimpleNamespace(
+        hf_token="hf_kept", token_factory_api_key="v1.kept", ngc_api_key="nvapi-kept"
+    )
+    asked: list[str] = []
+
+    def ask(prompt, *, default="", secret=False):
+        asked.append(prompt)
+        return ""  # a bare Enter — would wipe the key if it reached the store
+
+    hf, tf, ngc = cli_main._prompt_setup_tokens(
+        ask, existing, skip={"HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY", "NGC_API_KEY"}
+    )
+
+    assert (hf, tf, ngc) == ("hf_kept", "v1.kept", "nvapi-kept")
+    assert asked == []  # none of the three were re-prompted
+
+
+def test_prompt_setup_tokens_still_prompts_for_unflagged_tokens() -> None:
+    from types import SimpleNamespace
+
+    existing = SimpleNamespace(hf_token="", token_factory_api_key="", ngc_api_key="")
+    asked: list[str] = []
+
+    def ask(prompt, *, default="", secret=False):
+        asked.append(prompt)
+        return "hf_new" if "HF_TOKEN" in prompt else ""
+
+    hf, _tf, _ngc = cli_main._prompt_setup_tokens(ask, existing, skip={"NGC_API_KEY"})
+
+    assert hf == "hf_new"
+    assert any("HF_TOKEN" in p for p in asked)
+    assert not any("NGC_API_KEY" in p for p in asked)  # NGC was skipped
+
+
+def test_configure_token_factory_key_without_a_nebius_profile(
+    monkeypatch, tmp_path
+) -> None:
+    """Storing only the Token Factory key must not report that nothing was written."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    # No authenticated Nebius CLI profile: the laptop-only inference case.
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: False)
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "v1.test-key")
+
+    result = runner.invoke(
+        app,
+        ["configure", "--show", "--save-env-credentials"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Nothing was written under ~/.npa." not in result.output
+    assert (
+        yaml.safe_load(creds_path.read_text())["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"]
+        == "v1.test-key"
+    )
+
+
+def _fresh_configure_paths(monkeypatch, tmp_path):
+    """Point configure at empty tmp dotfiles and a ready Nebius profile."""
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    return creds_path, config_path
+
+
+def test_configure_discovery_recovers_tenant_from_profile_project(
+    monkeypatch, tmp_path
+) -> None:
+    """A profile with parent-id but no tenant-id still discovers projects.
+
+    Regression: `nebius config get tenant-id` is empty for federation profiles
+    and single-project profiles, and discovery bailed out silently, dropping the
+    operator into hand-typing tenant/project ids.
+    """
+    import yaml
+    import npa.clients.nebius as nebius_module
+
+    creds_path, config_path = _fresh_configure_paths(monkeypatch, tmp_path)
+    _stub_nebius_defaults(monkeypatch, project="project-prod", tenant="")
+    # Only the project -> parent-tenant lookup knows the tenant.
+    monkeypatch.setattr(
+        nebius_module, "get_project_tenant_id", lambda project_id: "tenant-a"
+    )
+    seen_tenants: list[str] = []
+
+    def _list_projects(tenant_id):
+        seen_tenants.append(tenant_id)
+        return [
+            {
+                "id": "project-prod",
+                "name": "prod",
+                "tenant_id": "tenant-a",
+                "region": "eu-north1",
+            }
+        ]
+
+    monkeypatch.setattr(nebius_module, "list_projects_in_tenant", _list_projects)
+
+    # select the single project; accept the profile bind; decline storage;
+    # HF/TF/NGC empty.
+    answers = "\n".join(["1", "", "N", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert seen_tenants == ["tenant-a"]
+    assert "the parent tenant of project project-prod" in result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    assert cfg["projects"]["prod"]["tenant_id"] == "tenant-a"
+    assert creds_path.exists()
+
+
+def test_configure_discovery_prompts_when_several_tenants(
+    monkeypatch, tmp_path
+) -> None:
+    """No tenant-id and no parent-id: pick from the listable tenants."""
+    import npa.clients.nebius as nebius_module
+
+    _fresh_configure_paths(monkeypatch, tmp_path)
+    _stub_nebius_defaults(monkeypatch, project="", tenant="")
+    monkeypatch.setattr(
+        nebius_module,
+        "list_tenants",
+        lambda: [
+            {"id": "tenant-a", "name": "alpha", "region": "eu-north1"},
+            {"id": "tenant-b", "name": "beta", "region": "us-central1"},
+        ],
+    )
+    seen_tenants: list[str] = []
+
+    def _list_projects(tenant_id):
+        seen_tenants.append(tenant_id)
+        return [
+            {
+                "id": "project-beta",
+                "name": "beta-proj",
+                "tenant_id": tenant_id,
+                "region": "us-central1",
+            }
+        ]
+
+    monkeypatch.setattr(nebius_module, "list_projects_in_tenant", _list_projects)
+
+    # pick tenant 2, select the single project, accept the profile bind,
+    # decline storage, no tokens.
+    answers = "\n".join(["2", "1", "", "N", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert seen_tenants == ["tenant-b"]
+    assert "tenant-a" in result.output and "tenant-b" in result.output
+
+
+def test_configure_explains_why_discovery_was_skipped(monkeypatch, tmp_path) -> None:
+    """With no tenant recoverable, say so instead of silently going manual."""
+    import npa.clients.nebius as nebius_module
+
+    _fresh_configure_paths(monkeypatch, tmp_path)
+    _stub_nebius_defaults(monkeypatch, project="", tenant="")
+    monkeypatch.setattr(nebius_module, "list_tenants", lambda: [])
+
+    def _must_not_discover(_tenant_id):
+        raise AssertionError("discovery must not run without a tenant")
+
+    monkeypatch.setattr(nebius_module, "list_projects_in_tenant", _must_not_discover)
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *_a, **_k: {
+            "nebius_api_key": "AK",
+            "nebius_secret_key": "SK",
+            "s3_bucket": "b",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+        },
+    )
+
+    # manual: tenant, project, region, registry, profile-bind(n), bucket, tokens
+    answers = "\n".join(["tenant-x", "project-x", "", "", "n", "", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "Skipping project discovery" in result.output
+    assert "nebius config set tenant-id" in result.output
+
+
+def test_configure_secret_prompts_are_visible_on_non_tty(monkeypatch, tmp_path) -> None:
+    """Piped stdin must not ask getpass to hide input (GetPassWarning)."""
+    import npa.clients.nebius as nebius_module
+
+    _fresh_configure_paths(monkeypatch, tmp_path)
+    _stub_nebius_defaults(monkeypatch, project="", tenant="")
+    monkeypatch.setattr(nebius_module, "list_tenants", lambda: [])
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *_a, **_k: {
+            "nebius_api_key": "AK",
+            "nebius_secret_key": "SK",
+            "s3_bucket": "b",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+        },
+    )
+
+    hide_flags: list[bool] = []
+    real_prompt = cli_main.typer.prompt
+
+    def _record_prompt(label, **kwargs):
+        hide_flags.append(bool(kwargs.get("hide_input")))
+        return real_prompt(label, **kwargs)
+
+    monkeypatch.setattr(cli_main.typer, "prompt", _record_prompt)
+    # CliRunner always pipes stdin, so isatty() is False here.
+    answers = (
+        "\n".join(["tenant-x", "project-x", "", "", "n", "", "hf_x", "", ""]) + "\n"
+    )
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert hide_flags and not any(hide_flags), (
+        "secret prompts must not hide input on a pipe"
+    )
+    assert result.output.count("stdin is not a terminal") == 1
+
+
+def test_configure_binds_nebius_profile_to_selected_project(
+    monkeypatch, tmp_path
+) -> None:
+    """Accepting the prompt re-points the Nebius CLI profile at the project."""
+    import npa.clients.nebius as nebius_module
+
+    _fresh_configure_paths(monkeypatch, tmp_path)
+    bound = _stub_nebius_defaults(monkeypatch, project="project-other", tenant="")
+    monkeypatch.setattr(nebius_module, "get_project_tenant_id", lambda _p: "")
+    monkeypatch.setattr(nebius_module, "list_tenants", lambda: [])
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *_a, **_k: {
+            "nebius_api_key": "AK",
+            "nebius_secret_key": "SK",
+            "s3_bucket": "b",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+        },
+    )
+
+    answers = "\n".join(["tenant-x", "project-x", "", "", "", "", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert bound == [("project-x", "tenant-x")]
+    assert "now points at project-x" in result.output
+
+
+def test_configure_declining_profile_binding_leaves_it_alone(
+    monkeypatch, tmp_path
+) -> None:
+    import npa.clients.nebius as nebius_module
+
+    _fresh_configure_paths(monkeypatch, tmp_path)
+    bound = _stub_nebius_defaults(monkeypatch, project="project-other", tenant="")
+    monkeypatch.setattr(nebius_module, "get_project_tenant_id", lambda _p: "")
+    monkeypatch.setattr(nebius_module, "list_tenants", lambda: [])
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *_a, **_k: {
+            "nebius_api_key": "AK",
+            "nebius_secret_key": "SK",
+            "s3_bucket": "b",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+        },
+    )
+
+    answers = "\n".join(["tenant-x", "project-x", "", "", "n", "", "", "", ""]) + "\n"
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert bound == []
+    assert "nebius config set parent-id project-x" in result.output
+
+
+def test_configure_manual_alias_uses_project_name_not_region(
+    monkeypatch, tmp_path
+) -> None:
+    """A region-shaped alias (`us-central1`) is confusing next to `region:`."""
+    import yaml
+    import npa.clients.nebius as nebius_module
+
+    _creds_path, config_path = _fresh_configure_paths(monkeypatch, tmp_path)
+    _stub_nebius_defaults(
+        monkeypatch, project="", tenant="", project_name="TLE Workbench"
+    )
+    monkeypatch.setattr(nebius_module, "list_tenants", lambda: [])
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *_a, **_k: {
+            "nebius_api_key": "AK",
+            "nebius_secret_key": "SK",
+            "s3_bucket": "b",
+            "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        },
+    )
+
+    answers = (
+        "\n".join(["tenant-x", "project-x", "us-central1", "", "n", "", "", "", ""])
+        + "\n"
+    )
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    assert cfg["default_project"] == "tle-workbench"
+    assert cfg["projects"]["tle-workbench"]["region"] == "us-central1"
+
+
+def test_configure_manual_alias_falls_back_to_region(monkeypatch, tmp_path) -> None:
+    """With no readable project name the region alias is still used."""
+    import yaml
+    import npa.clients.nebius as nebius_module
+
+    _creds_path, config_path = _fresh_configure_paths(monkeypatch, tmp_path)
+    _stub_nebius_defaults(monkeypatch, project="", tenant="", project_name="")
+    monkeypatch.setattr(nebius_module, "list_tenants", lambda: [])
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        nebius_module,
+        "bootstrap_environment",
+        lambda *_a, **_k: {
+            "nebius_api_key": "AK",
+            "nebius_secret_key": "SK",
+            "s3_bucket": "b",
+            "s3_endpoint": "https://storage.us-central1.nebius.cloud",
+        },
+    )
+
+    answers = (
+        "\n".join(["tenant-x", "project-x", "us-central1", "", "n", "", "", "", ""])
+        + "\n"
+    )
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load(config_path.read_text())
+    assert cfg["default_project"] == "us-central1"
 
 
 def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None:
@@ -129,9 +1142,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
     monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
     monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
-    _stub_nebius_defaults(
-        monkeypatch, project="project-12345", tenant="tenant-abcde"
-    )
+    _stub_nebius_defaults(monkeypatch, project="project-12345", tenant="tenant-abcde")
 
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: False)
 
@@ -146,6 +1157,7 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
         bucket_max_size_bytes=0,
         bucket_storage_class="standard",
         on_status=None,
+        on_resource_created=None,
     ):
         bootstrap_calls.append(
             {
@@ -159,34 +1171,50 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
         )
         if on_status:
             on_status("Setting up S3 bucket...")
+        if on_resource_created:
+            on_resource_created(
+                "service_account",
+                {"id": "serviceaccount-storage", "name": "lerobot-training"},
+            )
+            on_resource_created("bucket", {"name": bucket_name})
+            on_resource_created(
+                "access_key",
+                {"id": "accesskey-storage", "name": "lerobot-access-key"},
+            )
         return {
             "nebius_api_key": "AKIAPROVISIONED",
             "nebius_secret_key": "provisioned-secret",
             "s3_bucket": bucket_name,
             "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+            "service_account_id": "serviceaccount-storage",
+            "service_account_name": "lerobot-training",
+            "service_account_project_id": project_id,
+            "service_account_managed_by": "npa",
         }
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
     # Enter project/tenant + default region/registry; pick a custom
-    # bucket name and a custom size; then HF + AI Cloud + Token Factory + NGC;
+    # bucket name and a custom size; then HF + Token Factory + NGC;
     # accept the default project alias (region).
-    answers = "\n".join(
-        [
-            "project-12345",     # project id
-            "tenant-abcde",      # tenant id
-            "",                  # region (default eu-north1)
-            "",                  # registry (default)
-            "my-bucket",         # bucket name (customer choice)
-            "",                  # storage class (standard default)
-            "100",               # size in GB
-            "hf_secret_token",   # HF token
-            "aicloud_secret",    # AI Cloud API key
-            "nebius_secret_key", # Nebius Token Factory API key
-            "nvapi_secret",      # NGC API key
-            "",                  # project alias (default = region)
-        ]
-    ) + "\n"
+    answers = (
+        "\n".join(
+            [
+                "tenant-abcde",  # tenant id
+                "project-12345",  # project id
+                "",  # region (default eu-north1)
+                "",  # registry (default)
+                "my-bucket",  # bucket name (customer choice)
+                "",  # storage class (standard default)
+                "100",  # size in GB
+                "hf_secret_token",  # HF token
+                "nebius_secret_key",  # Nebius Token Factory API key
+                "nvapi_secret",  # NGC API key
+                "",  # project alias (default = region)
+            ]
+        )
+        + "\n"
+    )
 
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
@@ -206,13 +1234,20 @@ def test_configure_interactive_provisions_storage(monkeypatch, tmp_path) -> None
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_secret_token"
-    assert creds["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "aicloud_secret"
+    assert "NEBIUS_AI_CLOUD_KEY" not in creds["tokens"]
     assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "nebius_secret_key"
     assert creds["ngc"]["api_key"] == "nvapi_secret"
     assert creds["storage"]["aws_access_key_id"] == "AKIAPROVISIONED"
     assert creds["storage"]["aws_secret_access_key"] == "provisioned-secret"
     assert creds["storage"]["endpoint_url"] == "https://storage.eu-north1.nebius.cloud"
     assert creds["storage"]["bucket"] == "s3://my-bucket/"
+    assert creds["nebius"] == {"service_account_id": "serviceaccount-storage"}
+    assert creds["storage_iam"] == {
+        "service_account_id": "serviceaccount-storage",
+        "service_account_name": "lerobot-training",
+        "service_account_project_id": "project-12345",
+        "service_account_managed_by": "npa",
+    }
 
     cfg = yaml.safe_load(config_path.read_text())
     project = cfg["projects"]["eu-north1"]
@@ -250,6 +1285,7 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
         bucket_max_size_bytes=0,
         bucket_storage_class="standard",
         on_status=None,
+        on_resource_created=None,
     ):
         sizes.append(bucket_max_size_bytes)
         return {
@@ -261,9 +1297,9 @@ def test_configure_provision_reuses_existing_bucket_without_size_prompt(
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    # proj, tenant, region, registry, bucket name (Enter = default), hf, ai cloud,
+    # proj, tenant, region, registry, bucket name (Enter = default), hf,
     # token factory, ngc, project alias (Enter = region default)
-    answers = "\n".join(["project-1", "tenant-1", "", "", "", "", "", "", "", ""]) + "\n"
+    answers = "\n".join(["tenant-1", "project-1", "", "", "", "", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -279,7 +1315,7 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
 
     Uses the reuse path (bucket_exists=True) so there are no storage-class/size
     prompts; answers are: project, tenant, region, registry, bucket-name(reuse),
-    HF, AI Cloud, Token Factory, NGC, alias.
+    HF, Token Factory, NGC, alias.
     """
 
     from npa.clients import config as config_module
@@ -293,9 +1329,17 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
     _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
 
-    def fake_bootstrap(project_id, tenant_id, region, *, bucket_name=None,
-                       bucket_max_size_bytes=0, bucket_storage_class="standard",
-                       on_status=None):
+    def fake_bootstrap(
+        project_id,
+        tenant_id,
+        region,
+        *,
+        bucket_name=None,
+        bucket_max_size_bytes=0,
+        bucket_storage_class="standard",
+        on_status=None,
+        on_resource_created=None,
+    ):
         return {
             "nebius_api_key": "AKIA",
             "nebius_secret_key": "secret",
@@ -305,9 +1349,10 @@ def _run_reuse_bucket_configure(monkeypatch, tmp_path, *, hf_token: str, ngc_key
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    answers = "\n".join(
-        ["project-1", "tenant-1", "", "", "", hf_token, "", "", ngc_key, ""]
-    ) + "\n"
+    answers = (
+        "\n".join(["tenant-1", "project-1", "", "", "", hf_token, "", ngc_key, ""])
+        + "\n"
+    )
     return runner.invoke(app, ["configure", "--interactive"], input=answers)
 
 
@@ -336,7 +1381,9 @@ def test_configure_note_lists_inaccessible_hf_models(monkeypatch, tmp_path) -> N
 
     def _deny_one(token, repo, *, timeout=10.0):
         if repo == denied:
-            return HFAccessResult(repo=repo, ok=False, status_code=403, error="no access")
+            return HFAccessResult(
+                repo=repo, ok=False, status_code=403, error="no access"
+            )
         return HFAccessResult(repo=repo, ok=True, status_code=200)
 
     monkeypatch.setattr(huggingface, "validate_hf_access", _deny_one)
@@ -351,7 +1398,9 @@ def test_configure_note_lists_inaccessible_hf_models(monkeypatch, tmp_path) -> N
     assert "huggingface.co" in note
 
 
-def test_configure_note_lists_ngc_blocked_when_key_missing(monkeypatch, tmp_path) -> None:
+def test_configure_note_lists_ngc_blocked_when_key_missing(
+    monkeypatch, tmp_path
+) -> None:
     # HF probes all succeed (autouse); NGC key omitted -> NVIDIA pulls blocked.
     result = _run_reuse_bucket_configure(
         monkeypatch, tmp_path, hf_token="hf_good", ngc_key=""
@@ -411,7 +1460,6 @@ def _prepopulate_config(monkeypatch, tmp_path):
             {
                 "tokens": {
                     "HF_TOKEN": "hf_existing",
-                    "NEBIUS_AI_CLOUD_KEY": "aicloud_existing",
                     "NEBIUS_TOKEN_FACTORY_KEY": "tf_existing",
                 },
                 "ngc": {"api_key": "nvapi-existing"},
@@ -420,6 +1468,15 @@ def _prepopulate_config(monkeypatch, tmp_path):
                     "aws_secret_access_key": "SK_existing",
                     "endpoint_url": "https://storage.eu-north1.nebius.cloud",
                     "bucket": "s3://npa-bucket-existing/",
+                },
+                "storage_setup": {
+                    "version": 1,
+                    "projects": {
+                        "project-existing": {
+                            "status": "complete",
+                            "bucket_name": "npa-bucket-existing",
+                        }
+                    },
                 },
             }
         )
@@ -440,12 +1497,14 @@ def test_configure_rerun_all_defaults_is_idempotent(monkeypatch, tmp_path) -> No
     creds_path, config_path, nebius_module = _prepopulate_config(monkeypatch, tmp_path)
 
     def _must_not_provision(*_a, **_k):
-        raise AssertionError("bootstrap_environment should not run on an all-defaults re-run")
+        raise AssertionError(
+            "bootstrap_environment should not run on an all-defaults re-run"
+        )
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", _must_not_provision)
 
-    # project, tenant, region, registry, keep-storage, HF, AI cloud, TF, NGC, alias
-    answers = "\n".join([""] * 10) + "\n"
+    # project, tenant, region, registry, keep-storage, HF, TF, NGC, alias
+    answers = "\n".join([""] * 9) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -460,7 +1519,7 @@ def test_configure_rerun_all_defaults_is_idempotent(monkeypatch, tmp_path) -> No
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_existing"
-    assert creds["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "aicloud_existing"
+    assert "NEBIUS_AI_CLOUD_KEY" not in creds["tokens"]
     assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf_existing"
     assert creds["ngc"]["api_key"] == "nvapi-existing"
     # Storage preserved verbatim — no new access key minted.
@@ -479,21 +1538,23 @@ def test_configure_rerun_updates_selected_values(monkeypatch, tmp_path) -> None:
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("should keep storage")),
     )
 
-    # Update project id and HF token; keep everything else (incl. storage).
-    answers = "\n".join(
-        [
-            "project-new",  # project id (update)
-            "",             # tenant id (keep)
-            "",             # region (keep)
-            "",             # registry (keep)
-            "",             # keep existing storage? -> Y
-            "hf_new",       # HF token (update)
-            "",             # AI cloud (keep)
-            "",             # token factory (keep)
-            "",             # NGC (keep)
-            "",             # alias (keep prod)
-        ]
-    ) + "\n"
+    # Update the HF token; keep project identity and verified storage.
+    answers = (
+        "\n".join(
+            [
+                "",  # tenant id (keep)
+                "",  # project id (keep)
+                "",  # region (keep)
+                "",  # registry (keep)
+                "",  # keep existing storage? -> Y
+                "hf_new",  # HF token (update)
+                "",  # token factory (keep)
+                "",  # NGC (keep)
+                "",  # alias (keep prod)
+            ]
+        )
+        + "\n"
+    )
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -502,25 +1563,34 @@ def test_configure_rerun_updates_selected_values(monkeypatch, tmp_path) -> None:
     # Updated stanza lives under the preserved alias.
     prod = cfg["projects"]["prod"]
     assert cfg["default_project"] == "prod"
-    assert prod["project_id"] == "project-new"
+    assert prod["project_id"] == "project-existing"
     assert prod["tenant_id"] == "tenant-existing"
 
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["tokens"]["HF_TOKEN"] == "hf_new"
-    assert creds["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "aicloud_existing"
     assert creds["storage"]["aws_access_key_id"] == "AK_existing"
 
 
-def test_configure_rerun_can_reprovision_storage_when_declined(monkeypatch, tmp_path) -> None:
+def test_configure_rerun_can_reprovision_storage_when_declined(
+    monkeypatch, tmp_path
+) -> None:
     import yaml
 
     creds_path, config_path, nebius_module = _prepopulate_config(monkeypatch, tmp_path)
 
     calls: list[dict] = []
 
-    def fake_bootstrap(project_id, tenant_id, region, *, bucket_name=None,
-                       bucket_max_size_bytes=0, bucket_storage_class="standard",
-                       on_status=None):
+    def fake_bootstrap(
+        project_id,
+        tenant_id,
+        region,
+        *,
+        bucket_name=None,
+        bucket_max_size_bytes=0,
+        bucket_storage_class="standard",
+        on_status=None,
+        on_resource_created=None,
+    ):
         calls.append({"bucket_name": bucket_name})
         return {
             "nebius_api_key": "AK_new",
@@ -531,33 +1601,40 @@ def test_configure_rerun_can_reprovision_storage_when_declined(monkeypatch, tmp_
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
-    # Decline keep-existing storage -> provision; bucket name Enter reuses the
-    # existing bucket name default (bucket_exists=True -> no size prompts).
-    answers = "\n".join(
-        [
-            "",     # project id (keep)
-            "",     # tenant id (keep)
-            "",     # region (keep)
-            "",     # registry (keep)
-            "n",    # keep existing storage? -> no
-            "",     # bucket name (default = npa-bucket-existing)
-            "",     # HF (keep)
-            "",     # AI cloud (keep)
-            "",     # token factory (keep)
-            "",     # NGC (keep)
-            "",     # alias (keep)
-        ]
-    ) + "\n"
+    # Decline keep-existing storage -> provision; the editable bucket prompt
+    # defaults to a fresh project-scoped proposal, never the declined name.
+    answers = (
+        "\n".join(
+            [
+                "",  # tenant id (keep)
+                "",  # project id (keep)
+                "",  # region (keep)
+                "",  # registry (keep)
+                "n",  # keep existing storage? -> no
+                "",  # bucket name (fresh project-scoped default)
+                "",  # HF (keep)
+                "",  # token factory (keep)
+                "",  # NGC (keep)
+                "",  # alias (keep)
+            ]
+        )
+        + "\n"
+    )
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
-    assert calls[0]["bucket_name"] == "npa-bucket-existing"
+    assert calls[0]["bucket_name"] == nebius_module.bucket_name_for(
+        "tenant-existing", "project-existing"
+    )
+    assert calls[0]["bucket_name"] != "npa-bucket-existing"
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AK_new"
 
 
-def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path) -> None:
+def test_configure_provision_falls_back_to_manual_on_error(
+    monkeypatch, tmp_path
+) -> None:
     import yaml
 
     from npa.clients import config as config_module
@@ -573,41 +1650,432 @@ def test_configure_provision_falls_back_to_manual_on_error(monkeypatch, tmp_path
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: False)
 
     def boom(*_args, **_kwargs):
-        raise nebius_module.NebiusError("PermissionDenied")
+        # Mirror the real Nebius object-storage authorization failure.
+        raise nebius_module.NebiusError(
+            "nebius storage bucket list failed (exit 15):\n"
+            "Error: rpc error: code = PermissionDenied desc = AccessDenied: Access denied"
+        )
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", boom)
 
-    answers = "\n".join(
-        [
-            "project-1",         # project id
-            "tenant-1",          # tenant id
-            "",                  # region (default)
-            "",                  # registry (default)
-            "provision-bucket",  # bucket name
-            "",                  # storage class (standard default)
-            "",                  # size GB (default 50)
-            "AKIAMANUAL",        # S3 access key (fallback)
-            "manual-secret",     # S3 secret (fallback)
-            "",                  # S3 endpoint (default-by-region)
-            "s3://manual-bucket/",  # S3 bucket (fallback)
-            "hf_tok",            # HF token
-            "",                  # AI Cloud API key (skip)
-            "",                  # Token Factory API key (skip)
-            "",                  # NGC API key (skip)
-            "",                  # project alias (default = region)
-        ]
-    ) + "\n"
+    answers = (
+        "\n".join(
+            [
+                "tenant-1",  # tenant id
+                "project-1",  # project id
+                "",  # region (default)
+                "",  # registry (default)
+                "provision-bucket",  # bucket name
+                "",  # storage class (standard default)
+                "",  # size GB (default 50)
+                "n",  # skip object storage? -> no, enter manually
+                "AKIAMANUAL",  # S3 access key (fallback)
+                "manual-secret",  # S3 secret (fallback)
+                "",  # S3 endpoint (default-by-region)
+                "s3://manual-bucket/",  # S3 bucket (fallback)
+                "hf_tok",  # HF token
+                "",  # Token Factory API key (skip)
+                "",  # NGC API key (skip)
+                "",  # project alias (default = region)
+            ]
+        )
+        + "\n"
+    )
 
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
     assert "Could not auto-provision" in result.output
+    # Access-denied provisioning should surface actionable IAM guidance, not a
+    # bare rpc dump, before falling back to manual entry.
+    assert "access denied" in result.output.lower()
+    assert "storage.object-editor" in result.output
+    assert "NPA_ALLOW_EDITORS_STORAGE_FALLBACK=1" in result.output
+    assert "re-run `npa configure`" in result.output
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AKIAMANUAL"
     assert creds["storage"]["aws_secret_access_key"] == "manual-secret"
     assert creds["storage"]["endpoint_url"] == "https://storage.eu-north1.nebius.cloud"
     assert creds["storage"]["bucket"] == "s3://manual-bucket/"
     assert "api_key" not in creds.get("ngc", {})
+
+
+def _bootstrap_capture(calls: list[dict]):
+    def fake_bootstrap(
+        project_id,
+        tenant_id,
+        region,
+        *,
+        bucket_name=None,
+        bucket_max_size_bytes=0,
+        bucket_storage_class="standard",
+        on_status=None,
+        on_resource_created=None,
+    ):
+        calls.append(
+            {
+                "bucket_name": bucket_name,
+                "bucket_max_size_bytes": bucket_max_size_bytes,
+                "bucket_storage_class": bucket_storage_class,
+            }
+        )
+        return {
+            "nebius_api_key": "AKIA",
+            "nebius_secret_key": "secret",
+            "s3_bucket": bucket_name,
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
+        }
+
+    return fake_bootstrap
+
+
+def test_configure_skips_storage_and_still_writes_tokens_on_provision_failure(
+    monkeypatch, tmp_path
+) -> None:
+    """Storage AccessDenied must not dead-end: skip storage, still write tokens."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    # Existence search + provisioning both denied.
+    monkeypatch.setattr(
+        nebius_module,
+        "bucket_exists",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            nebius_module.NebiusError("AccessDenied")
+        ),
+    )
+
+    def boom(*_a, **_k):
+        raise nebius_module.NebiusError("AccessDenied: Access denied")
+
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", boom)
+
+    # proj, tenant, region, registry, bucket, skip-storage (Enter=Y),
+    # hf, ai, tf, ngc, alias.
+    answers = (
+        "\n".join(
+            [
+                "tenant-1",
+                "project-1",
+                "",
+                "",
+                "npa-tle-727",
+                "",
+                "hf_tok",
+                "",
+                "",
+                "",
+                "",
+            ]
+        )
+        + "\n"
+    )
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "Skip object storage for now and finish setup?" in result.output
+    assert "Skipping object storage" in result.output
+    assert (
+        "Setup incomplete: writable object storage is not configured" in result.output
+    )
+    assert "provision-if-absent --project" in result.output
+    assert "Setup complete" not in result.output
+    creds = yaml.safe_load(creds_path.read_text())
+    assert creds["tokens"]["HF_TOKEN"] == "hf_tok"
+    # No storage stanza (or empty) was written.
+    assert not creds.get("storage")
+
+
+def test_configure_allows_region_differing_from_registry_region(
+    monkeypatch, tmp_path
+) -> None:
+    """Choosing a region that differs from the registry's region is fine (no warning).
+
+    Registries are readable cross-region and a project can hold registries in
+    multiple regions, so the registry region is only a default hint.
+    """
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
+
+    answers = (
+        "\n".join(
+            [
+                "tenant-1",
+                "project-1",
+                "us-central1",
+                "cr.eu-north1.nebius.cloud/e00abc",
+                "my-bucket",
+                "",  # hf
+                "",  # ai
+                "",  # tf
+                "",  # ngc
+                "",  # alias
+            ]
+        )
+        + "\n"
+    )
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "does not match" not in result.output
+
+
+def test_normalize_pasted_secret_strips_quotes_and_auth_prefixes() -> None:
+    n = cli_main._normalize_pasted_secret
+    assert n('  "hf_abc123"  ') == "hf_abc123"
+    assert n("Bearer v1.xyz") == "v1.xyz"
+    assert n("bearer v1.xyz") == "v1.xyz"
+    assert n("Authorization: Bearer nvapi-xyz") == "nvapi-xyz"
+    assert n("'v1.abc'") == "v1.abc"
+    assert n('"Bearer v1.abc"') == "v1.abc"
+    # A bare token is unchanged.
+    assert n("hf_plain") == "hf_plain"
+    assert n("") == ""
+    # AWS keys may legitimately begin with words that look like auth schemes;
+    # the S3 prompt opts into quote-only normalization.
+    assert n('"Bearer valid-aws-secret"', strip_auth_wrapper=False) == (
+        "Bearer valid-aws-secret"
+    )
+    assert n("Authorization:valid-access-key", strip_auth_wrapper=False) == (
+        "Authorization:valid-access-key"
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("0", 0),
+        ("-1", 0),
+        ("1", 1024**3),
+        ("0.5", 512 * 1024**2),
+        ("0.000000001", 1),
+    ],
+)
+def test_gb_to_bytes_has_explicit_gib_flooring_boundaries(
+    value: str, expected: int
+) -> None:
+    assert cli_main._gb_to_bytes(value) == expected
+
+
+def test_gb_to_bytes_invalid_or_nonfinite_uses_recommended_cap() -> None:
+    expected = int(cli_main.RECOMMENDED_BUCKET_SIZE_GB) * 1024**3
+    assert cli_main._gb_to_bytes("invalid") == expected
+    assert cli_main._gb_to_bytes("nan") == expected
+    assert cli_main._gb_to_bytes("inf") == expected
+
+
+def test_configure_normalizes_tokens_and_warns_on_bad_token_factory_key(
+    monkeypatch, tmp_path
+) -> None:
+    """Pasted Bearer/quoted tokens are stored bare; a non-v1. TF key warns."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    creds_path = tmp_path / "credentials.yaml"
+    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
+
+    # proj, tenant, region, registry, bucket, hf (Bearer+quoted),
+    # token factory (quoted, not v1.), ngc (Bearer), alias.
+    answers = (
+        "\n".join(
+            [
+                "tenant-1",
+                "project-1",
+                "",
+                "",
+                "my-bucket",
+                'Bearer "hf_abc123"',
+                '"nebius-iam-looking-token"',
+                "Bearer nvapi-xyz",
+                "",
+            ]
+        )
+        + "\n"
+    )
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "does not look like a Token Factory key" in result.output
+    creds = yaml.safe_load(creds_path.read_text())
+    assert creds["tokens"]["HF_TOKEN"] == "hf_abc123"
+    assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "nebius-iam-looking-token"
+    assert creds["ngc"]["api_key"] == "nvapi-xyz"
+
+
+def test_configure_typed_existing_bucket_is_reused_without_create_prompts(
+    monkeypatch, tmp_path
+) -> None:
+    """A typed name that already exists is reused; no storage-class/size prompts."""
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+
+    searched: list[tuple[str, str]] = []
+
+    def fake_bucket_exists(project_id, bucket_name):
+        searched.append((project_id, bucket_name))
+        return True
+
+    monkeypatch.setattr(nebius_module, "bucket_exists", fake_bucket_exists)
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        nebius_module, "bootstrap_environment", _bootstrap_capture(calls)
+    )
+
+    # proj, tenant, region, registry, bucket name, hf, ai, tf, ngc, alias.
+    # No storage-class/size answers: none should be prompted for a reused bucket.
+    answers = (
+        "\n".join(
+            [
+                "tenant-1",
+                "project-1",
+                "",
+                "",
+                "my-existing-bucket",
+                "hf_tok",
+                "",
+                "",
+                "",
+                "",
+            ]
+        )
+        + "\n"
+    )
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert searched == [("project-1", "my-existing-bucket")]
+    assert (
+        "Reusing existing object-storage bucket 'my-existing-bucket'" in result.output
+    )
+    assert "New bucket storage class" not in result.output
+    assert calls and calls[0]["bucket_name"] == "my-existing-bucket"
+    assert calls[0]["bucket_max_size_bytes"] == 0
+
+
+def test_configure_bucket_search_failure_fails_closed_before_create(
+    monkeypatch, tmp_path
+) -> None:
+    """When existence can't be verified, npa skips create prompts and get-or-creates."""
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(monkeypatch, project="project-1", tenant="tenant-1")
+
+    def boom_exists(*_a, **_k):
+        raise nebius_module.NebiusError("nebius storage bucket list failed (exit 15)")
+
+    monkeypatch.setattr(nebius_module, "bucket_exists", boom_exists)
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        nebius_module, "bootstrap_environment", _bootstrap_capture(calls)
+    )
+
+    answers = (
+        "\n".join(
+            [
+                "tenant-1",
+                "project-1",
+                "",
+                "",
+                "maybe-existing",
+                "",  # skip object storage after the verification failure
+                "hf_tok",
+                "",
+                "",
+                "",
+                "",
+            ]
+        )
+        + "\n"
+    )
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert "Could not verify whether 'maybe-existing' already exists" in result.output
+    assert "will not create or adopt it" in result.output
+    assert "New bucket storage class" not in result.output
+    assert calls == []
+
+
+def test_noninteractive_bucket_collision_uses_a_different_deterministic_name(
+    monkeypatch,
+) -> None:
+    import npa.clients.nebius as nebius_module
+
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: False)
+    requested: list[str] = []
+
+    def bootstrap(*_args, bucket_name, **_kwargs):
+        requested.append(bucket_name)
+        if len(requested) == 1:
+            raise nebius_module.NebiusError(
+                f"Object-storage bucket name '{bucket_name}' is already taken"
+            )
+        return {
+            "nebius_api_key": "access",
+            "nebius_secret_key": "secret",
+            "s3_bucket": bucket_name,
+            "s3_endpoint": "https://storage.example",
+        }
+
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", bootstrap)
+
+    result = cli_main._provision_object_storage(
+        nebius_module,
+        lambda _label, *, default="", **_kwargs: default,
+        project_id="project-a",
+        tenant_id="tenant-a",
+        region="eu-north1",
+        existing_bucket="npa-bucket-collision",
+        interactive=False,
+    )
+
+    assert result is not None
+    assert requested[0] == "npa-bucket-collision"
+    assert requested[1] == cli_main._collision_bucket_name(
+        requested[0], tenant_id="tenant-a", project_id="project-a"
+    )
+    assert requested[1] != requested[0]
 
 
 def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None:
@@ -629,41 +2097,47 @@ def test_configure_no_provision_uses_manual_entry(monkeypatch, tmp_path) -> None
 
     monkeypatch.setattr(nebius_module, "bootstrap_environment", must_not_call)
 
-    answers = "\n".join(
-        [
-            "project-1",         # project id
-            "tenant-1",          # tenant id
-            "me-central1",       # region
-            "",                  # registry (default)
-            "AKIAMANUAL",        # S3 access key
-            "manual-secret",     # S3 secret
-            "",                  # S3 endpoint (default-by-region)
-            "s3://b/",           # S3 bucket
-            "",                  # HF token
-            "",                  # AI Cloud API key
-            "",                  # Token Factory API key
-            "",                  # NGC API key
-            "lab",               # project alias (custom)
-        ]
-    ) + "\n"
+    answers = (
+        "\n".join(
+            [
+                "tenant-1",  # tenant id
+                "project-1",  # project id
+                "me-central1",  # region
+                "",  # registry (default)
+                "AKIAMANUAL",  # S3 access key
+                "manual-secret",  # S3 secret
+                "",  # S3 endpoint (default-by-region)
+                "s3://b/",  # S3 bucket
+                "",  # HF token
+                "",  # Token Factory API key
+                "",  # NGC API key
+            ]
+        )
+        + "\n"
+    )
 
     result = runner.invoke(
         app, ["configure", "--interactive", "--no-provision"], input=answers
     )
 
     assert result.exit_code == 0, result.output
-    assert "project alias: lab" in result.output
-    assert "-p lab" in result.output
+    # The alias is auto-derived from the region (no alias prompt).
+    assert "project alias: me-central1" in result.output
+    assert "-p me-central1" in result.output
     creds = yaml.safe_load(creds_path.read_text())
     assert creds["storage"]["aws_access_key_id"] == "AKIAMANUAL"
     # Endpoint default tracks the entered region.
-    assert creds["storage"]["endpoint_url"] == "https://storage.me-central1.nebius.cloud"
+    assert (
+        creds["storage"]["endpoint_url"] == "https://storage.me-central1.nebius.cloud"
+    )
     cfg = yaml.safe_load(config_path.read_text())
-    assert cfg["default_project"] == "lab"
-    assert cfg["projects"]["lab"]["region"] == "me-central1"
+    assert cfg["default_project"] == "me-central1"
+    assert cfg["projects"]["me-central1"]["region"] == "me-central1"
 
 
-def test_configure_interactive_skips_config_without_project(monkeypatch, tmp_path) -> None:
+def test_configure_interactive_skips_config_without_project(
+    monkeypatch, tmp_path
+) -> None:
     import yaml
 
     from npa.clients import config as config_module
@@ -707,18 +2181,17 @@ def test_configure_token_factory_key_stores_under_tokens_nebius_token_factory_ke
     from npa.clients import credentials as credentials_module
 
     creds_path = tmp_path / "credentials.yaml"
-    creds_path.write_text(
-        yaml.safe_dump({"tokens": {"HF_TOKEN": "hf-existing"}})
-    )
+    creds_path.write_text(yaml.safe_dump({"tokens": {"HF_TOKEN": "hf-existing"}}))
     monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", creds_path)
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "tf-cli-key")
 
     result = runner.invoke(
         app,
-        ["configure", "--token-factory-key", "tf-cli-key"],
+        ["configure", "--show", "--save-env-credentials"],
     )
 
     assert result.exit_code == 0, result.output
-    assert "tokens.NEBIUS_TOKEN_FACTORY_KEY" in result.output
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in result.output
     stored = yaml.safe_load(creds_path.read_text())
     assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-cli-key"
     assert stored["tokens"]["HF_TOKEN"] == "hf-existing"
@@ -770,7 +2243,6 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
             {
                 "tokens": {
                     "HF_TOKEN": "hf-existing",
-                    "NEBIUS_AI_CLOUD_KEY": "aicloud-existing",
                     "NEBIUS_TOKEN_FACTORY_KEY": "tf-existing",
                     "NGC_API_KEY": "ngc-existing",
                 },
@@ -789,22 +2261,24 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
     _stub_nebius_defaults(monkeypatch)
 
     # Skip everything except HF token.
-    answers = "\n".join(
-        [
-            "",  # project id
-            "",  # tenant id
-            "",  # region
-            "",  # registry
-            "",  # S3 access key id
-            "",  # S3 secret access key
-            "",  # S3 endpoint
-            "",  # S3 bucket
-            "hf-updated",  # HF token
-            "",  # AI Cloud API key (unchanged)
-            "",  # Token Factory API key (unchanged)
-            "",  # NGC API key (unchanged)
-        ]
-    ) + "\n"
+    answers = (
+        "\n".join(
+            [
+                "",  # tenant id
+                "",  # project id
+                "",  # region
+                "",  # registry
+                "",  # S3 access key id
+                "",  # S3 secret access key
+                "",  # S3 endpoint
+                "",  # S3 bucket
+                "hf-updated",  # HF token
+                "",  # Token Factory API key (unchanged)
+                "",  # NGC API key (unchanged)
+            ]
+        )
+        + "\n"
+    )
     result = runner.invoke(
         app,
         ["configure", "--interactive", "--no-provision"],
@@ -814,7 +2288,7 @@ def test_configure_interactive_updates_selected_token_and_preserves_skipped_toke
     assert result.exit_code == 0, result.output
     stored = yaml.safe_load(creds_path.read_text())
     assert stored["tokens"]["HF_TOKEN"] == "hf-updated"
-    assert stored["tokens"]["NEBIUS_AI_CLOUD_KEY"] == "aicloud-existing"
+    assert "NEBIUS_AI_CLOUD_KEY" not in stored["tokens"]
     assert stored["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "tf-existing"
     assert stored["tokens"]["NGC_API_KEY"] == "ngc-existing"
 
@@ -823,7 +2297,9 @@ def test_configure_creates_nebius_profile_when_missing(monkeypatch, tmp_path) ->
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
 
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     # A nebius binary exists but no profile is ready until we "create" one.
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
@@ -853,7 +2329,9 @@ def test_configure_detects_existing_nebius_profile(monkeypatch, tmp_path) -> Non
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
 
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: True)
 
@@ -892,7 +2370,7 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
         monkeypatch,
         project="project-from-profile",
         tenant="tenant-from-profile",
-        registry="cr.eu-west1.nebius.cloud/reg-abc",
+        registry="cr.eu-north1.nebius.cloud/reg-abc",
     )
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
     monkeypatch.setattr(
@@ -902,39 +2380,86 @@ def test_configure_existing_profile_writes_config_with_explicit_ids(
             "nebius_api_key": "AKIAEXISTING",
             "nebius_secret_key": "existing-secret",
             "s3_bucket": "existing-bucket",
-            "s3_endpoint": "https://storage.eu-west1.nebius.cloud",
+            "s3_endpoint": "https://storage.eu-north1.nebius.cloud",
         },
     )
 
-    answers = "\n".join(
-        [
-            "project-from-profile",  # project id (entered explicitly)
-            "tenant-from-profile",   # tenant id (entered explicitly)
-            "",                  # region (accept eu-west1 from registry)
-            "",                  # registry (accept discovered)
-            "",                  # bucket name (Enter = default)
-            "hf_from_profile",   # HF token
-            "",                  # AI Cloud API key (skip)
-            "",                  # Token Factory API key (skip)
-            "",                  # NGC API key (skip)
-            "",                  # project alias (default = region)
-        ]
-    ) + "\n"
+    answers = (
+        "\n".join(
+            [
+                "tenant-from-profile",  # tenant id (entered explicitly)
+                "project-from-profile",  # project id (entered explicitly)
+                "",  # region (accept eu-north1 from registry)
+                "",  # registry (accept discovered)
+                "",  # bucket name (Enter = default)
+                "hf_from_profile",  # HF token
+                "",  # Token Factory API key (skip)
+                "",  # NGC API key (skip)
+                "",  # project alias (default = region)
+            ]
+        )
+        + "\n"
+    )
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
     assert "Nebius CLI profile detected" in result.output
     config = yaml.safe_load(config_path.read_text())
-    assert config["projects"]["eu-west1"]["project_id"] == "project-from-profile"
-    assert config["projects"]["eu-west1"]["tenant_id"] == "tenant-from-profile"
-    assert config["projects"]["eu-west1"]["region"] == "eu-west1"
+    assert config["projects"]["eu-north1"]["project_id"] == "project-from-profile"
+    assert config["projects"]["eu-north1"]["tenant_id"] == "tenant-from-profile"
+    assert config["projects"]["eu-north1"]["region"] == "eu-north1"
+    assert (
+        config["projects"]["eu-north1"]["container_registry"]
+        == "cr.eu-north1.nebius.cloud/reg-abc"
+    )
+
+
+def test_configure_defaults_to_eu_north1_registry_over_other_region(
+    monkeypatch, tmp_path
+) -> None:
+    """A discovered non-eu-north1 registry is not auto-selected; default stays eu-north1."""
+    import yaml
+
+    from npa.clients import config as config_module
+    from npa.clients import credentials as credentials_module
+    import npa.clients.nebius as nebius_module
+
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
+    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _stub_nebius_defaults(
+        monkeypatch,
+        project="project-1",
+        tenant="tenant-1",
+        registry="cr.us-central1.nebius.cloud/u00xyz",
+    )
+    monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
+    monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
+
+    # Accept all defaults (Enter). The registry default must be eu-north1, not
+    # the discovered us-central1 registry.
+    answers = (
+        "\n".join(["tenant-1", "project-1", "", "", "", "", "", "", "", ""]) + "\n"
+    )
+    result = runner.invoke(app, ["configure", "--interactive"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    config = yaml.safe_load(config_path.read_text())
+    stanza = next(iter(config["projects"].values()))
+    assert stanza["container_registry"].startswith("cr.eu-north1.nebius.cloud/")
+    assert stanza["region"] == "eu-north1"
 
 
 def test_configure_stale_profile_shows_activate_guidance(monkeypatch, tmp_path) -> None:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
 
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
@@ -951,7 +2476,9 @@ def test_configure_stale_profile_shows_activate_guidance(monkeypatch, tmp_path) 
     assert "profiles exist but" in result.output
     assert "nebius profile activate" in result.output
     assert "Skipped Nebius profile creation" in result.output
-    assert "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
+    assert (
+        "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
+    )
     assert "--no-provision" in result.output
 
 
@@ -989,7 +2516,9 @@ def test_configure_user_declines_profile_creation(monkeypatch, tmp_path) -> None
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
 
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
@@ -1007,14 +2536,18 @@ def test_configure_user_declines_profile_creation(monkeypatch, tmp_path) -> None
     assert result.exit_code == 1, result.output
     assert "Skipped Nebius profile creation" in result.output
     assert "Re-run `npa configure`" in result.output
-    assert "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
+    assert (
+        "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
+    )
 
 
 def test_configure_profile_creation_fails_verification(monkeypatch, tmp_path) -> None:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
 
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
     readiness = iter([False, False])
@@ -1029,14 +2562,18 @@ def test_configure_profile_creation_fails_verification(monkeypatch, tmp_path) ->
     assert result.exit_code == 1, result.output
     assert "Could not verify a Nebius profile" in result.output
     assert "Re-run `npa configure`" in result.output
-    assert "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
+    assert (
+        "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
+    )
 
 
 def test_configure_profile_create_subprocess_fails(monkeypatch, tmp_path) -> None:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
 
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
@@ -1049,7 +2586,9 @@ def test_configure_profile_create_subprocess_fails(monkeypatch, tmp_path) -> Non
 
     assert result.exit_code == 1, result.output
     assert "Could not verify a Nebius profile" in result.output
-    assert "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
+    assert (
+        "auto-provisioning needs an authenticated Nebius CLI profile" in result.output
+    )
 
 
 def test_configure_full_interactive_bootstraps_profile_and_provisions(
@@ -1077,9 +2616,7 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
         return True
 
     monkeypatch.setattr(cli_main, "_create_nebius_profile", fake_create)
-    _stub_nebius_defaults(
-        monkeypatch, project="project-12345", tenant="tenant-abcde"
-    )
+    _stub_nebius_defaults(monkeypatch, project="project-12345", tenant="tenant-abcde")
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: False)
     monkeypatch.setattr(
         nebius_module,
@@ -1092,23 +2629,25 @@ def test_configure_full_interactive_bootstraps_profile_and_provisions(
         },
     )
 
-    answers = "\n".join(
-        [
-            "y",                 # create Nebius profile
-            "project-12345",     # project id
-            "tenant-abcde",      # tenant id
-            "",                  # region (default eu-north1)
-            "",                  # registry (default)
-            "",                  # bucket name (Enter = default)
-            "",                  # storage class (standard default)
-            "",                  # size GB (default 50)
-            "hf_secret_token",   # HF token
-            "",                  # AI Cloud API key (skip)
-            "",                  # Token Factory API key (skip)
-            "",                  # NGC API key (skip)
-            "",                  # project alias (default = region)
-        ]
-    ) + "\n"
+    answers = (
+        "\n".join(
+            [
+                "y",  # create Nebius profile
+                "tenant-abcde",  # tenant id
+                "project-12345",  # project id
+                "",  # region (default eu-north1)
+                "",  # registry (default)
+                "",  # bucket name (Enter = default)
+                "",  # storage class (standard default)
+                "",  # size GB (default 50)
+                "hf_secret_token",  # HF token
+                "",  # Token Factory API key (skip)
+                "",  # NGC API key (skip)
+                "",  # project alias (default = region)
+            ]
+        )
+        + "\n"
+    )
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1127,7 +2666,9 @@ def test_configure_missing_nebius_cli_shows_install_guidance(
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
 
-    monkeypatch.setattr(credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml")
+    monkeypatch.setattr(
+        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
+    )
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr(cli_main.shutil, "which", lambda name: None)
     monkeypatch.setattr(cli_main, "_nebius_profile_ready", lambda **_: False)
@@ -1190,6 +2731,32 @@ def test_nebius_profile_not_ready_without_binary(monkeypatch) -> None:
     assert cli_main._nebius_profile_ready() is False
 
 
+def test_nebius_profile_ready_strips_ambient_token(monkeypatch) -> None:
+    """The readiness probe must reflect the profile, not a stale inherited token.
+
+    A stale NEBIUS_IAM_TOKEN / NEBIUS_IAM_TOKEN_FILE lets the CLI skip a real
+    token exchange, so the probe must run with both stripped from the env.
+    """
+    monkeypatch.setattr(cli_main.shutil, "which", lambda name: "/usr/bin/nebius")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "stale-token")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN_FILE", "/tmp/stale-token")
+    monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
+
+    captured: dict = {}
+
+    class _Result:
+        returncode = 0
+
+    def fake_runner(cmd, **kwargs):
+        captured.update(kwargs)
+        return _Result()
+
+    assert cli_main._nebius_profile_ready(runner=fake_runner) is True
+    passed_env = captured["env"]
+    assert "NEBIUS_IAM_TOKEN" not in passed_env
+    assert "NEBIUS_IAM_TOKEN_FILE" not in passed_env
+
+
 def test_app_entry_typed_error_exits_one_without_traceback(monkeypatch, capsys) -> None:
     def fail() -> None:
         raise NotEnoughResourcesError(
@@ -1227,7 +2794,9 @@ def test_app_entry_typed_error_json_mode(monkeypatch, capsys) -> None:
     assert payload["project_id"] == "project-1"
 
 
-def test_app_entry_unexpected_error_no_stacktrace_by_default(monkeypatch, capsys) -> None:
+def test_app_entry_unexpected_error_no_stacktrace_by_default(
+    monkeypatch, capsys
+) -> None:
     def fail() -> None:
         raise RuntimeError("boom")
 

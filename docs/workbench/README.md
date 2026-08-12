@@ -16,6 +16,7 @@ workflows, and operational runbooks.
 | [../../npa/workflows/workbench/npa-workflows/README.md](../../npa/workflows/workbench/npa-workflows/README.md) | **Workflow catalog** — find the right `npa.workflow` spec by what you want to do |
 | [oss-solution-catalog.md](oss-solution-catalog.md) | OSS Physical AI registry candidates with pinned refs, cloud-fit notes, and E2E gates |
 | [cli-sdk-yaml-walkthrough.md](cli-sdk-yaml-walkthrough.md) | How to call any Workbench tool through the CLI, SDK, and SkyPilot YAML against the same service |
+| [guides/physical-ai-data-factory-deploy.md](guides/physical-ai-data-factory-deploy.md) | **Physical AI Data Factory** — copy-paste runbook (stage input frames, submit) for the annotate → Cosmos augment → curate → visualize blueprint |
 | [../quickstart.md](../quickstart.md) | Full `npa` CLI quickstart |
 | [../cli/README.md](../cli/README.md) | CLI command reference index |
 | [../cli-errors.md](../cli-errors.md) | End-user CLI error formatting, exit codes, and JSON error output |

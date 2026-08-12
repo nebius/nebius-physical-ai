@@ -15,6 +15,12 @@ def test_run_recording_detected_as_run_specific():
     assert R.is_stock_demo_recording(_RUN_RRD) is False
 
 
+def test_paidf_recording_detected_as_run_specific():
+    paidf = b"RRF2\x00...input/frame_0000...augmented/aug-paidf-0...pipeline/3_grade..."
+    assert R.recording_has_run_entities(paidf) is True
+    assert R.is_stock_demo_recording(paidf) is False
+
+
 def test_stock_demo_detected_and_not_run_specific():
     assert R.recording_has_run_entities(_DEMO_RRD) is False
     assert R.is_stock_demo_recording(_DEMO_RRD) is True

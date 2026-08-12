@@ -14,6 +14,8 @@ SUPPORTED_REGIONS = {DEFAULT_REGION, "us-central1"}
 DEFAULT_K8S_VERSION = "1.33"
 DEFAULT_NODE_PLATFORM = "cpu-e2"
 DEFAULT_NODE_PRESET = "2vcpu-8gb"
+# Canonical first-run / PAIDF shape.  Provisioning, workflow planning and the
+# Terraform defaults import or mirror this one documented value.
 DEFAULT_CPU_NODE_GROUP_PRESET = "8vcpu-32gb"
 DEFAULT_NODE_COUNT = 1
 DEFAULT_BOOT_DISK_TYPE = "network_ssd"
@@ -146,7 +148,9 @@ class NodeGroupConfig:
         gpu_type = self.gpu_type.lower().strip()
         if gpu_type not in GPU_TYPE_DEFAULTS:
             allowed = ", ".join(sorted(GPU_TYPE_DEFAULTS))
-            raise ClusterConfigError(f"unsupported GPU type '{self.gpu_type}'. Supported: {allowed}")
+            raise ClusterConfigError(
+                f"unsupported GPU type '{self.gpu_type}'. Supported: {allowed}"
+            )
         object.__setattr__(self, "gpu_type", gpu_type)
 
         name = self.name.strip() or default_node_group_name(self.cluster_name, gpu_type)
@@ -156,7 +160,9 @@ class NodeGroupConfig:
         platform = self.platform.strip() or GPU_TYPE_DEFAULTS[gpu_type]["platform"]
         object.__setattr__(self, "platform", platform)
 
-        object.__setattr__(self, "capacity_block_group", self.capacity_block_group.strip())
+        object.__setattr__(
+            self, "capacity_block_group", self.capacity_block_group.strip()
+        )
 
         preset = resolve_gpu_preset(gpu_type, self.node_preset)
         object.__setattr__(self, "node_preset", preset)
@@ -164,14 +170,18 @@ class NodeGroupConfig:
         if self.node_count < 1 or self.node_count > 100:
             raise ClusterConfigError("--node-count must be between 1 and 100")
         if (self.autoscaling_min is None) != (self.autoscaling_max is None):
-            raise ClusterConfigError("--autoscaling-min and --autoscaling-max must be provided together")
+            raise ClusterConfigError(
+                "--autoscaling-min and --autoscaling-max must be provided together"
+            )
         if self.autoscaling_min is not None and self.autoscaling_max is not None:
             if self.autoscaling_min < 0:
                 raise ClusterConfigError("--autoscaling-min must be at least 0")
             if self.autoscaling_max < 1:
                 raise ClusterConfigError("--autoscaling-max must be at least 1")
             if self.autoscaling_min > self.autoscaling_max:
-                raise ClusterConfigError("--autoscaling-min must be less than or equal to --autoscaling-max")
+                raise ClusterConfigError(
+                    "--autoscaling-min must be less than or equal to --autoscaling-max"
+                )
         if not isinstance(self.public_ip, bool):
             raise ClusterConfigError("public_ip must be a boolean")
         if self.timeout_minutes < 1:
@@ -219,21 +229,27 @@ class CpuNodeGroupConfig:
         object.__setattr__(self, "node_preset", preset)
         validate_node_shape(platform, preset)
 
-        name = self.name.strip() or default_cpu_node_group_name(self.cluster_name, preset)
+        name = self.name.strip() or default_cpu_node_group_name(
+            self.cluster_name, preset
+        )
         validate_cluster_name(name)
         object.__setattr__(self, "name", name)
 
         if self.node_count < 1 or self.node_count > 100:
             raise ClusterConfigError("--node-count must be between 1 and 100")
         if (self.autoscaling_min is None) != (self.autoscaling_max is None):
-            raise ClusterConfigError("--autoscaling-min and --autoscaling-max must be provided together")
+            raise ClusterConfigError(
+                "--autoscaling-min and --autoscaling-max must be provided together"
+            )
         if self.autoscaling_min is not None and self.autoscaling_max is not None:
             if self.autoscaling_min < 0:
                 raise ClusterConfigError("--autoscaling-min must be at least 0")
             if self.autoscaling_max < 1:
                 raise ClusterConfigError("--autoscaling-max must be at least 1")
             if self.autoscaling_min > self.autoscaling_max:
-                raise ClusterConfigError("--autoscaling-min must be less than or equal to --autoscaling-max")
+                raise ClusterConfigError(
+                    "--autoscaling-min must be less than or equal to --autoscaling-max"
+                )
         if not isinstance(self.public_ip, bool):
             raise ClusterConfigError("public_ip must be a boolean")
         if self.timeout_minutes < 1:
@@ -257,14 +273,18 @@ def validate_cluster_name(name: str) -> None:
 def validate_region(region: str) -> None:
     if region not in SUPPORTED_REGIONS:
         allowed = ", ".join(sorted(SUPPORTED_REGIONS))
-        raise ClusterConfigError(f"unsupported region '{region}'. Supported regions: {allowed}")
+        raise ClusterConfigError(
+            f"unsupported region '{region}'. Supported regions: {allowed}"
+        )
 
 
 def validate_node_shape(platform: str, preset: str) -> None:
     presets = SUPPORTED_NODE_PRESETS.get(platform)
     if not presets:
         allowed = ", ".join(sorted(SUPPORTED_NODE_PRESETS))
-        raise ClusterConfigError(f"unsupported CPU node platform '{platform}'. Supported: {allowed}")
+        raise ClusterConfigError(
+            f"unsupported CPU node platform '{platform}'. Supported: {allowed}"
+        )
     if preset not in presets:
         allowed = ", ".join(sorted(presets))
         raise ClusterConfigError(
@@ -292,7 +312,9 @@ def resolve_gpu_preset(gpu_type: str, override: str = "") -> str:
     defaults = GPU_TYPE_DEFAULTS.get(normalized)
     if not defaults:
         allowed = ", ".join(sorted(GPU_TYPE_DEFAULTS))
-        raise ClusterConfigError(f"unsupported GPU type '{gpu_type}'. Supported: {allowed}")
+        raise ClusterConfigError(
+            f"unsupported GPU type '{gpu_type}'. Supported: {allowed}"
+        )
     return override.strip() or defaults["preset"]
 
 

@@ -33,6 +33,9 @@ class SubmitLiveCase:
     secret_envs: tuple[str, ...] = ()
     requires_token_factory: bool = False
     plan_only: bool = False
+    #: Required, machine-checked explanation for every non-executing matrix
+    #: entry. Empty for every real-submit case.
+    plan_only_justification: str = ""
     #: Skip this twin in the bounded daily GPU rotation because it cannot pass as
     #: a standalone submit today (needs a prior workflow's artifact, an input not
     #: staged into the job, or infra the npa.workflow render doesn't yet wire).
@@ -55,6 +58,9 @@ class SubmitLiveCase:
     #: the live registry at submit time). Set for specs whose stages run inside a
     #: baked image instead of the default SkyPilot image + staged npa source.
     image_tool: str = ""
+    #: Exact toolRef -> image-tool mappings for workflows that require several
+    #: distinct workbench images in one run.
+    image_overrides: tuple[tuple[str, str], ...] = ()
     #: Per-wave deadline for this case, in seconds. 0 = use
     #: ``NPA_E2E_NPA_WORKFLOW_SUBMIT_MAX_WAIT_SECONDS``. Set it when one case is
     #: much slower than the rest (a 8 GB image pull plus GPU training) so the whole
@@ -590,6 +596,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         plan_only=True,
+        plan_only_justification="three execution-contract gaps: missing VM config, disconnected decision, and local-only publish",
         notes=(
             "Plan-only: Isaac Lab train/eval default to a VM config absent on a fresh "
             "worker, the decision stage does not consume the evaluation report, and "
@@ -601,6 +608,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         plan_only=True,
+        plan_only_justification="inherits the hardening workflow's missing VM config, disconnected decision, and local-only publish",
         notes=(
             "Plan-only: the inherited Isaac Lab train/eval needs a VM config missing on "
             "fresh workers, its decision ignores evaluation, and publish writes only "
@@ -608,7 +616,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "those gaps."
         ),
     ),
-    # --- Plan-only: stubs or separately covered BYOF onboarding flows ---
+    # --- Real PAIDF GPU-daily acceptance ---
     SubmitLiveCase(
         "physical-ai-data-factory.yaml",
         "multi",
@@ -619,64 +627,78 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "HF_TOKEN",
         ),
         requires_token_factory=True,
-        plan_only=True,
+        runtime=True,
+        config_vars=(("n_augmentations", "1"),),
+        image_overrides=(
+            ("workbench.cosmos2.transfer_execute", "cosmos2-transfer"),
+            ("workbench.cosmos_evaluator.evaluate", "cosmos-evaluator"),
+            ("workbench.cosmos_curate.curate", "cosmos-curate"),
+            ("workbench.fiftyone.curate_augmented", "fiftyone"),
+        ),
+        max_wait_seconds=7200,
         notes=(
-            "Physical AI Data Factory blueprint. Dynamic gate (needs "
-            "--assume-decision). All stages are real (augment = cosmos2."
-            "transfer_execute on GPU; curate/finalize/grade = real run.shell). "
-            "Plan-only in CI because a real Cosmos Transfer 2.5 run is heavy "
-            "(gated-weight download + diffusion) and needs the npa-cosmos2-transfer "
-            "image rebuilt from this branch; live render/submit-prep is validated "
-            "without burning a GPU."
+            "Authorized GPU-daily PAIDF acceptance. Uses the pinned real RoboPro "
+            "starter input, runs the dynamic gate through the runtime orchestrator, "
+            "and asserts real Cosmos Transfer/Evaluator/Curator/FiftyOne and Rerun "
+            "artifacts. One augmentation keeps the daily proof decisive."
         ),
     ),
+    # --- Plan-only: stubs or separately covered BYOF onboarding flows ---
     SubmitLiveCase(
         "sim2real-vlm-rl.yaml",
         "multi",
         secret_envs=("HF_TOKEN",),
         plan_only=True,
+        plan_only_justification="contains known stub toolRefs without a real execution contract",
         notes="Stub toolRefs; plan-only until engine wiring lands.",
     ),
     SubmitLiveCase(
         "byof.yaml",
         "multi",
         plan_only=True,
+        plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="Delegates to run_byof_repo.py; covered by byof live e2e.",
     ),
     SubmitLiveCase(
         "byof-maniskill.yaml",
         "multi",
         plan_only=True,
+        plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
         "byof-mujoco-playground.yaml",
         "multi",
         plan_only=True,
+        plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
         "byof-robocasa.yaml",
         "multi",
         plan_only=True,
+        plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
         "byof-openpi.yaml",
         "multi",
         plan_only=True,
+        plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
         "byof-droid-policy-learning.yaml",
         "multi",
         plan_only=True,
+        plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
         "byof-open-dreamer.yaml",
         "multi",
         plan_only=True,
+        plan_only_justification="delegated multi-GPU BYOF execution is covered by its dedicated Open Dreamer live tier",
         notes=(
             "BYOF onboarding flow; the real multi-GPU path is covered by "
             "test_byof_open_dreamer_live_e2e.py."
@@ -692,6 +714,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
         ),
         plan_only=True,
+        plan_only_justification=(
+            "the dedicated RTX PRO live E2E owns the large gated model run"
+        ),
         notes=(
             "BYOF Wan 2.2 TI2V-5B candidate. Plan-only in the shared matrix: "
             "the real pushed-image RTX PRO generation, decoded MP4, verified RRD, "
@@ -708,6 +733,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
         ),
         plan_only=True,
+        plan_only_justification=(
+            "the dedicated four-B200 live E2E owns the multi-GPU gated model run"
+        ),
         notes=(
             "Plan-only in the shared submit matrix: the dedicated Wan live E2E "
             "runs the four-B200 TI2V-5B torchrun path and verifies immutable-image reuse, all four NCCL "
@@ -720,6 +748,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
         plan_only=True,
+        plan_only_justification="contains a stub FiftyOne state and colliding synthetic output targets",
         notes=(
             "workbench.fiftyone.launch_app is a stub, and both synthetic shard states "
             "currently target the same transfer manifest object; keep plan-only until "
@@ -730,6 +759,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sim2real-gpu-cross-region-agent.yaml",
         "multi",
         plan_only=True,
+        plan_only_justification="three of five advertised toolRefs remain stubs",
         notes=(
             "Three of five toolRefs are stubs: policy_rollouts, heldout_eval, and "
             "finalize."
@@ -739,6 +769,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "av-night-scene-hardening.yaml",
         "multi",
         plan_only=True,
+        plan_only_justification="terminal FiftyOne launch state remains a stub",
         notes=(
             "The terminal workbench.fiftyone.launch_app state is a stub; retain a full "
             "render preflight until the review toolRef becomes executable."
@@ -748,6 +779,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "rl-policy-training-sim-success.yaml",
         "multi",
         plan_only=True,
+        plan_only_justification="partial Isaac twin lacks the required Hydra execution parity",
         notes="Partial Isaac twin; plan-only until Hydra parity.",
     ),
 )

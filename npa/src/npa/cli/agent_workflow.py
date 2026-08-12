@@ -1325,6 +1325,8 @@ def _data_factory_spec() -> dict[str, Any]:
         "config_runtime": OrderedDict(
             {
                 "prefix": "physical-ai-data-factory/{{run.id}}",
+                "seed_fixture": "false",
+                "seed_default_input": "false",
                 # What to augment: a free-form hint surfaced as the augment prompt /
                 # input-conditioning subject (the run's real input clips are the base).
                 "augment_subject": "the input robot clips",
@@ -1357,6 +1359,7 @@ def _data_factory_spec() -> dict[str, Any]:
                 "curator_clip_len_s": "3",
                 "curator_min_clip_len_s": "1",
                 "curator_motion_filter": "score-only",
+                "fiftyone_dedup_threshold": "0.10",
             }
         ),
         "config_uri": OrderedDict(
@@ -1421,6 +1424,9 @@ def _data_factory_spec() -> dict[str, Any]:
                                     "{{config.configs_uri}}",
                                     "{{config.n_augmentations}}",
                                     "{{run.id}}",
+                                    "{{config.images_uri}}",
+                                    "{{config.seed_default_input}}",
+                                    "{{config.seed_fixture}}",
                                     "{{config.augment_subject}}",
                                 ]
                             }

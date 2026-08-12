@@ -21,7 +21,7 @@ kind: Workflow
 #                                       clips so the amplified set ships labeled)
 #   Stage 4  Curation                -> cosmos-curate      (NVIDIA Cosmos Curator:
 #                                       split / transcode / motion-score / catalog)
-#                                    -> curate             (Voxel51 / FiftyOne review
+#                                    -> curate             (real FiftyOne Brain review
 #                                       over the curated set)
 #            Finalize                 -> finalize          (graded-dataset report)
 #
@@ -44,6 +44,28 @@ kind: Workflow
 # through S3 under a single run prefix so input / intermediate / output artifacts
 # are all discoverable in the NPA agent artifact browser
 # (GET /api/artifacts/runs?prefix=physical-ai-data-factory).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# STARTER INPUT -- PREPARED AND VERIFIED BEFORE GPU PROVISIONING
+# ─────────────────────────────────────────────────────────────────────────────
+# The operator-side submit command prepares input/ before image preflight or
+# provisioning. With no selector it fetches the pinned RoboPro physical capture;
+# --input-video and --input-uri replace it. The verified source is normalized to
+# a 93-frame H.264 conditioning clip and eight captionable frames under:
+#
+#     s3://{{config.bucket}}/physical-ai-data-factory/<run-id>/input/
+#
+# --seed-fixture is the only path that generates geometric frames. It is explicit
+# synthetic developer/test data and never a production default or fallback.
+#
+# Every augment is input-conditioned by input/conditioning.mp4 through the
+# catalog's mandatory --condition-on-input flag (equivalent to
+# NPA_COSMOS_CONDITION_ON_INPUT=1). No decorative fixed control or fallback media
+# is used.
+#
+# Copy-paste default/local/S3/fixture selectors and provenance details:
+#   docs/workbench/guides/physical-ai-data-factory-deploy.md  ("Select the starter input")
+# ─────────────────────────────────────────────────────────────────────────────
 
 metadata:
   name: physical-ai-data-factory
@@ -61,6 +83,10 @@ config:
   prefix: "physical-ai-data-factory/{{run.id}}"
 
   # --- Augmentation + grading knobs (Stage 1 + Evaluate loop) ---
+  # Synthetic geometry is an explicit developer/test opt-in via --seed-fixture.
+  # The old spelling remains false for already-explicit compatibility automation.
+  seed_fixture: "false"
+  seed_default_input: "false"
   n_augmentations: "2"            # augmented variants sampled per source video
   augment_subject: "the input robot clips"  # included in sampled Cosmos prompts
   refinement_iterations: "2"      # max evaluate/validate passes before reject
@@ -100,6 +126,7 @@ config:
   curator_clip_len_s: "3"
   curator_min_clip_len_s: "1"
   curator_motion_filter: score-only
+  fiftyone_dedup_threshold: "0.10"
 
   # --- Models (verified available on Nebius Token Factory) ---
   caption_model: "Qwen/Qwen2.5-VL-72B-Instruct"
@@ -108,8 +135,10 @@ config:
   max_tokens: "512"
 
   # --- S3 artifact layout: input / intermediate / output under one run prefix ---
-  # Mandatory managed-transfer input: input_uri/trigger_uri must contain at least
-  # one .mp4, .mov, .webm, .mkv, or .avi. Missing video fails before inference.
+  # input_uri / images_uri must contain PNG/JPEG frames for captioning. The
+  # managed transfer path prefers a supported video when present, otherwise it
+  # assembles those frames into a temporary conditioning clip. Missing inputs
+  # fail before their respective caption/inference work starts.
   input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   images_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
   configs_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/"
@@ -128,7 +157,7 @@ config:
   # carryover from the AV/BDD100K curation pipelines; this video blueprint has no
   # LanceDB table, so it simply points at the augmented set (same prefix as
   # augment_uri) -- i.e. "the data to curate". The curate stage itself runs a
-  # real run.shell report over augment_uri (not the fiftyone.launch_app toolRef).
+  # real FiftyOne Brain review over augment_uri.
   lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
   # Cosmos Curator writes its own canonical tree (clips/ metas/v0/ processed_videos/)
   # under curated_clips_uri, and its summary under curator_report_uri; the FiftyOne
@@ -141,6 +170,16 @@ config:
   run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
   rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd"
   finalize_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
+  input_provenance_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/provenance.json"
+  input_source_kind: ""
+  input_origin: ""
+  input_origin_label: ""
+  input_sha256: ""
+  input_license: ""
+  input_staged_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  input_authoritative_url: ""
+  input_immutable_revision: ""
+  input_attribution: ""
 
 resources:
   gpu:
@@ -159,8 +198,18 @@ resources:
     # override instead of OOM-killing four concurrent Cosmos workers.
     cpus: 16
     memory: 128Gi
+    # Provision the cluster through npa before submit if its context is absent,
+    # so one `npa workbench workflow submit ...` covers the whole
+    # path (prerequisite check -> provision -> stage source -> launch) without a
+    # blueprint-specific command. `npa provision-if-absent` beforehand is still
+    # fine, and `--no-deploy-if-absent` opts out. The GPU quota gate in
+    # `npa cluster up` refuses before spending anything when quota is short.
+    deployIfAbsent: true
   cpu:
     cloud: kubernetes
+    # The same cluster serves both profiles, so only the GPU one declares
+    # deployIfAbsent; these requests must fit its CPU node (see
+    # tests/guardrails/test_default_cluster_fits_quickstart.py).
     cpus: 4
     memory: 16Gi
 
@@ -170,7 +219,7 @@ states:
   generate-configs:
     description: >
       Stage 1 - Config Generation. Sample appearance-only augmentation variable
-      combinations (lighting / background / cloth_color / surface) and write a
+      combinations (lighting / background / color_grade / surface_finish) and write a
       per-run config manifest that drives the augment stage.
     resources: cpu
     run:
@@ -183,16 +232,23 @@ states:
         - "{{config.configs_uri}}"
         - "{{config.n_augmentations}}"
         - "{{run.id}}"
+        - "{{config.images_uri}}"
+        - "{{config.seed_default_input}}"
+        - "{{config.seed_fixture}}"
         - "{{config.augment_subject}}"
     outputs:
       - uri: "{{config.configs_uri}}manifest.json"
         schema: npa.data_factory.configs.v1
+      - uri: "{{config.input_provenance_uri}}"
+        schema: npa.paidf.input-provenance.v1
     next: annotate-original
 
   annotate-original:
     description: >
-      Stage 2a - Understand & Annotate. Dense-caption the source video frames with a
-      hosted Token Factory VLM (zero-GPU) to produce pseudo-labels for the originals.
+      Stage 2a - Understand & Annotate. Dense-caption the derived conditioning
+      frames with a hosted Token Factory VLM (zero-GPU). The operator-side prepare
+      step extracts these from the verified source; fixture mode creates explicitly
+      synthetic frames. Missing input fails before provisioning or stage execution.
     needs: [generate-configs]
     toolRef: workbench.token_factory.caption
     resources: cpu
@@ -209,12 +265,13 @@ states:
       Stage 2b - Augment & Multiply. Cosmos Transfer 2.5 runs ONE inference per
       sampled appearance combo (config.n_augmentations), so N combos -> N scenario
       variants, each published as its own cosmos_augmented/<clip>/ dir (GPU tier).
-      Appearance-only: lighting, background, cloth_color, surface -- never scene
+      Appearance-only: lighting, background, color grade, surface finish -- never scene
       geometry.
-      Every managed variant conditions on a supported video under trigger_uri
-      (the run's input/ prefix), preserving its geometry/motion while changing its
-      appearance. Missing or inaccessible input fails closed before inference.
-      No bundled upstream media is available as a fallback.
+      Every managed variant conditions on the prepared 93-frame
+      input/conditioning.mp4 selected from trigger_uri, preserving geometry/motion
+      while changing appearance. The mandatory --condition-on-input catalog flag
+      prevents the staged source from being decorative. Missing or inaccessible
+      input fails closed; no bundled or geometric fallback is available.
       This is a member of the `grade`
       refinement loop: on a loop_back decision the loop re-runs augment (re-render),
       re-verify, and re-gate, so a failed batch is actually re-augmented.
@@ -361,15 +418,16 @@ states:
 
   curate:
     description: >
-      Stage 4b - Curation review (Voxel51 / FiftyOne). Run REAL FiftyOne Brain
+      Stage 4b - Curation review. Run REAL FiftyOne Brain
       curation over the augmented + graded scenario variants: build a
       fiftyone.Dataset, compute per-variant uniqueness, detect near-duplicates, and
       record which variants are kept vs dropped, plus clip/frame counts and per-clip
       coverage. The Cosmos Curator summary from the previous stage is merged in, so
       one report carries both the curator's clip catalog and the review decisions.
-      When FiftyOne is available (the curate stage runs in the npa-fiftyone image)
-      the report's curation_engine is "fiftyone-brain"; otherwise it degrades to
-      the report-only counts path so the pipeline never regresses.
+      This toolRef routes the stage into the npa-fiftyone image and requires the
+      report's curation_engine to be "fiftyone-brain". If the real component is
+      unavailable the stage fails closed; it never markets counts-only output as
+      FiftyOne review.
     needs: [cosmos-curate]
     toolRef: workbench.fiftyone.curate_augmented
     resources: cpu

@@ -38,6 +38,13 @@ resources:
 """
 
 
+@pytest.fixture(autouse=True)
+def _registry_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "cr.eu-north1.nebius.cloud")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "iam")
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+
+
 def test_hosts_are_deduplicated_per_registry() -> None:
     assert nebius_registry_hosts(RENDERED) == [
         "cr.eu-north1.nebius.cloud",
@@ -142,10 +149,10 @@ def test_no_refresh_without_a_private_image(tmp_path: Path, monkeypatch: pytest.
     assert calls == []
 
 
-def test_a_refresh_failure_does_not_block_the_submit(
+def test_a_refresh_failure_blocks_the_submit_before_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An operator without kubectl reach, or a public-image cluster, still submits."""
+    """A private-image job must not launch without its Kubernetes pull secret."""
 
     def boom(**kwargs: object) -> None:
         raise RuntimeError("kubectl not found")
@@ -156,7 +163,8 @@ def test_a_refresh_failure_does_not_block_the_submit(
     rendered = tmp_path / "workflow.yaml"
     rendered.write_text(RENDERED, encoding="utf-8")
 
-    _refresh_kubernetes_pull_secrets(rendered)  # must not raise
+    with pytest.raises(RuntimeError, match="imagePullSecret"):
+        _refresh_kubernetes_pull_secrets(rendered)
 
 
 def test_a_missing_rendered_file_is_ignored(tmp_path: Path) -> None:

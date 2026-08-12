@@ -1001,6 +1001,8 @@ class ServerlessClient:
         env: Mapping[str, str] | None = None,
         wrap_timeout: bool = True,
     ) -> subprocess.CompletedProcess[str]:
+        from npa.clients.nebius import nebius_cli_env
+
         full_args = [self._nebius_bin, *args]
         logger.debug("Running Nebius CLI: %s", shlex.join(_redact_cli_args(full_args)))
         effective_timeout = timeout or self._timeout
@@ -1010,7 +1012,9 @@ class ServerlessClient:
                 capture_output=True,
                 text=True,
                 timeout=effective_timeout,
-                env=dict(env) if env is not None else None,
+                # Always sanitize a stale NEBIUS_IAM_TOKEN so the CLI uses the
+                # active profile (whether or not a custom env was supplied).
+                env=nebius_cli_env(env),
             )
         except subprocess.TimeoutExpired as exc:
             if not wrap_timeout:

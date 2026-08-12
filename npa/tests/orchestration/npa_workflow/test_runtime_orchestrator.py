@@ -25,6 +25,7 @@ from npa.orchestration.npa_workflow.runtime import (
     RuntimeLedger,
     RuntimeOptions,
     SkyPilotWaveExecutor,
+    WaveAttempt,
     run_workflow_runtime,
     s3_trigger_waiter,
 )
@@ -242,6 +243,100 @@ class MemoryStore(RunStateStore):
         self.objects[key] = body
 
 
+def test_stage_ledger_heartbeat_requires_real_progress_and_poll_only_updates_observation() -> (
+    None
+):
+    state = RuntimeRunState(
+        workflow="synthetic",
+        run_id="ledger-heartbeat",
+        api_version="npa.workflow/v0.0.1",
+    )
+    base = {
+        "key": "wave-augment",
+        "states": ["augment"],
+        "attempt": 1,
+        "status": "running",
+        "sky_status": "RUNNING",
+        "job_id": "101",
+        "started_at": "2026-08-04T00:00:00Z",
+    }
+    state.record_wave(
+        {
+            **base,
+            "tasks": [
+                {
+                    "task_name": "augment",
+                    "status": "RUNNING",
+                    "last_progress_at": "2026-08-04T00:01:00Z",
+                }
+            ],
+            "observations": [{"observed_at": "2026-08-04T00:02:00Z"}],
+        }
+    )
+    # A later scheduler poll has no progress/heartbeat timestamp.
+    state.record_wave(
+        {
+            **base,
+            "tasks": [{"task_name": "augment", "status": "RUNNING"}],
+            "observations": [{"observed_at": "2026-08-04T00:07:00Z"}],
+        }
+    )
+
+    assert len(state.stages) == 1
+    stage = state.stages[0]
+    assert stage["managed_job_id"] == "101"
+    assert stage["last_heartbeat_at"] == "2026-08-04T00:01:00Z"
+    assert stage["heartbeat_source"] == "scheduler_task_progress"
+    assert stage["last_observed_at"] == "2026-08-04T00:07:00Z"
+
+
+def test_stage_ledger_keeps_attempts_and_parallel_job_attribution_separate() -> None:
+    state = RuntimeRunState(
+        workflow="synthetic",
+        run_id="ledger-attribution",
+        api_version="npa.workflow/v0.0.1",
+    )
+    state.record_wave(
+        {
+            "key": "parallel-1",
+            "states": ["shard-a", "shard-b"],
+            "attempt": 1,
+            "status": "failed",
+            "sky_status": "FAILED",
+            "job_id": "201",
+            "ended_at": "2026-08-04T00:03:00Z",
+        }
+    )
+    state.record_wave(
+        {
+            "key": "parallel-1",
+            "states": ["shard-a", "shard-b"],
+            "attempt": 2,
+            "status": "succeeded",
+            "sky_status": "SUCCEEDED",
+            "job_id": "202",
+            "ended_at": "2026-08-04T00:08:00Z",
+        }
+    )
+    state.record_wave(
+        {
+            "key": "finalize-1",
+            "states": ["finalize"],
+            "attempt": 1,
+            "status": "succeeded",
+            "sky_status": "SUCCEEDED",
+            "job_id": "203",
+        }
+    )
+
+    by_stage_attempt = {(item["stage"], item["attempt"]): item for item in state.stages}
+    assert by_stage_attempt[("shard-a", 1)]["managed_job_id"] == "201"
+    assert by_stage_attempt[("shard-b", 1)]["managed_job_id"] == "201"
+    assert by_stage_attempt[("shard-a", 2)]["managed_job_id"] == "202"
+    assert by_stage_attempt[("shard-b", 2)]["terminal_outcome"] == "succeeded"
+    assert by_stage_attempt[("finalize", 1)]["managed_job_id"] == "203"
+
+
 def _write_spec(tmp_path: Path, text: str, name: str = "spec.yaml") -> Path:
     path = tmp_path / name
     path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
@@ -269,6 +364,7 @@ def _executor(
     sleeps: list[float] | None = None,
     cancels: list[dict[str, Any]] | None = None,
     name_lookup_fn: Any | None = None,
+    reconcile_fn: Any | None = None,
 ) -> SkyPilotWaveExecutor:
     opts = options or RuntimeOptions(poll_seconds=0, max_wait_seconds=60)
     ledger = RuntimeLedger(
@@ -278,6 +374,19 @@ def _executor(
         api_version=spec.api_version,
         resume=opts.resume,
     )
+    effective_lookup = name_lookup_fn or (lambda name: [])
+
+    def default_reconcile(name: str, *, job_id: str = ""):
+        from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+        ids = [str(item) for item in effective_lookup(name)]
+        selected = job_id or (ids[0] if ids else "")
+        return (
+            ManagedJobEvidence("found", job_id=selected, status="UNKNOWN")
+            if selected
+            else ManagedJobEvidence("absent")
+        )
+
     return SkyPilotWaveExecutor(
         spec,
         run_id=run_id,
@@ -289,9 +398,12 @@ def _executor(
         timeline_fn=lambda job_id: [
             {"task_id": 0, "task_name": "t", "status": "SUCCEEDED", "job_id": job_id}
         ],
-        canceller=(lambda **kwargs: cancels.append(kwargs)) if cancels is not None else None,
+        canceller=(lambda **kwargs: cancels.append(kwargs))
+        if cancels is not None
+        else None,
         # Default: the launched name resolves to the id the fake submitter reported.
-        name_lookup_fn=name_lookup_fn if name_lookup_fn is not None else (lambda name: []),
+        name_lookup_fn=effective_lookup,
+        reconcile_fn=reconcile_fn or default_reconcile,
         sleeper=(sleeps.append if sleeps is not None else (lambda _seconds: None)),
         clock=_fake_clock(),
     )
@@ -310,7 +422,9 @@ def _fake_clock():
 # ------------------------------------------------------------------- early exit
 
 
-def test_runtime_early_exits_when_gate_promotes_on_first_iteration(tmp_path: Path) -> None:
+def test_runtime_early_exits_when_gate_promotes_on_first_iteration(
+    tmp_path: Path,
+) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     submitter = FakeSubmitter()
     executor = _executor(spec, submitter=submitter)
@@ -393,14 +507,19 @@ def test_runtime_sequence_matches_plan_time_unroll(
         decision_reader=_decision_reader(decisions),
     )
     runtime_states = [call["tasks"][0] for call in submitter.calls]
-    plan_states = [step.state for step in build_plan(spec, run_id="rt-eq", assume_decision=assume).steps]
+    plan_states = [
+        step.state
+        for step in build_plan(spec, run_id="rt-eq", assume_decision=assume).steps
+    ]
     assert runtime_states == plan_states
 
 
 # ---------------------------------------------------------------------- fan-out
 
 
-def test_runtime_launches_parallel_group_as_job_group_with_barrier(tmp_path: Path) -> None:
+def test_runtime_launches_parallel_group_as_job_group_with_barrier(
+    tmp_path: Path,
+) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     submitter = FakeSubmitter()
     executor = _executor(spec, submitter=submitter)
@@ -424,13 +543,17 @@ def test_runtime_launches_parallel_group_as_job_group_with_barrier(tmp_path: Pat
     assert [wave["kind"] for wave in report.waves] == ["parallel", "serial", "serial"]
 
 
-def test_runtime_max_concurrency_option_is_a_cap_not_an_override(tmp_path: Path) -> None:
+def test_runtime_max_concurrency_option_is_a_cap_not_an_override(
+    tmp_path: Path,
+) -> None:
     """--max-concurrency can only lower a group's declared bound (cost control)."""
 
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))  # group declares 2
 
     tighter = FakeSubmitter()
-    tight_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, max_concurrency=1)
+    tight_options = RuntimeOptions(
+        poll_seconds=0, max_wait_seconds=60, max_concurrency=1
+    )
     run_workflow_runtime(
         spec,
         run_id="rt-tight",
@@ -445,7 +568,9 @@ def test_runtime_max_concurrency_option_is_a_cap_not_an_override(tmp_path: Path)
     ]
 
     wider = FakeSubmitter()
-    wide_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, max_concurrency=8)
+    wide_options = RuntimeOptions(
+        poll_seconds=0, max_wait_seconds=60, max_concurrency=8
+    )
     run_workflow_runtime(
         spec,
         run_id="rt-wide",
@@ -511,7 +636,9 @@ def test_wave_retry_recovers_from_a_transient_failure(tmp_path: Path) -> None:
     )
 
     assert report.status == "succeeded"
-    attempts = [wave for wave in report.waves if wave["states"] == ["shard-a", "shard-b"]]
+    attempts = [
+        wave for wave in report.waves if wave["states"] == ["shard-a", "shard-b"]
+    ]
     assert [wave["attempt"] for wave in attempts] == [1, 2]
     assert attempts[0]["status"] == "failed"
     assert attempts[1]["status"] == "succeeded"
@@ -526,7 +653,9 @@ def test_wave_retry_exhausted_fails_the_run(tmp_path: Path) -> None:
         spec, status_fn=FakeStatus(["FAILED", "FAILED"]), options=options
     )
 
-    report = run_workflow_runtime(spec, run_id="rt-retry-fail", executor=executor, options=options)
+    report = run_workflow_runtime(
+        spec, run_id="rt-retry-fail", executor=executor, options=options
+    )
 
     assert report.status == "failed"
     assert "FAILED" in report.error
@@ -543,7 +672,9 @@ def test_timeout_cancels_the_managed_job(tmp_path: Path) -> None:
         cancels=cancels,
     )
 
-    report = run_workflow_runtime(spec, run_id="rt-timeout", executor=executor, options=options)
+    report = run_workflow_runtime(
+        spec, run_id="rt-timeout", executor=executor, options=options
+    )
 
     assert report.status == "failed"
     assert "did not reach a terminal status" in report.error
@@ -571,7 +702,11 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     # Ledger survived on the (in-memory) object store.
     persisted = store.read_runtime_state()
     assert isinstance(persisted, RuntimeRunState)
-    assert [wave["status"] for wave in persisted.waves] == ["succeeded", "succeeded", "failed"]
+    assert [wave["status"] for wave in persisted.waves] == [
+        "succeeded",
+        "succeeded",
+        "failed",
+    ]
 
     second_submitter = FakeSubmitter()
     resume_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
@@ -586,10 +721,69 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
         spec, run_id="rt-resume", executor=second, options=resume_options
     )
 
-    assert second_report.status == "succeeded"
-    # Only the previously failed wave is resubmitted; the first two are replayed.
-    assert [call["tasks"] for call in second_submitter.calls] == [["join"]]
-    assert [wave["replayed"] for wave in second_report.waves] == [True, True, False]
+    assert second_report.status == "failed"
+    # Successful waves replay, while a terminal workload failure remains terminal.
+    assert second_submitter.calls == []
+    assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
+
+
+def test_resume_with_explicit_retry_replays_success_and_retries_terminal_wave(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    first = _executor(
+        spec,
+        run_id="rt-explicit-retry",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(["SUCCEEDED", "SUCCEEDED", "FAILED"]),
+        store=store,
+    )
+    first_report = run_workflow_runtime(
+        spec, run_id="rt-explicit-retry", executor=first, options=first.options
+    )
+    assert first_report.status == "failed"
+
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retries=1,
+        retry_backoff_seconds=0,
+    )
+    resumed = _executor(
+        spec,
+        run_id="rt-explicit-retry",
+        submitter=submitter,
+        options=options,
+        store=store,
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-explicit-retry", executor=resumed, options=options
+    )
+
+    assert report.status == "succeeded"
+    assert [call["tasks"] for call in submitter.calls] == [["join"]]
+    assert submitter.calls[0]["job_name"].endswith("-a2")
+    assert [wave["replayed"] for wave in report.waves[:2]] == [True, True]
+
+
+def test_long_run_id_preserves_retry_attempt_suffix(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    run_id = "paidf-" + "x" * 80
+    executor = _executor(spec, run_id=run_id)
+    executor._sequence = 2
+    step = next(iter(build_plan(spec, run_id=run_id).steps))
+
+    name = executor._job_name(
+        [step],
+        group="",
+        attempt=WaveAttempt(key="wave", states=[step.state], kind="serial", attempt=3),
+    )
+
+    assert len(name) <= 60
+    assert name.endswith("-a3")
 
 
 # --------------------------------------------------------------------- trigger
@@ -664,7 +858,11 @@ def test_ledger_persists_waves_and_decisions(tmp_path: Path) -> None:
     assert persisted is not None
     assert persisted.schema_version == "npa.workflow.runtime.v1"
     assert persisted.status == "succeeded"
-    assert [wave["states"] for wave in persisted.waves] == [["work"], ["gate"], ["publish"]]
+    assert [wave["states"] for wave in persisted.waves] == [
+        ["work"],
+        ["gate"],
+        ["publish"],
+    ]
     assert persisted.decisions[-1]["decision"] == "promote_checkpoint"
     assert persisted.decisions[-1]["uri"].endswith("/gate/decision.json")
 
@@ -693,9 +891,7 @@ class BoomStatus:
 def test_transient_status_errors_do_not_orphan_the_job(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     cancels: list[dict[str, Any]] = []
-    executor = _executor(
-        spec, status_fn=BoomStatus(failures=3), cancels=cancels
-    )
+    executor = _executor(spec, status_fn=BoomStatus(failures=3), cancels=cancels)
 
     report = run_workflow_runtime(
         spec, run_id="rt-flaky-status", executor=executor, options=executor.options
@@ -721,7 +917,53 @@ def test_persistent_status_errors_cancel_the_job_and_fail(tmp_path: Path) -> Non
     assert "consecutive" in report.error
     # The whole point: the job we launched is not left running.
     assert cancels and cancels[0]["job_id"] == "1"
-    assert report.waves[0]["sky_status"] == "CANCELLED"
+    assert report.waves[0]["sky_status"] == "SUBMITTED"
+    assert report.waves[0]["cancellation"]["state"] == "requested"
+
+
+def test_exact_cancellation_is_verified_without_masking_primary_error(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    calls = {"count": 0}
+
+    def status(job_id: str, **_: Any) -> FakeResult:
+        calls["count"] += 1
+        if calls["count"] <= 6:
+            raise TimeoutError("queue transport failed")
+        return FakeResult(status="CANCELLED", job_id=job_id)
+
+    cancels: list[dict[str, Any]] = []
+    executor = _executor(spec, status_fn=status, cancels=cancels)
+    report = run_workflow_runtime(
+        spec, run_id="rt-cancel-verified", executor=executor, options=executor.options
+    )
+    wave = report.waves[0]
+    assert report.status == "failed"
+    assert "consecutive" in wave["primary_error"]
+    assert wave["cancellation"]["state"] == "verified"
+    assert wave["sky_status"] == "CANCELLED"
+    assert cancels[0]["job_id"] == "1"
+
+
+def test_exact_cancellation_failure_is_truthful_and_primary_error_survives(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+
+    def cancel_failure(**_kwargs: Any) -> None:
+        raise PermissionError("cancel forbidden")
+
+    executor = _executor(spec, status_fn=BoomStatus(failures=99))
+    executor._canceller = cancel_failure
+    report = run_workflow_runtime(
+        spec, run_id="rt-cancel-failed", executor=executor, options=executor.options
+    )
+    wave = report.waves[0]
+    assert "consecutive" in wave["primary_error"]
+    assert wave["cancellation"]["state"] == "failed"
+    assert "forbidden" in wave["cancellation"]["error"]
+    assert wave["sky_status"] != "CANCELLED"
 
 
 def test_unexpected_submit_error_tears_down_defensively_and_fails_fast(
@@ -748,13 +990,15 @@ def test_unexpected_submit_error_tears_down_defensively_and_fails_fast(
 
     assert report.status == "failed"
     assert "RuntimeError: submit timed out" in report.waves[0]["error"]
-    assert cancels and cancels[0]["cluster"], "must attempt a teardown by cluster name"
-    assert cancels[0]["job_id"] == "", "no job id was ever reported"
+    assert not cancels, "an ID-less uncertain launch must never cancel by name"
+    assert report.waves[0]["cancellation"]["state"] == "not_applicable"
     # One attempt only: an unexpected tooling failure is not retried.
     assert len(report.waves) == 1
 
 
-def test_unidentifiable_job_is_rejected_instead_of_polling_unknown(tmp_path: Path) -> None:
+def test_unidentifiable_job_is_rejected_instead_of_polling_unknown(
+    tmp_path: Path,
+) -> None:
     """An unidentifiable job used to burn max_wait_seconds and then leak.
 
     With no id from the launch output AND no match by name there is nothing safe to
@@ -781,11 +1025,12 @@ def test_unidentifiable_job_is_rejected_instead_of_polling_unknown(tmp_path: Pat
     assert report.status == "failed"
     assert "could not be found by name" in report.error
     assert status_fn.calls == [], "must not poll a job it cannot identify"
-    # Cancel by cluster name is still attempted so a launched-but-unnamed job dies.
-    assert cancels and cancels[0]["cluster"]
+    assert not cancels, "no fuzzy/name-only cancellation is permitted"
 
 
-def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(tmp_path: Path) -> None:
+def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
+    tmp_path: Path,
+) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     store = MemoryStore()
 
@@ -808,7 +1053,9 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(tmp_path: P
     persisted = store.read_runtime_state()
     assert persisted is not None
     key = persisted.waves[0]["key"]
-    persisted.record_wave({**persisted.waves[0], "status": "running", "sky_status": "RUNNING"})
+    persisted.record_wave(
+        {**persisted.waves[0], "status": "running", "sky_status": "RUNNING"}
+    )
     store.write_runtime_state(persisted)
 
     # Second driver resumes: it must poll job 1, not submit a second copy.
@@ -833,7 +1080,7 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(tmp_path: P
     assert [call["tasks"] for call in second_submitter.calls] == [["shard-c"], ["join"]]
 
 
-def test_resume_replaces_an_in_flight_job_that_actually_failed(tmp_path: Path) -> None:
+def test_resume_preserves_an_in_flight_job_that_actually_failed(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     store = MemoryStore()
     state = RuntimeRunState(workflow=spec.name, run_id="rt-adopt-failed")
@@ -862,20 +1109,93 @@ def test_resume_replaces_an_in_flight_job_that_actually_failed(tmp_path: Path) -
         spec, run_id="rt-adopt-failed", executor=executor, options=resume_options
     )
 
+    assert report.status == "failed"
+    assert submitter.calls == []
+
+
+def test_resume_relaunches_only_authoritatively_absent_transient_wave(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-absent-retry")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "failed",
+            "job_name": "rt-absent-retry-01-shards",
+            "attempt": 1,
+            "error_category": "kubernetes_transport",
+            "recovery_decision": "recovery_deadline_exhausted_verified_absent",
+            "cancellation": {"state": "not_applicable", "error": ""},
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-absent-retry",
+        submitter=submitter,
+        options=options,
+        store=store,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence("absent"),
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-absent-retry", executor=executor, options=options
+    )
     assert report.status == "succeeded"
-    # Wave was resubmitted (fresh job ids) after the dead one was observed.
-    assert [call["tasks"] for call in submitter.calls] == [
-        ["shard-a", "shard-b"],
-        ["shard-c"],
-        ["join"],
-    ]
+    assert [call["tasks"] for call in submitter.calls][0] == ["shard-a", "shard-b"]
+
+
+def test_resume_blocks_indeterminate_incomplete_wave_without_submit(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    state = RuntimeRunState(workflow=spec.name, run_id="rt-indeterminate")
+    state.record_wave(
+        {
+            "key": "001|shards|shards:shard-a:-,shards:shard-b:-",
+            "status": "running",
+            "job_name": "rt-indeterminate-01-shards",
+            "attempt": 1,
+            "recovery_decision": "block_indeterminate",
+        }
+    )
+    store.write_runtime_state(state)
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-indeterminate",
+        submitter=submitter,
+        options=options,
+        store=store,
+        reconcile_fn=lambda *_args, **_kwargs: ManagedJobEvidence(
+            "unavailable", error="controller queue refused"
+        ),
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-indeterminate", executor=executor, options=options
+    )
+    assert report.status == "failed"
+    assert submitter.calls == []
+    assert report.waves[0]["recovery_decision"] == "block_indeterminate"
+    assert "refusing a duplicate" in report.error
 
 
 def test_resume_without_a_ledger_bucket_fails_fast(tmp_path: Path) -> None:
     """Silently resubmitting everything is worse than refusing to resume."""
 
     text = FANOUT_SPEC.replace("  bucket: example-bucket\n", "")
-    text = text.replace('  prefix: "fanout/{{run.id}}"', '  prefix: "fanout/{{run.id}}"')
+    text = text.replace(
+        '  prefix: "fanout/{{run.id}}"', '  prefix: "fanout/{{run.id}}"'
+    )
     spec = load_spec(_write_spec(tmp_path, text))
     with pytest.raises(NpaWorkflowError, match="config.bucket is not set"):
         run_workflow_runtime(
@@ -1064,7 +1384,7 @@ def test_no_job_id_and_no_name_match_fails_the_wave(tmp_path: Path) -> None:
     )
     assert report.status == "failed"
     assert "could not be found by name" in report.error
-    assert cancels, "must still attempt a teardown by cluster name"
+    assert not cancels, "no exact job ID means cancellation is not applicable"
 
 
 # ------------------------------------------------------- review follow-ups (#225)
@@ -1075,8 +1395,11 @@ def test_trigger_listing_is_paginated(tmp_path: Path, mocker) -> None:
 
     spec = load_spec(_write_spec(tmp_path, TRIGGER_SPEC))
     pages = [
-        {"Contents": [{"Key": f"inbox/{i}.json"} for i in range(1000)], "IsTruncated": True,
-         "NextContinuationToken": "tok"},
+        {
+            "Contents": [{"Key": f"inbox/{i}.json"} for i in range(1000)],
+            "IsTruncated": True,
+            "NextContinuationToken": "tok",
+        },
         {"Contents": [{"Key": "inbox/1000.json"}], "IsTruncated": False},
     ]
     calls: list[dict[str, Any]] = []
@@ -1110,7 +1433,9 @@ def test_resume_refuses_a_ledger_recorded_for_a_different_plan(tmp_path: Path) -
 
     first = _executor(spec, run_id="rt-fp", store=store)
     assert (
-        run_workflow_runtime(spec, run_id="rt-fp", executor=first, options=first.options).status
+        run_workflow_runtime(
+            spec, run_id="rt-fp", executor=first, options=first.options
+        ).status
         == "succeeded"
     )
     recorded = store.read_runtime_state()
@@ -1132,7 +1457,9 @@ def test_resume_refuses_a_ledger_recorded_for_a_different_plan(tmp_path: Path) -
     )
     changed_spec = load_spec(_write_spec(tmp_path, changed, name="changed.yaml"))
     resume_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
-    resumed = _executor(changed_spec, run_id="rt-fp", options=resume_options, store=store)
+    resumed = _executor(
+        changed_spec, run_id="rt-fp", options=resume_options, store=store
+    )
 
     with pytest.raises(NpaWorkflowError, match="different plan"):
         run_workflow_runtime(
@@ -1149,7 +1476,11 @@ def test_resume_accepts_an_unchanged_plan(tmp_path: Path) -> None:
     resume_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
     submitter = FakeSubmitter()
     second = _executor(
-        spec, run_id="rt-fp-ok", submitter=submitter, options=resume_options, store=store
+        spec,
+        run_id="rt-fp-ok",
+        submitter=submitter,
+        options=resume_options,
+        store=store,
     )
     report = run_workflow_runtime(
         spec, run_id="rt-fp-ok", executor=second, options=resume_options

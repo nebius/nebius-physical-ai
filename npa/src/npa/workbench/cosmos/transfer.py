@@ -424,6 +424,7 @@ def publish_transfer_clip(
     content_guardrails_enabled = bool(
         transfer.get("content_guardrails_enabled", True)
     )
+    conditioning_clip_uri = str(transfer.get("conditioning_clip_uri") or "")
 
     frame_index: list[dict[str, str]] = []
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
@@ -451,6 +452,7 @@ def publish_transfer_clip(
             "control_spec": transfer.get("spec", ""),
             "input_conditioned": input_conditioned,
             "conditioned_input": conditioned_input,
+            "conditioning_clip_uri": conditioning_clip_uri,
             "control": conditioned_control,
             "content_guardrails_enabled": content_guardrails_enabled,
         }
@@ -469,6 +471,7 @@ def publish_transfer_clip(
         "video_bytes": int(transfer.get("video_bytes", 0) or 0),
         "input_conditioned": input_conditioned,
         "conditioned_input": conditioned_input,
+        "conditioning_clip_uri": conditioning_clip_uri,
         "control": conditioned_control,
         "content_guardrails_enabled": content_guardrails_enabled,
         "variables": variables or {},
@@ -521,6 +524,7 @@ def write_run_manifest(
         "video_bytes": sum(int(c.get("video_bytes", 0) or 0) for c in clips),
         "input_conditioned": bool(first.get("input_conditioned")),
         "conditioned_input": first.get("conditioned_input", ""),
+        "conditioning_clip_uri": first.get("conditioning_clip_uri", ""),
         "control": first.get("control", ""),
         "content_guardrails_enabled": bool(
             first.get("content_guardrails_enabled", True)

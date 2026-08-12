@@ -980,6 +980,62 @@ function installAgentApiMocks() {
     // Other runs: no data-factory provenance (keeps the panel honest/empty).
     req.reply(json({ ok: true, run_id: "", components: [], summary: "", origin: {} }));
   }).as("artifactProvenance");
+  cy.intercept("GET", `/api/fiftyone/dataset/${DF_MOCK_RUN_ID}`, json({
+    run_id: DF_MOCK_RUN_ID,
+    source: {
+      source_kind: "user_supplied",
+      input_origin: "operator_supplied",
+      input_origin_label: "User-supplied input",
+      staged_canonical_s3_uri: `s3://mock/physical-ai-data-factory/${DF_MOCK_RUN_ID}/input/`,
+      asset_license: "operator-managed",
+      sha256: "b".repeat(64),
+    },
+    review: {
+      engine: "fiftyone-brain",
+      real_fiftyone: true,
+      label: "Real FiftyOne Brain review",
+      limitation: "",
+    },
+    summary: {
+      variant_count: 1,
+      source_input_count: 1,
+      original_input_count: 1,
+      conditioning_count: 1,
+      synthetic_augmented_count: 1,
+      curation_engine: "fiftyone-brain",
+      curated_kept: 1,
+    },
+    fields: ["lighting"],
+    visualization: [],
+    samples: [
+      {
+        id: "source.mp4",
+        label: "source.mp4",
+        group: "source",
+        data_role: "source_input",
+        data_role_label: "User-supplied input",
+        video_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/source.mp4`,
+      },
+      {
+        id: "conditioning-frame-0001.png",
+        label: "conditioning-frame-0001.png",
+        group: "conditioning",
+        data_role: "derived_conditioning",
+        data_role_label: "Derived conditioning frame",
+        thumbnail_uri: `s3://mock/${DF_MOCK_RUN_ID}/input/conditioning-frame-0001.png`,
+      },
+      {
+        id: "aug0",
+        label: "aug0",
+        group: "augmented",
+        data_role: "synthetic_augmented",
+        data_role_label: "Synthetic / augmented output",
+        thumbnail_uri: `s3://mock/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/frame-000000.png`,
+        video_uri: `s3://mock/${DF_MOCK_RUN_ID}/cosmos_augmented/aug0/augmented_video.mp4`,
+        tags: { lighting: "warm" },
+      },
+    ],
+  })).as("dfDataset");
   cy.intercept("POST", "/api/workflows/draft", json({
     ok: true,
     yaml: WORKFLOW_YAML,

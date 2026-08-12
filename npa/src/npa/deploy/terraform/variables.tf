@@ -36,6 +36,12 @@ variable "instance_name" {
   default     = "npa-workbench"
 }
 
+variable "operation_id" {
+  description = "Secret-free NPA provisioning operation ID used for exact recovery ownership"
+  type        = string
+  default     = ""
+}
+
 variable "gpu_platform" {
   description = "Compute platform (e.g. gpu-h100-sxm, gpu-h200-sxm, cpu-d3)"
   type        = string
@@ -85,9 +91,19 @@ variable "server_port" {
 }
 
 variable "extra_ingress_ports" {
-  description = "Additional TCP ingress ports exposed alongside server_port"
-  type        = list(number)
-  default     = []
+  description = "Additional TCP ingress ports exposed alongside server_port, as a JSON array string (e.g. \"[443,9090]\")"
+  # A JSON-string (decoded with jsondecode below) rather than list(number): a
+  # `-var extra_ingress_ports=[443,9090]` value is parsed by Terraform as an HCL
+  # expression for non-string types, which intermittently failed with
+  # "Invalid expression". A string var is taken verbatim, so decoding is
+  # deterministic.
+  type    = string
+  default = "[]"
+
+  validation {
+    condition     = can(jsondecode(var.extra_ingress_ports))
+    error_message = "extra_ingress_ports must be a JSON array string, e.g. \"[443,9090]\" or \"[]\"."
+  }
 }
 
 variable "workbench_type" {
@@ -163,4 +179,10 @@ variable "fiftyone_version" {
   description = "FiftyOne PyPI version to install when workbench_type is fiftyone"
   type        = string
   default     = "1.15.0"
+}
+
+variable "wait_for_ssh" {
+  description = "Wait for the VM's SSH and cloud-init before finishing the apply. Set false when this machine cannot reach a fresh public IP on tcp/22 (corporate VPN / split tunnel): the VM still bootstraps, but the deploy cannot verify it and rolls nothing back."
+  type        = bool
+  default     = true
 }

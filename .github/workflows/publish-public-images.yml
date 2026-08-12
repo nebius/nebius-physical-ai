@@ -75,6 +75,14 @@ permissions:
   contents: read
   packages: write
 
+# A target tag has no registry compare-and-swap primitive. Serialize publishers
+# for this workflow so two validated releases cannot overwrite one another after
+# their respective preflights. Source references are independently digest-pinned
+# by publish_public before any copy.
+concurrency:
+  group: publish-public-images-${{ inputs.target || github.repository }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest

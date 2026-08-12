@@ -9,6 +9,7 @@ import pytest
 from npa.clients.token_factory import (
     DEFAULT_BASE_URL,
     TokenFactoryClient,
+    TokenFactoryConfig,
     TokenFactoryError,
     resolve_config,
     split_reasoning,
@@ -26,6 +27,55 @@ def _message_client(message: dict) -> TokenFactoryClient:
 def _client(handler) -> TokenFactoryClient:
     config = resolve_config(api_key="test-key", environ={})
     return TokenFactoryClient(config, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_transient_overload_retries_then_succeeds() -> None:
+    statuses = iter([529, 503, 200])
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        status = next(statuses)
+        if status == 200:
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "ok"}}]},
+                request=request,
+            )
+        return httpx.Response(
+            status,
+            json={"error": {"message": "overloaded"}},
+            request=request,
+        )
+
+    config = TokenFactoryConfig("https://example.test/v1/", "key", 5)
+    client = TokenFactoryClient(
+        config,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleeper=sleeps.append,
+    )
+
+    assert client.chat_completion_text(model="model", messages=[{"role": "user", "content": "hi"}]) == "ok"
+    assert sleeps == [1.0, 2.0]
+
+
+def test_auth_failure_is_not_retried() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(401, json={"error": "unauthorized"}, request=request)
+
+    config = TokenFactoryConfig("https://example.test/v1/", "key", 5)
+    client = TokenFactoryClient(
+        config,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleeper=lambda _delay: None,
+    )
+
+    with pytest.raises(TokenFactoryError, match="401"):
+        client.list_models()
+    assert calls == 1
 
 
 def test_resolve_config_defaults_to_token_factory_base_url() -> None:
@@ -188,7 +238,7 @@ def test_chat_completion_retries_consecutive_read_timeouts_with_backoff(monkeypa
     assert sleeps == [1, 2]
 
 
-def test_http_status_error_is_not_retried(monkeypatch) -> None:
+def test_retryable_http_status_uses_configured_backoff(monkeypatch) -> None:
     attempts = 0
     sleeps: list[int] = []
 
@@ -200,8 +250,8 @@ def test_http_status_error_is_not_retried(monkeypatch) -> None:
     monkeypatch.setattr("npa.clients.token_factory.time.sleep", sleeps.append)
     with pytest.raises(TokenFactoryError):
         _client(handler).chat_completion(model="m", messages=[{"role": "user", "content": "x"}])
-    assert attempts == 1
-    assert sleeps == []
+    assert attempts == 4
+    assert sleeps == [1.0, 2.0, 4.0]
 
 
 def test_list_models_returns_ids() -> None:

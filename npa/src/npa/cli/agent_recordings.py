@@ -29,6 +29,11 @@ RUN_ENTITY_MARKERS: tuple[bytes, ...] = (
     b"/scores",
     b"/signals",
     b"outer_loop",
+    # Physical AI Data Factory recordings use input/ and augmented/ image
+    # timelines plus pipeline/* report entities.  ``augmented/`` and
+    # ``pipeline/`` never occur in the stock Franka geometry recording.
+    b"augmented/",
+    b"pipeline/",
     # Neural-reconstruction (NuRec/NRE) run entities: rig-offset novel views
     # rendered from the trained Gaussians, NRE's validation renders, and the
     # Gaussian quality summary. None of these appear in the stock demo recording.

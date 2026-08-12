@@ -96,23 +96,21 @@ Full per-platform steps — Nebius CLI, WSL2 setup, operator tools:
 If you prefer not to activate the venv, call its interpreter directly with
 `./.venv/bin/npa`. The rest of this guide assumes the venv is activated.
 
-The base install is the core CLI, with no GPU or database wheels. Add extras
-when a workload requires them:
+The base install is fully capable: a plain `pip install -e npa` already
+includes every non-GPU workbench dependency (dataframe/reporting, LanceDB, the
+Rerun viewer, and the local eval/agent server). There is no separate
+`npa[full]` step. Only these extras are opt-in:
 
 ```bash
-pip install -e "npa[full]"      # everything below except the GPU extras
-pip install -e "npa[data]"      # pandas/scipy/matplotlib curation + reports
-pip install -e "npa[lancedb]"   # LanceDB workbench tool
-pip install -e "npa[viz]"       # Rerun viewer/recording integration
-pip install -e "npa[server]"    # FastAPI policy/eval server
-pip install -e "npa[adapter]"   # dataset conversion
-pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU)
-pip install -e "npa[groot]"     # GR00T SDK (GPU)
+pip install -e "npa[genesis]"   # Genesis + distillation stages (GPU, local)
+pip install -e "npa[groot]"     # GR00T SDK (GPU, local)
+pip install -e "npa[sonic]"     # SONIC ONNX export/runtime (GPU, local)
 pip install -e "npa[dev]"       # tests, lint (pytest, ruff); see Section 6
 ```
 
-Before running cloud workloads (Sections 5+), install `npa[full]` so every
-workbench tool has its dependencies. You also need the Nebius CLI —
+The GPU wheels above are only needed to run those engines **locally** — cloud
+jobs execute them inside the Nebius images they launch. To run cloud workloads
+(Sections 5+) the base install is enough; you also need the Nebius CLI —
 see [docs/install.md § Nebius CLI](install.md#4-nebius-cli-required).
 
 ## 4. Configure credentials
@@ -162,7 +160,7 @@ section,
 [Manage buckets](https://docs.nebius.com/object-storage/buckets/manage).
 
 Run interactive setup in a terminal. `npa configure` creates or reuses your
-Nebius CLI profile first, then prompts for your project id and tenant id, your
+Nebius CLI profile first, then prompts for your tenant id and project id, your
 region and container registry (defaults are discovered from the project), guides
 you to reuse an existing bucket or create a default `npa-bucket-<hash>` bucket
 (standard storage, size limit in GB), and asks for a local **project alias**
@@ -183,13 +181,65 @@ cannot) access — see [§4e](#4e-accept-and-verify-gated-model-access):
 npa configure
 ```
 
+Storage is committed after its declared write/read capability probe succeeds.
+Delete is best-effort probe cleanup and is reported independently. The declared
+runtime actions are `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`, and
+`ListObjectsV2`; NPA binds `storage.object-editor` to a project-scoped NPA group
+at the exact bucket. A provider-verified existing `editors` membership is
+accepted for older installations. Creating `editors` is an explicit compatibility
+fallback only when Nebius reports the narrow role unsupported. Unknown,
+unreadable, or insufficient IAM stops before key creation and probing. Newly
+Set `NPA_ALLOW_EDITORS_STORAGE_FALLBACK=1` only for that explicit fallback;
+otherwise a provider rejection remains terminal. The custom group name is
+derived from the exact project ID rather than its mutable alias. Newly
+created or changed bindings receive bounded, typed propagation retries against
+the same identity, including when an existing active key is reused. If a
+provider step or the probe fails, configure prints **Setup incomplete**, keeps
+owner-only creation provenance in `~/.npa/credentials.yaml`, and prints the
+restart-safe recovery command:
+
+```bash
+npa provision-if-absent --project <PROJECT_ALIAS> --skip-k8s
+```
+
+That recovery reconciles storage before any cluster work. It rolls back only
+resources conclusively created by the failing invocation; reused, shared, or
+ownership-unproven resources are preserved.
+
+Credentials are stored under
+`project_credentials.projects.<exact-project-id>` with the alias retained only
+as metadata. Atomic locked 0600 writes keep two projects on one host isolated.
+The legacy top-level `storage`, `storage_iam`, and `nebius` keys are derived
+compatibility views for the selected exact project. NPA migrates an older global
+record only when its project ownership is exact and unique; otherwise it leaves
+the record recoverable and fails closed.
+
 You do not need to run `nebius profile create` manually; the Nebius CLI binary
 must still be installed because `npa` invokes it internally.
 
-In non-interactive environments (CI, pipes), run `npa configure --interactive`
-in a real terminal, or `npa configure --show` for the file layout.
+With a valid non-interactive Nebius profile/service-account credential already
+active and the target IDs known, skip browser login, discovery, and tenant
+selection entirely:
+
+```bash
+npa configure --no-interactive \
+  --tenant-id "$YOUR_TENANT_ID" --project-id "$YOUR_PROJECT_ID" \
+  --region "$NEBIUS_REGION" --project-alias "$PROJECT_ALIAS"
+```
+
+These are non-secret identifiers; do not pass IAM, S3, Token Factory, HF, or NGC
+secrets on the command line. The command reuses existing storage only after the
+same write/read capability probe deployment uses. If none is configured, it
+provisions the deterministic default bucket through the already-authenticated
+profile. Add `--no-provision` only when project-only setup is intentional.
 
 Gate: after interactive setup, `nebius iam get-access-token` exits successfully.
+
+`npa agent preflight`, `agent setup`, and `agent fresh-setup` share this exact
+storage decision. Once configure has health-verified the bucket/key, agent setup
+reuses it and provisions only the separately named VM service account; it does
+not list, create, or rotate object-storage access keys. If revalidation is ever
+needed, provider output stays field-allowlisted and secret-redacted.
 
 Keep these non-secret values handy for later workbench deploys:
 
@@ -213,7 +263,6 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 |---|---|---|---|
 | Hugging Face token | `tokens.HF_TOKEN` | `HF_TOKEN` | Downloading gated Hugging Face models, datasets, or weights |
 | Nebius Token Factory key | `tokens.NEBIUS_TOKEN_FACTORY_KEY` | `NEBIUS_TOKEN_FACTORY_KEY` | Zero-GPU hosted inference (Token Factory / OpenAI-compatible) paths |
-| Nebius AI Cloud key | `tokens.NEBIUS_AI_CLOUD_KEY` | `NEBIUS_AI_CLOUD_KEY` | Calling Nebius AI Cloud APIs |
 | NGC API key | `ngc.api_key` | `NGC_API_KEY` | Using NGC-backed GR00T model references |
 | NGC organization | `ngc.org` | `NGC_ORG` | Your NGC key is organization-scoped |
 | NGC team | `ngc.team` | `NGC_TEAM` | Your NGC key is team-scoped |
@@ -224,6 +273,16 @@ Use these canonical keys in `~/.npa/credentials.yaml`.
 | Object-storage secret key | `storage.aws_secret_access_key` | `AWS_SECRET_ACCESS_KEY` | BYOVM, existing storage, or cross-project S3 workflows need explicit storage credentials |
 | Object-storage endpoint | `storage.endpoint_url` | `AWS_ENDPOINT_URL`, `NEBIUS_S3_ENDPOINT`, `NPA_STORAGE_ENDPOINT` | S3-compatible storage is not supplied by managed project config |
 | Object-storage bucket | `storage.bucket` | `NPA_CHECKPOINT_BUCKET`, `NEBIUS_S3_BUCKET` | A workflow needs a default checkpoint or artifact bucket |
+
+**How to create each token** (step-by-step, including where to click):
+
+- Hugging Face — [docs/workbench/huggingface-token.md](workbench/huggingface-token.md)
+- NVIDIA NGC — [docs/workbench/ngc-api-key.md](workbench/ngc-api-key.md)
+- Nebius Token Factory — [docs/workbench/token-factory-key.md](workbench/token-factory-key.md)
+
+`npa configure` links these inline at each prompt, normalizes pasted values
+(stripping stray quotes or a `Bearer` prefix), and warns if a Token Factory key
+does not look like a `v1.` key.
 
 When `tokens.HF_TOKEN` is loaded, `npa` forwards it to remote services as both
 `HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN`.
@@ -311,8 +370,9 @@ model you have not yet unlocked):
 
 ```bash
 npa workbench health access
-# or pass keys explicitly / persist them:
-npa workbench health access --hf-token hf_xxx --ngc-key nvapi-xxx --set-credentials
+# or export keys and persist them without putting secret values in argv:
+export HF_TOKEN='<your-token>' NGC_API_KEY='<your-key>'
+npa workbench health access --save-env-credentials
 # scope to one capability, or run offline (presence-only):
 npa workbench health access --capability groot
 ```
@@ -344,12 +404,15 @@ S3 bucket and access key); use `npa configure --show` for a read-only view of
 the file layout, or `npa configure --no-provision` to enter existing S3
 credentials by hand.
 
-### 5a. Your first result: zero-GPU inference (Nebius Token Factory)
+### 5a. Verify the path works: zero-GPU inference (Nebius Token Factory)
 
-The cheapest way to get a real result on Nebius is
-[Token Factory](https://tokenfactory.nebius.com/) hosted inference —
-OpenAI-compatible, zero-GPU, and it needs only a `NEBIUS_TOKEN_FACTORY_KEY`
-(no cluster, registry, or S3). Add the key with `npa configure` (or
+Nebius AI Cloud — GPU clusters, managed Kubernetes, and object storage — is the
+main substrate `npa` targets; the flagship GPU workload is Cosmos (Section 7).
+Before requesting GPUs, though, you can confirm the whole NPA→Nebius path works
+with a zero-GPU smoke test: [Token Factory](https://tokenfactory.nebius.com/)
+hosted inference is OpenAI-compatible and needs only a `NEBIUS_TOKEN_FACTORY_KEY`
+(no cluster, registry, or S3), so it exercises your credentials and connectivity
+without spending GPU-hours. Add the key with `npa configure` (or
 `export NEBIUS_TOKEN_FACTORY_KEY=v1...`), then confirm it authenticates:
 
 ```bash
@@ -486,7 +549,8 @@ RT-core-only (L40S / RTX Pro 6000); see its guide before choosing GPU type.
 
 ## 8. Do more with npa
 
-With install → `npa configure` → a first cloud result done, build outward:
+With install → `npa configure` → your first GPU workload on Nebius AI Cloud
+(Section 7) done, build outward:
 
 - **Run workbench workloads** — NVIDIA Cosmos (Section 7), vlm-eval, sim2real,
   and more. See [Workbench Getting Started](workbench/getting-started.md) for

@@ -32,7 +32,8 @@ ARG NUMPY_VERSION=2.3.5
 
 LABEL npa.tool="cosmos-evaluator" \
       npa.version="${COSMOS_EVALUATOR_VERSION}" \
-      npa.model_weights="none; the wired checks are CV + a hosted VLM endpoint"
+      npa.model_weights="none; the wired checks are CV + a hosted VLM endpoint" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     COSMOS_EVALUATOR_VENV=/opt/cosmos-evaluator/venv \

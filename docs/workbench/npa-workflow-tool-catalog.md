@@ -25,13 +25,13 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri` | `config.captions_uri` | no |
 | `workbench.token_factory.generate` | `npa workbench token-factory generate` | `config.prompts_uri` | `config.generations_uri` | no |
 | `workbench.cosmos2.transfer` | `npa workbench cosmos2 transfer` | `config.trigger_uri` | `config.augment_uri` | no |
-| `workbench.cosmos2.transfer_execute` | `npa workbench cosmos2 transfer --execute` | supported video under `config.trigger_uri` (required) | `config.augment_uri` | yes (real, input-conditioned Cosmos Transfer 2.5 on GPU; uploads video + frames to S3 and fails closed without input) |
+| `workbench.cosmos2.transfer_execute` | `npa workbench cosmos2 transfer --execute` | supported video or PNG/JPEG frames under `config.trigger_uri` (required) | `config.augment_uri` | yes (real, input-conditioned Cosmos Transfer 2.5 on GPU; uploads video + frames to S3 and fails closed without input) |
 | `workbench.cosmos2.transfer_conditioned_execute` | `npa workbench cosmos2 transfer --execute --condition-on-input` | `config.trigger_uri` | `config.augment_uri` | yes (real input-conditioned Cosmos Transfer 2.5; publishes exact frames in the canonical manifest) |
 | `workbench.cosmos3.generate` | `npa workbench cosmos3 generate` | `config.prompt`, `config.cosmos3_mode`, `config.cosmos3_checkpoint` | `config.output_uri` | yes (real Cosmos 3 omni-model generation on GPU in `npa-cosmos3`; gated weights download at runtime with the operator's HF token) |
 | `workbench.cosmos3.reason` | `npa workbench cosmos3 reason` | `config.scene_uri` | `config.reason_uri` | no |
 | `workbench.cosmos_evaluator.evaluate` | `npa workbench cosmos-evaluator evaluate` | `config.rollouts_uri`, `config.input_uri`, `config.configs_uri` | `config.scores_uri` | yes (real NVIDIA Cosmos Evaluator: hallucination + VLM attribute verification) |
 | `workbench.cosmos_curate.curate` | `npa workbench cosmos-curate curate-augmented` | `config.augment_uri` | `config.curated_clips_uri`, `config.curator_report_uri` | yes (real NVIDIA Cosmos Curator stages: split, transcode, motion score, catalog) |
-| `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` | yes (real FiftyOne Brain uniqueness, similarity, duplicate detection, and PCA review) |
+| `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented --require-fiftyone` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` | no (real FiftyOne Brain uniqueness, similarity, duplicate detection, and PCA review; fails closed) |
 | `workbench.lerobot.eval` | `npa workbench lerobot eval` | `config.checkpoint_uri`, `config.env` | `config.eval_uri` | no |
 | `workbench.retargeting.run` | `npa workbench sonic retargeting run` | `config.motion_uri` | `config.retargeted_uri` | no |
 | `workbench.mjlab.eval` | `npa workbench mjlab eval` | `config.motion_uri`, `config.checkpoint_uri` | `config.mjlab_uri` | no |

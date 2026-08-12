@@ -9,21 +9,54 @@ ssh_public_key = {
   path = "~/.ssh/id_ed25519.pub"
 }
 
-gpu_nodes_count    = 2
+# Default FTUE / Physical AI Data Factory shape: one small CPU node + one GPU
+# node, no Shared Filesystem. npa.workflow stages hand off artifacts via S3, so
+# no shared /mnt/data (and no Shared Filesystem SSD quota) is required.
+cpu_nodes_count    = 1
+cpu_nodes_platform = "cpu-d3"
+cpu_nodes_preset   = "8vcpu-32gb"
+
+gpu_nodes_count    = 1
 gpu_nodes_platform = "gpu-rtx6000"
-gpu_nodes_preset   = "8gpu-192vcpu-1744gb"
+gpu_nodes_preset   = "1gpu-24vcpu-218gb"
 
-# Optional private capacity reservation selector. Prefer passing this through
-# a gitignored terraform.tfvars file, TF_VAR_capacity_block_group, or
-# `terraform apply -var capacity_block_group=<id>`.
-capacity_block_group = ""
+# Preemptible GPU nodes draw on a different capacity pool than on-demand. Set
+# this when the tenant's on-demand GPU quota is exhausted (`npa cluster up`
+# reports the quota and what `nebius capacity resource-advice list` has free);
+# preemptible nodes can be reclaimed at any time.
+gpu_nodes_preemptible = false
 
-enable_filestore              = true
-existing_filestore            = ""
-filestore_disk_size_gibibytes = 1024
+enable_filestore   = false
+existing_filestore = ""
+
+# Optional private capacity reservation selector. Leave it commented out unless
+# you have a reservation: `npa cluster up --capacity-block-group <id>` passes it
+# as `-var`, which beats this file, but an uncommented empty value here would
+# override TF_VAR_capacity_block_group for direct Terraform runs.
+#   capacity_block_group = "<reservation-id>"
 
 enable_k8s_node_group_sa = false
 
-# The CLI normally supplies this from `nebius iam get-access-token`.
-# Set it here only for direct Terraform use.
-iam_token = "<nebius-iam-token>"
+# `npa cluster up` mints a fresh IAM token for every run and rejects an
+# iam_token pinned here (Terraform gives this file precedence over TF_VAR_*, so a
+# stale or placeholder token would break apply with Unauthenticated). Uncomment
+# it only for direct `terraform apply` use without the CLI.
+#   iam_token = "<nebius-iam-token>"
+
+# ── Opt-in: larger training farm ──────────────────────────────────────────
+# Multi-GPU / multi-node clusters and InfiniBand are opt-in, not the default:
+#
+#   gpu_nodes_count    = 2
+#   gpu_nodes_preset   = "8gpu-192vcpu-1744gb"  # up to 16 GPUs across 2 nodes
+#   enable_gpu_cluster = true                    # InfiniBand fabric attachment
+#   infiniband_fabric  = "<fabric-name>"
+#
+# ── Opt-in: Shared Filesystem (SFS) ───────────────────────────────────────
+# Only needed for workloads that require a cross-node shared /mnt/data + the
+# filesystem CSI default StorageClass. Requires Shared Filesystem SSD quota.
+#
+#   enable_filestore              = true
+#   filestore_disk_size_gibibytes = 1024
+#   # ...or attach an existing one instead of creating it (setting
+#   # existing_filestore alone is enough; it implies enable_filestore):
+#   existing_filestore            = "<computefilesystem-id>"

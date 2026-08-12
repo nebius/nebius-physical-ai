@@ -69,7 +69,9 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         note="Only needed to self-host; Token Factory serves it hosted (no HF gating).",
     ),
     GatedAsset("Qwen/Qwen2-VL-7B-Instruct", HF, ("vlm_eval",), False),
-    GatedAsset("Qwen/Qwen2.5-VL-72B-Instruct", HF, ("vlm_eval", "token_factory"), False),
+    GatedAsset(
+        "Qwen/Qwen2.5-VL-72B-Instruct", HF, ("vlm_eval", "token_factory"), False
+    ),
     GatedAsset("lerobot/pusht", HF, ("lerobot", "sim2real"), False),
 )
 
@@ -100,9 +102,7 @@ def assets_for(capabilities: Iterable[str] | None) -> tuple[GatedAsset, ...]:
     if not wanted:
         return WORKBENCH_ASSETS
     return tuple(
-        asset
-        for asset in WORKBENCH_ASSETS
-        if wanted.intersection(asset.capabilities)
+        asset for asset in WORKBENCH_ASSETS if wanted.intersection(asset.capabilities)
     )
 
 
@@ -145,7 +145,8 @@ def check_hf_asset(
                 summary=f"No HF token; cannot verify gated access to {asset.repo}.{caps}",
                 remedy=(
                     f"Accept the license at {hf_model_url(asset.repo)} while signed in, "
-                    "then run `npa configure` (or pass --hf-token)."
+                    "then export HF_TOKEN and run `npa configure --no-interactive "
+                    "--save-env-credentials`."
                 ),
             )
         return CheckResult(
@@ -214,7 +215,8 @@ def check_ngc_key(ngc_key: str, *, needed: bool) -> CheckResult:
             summary="NGC_API_KEY is not set (needed for GR00T / Cosmos NVIDIA pulls).",
             remedy=(
                 "Create one at https://org.ngc.nvidia.com/setup/api-key and run "
-                "`npa configure` (or pass --ngc-key)."
+                "`npa configure --no-interactive --save-env-credentials` with "
+                "NGC_API_KEY set in the environment."
             ),
         )
     if not key.lower().startswith(("nvapi-", "nvapi_")):
@@ -245,9 +247,7 @@ def check_workbench_access(
     """
 
     selected = list(capabilities) if capabilities is not None else None
-    results: list[CheckResult] = [
-        check_ngc_key(ngc_key, needed=_ngc_needed(selected))
-    ]
+    results: list[CheckResult] = [check_ngc_key(ngc_key, needed=_ngc_needed(selected))]
     for asset in assets_for(selected):
         if asset.provider != HF:
             continue

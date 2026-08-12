@@ -9,6 +9,8 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.cli._typer_defaults import resolve_typer_defaults
+
 from npa.workbench.lichtblick import (
     DEFAULT_CAMERA_TOPIC,
     DEFAULT_FPS,
@@ -33,6 +35,7 @@ class OutputFormat(str, Enum):
 
 
 @app.command("serve")
+@resolve_typer_defaults
 def serve_cmd(
     input_path: str = typer.Option(
         ...,

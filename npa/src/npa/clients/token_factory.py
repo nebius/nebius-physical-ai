@@ -17,14 +17,15 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import httpx
 
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 DEFAULT_API_KEY_ENV = "NEBIUS_TOKEN_FACTORY_KEY"
 DEFAULT_TIMEOUT_S = 120.0
-DEFAULT_TRANSPORT_ATTEMPTS = 3
+DEFAULT_RETRY_ATTEMPTS = 4
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504, 529})
 DEFAULT_TEXT_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
 # NVIDIA Cosmos3 Super-Reasoner: hosted vision-language physical-AI reasoner.
@@ -132,9 +133,15 @@ class TokenFactoryClient:
         config: TokenFactoryConfig | None = None,
         *,
         http_client: httpx.Client | None = None,
+        retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
+        sleeper: Callable[[float], None] | None = None,
     ) -> None:
         self._config = config or resolve_config()
         self._http_client = http_client
+        if retry_attempts < 1:
+            raise ValueError("retry_attempts must be at least one")
+        self._retry_attempts = retry_attempts
+        self._sleeper = sleeper or time.sleep
 
     @property
     def config(self) -> TokenFactoryConfig:
@@ -238,16 +245,27 @@ class TokenFactoryClient:
         owns_client = self._http_client is None
         client = self._http_client or httpx.Client(timeout=self._config.timeout_s)
         try:
-            for attempt in range(1, DEFAULT_TRANSPORT_ATTEMPTS + 1):
+            for attempt in range(1, self._retry_attempts + 1):
                 try:
-                    response = client.request(method, url, headers=self._headers(), json=json_body)
+                    response = client.request(
+                        method, url, headers=self._headers(), json=json_body
+                    )
                 except httpx.TransportError as exc:
-                    if attempt == DEFAULT_TRANSPORT_ATTEMPTS:
-                        raise TokenFactoryError(f"Token Factory request failed: {exc}") from exc
-                    time.sleep(attempt)
+                    if attempt == self._retry_attempts:
+                        raise TokenFactoryError(
+                            f"Token Factory request failed: {exc}"
+                        ) from exc
+                    self._sleeper(float(attempt))
+                    continue
+                if (
+                    response.status_code in RETRYABLE_STATUS_CODES
+                    and attempt < self._retry_attempts
+                ):
+                    self._sleeper(float(2 ** (attempt - 1)))
                     continue
                 response.raise_for_status()
                 return response.json()
+            raise AssertionError("unreachable Token Factory retry loop")
         except httpx.HTTPStatusError as exc:
             raise TokenFactoryError(
                 f"Token Factory request failed ({exc.response.status_code}): "

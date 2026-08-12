@@ -32,9 +32,22 @@ bash npa/scripts/verify_byof_onboarding_live.sh
 
 `npa agent deploy` provisions a dedicated long-lived **`npa-agent`** service account when
 IAM allows it; otherwise bootstrap reuses existing terraform_state / saved credentials.
-Persists `ssh_key_path` + `credentials` on the agent record and stages
-`llm.env`, `s3.env`, and `nebius.env` on the VM. Bootstrap resolves SSH from
-the agent record (or `--ssh-key` / `NPA_SSH_KEY`) — not from workbench SSH config.
+Persists `ssh_key_path` and non-secret deployment identity on the agent record;
+storage credentials remain only in the owner-only project credential store.
+Bootstrap stages `llm.env`, `s3.env`, and `nebius.env` on the VM and resolves SSH
+from the agent record (or `--ssh-key` / `NPA_SSH_KEY`) — not from workbench SSH config.
+
+Deploy/bootstrap persists pre-mutation through health-verification checkpoints
+and emits secret-free structured heartbeats during long calls. After lost client
+transport, reconcile the exact remote setup marker and authenticated
+`/api/models`: adopt matching healthy evidence, resume incomplete phases, and
+preserve ambiguous/mismatched evidence without replacing the VM.
+
+Agent VM creation is credential-free: Terraform/cloud-init receives no S3 HMAC
+keys, product tokens, or basic-auth password. After the exact VM identity and SSH
+channel are verified, bootstrap stages runtime credentials with owner-only SFTP
+uploads and atomic installs. A client failure resumes staging on that VM; it does
+not recreate the instance or copy secrets into Terraform state/user-data.
 
 All `npa agent …` and `nebius` IAM commands run on the **operator/dev VM**.
 The **agent VM** only receives staged `/opt/npa-agent/*.env` files.

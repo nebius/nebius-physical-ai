@@ -109,7 +109,17 @@ Tmux full matrix (all npa.workflow YAMLs, real S3, credential leak checks):
    flags like `--run-id`; a mismatch validates/plans fine but crashes on real
    submit. Keep `catalog.py` and `docs/workbench/npa-workflow-tool-catalog.md` in
    sync.
-9. **Live-infra is a priority** (`skills/atomic/testing-conventions/SKILL.md`): a
+9. **A blueprint never becomes a CLI command.** The spec is the unit of
+   composition: `npa workbench workflow submit <spec.yaml>` runs any of them, and
+   anything a blueprint needs on the way — provisioning, source staging,
+   prerequisite reporting — belongs in the spec (`deployIfAbsent`) or in the
+   generic submit flags (`--stage-src`, `--var`), never in a per-blueprint verb
+   such as `npa paidf up`. One command per YAML does not scale: every new
+   blueprint would add CLI surface, help text, docs and tests for behavior the
+   generic path already has. Natural-language shortcuts belong in the chat
+   agent's spec alias table (`npa/src/npa/cli/agent_workflow.py`), which maps a
+   phrase to a spec name rather than adding a command.
+10. **Live-infra is a priority** (`skills/atomic/testing-conventions/SKILL.md`): a
    new spec must be registered in `SUBMIT_LIVE_MATRIX`
    (`npa/src/npa/orchestration/npa_workflow/submit_matrix.py`); if it has a
    dynamic gate/loop, also add it to `DYNAMIC_SPECS` in

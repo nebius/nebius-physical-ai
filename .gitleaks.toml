@@ -78,4 +78,8 @@ commits = [
     # working-tree scan is clean; this allowlists the commit rather than rewriting a pushed
     # branch's history.
     '''58d3d4e19b94ddb889f64cdf5ef5a91340db4321''',
+    # Historical false positive: generic-api-key interpreted the plain operator
+    # prose `authentication, Kubernetes/RBAC calls...` as an assignment. The
+    # source contains no credential; the pushed PR commit cannot be rewritten.
+    '''adee7e5a24dbb9215f12ed54227a8aee27b65deb''',
 ]

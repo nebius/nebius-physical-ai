@@ -226,7 +226,11 @@ def _iter_tarball(tarball: Path):
     with tarfile.open(tarball, mode="r") as archive:
         for member in archive:
             name = member.name
-            if not (name.endswith(("/layer.tar", ".tar")) or "/blobs/" in name):
+            if not (
+                name.endswith(("/layer.tar", ".tar"))
+                or name.startswith("blobs/")
+                or "/blobs/" in name
+            ):
                 yield name + ("/" if member.isdir() else "")
                 continue
             handle = archive.extractfile(member)

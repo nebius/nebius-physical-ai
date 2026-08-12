@@ -86,6 +86,23 @@ them, but the workbench is built to be swapped:
 When you're ready for the production recipes, head to the
 [cookbooks](../cookbooks/README.md).
 
+## Physical AI Data Factory (video data augmentation)
+
+Turn a handful of frames into a labeled, curated, multiplied dataset: annotate →
+Cosmos Transfer augment → evaluate/validate → re-label → FiftyOne curate → Rerun
+visualize. Runs on Nebius + SkyPilot (no OSMO); pure composition of workbench
+tools.
+
+| Doc | Use when |
+| --- | --- |
+| [physical-ai-data-factory-deploy.md](physical-ai-data-factory-deploy.md) | **Copy-paste runbook** — from zero to a running blueprint (includes a one-block Quick start that stages input frames and submits) |
+| [physical-ai-data-factory.md](physical-ai-data-factory.md) | Conceptual guide — blueprint→stage mapping, S3 layout, viewing results |
+
+> **Fastest start:** the deploy runbook's [Quick start](physical-ai-data-factory-deploy.md#quick-start-copy-paste)
+> seeds captionable frames (no dataset needed) and submits an input-conditioned
+> Cosmos run in a single block. The GPU runner turns those same frames into a
+> temporary clip; no upstream example media is packaged or required.
+
 ## Sim-to-real (14-stage production loop)
 
 These guides are separate from the easy PushT walkthrough above. They document the

@@ -573,27 +573,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
-    "workbench.fiftyone.curate_augmented": ToolEntry(
-        name="workbench.fiftyone.curate_augmented",
-        description=(
-            "Run real FiftyOne Brain uniqueness, similarity, duplicate detection, "
-            "and PCA review over PAIDF variants, merging the Cosmos Curator report."
-        ),
-        argv_template=[
-            "npa",
-            "workbench",
-            "fiftyone",
-            "curate-augmented",
-            "--augment-uri",
-            "{{config.augment_uri}}",
-            "--report-uri",
-            "{{config.curation_report_uri}}",
-            "--curator-report-uri",
-            "{{config.curator_report_uri}}",
-            "--output",
-            "json",
-        ],
-    ),
     "workbench.sim2real_envgen.raw_shard": ToolEntry(
         name="workbench.sim2real_envgen.raw_shard",
         description="Generate raw simulation env shard.",
@@ -1547,6 +1526,31 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description="Launch FiftyOne App for pipeline review (workflow stub).",
         argv_template=["echo", "fiftyone review run {{run.id}} lance {{config.lance_uri}}"],
         stub=True,
+    ),
+    "workbench.fiftyone.curate_augmented": ToolEntry(
+        name="workbench.fiftyone.curate_augmented",
+        description=(
+            "Run real FiftyOne Brain uniqueness, similarity, duplicate detection, "
+            "and PCA review over PAIDF variants, merging the Cosmos Curator report; "
+            "fail closed if the FiftyOne engine does not complete."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "fiftyone",
+            "curate-augmented",
+            "--augment-uri",
+            "{{config.augment_uri}}",
+            "--report-uri",
+            "{{config.curation_report_uri}}",
+            "--curator-report-uri",
+            "{{config.curator_report_uri}}",
+            "--dedup-threshold",
+            "{{config.fiftyone_dedup_threshold}}",
+            "--require-fiftyone",
+            "--output",
+            "json",
+        ],
     ),
     "workbench.token_factory.caption": ToolEntry(
         name="workbench.token_factory.caption",

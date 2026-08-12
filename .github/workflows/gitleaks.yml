@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  # Keep workflows independent, but let a newer commit supersede older work for
+  # the same PR. Non-PR runs use run_id and are never cancelled by this policy.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   gitleaks:
     runs-on: ubuntu-latest

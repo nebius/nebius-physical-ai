@@ -4,6 +4,23 @@ Canonical contract for packaging workbench containers correctly, securely, and
 with the right runtime features exposed. Machine-readable rules live in
 `npa/docker/workbench/packaging-contract.yaml` (enforced by unit tests).
 
+## SkyPilot worker bootstrap contract
+
+Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
+effective user; root or verified passwordless sudo; `openssh-server`, `rsync`,
+and compatible service/init behavior; writable `/tmp` and home; and an
+entrypoint that forwards orchestrator arguments. Compliant first-party images
+record `org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1` in OCI
+config, with Dockerfile behavior covered by build tests.
+
+Submit resolves the selected tag to an immutable digest and validates metadata
+on that digest. Missing/mismatched first-party evidence fails before launch.
+Arbitrary unattested images get one bounded exact-context capability pod; probe
+cleanup failure also fails closed. Cache keys use digest plus contract version,
+never a tag. Image-byte licensing scans remain mandatory before registry push.
+For a multi-tool spec, repeat `--image-override TOOL_REF=IMAGE` to select each
+tool's artifact independently; the preflight and renderer share that same map.
+
 ## Inventory
 
 All first-class images live under `npa/docker/workbench/`:
@@ -16,7 +33,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-isaac-lab` | `isaac-lab/Dockerfile` | job shell |
 | `npa-cosmos` | `cosmos/Dockerfile` | job shell; server built but not default CMD |
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
-| `npa-fiftyone` | `fiftyone/Dockerfile` | job shell; `EXPOSE 5151` |
+| `npa-fiftyone` | `fiftyone/Dockerfile` | command-passthrough job entrypoint; `EXPOSE 5151` |
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686` |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
@@ -36,8 +53,8 @@ Every Dockerfile must declare one of:
 | Tier | `kind` | ENTRYPOINT expectation | Examples |
 | --- | --- | --- | --- |
 | **Service** | `service` | Starts the HTTP service (or entrypoint that does) | lerobot, lancedb, detection-training, lerobot-policy |
-| **Job** | `job` | Runs a workflow/CLI module with explicit CMD | sonic, sim2real-eval, cosmos3-reason, lerobot-vlm-rl |
-| **Interactive** | `interactive` | `/bin/bash` allowed only when CLI always overrides CMD | genesis, isaac-lab, fiftyone, cosmos, groot, retargeting |
+| **Job** | `job` | Runs a workflow/CLI module with explicit CMD or an exec-only command-passthrough entrypoint | sonic, fiftyone, sim2real-eval, cosmos3-reason, lerobot-vlm-rl |
+| **Interactive** | `interactive` | `/bin/bash` allowed only when CLI always overrides CMD | genesis, isaac-lab, cosmos, groot, retargeting |
 
 Do not ship a service-capable image as `interactive` without documenting why
 (deploy path must override CMD). Prefer promoting Cosmos/GR00T to `service`
@@ -241,8 +258,16 @@ python -m npa.deploy.publish_public --dry-run
 python -m npa.deploy.publish_public --target ghcr.io/<org>/<repo>
 ```
 
-The copy path is bracketed by two checks it runs itself. Before writing anything it
-reads every **source** manifest, because `crane auth login` writes a config file and
+The copy path is bracketed by checks it runs itself. Before writing anything it
+resolves every source tag once and uses only the resulting immutable digest for
+config inspection, licensing gates, bootstrap-attestation validation, and copy.
+The target tag is not exposed until all those gates pass. A missing/stale
+bootstrap label, a config/digest mismatch, or any scan failure leaves the public
+reference unchanged. The GitHub workflow serializes publishers for a target and
+does not cancel an in-progress publication because registries provide no atomic
+compare-and-swap for tags.
+
+It also reads every **source** manifest, because `crane auth login` writes a config file and
 exits 0 for any string without ever contacting the registry — so a stale credential
 would otherwise surface partway through the copy loop with some packages already
 created. Run it alone with `--preflight`. The registry's own error code says which
@@ -350,7 +375,8 @@ copies the rest. Two properties matter here:
   gets a pull failure for those tags until the image is built and the workflow re-run.
   Adding one later costs one more visibility flip.
 
-The copy itself is incremental. After the complete source preflight and licensing gates,
+The copy itself is incremental. After the complete digest-pinned source preflight,
+bootstrap attestation, and licensing gates,
 the publisher compares each source and target manifest digest. An exact match prints
 ``Already current; skipping copy`` and performs no registry write; only a missing or changed
 target runs ``crane copy``. This makes it safe to re-run the full guarded plan when one new
@@ -462,6 +488,11 @@ direct service-to-service file coupling.
 - Cosmos Transfer 2.5 has an artifact-by-artifact redistribution record at
   `npa/docker/workbench/cosmos2-transfer/REDISTRIBUTION.md`; its `public`
   classification is valid only after the registry-image audits named there pass.
+- PAIDF's CC-BY-4.0 RoboPro starter is not an image payload. The operator-side
+  CLI runtime-fetches the immutable object, verifies its SHA-256, and stages it
+  to the run. `skills/NOTICE-PAIDF-STARTER-MEDIA` records attribution and the
+  source/model/media license boundary; Cosmos repository example media remains
+  excluded because its asset-level rights and provenance are not uniform.
 
 - `docs/security/container-golden-evals.md` — usefulness + safety contract
 - `docs/security/image-reproducibility.md` — digests and tag families

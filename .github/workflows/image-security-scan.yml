@@ -29,6 +29,12 @@ permissions:
   contents: read
   security-events: write
 
+concurrency:
+  # Keep workflows independent, but let a newer commit supersede older work for
+  # the same PR. Scheduled and manual scans use run_id so they run to completion.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tag-strategy-check:
     name: Two-tag strategy consistency

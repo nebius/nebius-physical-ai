@@ -1311,6 +1311,12 @@
       .voxel-panel { min-height: calc(100dvh - 170px); }
       .voxel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
       .voxel-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+      .dataset-review {
+        border-radius: 10px; padding: 9px 11px; margin: 8px 0 10px;
+        font-size: 13px; line-height: 1.4;
+      }
+      .dataset-review.is-real { background: #ecfdf5; border: 1px solid #6ee7b7; color: #065f46; }
+      .dataset-review.is-limited { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
       .voxel-fields { font-size: 12px; color: var(--muted); margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
       .voxel-fields:empty { display: none; }
       .voxel-viz:empty { display: none; }
@@ -1327,8 +1333,13 @@
       .voxel-viz-legend .k { color: #16a34a; font-weight: 700; }
       .voxel-viz-legend .r { color: #d97706; font-weight: 700; }
       .voxel-grid {
-        display: grid;
-        gap: 12px;
+        display: block;
+      }
+      .voxel-group { margin: 16px 0 22px; }
+      .voxel-group h4 { margin: 0 0 3px; font-size: 16px; color: var(--text); }
+      .voxel-group-note { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+      .voxel-group-grid {
+        display: grid; gap: 12px;
         grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
       }
       .voxel-card {
@@ -1342,7 +1353,11 @@
         transition: box-shadow 160ms var(--ease, ease), transform 160ms var(--ease, ease);
       }
       .voxel-card:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
-      .voxel-card[data-group="input"] { opacity: 0.96; }
+      .voxel-card[data-role="original_input"],
+      .voxel-card[data-role="source_input"] { border-top: 4px solid #2563eb; }
+      .voxel-card[data-role="synthetic_fixture"] { border-top: 4px solid #64748b; }
+      .voxel-card[data-role="derived_conditioning"] { border-top: 4px solid #7c3aed; }
+      .voxel-card[data-role="synthetic_augmented"] { border-top: 4px solid #d97706; }
       .voxel-thumb {
         aspect-ratio: 4 / 3;
         background: #0f172a;
@@ -1361,7 +1376,7 @@
       }
       .voxel-tag em { color: var(--muted); font-style: normal; font-weight: 700; letter-spacing: 0.04em; }
       .voxel-caption { font-size: 12px; color: var(--muted); line-height: 1.4; }
-      @media (max-width: 640px) { .voxel-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
+      @media (max-width: 640px) { .voxel-group-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
       .run-log {
         margin: 8px 0 0 0;
         max-height: 180px;
@@ -1777,7 +1792,7 @@
       <nav class="main-tabs" role="tablist" aria-label="Workbench views">
         <button id="tabMain" class="main-tab" type="button" role="tab" aria-selected="true" aria-controls="panelChat" data-tab="main">Main</button>
         <button id="tabRerun" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRerun" data-tab="rerun">Rerun</button>
-        <button id="tabVoxel" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelVoxel" data-tab="voxel51">Voxel51</button>
+        <button id="tabVoxel" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panelVoxel" data-tab="voxel51">Dataset &amp; provenance</button>
       </nav>
       <button id="chatDrawerToggle" class="btn btn-primary chat-fab" type="button" aria-expanded="false" aria-controls="panelChat" title="Open chat">
         <span class="chat-fab-icon" aria-hidden="true">
@@ -2064,8 +2079,8 @@
           <section class="panel voxel-panel">
             <div class="voxel-head">
               <div>
-                <h3>Voxel51 dataset</h3>
-                <p class="hint">FiftyOne-style view of this run's components — input frames and each augmented scenario variant with its appearance tags, caption, and grade.</p>
+                <h3>Dataset &amp; provenance</h3>
+                <p class="hint">Original/input data and synthetic/augmented outputs are grouped separately. Source identity and the actual curation engine are shown below.</p>
               </div>
               <div class="btn-row" style="margin:0;">
                 <button id="voxelRefresh" class="btn" type="button">Refresh</button>
@@ -2078,6 +2093,7 @@
               </div>
               <button id="voxelLoadRun" class="btn btn-primary" type="button">Load dataset</button>
             </div>
+            <div id="voxelReview" class="dataset-review is-limited" aria-live="polite"></div>
             <div id="voxelSummary" class="voxel-summary" aria-live="polite"></div>
             <div id="voxelFields" class="voxel-fields"></div>
             <div id="voxelViz" class="voxel-viz" aria-live="polite"></div>
@@ -2938,14 +2954,14 @@
         const voxelRefreshBtn = document.getElementById("voxelRefresh");
         if (voxelRefreshBtn) {
           voxelRefreshBtn.addEventListener("click", () => {
-            loadVoxelDataset().catch((err) => showToast("Voxel51 refresh failed: " + String(err), "error"));
+            loadVoxelDataset().catch((err) => showToast("Dataset refresh failed: " + String(err), "error"));
           });
         }
         const voxelLoadRunBtn = document.getElementById("voxelLoadRun");
         if (voxelLoadRunBtn) {
           voxelLoadRunBtn.addEventListener("click", () => {
             const vin = document.getElementById("voxelRunInput");
-            loadVoxelDataset(vin ? vin.value : "").catch((err) => showToast("Voxel51 load failed: " + String(err), "error"));
+            loadVoxelDataset(vin ? vin.value : "").catch((err) => showToast("Dataset load failed: " + String(err), "error"));
           });
         }
         const voxelRunInputEl = document.getElementById("voxelRunInput");
@@ -2953,7 +2969,7 @@
           voxelRunInputEl.addEventListener("keydown", (event) => {
             if (event.key === "Enter") {
               event.preventDefault();
-              loadVoxelDataset(voxelRunInputEl.value).catch((err) => showToast("Voxel51 load failed: " + String(err), "error"));
+              loadVoxelDataset(voxelRunInputEl.value).catch((err) => showToast("Dataset load failed: " + String(err), "error"));
             }
           });
         }
@@ -4181,7 +4197,8 @@
           const bridge = ensureRerunCaptureBridge(iframe, { forceRestart: Boolean(opts && opts.forceRestart) });
           if (!bridge || !bridge.video) return "";
           await playVideoSoon(bridge.video, Math.min(300, budget));
-          const deadline = Date.now() + budget;
+          const fallbackBudget = Math.min(1200, Math.max(400, Math.floor(budget / 3)));
+          const deadline = Date.now() + Math.max(200, budget - fallbackBudget);
           while (Date.now() < deadline) {
             try {
               const track = bridge.stream && bridge.stream.getVideoTracks && bridge.stream.getVideoTracks()[0];
@@ -4199,6 +4216,14 @@
             } catch (_grabErr) { /* retry */ }
             await new Promise((r) => window.setTimeout(r, 80));
           }
+          // Some headless/accelerated browsers expose a valid capture stream but
+          // do not deliver its first video frame until a later canvas mutation.
+          // Reuse the full async canvas capture ladder before giving up; it still
+          // prefers captureStream/ImageCapture and safely rejects blank frames.
+          const captured = await captureCanvasDataUrl(bridge.canvas, {
+            budgetMs: fallbackBudget,
+          });
+          if (captured) return captured;
           // A static canvas can occasionally fail to emit its first MediaStream
           // frame in headless Chromium. Fall back to a final synchronous copy;
           // real cleared WebGL buffers still fail the blank-frame gate here.
@@ -4990,10 +5015,10 @@
           placeholder.innerHTML =
             '<p><strong>3D Rerun viewer needs a desktop browser.</strong></p>' +
             '<p class="hint">On mobile, view this run\'s input frames, augmented scenario ' +
-            'variants, captions and grade in the <strong>Voxel51</strong> tab — or open an ' +
+            'variants, captions and grade in <strong>Dataset &amp; provenance</strong> — or open an ' +
             'individual image/video from the Runs &amp; artifacts list above.</p>' +
             '<div class="btn-row" style="justify-content:center;margin-top:10px;">' +
-            '<button class="btn btn-primary" type="button" id="rerunToVoxel">Open Voxel51</button>' +
+            '<button class="btn btn-primary" type="button" id="rerunToVoxel">Open dataset</button>' +
             '</div>';
           const toVoxel = document.getElementById("rerunToVoxel");
           if (toVoxel) {
@@ -6912,12 +6937,15 @@
           const s3uri = String(item.s3_uri || "");
           const basename = key.split("/").pop() || key;
           const isPreferred = preferredKey && preferredKey === key;
+          const role = String(item.data_role || "pipeline_metadata");
+          const roleLabel = String(item.data_role_label || "Pipeline metadata / report");
           const actionLabel = render === "rerun" ? "View in Rerun" : (render === "mcap" ? "View in Lichtblick" : (render === "video" ? "Play" : "Load"));
           const primary = (render === "rerun" || render === "mcap" || render === "video") ? " btn-primary" : "";
           return (
             '<div class="artifact-card' + (isPreferred ? " is-preferred" : "") + '" data-render="' + escapeHtml(render) + '">' +
             '<div class="artifact-card-head"><strong>' + escapeHtml(basename) + '</strong>' +
             (isPreferred ? '<span class="badge badge-ok">recommended</span>' : "") +
+            '<span class="pill" data-role="' + escapeHtml(role) + '"><strong>' + escapeHtml(roleLabel) + "</strong></span>" +
             '<span class="pill">' + escapeHtml(render) + '</span></div>' +
             '<div class="artifact-card-meta">size=' + escapeHtml(String(item.size || 0)) +
             ' · updated=' + escapeHtml(String(item.last_modified || "")) + '</div>' +
@@ -7364,6 +7392,7 @@
       let voxelDatasetRun = "";
       async function loadVoxelDataset(runIdArg) {
         const grid = document.getElementById("voxelGrid");
+        const reviewHost = document.getElementById("voxelReview");
         const summaryHost = document.getElementById("voxelSummary");
         const fieldsHost = document.getElementById("voxelFields");
         const input = document.getElementById("voxelRunInput");
@@ -7371,6 +7400,7 @@
         // No run chosen yet: auto-pick the most recent discovered run so the tab
         // always shows content instead of an empty prompt.
         if (!runId) {
+          if (reviewHost) reviewHost.innerHTML = "";
           if (grid) grid.innerHTML = '<p class="hint">Finding the latest run…</p>';
           try {
             const runsData = await loadJson("/api/artifacts/runs?limit=1");
@@ -7402,6 +7432,15 @@
         const summary = (data && data.summary) || {};
         const fields = Array.isArray(data && data.fields) ? data.fields : [];
         const samples = Array.isArray(data && data.samples) ? data.samples : [];
+        const source = (data && data.source && typeof data.source === "object") ? data.source : {};
+        const review = (data && data.review && typeof data.review === "object") ? data.review : {};
+        if (reviewHost) {
+          const real = Boolean(review.real_fiftyone);
+          reviewHost.className = "dataset-review " + (real ? "is-real" : "is-limited");
+          reviewHost.innerHTML =
+            "<strong>" + escapeHtml(String(review.label || (real ? "Real FiftyOne Brain review" : "Artifact summary only — FiftyOne did not run"))) + "</strong>" +
+            (review.limitation ? "<br>" + escapeHtml(String(review.limitation)) : "");
+        }
         if (summaryHost) {
           const grade = (summary.grade_score === null || summary.grade_score === undefined) ? "n/a" : String(summary.grade_score);
           summaryHost.innerHTML =
@@ -7410,7 +7449,12 @@
             '<span class="pill">multiply <strong>' + escapeHtml(String(summary.multiply_mode || "-")) + "</strong></span>" +
             '<span class="pill">grade <strong>' + escapeHtml(grade) + "</strong></span>" +
             '<span class="pill">decision <strong>' + escapeHtml(String(summary.grade_decision || "-")) + "</strong></span>" +
-            '<span class="pill">input frames <strong>' + escapeHtml(String(summary.input_count || 0)) + "</strong></span>" +
+            '<span class="pill">source input <strong>' + escapeHtml(String(summary.source_input_count || summary.original_input_count || 0)) + "</strong></span>" +
+            '<span class="pill">synthetic/augmented <strong>' + escapeHtml(String(summary.synthetic_augmented_count || summary.augmented_count || 0)) + "</strong></span>" +
+            (summary.conditioning_count ? '<span class="pill">derived conditioning <strong>' + escapeHtml(String(summary.conditioning_count)) + "</strong></span>" : "") +
+            (source.input_origin_label ? '<span class="pill">origin <strong>' + escapeHtml(String(source.input_origin_label)) + "</strong></span>" : "") +
+            (source.asset_license ? '<span class="pill">license <strong>' + escapeHtml(String(source.asset_license)) + "</strong></span>" : "") +
+            (source.sha256 ? '<span class="pill">sha256 <strong>' + escapeHtml(String(source.sha256).slice(0, 12)) + "…</strong></span>" : "") +
             (summary.curation_engine ? '<span class="pill">curation <strong>' + escapeHtml(String(summary.curation_engine)) + "</strong></span>" : "") +
             ((summary.curated_kept !== null && summary.curated_kept !== undefined) ? '<span class="pill">kept <strong>' + escapeHtml(String(summary.curated_kept)) + "</strong></span>" : "") +
             (summary.near_duplicate_count ? '<span class="pill">near-dupes <strong>' + escapeHtml(String(summary.near_duplicate_count)) + "</strong></span>" : "") +
@@ -7466,11 +7510,13 @@
           grid.innerHTML = '<p class="hint">No samples found for this run.</p>';
           return;
         }
-        grid.innerHTML = samples.map((s, i) => {
+        const sampleCard = (s, i) => {
           const tags = (s && s.tags && typeof s.tags === "object") ? s.tags : {};
           const tagHtml = Object.keys(tags).map((k) => '<span class="voxel-tag"><em>' + escapeHtml(k) + "</em> " + escapeHtml(String(tags[k])) + "</span>").join("");
           const caption = String((s && s.caption) || "");
           const group = String((s && s.group) || "");
+          const dataRole = String((s && s.data_role) || (group === "source" ? "source_input" : (group === "conditioning" ? "derived_conditioning" : "synthetic_augmented")));
+          const roleLabel = String((s && s.data_role_label) || (group === "source" ? "Source input" : (group === "conditioning" ? "Derived conditioning data" : "Synthetic / augmented output")));
           const label = String((s && s.label) || (s && s.id) || ("sample " + i));
           // Prefer bucket-qualified s3:// URIs so thumbnails/view/download resolve
           // the correct bucket (runs may live in any accessible bucket).
@@ -7486,10 +7532,11 @@
             if (flags.includes("redundant")) curBadge += '<span class="voxel-tag" title="low-uniqueness, flagged for review"><em>redundant</em></span>';
           }
           return (
-            '<div class="voxel-card" data-group="' + escapeHtml(group) + '">' +
+            '<div class="voxel-card" data-group="' + escapeHtml(group) + '" data-role="' + escapeHtml(dataRole) + '">' +
             '<div class="voxel-thumb" data-thumb-uri="' + escapeHtml(thumbUri) + '"><span class="hint">…</span></div>' +
             '<div class="voxel-meta">' +
-            '<div class="voxel-title"><strong>' + escapeHtml(label) + '</strong><span class="pill">' + escapeHtml(group) + "</span></div>" +
+            '<div class="voxel-title"><strong>' + escapeHtml(label) + '</strong></div>' +
+            '<div class="voxel-tags"><span class="voxel-tag"><em>' + escapeHtml(roleLabel) + "</em></span></div>" +
             (curBadge ? '<div class="voxel-tags">' + curBadge + "</div>" : "") +
             (tagHtml ? '<div class="voxel-tags">' + tagHtml + "</div>" : "") +
             (caption ? '<div class="voxel-caption">' + escapeHtml(caption) + "</div>" : "") +
@@ -7498,7 +7545,36 @@
             '<button class="btn" type="button" data-vx-action="download" data-s3-uri="' + escapeHtml(thumbUri) + '" data-name="' + escapeHtml(label) + '">Download</button>' +
             "</div></div></div>"
           );
-        }).join("");
+        };
+        const sourceSamples = samples.filter((s) => s && (s.group === "source" || s.group === "input"));
+        const conditioning = samples.filter((s) => s && s.group === "conditioning");
+        const augmented = samples.filter((s) => s && s.group === "augmented");
+        const other = samples.filter((s) => s && !["source", "input", "conditioning", "augmented"].includes(s.group));
+        const groupSection = (title, note, rows, offset) => rows.length ? (
+          '<section class="voxel-group"><h4>' + escapeHtml(title) + " (" + String(rows.length) + ")</h4>" +
+          '<p class="voxel-group-note">' + escapeHtml(note) + '</p><div class="voxel-group-grid">' +
+          rows.map((sample, index) => sampleCard(sample, offset + index)).join("") + "</div></section>"
+        ) : "";
+        grid.innerHTML =
+          groupSection(
+            String(source.input_origin_label || "Source input"),
+            "Source before conditioning. " + String(source.asset_attribution || source.description || "Authenticity and license are recorded in provenance") + (source.staged_canonical_s3_uri ? " — " + String(source.staged_canonical_s3_uri) : ""),
+            sourceSamples,
+            0
+          ) +
+          groupSection(
+            "Derived conditioning data",
+            "Normalized 93-frame clip and caption frames derived from the source; this is the exact Cosmos conditioning path.",
+            conditioning,
+            sourceSamples.length
+          ) +
+          groupSection(
+            "Synthetic / augmented data",
+            "Variants generated from the conditioned source by Cosmos Transfer; these are not source captures.",
+            augmented,
+            sourceSamples.length + conditioning.length
+          ) +
+          groupSection("Other dataset artifacts", "Additional samples without a recognized provenance role.", other, sourceSamples.length + conditioning.length + augmented.length);
         for (const node of grid.querySelectorAll(".voxel-thumb[data-thumb-uri]")) {
           const uri = String(node.getAttribute("data-thumb-uri") || "").trim();
           if (!uri) { node.innerHTML = '<span class="hint">no preview</span>'; continue; }
@@ -7580,6 +7656,7 @@
             // preview handles basic-auth so <video>/<img> can play without 401s.
             await showArtifactPreview(simViz, activeArtifactRender);
           } else {
+            if (activeArtifactRender === "rerun") setRenderMode("rerun");
             hideArtifactPreview();
           }
           if (!ready && (!activeArtifactRender || activeArtifactRender === "rerun")) {

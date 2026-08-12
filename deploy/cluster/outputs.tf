@@ -18,6 +18,16 @@ output "created_subnet_id" {
   value       = local.create_subnet ? nebius_vpc_v1_subnet.cluster[0].id : null
 }
 
+output "created_network_id" {
+  description = "Network created by this wrapper when subnet_id was empty."
+  value       = local.create_subnet ? nebius_vpc_v1_network.cluster[0].id : null
+}
+
+output "k8s_node_group_service_account_id" {
+  description = "Service account created for Kubernetes node groups when enabled."
+  value       = module.k8s_training.k8s_node_group_service_account_id
+}
+
 output "k8s_training_ref" {
   description = "Pinned nebius-solutions-library release used by this wrapper."
   value       = "main-v2026-05-25+local-cluster-patches"

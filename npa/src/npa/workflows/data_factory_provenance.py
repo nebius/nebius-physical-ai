@@ -19,12 +19,12 @@ from typing import Any, Callable
 # runtime is where the compute actually runs (grounds the "which needs a GPU" story).
 _STAGE_COMPONENTS: list[tuple[str, dict[str, str]]] = [
     ("configs", {"stage": "Config generation", "component": "Appearance-variable sampler", "runtime": "CPU"}),
-    ("input", {"stage": "Source frames", "component": "Uploaded source clips", "runtime": "input"}),
+    ("input", {"stage": "Source + conditioning", "component": "Verified run input and derived conditioning", "runtime": "operator-side prepare"}),
     ("labeled_original", {"stage": "Annotate originals", "component": "Token Factory VLM", "runtime": "hosted GPU (Token Factory)"}),
     ("cosmos_augmented", {"stage": "Augment", "component": "Cosmos Transfer 2.5", "runtime": "GPU (Nebius K8s)"}),
     ("grade", {"stage": "Attribute verify + quality gate", "component": "Token Factory vlm_eval + CPU gate", "runtime": "hosted GPU (Token Factory) + CPU"}),
     ("labeled_augmented", {"stage": "Pseudo-label augmented", "component": "Token Factory VLM", "runtime": "hosted GPU (Token Factory)"}),
-    ("curation", {"stage": "Curation", "component": "FiftyOne-style curation report", "runtime": "CPU"}),
+    ("curation", {"stage": "Curation", "component": "Dataset curation report", "runtime": "CPU"}),
     ("reports", {"stage": "Visualize + finalize", "component": "Rerun recording + aggregate report", "runtime": "CPU"}),
 ]
 
@@ -117,8 +117,8 @@ def build_run_provenance(
             elif engine == "report-only":
                 entry["engine"] = "report_only"
                 entry["detail"] = (
-                    "counts report (FiftyOne stand-in) — run the curate stage in the "
-                    "npa-fiftyone image for real FiftyOne Brain curation"
+                    "artifact counts only — FiftyOne Brain did not run for this "
+                    "historical or fallback result"
                 )
         components.append(entry)
 
@@ -137,10 +137,9 @@ def build_run_provenance(
     }
 
 
-# Stages whose artifacts are genuine ORIGINAL inputs (uploaded/source), and the
-# visual-producing stages in pipeline order (earliest first) so origin resolution
-# can fall back to "earliest stored visual" when no original was persisted.
-_ORIGINAL_INPUT_STAGES: tuple[str, ...] = ("input", "labeled_original")
+# Stage whose artifacts may contain source input, and visual-producing stages in
+# pipeline order. Derived conditioning and fixture frames are classified below.
+_ORIGINAL_INPUT_STAGES: tuple[str, ...] = ("input",)
 _VISUAL_STAGE_ORDER: tuple[str, ...] = ("input", "labeled_original", "cosmos_augmented")
 _IMAGE_EXTS: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 _VIDEO_EXTS: tuple[str, ...] = (".mp4", ".mov", ".webm", ".avi", ".mkv")
@@ -182,8 +181,8 @@ def build_run_origin(
 
     Answers "what was the original input image/frame?" without guessing:
 
-    - If the run stored source frames/clips (``input/`` or ``labeled_original/``),
-      those keys ARE the original inputs and are returned verbatim.
+    - If the run stored source frames/clips under ``input/``, those keys are source
+      inputs; normalized conditioning artifacts are reported separately.
     - Otherwise it reports that no original RGB input was persisted, names the
       earliest stored visuals (e.g. the Cosmos Transfer 2.5 *augmented* frames,
       which are augment OUTPUTS), the augment engine/model, the config-driven
@@ -203,10 +202,43 @@ def build_run_origin(
         except Exception:  # noqa: BLE001 - origin is best-effort context
             return {}
 
+    provenance_key = _stage_json_key(keys, run_id, "input", "provenance.json")
+    input_source = _read(provenance_key)
+    config_variables: dict[str, Any] | None = None
+    cfg_key = _stage_json_key(keys, run_id, "configs", "manifest.json")
+    cfg = _read(cfg_key)
+    variables = cfg.get("variables")
+    if isinstance(variables, dict) and variables:
+        config_variables = variables
+    source = cfg.get("input_source")
+    if not input_source and isinstance(source, dict):
+        input_source = dict(source)
+    elif not input_source and int(cfg.get("seeded_default_input_frames") or 0) > 0:
+        input_source = {
+            "source_kind": "synthetic_fixture",
+            "input_origin_label": "Synthetic seeded fixture",
+            "frame_count": int(cfg.get("seeded_default_input_frames") or 0),
+        }
+    source_kind = str(input_source.get("source_kind") or input_source.get("kind") or "")
+    source_kind = {
+        "npa_seeded_fixture": "synthetic_fixture",
+        "operator_provided": "user_supplied",
+        "stored_run_input": "user_supplied",
+    }.get(source_kind, source_kind)
+
     original_inputs: list[dict[str, str]] = []
+    derived_conditioning: list[dict[str, str]] = []
     for stage in _ORIGINAL_INPUT_STAGES:
         for key in _visual_keys_for_stage(keys, run_id, stage):
-            original_inputs.append({"key": key, "stage": stage, "kind": _artifact_kind(key)})
+            leaf = key.rsplit("/", 1)[-1].lower()
+            if leaf == "conditioning.mp4" or leaf.startswith("conditioning-frame-"):
+                derived_conditioning.append(
+                    {"key": key, "stage": stage, "kind": _artifact_kind(key)}
+                )
+            elif source_kind != "synthetic_fixture":
+                original_inputs.append(
+                    {"key": key, "stage": stage, "kind": _artifact_kind(key)}
+                )
 
     # Augment engine/model (real GPU Cosmos Transfer vs CPU stand-in).
     augment: dict[str, str] | None = None
@@ -234,14 +266,6 @@ def build_run_origin(
         label_model = str(cap.get("model") or "")
 
     # Config-driven appearance variables (grounds "generated from config, not an image").
-    config_variables: dict[str, Any] | None = None
-    cfg_key = _stage_json_key(keys, run_id, "configs", "manifest.json")
-    if cfg_key:
-        cfg = _read(cfg_key)
-        variables = cfg.get("variables")
-        if isinstance(variables, dict) and variables:
-            config_variables = variables
-
     # Earliest stored visual stage (for the no-original fallback).
     earliest_visual: dict[str, Any] | None = None
     present_components = {stage: base for stage, base in _STAGE_COMPONENTS}
@@ -268,16 +292,20 @@ def build_run_origin(
         config_variables=config_variables,
         labeled_from=labeled_from,
         label_model=label_model,
+        input_source=input_source,
+        derived_conditioning=derived_conditioning,
     )
     return {
         "run_id": run_id,
         "original_present": original_present,
         "original_inputs": original_inputs,
+        "derived_conditioning": derived_conditioning,
         "earliest_visual": earliest_visual,
         "augment": augment,
         "config_variables": config_variables,
         "labeled_from": labeled_from,
         "label_model": label_model,
+        "input_source": input_source,
         "summary": summary,
     }
 
@@ -292,8 +320,16 @@ def _origin_summary(
     config_variables: dict[str, Any] | None,
     labeled_from: str,
     label_model: str,
+    input_source: dict[str, Any],
+    derived_conditioning: list[dict[str, str]],
 ) -> str:
     run_tag = f" `{run_id}`" if run_id else ""
+    source_kind = str(input_source.get("source_kind") or input_source.get("kind") or "")
+    source_kind = {
+        "npa_seeded_fixture": "synthetic_fixture",
+        "operator_provided": "user_supplied",
+        "stored_run_input": "user_supplied",
+    }.get(source_kind, source_kind)
     if original_present:
         first = original_inputs[0]["key"]
         n = len(original_inputs)
@@ -302,12 +338,36 @@ def _origin_summary(
         if augment:
             model = augment.get("model") or "Cosmos Transfer 2.5"
             aug_bit = f" and then transformed by Cosmos Transfer 2.5 ({model}) in the Augment stage"
+        if source_kind == "upstream_sample":
+            source_phrase = "Upstream real sample"
+        elif source_kind == "user_supplied":
+            source_phrase = "User-supplied input (operator-provided input data)"
+        else:
+            source_phrase = "stored source input"
+        source_uri = str(
+            input_source.get("staged_canonical_s3_uri") or input_source.get("uri") or ""
+        )
+        uri_bit = f" from `{source_uri}`" if source_uri else ""
+        conditioning_bit = (
+            f" {len(derived_conditioning)} Derived conditioning clip/frame artifact(s) "
+            "were produced from that source."
+            if derived_conditioning
+            else ""
+        )
         return (
-            f"Original input for run{run_tag}: {n} uploaded source "
+            f"Source input for run{run_tag}: {n} {source_phrase} "
             f"{'frame' if n == 1 else 'frames'}/clip(s) — e.g. `{first}`{more}. "
-            f"These were annotated by the Token Factory VLM (Annotate originals){aug_bit}."
+            f"Source identity{uri_bit or ': recorded in the run config manifest'}. "
+            f"{conditioning_bit} The derived frames were annotated by the Token Factory VLM "
+            f"(Annotate input){aug_bit}."
         )
     # No original persisted → describe the earliest stored (augmented) visuals truthfully.
+    if source_kind == "synthetic_fixture":
+        return (
+            f"Run{run_tag} uses a Synthetic seeded fixture: repository-generated geometric "
+            "frames, not original real-world data. Cosmos consumes the Derived conditioning "
+            "clip assembled from those frames."
+        )
     if not earliest_visual:
         return (
             f"No original input image is recorded for run{run_tag}, and no stored "

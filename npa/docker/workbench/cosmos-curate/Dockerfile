@@ -47,7 +47,8 @@ ARG TORCH_VERSION=2.9.0
 
 LABEL npa.tool="cosmos-curate" \
       npa.version="${COSMOS_CURATE_VERSION}" \
-      npa.model_weights="none-baked-in; fetched at runtime with HF_TOKEN"
+      npa.model_weights="none-baked-in; fetched at runtime with HF_TOKEN" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 # CODE_DIR is upstream's own in-container code directory
 # (cosmos_curator.core.utils.environment.CONTAINER_PATHS_CODE_DIR) and WORKSPACE is

@@ -16,12 +16,12 @@ def test_generate_configs_writes_real_manifest(tmp_path: Path) -> None:
     assert result["n_augmentations"] == 3
     assert len(result["augmentations"]) == 3
     for combo in result["augmentations"]:
-        # Appearance vars match the actual (indoor manipulation) scene domain.
-        assert combo["cloth_color"] in dfs.APPEARANCE_VARIABLES["cloth_color"]
+        # Appearance vars work for a replaceable physical-scene input.
+        assert combo["color_grade"] in dfs.APPEARANCE_VARIABLES["color_grade"]
         assert combo["lighting"] in dfs.APPEARANCE_VARIABLES["lighting"]
         # Each combo carries the prompt that actually conditions the augmentation.
-        assert combo["cloth_color"] in combo["prompt"]
-        assert "folding" in combo["prompt"]
+        assert combo["color_grade"] in combo["prompt"]
+        assert "input-conditioned" in combo["prompt"]
     assert out.is_file()
     assert json.loads(out.read_text())["schema"] == "npa.data_factory.configs.v1"
 
@@ -42,15 +42,17 @@ def test_generate_configs_propagates_augmentation_subject_into_real_prompts(tmp_
 
 def test_prompt_from_combo_is_appearance_only() -> None:
     combo = {
-        "cloth_color": "red",
-        "surface": "wooden table",
+        "color_grade": "warm",
+        "surface_finish": "matte",
         "lighting": "dim evening light",
         "background": "plain wall",
     }
     prompt = dfs.prompt_from_combo(combo)
-    assert "red cloth" in prompt
-    assert "wooden table" in prompt
-    assert "appearance changed only" in prompt
+    assert "warm color grade" in prompt
+    assert "matte surface finish" in prompt
+    assert "change appearance only" in prompt
+    assert "Preserve the exact input objects" in prompt
+    assert "cloth" not in prompt
 
 
 def test_generate_configs_is_deterministic_by_seed(tmp_path: Path) -> None:
@@ -475,7 +477,13 @@ def test_generate_configs_feeds_first_augmentation_to_transfer(tmp_path: Path) -
 
     combo = _first_augmentation(configs_uri)
     assert combo == manifest["augmentations"][0]
-    assert set(combo) == {"lighting", "background", "cloth_color", "surface", "prompt"}
+    assert set(combo) == {
+        "lighting",
+        "background",
+        "color_grade",
+        "surface_finish",
+        "prompt",
+    }
     # The prompt is what the augment stage feeds into Cosmos Transfer.
     assert combo["prompt"]
 
@@ -631,3 +639,199 @@ def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> Non
     assert report["has_rrd"] is True
     assert report["stages"]["input"] == 1
     assert report["multiply_mode"] == "single-variant"
+
+
+def test_curation_and_final_reports_carry_input_provenance(monkeypatch) -> None:
+    source = {
+        "schema_version": "npa.paidf.input-provenance.v1",
+        "source_kind": "upstream_sample",
+        "input_origin": "actual_capture",
+        "input_origin_label": "Upstream real sample",
+        "sha256": "a" * 64,
+        "staged_canonical_s3_uri": "s3://b/physical-ai-data-factory/run/input/",
+        "derivation": {"kind": "normalized_conditioning_clip"},
+    }
+    monkeypatch.setattr(
+        dfs,
+        "_list_keys",
+        lambda _uri: [
+            "physical-ai-data-factory/run/cosmos_augmented/aug-run/frame-00000.png"
+        ],
+    )
+    monkeypatch.setattr(dfs, "_download_json", lambda _uri: source)
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+
+    curated = dfs.curate(
+        "s3://b/physical-ai-data-factory/run/cosmos_augmented/",
+        "s3://b/physical-ai-data-factory/run/curation/report.json",
+    )
+    final = dfs.finalize(
+        "s3://b/physical-ai-data-factory/run/",
+        "s3://b/physical-ai-data-factory/run/reports/final.json",
+    )
+
+    assert curated["input_source"] == source
+    assert [group["name"] for group in curated["dataset_groups"]] == [
+        "source",
+        "conditioning",
+        "augmented",
+    ]
+    assert final["input_source"] == source
+
+
+def test_is_truthy_matches_common_values() -> None:
+    for v in ("1", "true", "TRUE", "yes", "on", True):
+        assert dfs._is_truthy(v) is True
+    for v in ("", "0", "false", "no", None, "off"):
+        assert dfs._is_truthy(v) is False
+
+
+class _FakeStorage:
+    def __init__(self) -> None:
+        self.uploads: list[str] = []
+
+    def upload_file(self, local: str, dest: str) -> str:
+        assert Path(local).is_file()  # a real PNG was produced
+        self.uploads.append(dest)
+        return dest
+
+
+def test_seed_default_input_frames_writes_when_empty(monkeypatch) -> None:
+    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: [])
+    fake = _FakeStorage()
+    monkeypatch.setattr(dfs, "_storage", lambda: fake)
+
+    written = dfs._seed_default_input_frames("s3://b/physical-ai-data-factory/run/input/", count=3, seed="x")
+
+    assert written == 3
+    assert len(fake.uploads) == 3
+    assert all(dest.endswith(".png") for dest in fake.uploads)
+    assert fake.uploads[0].endswith("input/frame_0000.png")
+
+
+def test_seed_default_input_frames_skips_when_images_exist(monkeypatch) -> None:
+    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: ["physical-ai-data-factory/run/input/frame_0000.png"])
+    fake = _FakeStorage()
+    monkeypatch.setattr(dfs, "_storage", lambda: fake)
+
+    written = dfs._seed_default_input_frames("s3://b/physical-ai-data-factory/run/input/", seed="x")
+
+    assert written == 0
+    assert fake.uploads == []
+
+
+def test_seed_default_input_frames_noop_without_uri() -> None:
+    assert dfs._seed_default_input_frames("", seed="x") == 0
+
+
+def test_generate_configs_seeds_default_input_when_flag_set(tmp_path: Path, monkeypatch) -> None:
+    calls: dict[str, str] = {}
+
+    def fake_seed(input_uri: str, seed: str = "") -> int:
+        calls["input_uri"] = input_uri
+        calls["seed"] = seed
+        return 8
+
+    monkeypatch.setattr(dfs, "_seed_default_input_frames", fake_seed)
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    result = dfs.generate_configs(
+        str(tmp_path / "c.json"),
+        n_augmentations=1,
+        seed="run-x",
+        input_uri="s3://b/physical-ai-data-factory/run-x/input/",
+        seed_default_input="true",
+    )
+    assert result["seeded_default_input_frames"] == 8
+    assert result["input_source"]["kind"] == "npa_seeded_fixture"
+    assert result["input_source"]["staged_canonical_s3_uri"] == calls["input_uri"]
+    assert result["input_source"]["frame_count"] == 8
+    assert calls["input_uri"] == "s3://b/physical-ai-data-factory/run-x/input/"
+    assert calls["seed"] == "run-x"
+
+
+def test_generate_configs_no_seed_when_flag_false(tmp_path: Path, monkeypatch) -> None:
+    def boom(*_a, **_k) -> int:  # pragma: no cover - must not run
+        raise AssertionError("must not seed default input when the flag is falsy")
+
+    monkeypatch.setattr(dfs, "_seed_default_input_frames", boom)
+    result = dfs.generate_configs(
+        str(tmp_path / "c.json"),
+        n_augmentations=1,
+        seed="s",
+        input_uri="s3://b/input/",
+        seed_default_input="false",
+    )
+    assert result["seeded_default_input_frames"] == 0
+    assert result["input_source"]["kind"] == "operator_provided"
+
+
+def test_generate_configs_records_the_seeded_count_in_the_written_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The count has to be in the artifact, not just stdout.
+
+    Regression: the manifest was uploaded before the seeding block ran, so
+    configs/manifest.json never said whether the run used synthetic frames.
+    """
+    monkeypatch.setattr(dfs, "_seed_default_input_frames", lambda input_uri, seed="": 5)
+    real_upload = dfs._upload_json
+    monkeypatch.setattr(
+        dfs,
+        "_upload_json",
+        lambda payload, uri: uri if uri.startswith("s3://") else real_upload(payload, uri),
+    )
+    configs = tmp_path / "c.json"
+
+    dfs.generate_configs(
+        str(configs),
+        n_augmentations=1,
+        seed="run-x",
+        input_uri="s3://b/physical-ai-data-factory/run-x/input/",
+        seed_default_input="true",
+    )
+
+    written = json.loads(configs.read_text(encoding="utf-8"))
+    assert written["seeded_default_input_frames"] == 5
+    assert written["input_source"]["kind"] == "npa_seeded_fixture"
+
+
+def test_generate_configs_fails_when_requested_seeding_fails(tmp_path: Path, monkeypatch) -> None:
+    """Requested-but-failed seeding must not defer the failure to annotate-original."""
+
+    def boom(*_a, **_k) -> int:
+        raise RuntimeError("Pillow is not installed")
+
+    monkeypatch.setattr(dfs, "_seed_default_input_frames", boom)
+
+    with pytest.raises(RuntimeError, match="seed_default_input was requested"):
+        dfs.generate_configs(
+            str(tmp_path / "c.json"),
+            n_augmentations=1,
+            seed="s",
+            input_uri="s3://b/input/",
+            seed_default_input="true",
+        )
+
+
+def test_generate_configs_fixture_refuses_existing_user_media(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(dfs, "_seed_default_input_frames", lambda *_a, **_k: 0)
+    monkeypatch.setattr(
+        dfs,
+        "_download_json",
+        lambda _uri: {
+            "schema_version": "npa.paidf.input-provenance.v1",
+            "source_kind": "user_supplied",
+            "input_origin_label": "User-supplied input",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="refusing to silently reuse or overwrite"):
+        dfs.generate_configs(
+            str(tmp_path / "c.json"),
+            n_augmentations=1,
+            seed="s",
+            input_uri="s3://b/input/",
+            seed_fixture="true",
+        )

@@ -423,9 +423,11 @@ def test_resolve_project_id_existing_by_id() -> None:
     assert created is False
 
 
-def test_resolve_project_id_creates_when_absent(monkeypatch) -> None:
+def test_resolve_project_id_creates_when_absent(monkeypatch, tmp_path: Path) -> None:
     from npa.fleet import lifecycle
+    from npa.provisioning_journal import list_operations
 
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
     monkeypatch.setattr(lifecycle, "_list_projects", lambda *a, **k: [])
     created_names: list[str] = []
 
@@ -449,6 +451,10 @@ def test_resolve_project_id_creates_when_absent(monkeypatch) -> None:
     assert pid == "project-new"
     assert created is True
     assert created_names == [("fleet1-test-a", "us-central1")]
+    [ownership] = list_operations(project_id="project-new", resource_type="project")
+    resource = ownership.read()["resources"][0]
+    assert resource["ownership_source"] == "provider-create-response"
+    assert resource["labels"] == {"tenant_id": "tenant-x", "region": "us-central1"}
 
 
 def test_resolve_project_id_reuses_existing_by_name(monkeypatch) -> None:

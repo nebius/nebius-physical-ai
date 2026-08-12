@@ -1,0 +1,22 @@
+{
+  "captured_from": "sanitized-contract-fixture-pending-isolated-live-refresh",
+  "capture_blocker": "SkyPilot 0.12.2 queue manager fixed port 50011 was owned by an unrelated operator server; NPA failed closed instead of attaching to it",
+  "cases": {
+    "auth_failed": {
+      "returncode": 1,
+      "stderr": "Authentication failed while reading managed jobs.\n",
+      "stdout": ""
+    },
+    "empty": {
+      "returncode": 0,
+      "stderr": "Warning: optional presentation metadata was unavailable.\n",
+      "stdout": "Checking managed jobs...\n{\"jobs\": []}\n"
+    },
+    "nonterminal": {
+      "returncode": 0,
+      "stderr": "",
+      "stdout": "[{\"job_id\": 17, \"job_name\": \"sanitized-owned-run\", \"status\": \"RUNNING\"}]\n"
+    }
+  },
+  "skypilot_version": "0.12.2"
+}

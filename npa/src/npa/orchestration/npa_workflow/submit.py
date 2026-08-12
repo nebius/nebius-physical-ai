@@ -29,10 +29,16 @@ class PreparedNpaWorkflowSubmit:
     temp_dir: tempfile.TemporaryDirectory[str]
 
 
-def _merge_config_overrides(
+def merge_config_overrides(
     spec: NpaWorkflowSpec,
     overrides: Mapping[str, str] | None,
 ) -> NpaWorkflowSpec:
+    """Return *spec* with ``--var KEY=VALUE`` overrides merged into ``config``.
+
+    Shared by ``submit``, ``plan-spec`` and ``run-spec`` so every command plans
+    against the same resolved config (notably ``config.bucket``, whose shipped
+    default is the ``example-bucket`` placeholder).
+    """
     if not overrides:
         return spec
     merged = dict(spec.config)
@@ -48,6 +54,10 @@ def _merge_config_overrides(
         initial=spec.initial,
         states=dict(spec.states),
     )
+
+
+#: Backwards-compatible private alias.
+_merge_config_overrides = merge_config_overrides
 
 
 def load_spec_for_submit(
@@ -88,7 +98,7 @@ def prepare_npa_workflow_for_submit(
         raise NpaWorkflowError("run_id is required when preparing an npa.workflow for submit")
 
     spec = load_spec(yaml_path)
-    spec = _merge_config_overrides(spec, config_overrides)
+    spec = merge_config_overrides(spec, config_overrides)
     resolved_assume = _resolve_assume_decision(spec, assume_decision)
     if _spec_needs_assume_decision(spec) and not resolved_assume:
         raise NpaWorkflowError(

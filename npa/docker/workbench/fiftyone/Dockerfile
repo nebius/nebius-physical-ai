@@ -17,7 +17,8 @@ ARG PILLOW_VERSION=12.2.0
 ARG MONGODB_VERSION=7.0.14
 
 LABEL npa.tool="fiftyone" \
-      npa.version="${FIFTYONE_VERSION}"
+      npa.version="${FIFTYONE_VERSION}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     FIFTYONE_VERSION=${FIFTYONE_VERSION} \
@@ -48,6 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       sudo \
     && (apt-get install -y --no-install-recommends libcurl4t64 \
         || apt-get install -y --no-install-recommends libcurl4) \
+    && install -d -m 0755 /run/sshd \
     && rm -f /etc/ssh/ssh_host_* \
     && printf '%s\n' \
       'PasswordAuthentication no' \
@@ -55,6 +57,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       > /etc/ssh/sshd_config.d/99-npa-container.conf \
     && rm -rf /var/lib/apt/lists/*
 
+# SkyPilot invokes apt and service through sudo. Restricting executable names
+# would be cosmetic because apt can install arbitrary root code; this grant is
+# confined to the image's dedicated workflow user.
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
@@ -85,6 +90,7 @@ RUN python -m venv "${FIFTYONE_VENV}" \
 
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/smoke_env.py /opt/npa/docker/workbench/fiftyone/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/smoke_functional.py /opt/npa/docker/workbench/fiftyone/smoke_functional.py
+COPY --chown=ubuntu:ubuntu --chmod=0755 docker/workbench/fiftyone/entrypoint.sh /opt/npa/docker/workbench/fiftyone/entrypoint.sh
 
 # Bundle mongod so FiftyOne can launch its own metadata DB (needed for real
 # curation: compute_uniqueness / compute_similarity / compute_visualization).
@@ -112,4 +118,4 @@ print(f"FIFTYONE_BUILD_VERSION_OK {actual}")
 PY
 
 EXPOSE 5151
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["/opt/npa/docker/workbench/fiftyone/entrypoint.sh"]

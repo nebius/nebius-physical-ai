@@ -195,13 +195,21 @@ def _image_args(case: SubmitLiveCase, registry: str) -> list[str]:
     ``NPA_E2E_IMAGE_OVERRIDE_<TOOL>`` points at a SkyPilot-hostable variant of the same image.
     """
 
-    if case.image_tool:
-        from npa.deploy.images import container_image_for_tool
+    from npa.deploy.images import container_image_for_tool
 
+    def image_for(tool: str) -> str:
         override = os.environ.get(
-            f"NPA_E2E_IMAGE_OVERRIDE_{case.image_tool.upper().replace('-', '_')}", ""
+            f"NPA_E2E_IMAGE_OVERRIDE_{tool.upper().replace('-', '_')}", ""
         ).strip()
-        return ["--image", override or container_image_for_tool(case.image_tool, registry=registry)]
+        return override or container_image_for_tool(tool, registry=registry)
+
+    if case.image_overrides:
+        args: list[str] = []
+        for tool_ref, tool in case.image_overrides:
+            args.extend(["--image-override", f"{tool_ref}={image_for(tool)}"])
+        return args
+    if case.image_tool:
+        return ["--image", image_for(case.image_tool)]
     if os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
         return ["--image", "none"]
     return []
@@ -415,22 +423,7 @@ def _runtime_submit_args(
         args.append("--no-cancel-on-timeout")
     for key, value in [*case.config_vars, *sorted((extra_vars or {}).items())]:
         args.extend(["--var", f"{key}={value}"])
-    if case.image_tool:
-        # Stages that must run inside a baked workbench image (e.g. Isaac Lab's
-        # training script). Branch code is layered on with NPA_SRC_OVERLAY=1.
-        from npa.deploy.images import container_image_for_tool
-
-        image = container_image_for_tool(case.image_tool, registry=registry)
-        # Operator hook: some workbench images cannot host a SkyPilot task as built
-        # (the Isaac Lab image ships no system python3, which SkyPilot's Kubernetes
-        # runtime requires). Point this at a SkyPilot-compatible variant of the same
-        # image, e.g. NPA_E2E_IMAGE_OVERRIDE_ISAAC_LAB=<registry>/npa-isaac-lab:<tag>-sky
-        override = os.environ.get(
-            f"NPA_E2E_IMAGE_OVERRIDE_{case.image_tool.upper().replace('-', '_')}", ""
-        ).strip()
-        args.extend(["--image", override or image])
-    elif os.environ.get("NPA_E2E_CLEAR_WORKBENCH_IMAGES", "").strip() in {"1", "true", "yes"}:
-        args.extend(["--image", "none"])
+    args.extend(_image_args(case, registry))
     args.extend(_secret_env_args(case))
     args.extend(_skypilot_config_args())
     return args
@@ -504,6 +497,22 @@ def test_npa_workflow_runtime_live_reaches_terminal(
     waves = payload["waves"]
     assert waves, payload
 
+    if case.spec == "physical-ai-data-factory.yaml":
+        _assert_paidf_live_artifacts(
+            waves=waves,
+            bucket=live_bucket(e2e_project),
+            run_id=run_id,
+            e2e_project=e2e_project,
+        )
+        _assert_paidf_status_and_zero_launch_resume(
+            case=case,
+            path=path,
+            run_id=run_id,
+            registry=e2e_registry,
+            e2e_project=e2e_project,
+            forbidden_markers=forbidden_markers,
+        )
+
     if case.spec == "token-factory-trigger-watch.yaml":
         # The driver must have polled an empty prefix before the data arrived.
         watermarks = payload.get("watermarks") or {}
@@ -551,6 +560,122 @@ def test_npa_workflow_runtime_live_reaches_terminal(
             f"barrier task started before the parallel group finished: "
             f"group_end={group_end} starts={downstream_starts}"
         )
+
+
+def _assert_paidf_live_artifacts(
+    *, waves: list[dict], bucket: str, run_id: str, e2e_project: str | None
+) -> None:
+    """Prove real PAIDF waves, decision, component reports, and Rerun output."""
+
+    from npa.clients.project_credentials import s3_client_for_project
+
+    states = [str(state) for wave in waves for state in wave.get("states", [])]
+    required_states = {
+        "generate-configs",
+        "annotate-original",
+        "augment",
+        "evaluate",
+        "quality-gate",
+        "annotate-augmented",
+        "cosmos-curate",
+        "curate",
+        "visualize",
+        "finalize",
+    }
+    assert required_states <= set(states), (
+        f"PAIDF waves missing {sorted(required_states - set(states))}"
+    )
+
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+    prefix = f"physical-ai-data-factory/{run_id}/"
+    required = (
+        "configs/manifest.json",
+        "cosmos_augmented/manifest.json",
+        "grade/cosmos_evaluator.json",
+        "grade/decision.json",
+        "curation/cosmos_curator.json",
+        "curation/report.json",
+        "reports/sim2real.rrd",
+        "reports/final.json",
+    )
+    for relative in required:
+        head = client.head_object(Bucket=bucket, Key=prefix + relative)
+        assert int(head.get("ContentLength") or 0) > 0, relative
+
+    def read_json(relative: str) -> dict:
+        body = client.get_object(Bucket=bucket, Key=prefix + relative)["Body"].read()
+        payload = json.loads(body)
+        assert isinstance(payload, dict), relative
+        return payload
+
+    augment = read_json("cosmos_augmented/manifest.json")
+    assert int(augment.get("variant_count") or 0) >= 1
+    assert augment.get("input_conditioned") is True
+    evaluator = read_json("grade/cosmos_evaluator.json")
+    assert evaluator.get("schema") == "npa.cosmos_evaluator.report.v1"
+    assert evaluator.get("engines")
+    decision = read_json("grade/decision.json")
+    assert decision.get("decision") in {"promote_checkpoint", "loop_back"}
+    assert isinstance(decision.get("score"), (int, float))
+    curator = read_json("curation/cosmos_curator.json")
+    assert curator.get("engine") not in {None, "", "unavailable"}
+    curation = read_json("curation/report.json")
+    assert curation.get("curation_engine") == "fiftyone-brain"
+    final = read_json("reports/final.json")
+    assert int(final.get("artifact_count") or 0) > 0
+
+
+def _assert_paidf_status_and_zero_launch_resume(
+    *,
+    case: SubmitLiveCase,
+    path: Path,
+    run_id: str,
+    registry: str,
+    e2e_project: str | None,
+    forbidden_markers: list[str],
+) -> None:
+    """Prove S3 durability after local receipt loss and zero-launch resume."""
+
+    from npa.orchestration.npa_workflow.submission_state import submission_state_path
+
+    project = e2e_project or "default"
+    receipt = submission_state_path(project, run_id)
+    assert receipt.is_file(), f"missing local submission receipt {receipt}"
+    receipt.unlink()
+
+    status_args = ["workbench", "workflow", "status", run_id, "--json"]
+    if e2e_project:
+        status_args.extend(["--project", e2e_project])
+    durable_status = parse_json_payload(
+        RUNNER.invoke(app, status_args), forbidden_markers
+    )
+    assert str(durable_status.get("status") or "").upper() in TERMINAL_OK
+
+    from npa.orchestration.skypilot.cleanup import _nonterminal_job_ids
+
+    config_value = os.environ.get("NPA_E2E_SKYPILOT_CONFIG_PATH", "").strip()
+    config_path = Path(config_value) if config_value else None
+
+    def nonterminal_jobs() -> list[str]:
+        return _nonterminal_job_ids(
+            isolated_config_dir=None,
+            config_path=config_path,
+            sky_bin=os.environ.get("NPA_SKYPILOT_BIN", "").strip() or None,
+        )
+
+    assert nonterminal_jobs() == []
+
+    resume_args = _runtime_submit_args(
+        path, run_id=run_id, registry=registry, case=case
+    )
+    resume_args.append("--resume")
+    resumed = parse_runtime_json(
+        RUNNER.invoke(app, resume_args), forbidden_markers
+    )
+    assert resumed["status"] == "succeeded", resumed
+    assert resumed["waves"], resumed
+    assert all(wave.get("replayed") is True for wave in resumed["waves"]), resumed
+    assert nonterminal_jobs() == []
 
 
 def test_npa_workflow_runtime_gate_loop_early_exit_vs_full_budget(

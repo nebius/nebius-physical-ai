@@ -190,10 +190,15 @@ images:
       CUDA build/runtime bases. Git LFS smudging is disabled; upstream assets, example media,
       checkpoints, caches, and Git metadata are removed and build-guarded. Gated
       NVIDIA Open Model License weights are fetched only at runtime with the
-      operator's HF_TOKEN into a mounted cache. The derived whole-container
+      operator's HF_TOKEN into a mounted cache. PAIDF's CC-BY-4.0 RoboPro starter
+      is likewise not baked into this or any image: the operator-side NPA CLI
+      fetches the immutable object, enforces its SHA-256, and stages it to the
+      run. The upstream Cosmos repository's ambiguously licensed example media
+      remains excluded. The derived whole-container
       distribution conditions and full artifact evidence are recorded in
       cosmos2-transfer/REDISTRIBUTION.md; built-byte scans are a release gate.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos3:
     dockerfile: cosmos3/Dockerfile
     tier: job
@@ -240,12 +245,14 @@ images:
     # weights it would otherwise need are fetched at run time with the operator's
     # own token, so nothing license-restricted is baked into this image.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos-evaluator:
     dockerfile: cosmos-evaluator/Dockerfile
     tier: job
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     notes: "Mode-based entrypoint; the wired checks need no model weights."
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   lerobot-vlm-rl:
     dockerfile: lerobot-vlm-rl/Dockerfile
     tier: job
@@ -261,14 +268,19 @@ images:
     redistribution: public
   fiftyone:
     dockerfile: fiftyone/Dockerfile
-    tier: interactive
+    tier: job
     ports: [5151]
+    notes: >-
+      Command-passthrough entrypoint supports SkyPilot Kubernetes setup as the
+      non-root ubuntu user (openssh-server, rsync, sudo, passwordless service
+      restart). The service deploy path supplies the FiftyOne App command.
     passwordless_root_exemption: >-
       SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
       as the non-root ubuntu user. The image deletes all build-time SSH host keys,
       disables password and root login, and does not start sshd by default; host
       keys exist only ephemerally when the orchestrator explicitly starts SSH.
     redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
   cosmos:
     dockerfile: cosmos/Dockerfile
     tier: interactive

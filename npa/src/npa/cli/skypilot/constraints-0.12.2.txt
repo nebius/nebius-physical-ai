@@ -1,0 +1,7 @@
+# Compatibility contract for the isolated SkyPilot 0.12.2 runtime.
+# SkyPilot itself declares kubernetes>=20.0.0,!=32.0.0 without an upper bound.
+# Kubernetes client 36 changes generated type spellings in a way that breaks
+# SkyPilot's pod_config validator. 34.1.0 is known-good; the demonstrated-safe
+# range remains broad enough for resolver security updates.
+kubernetes>=20.0.0,!=32.0.0,<36
+click>=8.1,<8.2

@@ -24,6 +24,12 @@ sys.modules[_SPEC.name] = scanner
 _SPEC.loader.exec_module(scanner)
 
 
+def _gzip(payload: bytes) -> bytes:
+    """Stable gzip bytes so xdist workers collect identical parametrized IDs."""
+
+    return gzip.compress(payload, mtime=0)
+
+
 def _tar(path: Path, members: dict[str, bytes], *, mode: str = "w") -> Path:
     with tarfile.open(path, mode) as archive:
         for name, payload in members.items():
@@ -35,19 +41,23 @@ def _tar(path: Path, members: dict[str, bytes], *, mode: str = "w") -> Path:
 
 def _tar_bytes(members: dict[str, bytes], *, mode: str = "w") -> bytes:
     payload = io.BytesIO()
-    with tarfile.open(fileobj=payload, mode=mode) as archive:
+    archive_mode = "w" if mode == "w:gz" else mode
+    with tarfile.open(fileobj=payload, mode=archive_mode) as archive:
         for name, content in members.items():
             info = tarfile.TarInfo(name)
             info.size = len(content)
             archive.addfile(info, io.BytesIO(content))
-    return payload.getvalue()
+    raw = payload.getvalue()
+    return _gzip(raw) if mode == "w:gz" else raw
 
 
 def _zip_bytes(members: dict[str, bytes]) -> bytes:
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, content in members.items():
-            archive.writestr(name, content)
+            member = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            member.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(member, content)
     return payload.getvalue()
 
 
@@ -385,8 +395,8 @@ def test_nested_siblings_share_cumulative_decompression_budget(
     monkeypatch.setattr(scanner, "MAX_NESTED_UNCOMPRESSED_BYTES", 100)
     nested_payload = _zip_bytes(
         {
-            "first.gz": gzip.compress(b"a" * 40),
-            "second.gz": gzip.compress(b"b" * 40),
+            "first.gz": _gzip(b"a" * 40),
+            "second.gz": _gzip(b"b" * 40),
         }
     )
     findings = scanner.scan(
@@ -429,7 +439,7 @@ def test_malformed_nested_archive_fails_closed(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("name", "payload"),
     [
-        ("opt/application/service.json.gz", gzip.compress(b'{"service": "clean"}')),
+        ("opt/application/service.json.gz", _gzip(b'{"service": "clean"}')),
         ("opt/application/graph.gpickle.bz2", bz2.compress(b"clean graph data")),
         ("opt/application/index.json.xz", lzma.compress(b'{"index": "clean"}')),
     ],
@@ -444,7 +454,7 @@ def test_compressed_non_tar_data_is_inspected_without_tar_false_positive(
 @pytest.mark.parametrize(
     ("name", "payload"),
     [
-        ("opt/application/service.json.gz", gzip.compress(b"AKIAABCDEFGHIJKLMNOP")),
+        ("opt/application/service.json.gz", _gzip(b"AKIAABCDEFGHIJKLMNOP")),
         (
             "opt/application/graph.gpickle.bz2",
             bz2.compress(b"hf_token=actual_secret_value"),
@@ -479,7 +489,7 @@ def test_compressed_audited_example_literal_requires_exact_decompressed_bytes(
     clean = scanner.scan(
         _tar(
             tmp_path / "compressed-audited.tar",
-            {outer_path: gzip.compress(audited_payload)},
+            {outer_path: _gzip(audited_payload)},
         ),
         {},
     )
@@ -488,7 +498,7 @@ def test_compressed_audited_example_literal_requires_exact_decompressed_bytes(
     mutated = scanner.scan(
         _tar(
             tmp_path / "compressed-audited-mutated.tar",
-            {outer_path: gzip.compress(audited_payload + b" mutated")},
+            {outer_path: _gzip(audited_payload + b" mutated")},
         ),
         {},
     )

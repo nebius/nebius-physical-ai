@@ -199,8 +199,9 @@ Snowglobe. Design doc: `docs/architecture/blueprint-incorporation-plan.md`.
   gates `defense_rate` **delta-vs-baseline** (`adversarial_baseline.json`).
 
 **Optional extras (injected/guarded, absent degrades gracefully):**
-`npa[lancedb]` (LanceDB store), `npa[agent-eval]` (guardrails-ai),
-`npa[agent-trace]` (langfuse / opentelemetry-sdk). Embeddings default to
+`npa[agent-eval]` (guardrails-ai), `npa[agent-trace]` (langfuse /
+opentelemetry-sdk). The LanceDB store is now part of the base install.
+Embeddings default to
 `NPA_AGENT_EMBED_MODEL` (confirm with `npa workbench token-factory models`);
 LanceDB URI, SearXNG URL, and tracer keys are env/config-resolved, never
 hardcoded. New agentic tests: `test_agent_retrieval.py`, `test_agent_trace.py`,

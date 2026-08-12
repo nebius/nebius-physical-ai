@@ -7,10 +7,18 @@ name = "npa"
 version = "0.1.0"
 description = "Nebius Physical AI platform CLI/SDK"
 requires-python = ">=3.10"
-# Core keeps only what `import npa.cli.main` needs so the offline paths
-# (`npa --version`, vlm-eval stub, workflow validate/plan) install fast on a
-# clean index. Heavy or tool-specific packages live in extras; lower bounds are
-# deliberately wide so a stale mirror does not break the first install.
+# A plain `pip install -e npa` ships the full workbench capability set: the
+# offline CLI paths (`npa --version`, vlm-eval stub, workflow validate/plan)
+# plus the dataframe/plotting, LanceDB, Rerun, and FastAPI-server deps the
+# workbench tools use locally. There is intentionally no `npa` vs `npa[full]`
+# split — the default install is fully capable. GPU/simulation wheels
+# (`genesis`/`groot`/`sonic`) stay opt-in because they run in the remote Nebius
+# images your jobs launch, not on the client, and the optional agent adapters
+# (`agent-eval`/`agent-trace`) degrade gracefully when absent. Bounds are
+# deliberately wide so a stale mirror does not break the install, except for
+# lancedb, rerun-sdk and fastapi: those three are version-pinned because their
+# APIs move between minor releases and the workbench tools are written against
+# the pinned ones.
 dependencies = [
     "typer>=0.24",
     # Imported directly (npa.cli.workflow_shim); typer >= 0.27 no longer
@@ -26,36 +34,45 @@ dependencies = [
     "pyarrow>=14.0",
     "pillow>=10.0",
     # MCAP writer for the lichtblick viewer's frames->MCAP export (pure-Python).
-    "mcap>=1.1",
+    # Upper bound is deliberate: mcap 1.4.0 trips mypy module discovery (see the
+    # [tool.mypy] override) and the writer/reader pin the 1.x record API.
+    "mcap>=1.3,<2",
     # Recursive legal byte scanning must inspect modern Debian data.tar.zst payloads.
     "zstandard>=0.19",
+    # Wan MP4 verification must not depend on host ffmpeg/ffprobe packages.
+    "av==17.1.0",
     "pydantic>=2.0",
     "tomli>=2.0.0; python_version < '3.11'",
+    # Formerly the `data` extra: dataframe/plotting helpers used by curation,
+    # benchmarks, and reports.
+    "pandas>=2.0",
+    "joblib>=1.3",
+    "matplotlib>=3.8",
+    "scipy>=1.10",
+    # Formerly the `lancedb` extra: LanceDB workbench tool (local server,
+    # BDD100K import, materialized views).
+    "lancedb==0.30.2",
+    # Formerly the `viz` extra: Rerun viewer/recording integration
+    # (`npa rerun`, sim-viz adapters).
+    "rerun-sdk==0.31.4",
+    # Formerly the `server` extra: FastAPI policy/eval + agent backend server.
+    "fastapi~=0.136.1",
 ]
 
 [project.optional-dependencies]
 # SkyPilot is installed in an isolated venv outside NPA's package environment; see docs/orchestration/skypilot-setup.md.
 orchestration = []
-# Dataframe/plotting helpers used by curation, benchmarks, and reports.
-data = [
-    "pandas>=2.0",
-    "joblib>=1.3",
-    "matplotlib>=3.8",
-    "scipy>=1.10",
-]
-# LanceDB workbench tool (local server, BDD100K import, materialized views).
-lancedb = [
-    "lancedb==0.30.2",
-    "pandas>=2.0",
-]
-# Rerun viewer/recording integration (`npa rerun`, sim-viz adapters). PyAV
-# makes Wan's MP4 verification independent of host ffmpeg/ffprobe packages.
-viz = ["rerun-sdk==0.31.4", "av==17.1.0"]
-# Foxglove embedded viewer: MCAP read/write for `npa workbench foxglove`
-# (pure-python; the browser SDK itself is fetched at build/bootstrap time).
-# Upper bound is deliberate: mcap 1.4.0 trips mypy module discovery (see the
-# [tool.mypy] override) and the writer/reader pin the 1.x record API.
-foxglove = ["mcap>=1.3,<2"]
+# Back-compat aliases. The `data`, `foxglove`, `lancedb`, `viz`, `server`, and
+# `full` extras are now folded into the base install, so a plain
+# `pip install -e npa` already includes them. These remain as empty extras only
+# so existing `pip install -e "npa[full]"` / `npa[server]` invocations (docs,
+# scripts, remote-venv bootstraps) keep working as no-ops.
+data = []
+foxglove = []
+lancedb = []
+viz = []
+server = []
+full = []
 # Blueprint Phase J: guardrails-ai output validators for the adversarial eval.
 # Injected/guarded — the pure-python validator is the default; absence degrades
 # gracefully (see npa/tests/agent_eval/adversarial.py).
@@ -67,9 +84,6 @@ agent-trace = [
     "langfuse>=2.0",
     "opentelemetry-sdk>=1.20",
 ]
-# Everything the previous monolithic install provided, minus GPU extras.
-full = ["npa[data,foxglove,lancedb,viz,server]"]
-server = ["fastapi~=0.136.1"]
 genesis = [
     "genesis-world",
     "rsl-rl-lib==2.2.4",
@@ -93,14 +107,17 @@ sonic = [
     "onnxruntime>=1.18",
 ]
 # Development and test tooling. Install with: pip install -e "npa[dev]"
-# Includes the full extra so the standard (non-e2e) test suite collects
-# without pulling in GPU-heavy extras (genesis, groot, sonic).
+# The base install already carries every non-GPU workbench dependency, so the
+# standard (non-e2e) test suite collects without pulling in the GPU-heavy
+# extras (genesis, groot, sonic).
 dev = [
-    "npa[full]",
     "pytest>=8.0",
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
     "pytest-timeout>=2.3",
+    # The suite is parallel-safe; `-n auto` takes it from ~6 min to ~2 min on 8
+    # cores, which is the difference between running it every iteration and not.
+    "pytest-xdist>=3.5",
     "ruff>=0.4.0",
 ]
 
@@ -111,11 +128,14 @@ dev = [
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
     "pytest-timeout>=2.3",
+    # The suite is parallel-safe; `-n auto` takes it from ~6 min to ~2 min on 8
+    # cores, which is the difference between running it every iteration and not.
+    "pytest-xdist>=3.5",
     "ruff>=0.4.0",
 ]
 
 [project.scripts]
-npa = "npa.cli.main:app_entry"
+npa = "npa.cli.entry:main"
 
 [tool.npa.supported-tools]
 # Default LeRobot image release. Selectable package versions and their image tags
@@ -151,7 +171,7 @@ lichtblick = "1.26.0"
 lancedb = "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 detection-training = "bdd100k-golden-eval-smoke-20260614T210000Z"
 wan2-2 = "2.2-ti2v5b-rtfetch-cu128-20260809T011658Z-r7"
-nebius-cli = "0.12.192"
+nebius-cli = "0.12.254"
 terraform = "~> 0.5.201"
 terraform-cli = "1.13.3"
 
@@ -179,8 +199,11 @@ packages = ["src/npa"]
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
 "src/npa/deploy/wan2_2_image_manifest.json" = "npa/deploy/wan2_2_image_manifest.json"
 "src/npa/deploy/lerobot_version_manifest.json" = "npa/deploy/lerobot_version_manifest.json"
+"src/npa/deploy/terraform/.terraform.lock.hcl" = "npa/deploy/terraform/.terraform.lock.hcl"
+"src/npa/deploy/terraform/.terraform.lock.npa.json" = "npa/deploy/terraform/.terraform.lock.npa.json"
 "src/npa/smoke/golden_evals.yaml" = "npa/smoke/golden_evals.yaml"
 "src/npa/cli/agent_ui.html" = "npa/cli/agent_ui.html"
+"src/npa/assets/paidf_starter_video.json" = "npa/assets/paidf_starter_video.json"
 
 [tool.ruff]
 target-version = "py310"
