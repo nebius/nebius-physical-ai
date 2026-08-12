@@ -44,6 +44,61 @@ def write_json(uri: str, payload: dict[str, Any], *, directory: Path) -> str:
     return storage().upload_file(str(target), uri)
 
 
+def declared_loop_uri(
+    canonical_uri: str,
+    outer_iteration: int,
+    inner_iteration: int | None = None,
+) -> str:
+    """Map stable padded lineage to the integer URI rendered by loops."""
+
+    outer_segment = f"/outer-{outer_iteration:02d}/"
+    if outer_segment not in canonical_uri:
+        raise ValueError(f"canonical loop URI lacks expected segment {outer_segment!r}")
+    declared = canonical_uri.replace(
+        outer_segment,
+        f"/outer-{outer_iteration}/",
+        1,
+    )
+    if inner_iteration is not None:
+        inner_segment = f"/iter-{inner_iteration:02d}/"
+        if inner_segment not in declared:
+            raise ValueError(
+                f"canonical loop URI lacks expected segment {inner_segment!r}"
+            )
+        declared = declared.replace(
+            inner_segment,
+            f"/iter-{inner_iteration}/",
+            1,
+        )
+    return declared
+
+
+def write_loop_output(
+    canonical_uri: str,
+    payload: dict[str, Any],
+    directory: Path,
+    outer_iteration: int,
+    inner_iteration: int | None = None,
+) -> str:
+    """Publish canonical lineage plus the standard runtime checkpoint alias.
+
+    Historical Sim2Real artifacts use ``outer-01/iter-01`` while standard
+    ``npa.workflow`` loop substitutions use ``outer-1/iter-1``. Keep the
+    established lineage and publish the same small JSON payload at the output
+    URI that durable runtime reconciliation checks.
+    """
+
+    result = write_json(canonical_uri, payload, directory=directory)
+    declared_uri = declared_loop_uri(
+        canonical_uri,
+        outer_iteration,
+        inner_iteration,
+    )
+    if declared_uri != canonical_uri:
+        write_json(declared_uri, payload, directory=directory / "declared")
+    return result
+
+
 def source_sha() -> str:
     actual = os.environ.get("NPA_IMAGE_SOURCE_SHA", "").strip().lower()
     expected = os.environ.get("NPA_SIM2REAL_SOURCE_SHA", "").strip().lower()

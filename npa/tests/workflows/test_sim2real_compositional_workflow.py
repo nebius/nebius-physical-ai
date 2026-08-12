@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
@@ -13,6 +14,10 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     render_setup_for_tool,
     render_skypilot_yaml,
+)
+from npa.workflows.sim2real.workflow_io import (
+    declared_loop_uri,
+    write_loop_output,
 )
 from npa.workflows.sim2real.workflow_stage import _authoritative_scene_args
 
@@ -122,6 +127,85 @@ def test_environment_generation_and_split_share_stage_two_contract() -> None:
 
     assert _authoritative_scene_args(root) == expected
     assert source.count("*_authoritative_scene_args(root)") == 2
+
+
+def test_loop_outputs_preserve_canonical_lineage_and_runtime_checkpoint(
+    monkeypatch, tmp_path: Path
+) -> None:
+    canonical = "s3://bucket/run/actions/train/outer-01/iter-01/rollouts-result.json"
+    declared = "s3://bucket/run/actions/train/outer-1/iter-1/rollouts-result.json"
+    writes: list[tuple[str, dict[str, str], Path]] = []
+
+    def record(uri: str, payload: dict[str, str], *, directory: Path) -> str:
+        writes.append((uri, payload, directory))
+        return uri
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.workflow_io.write_json",
+        record,
+    )
+    payload = {"schema": "npa.sim2real.policy_rollouts.v1"}
+
+    result = write_loop_output(
+        canonical,
+        payload,
+        tmp_path,
+        1,
+        1,
+    )
+
+    assert result == canonical
+    assert [item[0] for item in writes] == [canonical, declared]
+    assert all(item[1] == payload for item in writes)
+    assert (
+        declared_loop_uri(
+            "s3://bucket/run/inner_loop/outer-01/evidence.json",
+            1,
+        )
+        == "s3://bucket/run/inner_loop/outer-1/evidence.json"
+    )
+    with pytest.raises(ValueError, match="expected segment"):
+        declared_loop_uri(
+            "s3://bucket/run/inner_loop/evidence.json",
+            1,
+        )
+
+
+def test_standard_workflow_loop_outputs_match_declared_aliases() -> None:
+    payload = yaml.safe_load(SPEC.read_text())
+    outputs = {
+        state: config["outputs"][0]["uri"]
+        for state, config in payload["states"].items()
+        if state
+        in {
+            "stage-07-rollouts",
+            "stage-08-reason2",
+            "stage-08-reason3",
+            "stage-09-ppo",
+            "stage-10-gold",
+        }
+    }
+    expected = {
+        "stage-07-rollouts": (
+            "{{config.root_uri}}/actions/train/outer-1/iter-1/rollouts-result.json"
+        ),
+        "stage-08-reason2": (
+            "{{config.root_uri}}/vlm_eval/train/outer-1/iter-1/reason2.json"
+        ),
+        "stage-08-reason3": (
+            "{{config.root_uri}}/vlm_eval/train/outer-1/iter-1/reason3.json"
+        ),
+        "stage-09-ppo": "{{config.root_uri}}/inner_loop/outer-1/evidence.json",
+        "stage-10-gold": ("{{config.root_uri}}/eval/gold-heldout/outer-1/report.json"),
+    }
+    rendered = {
+        state: uri.replace("{{loop.outer-loop}}", "1").replace(
+            "{{loop.inner-loop}}", "1"
+        )
+        for state, uri in outputs.items()
+    }
+
+    assert rendered == expected
 
 
 def test_stage_adapter_import_does_not_load_legacy_controller() -> None:

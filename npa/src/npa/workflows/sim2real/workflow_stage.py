@@ -18,6 +18,7 @@ from npa.workflows.sim2real.workflow_io import (
     source_sha,
     storage,
     write_json,
+    write_loop_output,
 )
 
 
@@ -402,7 +403,13 @@ def _stage7(args: argparse.Namespace) -> None:
         f"iter-{args.inner_iteration:02d}/"
     )
     storage().upload_directory(str(output), destination)
-    write_json(destination + "rollouts-result.json", payload, directory=work / "out")
+    write_loop_output(
+        destination + "rollouts-result.json",
+        payload,
+        work / "out",
+        args.outer_iteration,
+        args.inner_iteration,
+    )
     publish_component_record(
         root_uri=root,
         stage=7,
@@ -464,7 +471,9 @@ def _stage8(args: argparse.Namespace) -> None:
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/{args.reason_lane}.json"
     )
-    write_json(output_uri, payload, directory=work / "out")
+    write_loop_output(
+        output_uri, payload, work / "out", args.outer_iteration, args.inner_iteration
+    )
 
 
 def _run_eval(
@@ -642,7 +651,7 @@ def _stage9(args: argparse.Namespace) -> None:
         lane_base + "signal-batch.json", {"signals": signals}, directory=work / "batch"
     )
     write_json(lane_base + "training-update.json", update, directory=work / "training")
-    write_json(evidence_uri, evidence, directory=work / "evidence")
+    write_loop_output(evidence_uri, evidence, work / "evidence", args.outer_iteration)
     publish_component_record(
         root_uri=root,
         stage=8,
@@ -712,7 +721,7 @@ def _stage10(args: argparse.Namespace) -> None:
     report_uri = (
         f"{root}/eval/gold-heldout/outer-{args.outer_iteration:02d}/report.json"
     )
-    write_json(report_uri, report, directory=work / "out")
+    write_loop_output(report_uri, report, work / "out", args.outer_iteration)
     publish_component_record(
         root_uri=root,
         stage=10,
