@@ -108,17 +108,27 @@ def timed_get(
     verify: bool,
     timeout: float,
 ) -> TimedFetch:
-    started = time.perf_counter()
-    ttfb_s = 0.0
-    nbytes = 0
-    status = 0
-    with httpx.stream("GET", url, auth=auth, verify=verify, timeout=timeout) as resp:
-        status = int(resp.status_code)
-        resp.raise_for_status()
-        for chunk in resp.iter_bytes(64 * 1024):
-            if nbytes == 0:
-                ttfb_s = time.perf_counter() - started
-            nbytes += len(chunk)
+    # verify-live submits a local run before this probe; that can restart Rerun
+    # while nginx is streaming the bundle. Retry only that transport-level
+    # incomplete-chunk race, never HTTP/auth/content failures.
+    for attempt in range(3):
+        started = time.perf_counter()
+        ttfb_s = 0.0
+        nbytes = 0
+        status = 0
+        try:
+            with httpx.stream("GET", url, auth=auth, verify=verify, timeout=timeout) as resp:
+                status = int(resp.status_code)
+                resp.raise_for_status()
+                for chunk in resp.iter_bytes(64 * 1024):
+                    if nbytes == 0:
+                        ttfb_s = time.perf_counter() - started
+                    nbytes += len(chunk)
+            break
+        except httpx.RemoteProtocolError as exc:
+            if attempt >= 2 or "incomplete chunked read" not in str(exc).lower():
+                raise
+            time.sleep(0.2)
     total_s = time.perf_counter() - started
     try:
         path = httpx.URL(url).path

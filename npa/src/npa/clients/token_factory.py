@@ -134,14 +134,14 @@ class TokenFactoryClient:
         *,
         http_client: httpx.Client | None = None,
         retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
-        sleeper: Callable[[float], None] = time.sleep,
+        sleeper: Callable[[float], None] | None = None,
     ) -> None:
         self._config = config or resolve_config()
         self._http_client = http_client
         if retry_attempts < 1:
             raise ValueError("retry_attempts must be at least one")
         self._retry_attempts = retry_attempts
-        self._sleeper = sleeper
+        self._sleeper = sleeper or time.sleep
 
     @property
     def config(self) -> TokenFactoryConfig:
@@ -246,9 +246,17 @@ class TokenFactoryClient:
         client = self._http_client or httpx.Client(timeout=self._config.timeout_s)
         try:
             for attempt in range(1, self._retry_attempts + 1):
-                response = client.request(
-                    method, url, headers=self._headers(), json=json_body
-                )
+                try:
+                    response = client.request(
+                        method, url, headers=self._headers(), json=json_body
+                    )
+                except httpx.TransportError as exc:
+                    if attempt == self._retry_attempts:
+                        raise TokenFactoryError(
+                            f"Token Factory request failed: {exc}"
+                        ) from exc
+                    self._sleeper(float(attempt))
+                    continue
                 if (
                     response.status_code in RETRYABLE_STATUS_CODES
                     and attempt < self._retry_attempts
@@ -263,7 +271,10 @@ class TokenFactoryClient:
                 f"Token Factory request failed ({exc.response.status_code}): "
                 f"{_truncate(exc.response.text)}"
             ) from exc
-        except httpx.HTTPError as exc:
+        except httpx.RequestError as exc:
+            # Non-transport request failures (for example DecodingError and
+            # TooManyRedirects) are not safe POST retries, but they remain part
+            # of the public TokenFactoryError contract.
             raise TokenFactoryError(f"Token Factory request failed: {exc}") from exc
         except json.JSONDecodeError as exc:  # pragma: no cover - defensive
             raise TokenFactoryError("Token Factory returned non-JSON response") from exc

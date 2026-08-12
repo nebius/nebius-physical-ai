@@ -18,6 +18,8 @@ from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
+    # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
+    "workbench.nurec.visualize": "rerun-viewer",
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
@@ -483,25 +485,39 @@ def resolve_task_image(
 
     if tool_ref in options.image_overrides:
         resolved = str(options.image_overrides[tool_ref] or "").strip()
-    elif "*" in options.image_overrides:
-        resolved = str(options.image_overrides["*"] or "").strip()
     else:
-        resolved = str(resources.get("image") or "").strip()
-        if not resolved:
-            tool = tool_image_key(tool_ref)
-            if not tool:
-                return ""
-            from npa.deploy.images import container_image_for_tool
+        # A family override such as ``workbench.fiftyone`` applies to its actions.
+        # Exact matches above win, and the longest boundary-safe prefix is next.
+        best_override = ""
+        for prefix in options.image_overrides:
+            if prefix == "*":
+                continue
+            if (
+                (tool_ref == prefix or tool_ref.startswith(prefix + "."))
+                and len(prefix) > len(best_override)
+            ):
+                best_override = prefix
+        if best_override:
+            resolved = str(options.image_overrides[best_override] or "").strip()
+        elif "*" in options.image_overrides:
+            resolved = str(options.image_overrides["*"] or "").strip()
+        else:
+            resolved = str(resources.get("image") or "").strip()
+            if not resolved:
+                tool = tool_image_key(tool_ref)
+                if not tool:
+                    return ""
+                from npa.deploy.images import container_image_for_tool
 
-            kwargs: dict[str, Any] = {}
-            if options.registry:
-                kwargs["registry"] = options.registry
-            if tool == "sonic":
-                if options.gpu_target:
-                    kwargs["gpu_target"] = options.gpu_target
-                if options.image_variant:
-                    kwargs["image_variant"] = options.image_variant
-            resolved = container_image_for_tool(tool, **kwargs)
+                kwargs: dict[str, Any] = {}
+                if options.registry:
+                    kwargs["registry"] = options.registry
+                if tool == "sonic":
+                    if options.gpu_target:
+                        kwargs["gpu_target"] = options.gpu_target
+                    if options.image_variant:
+                        kwargs["image_variant"] = options.image_variant
+                resolved = container_image_for_tool(tool, **kwargs)
     return str(options.image_digest_pins.get(resolved, resolved)).strip()
 
 

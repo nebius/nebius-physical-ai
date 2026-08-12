@@ -632,10 +632,21 @@ def test_spec_cpu_stages_do_not_request_a_gpu(monkeypatch) -> None:
     for name in ("visualize", "finalize"):
         step = next(s for s in plan.steps if s.state == name)
         doc = build_skypilot_task_doc(
-            spec, step, run_id="test-run", options=SkypilotRenderOptions()
+            spec,
+            step,
+            run_id="test-run",
+            # This is an offline resource-shape assertion.  Plan-only rendering
+            # keeps it hermetic instead of minting a live private-registry token.
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
         )
         assert "accelerators" not in doc["resources"], name
-        assert "config" not in doc, f"{name} should not carry GPU pod_config"
+        pod_spec = (
+            doc.get("config", {})
+            .get("kubernetes", {})
+            .get("pod_config", {})
+            .get("spec", {})
+        )
+        assert "initContainers" not in pod_spec, f"{name} should not carry GPU pod_config"
 
 
 def test_renderer_installs_the_nurec_runtime_deps_the_vendor_image_lacks() -> None:

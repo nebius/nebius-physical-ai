@@ -2821,17 +2821,18 @@ def _validate_cluster_once(
         if annotations.get("storageclass.kubernetes.io/is-default-class") == "true":
             default_sc = item.get("metadata", {}).get("name", "")
             break
-    # The filesystem CSI (and its `csi-mounted-fs-path-sc` default StorageClass) is
-    # only installed when the shared filesystem is enabled. With the default
-    # FTUE / PAIDF shape (enable_filestore = false), the platform block-storage
-    # StorageClass stays the default, so only enforce the filesystem CSI SC when
-    # the shared filesystem was opted into.
-    if (
-        _shared_filesystem_requested(tfvars, dict(os.environ))
-        and default_sc != "csi-mounted-fs-path-sc"
-    ):
+    # The filesystem CSI is installed only when the shared filesystem is enabled.
+    # Respect environment overrides and existing-filesystem attachment semantics,
+    # then validate the exact expected default on both sides of that decision.
+    filestore_enabled = _shared_filesystem_requested(tfvars, dict(os.environ))
+    expected_default_sc = (
+        "csi-mounted-fs-path-sc"
+        if filestore_enabled
+        else str(tfvars.get("previous_default_storage_class_name") or "compute-csi-default-sc")
+    )
+    if default_sc != expected_default_sc:
         raise typer.BadParameter(
-            f"Expected default StorageClass csi-mounted-fs-path-sc, found {default_sc}"
+            f"Expected default StorageClass {expected_default_sc}, found {default_sc}"
         )
     return {
         "ready_nodes": ready_nodes,

@@ -920,9 +920,96 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
         "/foxglove/load-artifact",
         "/foxglove/convert-run",
         "/foxglove/live",
+        "/resources",
+        "/tenant-resources",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
 
+    monkeypatch.setattr(
+        module,
+        "_tenant_resource_inventory",
+        lambda *, force_refresh=False: {
+            "ok": True,
+            "force_refresh": force_refresh,
+            "categories": [{"id": "project", "status": "configured"}],
+        },
+    )
+    resource_route = next(route for route in module.app.routes if route.path == "/resources")
+    assert resource_route.endpoint(refresh=True) == {
+        "ok": True,
+        "force_refresh": True,
+        "categories": [{"id": "project", "status": "configured"}],
+    }
+
+    # Legacy project profiles predate the nested ``kubernetes`` block but are
+    # still explicit operator configuration.  The rendered backend must ground
+    # workflow placement from that selected context rather than discover a
+    # different cluster or report ambiguity.
+    monkeypatch.setattr(
+        module,
+        "_load_agent_config_yaml",
+        lambda: {
+            "default_project": "configured-project",
+            "projects": {
+                "configured-project": {
+                    "k8s_context": "configured-context",
+                    "container_registry": "registry.example/project",
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(module, "_agent_cloud_mk8s_clusters", lambda _project="": [])
+    grounded_legacy = module._agent_k8s_backends("configured-project")
+    assert grounded_legacy["configured"] == [
+        {
+            "source": "project_config_legacy",
+            "project": "configured-project",
+            "cluster_name": "configured-context",
+            "context": "configured-context",
+            "kubeconfig": "",
+            "gpu_profile": "",
+            "raw": {"container_registry": "registry.example/project"},
+        }
+    ]
+
+    # Execute the actual rendered chat wiring, not only the pure generator.
+    state = {"workflow_draft": {}}
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda payload: state.update(payload))
+    monkeypatch.setattr(module, "_agent_s3_settings", lambda: {"bucket": "configured-bucket"})
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda: {
+            "project": "configured-project",
+            "has_infra": True,
+            "configured": [
+                {
+                    "cluster_name": "configured-cluster",
+                    "context": "configured-context",
+                    "raw": {"gpu_accelerator": "RTXPRO6000", "namespace": "workflows"},
+                }
+            ],
+            "local_clusters": [],
+            "cloud_clusters": [],
+        },
+    )
+    reply, _used, _suggested, yaml_text, validation, intent = module._maybe_toolground_chat_reply(
+        "create sim2real yaml with isaac task Isaac-Lift-Cube-Franka-v0 and 5000 environments"
+    )
+    assert intent == "create_vlm_rl_workflow"
+    assert validation["ok"] is True
+    assert yaml_text and "bucket: configured-bucket" in yaml_text
+    assert "configured-cluster" in yaml_text
+    assert state["workflow_draft"]["runnable"] is True
+    assert "warnings" not in state["workflow_draft"] or not state["workflow_draft"]["warnings"]
+    assert "Could not generate runnable" not in reply
+
+    monkeypatch.setattr(module, "_agent_s3_settings", lambda: {"bucket": ""})
+    blocked = module._maybe_toolground_chat_reply("create sim2real yaml")
+    assert blocked[3] is None
+    assert blocked[4]["ok"] is False
+    assert "unresolved configuration placeholders" in blocked[0]
     command_secrets = [secrets.token_urlsafe(32) for _index in range(6)]
     public_steps = module._workflow_run_steps(
         [

@@ -149,7 +149,7 @@ def test_skypilot_bootstrap_reports_network_failure_from_pip(
         skypilot_cli.bootstrap_skypilot(venv_path=venv)
 
 
-def test_skypilot_install_package_pins_click_after_install(
+def test_skypilot_install_package_pins_runtime_dependencies_after_install(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -170,6 +170,7 @@ def test_skypilot_install_package_pins_click_after_install(
     skypilot_cli._install_package(state, "skypilot==0.12.2")
 
     assert any(cmd[-1] == "click>=8.1,<8.2" for cmd in installs), installs
+    assert any(cmd[-1] == skypilot_cli.KUBERNETES_CLIENT_SPEC for cmd in installs), installs
 
 
 def test_skypilot_bootstrap_can_install_local_tiny_package(

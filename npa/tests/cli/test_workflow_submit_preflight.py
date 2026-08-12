@@ -241,7 +241,9 @@ def test_paidf_fixture_is_explicit_in_rendered_plan(
     assert result.exit_code == 0, result.output
     assert "Synthetic seeded fixture" not in result.output  # metadata, not a fake stage
     assert "generate_configs" in result.output
-    assert "'true'" in result.output
+    plan = json.loads(result.output)["plan"]
+    generate = next(step for step in plan["steps"] if step["state"] == "generate-configs")
+    assert generate["argv"][-2] == "true"
     assert "--condition-on-input" in result.output
 
 

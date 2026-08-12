@@ -117,6 +117,7 @@ class RuntimeOptions:
     submit_timeout: int = 1800
     infra: str = ""
     controller_backend: str = "kubernetes"
+    config_path: Path | None = None
     isolated_config_dir: Path | None = None
     resume: bool = False
     project: str = "default"
@@ -1013,6 +1014,7 @@ class SkyPilotWaveExecutor:
         attempt.credential_source = f"project:{self.options.project}"
         self.ledger.record(attempt)
         kwargs = {
+            "config_path": self.options.config_path,
             "isolated_config_dir": self.options.isolated_config_dir,
             "controller_backend": self.options.controller_backend,
             "infra": self.options.infra,

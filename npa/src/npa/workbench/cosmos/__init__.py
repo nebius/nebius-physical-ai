@@ -2,24 +2,32 @@
 
 from __future__ import annotations
 
+import os as _os
+
 from npa._sdk import make_cli_wrapper
-from npa.workbench.cosmos.cosmos3 import (
-    Cosmos3AccessConfig as Cosmos3AccessConfig,
-    Cosmos3AccessError as Cosmos3AccessError,
-    Cosmos3CheckResult as Cosmos3CheckResult,
-    Cosmos3FetchResult as Cosmos3FetchResult,
-    Cosmos3ServeConfig as Cosmos3ServeConfig,
-    build_cosmos3_inference_args,
-    check_cosmos3_access,
-    fetch_cosmos3_artifacts,
-)
-from npa.workbench.cosmos.generate import (
-    GENERATE_MODES as GENERATE_MODES,
-    Cosmos3GenerateError as Cosmos3GenerateError,
-    cosmos3_generate_available,
-    generate_plan,
-    run_cosmos3_generate,
-)
+
+if _os.environ.get("NPA_SKIP_EAGER_IMPORTS", "").strip().lower() not in (
+    "1",
+    "true",
+    "yes",
+):
+    from npa.workbench.cosmos.cosmos3 import (
+        Cosmos3AccessConfig as Cosmos3AccessConfig,
+        Cosmos3AccessError as Cosmos3AccessError,
+        Cosmos3CheckResult as Cosmos3CheckResult,
+        Cosmos3FetchResult as Cosmos3FetchResult,
+        Cosmos3ServeConfig as Cosmos3ServeConfig,
+        build_cosmos3_inference_args,
+        check_cosmos3_access,
+        fetch_cosmos3_artifacts,
+    )
+    from npa.workbench.cosmos.generate import (
+        GENERATE_MODES as GENERATE_MODES,
+        Cosmos3GenerateError as Cosmos3GenerateError,
+        cosmos3_generate_available,
+        generate_plan,
+        run_cosmos3_generate,
+    )
 
 ensure_ingress = make_cli_wrapper(
     "npa.cli.cosmos", "ensure_ingress_cmd", "Ensure ingress for a Cosmos workbench."

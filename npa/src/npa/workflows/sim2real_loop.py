@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
 from npa.deploy.images import container_image_for_tool, registry_from_env
+from npa.serverless_common.env import require_isaac_eula_acceptance
 from npa.workbench.cosmos.reason import (
     CosmosReasonError,
     apply_cosmos_reason_kubernetes_env,
@@ -808,6 +809,15 @@ def _read_workflow_state(local_dir: Path) -> dict[str, Any]:
 def run_preamble(config: Sim2RealLoopConfig) -> dict[str, Any]:
     """Run stages 1-6 and persist workflow state."""
 
+    if (
+        config.sim_backend == SIM_BACKEND_ISAAC
+        and not config.byo_eval_command
+        and (config.k8s_context or config.k8s_kubeconfig)
+    ):
+        require_isaac_eula_acceptance(
+            context=f"Sim2Real run {config.run_id}",
+            resume_command=shlex.join([sys.executable, *sys.argv]),
+        )
     config.validate()
     local_dir = config.output_dir or Path(
         tempfile.mkdtemp(prefix=f"npa-{config.run_id}-")
@@ -2082,60 +2092,9 @@ def _wait_kubernetes_job(
         if succeeded >= 1:
             return "complete"
 
-    # Fast-path: rely on the API server condition watcher when available.
-    # Keep a polling fallback for clusters/tooling where `kubectl wait` is flaky.
-    wait_result = _kubectl(
-        config,
-        [
-            "wait",
-            "--for=condition=complete",
-            f"job/{job_name}",
-            "-n",
-            namespace,
-            f"--timeout={max(1, int(timeout_s))}s",
-        ],
-        timeout_s=max(30, int(timeout_s) + 5),
-        check=False,
-    )
-    if _kubectl_job_not_found(wait_result):
-        return "failed"
-    if wait_result.returncode == 0:
-        verify = _kubectl(
-            config,
-            [
-                "get",
-                "job",
-                job_name,
-                "-n",
-                namespace,
-                "-o",
-                "jsonpath={.status.succeeded} {.status.failed}",
-            ],
-            timeout_s=30,
-            check=False,
-        )
-        if verify.returncode == 0:
-            parts = (verify.stdout or "").strip().split()
-            succeeded = int(parts[0]) if parts and str(parts[0]).isdigit() else 0
-            if succeeded >= 1:
-                return "complete"
-    elif wait_result.returncode != 0:
-        failed_result = _kubectl(
-            config,
-            [
-                "wait",
-                "--for=condition=failed",
-                f"job/{job_name}",
-                "-n",
-                namespace,
-                "--timeout=1s",
-            ],
-            timeout_s=10,
-            check=False,
-        )
-        if failed_result.returncode == 0:
-            return "failed"
-
+    # `kubectl wait --for=condition=complete` remains blocked when a Job reaches
+    # Failed. Poll both counters so terminal failures surface without waiting for
+    # the component's full execution timeout.
     poll_s = max(2, int(os.environ.get("NPA_SIM2REAL_JOB_POLL_SECONDS", "5")))
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -2393,6 +2352,13 @@ def _component_job_manifest(
     timeout_s: int,
 ) -> dict[str, Any]:
     env_values = _kubernetes_component_env(env, config)
+    if component == "heldout_eval" and config.sim_backend == SIM_BACKEND_ISAAC:
+        # Forward the operator's explicit consent to the runtime-fetching image.
+        # Never default either value: absent consent must preserve exit-78 refusal.
+        for name in ("OMNI_KIT_ACCEPT_EULA", "ISAACSIM_ACCEPT_EULA"):
+            value = str(env.get(name) or os.environ.get(name) or "").strip()
+            if value:
+                env_values[name] = value
     pull_secrets = [
         {"name": name} for name in _split_csv(config.k8s_image_pull_secrets)
     ]
@@ -3051,9 +3017,17 @@ def _component_excerpt(text: str, limit: int = 1200) -> str:
     for line in str(text or "").splitlines():
         if "AWS_SECRET_ACCESS_KEY" in line or "AWS_ACCESS_KEY_ID" in line:
             scrubbed.append("[redacted secret line]")
+        elif len(line) > 500:
+            scrubbed.append(f"{line[:420]}...[line truncated]...{line[-40:]}")
         else:
             scrubbed.append(line)
-    return "\n".join(scrubbed)[-limit:]
+    output = "\n".join(scrubbed)
+    if len(output) <= limit:
+        return output
+    marker = "\n...[component log truncated]...\n"
+    budget = max(2, limit - len(marker))
+    head = budget // 2
+    return f"{output[:head]}{marker}{output[-(budget - head):]}"
 
 
 def _redact_command(command: str) -> str:
@@ -4676,7 +4650,12 @@ def _run_isaac_heldout_rollouts(
                     },
                 }
             )
-        env.close()
+        # Closing the final Isaac env starts Kit shutdown before the component can
+        # return its payload and upload report.json. Close only between batches;
+        # the minimal entrypoint hard-exits after the final upload, matching the
+        # proven BYO evaluator path.
+        if start + len(batch) < len(envs):
+            env.close()
     return per_env
 
 

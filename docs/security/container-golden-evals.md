@@ -111,7 +111,7 @@ flowchart TB
 | `cosmos3-reason` | `cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; real Reason VLM pass | optional | gpu-gated |
 | `sonic` | `0.1.2` | entrypoint-smoke | `/entrypoint.sh smoke`; GPU proofs; JSON artifact | required | gpu-gated |
 | `retargeting` | `0.1.1` | container-smoke | validate_motion_lib on synthetic motion | none | ready |
-| `fiftyone` | `1.15.0` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
+| `fiftyone` | `1.15.0.post1` | container-smoke | import+version; CLI; app config (env smoke) | none | ready |
 | `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
 | `envgen` | `0.1.2` | container-smoke | raw envgen JSONL; Genesis CUDA step | optional | gpu-gated |
@@ -249,6 +249,12 @@ pipeline. Key safety notes are condensed below.
   is a deliberate trade: the pod user can escalate inside its own container, so
   treat the container boundary (not the user) as the trust boundary for this
   image, as for any image whose orchestrator needs in-pod package installs.
+- **`fiftyone` SkyPilot exemption** — the interactive FiftyOne image has the
+  same narrowly scoped bootstrap requirement. Its build deletes all SSH host
+  keys, disables password authentication and root login, and starts only
+  `/bin/bash`; sshd is not enabled by default. SkyPilot may generate ephemeral
+  host keys and start SSH inside a submitted task. The packaging contract must
+  record this exemption whenever a public image carries `NOPASSWD:ALL`.
 - **Runtime user** — npa-built images (`groot`, `lerobot*`, `genesis`, `cosmos`,
   `cosmos3`, `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`, `loop-eval`) run as the unprivileged `ubuntu`
   user. `isaac-lab` and `sonic` inherit `root` from the `nvcr.io/nvidia/isaac-lab`

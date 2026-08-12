@@ -377,9 +377,10 @@ def submit_cmd(
     image_override: list[str] = typer.Option(
         [],
         "--image-override",
+        "--tool-image",
         help=(
-            "Repeatable TOOL_REF=IMAGE override for multi-tool workflows. "
-            "Specific tool refs take precedence over --image."
+            "Repeatable TOOL_REF=IMAGE override for npa.workflow specs. Exact "
+            "or tool-family matches take precedence over --image."
         ),
     ),
     npa_image: str = typer.Option(
@@ -393,6 +394,14 @@ def submit_cmd(
         help=(
             "For VM SONIC image pulls, materialize Docker registry auth envs. "
             "Nebius Container Registry defaults to a fresh IAM token."
+        ),
+    ),
+    refresh_registry_secret: bool = typer.Option(
+        True,
+        "--refresh-registry-secret/--no-refresh-registry-secret",
+        help=(
+            "Refresh the Kubernetes Nebius pull secret before submit. Disable only "
+            "when the cluster already has a separately managed pull credential."
         ),
     ),
     registry_username: str = typer.Option(
@@ -576,6 +585,12 @@ def submit_cmd(
         _fail(str(exc))
         return
     is_npa_spec = is_npa_workflow_spec(yaml_path)
+    if image_override and not is_npa_spec:
+        _fail(
+            "--image-override/--tool-image is supported only for "
+            "npa.workflow/v0.0.1 specs"
+        )
+        return
     is_paidf_spec = is_npa_spec and _is_paidf_workflow_spec(yaml_path)
     legacy_fixture = _is_truthy_submit_value(
         substitutions.get("seed_fixture")
@@ -679,6 +694,7 @@ def submit_cmd(
         submit_sim2real_from_workflow_vars,
     )
 
+    is_npa_spec = is_npa_workflow_spec(yaml_path)
     if is_sim2real_runbook(yaml_path):
         try:
             result = submit_sim2real_from_workflow_vars(
@@ -1182,6 +1198,7 @@ def submit_cmd(
                 secret_env_values=extra_env,
                 controller_backend=controller_backend.value,
                 infra=infra,
+                config_path=config_path,
                 isolated_config_dir=isolated_config_dir,
                 submit_timeout=submit_timeout,
                 poll_seconds=poll_seconds,
@@ -1323,7 +1340,8 @@ def submit_cmd(
             prepared_npa.temp_dir.cleanup()
             return
 
-        _refresh_kubernetes_pull_secrets(prepared_npa.skypilot_yaml_path)
+        if refresh_registry_secret:
+            _refresh_kubernetes_pull_secrets(prepared_npa.skypilot_yaml_path)
 
         # Skip SkyPilot-path materializers; npa.workflow already planned.
         materializer = ""
@@ -1735,6 +1753,7 @@ def _run_npa_workflow_runtime(
     secret_env_values: dict[str, str],
     controller_backend: str,
     infra: str,
+    config_path: Path | None,
     isolated_config_dir: Path | None,
     submit_timeout: int,
     poll_seconds: int,
@@ -1797,6 +1816,7 @@ def _run_npa_workflow_runtime(
         submit_timeout=submit_timeout,
         infra=infra,
         controller_backend=controller_backend,
+        config_path=config_path,
         isolated_config_dir=isolated_config_dir,
         resume=resume,
         project=project or "default",
@@ -2339,7 +2359,9 @@ def _parse_image_overrides(items: list[str]) -> dict[str, str]:
     overrides: dict[str, str] = {}
     for item in items:
         if "=" not in item:
-            raise ValueError("Invalid --image-override format. Use TOOL_REF=IMAGE.")
+            raise ValueError(
+                "Invalid --image-override/--tool-image format. Use TOOL_REF=IMAGE."
+            )
         tool_ref, image_ref = (part.strip() for part in item.split("=", 1))
         if (
             not tool_ref
@@ -2348,14 +2370,16 @@ def _parse_image_overrides(items: list[str]) -> dict[str, str]:
             or not image_ref
         ):
             raise ValueError(
-                "Invalid --image-override format. Use an exact TOOL_REF=IMAGE; "
+                "Invalid --image-override/--tool-image format. Use TOOL_REF=IMAGE; "
                 "use --image for a global fallback."
             )
         if tool_ref in overrides:
             raise ValueError(
                 f"Duplicate --image-override for exact tool ref {tool_ref!r}."
             )
-        overrides[tool_ref] = image_ref
+        overrides[tool_ref] = (
+            "" if image_ref.lower() in {"none", "default", "-"} else image_ref
+        )
     return overrides
 
 

@@ -25,7 +25,7 @@ PROJECT_ALIAS = "eu-north1"
 PROJECT_ID = "project-test-00000000000"
 BUCKET = "your-bucket-name"
 ENDPOINT_URL = "https://storage.eu-north1.nebius.cloud"
-FIFTYONE_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-fiftyone:1.15.0"
+FIFTYONE_IMAGE = "cr.eu-north1.nebius.cloud/your-registry-id/npa-fiftyone:1.15.0.post1"
 COSMOS_IMAGE = (
     "cr.eu-north1.nebius.cloud/your-registry-id/"
     "npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"

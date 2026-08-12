@@ -523,17 +523,25 @@ def test_oss_deps_carry_no_nvidia_isaac_package() -> None:
         ("matplotlib", "isaaclab.envs -> .ui -> widgets.image_plot imports matplotlib.cm"),
         ("opencv-python-headless", "isaaclab_assets.sensors.gelsight imports cv2"),
         ("boto3", "omni.replicator.core imports botocore.exceptions"),
+        ("coverage==7.13.5", "omni.kit.test.test_coverage imports coverage"),
     ],
 )
 def test_oss_deps_include_every_undeclared_isaac_dependency(package: str, why: str) -> None:
     """Regression pins for dependencies nothing in the Isaac wheels declares.
 
-    All four used to arrive free with the nvcr.io base image, and each was found by running
-    Isaac on a GPU and reading a traceback - not by reading requirements. The failure mode is
-    nasty: Kit logs the ImportError during extension startup and carries on, so the run dies
-    later somewhere that looks unrelated to the missing package.
+    These used to arrive free with the nvcr.io base image, and each was found by running
+    Isaac on a GPU and reading its startup diagnostics - not by reading requirements. Kit
+    can log an ImportError during extension startup and carry on partially loaded, so these
+    dependencies must remain explicit in the thin runtime.
     """
     assert package in OSS_DEPS.read_text(encoding="utf-8"), f"{package}: {why}"
+
+
+def test_isaac_image_normalizes_bootstrap_scripts_for_the_non_root_user() -> None:
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    assert "find /opt/npa/docker/workbench/common -type d -exec chmod 0755" in dockerfile
+    assert "find /opt/npa/docker/workbench/common -type f -exec chmod 0644" in dockerfile
+    assert "chmod 0755 /opt/npa/docker/workbench/common/*.sh" in dockerfile
 
 
 # --------------------------------------------------------------------------------------

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Third-Party EULA Preflight"
+  short_description: "Check scoped EULA consent before costly runs"
+  default_prompt: "Use $third-party-eula-preflight to verify required agreements and operator consent before provisioning or submitting this workload."

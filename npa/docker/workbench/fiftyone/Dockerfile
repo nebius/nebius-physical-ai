@@ -41,21 +41,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libsm6 \
       libxext6 \
       libxrender1 \
+      netcat-openbsd \
       openssh-server \
+      patch \
       procps \
       rsync \
       sudo \
     && (apt-get install -y --no-install-recommends libcurl4t64 \
         || apt-get install -y --no-install-recommends libcurl4) \
     && install -d -m 0755 /run/sshd \
+    && rm -f /etc/ssh/ssh_host_* \
+    && printf '%s\n' \
+      'PasswordAuthentication no' \
+      'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-container.conf \
     && rm -rf /var/lib/apt/lists/*
 
 # SkyPilot invokes apt and service through sudo. Restricting executable names
 # would be cosmetic because apt can install arbitrary root code; this grant is
 # confined to the image's dedicated workflow user.
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
-    && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-fiftyone \
-    && chmod 0440 /etc/sudoers.d/npa-fiftyone \
+    && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
+    && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/fiftyone \
       /opt/fiftyone/db \

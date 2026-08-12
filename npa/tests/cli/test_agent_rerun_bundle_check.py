@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import httpx
 
 from npa.agent_rerun_bundle_check import (
+    BundleBudgetResult,
     FORBIDDEN_UI_MARKERS,
     REQUIRED_UI_MARKERS,
+    TimedFetch,
     assert_rerun_ui_eager_load_contract,
     format_bundle_budget_report,
-    BundleBudgetResult,
-    TimedFetch,
+    timed_get,
 )
 
 
@@ -58,3 +60,43 @@ def test_format_bundle_budget_report_includes_fetches() -> None:
     assert "ok=false" in report
     assert "re_viewer.js" in report
     assert "error: re_viewer.js TTFB too slow" in report
+
+
+def test_timed_get_retries_incomplete_chunked_read(monkeypatch) -> None:
+    calls = {"count": 0}
+
+    class _Response:
+        status_code = 200
+
+        def __init__(self, fail: bool) -> None:
+            self.fail = fail
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self, _size):
+            if self.fail:
+                raise httpx.RemoteProtocolError(
+                    "peer closed connection without sending complete message body "
+                    "(incomplete chunked read)"
+                )
+            yield b"complete"
+
+    def _stream(*_args, **_kwargs):
+        calls["count"] += 1
+        return _Response(fail=calls["count"] == 1)
+
+    monkeypatch.setattr("npa.agent_rerun_bundle_check.httpx.stream", _stream)
+    monkeypatch.setattr("npa.agent_rerun_bundle_check.time.sleep", lambda _seconds: None)
+
+    result = timed_get("https://example.test/rerun/re_viewer.js", auth=None, verify=False, timeout=1)
+
+    assert calls["count"] == 2
+    assert result.status_code == 200
+    assert result.nbytes == len(b"complete")

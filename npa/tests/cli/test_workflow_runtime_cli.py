@@ -237,6 +237,7 @@ def fake_runtime(mocker, satisfied_preflight):
 
 
 def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
+    config_path = REPO_ROOT / "npa" / "workflows" / "workbench" / "config.yaml"
     result = RUNNER.invoke(
         app,
         [
@@ -249,6 +250,8 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
             "--runtime",
             "--var",
             "bucket=rt-bucket",
+            "--config-path",
+            str(config_path),
             "--registry",
             "cr.example.invalid/reg",
             "--poll-seconds",
@@ -276,6 +279,7 @@ def test_submit_runtime_passes_options_and_emits_json(fake_runtime) -> None:
     assert options.cancel_on_timeout is False
     # A run without an explicit --resume-run is always fresh.
     assert options.resume is False
+    assert options.config_path == config_path
     # --var reaches the spec's config, not just the renderer.
     assert fake_runtime["spec"].config["max_images"] == "1"
     assert fake_runtime["render_options"].registry == "cr.example.invalid/reg"
@@ -332,6 +336,73 @@ def test_submit_runtime_refreshes_pull_secret_before_driver(
     assert result.exit_code == 0, result.output
     assert events[0] == ("refresh", "token-factory-parallel-fanout.skypilot.yaml")
     assert events[1] == ("driver", "rt-pull-secret-order")
+
+
+def test_submit_runtime_passes_per_tool_image_override(fake_runtime) -> None:
+    image = "cr.example.invalid/reg/npa-fiftyone:fixed"
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "rt-tool-image",
+            "--runtime",
+            "--tool-image",
+            f"workbench.fiftyone.curate_augmented={image}",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    options = fake_runtime["render_options"]
+    assert options.image_overrides == {
+        "workbench.fiftyone.curate_augmented": image,
+    }
+
+
+def test_submit_rejects_malformed_per_tool_image_override() -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--tool-image",
+            "workbench.fiftyone.curate_augmented",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "TOOL_REF=IMAGE" in result.output
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ("workbench.fiftyone.curate_augmented", "Use TOOL_REF=IMAGE"),
+        (
+            "workbench.fiftyone.curate_augmented=registry/fiftyone:test",
+            "supported only for npa.workflow/v0.0.1",
+        ),
+    ],
+)
+def test_legacy_skypilot_submit_rejects_tool_image_instead_of_ignoring_it(
+    tmp_path: Path, override: str, message: str
+) -> None:
+    legacy = tmp_path / "legacy.yaml"
+    legacy.write_text("name: legacy\nresources:\n  cloud: kubernetes\nrun: echo ok\n")
+    result = RUNNER.invoke(
+        app,
+        ["workbench", "workflow", "submit", str(legacy), "--tool-image", override],
+    )
+    assert result.exit_code == 1
+    assert message in result.output
 
 
 def test_submit_runtime_resume_flag_is_forwarded(fake_runtime) -> None:
@@ -537,6 +608,36 @@ def test_submit_without_runtime_uses_the_one_shot_path(
     assert resumed.exit_code == 0, resumed.output
     assert "status: SUBMITTED" in resumed.output
     assert submit_mock.call_count == 2
+
+def test_submit_can_preserve_managed_registry_secret(
+    mocker, monkeypatch, satisfied_preflight
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    refresh = mocker.patch(
+        "npa.cli.workbench.workflow._refresh_kubernetes_pull_secrets"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(status="SUBMITTED", job_id="9", returncode=0),
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--run-id",
+            "managed-registry-secret",
+            "--no-refresh-registry-secret",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    refresh.assert_not_called()
 
 
 def test_plan_only_wins_over_runtime(mocker, monkeypatch, satisfied_preflight) -> None:

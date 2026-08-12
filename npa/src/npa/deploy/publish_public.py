@@ -8,12 +8,10 @@ This tool is license-guarded: it only ever copies tools reported by
 ``images.publicly_publishable_tools()`` and hard-refuses anything in
 ``images.OMNIVERSE_RESTRICTED_TOOLS`` as defence in depth around that selector.
 
-That set is currently empty. It used to hold ``isaac-lab``, ``sonic`` and ``groot``
-(plus the derived ``sonic-mujoco``), which baked NVIDIA Omniverse Kit; those images
-were re-architected to fetch Isaac Sim / Isaac Lab at first run under the operator's
-own EULA acceptance, so every workbench image is now publishable. The refusal is
-kept, and tested against a synthetic restricted tool, for the next runtime we cannot
-ship.
+The Isaac tools were re-architected to fetch Isaac Sim / Isaac Lab at first run
+under the operator's own EULA acceptance and are publishable. The separately
+contracted ``cosmos3-serving`` image remains build-your-own because its pinned
+vendor base has distribution conditions that anonymous GHCR does not establish.
 
 Example (dry run first, then execute):
 
@@ -119,7 +117,11 @@ def build_publish_plan(
             raise ValueError(
                 f"refusing to publish restricted (Omniverse Kit) tool {tool!r} to a public registry"
             )
-        source_ref = container_image_for_tool(tool, registry=source_registry)
+        source_ref = container_image_for_tool(
+            tool,
+            registry=source_registry,
+            tag=images.public_mirror_tag_for_tool(tool),
+        )
         image = source_ref.rsplit("/", 1)[-1]  # npa-<tool>:<tag>
         plan.append(
             PublishItem(
