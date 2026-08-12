@@ -258,6 +258,28 @@ def test_cosmos3_system_packages_use_an_immutable_snapshot() -> None:
         assert requirement in dockerfile
 
 
+def test_cosmos3_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
+    """The immutable Reason image must import its stage after Sky removes PYTHONPATH.
+
+    SkyPilot deliberately launches managed tasks with ``env -u PYTHONPATH``.  A source
+    tree copied into the image is therefore not enough: the interpreter selected by
+    ``require_baked_npa`` needs an image-local path record too.  Compositional live
+    attempt 16 reached both real Stage 8 siblings before exposing this boundary.
+    """
+
+    dockerfile = (
+        Path(__file__).resolve().parents[2]
+        / "docker"
+        / "workbench"
+        / "cosmos3-reason"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "NPA_BAKED_PYTHON=/opt/npa/venv/bin/python" in dockerfile
+    assert "npa-exact-source.pth" in dockerfile
+    assert "env -u PYTHONPATH /opt/npa/venv/bin/python -c" in dockerfile
+    assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile
+
+
 def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
     requirements = (
         Path(__file__).resolve().parents[2]

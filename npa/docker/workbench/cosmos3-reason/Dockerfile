@@ -21,6 +21,7 @@ ENV PYTHONUNBUFFERED=1 \
     NPA_COSMOS_REASON3_CACHE=/tmp/hf_home/cosmos-reason2-2b \
     NPA_COSMOS_REASON_CACHE=/tmp/hf_home/cosmos-reason2 \
     NPA_SKIP_EAGER_IMPORTS=1 \
+    NPA_BAKED_PYTHON=/opt/npa/venv/bin/python \
     HF_HOME=/tmp/hf_home \
     PYTHONPATH=/opt/npa/src
 
@@ -51,7 +52,10 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
       "safetensors==0.8.0" \
       "transformers==4.57.6" \
     && python -m pip check \
+    && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
     && python -c 'import npa.workflows.sim2real.runtime_attestation' \
+    && env -u PYTHONPATH /opt/npa/venv/bin/python -c \
+      'import boto3; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
     && chown -R ubuntu:ubuntu \
       /workspace /tmp/hf_home /opt/npa/src /opt/npa/pyproject.toml
