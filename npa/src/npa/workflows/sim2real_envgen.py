@@ -16,6 +16,8 @@ from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.task_contract import (
     LIFT_DATASET_ID,
     LIFT_TASK_ID,
+    TaskContractError,
+    assert_contract_digest,
     build_task_contract,
 )
 
@@ -163,8 +165,43 @@ def scene_spec_from_uri(uri: str) -> SceneSpec:
     payload = json.loads(local_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise Sim2RealEnvGenError(f"scene spec must be a JSON object: {ref}")
+    task_contract = dict(payload.get("task_contract") or {})
+    if task_contract:
+        try:
+            contract_digest = assert_contract_digest(task_contract)
+        except TaskContractError as exc:
+            raise Sim2RealEnvGenError(
+                f"scene spec {ref!r} contains an invalid task contract: {exc}"
+            ) from exc
+        task_id = str(payload.get("task_id") or task_contract.get("task_id") or "")
+        dataset = task_contract.get("dataset") or {}
+        dataset_id = str(payload.get("dataset_id") or dataset.get("id") or "")
+        if task_id != str(task_contract.get("task_id") or ""):
+            raise Sim2RealEnvGenError(
+                f"scene spec {ref!r} task_id disagrees with its task contract"
+            )
+        if dataset_id != str(dataset.get("id") or ""):
+            raise Sim2RealEnvGenError(
+                f"scene spec {ref!r} dataset_id disagrees with its task contract"
+            )
+        declared_digest = str(payload.get("task_contract_digest") or "")
+        if declared_digest and declared_digest != contract_digest:
+            raise Sim2RealEnvGenError(
+                f"scene spec {ref!r} task_contract_digest disagrees with its "
+                "task contract"
+            )
+    else:
+        task_id = str(payload.get("task_id") or LIFT_TASK_ID)
+        dataset_id = str(payload.get("dataset_id") or LIFT_DATASET_ID)
     catalog = payload.get("simready_catalog") or DEFAULT_SCENE_CATALOG
-    camera_names = payload.get("camera_names") or ("primary", "side", "overhead")
+    raw_cameras = payload.get("cameras") or {}
+    camera_names = payload.get("camera_names")
+    if not camera_names and isinstance(raw_cameras, list):
+        camera_names = raw_cameras
+    elif not camera_names and isinstance(raw_cameras, dict) and raw_cameras:
+        camera_names = tuple(raw_cameras)
+    camera_names = camera_names or ("primary", "side", "overhead")
+    cameras = dict(raw_cameras) if isinstance(raw_cameras, dict) else {}
     notes = payload.get("notes") or ()
     return SceneSpec(
         schema=str(payload.get("schema") or "npa.sim2real.scene_spec.v1"),
@@ -182,12 +219,12 @@ def scene_spec_from_uri(uri: str) -> SceneSpec:
         robot_preset=str(payload.get("robot_preset") or "franka"),
         sim_backend=str(payload.get("sim_backend") or "isaac"),
         camera_names=tuple(camera_names),
-        cameras=dict(payload.get("cameras") or {}),
+        cameras=cameras,
         physics_profile=str(payload.get("physics_profile") or "isaac-lift-franka"),
         notes=tuple(notes),
-        task_id=str(payload.get("task_id") or LIFT_TASK_ID),
-        dataset_id=str(payload.get("dataset_id") or LIFT_DATASET_ID),
-        task_contract=dict(payload.get("task_contract") or {}),
+        task_id=task_id,
+        dataset_id=dataset_id,
+        task_contract=task_contract,
     )
 
 

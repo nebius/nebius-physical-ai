@@ -14,6 +14,7 @@ from npa.workbench.cosmos.transfer import (
     TRANSFER_MANIFEST_STATUS,
 )
 from npa.workflows import sim2real_envgen as envgen
+from npa.workflows.sim2real.task_contract import build_task_contract
 
 
 def _write_manifest(path: Path, frame_uris: list[str]) -> Path:
@@ -43,15 +44,72 @@ def _config(scene: envgen.SceneSpec, *, env_count: int = 1_000) -> envgen.EnvGen
     )
 
 
+def test_stage_two_scene_spec_preserves_authoritative_task_contract(
+    tmp_path: Path,
+) -> None:
+    contract = build_task_contract(
+        task_id=envgen.LIFT_TASK_ID,
+        dataset_id=envgen.LIFT_DATASET_ID,
+        dataset_uri="s3://seed-bucket/task-aligned/",
+    )
+    path = tmp_path / "consumed-scene-spec.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "npa.sim2real.consumed_scene_spec.v1",
+                "task_id": contract["task_id"],
+                "dataset_id": contract["dataset"]["id"],
+                "task_contract_digest": contract["task_contract_digest"],
+                "task_contract": contract,
+                "cameras": contract["cameras"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    scene = envgen.scene_spec_from_uri(str(path))
+
+    assert scene.task_contract == contract
+    assert scene.task_id == contract["task_id"]
+    assert scene.dataset_id == contract["dataset"]["id"]
+    assert scene.camera_names == ("primary", "side", "overhead")
+    assert scene.cameras == {}
+    generated = envgen.generate_raw_envs(_config(scene, env_count=2))
+    assert {row["task_contract_digest"] for row in generated} == {
+        contract["task_contract_digest"]
+    }
+
+
+def test_stage_two_scene_spec_rejects_tampered_task_contract(tmp_path: Path) -> None:
+    contract = build_task_contract(
+        task_id=envgen.LIFT_TASK_ID,
+        dataset_id=envgen.LIFT_DATASET_ID,
+        dataset_uri="s3://seed-bucket/task-aligned/",
+    )
+    contract["dataset"]["uri"] = "s3://wrong-bucket/unrelated/"
+    path = tmp_path / "tampered-scene-spec.json"
+    path.write_text(
+        json.dumps(
+            {
+                "task_id": contract["task_id"],
+                "dataset_id": contract["dataset"]["id"],
+                "task_contract": contract,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(envgen.Sim2RealEnvGenError, match="invalid task contract"):
+        envgen.scene_spec_from_uri(str(path))
+
+
 def test_one_thousand_envs_cycle_only_over_published_manifest_frames(
     tmp_path: Path,
 ) -> None:
     published = [f"s3://bucket/run/augment/frame-{index:05d}.png" for index in range(8)]
     manifest = _write_manifest(tmp_path / "manifest.json", published)
 
-    scene = envgen.resolve_augmented_frames(
-        envgen.build_scene_spec(), str(manifest)
-    )
+    scene = envgen.resolve_augmented_frames(envgen.build_scene_spec(), str(manifest))
     records = envgen.generate_raw_envs(_config(scene))
     referenced = [record["scene"]["augmented_frame_uri"] for record in records]
 
@@ -136,15 +194,17 @@ def test_local_transfer_manifest_schemes_are_supported(
     published = ["local://frames/frame-00000.png"]
     manifest = _write_manifest(tmp_path / "manifest.json", published)
 
-    assert envgen.frame_uris_from_transfer_manifest(
-        f"{scheme}{manifest}"
-    ) == tuple(published)
+    assert envgen.frame_uris_from_transfer_manifest(f"{scheme}{manifest}") == tuple(
+        published
+    )
 
 
 def test_unreadable_local_transfer_manifest_fails_clearly(tmp_path: Path) -> None:
     missing = tmp_path / "missing.json"
 
-    with pytest.raises(envgen.Sim2RealEnvGenError, match="could not read transfer manifest"):
+    with pytest.raises(
+        envgen.Sim2RealEnvGenError, match="could not read transfer manifest"
+    ):
         envgen.frame_uris_from_transfer_manifest(f"local://{missing}")
 
 
@@ -152,7 +212,9 @@ def test_malformed_local_transfer_manifest_fails_clearly(tmp_path: Path) -> None
     malformed = tmp_path / "malformed.json"
     malformed.write_text("{not-json", encoding="utf-8")
 
-    with pytest.raises(envgen.Sim2RealEnvGenError, match="could not read transfer manifest"):
+    with pytest.raises(
+        envgen.Sim2RealEnvGenError, match="could not read transfer manifest"
+    ):
         envgen.frame_uris_from_transfer_manifest(f"local://{malformed}")
 
 

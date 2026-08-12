@@ -34,6 +34,15 @@ def _work(stage: int) -> Path:
     return Path(tempfile.mkdtemp(prefix=f"npa-s2r-stage-{stage:02d}-"))
 
 
+def _authoritative_scene_args(root: str) -> list[str]:
+    """Bind EnvGen and split to the exact Stage 2 task/scene contract."""
+
+    return [
+        "--scene-spec-uri",
+        f"{root}/stage_02_assets/consumed_scene_spec.json",
+    ]
+
+
 def _stage1(args: argparse.Namespace) -> None:
     from npa.workflows.sim2real.task_contract import (
         build_task_contract,
@@ -85,9 +94,12 @@ def _stage2(args: argparse.Namespace) -> None:
     scene: dict[str, Any] = {
         "schema": "npa.sim2real.consumed_scene_spec.v1",
         "task_id": contract["task_id"],
+        "dataset_id": contract["dataset"]["id"],
         "task_contract_digest": contract["task_contract_digest"],
+        "task_contract": contract,
         "assets_uri": args.assets_uri,
         "scene_spec_uri": args.scene_spec_uri,
+        "camera_names": contract["cameras"],
         "cameras": contract["cameras"],
         "robot": contract["embodiment"],
         "object": contract["object"],
@@ -185,6 +197,7 @@ def _stage4(args: argparse.Namespace) -> None:
             str(args.seed),
             "--augmented-frames-uri",
             f"{root}/augment/manifest.json",
+            *_authoritative_scene_args(root),
             "--output-dir",
             str(work),
         ]
@@ -224,6 +237,7 @@ def _stage5(args: argparse.Namespace) -> None:
         str(args.seed),
         "--augmented-frames-uri",
         f"{root}/augment/manifest.json",
+        *_authoritative_scene_args(root),
         "--output-dir",
         str(work),
     ]

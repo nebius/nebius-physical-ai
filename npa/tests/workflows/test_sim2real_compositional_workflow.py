@@ -13,6 +13,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_setup_for_tool,
     render_skypilot_yaml,
 )
+from npa.workflows.sim2real.workflow_stage import _authoritative_scene_args
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -96,6 +97,20 @@ def test_stage_adapters_do_not_submit_hidden_kubernetes_jobs() -> None:
     assert "submit_sim2real" not in source
     assert "sim2real.engine" not in source
     assert "NPA_SIM2REAL_INLINE_TASK" in source
+
+
+def test_environment_generation_and_split_share_stage_two_contract() -> None:
+    root = "s3://bucket/runs/exact-run"
+    expected = [
+        "--scene-spec-uri",
+        root + "/stage_02_assets/consumed_scene_spec.json",
+    ]
+    source = (
+        ROOT / "npa" / "src" / "npa" / "workflows" / "sim2real" / "workflow_stage.py"
+    ).read_text()
+
+    assert _authoritative_scene_args(root) == expected
+    assert source.count("*_authoritative_scene_args(root)") == 2
 
 
 def test_stage_adapter_import_does_not_load_legacy_controller() -> None:
