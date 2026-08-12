@@ -297,8 +297,7 @@ def nginx_agent_site_body(
     # initial GET. Compression changes it to chunked transfer encoding after
     # browser automation proxies decode the body, so keep native MCAP bytes.
     gzip off;
-    brotli off;
-    add_header Cache-Control "no-cache" always;
+    add_header Cache-Control "no-cache, no-transform" always;
     # nginx's static module already emits `Accept-Ranges: bytes`; do NOT add it again
     # (a duplicate makes the browser join it to "bytes, bytes", which fails Lichtblick's
     # `headers.get("accept-ranges") === "bytes"` range-support check).
