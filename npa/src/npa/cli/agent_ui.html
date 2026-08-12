@@ -7875,6 +7875,11 @@
         host.appendChild(row);
       }
       async function previewArtifact(item) {
+        // A media/data preview is an explicit viewer choice. Invalidate a
+        // recording load that may still be completing for the run; otherwise
+        // its late Rerun mount can repaint this selection after the operator
+        // has already opened the comparison video.
+        artifactLoadRequestId += 1;
         const runId = String((item && item.run_id) || "").trim();
         const runRef = String((item && item.run_ref) || "").trim();
         const key = String((item && item.key) || "").trim();
@@ -9010,6 +9015,7 @@
       async function loadWorkflowHistoryRun(runId, runRef) {
         const targetRunId = String(runId || "").trim();
         const targetRunRef = String(runRef || "").trim();
+        const viewerIntentRequestId = artifactLoadRequestId;
         if (!targetRunId) {
           throw new Error("Enter or select a run_id first");
         }
@@ -9025,7 +9031,11 @@
         await loadRunDetails(targetRunId, {
           entry: preferredRunEntry(activeArtifactRunRef || targetRunId) || {},
         });
-        if (data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)) {
+        if (
+          !operatorMediaPreviewActive &&
+          viewerIntentRequestId === artifactLoadRequestId &&
+          data && data.sim_viz && (data.sim_viz.rrd_uri || data.sim_viz.rerun_ready)
+        ) {
           await bestEffortMountRerun(String(data.sim_viz.camera || "workspace"), targetRunId);
         } else {
           showRerunPlaceholder("No .rrd recording for this run yet (workflow history). See stages and logs below.", { force: true });
