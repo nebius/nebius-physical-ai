@@ -293,6 +293,11 @@ def nginx_agent_site_body(
     auth_basic off;
     alias /opt/npa-agent/recordings/;
     default_type application/octet-stream;
+    # Remote-file readers require the authoritative Content-Length on their
+    # initial GET. Compression changes it to chunked transfer encoding after
+    # browser automation proxies decode the body, so keep native MCAP bytes.
+    gzip off;
+    brotli off;
     add_header Cache-Control "no-cache" always;
     # nginx's static module already emits `Accept-Ranges: bytes`; do NOT add it again
     # (a duplicate makes the browser join it to "bytes, bytes", which fails Lichtblick's

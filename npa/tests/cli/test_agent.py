@@ -974,6 +974,8 @@ def test_lichtblick_uses_native_static_size_and_range_semantics() -> None:
     )[0]
     assert "alias /opt/npa-agent/recordings/;" in block
     assert "proxy_pass" not in block
+    assert "gzip off;" in block
+    assert "brotli off;" in block
     assert "Accept-Ranges" in block
     assert "Access-Control-Allow-Origin" not in block
 
