@@ -50,11 +50,8 @@ describe("GR00T learning experience (live system)", () => {
     cy.visitLiveAgent();
     cy.get("#statusBar", { timeout: 30000 }).should("exist");
     cy.get("#tabRerun").click();
-    cy.get("#artifactPrefix").clear().type(activeRun, { delay: 0 });
-    cy.get("#runIdSelect option", { timeout: 60000 }).should(($options) => {
-      const values = [...$options].map((option) => option.value).filter(Boolean);
-      expect(values).to.include(activeRun);
-    });
+    // The exact run was already authorized and discovered in the suite hook.
+    // Enter it directly instead of waiting for the broad run-picker scan.
     cy.get("#runIdInput").clear().type(activeRun, { delay: 0 });
     cy.get("#loadRunData").click();
     cy.get("#artifactRunSummary", { timeout: 120000 }).should("contain.text", activeRun);
