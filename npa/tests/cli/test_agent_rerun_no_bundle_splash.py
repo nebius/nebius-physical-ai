@@ -81,7 +81,9 @@ def test_boot_page_warms_before_mount() -> None:
     assert "await ensureFrankaRerunLoaded()" in boot
     # A restored run can require an expensive exact lookup across tenant S3.
     # Desktop first paint stays independent of that background discovery.
-    assert 'refreshPromise.then(() => refreshArtifactRuns(""))' in boot
+    assert (
+        'then(() => refreshArtifactRuns("", { singlePage: true }))' in boot
+    )
     assert "await Promise.all([refreshPromise, accessPromise])" in boot
     assert (
         "if (defaultRunDiscoveryPromise) return defaultRunDiscoveryPromise" in ui_html
@@ -119,7 +121,7 @@ def test_run_load_soft_swaps_recording_without_wasm_remount() -> None:
         "async function mountRerunIframeUntilSuccess"
     )[0]
     assert "await swapRerunRecordingInPlace" in mount_src
-    load_art = ui_html.split("async function loadArtifact(payload, uiState)")[1].split(
+    load_art = ui_html.split("async function loadArtifact(payload)")[1].split(
         "async function refresh()"
     )[0]
     assert "swapRerunRecordingInPlace" in load_art

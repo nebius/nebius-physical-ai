@@ -2876,6 +2876,11 @@ def emit_learning_mcap(
                 FrameInput(
                     path=path,
                     camera=primary_camera,
+                    # GR00T's published replay contract names the physical
+                    # camera explicitly. The generic MCAP writer also supports
+                    # a conventional /camera primary alias, but that must not
+                    # replace this stable learning topic.
+                    topic=f"/camera/{primary_camera}",
                     timestamp_ns=timeline_origin_ns
                     + round(float(time_entry["time_seconds"]) * 1_000_000_000),
                 )

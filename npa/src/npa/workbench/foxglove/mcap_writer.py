@@ -338,6 +338,22 @@ def collect_run_inputs(
         else:
             skipped.append(relative)
 
+    # Directory conversion chooses a stable primary camera for the default
+    # Foxglove layout while retaining the physical camera name in each message.
+    # Direct FrameInput callers remain free to publish `/camera/<name>` or an
+    # explicit topic, which is required by contracts such as GR00T learning.
+    camera_names = sorted({frame.camera for frame in frames})
+    primary_camera = "camera" if "camera" in camera_names else (camera_names[0] if camera_names else "")
+    if primary_camera:
+        frames = [
+            FrameInput(
+                path=frame.path,
+                camera=frame.camera,
+                timestamp_ns=frame.timestamp_ns,
+                topic="/camera" if frame.camera == primary_camera else frame.topic,
+            )
+            for frame in frames
+        ]
     if max_frames and len(frames) > max_frames:
         frames = frames[: int(max_frames)]
     return frames, metrics, logs, skipped
@@ -451,10 +467,14 @@ def write_run_mcap(
         # ``/camera`` topic used by the default viewer layout; other streams keep
         # their descriptive names under ``/camera/<name>``.
         camera_names = sorted({str(frame.camera or "camera") for frame in frame_list})
-        primary_camera = (
-            "camera"
-            if "camera" in camera_names
-            else (camera_names[0] if camera_names else "")
+        primary_camera = "camera" if "camera" in camera_names else ""
+        canonical_camera_topic = (
+            str(camera_topic_prefix or "/camera").rstrip("/") or "/camera"
+        )
+        has_canonical_camera_topic = bool(primary_camera) or any(
+            frame.topic
+            and safe_topic(frame.topic, prefix="") == canonical_camera_topic
+            for frame in frame_list
         )
         camera_indices: dict[str, int] = {}
         frame_schedule: list[tuple[int, str, int, FrameInput]] = []
@@ -724,9 +744,13 @@ def write_run_mcap(
                 "transforms": str(summary.transforms),
                 "synthetic_timeline": "shared-epoch-per-topic-frame-index",
                 "primary_image_topic": (
-                    str(camera_topic_prefix or "/camera").rstrip("/") or "/camera"
-                    if camera_names
-                    else ""
+                    canonical_camera_topic
+                    if has_canonical_camera_topic
+                    else (
+                        safe_topic(camera_names[0], prefix=camera_topic_prefix)
+                        if camera_names
+                        else ""
+                    )
                 ),
             },
         )

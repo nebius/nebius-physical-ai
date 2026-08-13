@@ -7196,7 +7196,27 @@
         syncRunChooserFields(chosenRun, activeRunEntryKey || activeArtifactRunRef);
         return merged;
       }
-      async function refreshArtifactRuns(query, options) {
+      let defaultRunDiscoveryPromise = null;
+      function refreshArtifactRuns(query, options) {
+        const q = typeof query === "string" ? query.trim() : "";
+        const opts = options && typeof options === "object" ? options : {};
+        // The bounded first-paint request must remain independent from an
+        // operator's exhaustive Discover click. Deduplicate only identical,
+        // unscoped full discovery requests; exact/scoped/abortable calls retain
+        // their own supersession semantics.
+        if (
+          q || opts.resourceBucket || opts.projectId || opts.singlePage ||
+          opts.signal || opts.isCurrent
+        ) {
+          return _refreshArtifactRuns(query, options);
+        }
+        if (defaultRunDiscoveryPromise) return defaultRunDiscoveryPromise;
+        defaultRunDiscoveryPromise = _refreshArtifactRuns(query, options).finally(() => {
+          defaultRunDiscoveryPromise = null;
+        });
+        return defaultRunDiscoveryPromise;
+      }
+      async function _refreshArtifactRuns(query, options) {
         // Discover runs generically across the whole bucket. When a search query
         // is given, ask the SERVER to search ALL runs by name/ID (not just the
         // newest page) so old runs beyond the default limit are still findable,

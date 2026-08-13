@@ -47,7 +47,7 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         _wait_rerun_web_viewer_healthy,
         is_groot_training_recording,
         is_neural_reconstruction_recording,
-    ) = (None,) * 29
+    ) = (None,) * 30
 # NPA_EMBED_STANDALONE_END
 
 

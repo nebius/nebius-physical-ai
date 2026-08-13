@@ -83,7 +83,7 @@ def test_selected_run_capability_is_installed_before_rerun_mount() -> None:
         "syncRerunRecordingCapability(data && data.sim_viz)"
     ) < load_run.index("bestEffortMountRerun")
 
-    load_artifact = ui.split("async function loadArtifact(payload, uiState)")[1].split(
+    load_artifact = ui.split("async function loadArtifact(payload)")[1].split(
         "async function loadVoxelDataset"
     )[0]
     assert load_artifact.index(
