@@ -15,7 +15,14 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.soperator import spec_from_mapping
-from npa.soperator.spec import SoperatorSpec, SoperatorSpecError, WorkerPoolSpec, load_spec
+from npa.soperator.spec import (
+    DEFAULT_SOLUTIONS_LIBRARY_REF,
+    SoperatorSpec,
+    SoperatorSpecError,
+    WorkerPoolSpec,
+    load_spec,
+    sizing_tier_for_worker_count,
+)
 from npa.soperator.tfvars import render_tfvars
 
 runner = CliRunner()
@@ -55,6 +62,8 @@ def test_deploy_help_documents_spec_and_fixes() -> None:
     assert result.exit_code == 0
     assert "--spec" in result.output
     assert "--apply-fixes" in result.output
+    assert "--root-login-ssh-pub" in result.output
+    assert DEFAULT_SOLUTIONS_LIBRARY_REF[:20] in result.output
 
 
 def test_spec_multiple_presets_and_docker_cache() -> None:
@@ -65,6 +74,26 @@ def test_spec_multiple_presets_and_docker_cache() -> None:
     assert spec.workers[1].platform == "gpu-b200-sxm"
     assert spec.workers[1].preemptible is True
     assert all(w.docker_cache for w in spec.workers)
+
+
+def test_existing_positional_sdk_fields_keep_their_meaning() -> None:
+    spec = SoperatorSpec(
+        "c",
+        "us-central1",
+        "tenant",
+        "project",
+        "subnet",
+        ["ssh-ed25519 AAAA legacy"],
+        3,
+        "16vcpu-64gb",
+        "16vcpu-64gb",
+        "16vcpu-64gb",
+        [WorkerPoolSpec(name="w")],
+    )
+    spec.validate()
+    assert spec.ssh_public_keys == ["ssh-ed25519 AAAA legacy"]
+    assert spec.system_min_size == 3
+    assert spec.workers[0].name == "w"
 
 
 def test_gpu_pool_requires_fabric() -> None:
@@ -108,22 +137,70 @@ def test_render_tfvars_emits_multi_preset_and_io_m3_cache() -> None:
     assert "accounting_enabled = false" in tf
     assert 'active_checks_scope    = "essential"' in tf
     assert "slurm_rest_enabled = false" in tf
-    # Current upstream main requires an explicit node-group bundle version and
-    # replaced the old root-level system_resources input with sizing tiers.
+    # The pinned upstream contract requires an explicit node-group bundle and
+    # resolves omitted control-plane presets from its worker-count sizing tier.
     assert 'k8s_version        = "1.34"' in tf
     assert 'node_group_version = "72"' in tf
+    assert 'slurm_operator_version = "4.1.6"' in tf
+    assert "max_size = 24" in tf
+    assert tf.count("preset   = null") >= 2
     assert "system_resources =" not in tf
 
 
-def test_gpu_bootstrap_checks_require_accounting_backed_rest_api() -> None:
+@pytest.mark.parametrize("gpu", [False, True])
+@pytest.mark.parametrize("accounting", [False, True])
+def test_rest_and_accounting_are_independent_for_cpu_gpu_combinations(
+    gpu: bool, accounting: bool
+) -> None:
     data = _base_spec_mapping()
+    data["accounting"] = accounting
+    if not gpu:
+        data["workers"] = [data["workers"][0]]
+
+    spec = spec_from_mapping(data)
+    spec.validate()
+    tf = render_tfvars(spec)
+
+    assert f"accounting_enabled = {str(accounting).lower()}" in tf
+    # Omission is backward-compatible: REST follows accounting. GPU validation
+    # remains mandatory through NPA's direct login-jail creation check when the
+    # pinned operator cannot provide its REST-backed ActiveChecks.
+    assert f"slurm_rest_enabled = {str(accounting).lower()}" in tf
+    expected_scope = "dev" if gpu and accounting else "essential"
+    assert f'active_checks_scope    = "{expected_scope}"' in tf
+
+
+def test_gpu_cluster_allows_rest_disable_without_losing_direct_creation_check() -> None:
+    data = _base_spec_mapping()
+    data["accounting"] = False
+    data["slurm_rest_enabled"] = False
+
+    spec = spec_from_mapping(data)
+    spec.validate()
+    tf = render_tfvars(spec)
+    assert "accounting_enabled = false" in tf
+    assert "slurm_rest_enabled = false" in tf
+    assert 'active_checks_scope    = "essential"' in tf
+
+
+def test_explicit_rest_contract_rejects_operator_unsupported_no_accounting() -> None:
+    data = _base_spec_mapping()
+    data["accounting"] = False
+    data["slurm_rest_enabled"] = True
+
+    with pytest.raises(SoperatorSpecError, match="controller skips REST reconciliation"):
+        spec_from_mapping(data).validate()
+
+    # The toggles remain independent in the accepted direction: accounting can
+    # be enabled while REST is explicitly disabled.
     data["accounting"] = True
-
-    tf = render_tfvars(spec_from_mapping(data))
-
+    data["slurm_rest_enabled"] = False
+    spec = spec_from_mapping(data)
+    spec.validate()
+    tf = render_tfvars(spec)
     assert "accounting_enabled = true" in tf
-    assert "slurm_rest_enabled = true" in tf
-    assert 'active_checks_scope    = "dev"' in tf
+    assert "slurm_rest_enabled = false" in tf
+    assert 'active_checks_scope    = "essential"' in tf
 
 
 def test_k8s_and_node_group_versions_parse_and_must_be_non_empty() -> None:
@@ -144,9 +221,91 @@ def test_k8s_and_node_group_versions_parse_and_must_be_non_empty() -> None:
 
 def test_current_sizing_tier_control_plane_defaults() -> None:
     spec = SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")])
-    assert spec.system_preset == "16vcpu-64gb"
-    assert spec.controller_preset == "16vcpu-64gb"
+    assert spec.system_preset is None
+    assert spec.controller_preset is None
+    assert spec.accounting_preset is None
     assert spec.login_preset == "16vcpu-64gb"
+
+
+@pytest.mark.parametrize(
+    ("worker_count", "expected_tier"),
+    [
+        (9, "XS"),
+        (10, "S"),
+        (99, "S"),
+        (100, "M"),
+        (499, "M"),
+        (500, "L"),
+        (1999, "L"),
+        (2000, "XL"),
+    ],
+)
+def test_sizing_tier_threshold_boundaries(worker_count: int, expected_tier: str) -> None:
+    assert sizing_tier_for_worker_count(worker_count) == expected_tier
+
+
+@pytest.mark.parametrize(
+    ("worker_count", "rejected", "accepted"),
+    [
+        (1, "8vcpu-32gb", "16vcpu-64gb"),
+        (499, "8vcpu-32gb", "16vcpu-64gb"),
+        (500, "16vcpu-64gb", "32vcpu-128gb"),
+        (2000, "32vcpu-128gb", "64vcpu-256gb"),
+    ],
+)
+def test_system_preset_rejected_and_accepted_at_every_capacity_boundary(
+    worker_count: int, rejected: str, accepted: str
+) -> None:
+    workers = [WorkerPoolSpec(name="w", size=worker_count)]
+    with pytest.raises(SoperatorSpecError, match="control_plane.system.preset"):
+        SoperatorSpec(name="c", workers=workers, system_preset=rejected).validate()
+    SoperatorSpec(name="c", workers=workers, system_preset=accepted).validate()
+
+
+@pytest.mark.parametrize("role", ["controller", "login"])
+def test_controller_and_login_actual_minimum_preset(role: str) -> None:
+    kwargs = {f"{role}_preset": "8vcpu-32gb"}
+    with pytest.raises(SoperatorSpecError, match=rf"control_plane.{role}.preset"):
+        SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")], **kwargs).validate()
+    kwargs[f"{role}_preset"] = "16vcpu-64gb"
+    SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")], **kwargs).validate()
+
+
+@pytest.mark.parametrize(
+    ("worker_count", "rejected", "accepted"),
+    [
+        (499, "4vcpu-16gb", "8vcpu-32gb"),
+        (500, "8vcpu-32gb", "16vcpu-64gb"),
+        (2000, "16vcpu-64gb", "32vcpu-128gb"),
+    ],
+)
+def test_accounting_preset_boundaries_when_accounting_enabled(
+    worker_count: int, rejected: str, accepted: str
+) -> None:
+    workers = [WorkerPoolSpec(name="w", size=worker_count)]
+    with pytest.raises(SoperatorSpecError, match="control_plane.accounting.preset"):
+        SoperatorSpec(
+            name="c",
+            workers=workers,
+            accounting=True,
+            accounting_preset=rejected,
+        ).validate()
+    SoperatorSpec(
+        name="c",
+        workers=workers,
+        accounting=True,
+        accounting_preset=accepted,
+    ).validate()
+
+
+def test_system_max_size_preserves_upstream_autoscaling_and_validates_override() -> None:
+    spec = SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")])
+    assert "max_size = 24" in render_tfvars(spec)
+    spec.system_min_size = 25
+    assert "max_size = 25" in render_tfvars(spec)
+    spec.system_max_size = 24
+    with pytest.raises(SoperatorSpecError, match="max_size must be >= min_size"):
+        spec.validate()
 
 
 def test_resolve_login_ssh_key_from_operator_home(tmp_path) -> None:
@@ -159,7 +318,8 @@ def test_resolve_login_ssh_key_from_operator_home(tmp_path) -> None:
 
     resolved = _with_resolved_ssh_public_keys(original, home=tmp_path)
 
-    assert resolved.ssh_public_keys == ["ssh-ed25519 AAAA operator"]
+    assert resolved.root_login_ssh_public_key == "ssh-ed25519 AAAA operator"
+    assert resolved.ssh_public_keys == []
     assert original.ssh_public_keys == []
 
 
@@ -171,11 +331,161 @@ def test_explicit_login_ssh_key_wins_and_missing_fallback_fails(tmp_path) -> Non
         workers=[WorkerPoolSpec(name="w")],
         ssh_public_keys=["ssh-rsa AAAA explicit"],
     )
-    assert _with_resolved_ssh_public_keys(explicit, home=tmp_path) is explicit
+    resolved = _with_resolved_ssh_public_keys(explicit, home=tmp_path)
+    assert resolved.root_login_ssh_public_key == "ssh-rsa AAAA explicit"
+    assert resolved.ssh_public_keys == []
 
     missing = SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")])
-    with pytest.raises(ValueError, match="requires at least one login SSH public key"):
+    with pytest.raises(ValueError, match="root access requires one SSH public key"):
         _with_resolved_ssh_public_keys(missing, home=tmp_path)
+
+
+def test_root_login_ssh_key_precedence_and_nonstandard_ci_path(tmp_path) -> None:
+    from npa.soperator.lifecycle import _resolve_root_login_ssh_public_key
+
+    explicit_file = tmp_path / "ci" / "operator.pub"
+    explicit_file.parent.mkdir()
+    explicit_file.write_text("ssh-ed25519 AAAA explicit-file\n")
+    env_file = tmp_path / "env.pub"
+    env_file.write_text("ssh-ed25519 AAAA env-file\n")
+    home_key = tmp_path / ".ssh" / "id_ed25519.pub"
+    home_key.parent.mkdir()
+    home_key.write_text("ssh-ed25519 AAAA home\n")
+    env = {
+        "NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY": "ssh-ed25519 AAAA env-inline",
+        "NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY_FILE": str(env_file),
+    }
+    spec = SoperatorSpec(
+        name="c",
+        workers=[WorkerPoolSpec(name="w")],
+        root_login_ssh_public_key="ssh-ed25519 AAAA spec",
+    )
+
+    resolved = _resolve_root_login_ssh_public_key(
+        spec, explicit_file=explicit_file, environ=env, home=tmp_path
+    )
+    assert resolved.value.endswith("explicit-file")
+    assert resolved.source == "explicit argument"
+    assert resolved.fingerprint.startswith("SHA256:")
+
+    resolved = _resolve_root_login_ssh_public_key(spec, environ=env, home=tmp_path)
+    assert resolved.value.endswith("spec")
+    assert resolved.source == "spec root_login_ssh_public_key"
+
+    empty_spec = SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")])
+    resolved = _resolve_root_login_ssh_public_key(empty_spec, environ=env, home=tmp_path)
+    assert resolved.value.endswith("env-inline")
+    assert resolved.source == "NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY"
+
+    env.pop("NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY")
+    resolved = _resolve_root_login_ssh_public_key(empty_spec, environ=env, home=tmp_path)
+    assert resolved.value.endswith("env-file")
+    assert resolved.source == "NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY_FILE"
+
+    resolved = _resolve_root_login_ssh_public_key(empty_spec, environ={}, home=tmp_path)
+    assert resolved.value.endswith("home")
+    assert resolved.source == "operator default id_ed25519.pub"
+
+
+@pytest.mark.parametrize(
+    "bad_key",
+    [
+        "",
+        "command=x ssh-ed25519 AAAA comment",
+        "ssh-ed25519 not-base64! comment",
+        "ssh-ed25519 AAAA one\nssh-ed25519 AAAA two",
+    ],
+)
+def test_root_login_ssh_key_rejects_invalid_or_multiple_records(bad_key: str) -> None:
+    spec = SoperatorSpec(
+        name="c",
+        workers=[WorkerPoolSpec(name="w")],
+        root_login_ssh_public_key=bad_key,
+    )
+    if not bad_key:
+        # Empty means omitted and is resolved later by the deploy environment.
+        spec.validate()
+    else:
+        with pytest.raises(SoperatorSpecError, match="root login SSH key"):
+            spec.validate()
+
+
+def test_legacy_root_login_key_alias_accepts_one_record_only() -> None:
+    spec = SoperatorSpec(
+        name="c",
+        workers=[WorkerPoolSpec(name="w")],
+        ssh_public_keys=["ssh-ed25519 AAAA one", "ssh-ed25519 AAAA two"],
+    )
+    with pytest.raises(SoperatorSpecError, match="exactly one"):
+        spec.validate()
+
+
+def test_root_login_ssh_key_hcl_rendering_escapes_comment_safely() -> None:
+    key = 'ssh-ed25519 AAAA ci-${var.bad}-%{if true}-"quoted"-\\path'
+    spec = SoperatorSpec(
+        name="c",
+        workers=[WorkerPoolSpec(name="w")],
+        root_login_ssh_public_key=key,
+    )
+    spec.validate()
+    rendered = render_tfvars(spec)
+    assert "${var.bad}" not in rendered.replace("$${var.bad}", "")
+    assert "%{if true}" not in rendered.replace("%%{if true}", "")
+    assert (
+        '  "ssh-ed25519 AAAA ci-$${var.bad}-%%{if true}-\\"quoted\\"-\\\\path",'
+        in rendered
+    )
+
+
+def test_operator_override_validation_and_verified_userns_contract() -> None:
+    spec = SoperatorSpec(
+        name="c",
+        workers=[WorkerPoolSpec(name="w")],
+        slurm_operator_version="latest",
+    )
+    with pytest.raises(SoperatorSpecError, match="semantic version"):
+        spec.validate()
+
+    spec.slurm_operator_version = "4.1.7"
+    with pytest.raises(SoperatorSpecError, match="user-namespace override is verified only"):
+        spec.validate()
+
+    spec.use_default_apparmor_profile = True
+    spec.validate()  # explicit newer chart is possible when the pinned sysctl override is unused
+
+    spec.slurm_operator_version = "4.2.0"
+    with pytest.raises(SoperatorSpecError, match="outside the pinned runtime contract"):
+        spec.validate()
+
+
+def test_rest_contract_rejects_string_boolean() -> None:
+    data = _base_spec_mapping()
+    data["slurm_rest_enabled"] = "false"
+
+    with pytest.raises(SoperatorSpecError, match="must be a boolean"):
+        spec_from_mapping(data)
+
+
+def test_solutions_library_ref_requires_immutable_commit() -> None:
+    from npa.soperator.lifecycle import _validate_immutable_solutions_library_ref
+
+    assert _validate_immutable_solutions_library_ref(DEFAULT_SOLUTIONS_LIBRARY_REF) == (
+        DEFAULT_SOLUTIONS_LIBRARY_REF
+    )
+    with pytest.raises(ValueError, match="immutable 40-character"):
+        _validate_immutable_solutions_library_ref("main")
+
+
+def test_solutions_library_resolution_preserves_legacy_install_state(tmp_path) -> None:
+    from npa.soperator.lifecycle import _resolve_solutions_library
+
+    recipe = tmp_path / "nebius-solutions-library" / "soperator"
+    (recipe / "installations" / "example").mkdir(parents=True)
+
+    assert (
+        _resolve_solutions_library(None, tmp_path, DEFAULT_SOLUTIONS_LIBRARY_REF)
+        == recipe
+    )
 
 
 def test_render_tfvars_cpu_only_disables_image_disk() -> None:
@@ -237,9 +547,10 @@ def test_destroy_reconstructs_tf_var_env_from_sidecar(tmp_path, monkeypatch) -> 
     )
 
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    monkeypatch.setattr(lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None)
     # _soperator_tf_env -> _terraform_env mints a real IAM token via the `nebius`
     # CLI; stub it so the destroy tests never touch real infra (CI has no nebius).
-    monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin: {})
+    monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin, **kwargs: {})
     captured: dict[str, dict[str, str]] = {}
 
     class _Done:
@@ -301,9 +612,10 @@ def test_destroy_deletes_orphaned_vpc_allocation(tmp_path, monkeypatch) -> None:
     )
 
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    monkeypatch.setattr(lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None)
     # _soperator_tf_env -> _terraform_env mints a real IAM token via the `nebius`
     # CLI; stub it so the destroy tests never touch real infra (CI has no nebius).
-    monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin: {})
+    monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin, **kwargs: {})
     deleted: list[str] = []
 
     class _Done:
@@ -362,9 +674,10 @@ def test_destroy_deletes_orphaned_filesystems(tmp_path, monkeypatch) -> None:
     )
 
     monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    monkeypatch.setattr(lifecycle, "_assert_solutions_library_contract", lambda *a, **k: None)
     # _soperator_tf_env -> _terraform_env mints a real IAM token via the `nebius`
     # CLI; stub it so the destroy tests never touch real infra (CI has no nebius).
-    monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin: {})
+    monkeypatch.setattr(lifecycle, "_terraform_env", lambda nebius_bin, **kwargs: {})
     deleted: list[str] = []
 
     class _Done:
@@ -419,11 +732,223 @@ def test_nebius_cli_env_keeps_token_when_reuse_opt_in(monkeypatch) -> None:
     assert lifecycle._nebius_cli_env()["NEBIUS_IAM_TOKEN"] == "ci-injected-token"
 
 
+def test_soperator_terraform_token_uses_explicit_nebius_profile(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cross-tenant-profile")
+    seen: dict[str, str] = {}
+
+    def fake_tf_env(nebius_bin, *, profile=""):
+        seen["profile"] = profile
+        return {}
+
+    monkeypatch.setattr(lifecycle, "_terraform_env", fake_tf_env)
+    env = lifecycle._soperator_tf_env(
+        "nebius",
+        region="us-central1",
+        tenant_id="tenant",
+        project_id="project",
+        subnet_id="subnet",
+    )
+
+    assert seen["profile"] == "cross-tenant-profile"
+    assert env["TF_VAR_o11y_profile"] == "cross-tenant-profile"
+    assert env["NEBIUS_PROFILE"] == "cross-tenant-profile"
+    assert lifecycle._nebius_cli_env()["NEBIUS_PROFILE"] == "cross-tenant-profile"
+
+
+def test_kube_credential_refresh_pins_selected_nebius_profile(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        lifecycle,
+        "_run_capture",
+        lambda cmd, **kwargs: calls.append(cmd) or _Done(),
+    )
+
+    lifecycle._refresh_kube_credentials(
+        "nebius",
+        "cluster-id",
+        "context",
+        {"NPA_NEBIUS_PROFILE": "cross-tenant-profile"},
+    )
+
+    assert calls == [[
+        "nebius",
+        "--profile",
+        "cross-tenant-profile",
+        "mk8s",
+        "cluster",
+        "get-credentials",
+        "--id",
+        "cluster-id",
+        "--external",
+        "--force",
+        "--context-name",
+        "context",
+    ]]
+
+
 class _Done:
     def __init__(self, stdout: str = "", stderr: str = "", returncode: int = 0) -> None:
         self.stdout = stdout
         self.stderr = stderr
         self.returncode = returncode
+
+
+def test_direct_gpu_creation_check_uses_every_worker_and_gpu(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    calls: list[list[str]] = []
+
+    def fake_capture(cmd, **kwargs):
+        calls.append(cmd)
+        return _Done(
+            stdout=(
+                "0: NPA_GPU_CREATION_CHECK_RESULT host=gpu-0 status=PASS command_rc=0\n"
+                "1: NPA_GPU_CREATION_CHECK_RESULT host=gpu-1 status=PASS command_rc=0\n"
+            )
+        )
+
+    monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+    spec = SoperatorSpec(
+        name="c",
+        workers=[
+            WorkerPoolSpec(
+                name="gpu",
+                platform="gpu-b200-sxm",
+                preset="8gpu-160vcpu-1792gb",
+                size=2,
+                fabric="us-central1-b",
+            )
+        ],
+    )
+
+    checks = lifecycle._run_gpu_creation_checks(spec, "ctx", "kubectl")
+
+    assert checks == [{
+        "pool": "gpu",
+        "nodes": 2,
+        "gpus_per_node": 8,
+        "tests": [
+            "deviceQuery",
+            "vectorAdd",
+            "simpleMultiGPU",
+            "p2pBandwidthLatencyTest",
+        ],
+        "status": "PASS",
+    }]
+    command = calls[0]
+    assert "--nodes=2" in command
+    assert "--ntasks=2" in command
+    assert "--gpus-per-node=8" in command
+    assert "--nodelist=gpu-0,gpu-1" in command
+    task_script = command[-1]
+    assert "health-checker run" in task_script
+    assert "deviceQuery,vectorAdd,simpleMultiGPU,p2pBandwidthLatencyTest" in task_script
+
+
+def test_direct_gpu_creation_check_fails_on_missing_worker_pass(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_run_capture",
+        lambda *a, **k: _Done(
+            stdout="0: NPA_GPU_CREATION_CHECK_RESULT host=gpu-0 status=PASS command_rc=0\n"
+        ),
+    )
+    spec = SoperatorSpec(
+        name="c",
+        workers=[
+            WorkerPoolSpec(
+                name="gpu",
+                platform="gpu-b200-sxm",
+                preset="8gpu-160vcpu-1792gb",
+                size=2,
+                fabric="us-central1-b",
+            )
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="1/2 workers reported PASS"):
+        lifecycle._run_gpu_creation_checks(spec, "ctx", "kubectl")
+
+
+def test_direct_gpu_creation_check_is_noop_for_cpu_cluster(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_run_capture",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("unexpected kubectl")),
+    )
+    spec = SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="cpu")])
+
+    assert lifecycle._run_gpu_creation_checks(spec, "ctx", "kubectl") == []
+
+
+def test_superseded_activechecks_upgrade_aborts_only_old_hook(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    calls: list[list[str]] = []
+    releases = {
+        "items": [
+            {
+                "metadata": {
+                    "name": "stack-soperator-activechecks",
+                    "generation": 4,
+                },
+                "status": {
+                    "lastAttemptedGeneration": 3,
+                    "conditions": [
+                        {
+                            "type": "Reconciling",
+                            "status": "True",
+                            "reason": "Progressing",
+                        }
+                    ],
+                },
+            },
+            {
+                "metadata": {
+                    "name": "current-soperator-activechecks",
+                    "generation": 7,
+                },
+                "status": {
+                    "lastAttemptedGeneration": 7,
+                    "conditions": [
+                        {
+                            "type": "Reconciling",
+                            "status": "True",
+                            "reason": "Progressing",
+                        }
+                    ],
+                },
+            },
+        ]
+    }
+
+    def fake_capture(cmd, **kwargs):
+        calls.append(cmd)
+        if "get" in cmd and "helmreleases" in cmd:
+            return _Done(stdout=json.dumps(releases))
+        return _Done(stdout="ok")
+
+    monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+    monkeypatch.setattr(lifecycle.time, "time_ns", lambda: 42)
+
+    reset = lifecycle._abort_superseded_activechecks_upgrade("kubectl", "ctx")
+
+    assert reset == ["stack-soperator-activechecks"]
+    deletes = [cmd for cmd in calls if "delete" in cmd]
+    assert len(deletes) == 1
+    assert "wait-for-active-checks" in deletes[0]
+    annotations = [cmd for cmd in calls if "annotate" in cmd]
+    assert len(annotations) == 1
+    assert "stack-soperator-activechecks" in annotations[0]
+    assert "current-soperator-activechecks" not in annotations[0]
 
 
 def test_install_monitoring_crds_strips_token_and_verifies(monkeypatch) -> None:
@@ -676,6 +1201,55 @@ def test_install_monitoring_crds_raises_when_crd_absent(monkeypatch) -> None:
         lifecycle._install_monitoring_crds("kubectl", "ctx")
 
 
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "failed to inspect monitoring HelmReleases: Forbidden",
+        "failed to reset monitoring HelmRelease: transient server error",
+    ],
+)
+def test_post_deploy_monitoring_repair_failure_is_best_effort(
+    monkeypatch, detail: str
+) -> None:
+    from npa.soperator import lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_install_monitoring_crds",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError(detail)),
+    )
+    monkeypatch.setattr(lifecycle, "_patch_slurmcluster_crd", lambda *a, **k: True)
+    monkeypatch.setattr(lifecycle, "_ensure_scripts_configmap", lambda *a, **k: True)
+    monkeypatch.setattr(lifecycle, "_register_slurm_workers", lambda *a, **k: None)
+    monkeypatch.setattr(
+        lifecycle, "_abort_superseded_activechecks_upgrade", lambda *a, **k: []
+    )
+    messages: list[str] = []
+
+    warnings = lifecycle.apply_post_deploy_fixes(
+        "ctx", "kubectl", on_status=messages.append
+    )
+
+    assert warnings == [f"monitoring repair skipped after successful apply: {detail}"]
+    assert any("post-deploy warning" in message for message in messages)
+
+
+def test_post_deploy_monitoring_repair_clean_install_returns_no_warnings(
+    monkeypatch,
+) -> None:
+    from npa.soperator import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_install_monitoring_crds", lambda *a, **k: None)
+    monkeypatch.setattr(lifecycle, "_patch_slurmcluster_crd", lambda *a, **k: True)
+    monkeypatch.setattr(lifecycle, "_ensure_scripts_configmap", lambda *a, **k: True)
+    monkeypatch.setattr(lifecycle, "_register_slurm_workers", lambda *a, **k: None)
+    monkeypatch.setattr(
+        lifecycle, "_abort_superseded_activechecks_upgrade", lambda *a, **k: []
+    )
+
+    assert lifecycle.apply_post_deploy_fixes("ctx", "kubectl") == []
+
+
 def _write_recipe_locals(tmp_path, essential_body: str):
     """Write a minimal locals_active_checks.tf with an ``essential`` scope."""
 
@@ -774,6 +1348,88 @@ def test_patch_nodeconfigurator_allows_enroot_userns_and_is_idempotent(
     assert lifecycle._patch_nodeconfigurator_userns(tmp_path) is False
     assert template.read_text() == patched
     assert patched.count("# npa: allow Enroot user namespaces on Ubuntu hosts") == 1
+
+
+def test_patch_nodeconfigurator_missing_own_values_refuses_sibling_chart(
+    tmp_path,
+) -> None:
+    from npa.soperator import lifecycle
+
+    template = (
+        tmp_path
+        / "modules"
+        / "slurm"
+        / "templates"
+        / "helm_values"
+        / "terraform_fluxcd_values.yaml.tftpl"
+    )
+    template.parent.mkdir(parents=True)
+    original = (
+        "        fluxcd:\n"
+        "          nodeConfigurator:\n"
+        "            enabled: true\n"
+        "          siblingChart:\n"
+        "            enabled: true\n"
+        "            values:\n"
+        "              resources: {}\n"
+    )
+    template.write_text(original)
+
+    with pytest.raises(lifecycle.UpstreamContractError, match="its own values"):
+        lifecycle._patch_nodeconfigurator_userns(tmp_path)
+
+    assert template.read_text() == original
+    assert "privileged: true" not in template.read_text()
+
+
+def test_contract_assertion_stops_before_installation_or_cloud_mutation(
+    tmp_path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.soperator import lifecycle
+
+    spec = SoperatorSpec(
+        name="c",
+        region="us-central1",
+        tenant_id="tenant",
+        project_id="project",
+        workers=[WorkerPoolSpec(name="w")],
+        root_login_ssh_public_key="ssh-ed25519 AAAA operator",
+    )
+    recipe = tmp_path / "soperator"
+    (recipe / "installations" / "example").mkdir(parents=True)
+    monkeypatch.setattr(lifecycle, "resolve_environment", lambda **k: SimpleNamespace(
+        region="us-central1", tenant_id="tenant", project_id="project"
+    ))
+    monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    monkeypatch.setattr(lifecycle, "_resolve_solutions_library", lambda *a, **k: recipe)
+    monkeypatch.setattr(
+        lifecycle,
+        "_assert_solutions_library_contract",
+        lambda *a, **k: (_ for _ in ()).throw(
+            lifecycle.UpstreamContractError("incompatible pinned contract")
+        ),
+    )
+    prepared = False
+    provider_read = False
+
+    def prepare(*args, **kwargs):
+        nonlocal prepared
+        prepared = True
+
+    def resolve_subnet(*args, **kwargs):
+        nonlocal provider_read
+        provider_read = True
+
+    monkeypatch.setattr(lifecycle, "_prepare_installation", prepare)
+    monkeypatch.setattr(lifecycle, "_resolve_subnet", resolve_subnet)
+
+    with pytest.raises(lifecycle.UpstreamContractError, match="incompatible"):
+        lifecycle.deploy_cluster(spec, work_root=tmp_path)
+
+    assert prepared is False
+    assert provider_read is False
 
 
 def test_patch_nodeconfigurator_missing_template_is_safe(tmp_path) -> None:

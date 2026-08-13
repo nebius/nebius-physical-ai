@@ -3960,6 +3960,9 @@ def _soperator_validate_payload(body: dict) -> dict:
 
 
 def _soperator_deploy_from_payload(body: dict) -> dict:
+    from npa.soperator.lifecycle import _validate_immutable_solutions_library_ref
+    from npa.soperator.spec import DEFAULT_SOLUTIONS_LIBRARY_REF
+
     ready, reason = _agent_npa_ready()
     if not ready:
         return {{"ok": False, "status": "blocked", "error": reason}}
@@ -3967,6 +3970,16 @@ def _soperator_deploy_from_payload(body: dict) -> dict:
     validation = _soperator_validate_payload(body)
     if not validation.get("ok"):
         return {{"ok": False, "status": "invalid", "validation": validation}}
+    try:
+        ref = _validate_immutable_solutions_library_ref(
+            str(
+                body.get("ref")
+                or body.get("solutions_library_ref")
+                or DEFAULT_SOLUTIONS_LIBRARY_REF
+            )
+        )
+    except ValueError as exc:
+        return {{"ok": False, "status": "invalid", "error": str(exc), "validation": validation}}
     if dry_run:
         return {{
             "ok": True,
@@ -3974,12 +3987,12 @@ def _soperator_deploy_from_payload(body: dict) -> dict:
             "dry_run": True,
             "validation": validation,
             "command": "npa soperator deploy --spec <validated-spec> --output json",
+            "solutions_library_ref": ref,
         }}
     timeout_minutes = int(body.get("timeout_minutes") or body.get("timeout") or 90)
     project = _agent_project_alias(str(body.get("project") or ""))
     terraform_dir_text = str(body.get("terraform_dir") or "").strip()
     terraform_dir = Path(terraform_dir_text).expanduser() if terraform_dir_text else None
-    ref = str(body.get("ref") or body.get("solutions_library_ref") or "main")
     apply_fixes = bool(body.get("apply_fixes", True))
     spec_path = _write_soperator_temp_spec(_soperator_spec_text_from_payload(body))
     try:

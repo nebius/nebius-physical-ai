@@ -12,7 +12,8 @@ Example::
     spec = SoperatorSpec(
         name="npa-soperator",
         region="us-central1",
-        ssh_public_keys=["ssh-ed25519 AAAA... me"],
+        # Explicitly grants root SSH access to the public login node.
+        root_login_ssh_public_key="ssh-ed25519 AAAA... operator",
         workers=[
             WorkerPoolSpec(name="cpu", platform="cpu-d3", preset="8vcpu-32gb", docker_cache=True),
             WorkerPoolSpec(name="gpu", platform="gpu-b200-sxm", preset="8gpu-160vcpu-1792gb",

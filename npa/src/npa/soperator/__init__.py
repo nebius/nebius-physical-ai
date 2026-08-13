@@ -4,8 +4,11 @@ This package wraps the public ``nebius/nebius-solutions-library`` soperator
 Terraform recipe. Callers describe a cluster with a small declarative spec
 (``npa.soperator/v0.0.1``) that supports **multiple worker node pools with
 different presets** and an optional per-pool **Docker/Enroot image cache disk**
-(node-local ``NETWORK_SSD_IO_M3``). The spec is rendered into the recipe's
-``terraform.tfvars`` and applied; post-deploy fixes make the cluster usable.
+(node-local ``NETWORK_SSD_IO_M3``). The spec is rendered against an immutable,
+validated upstream contract. Deploy applies idempotent monitoring, CRD,
+user-namespace, scripts, and worker repairs, then requires direct CUDA creation
+checks on every GPU worker. REST/accounting compatibility and control-plane
+sizing are validated before provider mutation.
 
 No project/tenant/registry IDs are baked in here -- they are resolved from
 ``~/.npa/config.yaml`` or explicit arguments, keeping this module public-safe.

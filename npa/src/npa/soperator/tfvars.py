@@ -5,10 +5,14 @@ every nodeset must be set explicitly. This renderer produces a minimal, working
 tfvars: a trimmed control plane, one worker nodeset per spec pool (mixed presets
 supported), optional per-pool node-local Docker/Enroot image cache
 (``NETWORK_SSD_IO_M3``), NFS-in-k8s, accounting/telemetry/backups off by
-default, and ``use_default_apparmor_profile`` wired from the spec.
+default, REST resolved through the pinned operator compatibility contract,
+upstream-derived control-plane sizing, and ``use_default_apparmor_profile``
+wired from the spec. Mandatory direct GPU creation checks live in the lifecycle.
 """
 
 from __future__ import annotations
+
+import json
 
 from npa.soperator.spec import SoperatorSpec, WorkerPoolSpec
 
@@ -17,17 +21,32 @@ def _bool(value: bool) -> str:
     return "true" if value else "false"
 
 
+def _tfstr(value: str) -> str:
+    """Render a Terraform/HCL string with JSON and template escaping."""
+
+    # HCL quoted strings still evaluate ${...} interpolation and %{...}
+    # directives after JSON-compatible escaping. Doubling their introducers is
+    # Terraform's literal form and prevents a public-key comment (or any other
+    # user-controlled string) from changing the generated expression.
+    escaped = value.replace("${", "$${").replace("%{", "%%{")
+    return json.dumps(escaped, ensure_ascii=True)
+
+
+def _nullable_tfstr(value: str | None) -> str:
+    return "null" if value is None else _tfstr(value)
+
+
 def _render_worker(pool: WorkerPoolSpec) -> str:
     lines: list[str] = []
     lines.append("  {")
-    lines.append(f'    name = "{pool.name}"')
+    lines.append(f"    name = {_tfstr(pool.name)}")
     lines.append(f"    size = {pool.size}")
     lines.append("    autoscaling = {")
     lines.append("      enabled = false")
     lines.append("    }")
     lines.append("    resource = {")
-    lines.append(f'      platform = "{pool.platform}"')
-    lines.append(f'      preset   = "{pool.preset}"')
+    lines.append(f"      platform = {_tfstr(pool.platform)}")
+    lines.append(f"      preset   = {_tfstr(pool.preset)}")
     lines.append("    }")
     lines.append("    boot_disk = {")
     lines.append('      type                 = "NETWORK_SSD"')
@@ -36,7 +55,7 @@ def _render_worker(pool: WorkerPoolSpec) -> str:
     lines.append("    }")
     if pool.is_gpu():
         lines.append("    gpu_cluster = {")
-        lines.append(f'      infiniband_fabric = "{pool.fabric}"')
+        lines.append(f"      infiniband_fabric = {_tfstr(pool.fabric)}")
         lines.append("    }")
     lines.append(f"    preemptible = {'{}' if pool.preemptible else 'null'}")
     lines.append("    features = null")
@@ -56,7 +75,7 @@ def _render_worker(pool: WorkerPoolSpec) -> str:
         lines.append("      spec = {")
         lines.append(f"        size_gibibytes  = {pool.docker_cache_gib}")
         lines.append('        filesystem_type = "ext4"')
-        lines.append(f'        disk_type       = "{pool.docker_cache_disk_type}"')
+        lines.append(f"        disk_type       = {_tfstr(pool.docker_cache_disk_type)}")
         lines.append("      }")
         lines.append("    }")
     else:
@@ -71,7 +90,8 @@ def render_tfvars(spec: SoperatorSpec) -> str:
     """Return the full ``terraform.tfvars`` content for *spec*."""
 
     workers_block = "\n".join(_render_worker(p) for p in spec.workers)
-    ssh_keys = "\n".join(f'  "{key}",' for key in spec.ssh_public_keys)
+    root_login_key = spec.explicit_root_login_ssh_public_key()
+    ssh_keys = f"  {_tfstr(root_login_key)}," if root_login_key else ""
     telemetry = _bool(spec.telemetry)
     # ActiveChecks in the "dev" scope run NCCL all-reduce + InfiniBand + GPU perf
     # jobs that Error on a CPU-only cluster, hanging wait_for_soperator_activechecks_hr
@@ -79,13 +99,16 @@ def render_tfvars(spec: SoperatorSpec) -> str:
     # (variables.tf validation rejects ""), so on CPU-only clusters use "essential",
     # which sets runAfterCreation=false for every GPU/NCCL/IB/perf check and only
     # runs CPU-safe checks (ssh-check, etc.).
-    # Soperator 4.1 skips slurmrestd unless accounting is enabled, while its
-    # GPU bootstrap checks require that REST service to observe submitted Slurm
-    # jobs. Selecting those checks with accounting disabled leaves Terraform's
-    # activechecks HelmRelease waiting forever. Keep the full dev checks only
-    # when their REST dependency can exist.
+    # The pinned Terraform surface exposes REST independently, but its 4.1.6
+    # operator skips REST reconciliation without accounting. Only select the
+    # REST-backed dev checks for the runnable combination. NPA performs direct
+    # login-jail CUDA creation checks for every GPU pool, including accounting-
+    # disabled clusters, so essential scope no longer means zero GPU validation.
+    rest_enabled = spec.effective_slurm_rest_enabled()
     active_checks_scope = (
-        "dev" if spec.accounting and any(p.is_gpu() for p in spec.workers) else "essential"
+        "dev"
+        if rest_enabled and spec.accounting and any(p.is_gpu() for p in spec.workers)
+        else "essential"
     )
     # filestore_accounting must be non-null only when accounting is enabled, but
     # slurm_nodeset_accounting's variable validation dereferences it even when
@@ -104,7 +127,7 @@ def render_tfvars(spec: SoperatorSpec) -> str:
 
     return f"""# Generated by `npa soperator deploy` from an npa.soperator/v0.0.1 spec.
 # Cluster: {spec.name}
-company_name = "{spec.name}"
+company_name = {_tfstr(spec.name)}
 production   = false
 
 # --- Storage ---
@@ -138,7 +161,7 @@ nfs_in_k8s = {{
 }}
 
 # --- Slurm ---
-slurm_operator_version = "{spec.slurm_operator_version}"
+slurm_operator_version = {_tfstr(spec.slurm_operator_version)}
 slurm_operator_stable  = true
 
 slurm_nodesets_partitions = [
@@ -160,10 +183,10 @@ slurm_partition_config_type = "default"
 # --- Nodes ---
 slurm_nodeset_system = {{
   min_size = {spec.system_min_size}
-  max_size = {spec.system_min_size}
+  max_size = {spec.system_max_size or max(spec.system_min_size, 24)}
   resource = {{
     platform = "cpu-d3"
-    preset   = "{spec.system_preset}"
+    preset   = {_nullable_tfstr(spec.system_preset)}
   }}
   boot_disk = {{
     type                 = "NETWORK_SSD"
@@ -176,7 +199,7 @@ slurm_nodeset_controller = {{
   size = 1
   resource = {{
     platform = "cpu-d3"
-    preset   = "{spec.controller_preset}"
+    preset   = {_nullable_tfstr(spec.controller_preset)}
   }}
   boot_disk = {{
     type                 = "NETWORK_SSD"
@@ -195,7 +218,7 @@ slurm_nodeset_login = {{
   size = 1
   resource = {{
     platform = "cpu-d3"
-    preset   = "{spec.login_preset}"
+    preset   = {_tfstr(spec.login_preset)}
   }}
   boot_disk = {{
     type                 = "NETWORK_SSD"
@@ -209,7 +232,7 @@ slurm_nodeset_login = {{
 slurm_nodeset_accounting = {{
   resource = {{
     platform = "cpu-d3"
-    preset   = "16vcpu-64gb"
+    preset   = {_nullable_tfstr(spec.accounting_preset)}
   }}
   boot_disk = {{
     type                 = "NETWORK_SSD"
@@ -239,7 +262,7 @@ soperator_notifier   = {{ enabled = false }}
 nccl_inspector_profiling = {{ enabled = false }}
 
 accounting_enabled = {_bool(spec.accounting)}
-slurm_rest_enabled = {_bool(spec.accounting)}
+slurm_rest_enabled = {_bool(rest_enabled)}
 
 backups_enabled           = "force_disable"
 backups_password          = "unused-backups-disabled"
@@ -248,14 +271,15 @@ backups_prune_schedule    = "@daily-random"
 backups_retention         = {{ keepDaily = 7 }}
 cleanup_bucket_on_destroy = false
 
-k8s_version        = "{spec.k8s_version}"
-node_group_version = "{spec.node_group_version}"
+k8s_version        = {_tfstr(spec.k8s_version)}
+node_group_version = {_tfstr(spec.node_group_version)}
 nvidia_config_lines = [
   "options nvidia NVreg_RestrictProfilingToAdminUsers=0",
   "options nvidia NVreg_EnableStreamMemOPs=1",
 ]
 
-# Custom localhost AppArmor profile is not loaded by SPO in 4.1.0-stable; use
-# unconfined so login/worker sshd start. Overridable via the spec.
+# With the verified chart contract, NPA configures the Ubuntu user-namespace
+# sysctls when this is false so Enroot/Pyxis can run unconfined. Overrides are
+# version-gated by spec validation.
 use_default_apparmor_profile = {_bool(spec.use_default_apparmor_profile)}
 """

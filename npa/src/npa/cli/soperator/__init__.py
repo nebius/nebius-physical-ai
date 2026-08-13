@@ -12,6 +12,8 @@ from pathlib import Path
 
 import typer
 
+from npa.soperator.spec import DEFAULT_SOLUTIONS_LIBRARY_REF
+
 app = typer.Typer(
     name="soperator",
     help="Deploy and manage Nebius soperator (Slurm-on-Kubernetes) clusters.",
@@ -36,18 +38,27 @@ def deploy_cmd(
         "If omitted, the library is cloned under ~/.npa/soperator.",
     ),
     solutions_library_ref: str = typer.Option(
-        "main", "--ref", help="Git ref of nebius-solutions-library to clone when needed."
+        DEFAULT_SOLUTIONS_LIBRARY_REF,
+        "--ref",
+        help="Immutable 40-character nebius-solutions-library commit SHA.",
+    ),
+    root_login_ssh_public_key_file: Path | None = typer.Option(
+        None,
+        "--root-login-ssh-public-key-file",
+        help="Public-key file granting root SSH access on the public login node; "
+        "overrides the spec, environment, and operator-home discovery.",
     ),
     timeout: int = typer.Option(90, "--timeout", help="Terraform apply timeout in minutes."),
     apply_fixes: bool = typer.Option(
         True,
         "--apply-fixes/--skip-fixes",
-        help="Apply the post-deploy fixes (monitoring CRDs, CRD patch, scripts configmap) "
-        "the 4.1.0-stable recipe needs to reach a working Slurm.",
+        help="Apply monitoring prerequisites/repair, CRD and scripts compatibility "
+        "fixes, Ubuntu userns setup, and best-effort worker recovery. Mandatory "
+        "direct CUDA creation checks for GPU pools run with either setting.",
     ),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
-    """Deploy a soperator cluster from a spec (multiple presets + optional docker cache)."""
+    """Deploy or reconcile a pinned-contract Soperator cluster spec."""
 
     from npa.soperator.lifecycle import deploy_cluster
     from npa.soperator.spec import SoperatorSpecError, load_spec
@@ -61,6 +72,7 @@ def deploy_cmd(
         spec,
         terraform_dir=terraform_dir,
         solutions_library_ref=solutions_library_ref,
+        root_login_ssh_public_key_file=root_login_ssh_public_key_file,
         project=project or None,
         timeout_minutes=timeout,
         apply_fixes=apply_fixes,
@@ -84,7 +96,11 @@ def destroy_cmd(
     terraform_dir: Path | None = typer.Option(
         None, "--terraform-dir", help="solutions-library 'soperator' recipe dir (if not the default)."
     ),
-    solutions_library_ref: str = typer.Option("main", "--ref"),
+    solutions_library_ref: str = typer.Option(
+        DEFAULT_SOLUTIONS_LIBRARY_REF,
+        "--ref",
+        help="Immutable 40-character nebius-solutions-library commit SHA.",
+    ),
     project: str = typer.Option(
         "",
         "--project",

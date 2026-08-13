@@ -1,22 +1,28 @@
-"""Deploy / destroy / status for npa-managed soperator clusters.
+"""Deploy, reconcile, destroy, and repair npa-managed Soperator clusters.
 
-Wraps the ``nebius/nebius-solutions-library`` soperator Terraform recipe and
-applies the post-deploy fixes required to make the 4.1.0 stable release usable
-(monitoring CRDs, the ``ncclInspectorPreConf`` CRD gap, the cluster-name-
-prefixed slurm-scripts configmap). Node registration helpers are best-effort.
+NPA wraps an immutable, runtime-asserted ``nebius-solutions-library`` Soperator
+Terraform contract. It applies the monitoring prerequisites, stalled-dashboard
+repair, ``ncclInspectorPreConf`` CRD compatibility patch, prefixed Slurm scripts
+configmap, Ubuntu user-namespace configuration, best-effort worker recovery,
+and direct creation-time CUDA checks needed by that contract. REST is explicit
+at the NPA surface, while runtime validation accounts for the pinned operator's
+remaining REST/accounting limitation.
 
 Reuses the terraform subprocess helpers from ``npa.cli.cluster.terraform_lifecycle``.
 """
 
 from __future__ import annotations
 
+import base64
+from dataclasses import dataclass, replace
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
 import time
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -27,10 +33,16 @@ from npa.cli.cluster.terraform_lifecycle import (
     _terraform_env,
 )
 from npa.clients.config import resolve_environment
-from npa.soperator.spec import SoperatorSpec
+from npa.soperator.spec import (
+    DEFAULT_SOLUTIONS_LIBRARY_REF,
+    DEFAULT_SLURM_OPERATOR_VERSION,
+    SoperatorSpec,
+    validate_ssh_public_key_record,
+)
 from npa.soperator.tfvars import render_tfvars
 
 _SOLUTIONS_LIBRARY_REPO = "https://github.com/nebius/nebius-solutions-library.git"
+_IMMUTABLE_GIT_REF_RE = re.compile(r"^[0-9a-f]{40}$")
 _PROMETHEUS_CRD_BASE = (
     "https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/"
     "v0.76.0/example/prometheus-operator-crd"
@@ -42,6 +54,7 @@ _PROMETHEUS_CRDS = (
 )
 _MONITORING_NAMESPACE = "monitoring-system"
 _MONITORING_RELEASE_SUFFIX = "-monitoring-dashboards"
+_ACTIVECHECKS_RELEASE_SUFFIX = "-soperator-activechecks"
 
 # Sidecar written next to the generated tfvars so ``destroy`` can rebuild the
 # same TF_VAR_* env the recipe requires. region/tenant/project/subnet/o11y are
@@ -49,6 +62,19 @@ _MONITORING_RELEASE_SUFFIX = "-monitoring-dashboards"
 # later ``terraform destroy`` would fail on "No value for required variable"
 # without these.
 _ENV_SIDECAR = ".npa-soperator-env.json"
+
+
+class UpstreamContractError(ValueError):
+    """Raised before provider mutation when the pinned recipe contract differs."""
+
+
+@dataclass(frozen=True)
+class ResolvedRootLoginSSHKey:
+    """One validated public key that explicitly grants login-node root access."""
+
+    value: str
+    source: str
+    fingerprint: str
 
 
 def _write_env_sidecar(
@@ -96,36 +122,121 @@ def _api_domain(region: str) -> str:
     return "api.eu.nebius.cloud:443" if region.startswith("eu") else "api.nebius.cloud:443"
 
 
-def _with_resolved_ssh_public_keys(
-    spec: SoperatorSpec, *, home: Path | None = None
-) -> SoperatorSpec:
-    """Return *spec* with a standard operator SSH public key when omitted.
+def _root_login_key_fingerprint(value: str) -> str:
+    blob = base64.b64decode(value.split(maxsplit=2)[1], validate=True)
+    digest = base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+    return f"SHA256:{digest}"
 
-    Current solutions-library installations require at least one login key.
-    Keep explicit spec values authoritative; otherwise mirror the repository's
-    other infrastructure lifecycles and use the first conventional local key.
-    The key is rendered only into the private installation, never logged.
-    """
 
-    if spec.ssh_public_keys:
-        return spec
-    ssh_dir = (home or Path.home()).expanduser() / ".ssh"
-    for name in ("id_ed25519.pub", "id_rsa.pub"):
-        candidate = ssh_dir / name
-        try:
-            value = candidate.read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        if value:
-            return replace(spec, ssh_public_keys=[value])
-    raise ValueError(
-        "soperator requires at least one login SSH public key: set "
-        "ssh_public_keys in the spec or create ~/.ssh/id_ed25519.pub"
+def _read_root_login_key_file(path: Path, *, source: str) -> ResolvedRootLoginSSHKey:
+    try:
+        value = path.expanduser().read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"could not read {source} root-login SSH public-key file") from exc
+    normalized = validate_ssh_public_key_record(value)
+    return ResolvedRootLoginSSHKey(
+        value=normalized,
+        source=source,
+        fingerprint=_root_login_key_fingerprint(normalized),
     )
 
 
+def _resolve_root_login_ssh_public_key(
+    spec: SoperatorSpec,
+    *,
+    explicit_file: Path | None = None,
+    environ: dict[str, str] | None = None,
+    home: Path | None = None,
+) -> ResolvedRootLoginSSHKey:
+    """Resolve the one key granting root access to the public login node.
+
+    Precedence is: explicit CLI/SDK file, canonical or legacy spec field,
+    Soperator-specific inline environment value, Soperator-specific environment
+    file, generic ``NPA_SSH_PUBLIC_KEY`` file, then conventional operator-home
+    key discovery. Only a single OpenSSH public-key record is accepted.
+    """
+
+    if explicit_file is not None:
+        return _read_root_login_key_file(explicit_file, source="explicit argument")
+
+    explicit = spec.explicit_root_login_ssh_public_key()
+    if explicit:
+        normalized = validate_ssh_public_key_record(explicit)
+        source = (
+            "spec root_login_ssh_public_key"
+            if spec.root_login_ssh_public_key
+            else "legacy spec ssh_public_keys"
+        )
+        return ResolvedRootLoginSSHKey(
+            value=normalized,
+            source=source,
+            fingerprint=_root_login_key_fingerprint(normalized),
+        )
+
+    env = os.environ if environ is None else environ
+    inline = env.get("NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY", "").strip()
+    if inline:
+        normalized = validate_ssh_public_key_record(inline)
+        return ResolvedRootLoginSSHKey(
+            value=normalized,
+            source="NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY",
+            fingerprint=_root_login_key_fingerprint(normalized),
+        )
+
+    for env_name in (
+        "NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY_FILE",
+        "NPA_SSH_PUBLIC_KEY",
+    ):
+        configured_path = env.get(env_name, "").strip()
+        if configured_path:
+            return _read_root_login_key_file(Path(configured_path), source=env_name)
+
+    ssh_dir = (home or Path.home()).expanduser() / ".ssh"
+    for name in ("id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"):
+        candidate = ssh_dir / name
+        if candidate.is_file():
+            return _read_root_login_key_file(candidate, source=f"operator default {name}")
+    raise ValueError(
+        "soperator login-node root access requires one SSH public key: set "
+        "root_login_ssh_public_key in the spec, pass "
+        "--root-login-ssh-public-key-file, set "
+        "NPA_SOPERATOR_ROOT_LOGIN_SSH_PUBLIC_KEY[_FILE], or create "
+        "~/.ssh/id_ed25519.pub"
+    )
+
+
+def _with_resolved_ssh_public_keys(
+    spec: SoperatorSpec, *, home: Path | None = None
+) -> SoperatorSpec:
+    """Compatibility wrapper returning *spec* with its canonical root-login key."""
+
+    resolved = _resolve_root_login_ssh_public_key(spec, home=home)
+    if (
+        spec.root_login_ssh_public_key == resolved.value
+        and not spec.ssh_public_keys
+    ):
+        return spec
+    return replace(
+        spec,
+        root_login_ssh_public_key=resolved.value,
+        ssh_public_keys=[],
+    )
+
+
+def _validate_immutable_solutions_library_ref(ref: str) -> str:
+    normalized = ref.strip().lower()
+    if not _IMMUTABLE_GIT_REF_RE.fullmatch(normalized):
+        raise ValueError(
+            "solutions_library_ref must be an immutable 40-character commit SHA; "
+            "branches and moving tags are not accepted"
+        )
+    return normalized
+
+
 def _resolve_solutions_library(terraform_dir: Path | None, work_root: Path, ref: str) -> Path:
-    """Return the soperator recipe dir, cloning the solutions-library if needed."""
+    """Resolve a checkout of one immutable solutions-library commit."""
+
+    ref = _validate_immutable_solutions_library_ref(ref)
 
     if terraform_dir is not None:
         path = terraform_dir.expanduser().resolve()
@@ -134,12 +245,24 @@ def _resolve_solutions_library(terraform_dir: Path | None, work_root: Path, ref:
                 f"{path} is not a soperator recipe dir (missing installations/example)"
             )
         return path
-    clone_dir = work_root / "nebius-solutions-library"
+    # Preserve the historical default location when it exists so an already
+    # deployed installation keeps using its Terraform state. The contract
+    # assertion immediately after resolution still requires its HEAD to equal
+    # the requested immutable commit and permits only NPA's two known patches.
+    legacy_clone = work_root / "nebius-solutions-library"
+    if (legacy_clone / "soperator" / "installations" / "example").exists():
+        return legacy_clone / "soperator"
+    clone_dir = work_root / f"nebius-solutions-library-{ref[:12]}"
     if not (clone_dir / "soperator" / "installations" / "example").exists():
         work_root.mkdir(parents=True, exist_ok=True)
         git = _require_bin("git")
         _run_stream(
-            [git, "clone", "--depth", "1", "--branch", ref, _SOLUTIONS_LIBRARY_REPO, str(clone_dir)],
+            [git, "clone", "--filter=blob:none", "--no-checkout", _SOLUTIONS_LIBRARY_REPO, str(clone_dir)],
+            timeout=600,
+        )
+        _run_stream(
+            [git, "checkout", "--detach", ref],
+            cwd=clone_dir,
             timeout=600,
         )
     return clone_dir / "soperator"
@@ -157,6 +280,10 @@ def _nebius_cli_env() -> dict[str, str]:
     """
 
     env = os.environ.copy()
+    if env.get("NPA_NEBIUS_PROFILE", "").strip() and not env.get(
+        "NEBIUS_PROFILE", ""
+    ).strip():
+        env["NEBIUS_PROFILE"] = env["NPA_NEBIUS_PROFILE"].strip()
     reuse = env.get("NPA_REUSE_IAM_TOKEN", "").strip().lower() in {
         "1",
         "true",
@@ -219,6 +346,22 @@ _NODECONFIGURATOR_USERNS_VALUES = (
 )
 
 
+def _patch_active_checks_text(text: str) -> tuple[str, bool]:
+    if _ESSENTIAL_HEALTHY_NODES_MARKER in text:
+        return text, False
+    marker = "    essential = {\n"
+    idx = text.find(marker)
+    if idx == -1:
+        raise UpstreamContractError(
+            "pinned active-checks contract lacks the essential scope"
+        )
+    insert_at = idx + len(marker)
+    return (
+        text[:insert_at] + _ESSENTIAL_HEALTHY_NODES_OVERRIDE + text[insert_at:],
+        True,
+    )
+
+
 def _patch_active_checks_locals(recipe_dir: Path) -> bool:
     """Ensure the ``essential`` active-checks scope skips ``ensure-healthy-nodes``.
 
@@ -238,22 +381,84 @@ def _patch_active_checks_locals(recipe_dir: Path) -> bool:
     if not locals_tf.exists():
         return False
     text = locals_tf.read_text()
-    if _ESSENTIAL_HEALTHY_NODES_MARKER in text:
-        return False
-    marker = "    essential = {\n"
-    idx = text.find(marker)
-    if idx == -1:
-        return False
-    insert_at = idx + len(marker)
-    patched = text[:insert_at] + _ESSENTIAL_HEALTHY_NODES_OVERRIDE + text[insert_at:]
-    locals_tf.write_text(patched)
-    return True
+    patched, changed = _patch_active_checks_text(text)
+    if changed:
+        locals_tf.write_text(patched)
+    return changed
+
+
+def _yaml_mapping_block_bounds(text: str, key: str) -> tuple[int, int, int]:
+    """Return byte bounds and indentation for one YAML mapping block.
+
+    The Terraform template is YAML with interpolation expressions; parsing it as
+    ordinary YAML is unreliable. Indentation is nevertheless structural, so a
+    bounded mapping walk prevents a missing child from matching a later chart.
+    """
+
+    lines = text.splitlines(keepends=True)
+    offsets: list[int] = []
+    offset = 0
+    matches: list[tuple[int, int]] = []
+    for index, line in enumerate(lines):
+        offsets.append(offset)
+        stripped = line.lstrip(" ")
+        indent = len(line) - len(stripped)
+        if stripped.rstrip("\r\n") == f"{key}:":
+            matches.append((index, indent))
+        offset += len(line)
+    if len(matches) != 1:
+        raise UpstreamContractError(
+            f"pinned Helm template must contain exactly one {key!r} mapping; "
+            f"found {len(matches)}"
+        )
+    start_index, indent = matches[0]
+    end_index = len(lines)
+    for index in range(start_index + 1, len(lines)):
+        stripped = lines[index].strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("%{"):
+            continue
+        candidate = lines[index].lstrip(" ")
+        candidate_indent = len(lines[index]) - len(candidate)
+        if candidate_indent <= indent:
+            end_index = index
+            break
+    start = offsets[start_index]
+    end = offsets[end_index] if end_index < len(offsets) else len(text)
+    return start, end, indent
+
+
+def _patch_nodeconfigurator_text(text: str) -> tuple[str, bool]:
+    section_start, section_end, section_indent = _yaml_mapping_block_bounds(
+        text, "nodeConfigurator"
+    )
+    section = text[section_start:section_end]
+    marker_inside = _NODECONFIGURATOR_USERNS_MARKER in section
+    marker_anywhere = _NODECONFIGURATOR_USERNS_MARKER in text
+    if marker_anywhere and not marker_inside:
+        raise UpstreamContractError(
+            "nodeConfigurator user-namespace marker exists outside its chart block"
+        )
+    if marker_inside:
+        return text, False
+
+    values_line = " " * (section_indent + 2) + "values:\n"
+    matches = [match.start() for match in re.finditer(re.escape(values_line), section)]
+    if len(matches) != 1:
+        raise UpstreamContractError(
+            "pinned nodeConfigurator block must contain its own values: mapping; "
+            "refusing to inject into a sibling chart"
+        )
+    insert_at = section_start + matches[0] + len(values_line)
+    return (
+        text[:insert_at] + _NODECONFIGURATOR_USERNS_VALUES + text[insert_at:],
+        True,
+    )
 
 
 def _patch_nodeconfigurator_userns(recipe_dir: Path) -> bool:
     """Teach the upstream node configurator about Ubuntu's AppArmor userns gate.
 
-    The 4.1.0 chart enables ``kernel.unprivileged_userns_clone`` but Ubuntu's
+    The verified chart enables ``kernel.unprivileged_userns_clone`` but Ubuntu's
     newer host images independently deny unprivileged user namespaces through
     ``kernel.apparmor_restrict_unprivileged_userns``. Enroot/Pyxis image startup
     then fails even though the worker container itself is AppArmor-unconfined.
@@ -272,25 +477,121 @@ def _patch_nodeconfigurator_userns(recipe_dir: Path) -> bool:
     if not template.exists():
         return False
     text = template.read_text()
-    if _NODECONFIGURATOR_USERNS_MARKER in text:
-        return False
-    section = text.find("          nodeConfigurator:\n")
-    if section == -1:
-        return False
-    marker = "            values:\n"
-    insert_at = text.find(marker, section)
-    if insert_at == -1:
-        return False
-    insert_at += len(marker)
-    template.write_text(text[:insert_at] + _NODECONFIGURATOR_USERNS_VALUES + text[insert_at:])
-    return True
+    patched, changed = _patch_nodeconfigurator_text(text)
+    if changed:
+        template.write_text(patched)
+    return changed
+
+
+def _git_checkout_text(repo_root: Path, ref: str, relative_path: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo_root), "show", f"{ref}:{relative_path}"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise UpstreamContractError(
+            f"could not read {relative_path} from solutions-library {ref[:12]}"
+        )
+    return proc.stdout
+
+
+def _assert_solutions_library_contract(
+    recipe_dir: Path,
+    *,
+    ref: str,
+) -> None:
+    """Assert the complete pinned source/mutation contract before cloud writes."""
+
+    ref = _validate_immutable_solutions_library_ref(ref)
+    repo_root = recipe_dir.parent
+    head = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if head.returncode != 0 or head.stdout.strip().lower() != ref:
+        actual = head.stdout.strip()[:12] if head.returncode == 0 else "not-a-git-checkout"
+        raise UpstreamContractError(
+            f"solutions-library checkout mismatch: expected {ref[:12]}, got {actual}"
+        )
+
+    critical_fragments = {
+        "soperator/installations/example/terraform.tfvars": (
+            f'slurm_operator_version = "{DEFAULT_SLURM_OPERATOR_VERSION}"',
+            "k8s_version = 1.34",
+            "node_group_version = 72",
+        ),
+        "soperator/installations/example/main.tf": (
+            "rest_enabled                    = var.slurm_rest_enabled",
+            "accounting_enabled              = var.accounting_enabled",
+            "sizing_tier_override = module.sizing.sizing_tier",
+        ),
+        "soperator/installations/example/variables.tf": (
+            'variable "slurm_rest_enabled"',
+            'variable "accounting_enabled"',
+            'variable "sizing_tier_override"',
+        ),
+        "soperator/modules/sizing_tier/main.tf": (
+            'var.worker_count < 10 ? "XS"',
+            'var.worker_count < 100 ? "S"',
+            'var.worker_count < 500 ? "M"',
+            'var.worker_count < 2000 ? "L" : "XL"',
+            'L  = "32vcpu-128gb"',
+            'XL = "64vcpu-256gb"',
+        ),
+    }
+    for relative, fragments in critical_fragments.items():
+        pristine = _git_checkout_text(repo_root, ref, relative)
+        current_path = repo_root / relative
+        try:
+            current = current_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise UpstreamContractError(f"missing pinned contract file {relative}") from exc
+        if current != pristine:
+            raise UpstreamContractError(
+                f"unexpected local mutation in pinned contract file {relative}"
+            )
+        missing = [fragment for fragment in fragments if fragment not in current]
+        if missing:
+            raise UpstreamContractError(
+                f"pinned runtime contract is incompatible in {relative}: "
+                f"missing {missing[0]!r}"
+            )
+
+    patch_contracts = (
+        (
+            "soperator/modules/slurm/locals_active_checks.tf",
+            _patch_active_checks_text,
+        ),
+        (
+            "soperator/modules/slurm/templates/helm_values/"
+            "terraform_fluxcd_values.yaml.tftpl",
+            _patch_nodeconfigurator_text,
+        ),
+    )
+    for relative, transform in patch_contracts:
+        pristine = _git_checkout_text(repo_root, ref, relative)
+        expected_patched, _ = transform(pristine)
+        current_path = repo_root / relative
+        try:
+            current = current_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise UpstreamContractError(f"missing pinned patch target {relative}") from exc
+        if current not in (pristine, expected_patched):
+            raise UpstreamContractError(
+                f"unexpected local mutation in pinned patch target {relative}"
+            )
 
 
 def _prepare_installation(recipe_dir: Path, spec: SoperatorSpec, region: str) -> Path:
     """Create installations/<name> with the recipe files + generated tfvars."""
 
     _patch_active_checks_locals(recipe_dir)
-    _patch_nodeconfigurator_userns(recipe_dir)
+    if not spec.use_default_apparmor_profile:
+        _patch_nodeconfigurator_userns(recipe_dir)
     example = recipe_dir / "installations" / "example"
     install_dir = recipe_dir / "installations" / spec.name
     install_dir.mkdir(parents=True, exist_ok=True)
@@ -321,13 +622,21 @@ def _soperator_tf_env(
     project_id: str,
     subnet_id: str,
 ) -> dict[str, str]:
-    env = _terraform_env(nebius_bin)
+    profile = (
+        os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
+        or os.environ.get("NEBIUS_PROFILE", "").strip()
+    )
+    env = _terraform_env(nebius_bin, profile=profile)
+    if profile:
+        # Terraform local-exec and kubeconfig generation invoke the bare CLI;
+        # keep them on the same explicitly selected cross-tenant principal.
+        env["NEBIUS_PROFILE"] = profile
     env["TF_VAR_region"] = region
     env["TF_VAR_iam_tenant_id"] = tenant_id
     env["TF_VAR_iam_project_id"] = project_id
     # o11y is disabled in tfvars, but the variables are required to parse.
     env["TF_VAR_o11y_iam_tenant_id"] = tenant_id
-    env["TF_VAR_o11y_profile"] = os.environ.get("NPA_NEBIUS_PROFILE", "") or "default"
+    env["TF_VAR_o11y_profile"] = profile or "default"
     env["TF_VAR_vpc_subnet_id"] = subnet_id
     return env
 
@@ -382,9 +691,16 @@ def _refresh_kube_credentials(
 ) -> None:
     """Write an admin kubeconfig context for the cluster (recipe writes a limited SA)."""
 
+    argv = [nebius_bin]
+    profile = (
+        env.get("NPA_NEBIUS_PROFILE", "").strip()
+        or env.get("NEBIUS_PROFILE", "").strip()
+    )
+    if profile:
+        argv.extend(["--profile", profile])
     _run_capture(
         [
-            nebius_bin, "mk8s", "cluster", "get-credentials",
+            *argv, "mk8s", "cluster", "get-credentials",
             "--id", cluster_id, "--external", "--force", "--context-name", context,
         ],
         env=env,
@@ -455,7 +771,7 @@ def _ensure_monitoring_namespace(
 ) -> None:
     """Ensure the namespace required by the unconditional dashboards chart.
 
-    Soperator 4.1.0 still reconciles monitoring dashboards when observability is
+    The pinned Soperator contract still reconciles monitoring dashboards when observability is
     disabled, but that mode does not create ``monitoring-system``.  Creating the
     namespace is idempotent and lets Flux install the chart instead of leaving a
     permanently failed HelmRelease in an otherwise healthy cluster.
@@ -615,6 +931,107 @@ def _reset_stalled_monitoring_releases(
     return reset
 
 
+def _abort_superseded_activechecks_upgrade(
+    kubectl_bin: str,
+    context: str,
+    *,
+    namespace: str = "soperator",
+    env: dict[str, str] | None = None,
+) -> list[str]:
+    """Unblock a newer ActiveChecks generation from an older Helm action.
+
+    An upgrade can remain in its generated ``wait-for-active-checks`` hook when
+    an old REST-backed generation cannot observe Slurm job status. Flux cannot
+    start an already-rendered newer generation until that action exits. Only
+    when ``lastAttemptedGeneration`` is older than metadata.generation and the
+    release is actively Progressing, delete the Helm-owned hook Job and request
+    a reset/reconcile. Current-generation installs are never interrupted.
+    """
+
+    kube_env = env or _nebius_cli_env()
+    listed = _run_capture(
+        [
+            kubectl_bin,
+            "--context",
+            context,
+            "-n",
+            "flux-system",
+            "get",
+            "helmreleases",
+            "-o",
+            "json",
+        ],
+        env=kube_env,
+        check=False,
+    )
+    if listed.returncode != 0:
+        return []
+    try:
+        items = json.loads(listed.stdout or "{}").get("items", [])
+    except (AttributeError, json.JSONDecodeError):
+        return []
+
+    reset: list[str] = []
+    for item in items:
+        metadata = item.get("metadata") or {}
+        status = item.get("status") or {}
+        name = str(metadata.get("name") or "")
+        generation = int(metadata.get("generation") or 0)
+        attempted = int(status.get("lastAttemptedGeneration") or 0)
+        progressing = any(
+            condition.get("type") == "Reconciling"
+            and condition.get("status") == "True"
+            and condition.get("reason") == "Progressing"
+            for condition in (status.get("conditions") or [])
+        )
+        if (
+            not name.endswith(_ACTIVECHECKS_RELEASE_SUFFIX)
+            or not progressing
+            or attempted <= 0
+            or attempted >= generation
+        ):
+            continue
+        deleted = _run_capture(
+            [
+                kubectl_bin,
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "delete",
+                "job",
+                "wait-for-active-checks",
+                "--ignore-not-found=true",
+                "--wait=false",
+            ],
+            env=kube_env,
+            check=False,
+        )
+        if deleted.returncode != 0:
+            continue
+        token = str(time.time_ns())
+        annotated = _run_capture(
+            [
+                kubectl_bin,
+                "--context",
+                context,
+                "-n",
+                "flux-system",
+                "annotate",
+                "helmrelease",
+                name,
+                f"reconcile.fluxcd.io/requestedAt={token}",
+                f"reconcile.fluxcd.io/resetAt={token}",
+                "--overwrite",
+            ],
+            env=kube_env,
+            check=False,
+        )
+        if annotated.returncode == 0:
+            reset.append(name)
+    return reset
+
+
 def _patch_slurmcluster_crd(kubectl_bin: str, context: str) -> bool:
     """Patch the SlurmCluster CRD to accept plugStackConfig.ncclInspectorPreConf.
 
@@ -729,16 +1146,30 @@ def deploy_cluster(
     *,
     terraform_dir: Path | None = None,
     work_root: Path | None = None,
-    solutions_library_ref: str = "main",
+    solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF,
+    root_login_ssh_public_key_file: Path | None = None,
     project: str | None = None,
     timeout_minutes: int = 90,
     apply_fixes: bool = True,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Deploy a soperator cluster described by *spec*. Returns cluster metadata."""
+    """Deploy or reconcile *spec* after pinned-contract and key preflight."""
 
-    spec = _with_resolved_ssh_public_keys(spec)
     spec.validate()
+    root_login_key = _resolve_root_login_ssh_public_key(
+        spec, explicit_file=root_login_ssh_public_key_file
+    )
+    spec = replace(
+        spec,
+        root_login_ssh_public_key=root_login_key.value,
+        ssh_public_keys=[],
+    )
+    spec.validate()
+    _log(
+        on_status,
+        "login-node root SSH access enabled: "
+        f"source={root_login_key.source}; fingerprint={root_login_key.fingerprint}",
+    )
     envcfg = resolve_environment(
         project=project,
         project_id=spec.project_id or None,
@@ -758,6 +1189,8 @@ def deploy_cluster(
 
     work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
     recipe_dir = _resolve_solutions_library(terraform_dir, work_root, solutions_library_ref)
+    _assert_solutions_library_contract(recipe_dir, ref=solutions_library_ref)
+    _log(on_status, f"verified solutions-library contract {solutions_library_ref[:12]}")
     install_dir = _prepare_installation(recipe_dir, spec, region)
     _log(on_status, f"Installation dir: {install_dir}")
 
@@ -851,8 +1284,19 @@ def deploy_cluster(
 
     if apply_fixes:
         kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
-        apply_post_deploy_fixes(context, kubectl_bin, on_status=on_status)
+        warnings = apply_post_deploy_fixes(context, kubectl_bin, on_status=on_status)
         result["post_deploy_fixes"] = "applied"
+        result["post_deploy_fix_warnings"] = warnings
+
+    # GPU validation is a deploy contract, not an optional repair. Keep it
+    # active even when an operator deliberately selects --skip-fixes.
+    kubectl_bin = _require_bin(os.environ.get("NPA_KUBECTL_BIN") or "kubectl")
+    result["gpu_creation_checks"] = _run_gpu_creation_checks(
+        spec,
+        context,
+        kubectl_bin,
+        on_status=on_status,
+    )
 
     return result
 
@@ -862,7 +1306,7 @@ def destroy_cluster(
     *,
     terraform_dir: Path | None = None,
     work_root: Path | None = None,
-    solutions_library_ref: str = "main",
+    solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF,
     project: str | None = None,
     timeout_minutes: int = 90,
     on_status: Callable[[str], None] | None = None,
@@ -873,6 +1317,7 @@ def destroy_cluster(
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
     work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
     recipe_dir = _resolve_solutions_library(terraform_dir, work_root, solutions_library_ref)
+    _assert_solutions_library_contract(recipe_dir, ref=solutions_library_ref)
     install_dir = recipe_dir / "installations" / name
     if not install_dir.exists():
         raise ValueError(f"no installation found for cluster {name!r} at {install_dir}")
@@ -1069,17 +1514,37 @@ def apply_post_deploy_fixes(
     namespace: str = "soperator",
     on_status: Callable[[str], None] | None = None,
     timeout_minutes: int = 20,
-) -> None:
-    """Apply the fixes the 4.1.0-stable recipe needs to reach a working Slurm.
+) -> list[str]:
+    """Apply idempotent repairs after a successful Terraform reconciliation.
 
-    1. Install prometheus-operator CRDs (operator chart needs ServiceMonitor even
-       when telemetry is off).
-    2. Patch the SlurmCluster CRD to accept ``plugStackConfig.ncclInspectorPreConf``.
-    3. Create the cluster-name-prefixed ``<ns>-slurm-scripts`` configmap the
-       nodesets chart mounts (chart naming skew).
+    Monitoring namespace/CRD/dashboard repair is best-effort here: RBAC or a
+    transient Flux error is retained in the returned diagnostics but cannot turn
+    an already healthy Terraform apply into a reported deploy failure. A
+    superseded ActiveChecks wait hook is reset only when its attempted generation
+    is older than the desired generation. The CRD and scripts compatibility
+    fixes remain polled/best-effort, followed by worker address/RESUME recovery.
+    Returns non-secret warning strings.
     """
 
-    _install_monitoring_crds(kubectl_bin, context, on_status=on_status)
+    warnings: list[str] = []
+    try:
+        _install_monitoring_crds(kubectl_bin, context, on_status=on_status)
+    except RuntimeError as exc:
+        warning = f"monitoring repair skipped after successful apply: {exc}"
+        warnings.append(warning)
+        _log(on_status, f"post-deploy warning: {warning}")
+
+    reset_activechecks = _abort_superseded_activechecks_upgrade(
+        kubectl_bin,
+        context,
+        namespace=namespace,
+    )
+    if reset_activechecks:
+        _log(
+            on_status,
+            "post-deploy: aborted a superseded ActiveChecks Helm action so "
+            "the newer generation can reconcile",
+        )
 
     _log(on_status, "post-deploy: patching SlurmCluster CRD + ensuring scripts configmap")
     deadline = time.monotonic() + timeout_minutes * 60
@@ -1097,7 +1562,8 @@ def apply_post_deploy_fixes(
         _log(on_status, "post-deploy: slurm-scripts configmap not present yet; skipped")
 
     _register_slurm_workers(kubectl_bin, context, namespace, on_status=on_status)
-    _log(on_status, "post-deploy: fixes applied")
+    _log(on_status, "post-deploy: fixes applied" + (" with warnings" if warnings else ""))
+    return warnings
 
 
 def _register_slurm_workers(
@@ -1108,12 +1574,11 @@ def _register_slurm_workers(
     on_status: Callable[[str], None] | None = None,
     wait_minutes: int = 10,
 ) -> None:
-    """Best-effort: bring DOWN worker nodes to IDLE (soperator 4.1.0 slurmrestd gap).
+    """Best-effort: bring DOWN worker nodes to IDLE after registration races.
 
-    In 4.1.0-stable the operator doesn't deploy slurmrestd, so soperator's
-    dynamic-node registration can leave workers DOWN/not-responding with slurmctld
-    resolving the bare short name. Set the FQDN NodeAddr and RESUME any node that
-    isn't idle. Idempotent and non-fatal.
+    Dynamic-node registration can race worker readiness and leave slurmctld
+    resolving a bare short name. Set
+    the FQDN NodeAddr and RESUME any node that is down. Idempotent and non-fatal.
     """
 
     kube_env = _nebius_cli_env()
@@ -1144,3 +1609,130 @@ def _register_slurm_workers(
             slurmctl(["scontrol", "update", f"NodeName={node}", "State=RESUME"])
         _log(on_status, f"post-deploy: registered worker node(s): {', '.join(sorted(set(down)))}")
         time.sleep(15)
+
+
+def _gpu_count_from_preset(preset: str) -> int:
+    """Return the leading GPU count from an upstream GPU preset name."""
+
+    match = re.match(r"^([1-9][0-9]*)gpu-", preset)
+    if match is None:
+        raise RuntimeError(
+            f"GPU creation check cannot derive a GPU count from preset {preset!r}"
+        )
+    return int(match.group(1))
+
+
+def _run_gpu_creation_checks(
+    spec: SoperatorSpec,
+    context: str,
+    kubectl_bin: str,
+    *,
+    namespace: str = "soperator",
+    on_status: Callable[[str], None] | None = None,
+) -> list[dict[str, Any]]:
+    """Run real CUDA samples on every GPU worker through the login jail.
+
+    The pinned 4.1.6 Terraform surface exposes REST separately from accounting,
+    but the exact operator implementation skips REST reconciliation when
+    accounting is disabled. Its REST-backed ActiveCheck controller therefore
+    cannot provide creation-time GPU validation for that combination. This
+    direct Slurm check is the safe runtime contract: one exclusive task per
+    worker receives every GPU on that worker and requires deviceQuery,
+    vectorAdd, simpleMultiGPU, and p2pBandwidthLatencyTest to all report PASS.
+    Any failed/missing node or CUDA result fails the deploy.
+    """
+
+    checks: list[dict[str, Any]] = []
+    kube_env = _nebius_cli_env()
+    for pool in (worker for worker in spec.workers if worker.is_gpu()):
+        gpu_count = _gpu_count_from_preset(pool.preset)
+        nodes = [f"{pool.name}-{index}" for index in range(pool.size)]
+        node_list = ",".join(nodes)
+        task_script = f"""
+set -uo pipefail
+gpu_count=$(nvidia-smi -L | wc -l)
+if [ "$gpu_count" -ne {gpu_count} ]; then
+  echo "NPA_GPU_CREATION_CHECK_RESULT host=$(hostname) status=FAIL expected_gpus={gpu_count} actual_gpus=$gpu_count"
+  exit 1
+fi
+gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader | sort -u)
+case "$gpu_name" in
+  "NVIDIA H100") platform=8xH100 ;;
+  "NVIDIA H200") platform=8xH200 ;;
+  "NVIDIA B200") platform=8xB200 ;;
+  "NVIDIA B300") platform=8xB300 ;;
+  "NVIDIA GB300") platform=4xGB300 ;;
+  *) echo "NPA_GPU_CREATION_CHECK_RESULT host=$(hostname) status=FAIL unsupported_gpu=$gpu_name"; exit 1 ;;
+esac
+echo "NPA_GPU_CREATION_CHECK_START host=$(hostname) gpu_count=$gpu_count platform=$platform"
+out=$(health-checker run -e soperator -p "$platform" \
+  -n deviceQuery,vectorAdd,simpleMultiGPU,p2pBandwidthLatencyTest \
+  -f json-partial \
+  --tests-stdout-path /opt/soperator-outputs/health_checker_cmd_stdout)
+command_rc=$?
+status=$(printf '%s\n' "$out" | awk '/^[[:space:]]*{{/,/^[[:space:]]*}}/' | jq -r '.status // empty')
+echo "NPA_GPU_CREATION_CHECK_RESULT host=$(hostname) status=$status command_rc=$command_rc"
+test "$command_rc" -eq 0
+test "$status" = PASS
+""".strip()
+        command = [
+            kubectl_bin,
+            "--context",
+            context,
+            "exec",
+            "-n",
+            namespace,
+            "login-0",
+            "--",
+            "chroot",
+            "/mnt/jail",
+            "srun",
+            "--label",
+            f"--nodes={pool.size}",
+            f"--ntasks={pool.size}",
+            "--ntasks-per-node=1",
+            f"--gpus-per-node={gpu_count}",
+            "--exclusive",
+            f"--nodelist={node_list}",
+            "bash",
+            "-lc",
+            task_script,
+        ]
+        _log(
+            on_status,
+            "GPU creation check: "
+            f"pool={pool.name}; nodes={pool.size}; GPUs/node={gpu_count}; "
+            "tests=deviceQuery,vectorAdd,simpleMultiGPU,p2pBandwidthLatencyTest",
+        )
+        completed = _run_capture(command, env=kube_env, check=False)
+        passes = completed.stdout.count("NPA_GPU_CREATION_CHECK_RESULT")
+        passes_with_status = completed.stdout.count("status=PASS")
+        if (
+            completed.returncode != 0
+            or passes != pool.size
+            or passes_with_status != pool.size
+        ):
+            diagnostic = "\n".join(
+                (completed.stderr or completed.stdout).strip().splitlines()[-20:]
+            )
+            raise RuntimeError(
+                f"GPU creation check failed for pool {pool.name!r} "
+                f"({passes_with_status}/{pool.size} workers reported PASS)"
+                + (f":\n{diagnostic}" if diagnostic else "")
+            )
+        checks.append(
+            {
+                "pool": pool.name,
+                "nodes": pool.size,
+                "gpus_per_node": gpu_count,
+                "tests": [
+                    "deviceQuery",
+                    "vectorAdd",
+                    "simpleMultiGPU",
+                    "p2pBandwidthLatencyTest",
+                ],
+                "status": "PASS",
+            }
+        )
+        _log(on_status, f"GPU creation check passed: pool={pool.name}; workers={pool.size}")
+    return checks
