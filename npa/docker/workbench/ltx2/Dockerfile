@@ -107,9 +107,17 @@ RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
          -pix_fmt yuv420p /tmp/npa-ltx-moving.mp4 \
     && ffmpeg -v error -f lavfi -i color=c=black:size=64x64:rate=24:duration=2 \
          -pix_fmt yuv420p /tmp/npa-ltx-flat.mp4 \
+    # The third case: textured but frozen. The validator advertises rejecting a
+    # still repeated, and only the flat and moving cases were ever proved here.
+    && ffmpeg -v error -f lavfi -i testsrc=size=64x64:rate=24:duration=1 \
+         -frames:v 1 -pix_fmt yuv420p /tmp/npa-ltx-one.png \
+    && ffmpeg -v error -loop 1 -i /tmp/npa-ltx-one.png -t 3 -r 24 \
+         -pix_fmt yuv420p /tmp/npa-ltx-still.mp4 \
     && /opt/npa/ltx2/validate_video.py --video /tmp/npa-ltx-moving.mp4 >/dev/null \
     && ! /opt/npa/ltx2/validate_video.py --video /tmp/npa-ltx-flat.mp4 >/dev/null 2>&1 \
+    && ! /opt/npa/ltx2/validate_video.py --video /tmp/npa-ltx-still.mp4 >/dev/null 2>&1 \
     && rm -f /tmp/npa-ltx-moving.mp4 /tmp/npa-ltx-flat.mp4 \
+         /tmp/npa-ltx-still.mp4 /tmp/npa-ltx-one.png \
     # No LTX payload, no weights, no CUDA wheels may exist in any layer.
     && test -z "$(find / -xdev \( -name 'ltx_core' -o -name 'ltx_pipelines' \) -print -quit)" \
     && test -z "$(find / -xdev \( -name '*.safetensors' -o -name '*.ckpt' \) -print -quit)" \

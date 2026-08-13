@@ -19,6 +19,10 @@ from urllib.parse import urlparse
 
 MANIFEST_FILENAME = "ltx2_provenance.json"
 GATE_REPORT_FILENAME = "ltx2_gate.json"
+#: What the GPU container itself wrote, via `ltx-runtime provenance`. This is the
+#: declaration the generation actually ran under, as opposed to whatever a later
+#: CPU state happens to have in its own environment.
+DECLARATION_FILENAME = "ltx2_5_declaration.json"
 
 
 def _storage() -> Any:
@@ -51,15 +55,20 @@ def resolve_uri(uri: str, *, filename: str) -> str:
     return uri.rstrip("/") + "/" + filename
 
 
-def load_manifest(uri: str, *, storage: Any | None = None) -> Any | None:
+def load_manifest(
+    uri: str, *, storage: Any | None = None, filename: str = MANIFEST_FILENAME
+) -> Any | None:
     """Return the JSON document at *uri*, or ``None`` if it cannot be read.
 
     Every failure — absent object, unreadable object, malformed JSON — collapses
     to ``None`` on purpose. The gate treats ``None`` as a refusal, so the caller
     never has to decide which read errors are safe to ignore.
+
+    *filename* is what a prefix resolves to; the run's own declaration is written
+    under a different name than the manifest the gate later reads.
     """
 
-    resolved = resolve_uri(uri, filename=MANIFEST_FILENAME)
+    resolved = resolve_uri(uri, filename=filename)
     if not is_remote(resolved):
         path = Path(local_path(resolved))
         try:
@@ -76,7 +85,9 @@ def load_manifest(uri: str, *, storage: Any | None = None) -> Any | None:
         return None
 
 
-def write_json(payload: dict[str, Any], uri: str, *, filename: str, storage: Any | None = None) -> str:
+def write_json(
+    payload: dict[str, Any], uri: str, *, filename: str, storage: Any | None = None
+) -> str:
     """Write *payload* to *uri* (S3 or local) and return the destination URI."""
 
     resolved = resolve_uri(uri, filename=filename)
@@ -94,6 +105,7 @@ def write_json(payload: dict[str, Any], uri: str, *, filename: str, storage: Any
 
 
 __all__ = [
+    "DECLARATION_FILENAME",
     "GATE_REPORT_FILENAME",
     "MANIFEST_FILENAME",
     "is_remote",

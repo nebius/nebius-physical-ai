@@ -51,16 +51,15 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #:                         cosmos3-generate SkyPilot template, and the
 #:                         cosmos3-generate npa.workflow spec); what is missing
 #:                         is a >= 4-step pipeline that consumes its output.
-#:   genesis             : component/tool image with no workflow toolRef step
-#:                         yet (covered by its own tool + serverless E2Es and by
-#:                         the daily registry-reachability check, not by a
+#:   lerobot / genesis   : component/tool images with no workflow toolRef step
+#:                         yet (covered by their own tool + serverless E2Es and
+#:                         by the daily registry-reachability check, not by a
 #:                         multi-step workflow).
 #:
-#: ``groot`` left this set with the GR00T 1.7 multi-GPU training workflow, and
-#: ``lerobot`` left it when byof-ltx2.yaml added a policy-training state behind
-#: the LTX licence gate. That second spec is plan-only until npa-ltx2 is built,
-#: so the coverage it provides is structural for now; the lerobot image's own
-#: tool and serverless E2Es remain the live evidence.
+#: ``groot`` left this set with the GR00T 1.7 multi-GPU training workflow.
+#: ``lerobot`` briefly left it too, when byof-ltx2.yaml ended in a policy-training
+#: state — but that state trained on a hub dataset and consumed no LTX output, so
+#: it was removed rather than left standing as coverage it did not provide.
 EXEMPT_IMAGE_TOOLS: frozenset[str] = frozenset(
     {
         "sonic",
@@ -68,6 +67,7 @@ EXEMPT_IMAGE_TOOLS: frozenset[str] = frozenset(
         "cosmos3",
         "cosmos3-reason",
         "genesis",
+        "lerobot",
     }
 )
 

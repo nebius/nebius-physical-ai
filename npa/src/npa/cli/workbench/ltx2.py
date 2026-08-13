@@ -124,7 +124,9 @@ def declare_cmd(
 
 @app.command("stamp")
 def stamp_cmd(
-    run_id: str = typer.Option(..., "--run-id", help="Run id recorded in the manifest."),
+    run_id: str = typer.Option(
+        ..., "--run-id", help="Run id recorded in the manifest."
+    ),
     manifest_uri: str = typer.Option(
         ...,
         "--manifest-uri",
@@ -137,6 +139,14 @@ def stamp_cmd(
     ),
     model_file: list[str] = typer.Option(
         [], "--model-file", help="Weights file the run fetched; repeatable."
+    ),
+    declaration_uri: str = typer.Option(
+        "",
+        "--declaration-uri",
+        help=(
+            "The generation's own declaration (`ltx-runtime provenance`). When "
+            "given, this state's declaration must match it or the stamp refuses."
+        ),
     ),
     output: OutputFormat = typer.Option(
         OutputFormat.json, "--output", help="Output format."
@@ -154,6 +164,7 @@ def stamp_cmd(
             model_files=list(model_file),
             manifest_uri=manifest_uri,
             env=os.environ,
+            declaration_uri=declaration_uri,
         )
     except LtxLicenseError as exc:
         typer.echo(str(exc), err=True)
@@ -164,10 +175,7 @@ def stamp_cmd(
     _emit(
         payload,
         output=output,
-        text=(
-            f"stamped {result.manifest_uri} "
-            f"derived_model_training={disposition}"
-        ),
+        text=(f"stamped {result.manifest_uri} derived_model_training={disposition}"),
     )
 
 
@@ -180,6 +188,14 @@ def gate_cmd(
         ...,
         "--consumer",
         help="What wants the artifacts, e.g. 'lerobot policy training'.",
+    ),
+    artifact_uri: list[str] = typer.Option(
+        [],
+        "--artifact-uri",
+        help=(
+            "An artifact the consumer intends to use; repeatable. The manifest "
+            "must claim it, so another run's manifest cannot clear these bytes."
+        ),
     ),
     report_uri: str = typer.Option(
         "", "--report-uri", help="Optional S3 prefix or path for the gate report."
@@ -197,7 +213,10 @@ def gate_cmd(
     from npa.workbench.ltx2.gate import gate_run
 
     result = gate_run(
-        manifest_uri=manifest_uri, consumer=consumer, report_uri=report_uri
+        manifest_uri=manifest_uri,
+        consumer=consumer,
+        report_uri=report_uri,
+        artifacts=list(artifact_uri),
     )
     payload = result.as_dict()
     text = f"allowed={result.decision.allowed} {result.decision.reason}"

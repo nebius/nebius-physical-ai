@@ -36,6 +36,18 @@ FLAT_FRAME_TOLERANCE = 1.0
 #: above this.
 STATIC_PAIR_TOLERANCE = 0.5
 
+#: Fraction of consecutive frame pairs that must actually move, and fraction of
+#: frames that must carry texture.
+#:
+#: The whole-clip checks above use `max`, so they only ever asserted "at least
+#: one frame is not flat" and "at least one pair differs". One real frame
+#: followed by 120 frozen ones passes that — and a two-stage video model
+#: producing exactly that is a common, plausible-looking failure, which is the
+#: kind this validator exists to catch. Half is deliberately lenient: a real
+#: clip sits near 1.0, and a genuinely static shot is not what LTX generates.
+MIN_MOVING_PAIR_FRACTION = 0.5
+MIN_TEXTURED_FRAME_FRACTION = 0.5
+
 
 class VideoCheckError(RuntimeError):
     """Raised when a generated clip is missing, unreadable, or degenerate."""
@@ -55,6 +67,8 @@ class VideoCheck:
     duration_seconds: float
     max_frame_deviation: float
     max_frame_delta: float
+    moving_pair_fraction: float = 1.0
+    textured_frame_fraction: float = 1.0
     capability: str = ""
     checks: list[str] = field(default_factory=list)
 
@@ -112,7 +126,9 @@ def probe_stream(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(proc.stdout.decode("utf-8", "replace"))
     except json.JSONDecodeError as exc:
-        raise VideoCheckError(f"ffprobe returned unparseable output for {path}") from exc
+        raise VideoCheckError(
+            f"ffprobe returned unparseable output for {path}"
+        ) from exc
     streams = payload.get("streams") or []
     if not streams:
         raise VideoCheckError(f"{path} contains no video stream")
@@ -153,7 +169,9 @@ def decode_frames(path: Path, *, limit: int = 0) -> list[bytes]:
     raw = proc.stdout
     if len(raw) < stride:
         raise VideoCheckError(f"{path} decoded to no complete frame")
-    return [raw[start : start + stride] for start in range(0, len(raw) - stride + 1, stride)]
+    return [
+        raw[start : start + stride] for start in range(0, len(raw) - stride + 1, stride)
+    ]
 
 
 def _mean(values: Sequence[int]) -> float:
@@ -178,6 +196,19 @@ def validate_video(
 ) -> VideoCheck:
     """Validate a generated clip, or raise :class:`VideoCheckError`."""
 
+    if min_frames < 2:
+        # The motion check needs a pair. Accepting 1 previously reached
+        # `max(())` and raised ValueError from inside the validator, which a
+        # caller catching VideoCheckError would not have seen as a failure.
+        raise VideoCheckError(
+            f"min_frames must be at least 2 to check for motion (got {min_frames})"
+        )
+    if max_probe_frames and max_probe_frames < min_frames:
+        raise VideoCheckError(
+            f"max_probe_frames={max_probe_frames} is below min_frames={min_frames}, "
+            "so the check could never pass"
+        )
+
     target = Path(path)
     if not target.is_file():
         raise VideoCheckError(f"no video at {target}")
@@ -197,20 +228,40 @@ def validate_video(
             f"{target} decoded {len(frames)} frames, below the required {min_frames}"
         )
 
-    max_deviation = max(_deviation(frame) for frame in frames)
+    deviations = [_deviation(frame) for frame in frames]
+    max_deviation = max(deviations)
     if max_deviation < FLAT_FRAME_TOLERANCE:
         raise VideoCheckError(
             f"{target} decoded to flat frames (max deviation {max_deviation:.3f} "
             f"< {FLAT_FRAME_TOLERANCE}); a single-colour render is not a generation"
         )
+    textured_fraction = sum(
+        1 for value in deviations if value >= FLAT_FRAME_TOLERANCE
+    ) / len(deviations)
+    if textured_fraction < MIN_TEXTURED_FRAME_FRACTION:
+        raise VideoCheckError(
+            f"{target} is mostly flat: only {textured_fraction:.1%} of frames carry "
+            f"texture (need {MIN_TEXTURED_FRAME_FRACTION:.0%}). A clip that is blank "
+            "apart from a few frames is not a generation"
+        )
 
-    max_delta = max(
+    deltas = [
         _delta(frames[index], frames[index + 1]) for index in range(len(frames) - 1)
-    )
+    ]
+    max_delta = max(deltas)
     if max_delta < STATIC_PAIR_TOLERANCE:
         raise VideoCheckError(
             f"{target} shows no motion (max frame delta {max_delta:.3f} "
             f"< {STATIC_PAIR_TOLERANCE}); one still repeated is not a video"
+        )
+    moving_fraction = sum(
+        1 for value in deltas if value >= STATIC_PAIR_TOLERANCE
+    ) / len(deltas)
+    if moving_fraction < MIN_MOVING_PAIR_FRACTION:
+        raise VideoCheckError(
+            f"{target} is mostly frozen: only {moving_fraction:.1%} of consecutive "
+            f"frame pairs move (need {MIN_MOVING_PAIR_FRACTION:.0%}). A clip that "
+            "moves once and then holds a still is not a video"
         )
 
     duration = 0.0

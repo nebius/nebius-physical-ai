@@ -195,7 +195,14 @@ config:
   video_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_5_text_to_video.mp4"
 
   ltx2_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_provenance.json"
+  # Written by the GPU container itself (`ltx-runtime provenance`). `stamp` reads
+  # it back and refuses if its own environment disagrees, so the licence record
+  # cannot change identity on the hop between containers.
+  ltx2_declaration_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_5_declaration.json"
   ltx2_gate_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_gate.json"
+  # Named for the record the gate writes. Nothing in this spec trains: this is
+  # the consumer the operator intends to hand the cleared artifacts to, and the
+  # decision is recorded against that name.
   ltx2_consumer: "LeRobot policy training"
 
   # FiftyOne curation over the generated set. No Cosmos Curator ran here, so the
@@ -206,13 +213,6 @@ config:
   curator_report_uri: ""
   fiftyone_dedup_threshold: "0.10"
 
-  lerobot_dataset: "lerobot/pusht"
-  lerobot_output_dir: "/workspace/ltx2-policy"
-  policy_type: "act"
-  policy_device: "cuda"
-  train_steps: "200"
-  train_batch_size: "8"
-  artifacts_uri: "s3://{{config.bucket}}/{{config.prefix}}/policy/"
 
 resources:
   gpu:
@@ -245,6 +245,12 @@ states:
         schema: npa.workbench.byof.ltx2_5_text_to_video.v1
       - uri: "{{config.video_uri}}"
         schema: video/mp4
+      # What the GPU container itself declared, written by `ltx-runtime
+      # provenance`. `stamp` reconciles against this rather than trusting its
+      # own environment, so the licence record cannot change identity on the
+      # hop between containers.
+      - uri: "{{config.ltx2_declaration_uri}}"
+        schema: npa.ltx2.provenance.v1
     next: stamp
 
   stamp:
@@ -256,6 +262,8 @@ states:
     toolRef: workbench.ltx2.stamp
     resources: cpu
     inputs:
+      - uri: "{{config.ltx2_declaration_uri}}"
+        schema: npa.ltx2.provenance.v1
       - uri: "{{config.video_uri}}"
         schema: video/mp4
     outputs:
@@ -272,8 +280,11 @@ states:
     toolRef: workbench.fiftyone.curate_augmented
     resources: cpu
     inputs:
+      # The prefix `generate` uploaded into, and the schema it actually emits.
+      # This declared `npa.sim2real.augmented_frames.v1` until a graph lint
+      # noticed no upstream state produces that schema.
       - uri: "{{config.augment_uri}}"
-        schema: npa.sim2real.augmented_frames.v1
+        schema: video/mp4
     outputs:
       - uri: "{{config.curation_report_uri}}"
         schema: npa.fiftyone.curation.v1
@@ -281,34 +292,29 @@ states:
 
   gate:
     description: >
-      Fail-closed Attachment A(18) check before the trainer. Denies on a
-      commercial declaration, on a missing manifest, and on a manifest whose
-      terms it does not recognise; only an explicit non-commercial declaration
-      lets the run continue.
+      Fail-closed Attachment A(18) check, and the terminal state. Denies on a
+      commercial declaration, on a missing manifest, on a manifest whose terms
+      it does not recognise, and on a manifest that does not cover the artifact
+      the consumer named; only an explicit non-commercial declaration over
+      matching artifacts clears them.
+
+      This is where the shipped pipeline stops, deliberately. An earlier draft
+      ended in a LeRobot training state, but that state trained on the
+      `lerobot/pusht` hub dataset: no LTX Output ever reached it, so the gate in
+      front of it was decorative in the one place meant to demonstrate that it
+      is not. LTX-2.5 text-to-video output is not a LeRobot dataset — it has no
+      actions and no meta/info.json — and no honest conversion exists here, so
+      the trainer is the operator's own next step. What this spec owes them is
+      the decision, and a machine-readable record of it.
     needs: [curate]
     toolRef: workbench.ltx2.gate
     resources: cpu
     inputs:
       - uri: "{{config.ltx2_manifest_uri}}"
         schema: npa.ltx2.provenance.v1
+      - uri: "{{config.video_uri}}"
+        schema: video/mp4
     outputs:
       - uri: "{{config.ltx2_gate_uri}}"
         schema: npa.ltx2.gate.v1
-    next: train
-
-  train:
-    description: >
-      Train a LeRobot policy on the curated set. Reachable only through the
-      gate, so any checkpoint produced here carries a recorded, non-commercial
-      licence basis — and is itself a Derivative of LTX-2.x under Section 1.5,
-      still bound by the Agreement.
-    needs: [gate]
-    toolRef: workbench.lerobot.policy_train
-    resources: gpu
-    inputs:
-      - uri: "{{config.curation_report_uri}}"
-        schema: npa.fiftyone.curation.v1
-    outputs:
-      - uri: "{{config.artifacts_uri}}"
-        schema: npa.lerobot.checkpoint.v1
     terminal: true

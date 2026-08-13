@@ -567,6 +567,9 @@ class TestModesThatNeverNeedADeclaration:
             "source": "absent",
             "source_ref": SOURCE_REF,
             "weights": "absent",
+            # "unknown" rather than a repo default: nothing has been fetched, so
+            # naming a revision here would claim bytes the image does not have.
+            "weights_revision": "unknown",
             "cache": str(image.parent / "cache"),
             "model_cache": str(image.parent / "model-cache"),
         }

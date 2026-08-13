@@ -122,7 +122,9 @@ class LicenseDeclaration:
     def requires_paid_license(self) -> bool:
         """Whether Section 2.1 requires a Commercial Use Agreement for this run."""
 
-        return self.entity_class == ENTITY_COMMERCIAL and self.use_class == USE_COMMERCIAL
+        return (
+            self.entity_class == ENTITY_COMMERCIAL and self.use_class == USE_COMMERCIAL
+        )
 
     @property
     def relies_on_non_commercial_carve_out(self) -> bool:
@@ -210,9 +212,7 @@ def declaration_from_env(env: Mapping[str, str]) -> LicenseDeclaration:
     """
 
     if not _accepted(env.get(ACCEPT_ENV)):
-        raise LtxLicenseError(
-            refusal_text(f"{ACCEPT_ENV} is not set to YES.")
-        )
+        raise LtxLicenseError(refusal_text(f"{ACCEPT_ENV} is not set to YES."))
 
     entity_class = _normalize(env.get(ENTITY_CLASS_ENV))
     if entity_class not in ENTITY_CLASSES:
@@ -259,6 +259,10 @@ class ProvenanceRecord:
     model_files: tuple[str, ...] = ()
     source_ref: str = SOURCE_REF
     weights_repo: str = WEIGHTS_REPO
+    #: The commit the weights were actually fetched at. Empty means the run did
+    #: not record one, and the manifest says so rather than implying the
+    #: repository's current head — which is a different set of bytes tomorrow.
+    weights_revision: str = ""
     generated_at: str = field(default_factory=lambda: _utc_now())
 
     def as_dict(self) -> dict[str, Any]:
@@ -269,6 +273,7 @@ class ProvenanceRecord:
             "source": {"repo": SOURCE_REPO, "ref": self.source_ref},
             "weights": {
                 "repo": self.weights_repo,
+                "revision": self.weights_revision or "unrecorded",
                 "url": f"https://huggingface.co/{self.weights_repo}",
                 "files": list(self.model_files),
                 "delivery": "runtime-fetch-under-operator-hf-token",
@@ -312,7 +317,21 @@ class GateDecision:
         }
 
 
-def check_training_consumer(manifest: Any, *, consumer: str) -> GateDecision:
+def _covers(manifest: Mapping[str, Any], artifacts: tuple[str, ...]) -> list[str]:
+    """Return the artifacts *manifest* does not claim to describe."""
+
+    listed = manifest.get("outputs")
+    covered = {
+        str(item.get("uri"))
+        for item in (listed if isinstance(listed, list) else [])
+        if isinstance(item, Mapping) and item.get("uri")
+    }
+    return [artifact for artifact in artifacts if artifact not in covered]
+
+
+def check_training_consumer(
+    manifest: Any, *, consumer: str, artifacts: tuple[str, ...] = ()
+) -> GateDecision:
     """Decide whether *consumer* may train on artifacts described by *manifest*.
 
     Fail-closed in every direction that is not an explicit permission: a missing
@@ -320,6 +339,11 @@ def check_training_consumer(manifest: Any, *, consumer: str) -> GateDecision:
     all deny. The permissive branch is the narrow one, which is the right way
     round for a restriction whose breach is a licence termination event
     (Section 13).
+
+    When the caller names *artifacts*, the manifest must actually claim them.
+    Without that check a permissive manifest from a non-commercial run would
+    clear a *different* run's video — the decision would be about a document
+    rather than about the bytes anyone is going to train on.
     """
 
     if not isinstance(manifest, Mapping):
@@ -346,6 +370,19 @@ def check_training_consumer(manifest: Any, *, consumer: str) -> GateDecision:
     disposition = ""
     if isinstance(restrictions, Mapping):
         disposition = str(restrictions.get("derived_model_training") or "")
+
+    uncovered = _covers(manifest, artifacts)
+    if uncovered:
+        return GateDecision(
+            allowed=False,
+            reason=(
+                "This manifest does not describe "
+                f"{', '.join(uncovered)}. A licence decision travels with the "
+                "artifacts it was made about, so a manifest from another run "
+                "cannot clear these. Stamp the artifacts you intend to use."
+            ),
+            disposition=disposition,
+        )
 
     if disposition == TRAINING_NON_COMMERCIAL_ONLY:
         return GateDecision(

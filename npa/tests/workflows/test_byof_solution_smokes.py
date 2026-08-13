@@ -250,11 +250,19 @@ def test_ltx2_spec_fetches_nothing_before_the_operator_has_declared() -> None:
     assert "video_check.validate_video(" in smoke
 
 
-def test_ltx2_gate_state_stands_between_generation_and_training() -> None:
+def test_ltx2_gate_is_terminal_and_no_state_trains_without_consuming_ltx() -> None:
     """Attachment A(18) is enforced by graph order, so the order is a test.
 
-    A gate that a workflow can route around is decoration. `train` must be
-    reachable only through `gate`, and `gate` must read what `stamp` wrote.
+    An earlier version of this spec ended in a LeRobot training state, and this
+    test asserted the gate sat in front of it. It did — but that trainer read the
+    `lerobot/pusht` hub dataset and no LTX Output ever reached it, so the gate was
+    decorative in the one place meant to prove it is not. Asserting *position*
+    was the weakness: what matters is that nothing downstream of generation
+    trains on artifacts it never receives.
+
+    LTX-2.5 text-to-video output is not a LeRobot dataset — no actions, no
+    meta/info.json — so the honest shape is for the gate to be terminal and the
+    trainer to be the operator's own next step, taken only after calling it.
     """
 
     from npa.orchestration.npa_workflow import load_spec
@@ -265,22 +273,33 @@ def test_ltx2_gate_state_stands_between_generation_and_training() -> None:
     assert states["generate"].next == "stamp"
     assert states["stamp"].tool_ref == "workbench.ltx2.stamp"
     assert states["gate"].tool_ref == "workbench.ltx2.gate"
-    assert states["gate"].next == "train"
-    assert states["train"].tool_ref == "workbench.lerobot.policy_train"
-    assert states["train"].terminal
+    assert states["gate"].terminal, "the licence decision is where this spec stops"
 
-    predecessors = {
-        name for name, state in states.items() if state.next == "train"
+    training_tools = {"workbench.lerobot.policy_train", "workbench.groot.finetune"}
+    trainers = {
+        name for name, state in states.items() if state.tool_ref in training_tools
     }
-    assert predecessors == {"gate"}, (
-        f"training must be reachable only through the licence gate, not {predecessors}"
+    assert trainers == set(), (
+        f"{sorted(trainers)} would train inside this spec. Either wire it to consume "
+        "the generated artifacts, or leave training to the operator behind the gate — "
+        "a trainer fed from elsewhere makes the gate in front of it decorative."
     )
 
-    # Both sides must name the same config key, not two URIs that happen to
-    # look alike today.
-    token = "{{config.ltx2_manifest_uri}}"
-    assert [output.uri for output in states["stamp"].outputs] == [token]
-    assert [item.uri for item in states["gate"].inputs] == [token]
+    # Both sides must name the same config key, not two URIs that happen to look
+    # alike today.
+    manifest = "{{config.ltx2_manifest_uri}}"
+    assert [output.uri for output in states["stamp"].outputs] == [manifest]
+    assert manifest in [item.uri for item in states["gate"].inputs]
+
+    # The gate must be told which artifacts it is clearing, not just which
+    # document to read, or one run's manifest would clear another run's video.
+    assert "{{config.video_uri}}" in [item.uri for item in states["gate"].inputs]
+
+    # And `stamp` must read the declaration the GPU run itself wrote, rather than
+    # re-deriving one from its own container's environment.
+    declaration = "{{config.ltx2_declaration_uri}}"
+    assert declaration in [item.uri for item in states["generate"].outputs]
+    assert declaration in [item.uri for item in states["stamp"].inputs]
 
 
 def test_wan22_package_keeps_weights_runtime_only_and_claims_t2v_only() -> None:

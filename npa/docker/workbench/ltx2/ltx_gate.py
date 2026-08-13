@@ -63,11 +63,24 @@ def main(argv: list[str]) -> int:
             for item in os.environ.get("NPA_LTX_MODEL_FILES", "").split(",")
             if item
         )
+        # Read from the file the weight fetch wrote, not from an environment
+        # variable a later caller could set to anything: the point is to record
+        # what was delivered.
+        revision_file = os.path.join(
+            os.environ.get("NPA_LTX_MODEL_CACHE", "/workspace/model-cache/ltx-2.5"),
+            ".npa_weights_revision",
+        )
+        try:
+            with open(revision_file, encoding="utf-8") as handle:
+                weights_revision = handle.read().strip()
+        except OSError:
+            weights_revision = ""
         record = licensing.ProvenanceRecord(
             declaration=declaration,
             run_id=run_id,
             outputs=outputs,
             model_files=model_files,
+            weights_revision=weights_revision,
         )
         print(json.dumps(record.as_dict(), indent=2, sort_keys=True))
         return 0

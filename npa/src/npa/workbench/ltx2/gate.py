@@ -25,8 +25,10 @@ from npa.workbench.ltx2.artifacts import (
     write_json,
 )
 from npa.workbench.ltx2.licensing import (
+    PROVENANCE_SCHEMA,
     GateDecision,
     LicenseDeclaration,
+    LtxLicenseError,
     ProvenanceRecord,
     check_training_consumer,
     declaration_from_env,
@@ -53,6 +55,7 @@ class GateResult:
     decision: GateDecision
     consumer: str
     manifest_uri: str
+    artifacts: tuple[str, ...] = ()
     report_uri: str = ""
 
     def as_dict(self) -> dict[str, Any]:
@@ -60,11 +63,74 @@ class GateResult:
             "schema": GATE_SCHEMA,
             "consumer": self.consumer,
             "manifest_uri": self.manifest_uri,
+            "artifacts": list(self.artifacts),
         }
         payload.update(self.decision.as_dict())
         if self.report_uri:
             payload["report_uri"] = self.report_uri
         return payload
+
+
+def _reconcile_with_the_run(
+    declaration: LicenseDeclaration,
+    *,
+    declaration_uri: str,
+    storage: Any | None,
+) -> None:
+    """Require this state's declaration to match the one the generation ran under.
+
+    ``stamp`` executes in a different container, on a different node, with its own
+    environment — so deriving the declaration from ``os.environ`` alone leaves a
+    seam exactly where the licence chain of custody must not have one. If the
+    operator's environment drifted between states, or secret forwarding differs,
+    the manifest the gate later trusts would record this state's opinion rather
+    than the run's.
+
+    The GPU container wrote what it actually ran under. Any disagreement, and any
+    inability to read or recognise that record, refuses.
+    """
+
+    from npa.workbench.ltx2.artifacts import DECLARATION_FILENAME, load_manifest
+
+    recorded = load_manifest(
+        declaration_uri, storage=storage, filename=DECLARATION_FILENAME
+    )
+    if not isinstance(recorded, Mapping):
+        raise LtxLicenseError(
+            f"Cannot read the generation's own declaration at {declaration_uri}. "
+            "Refusing to stamp a manifest from this state's environment alone: "
+            "that would record what we believe now, not what the run did."
+        )
+    if recorded.get("schema") != PROVENANCE_SCHEMA:
+        raise LtxLicenseError(
+            f"The generation's declaration has schema {recorded.get('schema')!r}, "
+            f"expected {PROVENANCE_SCHEMA}. Refusing rather than guessing."
+        )
+
+    stated = recorded.get("operator_declaration")
+    stated = stated if isinstance(stated, Mapping) else {}
+    restrictions = recorded.get("restrictions")
+    restrictions = restrictions if isinstance(restrictions, Mapping) else {}
+    mismatches = [
+        f"{field}: the run declared {theirs!r}, this state has {ours!r}"
+        for field, theirs, ours in (
+            ("entity_class", stated.get("entity_class"), declaration.entity_class),
+            ("use_class", stated.get("use_class"), declaration.use_class),
+            (
+                "derived_model_training",
+                restrictions.get("derived_model_training"),
+                declaration.derived_model_training,
+            ),
+        )
+        if theirs != ours
+    ]
+    if mismatches:
+        raise LtxLicenseError(
+            "The declaration this state would stamp disagrees with the one the "
+            "generation ran under:\n  " + "\n  ".join(mismatches) + "\n"
+            "Refusing to overwrite the run's own record. Re-run generation under "
+            "the declaration you mean, or fix this state's environment."
+        )
 
 
 def stamp_run(
@@ -75,15 +141,21 @@ def stamp_run(
     env: Mapping[str, str],
     model_files: list[str] | None = None,
     storage: Any | None = None,
+    declaration_uri: str = "",
 ) -> StampResult:
     """Validate the operator declaration and stamp it onto a run's outputs.
 
     Raises :class:`~npa.workbench.ltx2.licensing.LtxLicenseError` when the
     declaration is absent or invalid, so an unlicensed run cannot produce a
-    manifest that would later read as permission.
+    manifest that would later read as permission — and, when *declaration_uri* is
+    given, when it disagrees with what the generation actually ran under.
     """
 
     declaration: LicenseDeclaration = declaration_from_env(env)
+    if declaration_uri:
+        _reconcile_with_the_run(
+            declaration, declaration_uri=declaration_uri, storage=storage
+        )
     record = ProvenanceRecord(
         declaration=declaration,
         run_id=run_id,
@@ -103,16 +175,24 @@ def gate_run(
     consumer: str,
     report_uri: str = "",
     storage: Any | None = None,
+    artifacts: list[str] | None = None,
 ) -> GateResult:
-    """Decide whether *consumer* may train on the artifacts *manifest_uri* covers."""
+    """Decide whether *consumer* may train on the artifacts *manifest_uri* covers.
+
+    Naming *artifacts* binds the decision to specific bytes: the manifest has to
+    claim them, so one run's permissive manifest cannot clear another run's video.
+    """
 
     manifest = load_manifest(manifest_uri, storage=storage)
-    decision = check_training_consumer(manifest, consumer=consumer)
+    decision = check_training_consumer(
+        manifest, consumer=consumer, artifacts=tuple(artifacts or ())
+    )
     resolved_manifest_uri = resolve_uri(manifest_uri, filename=MANIFEST_FILENAME)
     result = GateResult(
         decision=decision,
         consumer=consumer,
         manifest_uri=resolved_manifest_uri,
+        artifacts=tuple(artifacts or ()),
     )
     if not report_uri:
         return result
@@ -124,6 +204,7 @@ def gate_run(
         decision=decision,
         consumer=consumer,
         manifest_uri=resolved_manifest_uri,
+        artifacts=tuple(artifacts or ()),
         report_uri=written,
     )
 

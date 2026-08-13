@@ -2076,6 +2076,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
             "--manifest-uri",
             "{{config.ltx2_manifest_uri}}",
+            # The generation's own declaration, so the stamp cannot record this
+            # CPU state's environment instead of what the GPU run did.
+            "--declaration-uri",
+            "{{config.ltx2_declaration_uri}}",
             "--output-uri",
             "{{config.video_uri}}",
         ],
@@ -2097,6 +2101,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.ltx2_manifest_uri}}",
             "--consumer",
             "{{config.ltx2_consumer}}",
+            # Binds the decision to specific bytes, not just to a document.
+            "--artifact-uri",
+            "{{config.video_uri}}",
             "--report-uri",
             "{{config.ltx2_gate_uri}}",
         ],

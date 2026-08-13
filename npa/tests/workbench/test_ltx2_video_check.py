@@ -8,6 +8,7 @@ module is that a file can exist, probe cleanly, and still be worthless output.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,9 +21,20 @@ from npa.workbench.ltx2.video_check import (
     validate_video,
 )
 
+_FFMPEG_MISSING = shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None
+
+if _FFMPEG_MISSING and os.environ.get("NPA_REQUIRE_FFMPEG") == "1":
+    # This module decides whether a GPU run produced anything worth keeping. A
+    # silent skip on a runner without ffmpeg means that decision goes untested
+    # while the suite still reports green, so CI sets NPA_REQUIRE_FFMPEG=1 and
+    # gets a hard failure instead of a quiet hole.
+    raise RuntimeError(
+        "NPA_REQUIRE_FFMPEG=1 but ffmpeg/ffprobe are absent: the LTX-2.5 output "
+        "validator cannot be exercised, and skipping it would hide that."
+    )
+
 pytestmark = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
-    reason="ffmpeg/ffprobe are required to decode the fixtures",
+    _FFMPEG_MISSING, reason="ffmpeg/ffprobe are required to decode the fixtures"
 )
 
 
@@ -70,7 +82,9 @@ class TestAcceptsRealVideo:
     def test_the_artifact_is_json_serialisable_and_schema_tagged(
         self, moving_clip: Path
     ) -> None:
-        payload = validate_video(moving_clip, capability="ltx2_5_text_to_video").as_dict()
+        payload = validate_video(
+            moving_clip, capability="ltx2_5_text_to_video"
+        ).as_dict()
 
         assert payload["schema"] == ARTIFACT_SCHEMA
         assert payload["capability"] == "ltx2_5_text_to_video"
@@ -159,7 +173,10 @@ class TestInImageEntryPointStaysInSync:
             "/opt/npa/ltx2/video_check.py" in dockerfile
         )
         assert "validate_video.py --video /tmp/npa-ltx-moving.mp4" in dockerfile
-        assert "! /opt/npa/ltx2/validate_video.py --video /tmp/npa-ltx-flat.mp4" in dockerfile
+        assert (
+            "! /opt/npa/ltx2/validate_video.py --video /tmp/npa-ltx-flat.mp4"
+            in dockerfile
+        )
 
     def test_the_wrapper_imports_the_copied_module_not_the_package(self) -> None:
         wrapper = (
@@ -174,3 +191,113 @@ class TestInImageEntryPointStaysInSync:
         assert "npa.workbench" not in wrapper, (
             "the image has no npa package installed; the wrapper must import the copy"
         )
+
+
+class TestPartialDegeneration:
+    """A clip that starts real and then freezes is the failure worth catching.
+
+    The whole-clip checks use `max`, so before the fraction criteria they only
+    asserted "at least one frame is not flat" and "at least one pair differs".
+    One real frame followed by a hundred frozen ones satisfied both, and a
+    two-stage video model producing exactly that is a plausible, plausible-looking
+    failure — the kind a human skimming an MP4 thumbnail would not notice.
+    """
+
+    def _concat(self, path: Path, parts: list[Path]) -> Path:
+        listing = path.parent / "concat.txt"
+        listing.write_text(
+            "".join(f"file '{part}'\n" for part in parts), encoding="utf-8"
+        )
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(listing),
+                "-pix_fmt",
+                "yuv420p",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return path
+
+    def test_a_clip_that_moves_briefly_then_freezes_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        moving = _synthesize(
+            tmp_path / "moving.mp4", "life=size=64x64:rate=24", seconds="0.5"
+        )
+        frozen = _synthesize(
+            tmp_path / "frozen.mp4", "testsrc=size=64x64:rate=24", seconds="4"
+        )
+        # Freeze the test pattern by taking one frame and holding it.
+        held = tmp_path / "held.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(frozen),
+                "-vf",
+                "select=eq(n\\,0),loop=loop=95:size=1:start=0",
+                "-r",
+                "24",
+                "-pix_fmt",
+                "yuv420p",
+                str(held),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        clip = self._concat(tmp_path / "partial.mp4", [moving, held])
+
+        with pytest.raises(VideoCheckError) as excinfo:
+            validate_video(clip, min_frames=24)
+
+        assert "mostly frozen" in str(excinfo.value)
+
+    def test_a_genuinely_moving_clip_still_passes(self, tmp_path: Path) -> None:
+        """The control: the stricter criterion must not reject real output."""
+
+        clip = _synthesize(
+            tmp_path / "real.mp4", "life=size=64x64:rate=24", seconds="3"
+        )
+
+        result = validate_video(clip, min_frames=24)
+
+        assert result.moving_pair_fraction >= 0.5
+        assert result.textured_frame_fraction >= 0.5
+
+
+class TestBoundaries:
+    def test_min_frames_below_two_is_a_video_check_error(self, tmp_path: Path) -> None:
+        """It raised ValueError from `max(())` before, which callers do not catch."""
+
+        clip = _synthesize(tmp_path / "clip.mp4", "life=size=64x64:rate=24")
+
+        with pytest.raises(VideoCheckError) as excinfo:
+            validate_video(clip, min_frames=1)
+
+        assert "at least 2" in str(excinfo.value)
+
+    def test_probing_fewer_frames_than_required_is_refused_up_front(
+        self, tmp_path: Path
+    ) -> None:
+        """That combination can never pass, so say so instead of decoding first."""
+
+        clip = _synthesize(tmp_path / "clip.mp4", "life=size=64x64:rate=24")
+
+        with pytest.raises(VideoCheckError) as excinfo:
+            validate_video(clip, min_frames=24, max_probe_frames=8)
+
+        assert "could never pass" in str(excinfo.value)

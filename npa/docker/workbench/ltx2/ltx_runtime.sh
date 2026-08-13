@@ -36,6 +36,14 @@ GATE="${NPA_LTX_GATE:-/opt/npa/ltx2/ltx_gate.py}"
 SOURCE_REPO="${NPA_LTX_SOURCE_REPO:-https://github.com/Lightricks/LTX-2.git}"
 SOURCE_REF="${NPA_LTX_SOURCE_REF:-fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca}"
 WEIGHTS_REPO="${NPA_LTX_WEIGHTS_REPO:-Lightricks/LTX-2.5}"
+# The source ref is pinned and verified against the fetched HEAD; the weights had
+# neither, so a manifest could name the repository but not the bytes. We cannot
+# hardcode a commit here — the repo is gated, so its revisions are only visible
+# under the operator's own token — and inventing a plausible-looking sha would be
+# worse than none. Instead the mutable ref is resolved to an immutable commit
+# BEFORE the download, and that commit is what gets fetched and recorded.
+WEIGHTS_REF="${NPA_LTX_WEIGHTS_REF:-main}"
+readonly WEIGHTS_REVISION_FILE=.npa_weights_revision
 UV_EXTRA="${NPA_LTX_UV_EXTRA:-natten}"
 
 log() { printf 'ltx-runtime: %s\n' "$*" >&2; }
@@ -141,6 +149,16 @@ EOF
   exit "$EX_CONFIG"
 }
 
+resolve_weights_revision() {
+  # Resolve the ref to the commit it points at right now, under the operator's
+  # own token. Downloading a branch name and then recording the branch name
+  # would mean the manifest identifies something that changes underneath it.
+  python3 -c 'import sys
+from huggingface_hub import HfApi
+print(HfApi().repo_info(sys.argv[1], revision=sys.argv[2]).sha)' \
+    "$WEIGHTS_REPO" "$WEIGHTS_REF"
+}
+
 fetch_weights() {
   require_ltx_acceptance
   require_hf_token
@@ -156,8 +174,18 @@ fetch_weights() {
   if [[ -n "${NPA_LTX_WEIGHT_FILES:-}" ]]; then
     IFS=',' read -r -a files <<< "$NPA_LTX_WEIGHT_FILES"
   fi
-  log "fetching ${#files[@]} weight files from ${WEIGHTS_REPO} into ${MODEL_CACHE}"
-  hf download "$WEIGHTS_REPO" "${files[@]}" --local-dir "$MODEL_CACHE"
+  local revision
+  revision="$(resolve_weights_revision)"
+  [[ "$revision" =~ ^[0-9a-f]{40}$ ]] \
+    || die "$EX_UNAVAILABLE" \
+      "could not resolve ${WEIGHTS_REPO}@${WEIGHTS_REF} to a commit"
+
+  log "fetching ${#files[@]} weight files from ${WEIGHTS_REPO}@${revision}"
+  hf download "$WEIGHTS_REPO" "${files[@]}" \
+    --revision "$revision" --local-dir "$MODEL_CACHE"
+  # Record what was actually delivered, next to the bytes, so the provenance
+  # manifest names the weights rather than just the repository.
+  printf '%s\n' "$revision" > "$MODEL_CACHE/$WEIGHTS_REVISION_FILE"
 }
 
 undeclared() {
@@ -220,8 +248,11 @@ status() {
   ready_source && ready="ready"
   [[ -n "$(find "$MODEL_CACHE" -name '*.safetensors' -print -quit 2>/dev/null)" ]] \
     && weights="present"
-  printf '{"source":"%s","source_ref":"%s","weights":"%s","cache":"%s","model_cache":"%s"}\n' \
-    "$ready" "$SOURCE_REF" "$weights" "$CACHE_ROOT" "$MODEL_CACHE"
+  local revision="unknown"
+  [[ -s "$MODEL_CACHE/$WEIGHTS_REVISION_FILE" ]] \
+    && revision="$(<"$MODEL_CACHE/$WEIGHTS_REVISION_FILE")"
+  printf '{"source":"%s","source_ref":"%s","weights":"%s","weights_revision":"%s","cache":"%s","model_cache":"%s"}\n' \
+    "$ready" "$SOURCE_REF" "$weights" "$revision" "$CACHE_ROOT" "$MODEL_CACHE"
 }
 
 ensure_ssh_host_keys() {
