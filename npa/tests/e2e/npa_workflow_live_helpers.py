@@ -415,6 +415,12 @@ def seed_live_workflow_inputs(
         _seed_motion_clips(client, bucket=bucket, prefix=f"{marker}/source/")
         return
 
+    if spec_name == "groot-1-7-finetune.yaml":
+        # The closed-loop reference deliberately consumes immutable shared
+        # canonical data and checkpoint refs.  Synthetic smoke seeding would
+        # invalidate the task-contract and checkpoint-identity gates.
+        return
+
     # VLM-eval GPU twins score a rollout: seed a short RGB frame sequence under
     # the rollouts prefix so the self-hosted VLM has real frames to evaluate.
     if spec_name == "tokenfactory-scene-to-rollout-judge.yaml":
@@ -692,12 +698,12 @@ def _seed_prefix_from_source(source: str, bucket: str, dest_prefix: str, client)
                 )
                 copied += 1
         if copied == 0:
-            pytest.fail(f"NPA_E2E_SONIC_MOTION_SRC {source!r} had no objects to seed")
+            pytest.fail(f"live fixture source {source!r} had no objects to seed")
         return
 
     local_root = Path(source.replace("file://", ""))
     if not local_root.is_dir():
-        pytest.fail(f"NPA_E2E_SONIC_MOTION_SRC {source!r} is not an s3:// URI or a directory")
+        pytest.fail(f"live fixture source {source!r} is not an s3:// URI or a directory")
     uploaded = 0
     for item in sorted(local_root.rglob("*")):
         if item.is_file():
@@ -705,7 +711,7 @@ def _seed_prefix_from_source(source: str, bucket: str, dest_prefix: str, client)
             client.upload_file(str(item), bucket, f"{dest_prefix}{rel}")
             uploaded += 1
     if uploaded == 0:
-        pytest.fail(f"NPA_E2E_SONIC_MOTION_SRC {source!r} contained no files to seed")
+        pytest.fail(f"live fixture source {source!r} contained no files to seed")
 
 
 def _seed_scene_frame(client, *, bucket: str, marker: str) -> None:

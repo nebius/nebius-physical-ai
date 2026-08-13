@@ -212,7 +212,12 @@ def test_ui_frontend_fixes() -> None:
     ui = UI_HTML.read_text(encoding="utf-8")
     assert 'classList.toggle("mobile-agent", detectMobileLayout())' in ui
     assert "activeMainTab === \"rerun\"" in ui.split("function startPeriodicRefresh")[1].split("function startApp")[0]
-    assert "selectedRunIdFromUi()" in ui.split("async function loadRunData")[1].split("async function selectCamera")[0]
+    assert (
+        "selectedRunIdFromUi()"
+        in ui.split("async function loadRunData")[1].split(
+            "async function selectCamera"
+        )[0]
+    )
     assert "MAX_CLIENT_CHAT_TURNS" in ui
     assert "chatHistory.slice(-MAX_CLIENT_CHAT_TURNS)" in ui
     assert "Warning: Rerun recording/iframe did not reach SUCCESS" in ui

@@ -1,0 +1,37 @@
+# Kubernetes-schedulability prerequisites for an ALREADY BUILT npa-groot image.
+#
+# This is the small derived-build form of the prerequisite layer enabled in the
+# canonical Dockerfile. It lets an operator repair an existing, multi-GB GR00T
+# image without rebuilding the unchanged CUDA, PyTorch, and GR00T layers:
+#
+#   scripts/build-workbench-image-in-cluster.sh \
+#     --base <registry>/npa-groot:0.1.0 \
+#     --tag <registry>/npa-groot:0.1.0-sky1 \
+#     --dockerfile npa/docker/workbench/groot/Dockerfile.k8s-prereqs
+#
+# SkyPilot's Kubernetes bootstrap needs a system Python, rsync, an SSH client,
+# and netcat.  The GR00T workflow's pod template explicitly runs the bootstrap
+# as uid 0, so this derived image must not grant the final runtime user an
+# unrestricted passwordless privilege-escalation path.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+USER root
+
+# The historical 0.1.0 image force-purged linux-libc-dev while retaining
+# libc6-dev. That intentionally minimized the runtime surface but left dpkg with
+# an unsatisfied dependency, so every later apt install fails. A derived repair
+# must restore package consistency before it can install the SkyPilot tools.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --fix-broken
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         python3 python3-venv python3-pip rsync curl openssh-client netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
+    && python3 --version
+
+USER ubuntu
+WORKDIR /opt/groot
+ENTRYPOINT ["/bin/bash"]

@@ -28,6 +28,16 @@ NPA_SRC_S3_URI=s3://<bucket>/npa-src/npa \
   --plan-only --run-id demo
 ```
 
+A successful submit prints the resolved run ID in text mode and returns it as
+the top-level `run_id` in `--output-format json`. If the spec configures an S3
+`bucket`, NPA also writes a run manifest under its resolved prefix. List those
+runs later with the established durable-run command:
+
+```bash
+npa workbench workflow list \
+  --s3-bucket <bucket> --workflow-s3-prefix <parent-prefix> --json
+```
+
 Author and submit `npa.workflow/v0.0.1` specs under
 [`npa-workflows/`](../../npa/workflows/workbench/npa-workflows/). See that
 README for the full catalog.
@@ -50,6 +60,7 @@ Reference specs (all pytest-guarded):
 | `cosmos-synth-fanout-curation.yaml` | Fan-out Cosmos Transfer 2.5 synthetic-data shards → Voxel51 (FiftyOne) curation |
 | `tokenfactory-cosmos-gate.yaml` | Creative reason → augment → VLM gate loop |
 | `sonic-locomotion-finetuning.yaml` | Retarget → SONIC train → MJLab eval |
+| `groot-1-7-finetune.yaml` | GR00T N1.7 operational pipeline: deterministic real-data split, parameterized distributed optimizer smoke, immutable checkpoint, aligned offline inference, honest learning outcome, native RRD/MCAP, S3 publication, and deployed-agent viewer verification |
 | `mjlab-eval.yaml` / `retargeting.yaml` / `sonic-*.yaml` / `cosmos3-reason.yaml` | Single-tool workbench specs |
 
 ## Document shape
@@ -140,7 +151,7 @@ inventing YAML fields.
 | `--require-inputs` | Fail fast when declared input URIs are missing on S3 |
 | `--scheduler-plan` | Emit portable per-step task docs (`resources`, `command`) |
 | `run_workflow(..., execute=True)` | Dynamic traversal; not a static pre-built plan |
-| `npa workbench workflow submit <npa.workflow.yaml>` | Plan the graph and launch the run |
+| `npa workbench workflow submit <npa.workflow.yaml>` | Plan the graph, launch it, and return the resolved run ID |
 | `plan-spec --waves` | Show the runtime wave shape (serial steps + parallel groups and their concurrency batches) |
 | `submit --runtime` | Runtime orchestrator: submit each wave, poll it to terminal, read the real decision artifact from S3, then replan |
 
@@ -168,7 +179,7 @@ npa workbench workflow submit <spec.yaml> --run-id <id> --runtime \
 | Data-dependent branching | `transitions` outside a loop body are resolved from the real decision artifact (`goto`) |
 | Trigger / watch | A state's `trigger:` prefix is polled by the driver before its wave is submitted |
 | Retry / resume | Every wave attempt is written to `<config.prefix>/npa-workflow/runtime.json` (`npa.workflow.runtime.v1`); `--resume` replays succeeded waves instead of resubmitting them |
-| Timeout | A wave that never reaches a terminal state is cancelled (job + cluster) and fails the run |
+| Timeout | A positive `--max-wait-seconds` bounds each wave; `0` waits indefinitely. `--no-cancel-on-timeout` preserves a timed-out job as in-flight so `--resume` adopts it instead of submitting a duplicate |
 
 Design notes: [`DESIGN.md`](../../DESIGN.md). Live evidence:
 [`EVIDENCE.md`](../../EVIDENCE.md).
@@ -186,7 +197,7 @@ NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS=cpu ./scripts/npa-workflow-submit-live-e2e.sh
 ```
 
 Matrix: `npa/src/npa/orchestration/npa_workflow/submit_matrix.py`
-(19 twins across cpu / gpu / multi; stub twins are plan-only).
+(56 twins across cpu / gpu / multi; reviewed non-executable twins are plan-only).
 
 ## SDK
 

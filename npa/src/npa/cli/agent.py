@@ -17,7 +17,7 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 import typer
@@ -40,7 +40,6 @@ from npa.cli.agent_quota import (
 from npa.cli.agent_assets import (  # noqa: F401 - re-exported for tests/callers
     _agent_public_login_form_html,
     _lichtblick_default_layout_json,
-    _nginx_agent_site_body,
 )
 from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
     _stage_private_text,
@@ -110,6 +109,7 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
     AGENT_STAGES_RUN_PICKER_CONTRACT,
     AGENT_VIEWER_CHAT_DRAWER_CONTRACT,
     AGENT_VISUAL_FEEDBACK_CONTRACT,
+    _embedded_agent_artifact_content_source,
     _embedded_agent_artifacts_source,
     _embedded_agent_chat_source,
     _embedded_agent_provenance_source,
@@ -124,7 +124,7 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
     rendered_agent_ui_html,
 )
 from npa.cli.agent_embed import embedded_python_source
-from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT
+from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body as _nginx_agent_site_body
 from npa.cli.agent_deployment import (
     DeploymentIdentityError,
     assert_remote_owner_if_present,
@@ -209,6 +209,7 @@ _AGENT_WORKFLOW_EMBED = "__NPA_AGENT_WORKFLOW_EMBED__"
 _AGENT_ARTIFACTS_EMBED = "__NPA_AGENT_ARTIFACTS_EMBED__"
 _AGENT_ACCESS_EMBED = "__NPA_AGENT_ACCESS_EMBED__"
 _AGENT_ACCESS_RUNTIME_EMBED = "__NPA_AGENT_ACCESS_RUNTIME_EMBED__"
+_AGENT_ARTIFACT_CONTENT_EMBED = "__NPA_AGENT_ARTIFACT_CONTENT_EMBED__"
 _AGENT_ROUTING_EMBED = "__NPA_AGENT_ROUTING_EMBED__"
 _AGENT_VISUAL_FEEDBACK_EMBED = "__NPA_AGENT_VISUAL_FEEDBACK_EMBED__"
 _AGENT_RRD_PROXY_EMBED = "__NPA_AGENT_RRD_PROXY_EMBED__"
@@ -357,7 +358,7 @@ def _record_customer_url(record: dict[str, Any]) -> str:
     return str(record.get("agent_url", "")).strip()
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code=1)
 
@@ -1074,16 +1075,6 @@ def _agent_mobile_login_help_html() -> str:
     </details>"""
 
 
-# Placeholder token the Lichtblick web bundle ships in its index.html inline
-# script: ``LICHTBLICK_SUITE_DEFAULT_LAYOUT = [/*...PLACEHOLDER*/][0];``. Replacing
-# the comment with a layout object is the upstream-supported self-hosting hook, so
-# the embedded viewer opens with the sim2real point cloud + camera already shown
-# (Lichtblick otherwise hides point-cloud topics and picks no image topic).
-LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER = (
-    "/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/"
-)
-
-
 def _bootstrap_agent_stack(
     *,
     host: str,
@@ -1136,6 +1127,7 @@ def _bootstrap_agent_stack(
     agent_artifacts_source = _embedded_agent_artifacts_source()
     agent_access_source = _embedded_agent_access_source()
     agent_access_runtime_source = _embedded_agent_access_runtime_source()
+    agent_artifact_content_source = _embedded_agent_artifact_content_source()
     agent_routing_source = _embedded_agent_routing_source()
     agent_visual_feedback_source = _embedded_agent_visual_feedback_source()
     agent_rrd_proxy_source = _embedded_agent_rrd_proxy_source()
@@ -1324,8 +1316,8 @@ from urllib.parse import quote
 
 import httpx
 import yaml
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 app = FastAPI(title="npa-agent")
 DEPLOYMENT = {deployment_json}
@@ -1416,11 +1408,20 @@ def _lichtblick_recording_url(*, cache_bust: bool = False) -> str:
     return url
 
 
-def _lichtblick_iframe_url(*, mcap_url: str = "") -> str:
+def _lichtblick_iframe_url(
+    *, mcap_url: str = "", mcap_size: int = 0, primary_camera: str = ""
+) -> str:
     # Lichtblick opens a remote MCAP the same way the standalone tool does; the MCAP is
     # co-served same-origin under /lichtblick/recordings/ so the browser fetch needs no CORS.
     source = mcap_url or _lichtblick_recording_url()
-    return f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}"
+    size_hint = max(0, int(mcap_size or 0))
+    size_query = f"&npa.size={{size_hint}}" if size_hint else ""
+    camera = str(primary_camera or "").strip()
+    camera_query = f"&npa.camera={{quote(camera, safe='')}}" if camera else ""
+    return (
+        f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}"
+        f"{{size_query}}{{camera_query}}"
+    )
 
 
 def _publish_mcap_recording(source: Path) -> Path:
@@ -1779,22 +1780,26 @@ def _record_sim_viz_run(state: dict, payload: dict | None) -> None:
                     snapshot[key] = ""
             snapshot["foxglove_ready"] = bool(payload.get("foxglove_ready"))
     else:
-        # Never let a sparse update erase richer artifact fields from load-run.
-        for key in (
-            "artifact_render",
-            "artifact_key",
-            "artifact_uri",
-            "artifact_preview_url",
-            "artifact_download_url",
-            "rrd_uri",
-            "rerun_iframe_url",
-            "visualization_note",
-            "preview_entity",
-            "foxglove_url",
-            "mcap_updated_at",
-        ):
-            if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
-                snapshot[key] = existing[key]
+        no_preview = str(payload.get("preview_status") or "").strip() == "no_previewable_recording"
+        # Never let a sparse update erase richer artifact fields from load-run,
+        # except when an explicit run selection establishes an honest no-preview
+        # state and therefore must clear a stale artifact from the prior run.
+        if not no_preview:
+            for key in (
+                "artifact_render",
+                "artifact_key",
+                "artifact_uri",
+                "artifact_preview_url",
+                "artifact_download_url",
+                "rrd_uri",
+                "rerun_iframe_url",
+                "visualization_note",
+                "preview_entity",
+                "foxglove_url",
+                "mcap_updated_at",
+            ):
+                if not str(snapshot.get(key) or "").strip() and str(existing.get(key) or "").strip():
+                    snapshot[key] = existing[key]
         if not payload.get("foxglove_ready") and existing.get("foxglove_ready") and str(snapshot.get("foxglove_url") or "").strip():
             snapshot["foxglove_ready"] = True
     runs[history_key] = snapshot
@@ -3044,7 +3049,7 @@ def _agent_system_prompt() -> str:
         "- POST /api/sim-viz/load-run — switch active run context by run_id",
         "- GET /api/artifacts/runs?prefix=&limit= — discover run prefixes from object storage (no workflow allowlist)",
         "- GET /api/artifacts/run/{{run_id}} — list every object for a run with render hints",
-        "- POST /api/sim-viz/load-artifact — load explicit s3_uri (or run_id+key) into viewer/download",
+        "- POST /api/sim-viz/load-artifact — load run_id+s3_uri or run_id+key into viewer/download",
         "- POST /api/sim-viz/load-franka-demo — load stock Franka tabletop demo into Rerun",
         "- GET /api/foxglove/config, /api/foxglove/status — embedded Foxglove viewer config + readiness",
         "- POST /api/foxglove/load-artifact | /api/foxglove/convert-run | /api/foxglove/live —"
@@ -3060,7 +3065,7 @@ def _agent_system_prompt() -> str:
         "To view Franka immediately, tell users to open the **Rerun** tab and click **Load Franka in Rerun**",
         "(or POST /api/sim-viz/load-franka-demo). The UI has two tabs: **Chat** and **Rerun**.",
         "Artifact-first browsing flow: call `/api/artifacts/runs`, inspect `/api/artifacts/run/{{id}}`,",
-        "then `POST /api/sim-viz/load-artifact` with explicit `s3_uri` or `run_id` + `key`.",
+        "then `POST /api/sim-viz/load-artifact` with `run_id` + `s3_uri` or `run_id` + `key`.",
         "The **Rerun** tab embeds the viewer full-bleed beside a run-loading rail (mp4/video preview,",
         "artifact browser, and Load run data). There is no separate Cameras panel in the UI.",
         "Never suggest localhost, 127.0.0.1, or port 8080 — use relative /api/... paths or /rerun/.",
@@ -4659,7 +4664,7 @@ def chat(payload: dict):
     origin_reply, origin_apis = _maybe_origin_reply(
         last_content, visual_context=visual_context, state=state
     )
-    if origin_reply and not has_image_content(llm_messages):
+    if origin_reply and not visual_turn and not has_image_content(llm_messages):
         history = [*merged_history, {{"role": "assistant", "content": origin_reply}}][-80:]
         session.update(
             {{
@@ -4942,6 +4947,8 @@ def chat(payload: dict):
     visual_block = format_visual_context_block(visual_context)
     if visual_block:
         system_content += "\\n\\n" + visual_block
+    if visual_turn:
+        system_content += learning_visual_fact_block(visual_context)
     if origin_reply:
         # Ground the "Where it comes from" / original-input story with real facts.
         system_content += (
@@ -5004,6 +5011,9 @@ def chat(payload: dict):
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="LLM response missing assistant message") from exc
     reply, reasoning = _split_reasoning(message)
+    if visual_turn and learning_visual_reply_needs_correction(reply, visual_context):
+        reply = truthful_learning_visual_reply(visual_context)
+        reasoning = None
     if not reply and reasoning:
         reply = reasoning
         reasoning = None
@@ -6064,7 +6074,14 @@ def sim_viz_status(run_id: str = ""):
     mode = str(payload.get("mode") or "static").strip().lower()
     payload["mode"] = "live" if mode == "live" else "static"
     artifact_render = str(payload.get("artifact_render") or "").strip().lower()
-    if artifact_render and artifact_render != "rerun":
+    preview_status = str(payload.get("preview_status") or "").strip().lower()
+    if preview_status == "no_previewable_recording":
+        # Do not let a shared/stale recording file turn a training run's honest
+        # no-preview state back into rerun_ready=true on the next status poll.
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        payload["rerun_iframe_url"] = ""
+    elif artifact_render and artifact_render != "rerun":
         payload["rrd_uri"] = ""
         payload["rerun_ready"] = False
         payload["rerun_iframe_url"] = ""
@@ -6154,7 +6171,12 @@ def _sim_viz_load_response(state: dict, sim_viz: dict, *, run_id: str) -> dict:
     ]
     payload["available_runs"] = build_available_sim_viz_runs(_sim_viz_runs(state))
     render = str(payload.get("artifact_render") or "").strip().lower()
-    if render and render != "rerun":
+    preview_status = str(payload.get("preview_status") or "").strip().lower()
+    if preview_status == "no_previewable_recording":
+        payload["rrd_uri"] = ""
+        payload["rerun_ready"] = False
+        payload["rerun_iframe_url"] = ""
+    elif render and render != "rerun":
         payload["rrd_uri"] = ""
         payload["rerun_ready"] = False
         if not payload.get("rerun_iframe_url"):
@@ -6305,15 +6327,52 @@ def sim_viz_load_run(payload: dict | None = None):
             }}
         if requested_bucket:
             raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
+        if artifacts:
+            role_counts = artifact_inventory_counts(artifacts)
+            state = _load_state()
+            sim_viz = dict(DEFAULT_SIM_VIZ)
+            sim_viz.update({{
+                "run_id": resolved_run_id,
+                "artifact_run_ref": resolved_ref,
+                "stage": "artifacts",
+                "camera": camera,
+                "rrd_uri": "",
+                "rerun_ready": False,
+                "rerun_iframe_url": "",
+                "artifact_key": "",
+                "artifact_uri": "",
+                "artifact_render": "",
+                "artifact_count": len(artifacts),
+                "output_artifact_count": role_counts["output"],
+                "input_artifact_count": role_counts["input"],
+                "metadata_artifact_count": role_counts["metadata"],
+                "preview_status": "no_previewable_recording",
+                "visualization_note": "No previewable recording; artifacts available.",
+                "rrd_updated_at": _now_iso(),
+            }})
+            state["active_run_id"] = resolved_run_id
+            state["sim_viz"] = sim_viz
+            _record_sim_viz_run(state, sim_viz)
+            _save_state(state)
+            return {{
+                "ok": True,
+                "artifacts_available": True,
+                "artifact_count": len(artifacts),
+                "output_artifact_count": role_counts["output"],
+                "sim_viz": _sim_viz_load_response(state, sim_viz, run_id=resolved_run_id),
+                "preferred": preferred.to_dict() if preferred else None,
+                "run_ref": resolved_ref,
+            }}
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
-            detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
+            detail={{"error": "run_id is ambiguous; provide run_ref",
+                     "run_id": exc.run_id, "run_refs": exc.references}},
         ) from exc
     except AmbiguousRunSourceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ArtifactDiscoveryError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="invalid run artifact request") from exc
     except HTTPException:
         raise
     except (ClientError, BotoCoreError, OSError, KeyError, TypeError, ValueError):
@@ -6490,6 +6549,44 @@ def artifacts_runs(
         raise
     except Exception as exc:
         return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+def _resolved_run_artifacts(s3, settings, run_ref_or_id: str, *, prefix: str = ""):
+    effective_prefix = _artifact_discovery_prefix(settings, prefix)
+    resolution = None
+    if prefix:
+        normalized_run = _validate_run_basename(run_ref_or_id)
+        artifacts = list_artifacts(
+            settings["bucket"], normalized_run, prefix=effective_prefix, s3=s3
+        )
+        if artifacts:
+            resolution = RunResolution(
+                normalized_run, settings["bucket"], effective_prefix, artifacts
+            )
+    else:
+        allowed_buckets, _scope = _agent_artifact_list_scope(
+            _agent_access_report(), "", ""
+        )
+        resolution = resolve_run_artifacts(
+            allowed_buckets,
+            base_prefix=settings.get("prefix", ""),
+            run_ref_or_id=run_ref_or_id,
+            s3=s3,
+        )
+    if resolution is None:
+        raise HTTPException(
+            status_code=404,
+            detail="run artifacts not found in configured S3 storage",
+        )
+    return (
+        resolution.run_id,
+        resolution.bucket,
+        resolution.artifacts,
+        resolution.source_prefix,
+    )
+
+
+{_AGENT_ARTIFACT_CONTENT_EMBED}
+
+
 @app.get("/artifacts/run/{{run_id:path}}")
 def artifacts_for_run(
     run_id: str,
@@ -6606,6 +6703,12 @@ def artifacts_for_run(
             s3=s3,
         )
         preferred = select_preferred_artifact(page.artifacts)
+        role_counts = artifact_inventory_counts(page.artifacts)
+        summary = build_run_summary(
+            normalized_run,
+            page.artifacts,
+            _summary_documents_for_run(s3, run_bucket, page.artifacts),
+        )
         return {{
             "ok": True,
             "contract": ARTIFACT_DISCOVERY_CONTRACT,
@@ -6624,6 +6727,12 @@ def artifacts_for_run(
             "preferred": preferred.to_dict() if preferred else None,
             "access": _agent_access_diagnostics(access_report),
             **page.to_dict(),
+            "output_artifact_count": role_counts["output"],
+            "input_artifact_count": role_counts["input"],
+            "metadata_artifact_count": role_counts["metadata"],
+            "summary": summary,
+            "no_recording": not bool(summary.get("has_recording")),
+            "recording_state": str(summary.get("recording_state") or ""),
         }}
     except AmbiguousRunError as exc:
         raise HTTPException(
@@ -7023,32 +7132,47 @@ def sim_viz_load_artifact(payload: dict | None = None):
         resolved_ref = ""
         resolution = None
         if requested_uri:
+            if not (requested_run_ref or requested_run):
+                raise HTTPException(
+                    status_code=400,
+                    detail={{
+                        "schema": "npa.agent.api_error/v1",
+                        "contract_version": "npa.agent.load-artifact.v2",
+                        "code": "run_id_required_for_s3_uri",
+                        "message": "run_id or server-issued run_ref is required with s3_uri",
+                        "migration": {{
+                            "required_fields": ["run_id", "s3_uri"],
+                            "preferred_fields": ["run_ref", "key"],
+                            "discover_via": [
+                                "GET /api/artifacts/runs",
+                                "GET /api/artifacts/run/{{run_id_or_run_ref}}",
+                            ],
+                            "security_boundary": "only server-discovered inventory objects may be loaded",
+                        }},
+                    }},
+                )
             bucket, key = parse_s3_uri(requested_uri)
             key = _safe_artifact_key(key)
             s3_uri = requested_uri
             selector = requested_run_ref or requested_run
-            if selector:
-                resolution = resolve_run_artifacts(
-                    _agent_s3_buckets(s3, settings),
-                    base_prefix=settings.get("prefix", ""),
-                    run_ref_or_id=selector,
-                    s3=s3,
-                )
-                if resolution is None or not any(
-                    item.key == key and item.s3_uri == requested_uri
-                    for item in resolution.artifacts
-                ):
-                    raise HTTPException(status_code=400, detail="artifact URI is outside the selected run")
-                run_id = resolution.run_id
-                bucket = resolution.bucket
-                resolved_ref = resolution.run_ref
-            else:
-                bucket, key, authorized_run = _authorize_agent_artifact_uri(
-                    s3=s3, settings=settings, uri=requested_uri
-                )
-                run_guess = str(authorized_run or _run_id_for_key(key, ""))
-                run_id = validate_run_id(run_guess) if run_guess else "artifact"
-                s3_uri = f"s3://{{bucket}}/{{key}}"
+            run_id, bucket, artifact = _resolved_artifact_for_content(
+                s3,
+                settings,
+                run_id=selector,
+                key=key,
+                requested_bucket=bucket,
+            )
+            key = str(artifact.key)
+            s3_uri = str(artifact.s3_uri)
+            resolution = resolve_run_artifacts(
+                _agent_s3_buckets(s3, settings),
+                base_prefix=settings.get("prefix", ""),
+                run_ref_or_id=selector,
+                s3=s3,
+            )
+            if resolution is None:
+                raise HTTPException(status_code=404, detail="run_id not found")
+            resolved_ref = resolution.run_ref
         else:
             key = _safe_artifact_key(requested_key)
             resolution = resolve_run_artifacts(
@@ -7073,6 +7197,17 @@ def sim_viz_load_artifact(payload: dict | None = None):
         source_bucket, source_project, source_prefix = _artifact_source_metadata(
             _agent_access_report(), bucket, key, run_id
         )
+        run_summary = build_run_summary(
+            run_id,
+            resolution.artifacts,
+            _summary_documents_for_run(s3, bucket, resolution.artifacts),
+        )
+        learning_summary = run_summary.get("learning")
+        learning_contract = (
+            learning_summary.get("artifact_contract")
+            if isinstance(learning_summary, dict)
+            else None
+        )
         sim_viz = _apply_loaded_artifact(
             state=state,
             run_id=run_id,
@@ -7082,19 +7217,32 @@ def sim_viz_load_artifact(payload: dict | None = None):
             local_path=local_path,
             source_identity=(source_bucket, source_project, source_prefix),
             run_ref=resolved_ref,
+            artifact_contract=learning_contract,
         )
         return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri, "run_ref": resolved_ref}}
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
-            detail={{"error": str(exc), "run_id": exc.run_id, "run_refs": exc.references}},
+            detail={{"error": "run_id is ambiguous; provide run_ref",
+                     "run_id": exc.run_id, "run_refs": exc.references}},
         ) from exc
     except ArtifactDiscoveryError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="invalid run artifact request") from exc
     except HTTPException:
         raise
-    except Exception as exc:
-        return JSONResponse(status_code=502, content={{"ok": False, "error": str(exc), "source": "s3"}})
+    except Exception:
+        logging.getLogger("npa.agent.artifact_load").exception(
+            "Artifact load storage request failed"
+        )
+        return JSONResponse(
+            status_code=502,
+            content={{
+                "ok": False,
+                "error": "artifact storage request failed",
+                "error_code": "artifact_storage_error",
+                "source": "s3",
+            }},
+        )
 
 
 def _foxglove_convert_run(**kwargs):
@@ -8171,6 +8319,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_ARTIFACTS_EMBED, agent_artifacts_source)
         .replace(_AGENT_ACCESS_EMBED, agent_access_source)
         .replace(_AGENT_ACCESS_RUNTIME_EMBED, agent_access_runtime_source)
+        .replace(_AGENT_ARTIFACT_CONTENT_EMBED, agent_artifact_content_source)
         .replace(_AGENT_ROUTING_EMBED, agent_routing_source)
         .replace(_AGENT_VISUAL_FEEDBACK_EMBED, agent_visual_feedback_source)
         .replace(_AGENT_RRD_PROXY_EMBED, agent_rrd_proxy_source)
@@ -8329,6 +8478,9 @@ def _health(
 _artifact_only_http_probe = agent_resources.artifact_only_http_probe
 
 
+ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS = 60.0
+
+
 def _verify_artifact_only_live(
     *,
     record: dict[str, Any],
@@ -8345,7 +8497,7 @@ def _verify_artifact_only_live(
             base_url=agent_base,
             auth=(auth_user, auth_password),
             verify=tls_verify,
-            timeout=30.0,
+            timeout=ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS,
         ) as client:
             result = _artifact_only_http_probe(client)
     except (httpx.HTTPError, DeploymentIdentityError) as exc:
@@ -8417,7 +8569,7 @@ def _verify_artifact_only_live(
             base_url=agent_base,
             auth=(auth_user, auth_password),
             verify=tls_verify,
-            timeout=30.0,
+            timeout=ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS,
         ) as client:
             final = client.get("/api/health")
             final.raise_for_status()
@@ -8479,7 +8631,7 @@ def preflight_cmd(
         )
     results.append(_agent_ssh_egress_result())
     results.append(_agent_storage_result(project))
-    results.append(_agent_token_factory_result())
+    results.append(_agent_token_factory_result(_resolve_deploy_llm_credentials()[0]))
     has_fail = _render_agent_checks(results, output_json=output_json)
     if has_fail:
         raise typer.Exit(code=1)

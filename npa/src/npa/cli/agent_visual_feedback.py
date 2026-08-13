@@ -24,6 +24,43 @@ MAX_IMAGE_DATA_URL_CHARS = 2_500_000
 
 VISUAL_KINDS = frozenset({"rerun", "foxglove", "video", "image", "data", "unknown"})
 
+def is_offline_groot_learning_context(
+    visual_context: Mapping[str, Any] | None,
+) -> bool:
+    """Recognize legacy and operational GR00T offline-evaluation recordings."""
+
+    context = visual_context if isinstance(visual_context, Mapping) else {}
+    contract = context.get("artifact_contract")
+    contract = contract if isinstance(contract, Mapping) else {}
+    authoritative = (
+        context.get("artifact_contract_authoritative") is True
+        or contract.get("authoritative") is True
+    )
+    evaluation_kind = str(
+        context.get("evaluation_kind") or contract.get("evaluation_kind") or ""
+    ).lower()
+    closed_loop = context.get("closed_loop")
+    if closed_loop is None:
+        closed_loop = contract.get("closed_loop")
+    return authoritative and "offline" in evaluation_kind and closed_loop is False
+
+
+def learning_visual_fact_block(visual_context: Mapping[str, Any] | None) -> str:
+    """Return fail-closed facts for an offline GR00T learning replay."""
+
+    if not is_offline_groot_learning_context(visual_context):
+        return ""
+    return (
+        "\n\nNON-NEGOTIABLE FACTS FOR THIS LEARNING REPLAY:\n"
+        "- It is offline held-out model evaluation, not simulator/robot rollout or closed-loop execution.\n"
+        "- Its camera pixels originate in persisted held-out LeRobot observation videos; "
+        "simple geometry or 96x96 resolution is not evidence of synthetic generation.\n"
+        "- The original visual inputs are present. Never claim they are absent or generated "
+        "inside a simulator.\n"
+        "- A single frame does not prove motion, control behavior, or task success.\n"
+        "Any response contradicting these facts is incorrect."
+    )
+
 # Token → operator-facing hint. Matched against joined metadata text only.
 _DOMAIN_HINT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (
@@ -180,6 +217,10 @@ def _meta_blob(meta: Mapping[str, Any] | None) -> str:
         "camera",
         "artifact_render",
         "text_excerpt",
+        "provenance",
+        "origin",
+        "evaluation_kind",
+        "artifact_contract_authoritative",
     ):
         value = meta.get(key)
         if value is None:
@@ -197,11 +238,101 @@ def infer_visual_domain_hints(meta: Mapping[str, Any] | None) -> list[str]:
         return []
     # Soft-normalize separators so gr00t_n1 / isaac-lab match token rules.
     normalized = re.sub(r"[_\-/.:]+", " ", blob)
+    if is_offline_groot_learning_context(meta):
+        return [
+            "This is explicitly an offline held-out GR00T policy evaluation, not a "
+            "simulator/robot rollout or closed-loop execution. Describe the recorded "
+            "dataset camera frame, expert-versus-predicted action plots, action error, "
+            "training loss, and evaluation provenance that are actually visible; do "
+            "not infer synthetic imagery or task behavior from the GR00T name alone."
+        ]
     hints: list[str] = []
     for tokens, hint in _DOMAIN_HINT_RULES:
         if any(token in normalized for token in tokens):
             hints.append(hint)
     return hints[:4]
+
+
+_LEARNING_REPLY_CONTRADICTIONS: tuple[str, ...] = (
+    "synthetic simulation",
+    "generated synthetically",
+    "absence of an original input",
+    "no original input",
+    "nature of the simulation",
+    "simulation environment itself",
+    "controlling the robot",
+    "robotic arm's movements",
+)
+
+
+def learning_visual_reply_needs_correction(
+    reply: str | None,
+    meta: Mapping[str, Any] | None,
+) -> bool:
+    """Reject visual prose that contradicts a learning run's grounded facts."""
+    if not is_offline_groot_learning_context(meta):
+        return False
+    lowered = str(reply or "").lower()
+    return any(_contains_affirmative_phrase(lowered, phrase) for phrase in _LEARNING_REPLY_CONTRADICTIONS)
+
+
+def _contains_affirmative_phrase(text: str, phrase: str) -> bool:
+    """Find a claim while respecting nearby grammatical negation."""
+    for match in re.finditer(re.escape(phrase), text, flags=re.IGNORECASE):
+        prefix = text[max(0, match.start() - 48) : match.start()]
+        if re.search(
+            r"(?:\bnot\b|\bnever\b|\bno\b|\bwithout\b|isn['’]?t|aren['’]?t|doesn['’]?t)\s+(?:\w+\s+){0,4}$",
+            prefix,
+        ):
+            continue
+        return True
+    return False
+
+
+def has_quality_captured_frame(meta: Mapping[str, Any] | None) -> bool:
+    values = meta if isinstance(meta, Mapping) else {}
+    quality = str(values.get("frame_quality") or "").strip().lower()
+    capture = str(values.get("capture") or "").strip().lower()
+    blank = values.get("frame_blank") is True or quality in {"blank", "uniform", "unavailable"}
+    return (
+        values.get("has_image") is True
+        and capture in {"frame", "captured-frame", "screenshot", "quality-captured-frame"}
+        and quality in {"captured", "rendered", "nonblank", "quality-captured"}
+        and not blank
+    )
+
+
+def metadata_only_visual_reply(meta: Mapping[str, Any] | None) -> str:
+    values = meta if isinstance(meta, Mapping) else {}
+    run_id = str(values.get("run_id") or "unknown run").strip()
+    artifact = str(values.get("artifact_key") or "unknown artifact").strip()
+    camera = str(values.get("camera") or "not reported").strip()
+    return (
+        "I could verify only run/artifact metadata: "
+        f"run `{run_id}`, artifact `{artifact}`, primary camera `{camera}`. "
+        "No quality-captured frame was available, so I did not inspect pixels and "
+        "cannot truthfully describe objects, colors, image quality, motion, or task outcome."
+    )
+
+
+def truthful_learning_visual_reply(meta: Mapping[str, Any] | None) -> str:
+    """Fail-closed Describe-this reply for a factual offline learning replay.
+
+    This intentionally describes only the visible, blueprint-backed panels and
+    supplied provenance. It does not infer task behavior or image origin from a
+    low-resolution frame's visual style.
+    """
+    values = meta if isinstance(meta, Mapping) else {}
+    if not has_quality_captured_frame(values):
+        return metadata_only_visual_reply(values)
+    camera = str(values.get("camera") or "the report-selected primary camera").strip()
+    return (
+        "A quality-captured viewer frame was supplied to the multimodal model. The "
+        "original answer was rejected because it contradicted authoritative run metadata, "
+        f"so I will not invent replacement pixel details. Metadata proves that `{camera}` "
+        "is aligned with expert and baseline/post-training predictions on an offline "
+        "held-out dataset timeline. It does not prove motion, task success, or closed-loop control."
+    )
 
 
 def describe_user_prompt(kind: str, meta: Mapping[str, Any] | None = None) -> str:
@@ -341,6 +472,17 @@ def build_metadata_only_visual_reply(meta: Mapping[str, Any] | None) -> str:
     ]
     if note:
         lines.append(f"- note: {note[:320]}")
+    if is_offline_groot_learning_context(meta):
+        lines.extend(
+            [
+                "",
+                "**Grounded evaluation facts**: This is offline held-out GR00T policy "
+                "evaluation, **not a physical-robot or closed-loop robot rollout**. "
+                "The recording aligns persisted dataset camera frames with expert and "
+                "baseline/post-training predicted actions, losses, metrics, and "
+                "checkpoint provenance.",
+            ]
+        )
     if hints:
         lines.append("")
         lines.append("Domain hints from metadata:")

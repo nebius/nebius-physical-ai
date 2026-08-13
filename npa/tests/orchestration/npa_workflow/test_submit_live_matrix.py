@@ -163,6 +163,21 @@ def test_standalone_cosmos_case_exercises_conditioned_real_toolref() -> None:
     assert "--condition-on-input" in transfer.argv
 
 
+def test_groot_case_truthfully_describes_offline_configurable_training() -> None:
+    case = next(
+        case for case in SUBMIT_LIVE_MATRIX if case.spec == "groot-1-7-finetune.yaml"
+    )
+
+    assert case.tier == "multi"
+    assert not case.plan_only
+    assert case.image_tool == "groot"
+    assert not case.config_vars
+    assert "offline held-out baseline inference" in case.notes
+    assert "one-to-many-GPU" in case.notes
+    assert "learning outcome separately from pipeline status" in case.notes
+    assert "not closed-loop or physical-robot task evidence" in case.notes
+
+
 @pytest.mark.parametrize(
     "name", ["sim2real-two-step.yaml", "sim2real-two-step-agent.yaml"]
 )

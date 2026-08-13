@@ -863,6 +863,26 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
         lambda *_args, **_kwargs: pytest.fail("rejected requests must not download"),
     )
     try:
+        with pytest.raises(module.HTTPException) as exc_info:
+            module.sim_viz_load_artifact(
+                {"s3_uri": "s3://configured-bucket/nested/root/run-one/report.rrd"}
+            )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == {
+            "schema": "npa.agent.api_error/v1",
+            "contract_version": "npa.agent.load-artifact.v2",
+            "code": "run_id_required_for_s3_uri",
+            "message": "run_id or server-issued run_ref is required with s3_uri",
+            "migration": {
+                "required_fields": ["run_id", "s3_uri"],
+                "preferred_fields": ["run_ref", "key"],
+                "discover_via": [
+                    "GET /api/artifacts/runs",
+                    "GET /api/artifacts/run/{run_id_or_run_ref}",
+                ],
+                "security_boundary": "only server-discovered inventory objects may be loaded",
+            },
+        }
         for key in ("../secret", "folder/../secret", "folder\\secret", "bad\x00key"):
             with pytest.raises(module.HTTPException) as exc_info:
                 module._safe_artifact_key(key)
@@ -921,6 +941,78 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
                 }
             )
         assert exc_info.value.status_code == 400
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_artifact_range_response_uses_get_object_metadata_consistently(
+    monkeypatch, tmp_path
+) -> None:
+    import io
+    import sys
+
+    module_name = "npa_rendered_artifact_range_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    artifact = module.Artifact(
+        "run-one",
+        "run-one/report.bin",
+        "s3://bucket/run-one/report.bin",
+        10,
+        "2026-08-01T00:00:00+00:00",
+        "download",
+        False,
+        relative_key="report.bin",
+    )
+
+    class FakeS3:
+        def __init__(self, *, total: int = 10):
+            self.total = total
+
+        def get_object(self, **kwargs):
+            assert kwargs["Range"] == "bytes=0-3"
+            return {
+                "Body": io.BytesIO(b"abcd"),
+                "ContentLength": 4,
+                "ContentRange": f"bytes 0-3/{self.total}",
+            }
+
+    try:
+        s3 = FakeS3()
+        monkeypatch.setattr(
+            module, "_agent_s3_client", lambda: (s3, {"bucket": "bucket"})
+        )
+        monkeypatch.setattr(
+            module,
+            "_resolved_artifact_for_content",
+            lambda *_args, **_kwargs: ("run-one", "bucket", artifact),
+        )
+        request = module.Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/artifacts/content",
+                "headers": [(b"range", b"bytes=0-3")],
+            }
+        )
+        response = module._artifact_content_response(
+            request, run_id="run-one", key=artifact.key
+        )
+        assert response.status_code == 206
+        assert response.headers["content-range"] == "bytes 0-3/10"
+        assert response.headers["content-length"] == "4"
+
+        stale = FakeS3(total=11)
+        monkeypatch.setattr(
+            module, "_agent_s3_client", lambda: (stale, {"bucket": "bucket"})
+        )
+        with pytest.raises(module.HTTPException) as exc_info:
+            module._artifact_content_response(
+                request, run_id="run-one", key=artifact.key
+            )
+        assert exc_info.value.status_code == 409
+        assert "changed since inventory discovery" in exc_info.value.detail
     finally:
         sys.modules.pop(module_name, None)
 
@@ -1757,6 +1849,19 @@ def test_rendered_backend_labels_nurec_camera_without_inheriting(monkeypatch) ->
     assert 'NEURAL_RECONSTRUCTION_CAMERA_LABEL = "novel-view"' in body
     # The label is applied on the neural-reconstruction branch, not inherited.
     assert "camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
+
+
+def test_rendered_backend_labels_groot_training_without_rollout_claim(monkeypatch) -> None:
+    body = _render_backend_body(monkeypatch)
+
+    assert 'GROOT_TRAINING_CAMERA_LABEL = "camera"' in body
+    assert "camera = GROOT_TRAINING_CAMERA_LABEL" in body
+    assert "GR00T training telemetry loaded." in body
+    assert "dataset/synthetic-fps, not robot capture time; this is not a " in body
+    assert "policy rollout evaluation." in body
+    assert "GR00T training telemetry MCAP loaded" in body
+    assert "factual metrics on dataset/synthetic-fps time; it is not a policy " in body
+    assert "rollout or robot-capture recording." in body
 
 
 def test_rendered_backend_allows_head_on_the_rrd_blob_probe(monkeypatch) -> None:

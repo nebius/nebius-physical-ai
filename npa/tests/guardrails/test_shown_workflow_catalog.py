@@ -11,7 +11,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
+from npa.orchestration.npa_workflow.catalog import (
+    PUBLIC_REUSABLE_TOOLREFS,
+    TOOL_CATALOG,
+)
 from npa.orchestration.npa_workflow.detect import detect_submit_format
+from npa.orchestration.npa_workflow.spec import load_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKBENCH = REPO_ROOT / "npa" / "workflows" / "workbench"
@@ -46,3 +51,16 @@ def test_shown_catalog_has_npa_workflow_specs() -> None:
     specs = iter_npa_workflow_specs()
     assert specs, "expected npa.workflow specs under the shown catalog"
     assert all(detect_submit_format(path) == "npa.workflow" for path in specs)
+
+
+def test_tool_catalog_is_reachable_or_explicitly_public_reusable() -> None:
+    reachable = {
+        state.tool_ref
+        for path in iter_npa_workflow_specs()
+        for state in load_spec(path).states.values()
+        if state.tool_ref
+    }
+    reusable = set(PUBLIC_REUSABLE_TOOLREFS)
+    assert not (reachable & reusable), "consumed entries are reachable, not reusable-only"
+    assert set(TOOL_CATALOG) == reachable | reusable
+    assert all(PUBLIC_REUSABLE_TOOLREFS.values())

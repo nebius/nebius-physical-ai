@@ -17,6 +17,7 @@ from npa.orchestration.npa_workflow.spec import (
     StateSpec,
     config_truthy,
     resolve_config_int,
+    resolve_resource_profile,
 )
 from npa.orchestration.npa_workflow.tokens import resolve_tokens
 
@@ -486,16 +487,37 @@ def build_step(
         shell=shell,
         tool_ref=tool_ref,
         resources=state.resources,
-        resources_profile=_resources_profile(spec, state.resources),
+        resources_profile=_resources_profile(
+            spec,
+            state.resources,
+            config=config,
+            run=ctx.run,
+            state_outputs=ctx.state_outputs,
+        ),
         outputs=outputs,
         inputs=_resolved_inputs(state, ctx),
         group=group,
     )
 
 
-def _resources_profile(spec: NpaWorkflowSpec, profile: str) -> dict[str, Any]:
+def _resources_profile(
+    spec: NpaWorkflowSpec,
+    profile: str,
+    *,
+    config: dict[str, Any],
+    run: dict[str, Any],
+    state_outputs: dict[str, dict[str, str]],
+) -> dict[str, Any]:
     raw = spec.resources.get(profile) or spec.resources.get("default") or {}
-    return dict(raw) if isinstance(raw, dict) else {}
+    if not isinstance(raw, dict):
+        return {}
+    return resolve_resource_profile(
+        profile,
+        raw,
+        config=config,
+        run=run,
+        state_outputs=state_outputs,
+    )
 
 
 def _resolved_inputs(state: StateSpec, ctx: RunContext) -> list[dict[str, str]]:
@@ -901,6 +923,8 @@ def _with_resources(record: dict[str, Any], step: PlanStep) -> dict[str, Any]:
     record.setdefault("resources", step.resources)
     if not record.get("resources_profile"):
         record["resources_profile"] = dict(step.resources_profile)
+    record.setdefault("inputs", [dict(item) for item in step.inputs])
+    record.setdefault("outputs", [dict(item) for item in step.outputs])
     return record
 
 

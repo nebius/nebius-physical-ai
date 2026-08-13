@@ -492,7 +492,7 @@ def _explicit_stage_record(
         else "The authoritative workflow graph declares this stage, but no execution status was recorded."
     )
     label = str(payload.get("label") or payload.get("name") or stage_id).strip()
-    return stage_evidence_record(
+    record = stage_evidence_record(
         stage_id=stage_id,
         label=label or artifact_stage_label(stage_id),
         stage_key=stage_id,
@@ -509,6 +509,11 @@ def _explicit_stage_record(
         observed_at=str(payload.get("updated_at") or payload.get("end_time") or payload.get("end") or ""),
         summary=str(payload.get("summary") or payload.get("error_summary") or reason),
     )
+    for key in ("job_id", "job_name", "sky_status", "wave_key"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            record[key] = value
+    return record
 
 
 def parse_stage_evidence_documents(documents: list[dict[str, Any]]) -> dict[str, Any]:
@@ -747,6 +752,12 @@ def build_artifact_backed_stages(
                     stage["diagnostic_reason"] = observation["reason"]
                     stage["summary"] = observation["reason"] + " Execution status is unavailable."
             stages.append(stage)
+        # Once a durable workflow manifest supplies the execution graph, keep
+        # the timeline one-to-one with that graph. Unmatched top-level artifact
+        # directories remain browsable through the artifact inventory; turning
+        # them into extra pseudo-stages would make a completed N-state workflow
+        # appear to have additional stages with no physical job identity.
+        return stages
     elif workflow_stage_defs:
         for stage_id, label, patterns in workflow_stage_defs:
             matched = [

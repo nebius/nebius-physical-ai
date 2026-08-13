@@ -57,7 +57,9 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # No NGC_API_KEY: `--runtime local` trains in the stage and pulls nothing from NGC, and
     # hinting a secret the cases do not carry skips the twins instead of running them (#238).
     "workbench.sonic": ("HF_TOKEN",),
-    "workbench.groot": ("HF_TOKEN", "NGC_API_KEY"),
+    # The pinned N1.7 base model is fetched from Hugging Face. The redistributable
+    # GR00T image contains no NGC payload and finetuning does not use NGC.
+    "workbench.groot": ("HF_TOKEN",),
 }
 
 # Optional dependency groups a toolRef's stage needs, declared as npa extras in
@@ -70,6 +72,8 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
     "workbench.sonic": "sonic",
+    "workflow.groot.emit_learning_rrd": "viz",
+    "workflow.groot.publish_learning": "viz",
 }
 
 # Declarative metadata, never a package-string passthrough.
@@ -86,6 +90,32 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    # The redistributable image security layer upgrades Transformers with
+    # ``--no-deps``. GR00T commit 3df8b382 pins 4.57.3; Transformers 5.3 changes
+    # PretrainedConfig dataclass behavior and the pinned GR00T model config then
+    # fails during import. Restore the upstream runtime exactly for real model
+    # stages. A normal targeted install also restores its Hub/tokenizers closure
+    # while leaving torch and the vendor GR00T package untouched.
+    "workbench.groot": (
+        # The redistributable image's uv-created Python 3.10 environment has no
+        # pip. A source overlay can expose the current CLI while its conditional
+        # Python <3.11 dependency is still absent; live job 446 then failed on
+        # ``import tomli`` before the trainer started. The common installer's uv
+        # fallback targets the exact recorded interpreter.
+        ("python:tomli", "tomli>=2.0.0"),
+        (
+            'python:transformers;assert(__import__("importlib.metadata").metadata.version("transformers")=="4.57.3")',
+            "transformers==4.57.3",
+        ),
+    ),
+    "workflow.groot.prepare_split": (("python:pyarrow", "pyarrow>=15,<22"),),
+    "workflow.groot.compare_learning": (
+        ("python:av", "av>=12,<17"),
+        ("python:PIL", "Pillow>=10,<12"),
+    ),
+    "workflow.groot.emit_learning_mcap": (("python:av", "av>=12,<17"),),
+    "workflow.groot.emit_learning_rrd": (("python:av", "av>=12,<17"),),
+    "workflow.groot.publish_learning": (("python:av", "av>=12,<17"),),
     "workbench.cosmos.fetch": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
     "workbench.cosmos.check": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
     "workbench.lerobot.policy_train": (
@@ -121,6 +151,8 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
+    "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
     # Isaac Lab's simulator packages live in the Omniverse kit environment, not in the image's
     # system python. Live job 267 installed npa into /usr/bin/python3 and the stage died with
@@ -286,10 +318,20 @@ def normalize_resources(
             continue
         value = resources[key]
         if key == "accelerators":
-            if accel_override:
-                value = accel_override
-            elif str(value).strip() in overrides:
-                value = overrides[str(value).strip()]
+            selected_override = accel_override or overrides.get(str(value).strip(), "")
+            # A cluster-specific product name should not silently collapse a
+            # multi-GPU request. Accept either an exact ``NAME:COUNT`` override
+            # or a name-only override that preserves the profile's count.
+            if (
+                selected_override
+                and ":" not in selected_override
+                and isinstance(value, str)
+                and ":" in value
+            ):
+                _declared_name, declared_count = value.rsplit(":", 1)
+                value = f"{selected_override}:{declared_count}"
+            elif selected_override:
+                value = selected_override
         if key == "memory" and isinstance(value, str):
             stripped = value.strip()
             if stripped.lower().endswith("gi"):
@@ -374,7 +416,8 @@ def render_pip_requirements_setup(requirements: Sequence[tuple[str, str]]) -> st
             f"  echo 'installing {requirement} for {label}' >&2\n"
             f"  \"$npa_req_python\" -m pip install -q '{requirement}' \\\n"
             f"    || \"$npa_req_python\" -m pip install -q '{requirement}' --break-system-packages \\\n"
-            f"    || \"$npa_req_python\" -m pip install -q '{requirement}' --user\n"
+            f"    || \"$npa_req_python\" -m pip install -q '{requirement}' --user \\\n"
+            f"    || uv pip install -q --python \"$npa_req_python\" '{requirement}'\n"
             "fi\n"
         )
     return "".join(lines)
@@ -915,9 +958,22 @@ def default_npa_setup() -> str:
         "npa_pip_install() {\n"
         '  target="$1"\n'
         "  shift\n"
-        '  python3 -m pip install -q "$target" "$@" \\\n'
-        '    || python3 -m pip install -q "$target" "$@" --break-system-packages \\\n'
-        '    || python3 -m pip install -q "$target" "$@" --user\n'
+        # uv-created environments deliberately need not contain pip. GR00T's
+        # image is one: `python3 -m pip` exits before the source overlay can be
+        # staged even though the image ships uv. Let uv target the exact
+        # interpreter that `python3` resolves to; unlike activating another
+        # interpreter, this preserves the vendor environment and its pins.
+        "  npa_install_python=\"$(command -v python3)\"\n"
+        "  if \"$npa_install_python\" -m pip --version >/dev/null 2>&1; then\n"
+        "    \"$npa_install_python\" -m pip install -q \"$target\" \"$@\" \\\n"
+        "      || \"$npa_install_python\" -m pip install -q \"$target\" \"$@\" --break-system-packages \\\n"
+        "      || \"$npa_install_python\" -m pip install -q \"$target\" \"$@\" --user\n"
+        "  elif command -v uv >/dev/null 2>&1; then\n"
+        "    uv pip install -q --python \"$npa_install_python\" \"$target\" \"$@\"\n"
+        "  else\n"
+        "    echo \"python3 has no pip and uv is unavailable: $npa_install_python\" >&2\n"
+        "    return 1\n"
+        "  fi\n"
         "}\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
         "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"

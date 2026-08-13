@@ -1256,7 +1256,10 @@ def test_verified_job_id_prefers_the_name_lookup(mocker) -> None:
     from npa.orchestration.skypilot import workflow as workflow_mod
 
     queue = """
-    [{"job_id": 164, "job_name": "wave-x", "task_name": "a", "status": "RUNNING"}]
+    [
+      {"job_id": 163, "job_name": "wave-x", "task_name": "a", "status": "CANCELLED"},
+      {"job_id": 164, "job_name": "wave-x", "task_name": "a", "status": "RUNNING"}
+    ]
     """
     mocker.patch.object(
         workflow_mod.subprocess,

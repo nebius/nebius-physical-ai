@@ -7,6 +7,11 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+- Agent artifact loading now requires a discovered `run_id`/`run_ref` inventory
+  context with every S3 URI. URI-only requests return structured error
+  `npa.agent.api_error/v1` (`run_id_required_for_s3_uri`) instead of reading an
+  arbitrary object.
+
 ### Retiring the raw SkyPilot task catalog (36 → 0 templates (of the 36; two arrived mid-sweep from #234/#235))
 
 `npa.workflow/v0.0.1` specs are becoming the only workflow authoring surface.

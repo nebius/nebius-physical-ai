@@ -445,6 +445,59 @@ def test_runtime_early_exits_when_gate_promotes_on_first_iteration(
     assert report.decisions and report.decisions[-1]["decision"] == "promote_checkpoint"
 
 
+def test_runtime_persists_exact_submitted_workflow_yaml(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    executor = _executor(spec, store=store)
+    workflow_yaml = GATE_LOOP_SPEC.encode("utf-8")
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-workflow-artifact",
+        executor=executor,
+        state_store=store,
+        options=executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=workflow_yaml,
+    )
+
+    assert report.status == "succeeded"
+    assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
+
+
+def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    executor = _executor(spec, store=store)
+    workflow_yaml = GATE_LOOP_SPEC.encode("utf-8")
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-executor-workflow-artifact",
+        executor=executor,
+        options=executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=workflow_yaml,
+    )
+
+    assert report.status == "succeeded"
+    assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
+
+
+def test_runtime_rejects_workflow_yaml_without_any_durable_store(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec)
+
+    with pytest.raises(NpaWorkflowError, match="workflow_yaml requires a durable"):
+        run_workflow_runtime(
+            spec,
+            run_id="rt-no-workflow-store",
+            executor=executor,
+            options=executor.options,
+            workflow_yaml=GATE_LOOP_SPEC.encode("utf-8"),
+        )
+
+
 def test_runtime_runs_full_budget_when_gate_keeps_looping(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     submitter = FakeSubmitter()
@@ -679,6 +732,77 @@ def test_timeout_cancels_the_managed_job(tmp_path: Path) -> None:
     assert report.status == "failed"
     assert "did not reach a terminal status" in report.error
     assert cancels and cancels[0]["job_id"]
+
+
+def test_timeout_without_cancel_preserves_the_in_flight_job(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    cancels: list[dict[str, Any]] = []
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=2, cancel_on_timeout=False)
+    executor = _executor(
+        spec,
+        status_fn=FakeStatus(["RUNNING"] * 20),
+        options=options,
+        cancels=cancels,
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-timeout-preserve", executor=executor, options=options
+    )
+
+    assert report.status == "failed"
+    assert "did not reach a terminal status" in report.error
+    assert not cancels
+    assert report.waves[0]["status"] == "running"
+    assert report.waves[0]["sky_status"] == "SUBMITTED"
+
+
+def test_timeout_without_cancel_never_retries_a_preserved_job(tmp_path: Path) -> None:
+    """Scratch regression: retries must not turn one preserved job into three."""
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    submitter = FakeSubmitter()
+    cancels: list[dict[str, Any]] = []
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=2,
+        retries=2,
+        retry_backoff_seconds=0,
+        cancel_on_timeout=False,
+    )
+    executor = _executor(
+        spec,
+        submitter=submitter,
+        status_fn=FakeStatus(["RUNNING"] * 20),
+        options=options,
+        cancels=cancels,
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-timeout-preserve-retries", executor=executor, options=options
+    )
+
+    assert report.status == "failed"
+    assert len(submitter.calls) == 1
+    assert cancels == []
+    assert len(report.waves) == 1
+    assert report.waves[0]["status"] == "running"
+    assert executor.ledger.state.in_flight_wave(report.waves[0]["key"]) is not None
+
+
+def test_zero_max_wait_is_unbounded(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=0)
+    executor = _executor(
+        spec,
+        status_fn=FakeStatus(["PENDING", "RUNNING", "SUCCEEDED"] * 3),
+        options=options,
+    )
+
+    report = run_workflow_runtime(
+        spec, run_id="rt-unbounded-wait", executor=executor, options=options
+    )
+
+    assert report.status == "succeeded"
 
 
 def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) -> None:
@@ -1333,7 +1457,9 @@ def test_stale_job_id_from_launch_output_is_corrected_by_name(tmp_path: Path) ->
         spec,
         submitter=StaleIdSubmitter(),
         status_fn=status_fn,
-        name_lookup_fn=lambda name: ["141"],
+        # The old id still matches the deterministic wave name; newest-first
+        # lookup must win even when the stale parsed id appears later in the list.
+        name_lookup_fn=lambda name: ["141", "140"],
     )
     report = run_workflow_runtime(
         spec, run_id="rt-stale-id", executor=executor, options=executor.options

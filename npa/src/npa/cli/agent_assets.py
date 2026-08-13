@@ -93,7 +93,8 @@ def _nginx_agent_site_body(
 ) -> str:
     """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
     # Imported lazily: npa.cli.agent imports this module.
-    from npa.cli.agent import AGENT_UI_VERSION, LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER
+    from npa.cli.agent import AGENT_UI_VERSION
+    from npa.cli.agent_site import LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER
 
     lichtblick_default_layout = _lichtblick_default_layout_json()
     lichtblick_layout_placeholder = LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER

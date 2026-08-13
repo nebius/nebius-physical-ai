@@ -299,7 +299,10 @@ def submit_cmd(
     max_wait_seconds: int = typer.Option(
         3600,
         "--max-wait-seconds",
-        help="With --runtime: per-wave deadline before the job is cancelled.",
+        help=(
+            "With --runtime: per-wave deadline before the job is cancelled; "
+            "0 waits indefinitely."
+        ),
     ),
     cancel_on_timeout: bool = typer.Option(
         True,
@@ -1644,10 +1647,17 @@ def submit_cmd(
             prepared_npa.temp_dir.cleanup()
 
     if output_format == OutputFormat.json:
-        typer.echo(json.dumps(result.__dict__, indent=2, sort_keys=True))
+        typer.echo(
+            json.dumps(
+                {**result.__dict__, "run_id": resolved_run_id},
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return
 
     typer.echo(f"status: {result.status}")
+    typer.echo(f"run_id: {resolved_run_id}")
     if result.job_id:
         typer.echo(f"job_id: {result.job_id}")
     if workflow_state is not None:
@@ -1785,6 +1795,17 @@ def _run_npa_workflow_runtime(
         _fail(str(exc))
         return
 
+    submitted_yaml = yaml_path.read_bytes()
+    if config_overrides:
+        import yaml
+
+        source = yaml.safe_load(submitted_yaml)
+        if not isinstance(source, dict) or not isinstance(source.get("config"), dict):
+            _fail("npa.workflow source has no config mapping for --var overrides")
+            return
+        source["config"].update(config_overrides)
+        submitted_yaml = yaml.safe_dump(source, sort_keys=False).encode("utf-8")
+
     from npa.orchestration.npa_workflow.runtime import plan_preview
     from npa.orchestration.npa_workflow.submission_state import update_submission_state
 
@@ -1841,6 +1862,7 @@ def _run_npa_workflow_runtime(
                 render_options=render_options,
                 options=options,
                 assume_decision=assume_decision,
+                workflow_yaml=submitted_yaml,
                 logger=lambda message: typer.echo(f"[runtime] {message}", err=True),
             )
         except NpaWorkflowError as exc:

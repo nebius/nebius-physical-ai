@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timezone
 import json
+import math
 import mimetypes
 from pathlib import Path
 import re
@@ -78,7 +79,17 @@ def is_model_artifact(name: str) -> bool:
 
 
 _JSON_EXTENSIONS = {".json"}
-_TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".yaml", ".yml", ".md"}
+_TEXT_EXTENSIONS = {".txt", ".log", ".csv", ".jsonl", ".yaml", ".yml", ".md"}
+INLINE_TEXT_MAX_BYTES = 256 * 1024
+_INPUT_ARTIFACT_ROOTS = {
+    "data",
+    "dataset",
+    "datasets",
+    "input",
+    "inputs",
+    "source",
+    "sources",
+}
 _RENDER_ORDER = {
     "rerun": 0,
     "mcap": 1,
@@ -89,6 +100,87 @@ _RENDER_ORDER = {
     "download": 6,
 }
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
+
+# This is the authoritative artifact/semantic contract for the shipped GR00T
+# offline workflow.  Backend responses serialize this contract for the browser;
+# the UI must not maintain a second collection of filename heuristics.
+GROOT_ARTIFACT_CONTRACT_SCHEMA = "npa.groot.artifacts/v1"
+GROOT_ARTIFACT_PATHS: dict[str, tuple[str, ...]] = {
+    "split_manifest": ("reports/split/manifest.json",),
+    "report": (
+        "reports/two-gpu-pipeline-report.json",
+        "reports/learning-rigor-report.json",
+        "reports/learning-report.json",
+    ),
+    "rrd": (
+        "reports/groot-offline-evaluation.rrd",
+        "reports/groot-learning.rrd",
+    ),
+    "mcap": (
+        "reports/groot-offline-evaluation.mcap",
+        "reports/groot-learning.mcap",
+    ),
+    "baseline_evaluation": (
+        "offline/baseline/evaluation.json",
+        "eval/baseline/evaluation.json",
+    ),
+    "trained_evaluation": (
+        "offline/trained/evaluation.json",
+        "eval/posttrain/evaluation.json",
+    ),
+    "training_manifest": (
+        "checkpoints/candidate/npa_groot_finetune_manifest.json",
+        "checkpoints/npa_groot_finetune_manifest.json",
+    ),
+    "checkpoint_reference": ("reports/trained-checkpoint.json",),
+    "comparison_video": ("reports/offline-heldout-comparison.mp4",),
+    "publish_manifest": ("reports/publish-manifest.json",),
+    "workflow_spec": ("workflow.yaml",),
+}
+GROOT_ARTIFACT_STAGES: tuple[dict[str, Any], ...] = (
+    {
+        "id": "split",
+        "label": "Prepare leakage-free split",
+        "semantics": ("split_manifest",),
+        "description": "Episode-disjoint train/held-out split with train-only statistics.",
+    },
+    {
+        "id": "baseline",
+        "label": "Offline baseline",
+        "semantics": ("baseline_evaluation",),
+        "description": "Deterministic held-out action prediction before training.",
+    },
+    {
+        "id": "train",
+        "label": "Multi-GPU policy training",
+        "semantics": ("training_manifest", "checkpoint_reference"),
+        "description": "Optimizer loss and selected candidate-checkpoint provenance.",
+    },
+    {
+        "id": "posttrain",
+        "label": "Offline post-training evaluation",
+        "semantics": ("trained_evaluation", "report"),
+        "description": "Held-out action prediction after training; not a rollout.",
+    },
+    {
+        "id": "compare",
+        "label": "Classify learning outcome",
+        "semantics": ("report", "comparison_video"),
+        "description": "Before/after action error and outcome, separate from pipeline status.",
+    },
+    {
+        "id": "diagnostics",
+        "label": "Synchronized diagnostics",
+        "semantics": ("rrd", "mcap", "comparison_video"),
+        "description": "RRD/MCAP diagnostics aligned to the held-out dataset timeline.",
+    },
+    {
+        "id": "publish",
+        "label": "Validate and publish",
+        "semantics": ("publish_manifest", "workflow_spec"),
+        "description": "Independent artifact inspection, hashes, and submitted workflow provenance.",
+    },
+)
 
 # Bucket roots owned by infrastructure tooling are never user workflow runs.
 # Keep this list deliberately narrow and structural: these are canonical state
@@ -153,9 +245,13 @@ class Artifact:
     last_modified: str
     render: str
     inline: bool
+    role: str = "output"
+    namespace: str = ""
+    relative_key: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        role = artifact_data_role(self.key, self.run_id)
+        data_role = artifact_data_role(self.key, self.run_id)
+        category = artifact_category_for_relative_key(self.relative_key, role=self.role)
         return {
             "run_id": self.run_id,
             "key": self.key,
@@ -164,9 +260,16 @@ class Artifact:
             "last_modified": self.last_modified,
             "render": self.render,
             "inline": self.inline,
-            "data_role": role["role"],
-            "data_role_label": role["label"],
-            "data_role_detail": role["detail"],
+            "data_role": data_role["role"],
+            "data_role_label": data_role["label"],
+            "data_role_detail": data_role["detail"],
+            "role": self.role,
+            "namespace": self.namespace,
+            "relative_key": self.relative_key,
+            "category": category,
+            "content_type": artifact_media_type(self.key),
+            "download_only": not self.inline,
+            "is_output": self.role == "output",
         }
 
 
@@ -202,6 +305,11 @@ class RunSummary:
     # Exact directory *above* run_id. This is part of source identity because
     # the same run id may legitimately exist under multiple prefixes/buckets.
     resolved_prefix: str = ""
+    output_artifact_count: int = 0
+    input_artifact_count: int = 0
+    metadata_artifact_count: int = 0
+    namespaces: tuple[str, ...] = ()
+    canonical_score: int = 0
 
     @property
     def run_ref(self) -> str:
@@ -227,6 +335,10 @@ class RunSummary:
             "source_prefix": self.resolved_prefix,
             "run_ref": self.run_ref,
             "summary_complete": self.summary_complete,
+            "output_artifact_count": self.output_artifact_count,
+            "input_artifact_count": self.input_artifact_count,
+            "metadata_artifact_count": self.metadata_artifact_count,
+            "namespaces": list(self.namespaces),
             "source_type": "artifact_storage",
             "source_label": "S3 artifacts",
         }
@@ -322,6 +434,130 @@ class RunResolution:
         return encode_run_ref(self.bucket, self.source_prefix, self.run_id)
 
 
+def _merge_staging_resolutions(
+    matches: list[RunResolution],
+) -> list[RunResolution]:
+    """Attach input-only staging roots to one authoritative output root.
+
+    A submitted workflow can stage source and data below its workflow
+    namespace while the runner writes completed outputs at the bucket root.
+    Those are one run, not an ambiguous duplicate. Two roots that both contain
+    outputs remain separate and therefore fail closed.
+    """
+
+    grouped: dict[tuple[str, str], list[RunResolution]] = {}
+    for match in matches:
+        grouped.setdefault((match.bucket, match.run_id), []).append(match)
+    merged: list[RunResolution] = []
+    for same_run in grouped.values():
+        merged.extend(_merge_staging_resolution_group(same_run))
+    return merged
+
+
+def _merge_staging_resolution_group(
+    matches: list[RunResolution],
+) -> list[RunResolution]:
+    """Merge one bucket/run-id group without crossing authorization roots."""
+    by_source: dict[tuple[str, str], RunResolution] = {}
+    for match in matches:
+        source_key = (match.source_prefix, match.run_id)
+        existing = by_source.get(source_key)
+        if existing is None:
+            by_source[source_key] = match
+            continue
+        artifacts = {artifact.key: artifact for artifact in existing.artifacts}
+        for artifact in match.artifacts:
+            previous = artifacts.get(artifact.key)
+            if previous is not None and previous != artifact:
+                return matches
+            artifacts[artifact.key] = artifact
+        by_source[source_key] = RunResolution(
+            run_id=match.run_id,
+            bucket=match.bucket,
+            source_prefix=match.source_prefix,
+            artifacts=sorted(artifacts.values(), key=lambda item: item.key),
+        )
+    unique = list(by_source.values())
+    authoritative = [
+        match
+        for match in unique
+        if any(artifact.role == "output" for artifact in match.artifacts)
+    ]
+    staging = [
+        match
+        for match in unique
+        if match.artifacts
+        and all(artifact.role == "input" for artifact in match.artifacts)
+    ]
+    if len(authoritative) != 1 or len(authoritative) + len(staging) != len(unique):
+        return unique
+    primary = authoritative[0]
+    artifacts = {
+        artifact.key: artifact
+        for match in (*staging, primary)
+        for artifact in match.artifacts
+    }
+    return [
+        RunResolution(
+            run_id=primary.run_id,
+            bucket=primary.bucket,
+            source_prefix=primary.source_prefix,
+            artifacts=sorted(artifacts.values(), key=lambda item: item.key),
+        )
+    ]
+
+
+def _merge_staging_summaries(runs: list[RunSummary]) -> list[RunSummary]:
+    grouped: dict[tuple[str, str], list[RunSummary]] = {}
+    for run in runs:
+        grouped.setdefault((run.bucket, run.run_id), []).append(run)
+    merged: list[RunSummary] = []
+    for same_id in grouped.values():
+        authoritative = [run for run in same_id if run.output_artifact_count > 0]
+        staging = [
+            run
+            for run in same_id
+            if run.output_artifact_count == 0 and run.input_artifact_count > 0
+        ]
+        if (
+            len(authoritative) != 1
+            or len(authoritative) + len(staging) != len(same_id)
+        ):
+            merged.extend(same_id)
+            continue
+        primary = authoritative[0]
+        merged.append(
+            dataclass_replace(
+                primary,
+                last_modified=max(
+                    (run.last_modified for run in same_id if run.last_modified),
+                    default=primary.last_modified,
+                ),
+                started_at=min(
+                    (run.started_at for run in same_id if run.started_at),
+                    default=primary.started_at,
+                ),
+                artifact_count=sum(run.artifact_count for run in same_id),
+                has_viewable=any(run.has_viewable for run in same_id),
+                input_artifact_count=sum(
+                    run.input_artifact_count for run in same_id
+                ),
+                metadata_artifact_count=sum(
+                    run.metadata_artifact_count for run in same_id
+                ),
+                namespaces=tuple(
+                    dict.fromkeys(
+                        namespace
+                        for run in same_id
+                        for namespace in run.namespaces
+                    )
+                ),
+                canonical_score=sum(run.canonical_score for run in same_id),
+            )
+        )
+    return merged
+
+
 _RUN_REF_PREFIX = "npa1_"
 _SAFE_BUCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$")
 
@@ -390,6 +626,32 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     return parsed.netloc, key
 
 
+def authorize_artifact_inventory_key(
+    run_id: str,
+    key: str,
+    inventory_keys: "list[str] | tuple[str, ...] | set[str]",
+) -> str:
+    """Authorize one S3 key against the already-resolved inventory for a run.
+
+    The inventory must come from S3-first discovery for ``run_id``. Requiring an
+    exact match means S3 credentials can never turn this endpoint into an
+    arbitrary object reader, even when the credentials can access other runs.
+    """
+    normalized_run = validate_run_id(run_id)
+    normalized_key = str(key or "").strip().lstrip("/")
+    if not normalized_key:
+        raise ArtifactDiscoveryError("artifact key is required")
+    if "\\" in normalized_key or any(
+        segment in {"", ".", ".."} for segment in normalized_key.split("/")
+    ):
+        raise ArtifactDiscoveryError("artifact key traversal is not allowed")
+    if normalized_key not in {str(item) for item in inventory_keys}:
+        raise ArtifactDiscoveryError(
+            f"artifact key is not part of validated run {normalized_run!r}"
+        )
+    return normalized_key
+
+
 def build_s3_client(
     *,
     endpoint_url: str,
@@ -452,6 +714,65 @@ def is_inline_render(render: str) -> bool:
     return render in {"rerun", "mcap", "video", "image", "json", "text"}
 
 
+def artifact_role_for_relative_key(relative_key: str) -> str:
+    """Classify an object relative to its run root without workflow allowlists."""
+    relative = str(relative_key or "").strip().lstrip("/")
+    first = relative.split("/", 1)[0].lower() if relative else ""
+    return "input" if first in _INPUT_ARTIFACT_ROOTS else "output"
+
+
+def artifact_category_for_relative_key(relative_key: str, *, role: str = "output") -> str:
+    """Return a user-facing artifact category without inspecting object bytes."""
+    relative = str(relative_key or "").strip().lstrip("/")
+    lowered = relative.lower()
+    leaf = Path(lowered).name
+    first = lowered.split("/", 1)[0] if lowered else ""
+    suffix = Path(leaf).suffix
+    if leaf == "manifest.json" or leaf.endswith("_manifest.json"):
+        return "manifest"
+    if first in {"checkpoint", "checkpoints"} or suffix in {
+        ".bin",
+        ".ckpt",
+        ".pth",
+        ".pt",
+        ".safetensors",
+    }:
+        return "checkpoint"
+    if suffix == ".log" or first in {"log", "logs", "evidence"}:
+        return "log"
+    if suffix in {".yaml", ".yml"} or "config" in leaf or first in {"config", "configs"}:
+        return "config"
+    normalized_role = str(role or "output").lower()
+    if normalized_role == "input":
+        return "input"
+    if normalized_role == "metadata":
+        return "staged"
+    return "output"
+
+
+def artifact_inventory_counts(artifacts: "list[Artifact]") -> dict[str, int]:
+    counts = {"output": 0, "input": 0, "metadata": 0}
+    for item in artifacts:
+        role = str(item.role or "output").lower()
+        if role not in counts:
+            role = "metadata"
+        counts[role] += 1
+    return counts
+
+
+def _artifact_output_signal_score(relative_key: str) -> int:
+    """Score evidence that a namespace is the authoritative output root."""
+    relative = str(relative_key or "").strip().lstrip("/").lower()
+    first = relative.split("/", 1)[0] if relative else ""
+    if relative == "manifest.json":
+        return 10_000
+    if first in {"checkpoint", "checkpoints"}:
+        return 1_000
+    if first in {"artifacts", "evidence", "output", "outputs", "reports", "results"}:
+        return 100
+    return 0
+
+
 def artifact_media_type(filename: str) -> str:
     """Return a browser-playable Content-Type for an artifact filename.
 
@@ -481,12 +802,18 @@ def artifact_media_type(filename: str) -> str:
         ".tif": "image/png",
         ".tiff": "image/png",
         ".json": "application/json",
+        ".jsonl": "application/x-ndjson; charset=utf-8",
         ".txt": "text/plain; charset=utf-8",
         ".log": "text/plain; charset=utf-8",
         ".md": "text/plain; charset=utf-8",
         ".csv": "text/plain; charset=utf-8",
         ".yaml": "text/plain; charset=utf-8",
         ".yml": "text/plain; charset=utf-8",
+        ".bin": "application/octet-stream",
+        ".ckpt": "application/octet-stream",
+        ".pt": "application/octet-stream",
+        ".pth": "application/octet-stream",
+        ".safetensors": "application/octet-stream",
     }
     if suffix in explicit:
         return explicit[suffix]
@@ -494,6 +821,507 @@ def artifact_media_type(filename: str) -> str:
     if guessed:
         return str(guessed)
     return "application/octet-stream"
+
+
+_SECRET_KEY_RE = re.compile(
+    r"(?i)(authorization|cookie|password|passwd|private[_-]?key|secret|token|"
+    r"access[_-]?key|api[_-]?key|client[_-]?secret)"
+)
+_SECRET_LINE_RE = re.compile(
+    r"(?im)^(?P<prefix>\s*[\"']?[A-Za-z0-9_.-]*"
+    r"(?:authorization|cookie|password|passwd|private[_-]?key|secret|token|"
+    r"access[_-]?key|api[_-]?key|client[_-]?secret)[\"']?\s*[:=]\s*)"
+    r"(?P<value>[^\r\n,}]+)"
+)
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*")
+_AWS_ACCESS_KEY_RE = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+_PEM_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----",
+    re.DOTALL,
+)
+
+
+def _redact_json_value(value: Any) -> tuple[Any, bool]:
+    redacted = False
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, child in value.items():
+            if _SECRET_KEY_RE.search(str(key)):
+                out[str(key)] = "[REDACTED]"
+                redacted = True
+            else:
+                clean, changed = _redact_json_value(child)
+                out[str(key)] = clean
+                redacted = redacted or changed
+        return out, redacted
+    if isinstance(value, list):
+        out_list = []
+        for child in value:
+            clean, changed = _redact_json_value(child)
+            out_list.append(clean)
+            redacted = redacted or changed
+        return out_list, redacted
+    if isinstance(value, str):
+        clean, changed = redact_artifact_text(value)
+        return clean, changed
+    return value, False
+
+
+def redact_artifact_text(text: str) -> tuple[str, bool]:
+    """Redact common credential forms from an inline text preview."""
+    value = str(text or "")
+    original = value
+    value = _PEM_PRIVATE_KEY_RE.sub("[REDACTED PRIVATE KEY]", value)
+    value = _BEARER_RE.sub("Bearer [REDACTED]", value)
+    value = _AWS_ACCESS_KEY_RE.sub("[REDACTED ACCESS KEY]", value)
+    value = _SECRET_LINE_RE.sub(lambda match: match.group("prefix") + "[REDACTED]", value)
+    return value, value != original
+
+
+def build_text_preview(
+    data: bytes,
+    *,
+    total_bytes: int,
+    render: str,
+    max_bytes: int = INLINE_TEXT_MAX_BYTES,
+) -> dict[str, Any]:
+    """Decode, redact, and format a bounded UTF-8 artifact preview."""
+    if max_bytes <= 0:
+        raise ArtifactDiscoveryError("text preview max_bytes must be > 0")
+    raw = bytes(data or b"")
+    bounded = raw[:max_bytes]
+    text = bounded.decode("utf-8", errors="replace")
+    redacted = False
+    normalized_render = str(render or "text").lower()
+    if normalized_render == "json":
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            text, redacted = redact_artifact_text(text)
+        else:
+            parsed, redacted = _redact_json_value(parsed)
+            text = json.dumps(parsed, indent=2, sort_keys=True, ensure_ascii=False)
+    else:
+        text, redacted = redact_artifact_text(text)
+    total = max(0, int(total_bytes or 0))
+    summary = {
+        "text": text,
+        "truncated": total > len(bounded) or len(raw) > len(bounded),
+        "bytes_read": len(bounded),
+        "total_bytes": total,
+        "max_bytes": int(max_bytes),
+        "encoding": "utf-8",
+        "invalid_utf8_replaced": "\ufffd" in text,
+        "redacted": redacted,
+        "render": normalized_render,
+    }
+    return summary
+
+
+def parse_http_byte_range(value: str, total_bytes: int) -> tuple[int, int] | None:
+    """Parse one RFC 7233 byte range; reject multiple or unsatisfiable ranges."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    total = int(total_bytes)
+    if total < 0 or not raw.lower().startswith("bytes=") or "," in raw:
+        raise ArtifactDiscoveryError("invalid byte range")
+    spec = raw.split("=", 1)[1].strip()
+    if "-" not in spec:
+        raise ArtifactDiscoveryError("invalid byte range")
+    start_raw, end_raw = (part.strip() for part in spec.split("-", 1))
+    if not start_raw:
+        if not end_raw.isdigit() or int(end_raw) <= 0 or total <= 0:
+            raise ArtifactDiscoveryError("unsatisfiable byte range")
+        length = min(int(end_raw), total)
+        return total - length, total - 1
+    if not start_raw.isdigit():
+        raise ArtifactDiscoveryError("invalid byte range")
+    start = int(start_raw)
+    if start >= total:
+        raise ArtifactDiscoveryError("unsatisfiable byte range")
+    if end_raw:
+        if not end_raw.isdigit():
+            raise ArtifactDiscoveryError("invalid byte range")
+        end = min(int(end_raw), total - 1)
+        if end < start:
+            raise ArtifactDiscoveryError("unsatisfiable byte range")
+    else:
+        end = total - 1
+    return start, end
+
+
+def safe_artifact_filename(key: str) -> str:
+    """Return a conservative ASCII download filename for Content-Disposition."""
+    leaf = Path(str(key or "").replace("\\", "/")).name or "artifact.bin"
+    clean = re.sub(r"[^A-Za-z0-9._-]+", "_", leaf).strip("._")
+    return (clean[:180] or "artifact.bin")
+
+
+def safe_content_disposition(key: str, *, attachment: bool) -> str:
+    disposition = "attachment" if attachment else "inline"
+    return f'{disposition}; filename="{safe_artifact_filename(key)}"'
+
+
+def _relative_artifact_key(artifact: Artifact) -> str:
+    relative = str(artifact.relative_key or "").strip().strip("/").lower()
+    if relative:
+        return relative
+    key = str(artifact.key or "").strip().strip("/").lower()
+    for aliases in GROOT_ARTIFACT_PATHS.values():
+        for alias in aliases:
+            if key == alias or key.endswith("/" + alias):
+                return alias
+    return key
+
+
+def groot_artifact_contract(
+    artifacts: list[Artifact],
+    learning_report: dict[str, Any],
+) -> dict[str, Any]:
+    """Serialize path matches only after report metadata establishes semantics.
+
+    A matching filename is useful for locating an object, but it is not enough
+    to classify an arbitrary run as GR00T.  The report schema, evaluation kind,
+    and provenance establish that meaning; retained aliases are then matched
+    through this one Python-owned table.
+    """
+    report: dict[str, Any] = (
+        learning_report if isinstance(learning_report, dict) else {}
+    )
+    authoritative = (
+        report.get("schema") == "npa.groot.learning.v1"
+        and str(report.get("evaluation_kind") or "").strip()
+        == "offline held-out policy evaluation"
+        and report.get("closed_loop") is False
+    )
+    inventory = {_relative_artifact_key(item): item for item in artifacts}
+    matches: dict[str, list[str]] = {}
+    for semantic, aliases in GROOT_ARTIFACT_PATHS.items():
+        matches[semantic] = [
+            alias for alias in aliases if alias.lower() in inventory
+        ]
+
+    dataset_value = report.get("dataset")
+    dataset: dict[str, Any] = dataset_value if isinstance(dataset_value, dict) else {}
+    provenance_value = report.get("provenance")
+    provenance: dict[str, Any] = (
+        provenance_value if isinstance(provenance_value, dict) else {}
+    )
+    camera_names = [
+        str(value).strip()
+        for value in dataset.get("camera_names") or []
+        if str(value).strip()
+    ]
+    primary_camera = str(provenance.get("primary_camera") or "").strip()
+    camera_valid = bool(primary_camera and primary_camera in camera_names)
+    if authoritative and not camera_valid:
+        # A semantically valid report with contradictory modality provenance is
+        # not safe input for a viewer camera/topic selection.
+        authoritative = False
+
+    return {
+        "schema": GROOT_ARTIFACT_CONTRACT_SCHEMA,
+        "authoritative": authoritative,
+        "evaluation_kind": str(report.get("evaluation_kind") or ""),
+        "closed_loop": report.get("closed_loop") is True,
+        "primary_camera": primary_camera if camera_valid else "",
+        "camera_names": camera_names,
+        "paths": {key: list(value) for key, value in GROOT_ARTIFACT_PATHS.items()},
+        "matches": matches if authoritative else {},
+        "stages": [
+            {**stage, "semantics": list(stage["semantics"])}
+            for stage in GROOT_ARTIFACT_STAGES
+        ],
+    }
+
+
+def _finite_loss_history(
+    value: Any,
+    *,
+    step_keys: tuple[str, ...] = ("optimizer_step", "step"),
+) -> list[dict[str, Any]] | None:
+    """Return validated optimizer-step loss points, or ``None`` if malformed."""
+    if not isinstance(value, list) or not value:
+        return None
+    points: list[dict[str, Any]] = []
+    previous = 0
+    for raw in value:
+        if not isinstance(raw, dict):
+            return None
+        step_value = next((raw.get(key) for key in step_keys if raw.get(key) is not None), None)
+        try:
+            step = int(str(step_value))
+            loss = float(str(raw.get("loss")))
+        except (TypeError, ValueError):
+            return None
+        if step <= previous or step <= 0 or not math.isfinite(loss):
+            return None
+        points.append({"optimizer_step": step, "loss": loss})
+        previous = step
+    return points
+
+
+def build_run_summary(
+    run_id: str,
+    artifacts: list[Artifact],
+    documents: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a concise run summary from allowlisted manifest/evidence fields."""
+    docs = documents if isinstance(documents, dict) else {}
+
+    def _doc(suffix: str) -> dict[str, Any]:
+        normalized = suffix.lower().strip("/")
+        for key, value in docs.items():
+            if str(key).lower().strip("/") == normalized and isinstance(value, dict):
+                return value
+        for key, value in docs.items():
+            if str(key).lower().endswith(suffix.lower()) and isinstance(value, dict):
+                return value
+        return {}
+
+    def _semantic_doc(semantic: str) -> tuple[str, dict[str, Any]]:
+        for path in GROOT_ARTIFACT_PATHS[semantic]:
+            document = _doc(path)
+            if document:
+                return path, document
+        return "", {}
+
+    root_manifest = _doc("manifest.json")
+    workflow_manifest = _doc("npa-workflow/manifest.json")
+    training = _doc("evidence/training.json")
+    capacity = _doc("evidence/capacity.json")
+    collective = _doc("evidence/collective.json")
+    checkpoint_path, checkpoint = _semantic_doc("training_manifest")
+    learning_path, learning_doc = _semantic_doc("report")
+    learning: dict[str, Any] = {}
+    if learning_doc.get("schema") == "npa.groot.learning.v1":
+        learning_dataset_value = learning_doc.get("dataset")
+        learning_dataset: dict[str, Any] = (
+            learning_dataset_value
+            if isinstance(learning_dataset_value, dict)
+            else {}
+        )
+        learning_training_value = learning_doc.get("training")
+        learning_training: dict[str, Any] = (
+            learning_training_value
+            if isinstance(learning_training_value, dict)
+            else {}
+        )
+        learning_eval_value = learning_doc.get("evaluation")
+        learning_eval: dict[str, Any] = (
+            learning_eval_value
+            if isinstance(learning_eval_value, dict)
+            else {}
+        )
+        learning_viz_value = learning_doc.get("visualizations")
+        learning_viz: dict[str, Any] = (
+            learning_viz_value
+            if isinstance(learning_viz_value, dict)
+            else {}
+        )
+        learning = {
+            "badge": str(learning_doc.get("badge") or "Offline held-out policy evaluation"),
+            "pipeline_status": str(learning_doc.get("pipeline_status") or "unknown"),
+            "learning_outcome": str(learning_doc.get("learning_outcome") or "inconclusive"),
+            "candidate_promoted": learning_doc.get("candidate_promoted") is True,
+            "evaluation_kind": str(learning_doc.get("evaluation_kind") or ""),
+            "closed_loop": learning_doc.get("closed_loop") is True,
+            "embodiment": str(learning_dataset.get("embodiment") or ""),
+            "camera_names": [str(value) for value in learning_dataset.get("camera_names") or []],
+            "source_resolution": str(learning_dataset.get("source_resolution") or "unknown"),
+            "train_episodes": int(learning_dataset.get("train_episodes") or 0),
+            "heldout_episodes": int(learning_dataset.get("heldout_episodes") or 0),
+            "heldout_samples": int(learning_dataset.get("heldout_samples") or 0),
+            "split_hash": str(learning_dataset.get("split_hash") or ""),
+            "leakage_free": learning_dataset.get("leakage_free") is True,
+            "gpu_count": int(learning_training.get("gpu_count") or 0),
+            "optimizer_steps": int(learning_training.get("optimizer_steps") or 0),
+            "training_examples": int(learning_training.get("training_examples") or 0),
+            "epoch_equivalent": float(learning_training.get("epoch_equivalent") or 0.0),
+            "checkpoint_uri": str(learning_training.get("checkpoint_uri") or ""),
+            "metric_name": str(learning_eval.get("metric_name") or "action_mse"),
+            "baseline_value": float(learning_eval.get("baseline_value") or 0.0),
+            "posttrain_value": float(learning_eval.get("posttrain_value") or 0.0),
+            "absolute_improvement": float(learning_eval.get("absolute_improvement") or 0.0),
+            "relative_improvement_percent": float(
+                learning_eval.get("relative_improvement_percent") or 0.0
+            ),
+            "improved": learning_eval.get("improved") is True,
+            "gate_passed": learning_eval.get("gate_passed") is True,
+            "zero_predictor_mse": float(learning_eval.get("zero_predictor_mse") or 0.0),
+            "train_mean_predictor_mse": float(
+                learning_eval.get("train_mean_predictor_mse") or 0.0
+            ),
+            "baseline_skill_score": float(
+                learning_eval.get("baseline_skill_score") or 0.0
+            ),
+            "posttrain_skill_score": float(
+                learning_eval.get("posttrain_skill_score") or 0.0
+            ),
+            "repeat_noise_multiple": float(
+                (learning_eval.get("gate") or {}).get("repeat_noise_multiple") or 0.0
+            ),
+            "per_horizon_mse": learning_eval.get("per_horizon_mse") or {},
+            "loss_trend": learning_training.get("loss_trend") or {},
+            "checkpoint_selection_uri": str(
+                learning_eval.get("checkpoint_selection_uri") or ""
+            ),
+            "per_dimension": learning_eval.get("per_dimension") or [],
+            "mcap_uri": str(learning_viz.get("mcap_uri") or ""),
+            "rrd_uri": str(learning_viz.get("rrd_uri") or ""),
+            "comparison_video_uri": str(
+                learning_viz.get("comparison_video_uri")
+                or (learning_viz.get("comparison_video") or {}).get("uri")
+                or ""
+            ),
+            "native_resolution_preserved": learning_viz.get("native_resolution_preserved")
+            is True,
+            "semantic_phases": [str(value) for value in learning_doc.get("semantic_phases") or []],
+        }
+        learning["artifact_contract"] = groot_artifact_contract(
+            artifacts, learning_doc
+        )
+    workflow = str(
+        root_manifest.get("workflow_name")
+        or workflow_manifest.get("workflow")
+        or workflow_manifest.get("name")
+        or ""
+    )
+    steps_value = workflow_manifest.get("steps")
+    steps: list[Any] = steps_value if isinstance(steps_value, list) else []
+    tool_ref = ""
+    for step in steps:
+        if isinstance(step, dict) and step.get("tool_ref"):
+            tool_ref = str(step["tool_ref"])
+            break
+    status = str(
+        learning_doc.get("status")
+        or training.get("status")
+        or training.get("terminal_status")
+        or checkpoint.get("status")
+        or root_manifest.get("status")
+        or "unknown"
+    )
+    accelerator_count = int(
+        (learning.get("gpu_count") if learning else 0)
+        or training.get("gpu_count")
+        or training.get("distinct_gpu_count")
+        or checkpoint.get("num_gpus")
+        or capacity.get("total_allocatable")
+        or 0
+    )
+    accelerator_type = str(
+        training.get("accelerator")
+        or collective.get("accelerator")
+        or capacity.get("accelerator")
+        or ""
+    )
+    world_size = int(training.get("world_size") or collective.get("world_size") or 0)
+    training_steps = int(
+        (learning.get("optimizer_steps") if learning else 0)
+        or training.get("optimizer_steps")
+        or checkpoint.get("training_step")
+        or checkpoint.get("max_steps")
+        or 0
+    )
+    report_training_value = learning_doc.get("training")
+    report_training: dict[str, Any] = (
+        report_training_value if isinstance(report_training_value, dict) else {}
+    )
+    loss_sources = (
+        (learning_path, report_training, "final_loss", "report"),
+        (checkpoint_path, checkpoint, "train_loss", "training_manifest"),
+        ("evidence/training.json", training, "train_loss", "generic_training"),
+    )
+    loss: float | None = None
+    loss_history: list[dict[str, Any]] = []
+    loss_source = ""
+    loss_error = "no_loss_evidence"
+    for source, payload, final_key, source_kind in loss_sources:
+        if not payload:
+            continue
+        raw_history = payload.get("loss_history")
+        if raw_history is None:
+            raw_history = payload.get("losses")
+        final_value = payload.get(final_key)
+        if final_value is None and source_kind == "training_manifest":
+            final_value = payload.get("final_step_loss")
+        if final_value is None and source.endswith("manifest.json"):
+            final_value = payload.get("final_loss")
+        # Presence at a higher-precedence source is intentional: malformed or
+        # non-finite evidence must remain visible as invalid, never be hidden by
+        # a weaker fallback document.
+        if raw_history is None and final_value is None:
+            continue
+        loss_source = source
+        parsed_history = _finite_loss_history(raw_history)
+        try:
+            candidate_loss = float(final_value) if final_value is not None else None
+        except (TypeError, ValueError):
+            candidate_loss = None
+        if (
+            parsed_history
+            and candidate_loss is not None
+            and math.isfinite(candidate_loss)
+            and math.isclose(candidate_loss, parsed_history[-1]["loss"], rel_tol=1e-9, abs_tol=1e-12)
+        ):
+            loss = candidate_loss
+            loss_history = parsed_history
+            loss_error = ""
+        else:
+            loss_error = "malformed_or_nonfinite_loss_evidence"
+        break
+    # The generic training evidence contract predates per-step trajectories and
+    # may honestly contain only a finite terminal loss.  Preserve that signal
+    # for non-GR00T summaries, while reports/manifests claiming a trajectory
+    # remain subject to the stricter history/final-value consistency check.
+    terminal_only_loss = (
+        loss_source == "evidence/training.json"
+        and not loss_history
+        and training.get("loss_finite") is True
+    )
+    if terminal_only_loss:
+        try:
+            terminal = float(str(training.get("train_loss")))
+        except (TypeError, ValueError):
+            terminal = math.nan
+        if math.isfinite(terminal):
+            loss = terminal
+            loss_error = ""
+    finite_loss = loss is not None and (bool(loss_history) or terminal_only_loss)
+    counts = artifact_inventory_counts(artifacts)
+    has_recording = any(item.render in {"rerun", "mcap"} for item in artifacts)
+    summary = {
+        "run_id": str(run_id),
+        "completion_status": status,
+        "workflow": workflow,
+        "tool": tool_ref or workflow,
+        "accelerator_count": accelerator_count,
+        "accelerator_type": accelerator_type,
+        "world_size": world_size,
+        "training_steps": training_steps,
+        "loss": loss if finite_loss else None,
+        "finite_loss": finite_loss,
+        "loss_history": loss_history if finite_loss else [],
+        "loss_point_count": len(loss_history) if finite_loss else 0,
+        "loss_source": loss_source,
+        "loss_validation_error": loss_error,
+        "artifact_count": len(artifacts),
+        "output_artifact_count": counts["output"],
+        "input_artifact_count": counts["input"],
+        "metadata_artifact_count": counts["metadata"],
+        "total_bytes": sum(max(0, int(item.size or 0)) for item in artifacts),
+        "has_recording": has_recording,
+        "recording_state": (
+            "Recording available"
+            if has_recording
+            else "No RRD/MCAP recording; use the artifacts below"
+        ),
+    }
+    if learning:
+        summary["learning"] = learning
+    return summary
 
 
 def list_runs(
@@ -789,9 +1617,18 @@ def _list_artifact_run_index(
                         "last_modified": "",
                         "earliest": "",
                         "has_viewable": False,
+                        "output_artifact_count": 0,
+                        "input_artifact_count": 0,
+                        "canonical_score": 0,
                     },
                 )
                 current["artifact_count"] = int(current["artifact_count"]) + 1
+                scope = "/".join(part for part in (parent, run_id) if part)
+                relative_key = key[len(scope) :].lstrip("/") if key.startswith(scope) else key
+                role = artifact_role_for_relative_key(relative_key)
+                count_key = "input_artifact_count" if role == "input" else "output_artifact_count"
+                current[count_key] = int(current[count_key]) + 1
+                current["canonical_score"] = int(current["canonical_score"]) + _artifact_output_signal_score(relative_key)
                 current["has_viewable"] = bool(
                     current["has_viewable"] or render_hint_for_object(key=key) != "download"
                 )
@@ -816,10 +1653,17 @@ def _list_artifact_run_index(
             bucket=bucket,
             summary_complete=discovery_complete,
             resolved_prefix=parent,
+            output_artifact_count=int(payload["output_artifact_count"]),
+            input_artifact_count=int(payload["input_artifact_count"]),
+            namespaces=(parent,),
+            canonical_score=int(payload["canonical_score"]),
         )
         for (parent, run_id), payload in summaries.items()
         if not needle or needle in run_id.lower()
     ]
+    # Keep one fail-closed implementation for the staging + authoritative
+    # output shape.  All other duplicate basenames remain source-qualified.
+    runs = _merge_staging_summaries(runs)
     runs.sort(
         key=lambda item: (
             item.last_modified,
@@ -1324,6 +2168,7 @@ def find_run_artifacts_across_buckets(
         raise ArtifactDiscoveryError(
             "run source discovery was incomplete; select an exact source"
         )
+    matches = _merge_staging_resolutions(matches)
     if not matches:
         return "", []
     if len(matches) > 1:
@@ -1467,12 +2312,16 @@ def find_run_artifact_matches(
             run_id=normalized_run,
             bucket=bucket,
             source_prefix=item.resolved_prefix,
-            artifacts=list_artifacts(
-                bucket,
-                normalized_run,
-                prefix=item.resolved_prefix,
-                s3=s3,
-            ),
+            artifacts=[
+                artifact
+                for namespace in (item.namespaces or (item.resolved_prefix,))
+                for artifact in list_artifacts(
+                    bucket,
+                    normalized_run,
+                    prefix=namespace,
+                    s3=s3,
+                )
+            ],
         )
         for item in index.runs
         if item.run_id == normalized_run
@@ -1498,10 +2347,16 @@ def resolve_run_artifacts(
         # A run_ref is a stable selector, not an authorization capability. Prove
         # that its exact bucket/prefix tuple is present in the server-discovered
         # bounded run index before listing objects beneath a caller-supplied path.
-        matches = find_run_artifact_matches(
-            bucket, base_prefix=base_prefix, run_id=run_id, s3=s3
+        exact_source_matches = _merge_staging_resolutions(
+            find_run_artifact_matches(
+                bucket, base_prefix=base_prefix, run_id=run_id, s3=s3
+            )
         )
-        exact = [item for item in matches if item.source_prefix == source_prefix]
+        exact = [
+            item
+            for item in exact_source_matches
+            if item.source_prefix == source_prefix
+        ]
         if not exact:
             return None
         if len(exact) > 1:
@@ -1523,6 +2378,7 @@ def resolve_run_artifacts(
         raise ArtifactDiscoveryError(
             "run source discovery was incomplete; select a server-discovered exact source"
         )
+    matches = _merge_staging_resolutions(matches)
     if not matches:
         return None
     if len(matches) > 1:
@@ -1541,6 +2397,7 @@ def find_run_artifacts(bucket: str, *, base_prefix: str, run_id: str, s3=None) -
     matches = find_run_artifact_matches(
         bucket, base_prefix=base_prefix, run_id=run_id, s3=s3
     )
+    matches = _merge_staging_resolutions(matches)
     if not matches:
         return []
     if len(matches) > 1:
@@ -1561,6 +2418,7 @@ def list_artifacts(
     normalized_prefix = _normalize_prefix(prefix)
     run_prefix = _normalize_prefix(_validate_run_basename(run_id))
     scope = f"{normalized_prefix}{run_prefix}"
+    namespace = normalized_prefix.rstrip("/") or "<bucket-root>"
     artifacts: list[Artifact] = []
     try:
         paginator = client.get_paginator("list_objects_v2")
@@ -1570,6 +2428,8 @@ def list_artifacts(
                 if not key:
                     continue
                 render = render_hint_for_object(key=key)
+                relative_key = key[len(scope):] if key.startswith(scope) else key
+                relative_key = relative_key.lstrip("/")
                 artifacts.append(
                     Artifact(
                         run_id=run_id,
@@ -1579,6 +2439,9 @@ def list_artifacts(
                         last_modified=_to_iso8601(item.get("LastModified")),
                         render=render,
                         inline=is_inline_render(render),
+                        role=artifact_role_for_relative_key(relative_key),
+                        namespace=namespace,
+                        relative_key=relative_key,
                     )
                 )
     except (ClientError, BotoCoreError) as exc:
@@ -1602,6 +2465,7 @@ def list_artifacts_page(
     normalized_prefix = _normalize_prefix(prefix)
     run_prefix = _normalize_prefix(validate_run_id(run_id))
     scope = f"{normalized_prefix}{run_prefix}"
+    namespace = normalized_prefix.rstrip("/") or "<bucket-root>"
     size = max(1, min(int(page_size), 1000))
     kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": scope, "MaxKeys": size}
     if str(cursor or "").strip():
@@ -1618,6 +2482,8 @@ def list_artifacts_page(
         if not key:
             continue
         render = render_hint_for_object(key=key)
+        relative_key = key[len(scope):] if key.startswith(scope) else key
+        relative_key = relative_key.lstrip("/")
         artifacts.append(
             Artifact(
                 run_id=run_id,
@@ -1627,6 +2493,9 @@ def list_artifacts_page(
                 last_modified=_to_iso8601(item.get("LastModified")),
                 render=render,
                 inline=is_inline_render(render),
+                role=artifact_role_for_relative_key(relative_key),
+                namespace=namespace,
+                relative_key=relative_key,
             )
         )
     artifacts.sort(key=lambda item: (item.last_modified, item.key), reverse=True)
@@ -1791,7 +2660,7 @@ def find_run_artifact_page_across_buckets(
 def select_preferred_artifact(artifacts: list[Artifact]) -> Artifact | None:
     if not artifacts:
         return None
-    def _score(item: Artifact) -> tuple[int, int, str, str]:
+    def _score(item: Artifact) -> tuple[int, int, int, str, str]:
         key = item.key.lower()
         if key.endswith("/reports/sim2real.rrd"):
             specificity = 0
@@ -1805,7 +2674,8 @@ def select_preferred_artifact(artifacts: list[Artifact]) -> Artifact | None:
             specificity = 20
         else:
             specificity = 10
-        return (_RENDER_ORDER.get(item.render, 99), specificity, item.last_modified, item.key)
+        role_rank = {"output": 0, "metadata": 1, "input": 2}.get(str(item.role or ""), 3)
+        return (role_rank, _RENDER_ORDER.get(item.render, 99), specificity, item.last_modified, item.key)
     return sorted(
         artifacts,
         key=_score,

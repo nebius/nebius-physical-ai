@@ -9,6 +9,10 @@ from npa.workflows.artifacts import (
     AmbiguousRunError,
     Artifact,
     ArtifactDiscoveryError,
+    RunResolution,
+    RunSummary,
+    _merge_staging_resolutions,
+    _merge_staging_summaries,
     artifact_media_type,
     artifact_data_role,
     build_fiftyone_dataset,
@@ -873,6 +877,121 @@ def test_find_run_artifacts_locates_root_level_run() -> None:
         "scenario-gen-smoke/scenario-gen-smoke-1/npa-workflow/manifest.json",
         "scenario-gen-smoke/scenario-gen-smoke-1/ranked/ranked.json",
     ]
+
+
+def test_find_run_artifacts_merges_staging_inputs_with_authoritative_outputs() -> None:
+    """One run id may have staged inputs and a separate completed output root."""
+    run_id = "groot17-8gpu-20260806T024557Z-3dfb0270"
+    layout = [
+        (f"groot-1-7-finetune/{run_id}/source/runner.py", "2026-08-06T02:40:00+00:00"),
+        (f"groot-1-7-finetune/{run_id}/data/episode.mp4", "2026-08-06T02:41:00+00:00"),
+        (f"{run_id}/checkpoints/model.safetensors", "2026-08-06T03:01:00+00:00"),
+        (f"{run_id}/manifest.json", "2026-08-06T03:02:00+00:00"),
+    ]
+
+    artifacts = find_run_artifacts("bucket", base_prefix="", run_id=run_id, s3=_PrefixAwareS3(layout))
+
+    assert {item.key for item in artifacts} == {key for key, _timestamp in layout}
+    assert {item.role for item in artifacts if "/source/" in item.key or "/data/" in item.key} == {
+        "input"
+    }
+    outputs = [item for item in artifacts if item.role == "output"]
+    assert {item.key for item in outputs} == {
+        f"{run_id}/checkpoints/model.safetensors",
+        f"{run_id}/manifest.json",
+    }
+    checkpoint = next(item for item in outputs if item.key.endswith(".safetensors"))
+    assert checkpoint.render == "download"
+    assert checkpoint.inline is False
+
+
+def test_list_all_runs_groups_duplicate_run_namespaces_and_counts_outputs() -> None:
+    run_id = "groot17-8gpu-20260806T024557Z-3dfb0270"
+    layout = [
+        (f"groot-1-7-finetune/{run_id}/source/runner.py", "2026-08-06T02:40:00+00:00"),
+        (f"groot-1-7-finetune/{run_id}/data/episode.mp4", "2026-08-06T02:41:00+00:00"),
+        (f"{run_id}/checkpoints/model.safetensors", "2026-08-06T03:01:00+00:00"),
+        (f"{run_id}/manifest.json", "2026-08-06T03:02:00+00:00"),
+    ]
+
+    page = list_all_runs("bucket", base_prefix="", limit=50, contains=run_id, s3=_PrefixAwareS3(layout))
+
+    matching = [run for run in page.runs if run.run_id == run_id]
+    assert len(matching) == 1
+    assert matching[0].artifact_count == 4
+    assert matching[0].output_artifact_count == 2
+    assert matching[0].input_artifact_count == 2
+
+
+def test_staging_merge_deduplicates_same_source_and_preserves_started_at() -> None:
+    run_id = "groot-run-20260811T000000Z"
+    output = Artifact(
+        run_id=run_id,
+        key=f"{run_id}/manifest.json",
+        s3_uri=f"s3://bucket/{run_id}/manifest.json",
+        size=10,
+        last_modified="2026-08-11T00:01:00+00:00",
+        render="json",
+        inline=True,
+        relative_key="manifest.json",
+    )
+    duplicate = RunResolution(run_id, "bucket", "", [output])
+    merged_resolutions = _merge_staging_resolutions([duplicate, duplicate])
+    assert len(merged_resolutions) == 1
+    assert merged_resolutions[0].artifacts == [output]
+
+    primary = RunSummary(
+        run_id=run_id,
+        last_modified="2026-08-11T00:01:00+00:00",
+        started_at="2026-08-11T00:00:00+00:00",
+        artifact_count=1,
+        has_viewable=True,
+        bucket="bucket",
+        resolved_prefix="",
+        output_artifact_count=1,
+        canonical_score=1000,
+    )
+    staging = RunSummary(
+        run_id=run_id,
+        last_modified="",
+        started_at="",
+        artifact_count=1,
+        has_viewable=False,
+        bucket="bucket",
+        resolved_prefix="groot-1-7-finetune",
+        input_artifact_count=1,
+        canonical_score=0,
+    )
+    merged_summaries = _merge_staging_summaries([primary, staging])
+    assert len(merged_summaries) == 1
+    assert merged_summaries[0].started_at == primary.started_at
+    assert merged_summaries[0].last_modified == primary.last_modified
+    assert merged_summaries[0].artifact_count == 2
+
+
+def test_staging_resolution_conflicts_remain_fail_closed() -> None:
+    run_id = "groot-run-20260811T000000Z"
+    first = Artifact(
+        run_id=run_id,
+        key=f"{run_id}/manifest.json",
+        s3_uri=f"s3://bucket/{run_id}/manifest.json",
+        size=10,
+        last_modified="2026-08-11T00:01:00+00:00",
+        render="json",
+        inline=True,
+        relative_key="manifest.json",
+    )
+    conflicting = Artifact(**{**first.__dict__, "size": 11})
+    matches = [
+        RunResolution(run_id, "bucket", "", [first]),
+        RunResolution(run_id, "bucket", "", [conflicting]),
+    ]
+    assert _merge_staging_resolutions(matches) == matches
+
+
+def test_yaml_artifact_is_renderable_text_and_downloadable() -> None:
+    assert render_hint_for_object(key="run/workflow.yaml") == "text"
+    assert artifact_media_type("workflow.yaml").startswith("text/plain")
 
 
 def test_list_runs_skips_bare_files_not_run_dirs() -> None:

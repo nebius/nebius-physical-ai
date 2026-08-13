@@ -603,6 +603,19 @@ def test_setup_survives_pep668_managed_interpreters() -> None:
     assert "npa_pip_install -e /opt/nebius-physical-ai/npa" in setup
 
 
+def test_setup_uses_uv_when_the_selected_environment_has_no_pip() -> None:
+    """uv-created vendor venvs must support branch source overlays (live job 404)."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    setup = default_npa_setup()
+    pip_probe = setup.index('"$npa_install_python" -m pip --version')
+    uv_fallback = setup.index('uv pip install -q --python "$npa_install_python"')
+    assert pip_probe < uv_fallback
+    assert 'npa_install_python="$(command -v python3)"' in setup
+    assert "python3 has no pip and uv is unavailable" in setup
+
+
 def test_shipped_trigger_spec_reads_its_knobs_from_config() -> None:
     """The trigger/watch reference must be config-driven, not hardcoded."""
 

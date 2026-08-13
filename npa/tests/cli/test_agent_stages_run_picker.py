@@ -87,6 +87,17 @@ def test_selected_run_capability_is_installed_before_rerun_mount() -> None:
     )
 
 
+def test_artifact_run_load_is_independent_from_rerun_preview() -> None:
+    """Loading an artifact-backed training run must not require a Rerun recording."""
+    ui = _embedded_ui_html()
+    assert 'id="artifactRoleFilter"' in ui
+
+    load_fn = ui.split("async function loadRunData")[1].split("async function selectCamera")[0]
+    assert "await loadArtifactsForSelectedRun(runRef || runId" in load_fn
+    assert "deferPreferredViewer: true" in load_fn
+    assert "No RRD/MCAP recording; use the artifacts below" in load_fn
+
+
 def test_artifact_backed_stages_skip_unrelated_draft_overlay() -> None:
     """Historical capture runs must not inherit an unrelated workflow draft as pending."""
     source = AGENT_MODULE.read_text(encoding="utf-8")
