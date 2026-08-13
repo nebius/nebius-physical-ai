@@ -106,34 +106,15 @@ function assertSingleFoxgloveWebAction(options = {}) {
 
 function foxgloveExportResponse(runId, overrides = {}) {
   const canonicalHash = String(overrides.sha256 || "a".repeat(64));
-  const recordingId = String(overrides.recordingId || `rec_${runId.replace(/[^A-Za-z0-9]/g, "_")}`);
   const layoutId = String(overrides.layoutId === undefined ? "layout_rich_v1" : overrides.layoutId);
-  const start = "2026-08-10T12:00:00.000000000Z";
-  const end = "2026-08-10T12:00:09.937500000Z";
   const seek = "2026-08-10T12:00:00.250000000Z";
-  const params = new URLSearchParams({
-    ds: "foxglove-stream",
-    "ds.recordingId": recordingId,
-    "ds.start": start,
-    "ds.end": end,
-    time: seek,
-  });
+  const recordingUrl = `${window.location.origin}/foxglove/data/${runId}.mcap`;
+  const params = new URLSearchParams();
+  params.append("ds", "remote-file");
+  params.append("ds.url", recordingUrl);
+  params.append("time", seek);
   if (layoutId) params.set("layoutId", layoutId);
   const webUrl = `https://app.foxglove.dev/~/view?${params.toString()}`;
-  const cloud = {
-    recording_id: recordingId,
-    recording_key: `npa-${canonicalHash}`,
-    import_status: "complete",
-    reused: Boolean(overrides.reused),
-    layout: {
-      layout_id: layoutId,
-      available: Boolean(layoutId),
-      created: Boolean(overrides.layoutCreated),
-      updated: false,
-      reused: !overrides.layoutCreated && Boolean(layoutId),
-      reason: layoutId ? "" : "Layout API is unavailable on this plan",
-    },
-  };
   return {
     ok: true,
     converted: Boolean(overrides.converted),
@@ -147,6 +128,8 @@ function foxgloveExportResponse(runId, overrides = {}) {
       canonical_mcap_sha256: canonicalHash,
       canonical_mcap_source: overrides.converted ? "converted" : "native-reused",
       canonical_mcap_provenance: {
+        start_time_ns: 1786363200000000000,
+        end_time_ns: 1786363209937500000,
         rich_run: {
           engine_provenance: {
             engine: "NVIDIA Isaac Sim + Isaac Lab via LeIsaac",
@@ -158,18 +141,18 @@ function foxgloveExportResponse(runId, overrides = {}) {
         },
       },
       transport_state: "published-local-cache",
-      foxglove_cloud: cloud,
       lichtblick_ready: true,
     },
     export: {
       available: true,
-      recording_url: `${window.location.origin}/foxglove/data/${runId}.mcap`,
-      download_url: `${window.location.origin}/foxglove/data/${runId}.mcap`,
+      recording_url: recordingUrl,
+      download_url: recordingUrl,
       web_url: webUrl,
-      data_source: "foxglove-stream",
+      data_source: "remote-file",
+      web_open_mode: "remote-file",
+      layout_id: layoutId,
       canonical_s3_uri: `s3://mock/${runId}/reports/sim2real.mcap`,
       sha256: canonicalHash,
-      cloud,
       provenance: {
         start_time_ns: 1786363200000000000,
         end_time_ns: 1786363209937500000,
@@ -189,19 +172,19 @@ function foxgloveExportResponse(runId, overrides = {}) {
   };
 }
 
-function assertRichOfficialUrl(webUrl, recordingId = null) {
+function assertRichOfficialUrl(webUrl, expectedRecordingUrl = null) {
   const parsed = new URL(webUrl);
   expect(parsed.origin).to.eq("https://app.foxglove.dev");
   expect(parsed.pathname).to.eq("/~/view");
-  expect(parsed.searchParams.get("ds")).to.eq("foxglove-stream");
-  if (recordingId) {
-    expect(parsed.searchParams.get("ds.recordingId")).to.eq(recordingId);
+  expect(parsed.searchParams.get("ds")).to.eq("remote-file");
+  expect(parsed.searchParams.getAll("ds.url")).to.have.length(1);
+  if (expectedRecordingUrl) {
+    expect(parsed.searchParams.get("ds.url")).to.eq(expectedRecordingUrl);
   }
   expect(parsed.searchParams.get("layoutId")).to.eq("layout_rich_v1");
-  expect(parsed.searchParams.get("ds.start")).to.eq("2026-08-10T12:00:00.000000000Z");
-  expect(parsed.searchParams.get("ds.end")).to.eq("2026-08-10T12:00:09.937500000Z");
   expect(parsed.searchParams.get("time")).to.eq("2026-08-10T12:00:00.250000000Z");
   expect(parsed.searchParams.get("openIn")).to.eq(null);
+  expect(parsed.searchParams.get("ds.recordingId")).to.eq(null);
   expect(webUrl).not.to.match(/token|password|authorization/i);
 }
 
@@ -260,30 +243,12 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       });
   });
 
-  it("downloads MCAP and exposes one web-only indexed-recording action", () => {
+  it("downloads MCAP and opens the exact safe remote-file deep link", () => {
     const config = stubFoxgloveApis();
-    const webUrl = foxgloveExportResponse("mock-run", {
-      recordingId: "rec_mock123",
-      reused: true,
-    }).export.web_url;
+    const exportedResponse = foxgloveExportResponse("mock-run");
+    const webUrl = exportedResponse.export.web_url;
     const canonicalHash = "a".repeat(64);
     cy.intercept("POST", "/api/foxglove/export", (request) => {
-      const cloud = request.body.open_web
-        ? {
-            recording_id: "rec_mock123",
-            recording_key: `npa-${canonicalHash}`,
-            import_status: "complete",
-            reused: true,
-            layout: {
-              layout_id: "layout_rich_v1",
-              available: true,
-              created: false,
-              updated: false,
-              reused: true,
-              reason: "",
-            },
-          }
-        : {};
       request.reply({ statusCode: 200, body: {
         ok: true,
         converted: false,
@@ -299,17 +264,16 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
           canonical_mcap_provenance: foxgloveExportResponse("mock-run").sim_viz
             .canonical_mcap_provenance,
           transport_state: "published-local-cache",
-          foxglove_cloud: cloud,
           lichtblick_ready: true,
           lichtblick_iframe_url: "/lichtblick/?ds=remote-file&ds.url=%2Flichtblick%2Frecordings%2Fsim2real.mcap",
         },
         export: request.body.open_web ? {
           available: true,
-          recording_url: `${window.location.origin}${MCAP_URL}`,
-          download_url: `${window.location.origin}${MCAP_URL}`,
+          recording_url: exportedResponse.export.recording_url,
+          download_url: exportedResponse.export.download_url,
           web_url: webUrl,
-          data_source: "foxglove-stream",
-          cloud,
+          data_source: "remote-file",
+          web_open_mode: "remote-file",
         } : {
           available: true,
           recording_url: `${window.location.origin}${MCAP_URL}`,
@@ -336,9 +300,8 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#foxgloveOpenWeb").should("have.text", "Open in Foxglove Web").click();
     cy.wait("@foxgloveExport").its("request.body.open_web").should("eq", true);
     cy.get("@foxgloveNavigate").should("have.been.calledWith", webUrl);
-    cy.then(() => assertRichOfficialUrl(webUrl, "rec_mock123"));
-    cy.get("#foxgloveExportNote").should("contain.text", "Reused the unchanged indexed");
-    cy.get("#renderedDataSummary").should("contain.text", "Foxglove Cloud: complete (reused)");
+    cy.then(() => assertRichOfficialUrl(webUrl, exportedResponse.export.recording_url));
+    cy.get("#foxgloveExportNote").should("contain.text", "remote-file source");
     cy.get("#renderedDataSummary")
       .should("contain.text", "NVIDIA Isaac Sim + Isaac Lab via LeIsaac")
       .and("contain.text", "not world geometry")
@@ -401,7 +364,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.then(() => expect(exports).to.deep.eq(["non-stock-customer-run"]));
   });
 
-  it("uses conversion for a source-only run and reuses a canonical recording for the next run", () => {
+  it("uses conversion for a source-only run and opens each selected canonical recording", () => {
     stubFoxgloveApis();
     let exportCount = 0;
     cy.intercept("POST", "/api/foxglove/export", (request) => {
@@ -409,8 +372,6 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
       const runId = String(request.body.run_id || "");
       request.reply({ statusCode: 200, body: foxgloveExportResponse(runId, {
         converted: exportCount === 1,
-        reused: exportCount === 2,
-        recordingId: exportCount === 1 ? "rec_converted" : "rec_reused",
       }) });
     }).as("pathExport");
     cy.window().then((win) => {
@@ -420,12 +381,12 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#tabRerun").click();
     cy.get("#foxgloveOpenWeb").click();
     cy.wait("@pathExport").its("request.body.run_id").should("eq", "mock-run");
-    cy.get("#foxgloveExportNote").should("contain.text", "Uploaded and indexed");
+    cy.get("#foxgloveExportNote").should("contain.text", "remote-file source");
     cy.get("#runIdInput").clear().type("non-stock-customer-run");
     cy.get("#loadRunData").click();
     cy.get("#foxgloveOpenWeb").click();
     cy.wait("@pathExport").its("request.body.run_id").should("eq", "non-stock-customer-run");
-    cy.get("#foxgloveExportNote").should("contain.text", "Reused the unchanged indexed");
+    cy.get("#foxgloveExportNote").should("contain.text", "remote-file source");
     cy.get("@pathNavigate").should("have.been.calledTwice");
     cy.get("@pathNavigate").then((navigate) => {
       navigate.getCalls().forEach((call) => assertRichOfficialUrl(call.args[0]));
@@ -456,16 +417,17 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.get("#tabRerun").click();
     cy.get("#foxgloveOpenWeb").click();
     cy.wait("@layoutExport").then(({ response }) => {
-      assertRichOfficialUrl(response.body.export.web_url, "rec_mock_run");
-      expect(response.body.export.cloud.layout.reused).to.eq(true);
+      assertRichOfficialUrl(
+        response.body.export.web_url,
+        `${window.location.origin}/foxglove/data/mock-run.mcap`,
+      );
     });
     cy.get("#foxgloveOpenWeb").click();
     cy.wait("@layoutExport").then(({ response }) => {
       const parsed = new URL(response.body.export.web_url);
       expect(parsed.searchParams.get("layoutId")).to.eq(null);
       expect(parsed.searchParams.get("time")).to.eq("2026-08-10T12:00:00.250000000Z");
-      expect(response.body.export.cloud.layout.available).to.eq(false);
-      expect(response.body.export.cloud.layout.reason).to.contain("unavailable");
+      expect(response.body.export.layout_id).to.eq("");
     });
     cy.get("@layoutNavigate").should("have.been.calledTwice");
   });
@@ -496,7 +458,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
     cy.then(() => expect(requests, "one export request").to.eq(1));
   });
 
-  it("does not abandon a valid slow Foxglove Cloud export", () => {
+  it("does not abandon a valid slow canonical MCAP export", () => {
     stubFoxgloveApis();
     const exported = foxgloveExportResponse("mock-run", { reused: true });
     cy.intercept("POST", "/api/foxglove/export", (request) => {
@@ -505,7 +467,7 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
         statusCode: 200,
         body: exported,
       });
-    }).as("slowCloudExport");
+    }).as("slowMcapExport");
     cy.window().then((win) => {
       const replace = cy.stub().as("slowCloudNavigate");
       cy.stub(win, "open").returns({
@@ -517,14 +479,14 @@ describe("NPA agent UI — embedded Foxglove viewer", () => {
 
     cy.get("#tabRerun").click();
     cy.get("#foxgloveOpenWeb").click();
-    cy.wait("@slowCloudExport", { timeout: 20000 });
+    cy.wait("@slowMcapExport", { timeout: 20000 });
     cy.get("@slowCloudNavigate").should(
       "have.been.calledOnceWith",
       exported.export.web_url,
     );
     cy.get("#foxgloveExportNote").should(
       "contain.text",
-      "Reused the unchanged indexed",
+      "remote-file source",
     );
   });
 

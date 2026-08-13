@@ -1714,9 +1714,12 @@ describe("NPA agent UI with mocked APIs", () => {
     cy.get("#tabRerun").click();
     cy.get("#artifactRefreshRuns").click();
     cy.wait("@trainingRuns");
+    // The refresh request and select rendering are separate async steps. Retry
+    // until the response is represented in the DOM instead of sampling the old
+    // options synchronously on a busy CI host.
+    cy.get(`#runIdSelect option[value="${TRAIN_RUN}"]`).should("have.length", 1);
     cy.get("#runIdSelect option").then(($opts) => {
       const values = [...$opts].map((opt) => opt.value).filter(Boolean);
-      expect(values).to.include(TRAIN_RUN);
       expect(values).not.to.include("checkpoints");
       expect(values).not.to.include("evidence");
     });

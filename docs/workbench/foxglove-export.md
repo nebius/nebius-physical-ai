@@ -4,9 +4,9 @@ The NPA agent preserves two distinct operations over one canonical artifact:
 
 - **Download MCAP** resolves the active run's canonical S3 recording and downloads
   byte-identical data from the agent's bounded public HTTPS transport cache.
-- **Open in Foxglove Web** converts or reuses that same MCAP, uploads it to
-  Foxglove Cloud under a content-derived key, waits until the recording is
-  indexed, and opens the official recording deep link.
+- **Open in Foxglove Web** converts or reuses that same MCAP and opens the
+  official `remote-file` deep link to the agent's public HTTPS transport URL.
+  It does not put basic auth or an API token in the URL.
 
 There is no Foxglove Desktop action. Lichtblick remains the in-page MCAP viewer
 tab, with its established open and reload controls.
@@ -29,36 +29,41 @@ fails visibly if discovery, download, validation, upload, or provenance storage
 fails. Successful writes invalidate the run-list cache, so Runs & Artifacts
 shows the MCAP immediately.
 
-Lichtblick, Download MCAP, and Foxglove Cloud all receive those same bytes. The
+Lichtblick, Download MCAP, and Foxglove Web all receive those same bytes. The
 fixed Lichtblick recording and random Foxglove publication are ephemeral caches;
 the S3 URI and SHA-256 identify the persistent artifact. Run switching clears
-the previous run's viewer, canonical, transport, and Cloud state.
+the previous run's viewer, canonical, and transport state.
 
 ## Foxglove Web contract
 
-The official link uses Foxglove's documented Cloud data-source form:
+The official link uses Foxglove's documented remote-file data-source form:
 
 ```text
-https://app.foxglove.dev/~/view?ds=foxglove-stream&ds.recordingId=<recording-id>&layoutId=<layout-id>&ds.start=<rfc3339>&ds.end=<rfc3339>&time=<rfc3339>
+https://app.foxglove.dev/~/view?ds=remote-file&ds.url=<absolute-public-https-mcap>&time=<rfc3339>
 ```
 
-The agent derives a v1 presentation from the canonical MCAP inspection: up to
-two Image panels are bound only to real `foxglove.CompressedImage` topics, 3D is
-included only when a renderable PointCloud, SceneUpdate, pose, or scan schema
-exists (a FrameTransform alone does not paint geometry),
-Plot paths come only from numeric JSON-schema fields, and Log is included only
-for a real `foxglove.Log` topic. The first seek is 250 ms into the bounded
-recording range, where synchronized topics have begun painting.
+`ds.url` is encoded once as a query component; after Foxglove parses the deep
+link it is byte-for-byte the `recording_url` returned by the agent. The link may
+include an initial `time` 250 ms into the inspected recording. Live sources use
+the same documented URL surface with `ds=foxglove-websocket` or
+`ds=rosbridge-websocket` and one `ds.url`.
 
-The shared organization layout is keyed by the stable name
-`NPA Physical AI rich visualization v1`. The API lists and compares its opaque
-data before writing: unchanged layouts are reused, while a changed compatible
-topic contract updates the existing ID instead of spending another layout.
-Foxglove requires API-key-created layouts to use `ORG_WRITE`. If the token or
-plan permits recording upload but not layout mutation, opening the indexed
-recording remains available without `layoutId` and the API response reports the
-layout limitation honestly; the user must select or create a suitable shared
-layout in Foxglove.
+The MCAP URL must be absolute public HTTPS, have no userinfo, and remain
+unauthenticated so the cross-origin Foxglove application can fetch it. nginx
+serves it with wildcard CORS, an `OPTIONS` response that allows `Range`, byte
+ranges, and compression disabled. The filename contains an unguessable token
+and old publications are pruned.
+
+Foxglove sign-in and organization access may still be required in the browser.
+The agent reports the hosted iframe as connecting or ready and surfaces SDK or
+host errors; it does not claim that an external sign-in wall loaded recording
+pixels. The cross-origin iframe also means Describe this is state/text-only.
+
+## Optional Foxglove Cloud import
+
+The backend retains an explicit `cloud_import: true` export mode for operators
+who want a content-addressed Foxglove Cloud recording and managed layout. The
+ordinary UI action does not invoke it and does not require a Foxglove API token.
 
 The API token is read server-side from
 `tokens.FOXGLOVE_API_TOKEN` in `~/.npa/credentials.yaml` (mode `0600`). It is
@@ -76,20 +81,14 @@ npa configure --no-interactive --save-env-credentials
 The next agent deploy or bootstrap copies it into the VM's private
 `credentials.yaml`; it is not added to the shared workbench environment.
 
-Uploads are explicit: only **Open in Foxglove Web** invokes them. The content
-SHA-256 determines a stable recording key, so unchanged MCAPs and in-progress
-imports are reused rather than uploaded again. The action waits for Foxglove's
-`complete` import state and surfaces missing-token, project-selection,
-permission, indexing, and plan/storage/rate-quota errors.
-
-Foxglove sign-in and organization access are still required in the browser. The recording is already
-stored and indexed in Foxglove Cloud before the tab opens, so Foxglove does not
-need to fetch the agent's self-signed IP URL.
+Cloud imports are content-addressed by the canonical SHA-256, reuse unchanged or
+in-progress imports, and surface missing-token, project-selection, permission,
+indexing, plan, storage, and rate-quota errors.
 
 ## Download and transport contract
 
-The random agent URL remains intentionally unauthenticated for MCAP download,
-CORS, and byte-range validation. It is not the Foxglove Web data source. Anyone
+The random agent URL remains intentionally unauthenticated for MCAP download and
+is the Foxglove Web `remote-file` data source. Anyone
 holding the URL can read it until the agent prunes the publication. The export
 route refuses missing, non-HTTPS, credential-bearing, loopback, private,
 link-local, reserved, and metadata origins.
@@ -112,6 +111,36 @@ and build a web-only link for an already indexed recording with:
 ```bash
 npa workbench foxglove open --recording-id <recording-id>
 ```
+
+## Cypress regression tiers
+
+The mocked tier serves the production Agent UI, the real pinned
+`@foxglove/embed` browser build, and a protocol-accurate local viewer stand-in:
+
+```bash
+bash npa/scripts/run_agent_cypress.sh --mock
+```
+
+The live tier is opt-in and read-only apart from preparing the selected
+canonical MCAP. It never submits a workflow or provisions resources. Pass the
+HTTPS URL and basic auth only through the process environment; do not put them
+in command arguments or committed Cypress files:
+
+```bash
+NPA_AGENT_CYPRESS_LIVE=1 \
+NPA_AGENT_BASE_URL=https://agent.example \
+NPA_AGENT_USER='<runtime-user>' \
+NPA_AGENT_PASSWORD='<runtime-password>' \
+NPA_AGENT_CYPRESS_FOXGLOVE_RUN_ID='<real-run-id>' \
+bash npa/scripts/run_agent_cypress.sh --live
+```
+
+Live mode fails closed unless the opt-in and all three access variables are
+present, requires HTTPS, accepts the agent's self-signed certificate, disables
+screenshots and video, and does not print credential values. It proves the SDK
+backend/iframe contract, selected remote-file destination, popup-safe open,
+CORS preflight, byte Range response, and MCAP magic without reading pixels from
+the cross-origin hosted viewer.
 
 References: [Foxglove shareable links](https://docs.foxglove.dev/docs/visualization/shareable-links),
 [Foxglove layouts](https://docs.foxglove.dev/docs/visualization/layouts),

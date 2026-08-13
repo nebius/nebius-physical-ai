@@ -8,7 +8,10 @@ safety rules for the unauthenticated CORS data directory, and the text-only
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -22,6 +25,7 @@ from npa.cli.agent_foxglove import (
     MCAP_MAGIC,
     data_source_for_state,
     describe_foxglove_context,
+    foxglove_data_source_link,
     foxglove_status_payload,
     foxglove_download_export,
     foxglove_recording_link,
@@ -50,6 +54,67 @@ def _install_assets(tmp_path: Path, *, manifest: bool = True) -> Path:
             encoding="utf-8",
         )
     return assets
+
+
+def test_cypress_live_runner_fails_closed_and_keeps_credentials_out_of_arguments() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    runner = (repo_root / "npa" / "scripts" / "run_agent_cypress.sh").read_text(
+        encoding="utf-8"
+    )
+    config = (
+        repo_root / "npa" / "tests" / "browser" / "cypress.config.cjs"
+    ).read_text(encoding="utf-8")
+
+    assert '"${NPA_AGENT_CYPRESS_LIVE:-0}" != "1"' in runner
+    for name in ("NPA_AGENT_BASE_URL", "NPA_AGENT_USER", "NPA_AGENT_PASSWORD"):
+        assert name in runner
+    assert 'npm run "${LIVE_CYPRESS_SCRIPT}" -- --env' not in runner
+    assert "screenshotOnRunFailure: process.env.NPA_AGENT_CYPRESS_LIVE" in config
+    assert "video: false" in config
+
+
+@pytest.mark.skipif(
+    os.environ.get("CI") != "true" or sys.version_info[:2] != (3, 12),
+    reason="the standard CI Python 3.12 lane owns the hermetic Cypress smoke",
+)
+def test_ci_executes_mocked_agent_cypress() -> None:
+    """Keep the real production-bundle browser smoke in the standard CI gate."""
+    repo_root = Path(__file__).resolve().parents[3]
+    child_env = dict(os.environ)
+    for name in tuple(child_env):
+        if name in {"NPA_AGENT_PASSWORD", "FOXGLOVE_API_TOKEN"} or name.startswith(
+            "CYPRESS_NPA_AGENT_"
+        ):
+            child_env.pop(name, None)
+    subprocess.run(
+        ["bash", "npa/scripts/run_agent_cypress.sh", "--mock"],
+        cwd=repo_root,
+        env=child_env,
+        check=True,
+    )
+
+
+def test_deploy_foxglove_settings_preserve_saved_values_and_validate_override(
+    monkeypatch,
+) -> None:
+    from npa.cli.agent_foxglove_config import resolve_settings
+
+    monkeypatch.setenv("NPA_FOXGLOVE_VIEWER_BACKEND", "foxglove-sdk")
+    monkeypatch.delenv("NPA_FOXGLOVE_ORG_SLUG", raising=False)
+    monkeypatch.delenv("NPA_FOXGLOVE_LIVE_URL", raising=False)
+    resolved = resolve_settings(
+        embed_src="https://embed.foxglove.dev/",
+        saved={"org_slug": "saved-org", "live_url": "wss://robot.example/ws"},
+    )
+
+    assert resolved == {
+        "embed_src": "https://embed.foxglove.dev/",
+        "viewer_backend": "foxglove-sdk",
+        "org_slug": "saved-org",
+        "live_url": "wss://robot.example/ws",
+    }
+    with pytest.raises(ValueError, match="foxglove viewer backend"):
+        resolve_settings(viewer_backend="unexpected")
 
 
 # --------------------------------------------------------------------------- #
@@ -159,6 +224,68 @@ def test_foxglove_download_export_keeps_exact_public_url() -> None:
     assert links["available"] is True
     assert links["download_url"] == recording
     assert "web_url" not in links
+
+
+def test_foxglove_data_source_link_encodes_remote_urls_exactly_once() -> None:
+    from urllib.parse import parse_qs, urlparse
+
+    recording = "https://agent.example/foxglove/data/a%20run.mcap?part=2&view=all"
+    link = foxglove_data_source_link(
+        {"type": "remote-file", "urls": [recording]},
+        start_time_ns=1_786_363_200_000_000_000,
+        end_time_ns=1_786_363_209_937_500_000,
+    )
+    query = parse_qs(urlparse(link["web_url"]).query)
+
+    assert link["available"] is True
+    assert link["web_open_mode"] == "remote-file"
+    assert query == {
+        "ds": ["remote-file"],
+        "ds.url": [recording],
+        "time": ["2026-08-10T12:00:00.250000000Z"],
+    }
+    assert "ds.recordingId" not in query
+    assert "password" not in link["web_url"].lower()
+
+
+@pytest.mark.parametrize(
+    ("protocol", "url"),
+    [
+        ("foxglove-websocket", "wss://robot.example/ws"),
+        ("rosbridge-websocket", "wss://robot.example/ros"),
+    ],
+)
+def test_foxglove_data_source_link_supports_documented_live_sources(
+    protocol: str, url: str
+) -> None:
+    from urllib.parse import parse_qs, urlparse
+
+    link = foxglove_data_source_link(
+        {"type": "live", "protocol": protocol, "url": url}
+    )
+
+    assert parse_qs(urlparse(link["web_url"]).query) == {
+        "ds": [protocol],
+        "ds.url": [url],
+    }
+    assert link["web_open_mode"] == "live"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"type": "remote-file", "urls": ["/relative.mcap"]},
+        {"type": "remote-file", "urls": ["https://user:pass@agent.example/a.mcap"]},
+        {"type": "remote-file", "urls": ["https://127.0.0.1/a.mcap"]},
+        {"type": "live", "protocol": "foxglove-websocket", "url": "ws://localhost:8765"},
+        {"type": "live", "protocol": "unsupported", "url": "wss://robot.example/ws"},
+    ],
+)
+def test_foxglove_data_source_link_rejects_unsafe_sources(source: dict) -> None:
+    link = foxglove_data_source_link(source)
+
+    assert link["available"] is False
+    assert link["web_url"] == ""
 
 
 def test_foxglove_recording_link_is_web_only_and_round_trips_id() -> None:
@@ -500,14 +627,24 @@ def test_select_viewer_backend_honors_an_operator_override() -> None:
     )
     assert forced == "self-hosted"
 
-    # An override that cannot be served is ignored rather than breaking the pane.
-    fallback, _ = select_viewer_backend(
+    # An explicit override never silently falls back to another product.
+    fallback, reason = select_viewer_backend(
         {"NPA_FOXGLOVE_VIEWER_BACKEND": "self-hosted"},
         sdk_ready=True,
         embed_src="https://embed.foxglove.dev/",
         self_hosted_ready=False,
     )
-    assert fallback == "foxglove-sdk"
+    assert fallback == ""
+    assert "explicitly selected self-hosted" in reason
+
+    unavailable, reason = select_viewer_backend(
+        {"NPA_FOXGLOVE_VIEWER_BACKEND": "foxglove-sdk"},
+        sdk_ready=True,
+        embed_src="",
+        self_hosted_ready=True,
+    )
+    assert unavailable == ""
+    assert "explicitly selected foxglove-sdk" in reason
 
 
 def test_self_hosted_viewer_url_uses_the_remote_file_contract() -> None:

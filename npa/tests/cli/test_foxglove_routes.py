@@ -267,7 +267,7 @@ def test_export_converts_active_run_when_no_mcap_is_published(harness) -> None:
     assert harness["convert_calls"]
 
 
-def test_export_open_web_uploads_once_and_returns_indexed_recording_link(
+def test_export_open_web_returns_selected_remote_file_link_without_cloud_upload(
     harness,
 ) -> None:
     (harness["runs_dir"] / "run-1").mkdir()
@@ -276,13 +276,13 @@ def test_export_open_web_uploads_once_and_returns_indexed_recording_link(
 
     assert response.status_code == 200
     exported = response.json()["export"]
-    assert exported["data_source"] == "foxglove-stream"
-    assert exported["cloud"]["import_status"] == "complete"
-    assert exported["web_url"].startswith(
-        "https://app.foxglove.dev/~/view?ds=foxglove-stream&ds.recordingId="
-    )
+    assert exported["data_source"] == "remote-file"
+    assert exported["web_open_mode"] == "remote-file"
+    assert "ds=remote-file" in exported["web_url"]
+    assert "ds.url=https%3A%2F%2Fagent.example%2Ffoxglove%2Fdata%2F" in exported["web_url"]
+    assert "cloud" not in exported
     assert "openIn" not in exported["web_url"]
-    assert harness["cloud_calls"][0][1] == "run-1"
+    assert harness["cloud_calls"] == []
 
 
 def test_export_different_safe_run_converts_that_run(harness) -> None:
@@ -402,7 +402,7 @@ def test_export_uses_one_canonical_s3_contract_for_viewers_download_and_cloud(
     )
     client = TestClient(app)
 
-    request = {"open_web": True, "run_ref": "npa1_exact"}
+    request = {"open_web": True, "cloud_import": True, "run_ref": "npa1_exact"}
     first = client.post("/foxglove/export", json=request)
     second = client.post("/foxglove/export", json=request)
 

@@ -2140,10 +2140,10 @@
                   <button id="foxgloveOpenWeb" class="btn" type="button"
                     data-testid="open-foxglove-web" aria-describedby="foxgloveExportNote"
                     aria-busy="false" disabled
-                    title="Upload or reuse this MCAP in Foxglove Cloud and open the indexed recording">Open in Foxglove Web</button>
+                    title="Open this public MCAP as a remote-file data source in Foxglove Web">Open in Foxglove Web</button>
                   <a id="openFullRerun" class="btn" href="/rerun/?hide_welcome_screen=1&theme=dark&camera=workspace" target="_blank" rel="noopener">Open full Rerun</a>
                 </div>
-                <p id="foxgloveExportNote" class="hint" role="status" aria-live="polite">Load a run to export or reuse its canonical MCAP in Foxglove Web.</p>
+                <p id="foxgloveExportNote" class="hint" role="status" aria-live="polite">Load a run to open its canonical MCAP in Foxglove Web.</p>
                 <p id="simvizCta" class="cta">Embedded recording uses a same-origin iframe with a public `.rrd` URL (Rerun wasm cannot send basic auth).</p>
               </div>
               <div id="rerunPlaceholder" class="rerun-placeholder" hidden>
@@ -4974,7 +4974,7 @@
         button.textContent = busy ? "Opening Foxglove Web…" : "Open in Foxglove Web";
         if (!runId && !busy && !staleOperationCancelled) {
           setFoxgloveWebNote(
-            "Load a run to export or reuse its canonical MCAP in Foxglove Web.",
+            "Load a run to open its canonical MCAP in Foxglove Web.",
             "idle"
           );
         }
@@ -5919,9 +5919,9 @@
         }
         if (foxgloveWebOperation) return false;
         // This synchronous pre-open runs inside the button's user gesture. It is
-        // required because Cloud indexing is asynchronous and browsers otherwise
-        // block the later navigation. No recording URL or credential is exposed to
-        // the blank tab. A blocked popup is reported before starting an upload.
+        // required because canonical MCAP preparation is asynchronous and browsers
+        // otherwise block the later navigation. No recording URL or credential is
+        // exposed to the blank tab. A blocked popup is reported before export.
         const popup = window.open("about:blank", "_blank");
         if (!popup) {
           setFoxgloveWebNote(
@@ -5943,11 +5943,11 @@
         foxgloveWebOperation = operation;
         syncFoxgloveWebAction();
         setFoxgloveWebNote(
-          "Exporting or reusing the canonical MCAP for " + runId + " and waiting for Foxglove indexing…",
+          "Preparing the canonical MCAP for " + runId + " and its Foxglove remote-file link…",
           "loading"
         );
-        setStatus("Preparing Foxglove Cloud recording…");
-        showToast("Uploading or reusing the indexed Foxglove recording…", "info");
+        setStatus("Preparing the Foxglove remote-file link…");
+        showToast("Preparing the selected MCAP for Foxglove Web…", "info");
         try {
           const data = await apiJson("/api/foxglove/export", {
             method: "POST",
@@ -5971,11 +5971,8 @@
           if (!info || !info.available || !info.web_url) {
             throw new Error(String((info && info.reason) || "Foxglove Web is unavailable"));
           }
-          const reused = Boolean(info.cloud && info.cloud.reused);
           setFoxgloveWebNote(
-            reused
-              ? "Reused the unchanged indexed Foxglove Cloud recording for " + runId + "."
-              : "Uploaded and indexed the canonical MCAP for " + runId + " in Foxglove Cloud.",
+            "Opened the selected canonical MCAP for " + runId + " as a Foxglove remote-file source.",
             "success"
           );
           // Navigation is the requested action and must not wait behind a broad
@@ -5983,7 +5980,7 @@
           // credentials; artifact refresh below updates the local UI afterward.
           popup.location.replace(String(info.web_url));
           updateRenderedDataSummary((data && data.sim_viz) || {});
-          showToast("Opened the indexed recording in Foxglove Web.", "success");
+          showToast("Opened the selected MCAP in Foxglove Web.", "success");
           setStatus("Ready");
           // Refresh independently: a tenant-wide S3 walk can be slow and must
           // not keep this action disabled after the recording already opened.

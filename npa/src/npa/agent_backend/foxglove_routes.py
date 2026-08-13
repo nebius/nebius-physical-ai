@@ -40,6 +40,7 @@ try:  # agent VM: /opt/npa-agent is on sys.path and the package is flat there
     from agent_backend.foxglove import (
         convert_run_request,
         converted_recording_update,
+        foxglove_data_source_link,
         foxglove_status_payload,
         foxglove_download_export,
         foxglove_recording_link,
@@ -52,6 +53,7 @@ except ImportError:  # repo / local tests
     from npa.agent_backend.foxglove import (
         convert_run_request,
         converted_recording_update,
+        foxglove_data_source_link,
         foxglove_status_payload,
         foxglove_download_export,
         foxglove_recording_link,
@@ -291,6 +293,16 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
         export["sha256"] = str(sim_viz.get("canonical_mcap_sha256") or "")
         export["provenance"] = dict(sim_viz.get("canonical_mcap_provenance") or {})
         if bool(body.get("open_web")):
+            provenance = dict(sim_viz.get("canonical_mcap_provenance") or {})
+            web = foxglove_data_source_link(
+                config.get("data_source"),
+                start_time_ns=int(provenance.get("start_time_ns") or 0),
+                end_time_ns=int(provenance.get("end_time_ns") or 0),
+            )
+            if not web["available"]:
+                raise http_error(status_code=409, detail=web["reason"])
+            export.update(web)
+        if bool(body.get("cloud_import")):
             if deps.ensure_cloud_recording is None:
                 raise http_error(
                     status_code=503,

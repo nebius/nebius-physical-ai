@@ -181,7 +181,9 @@ module.exports = defineConfig({
     supportFile: "cypress/support/e2e.js",
     specPattern: "cypress/e2e/**/*.cy.js",
     video: false,
-    screenshotOnRunFailure: true,
+    // Live pages are authenticated. Never persist a live screenshot even when
+    // the UI or browser fails; mocked runs keep ordinary screenshot diagnostics.
+    screenshotOnRunFailure: process.env.NPA_AGENT_CYPRESS_LIVE === "1" ? false : true,
     chromeWebSecurity: false,
     defaultCommandTimeout: 12000,
     requestTimeout: 30000,

@@ -93,22 +93,26 @@ npa workbench foxglove open --recording-id <indexed-recording-id>
 npa workbench foxglove inspect --input-path run.mcap
 ```
 
-`open` uses Foxglove's official `foxglove-stream` recording deep-link contract.
+`open` uses Foxglove's official `foxglove-stream` recording deep-link contract
+for an explicitly indexed Cloud recording.
 Agent export persists exactly one canonical run artifact at
 `<run-prefix>/<run-id>/reports/sim2real.mcap`, with
 `sim2real.mcap.provenance.json` beside it. A valid native MCAP is reused;
 otherwise real S3 run artifacts are converted and the run-list cache is
 invalidated. Lichtblick, the download transport, and Cloud import use identical
 canonical bytes and report the same SHA-256.
-The agent's **Open in Foxglove Web** action uploads the MCAP once under a stable
-content key, reuses unchanged or in-progress imports, waits for indexed
-`complete` state, creates/updates or reuses the shared
-`NPA Physical AI rich visualization v1` layout from the inspected real channel
-schemas, then opens a documented link with `layoutId`, bounded `ds.start` /
-`ds.end`, and an initial `time` 250 ms into the recording. Image, 3D, Plot, and
-Log panels are present only when their compatible real topics exist. Layout API
-denial is an explicit fallback without `layoutId`; never claim immediate visual
-success in that state. A server-side API token is required at
+The agent's ordinary **Open in Foxglove Web** action prepares the canonical MCAP
+and opens Foxglove's documented `ds=remote-file&ds.url=<public HTTPS MCAP>`
+link. The recording URL is encoded exactly once, contains no credentials, and
+is the same CORS + byte-range transport used by the official embed SDK. The
+button synchronously reserves a popup during the user gesture and reports
+blocked or failed navigation honestly.
+
+An explicit backend `cloud_import` mode can upload the MCAP once under a stable
+content key, reuse unchanged or in-progress imports, wait for indexed
+`complete` state, and create/update the shared
+`NPA Physical AI rich visualization v1` layout from inspected channel schemas.
+A server-side API token is required for that optional mode at
 `tokens.FOXGLOVE_API_TOKEN` in `~/.npa/credentials.yaml` (mode `0600`). It is
 never part of browser config, deep links, subprocess arguments, shared
 workbench env, or the agent's `foxglove.env`. If it is already exported in the
@@ -174,6 +178,8 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_foxglove_mcap.py npa/tests/docker/test_foxglove_image.py \
   npa/tests/cli/test_agent_backend_render.py npa/tests/smoke/test_agent_smoke.py -q
 bash npa/scripts/run_agent_cypress.sh --mock     # includes agent_foxglove.cy.js
+# Explicit live opt-in; URL/user/password are runtime environment variables.
+NPA_AGENT_CYPRESS_LIVE=1 bash npa/scripts/run_agent_cypress.sh --live
 ```
 
 The browser spec drives the **real** `@foxglove/embed` build against a

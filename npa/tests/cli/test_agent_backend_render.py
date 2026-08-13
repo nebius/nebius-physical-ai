@@ -547,7 +547,13 @@ def test_shipped_agent_backend_memory_module_compiles(monkeypatch) -> None:
     assert "class RunMemory" in body
 
 
-def _capture_setup_script(monkeypatch, *, preload_stock_demo: bool = True) -> str:
+def _capture_setup_script(
+    monkeypatch,
+    *,
+    preload_stock_demo: bool = True,
+    foxglove_embed_src: str = "",
+    foxglove_viewer_backend: str = "",
+) -> str:
     from npa.cli import agent as agent_module
 
     captured: dict[str, str] = {}
@@ -594,9 +600,42 @@ def _capture_setup_script(monkeypatch, *, preload_stock_demo: bool = True) -> st
         tf_api_key="",
         nebius_ai_key="",
         public_https=True,
+        foxglove_embed_src=foxglove_embed_src,
+        foxglove_viewer_backend=foxglove_viewer_backend,
         preload_stock_demo=preload_stock_demo,
     )
     return captured["setup_script"]
+
+
+def test_bootstrap_stages_explicit_official_foxglove_backend(monkeypatch) -> None:
+    setup_script = _capture_setup_script(
+        monkeypatch,
+        foxglove_embed_src="https://embed.foxglove.dev/",
+        foxglove_viewer_backend="foxglove-sdk",
+    )
+    foxglove_env = setup_script.split(
+        "cat <<'ENV' | sudo tee /opt/npa-agent/foxglove.env >/dev/null\n", 1
+    )[1].split("\nENV", 1)[0]
+
+    assert "NPA_FOXGLOVE_EMBED_SRC=https://embed.foxglove.dev/" in foxglove_env
+    assert "NPA_FOXGLOVE_VIEWER_BACKEND=foxglove-sdk" in foxglove_env
+
+
+def test_bootstrap_rejects_unknown_foxglove_backend(monkeypatch) -> None:
+    with pytest.raises(ValueError, match="foxglove viewer backend"):
+        _capture_setup_script(
+            monkeypatch,
+            foxglove_embed_src="https://embed.foxglove.dev/",
+            foxglove_viewer_backend="not-a-viewer",
+        )
+
+
+def test_bootstrap_rejects_official_backend_without_embed_source(monkeypatch) -> None:
+    with pytest.raises(ValueError, match="foxglove-sdk requires"):
+        _capture_setup_script(
+            monkeypatch,
+            foxglove_viewer_backend="foxglove-sdk",
+        )
 
 
 def test_no_stock_bootstrap_has_no_default_recording_or_rrd_response(

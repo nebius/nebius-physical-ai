@@ -142,11 +142,10 @@ from npa.provisioning_journal import (
     operation_heartbeats,
 )
 from npa.workbench.foxglove import (
-    DEFAULT_FOXGLOVE_EMBED_SRC,
     FOXGLOVE_EMBED_SDK_INTEGRITY,
     FOXGLOVE_EMBED_SDK_VERSION,
 )
-
+from npa.cli import agent_foxglove_config
 app = typer.Typer(
     name="agent",
     help="Deploy and operate a public NPA chat agent VM.",
@@ -178,7 +177,7 @@ DEFAULT_LLM_MODELS = (
     DEFAULT_LLM_MODEL,
     "Qwen/Qwen2.5-VL-72B-Instruct",
 )
-AGENT_UI_VERSION = "2026081301"
+AGENT_UI_VERSION = "2026081302"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
@@ -1106,11 +1105,15 @@ def _bootstrap_agent_stack(
     nebius_tenant_id: str = "",
     public_https: bool = True,
     foxglove_embed_src: str = "",
+    foxglove_viewer_backend: str = "",
     foxglove_org_slug: str = "",
     foxglove_live_url: str = "",
     deployment: dict[str, str] | None = None,
     preload_stock_demo: bool = True,
 ) -> None:
+    foxglove_settings = agent_foxglove_config.resolve_settings(
+        embed_src=foxglove_embed_src, viewer_backend=foxglove_viewer_backend
+    )
     ssh = SSHClient(
         config=resolve_ssh_config(
             ssh_host=host,
@@ -1155,8 +1158,9 @@ def _bootstrap_agent_stack(
     nginx_site_body = _nginx_agent_site_body(
         backend_port=backend_port, rerun_port=rerun_port
     )
-    foxglove_embed_src_value = _env_line_value(
-        foxglove_embed_src or os.environ.get("NPA_FOXGLOVE_EMBED_SRC", "")
+    foxglove_embed_src_value = _env_line_value(foxglove_settings["embed_src"])
+    foxglove_viewer_backend_value = _env_line_value(
+        foxglove_settings["viewer_backend"]
     )
     foxglove_org_slug_value = _env_line_value(
         foxglove_org_slug or os.environ.get("NPA_FOXGLOVE_ORG_SLUG", "")
@@ -1282,6 +1286,7 @@ ENV
 cat <<'ENV' | sudo tee /opt/npa-agent/foxglove.env >/dev/null
 NPA_FOXGLOVE_ENABLED=1
 NPA_FOXGLOVE_EMBED_SRC={foxglove_embed_src_value}
+NPA_FOXGLOVE_VIEWER_BACKEND={foxglove_viewer_backend_value}
 NPA_FOXGLOVE_ORG_SLUG={foxglove_org_slug_value}
 NPA_FOXGLOVE_LIVE_URL={foxglove_live_url_value}
 NPA_FOXGLOVE_SDK_VERSION={foxglove_sdk_version}
@@ -8766,6 +8771,11 @@ def _transactional_agent_command(command: str):
                     bound.arguments.get("foxglove_embed_src"),
                 ),
                 (
+                    "foxglove_viewer_backend",
+                    "--foxglove-viewer-backend",
+                    bound.arguments.get("foxglove_viewer_backend"),
+                ),
+                (
                     "foxglove_org_slug",
                     "--foxglove-org-slug",
                     bound.arguments.get("foxglove_org_slug"),
@@ -8932,24 +8942,10 @@ def deploy_cmd(
         "--llm-models",
         help="Additional Token Factory model IDs (repeat flag or comma-separate values).",
     ),
-    foxglove_embed_src: str = typer.Option(
-        "",
-        "--foxglove-embed-src",
-        help=(
-            "Foxglove embed application URL for the viewer pane "
-            f"(default: $NPA_FOXGLOVE_EMBED_SRC or {DEFAULT_FOXGLOVE_EMBED_SRC})."
-        ),
-    ),
-    foxglove_org_slug: str = typer.Option(
-        "",
-        "--foxglove-org-slug",
-        help="Foxglove organization slug users should sign into (default: $NPA_FOXGLOVE_ORG_SLUG).",
-    ),
-    foxglove_live_url: str = typer.Option(
-        "",
-        "--foxglove-live-url",
-        help="Optional live ws:// or wss:// Foxglove/ROS-bridge URL for the viewer pane.",
-    ),
+    foxglove_embed_src: str = agent_foxglove_config.embed_src_option(),
+    foxglove_viewer_backend: str = agent_foxglove_config.viewer_backend_option(),
+    foxglove_org_slug: str = agent_foxglove_config.org_slug_option(),
+    foxglove_live_url: str = agent_foxglove_config.live_url_option(),
     no_public_https: bool = typer.Option(
         False,
         "--no-public-https",
@@ -9330,6 +9326,12 @@ def deploy_cmd(
     configured_llm_models = _normalize_llm_models(
         [configured_llm_model, *extra_llm_models]
     )
+    foxglove_settings = agent_foxglove_config.resolve_settings(
+        embed_src=foxglove_embed_src,
+        viewer_backend=foxglove_viewer_backend,
+        org_slug=foxglove_org_slug,
+        live_url=foxglove_live_url,
+    )
     # A missing Token Factory key is already surfaced up front (before Terraform)
     # by the deploy prerequisite check above.
     rollback_record = {
@@ -9337,6 +9339,7 @@ def deploy_cmd(
         "project_id": env_project_id,
         "region": env_region,
         "service_account_id": str(creds.get("service_account_id", "")),
+        "foxglove": foxglove_settings,
     }
     partial_urls = build_agent_urls(
         public_ip, agent_port=agent_port, public_https=public_https
@@ -9356,6 +9359,7 @@ def deploy_cmd(
         "public_https": public_https,
         "setup_state": "remote_bootstrap_pending",
         "service_account_id": str(creds.get("service_account_id", "")),
+        "foxglove": foxglove_settings,
     }
     _store_agent_record(project, name, partial_record)
     if operation is not None:
@@ -9411,9 +9415,10 @@ def deploy_cmd(
             "nebius_tenant_id": env_tenant_id,
             "service_account_id": str(creds.get("service_account_id", "")),
             "public_https": public_https,
-            "foxglove_embed_src": foxglove_embed_src,
-            "foxglove_org_slug": foxglove_org_slug,
-            "foxglove_live_url": foxglove_live_url,
+            "foxglove_embed_src": foxglove_settings["embed_src"],
+            "foxglove_viewer_backend": foxglove_settings["viewer_backend"],
+            "foxglove_org_slug": foxglove_settings["org_slug"],
+            "foxglove_live_url": foxglove_settings["live_url"],
         },
         reconcile_kwargs={
             "host": public_ip,
@@ -9509,6 +9514,7 @@ def deploy_cmd(
         service_account_id=str(creds.get("service_account_id", "")),
     )
     final_record = record.to_dict()
+    final_record["foxglove"] = foxglove_settings
     final_record["setup_state"] = "healthy"
     final_record["setup_evidence"] = {
         key: reconciliation.get(key)
@@ -9808,24 +9814,10 @@ def bootstrap_cmd(
         "--refresh-credentials",
         help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
     ),
-    foxglove_embed_src: str = typer.Option(
-        "",
-        "--foxglove-embed-src",
-        help=(
-            "Foxglove embed application URL for the viewer pane "
-            f"(default: $NPA_FOXGLOVE_EMBED_SRC or {DEFAULT_FOXGLOVE_EMBED_SRC})."
-        ),
-    ),
-    foxglove_org_slug: str = typer.Option(
-        "",
-        "--foxglove-org-slug",
-        help="Foxglove organization slug users should sign into (default: $NPA_FOXGLOVE_ORG_SLUG).",
-    ),
-    foxglove_live_url: str = typer.Option(
-        "",
-        "--foxglove-live-url",
-        help="Optional live ws:// or wss:// Foxglove/ROS-bridge URL for the viewer pane.",
-    ),
+    foxglove_embed_src: str = agent_foxglove_config.embed_src_option(),
+    foxglove_viewer_backend: str = agent_foxglove_config.viewer_backend_option(),
+    foxglove_org_slug: str = agent_foxglove_config.org_slug_option(),
+    foxglove_live_url: str = agent_foxglove_config.live_url_option(),
     no_public_https: bool = typer.Option(
         False,
         "--no-public-https",
@@ -9837,6 +9829,13 @@ def bootstrap_cmd(
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
+    foxglove_settings = agent_foxglove_config.resolve_settings(
+        embed_src=foxglove_embed_src,
+        viewer_backend=foxglove_viewer_backend,
+        org_slug=foxglove_org_slug,
+        live_url=foxglove_live_url,
+        saved=record.get("foxglove"),
+    )
     public_ip = str(record.get("public_ip", "")).strip()
     if not _is_routable_public_ip(public_ip):
         _fail("agent VM does not have a routable public IP")
@@ -10016,9 +10015,10 @@ def bootstrap_cmd(
             "nebius_tenant_id": tenant_id,
             "service_account_id": service_account_id,
             "public_https": public_https,
-            "foxglove_embed_src": foxglove_embed_src,
-            "foxglove_org_slug": foxglove_org_slug,
-            "foxglove_live_url": foxglove_live_url,
+            "foxglove_embed_src": foxglove_settings["embed_src"],
+            "foxglove_viewer_backend": foxglove_settings["viewer_backend"],
+            "foxglove_org_slug": foxglove_settings["org_slug"],
+            "foxglove_live_url": foxglove_settings["live_url"],
         },
         reconcile_kwargs={
             "host": public_ip,
@@ -10086,6 +10086,7 @@ def bootstrap_cmd(
     llm_payload["models"] = list(resolved_llm_models)
     updated["llm"] = llm_payload
     updated["ssh_key_path"] = ssh_key_path
+    updated["foxglove"] = foxglove_settings
     updated["setup_state"] = "healthy"
     updated["setup_evidence"] = {
         key: reconciliation.get(key)

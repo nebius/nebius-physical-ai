@@ -383,8 +383,9 @@ def public_https_url_allowed(url: str) -> bool:
 def foxglove_download_export(recording_url: str, *, origin: str = "") -> dict:
     """Build the public MCAP download contract used by the export route.
 
-    The URL is not used by Foxglove Web. The official app opens the indexed
-    Cloud recording returned by :func:`foxglove_recording_link`.
+    The same URL may be handed to the embedded SDK or to the documented
+    ``remote-file`` Foxglove Web deep link. It therefore has to be reachable by
+    a browser without the agent's basic-auth credentials.
     """
     absolute = _absolute(recording_url, origin)
     try:
@@ -427,6 +428,83 @@ def foxglove_download_export(recording_url: str, *, origin: str = "") -> dict:
             "download and transport checks. Anyone with the URL can read it until "
             "the agent prunes the publication."
         ),
+    }
+
+
+def foxglove_data_source_link(
+    data_source: dict | None,
+    *,
+    layout_id: str = "",
+    start_time_ns: int = 0,
+    end_time_ns: int = 0,
+) -> dict:
+    """Build a Foxglove Web deep link for an SDK live/remote-file source.
+
+    Foxglove documents the browser URL as ``ds=remote-file`` with one repeated
+    ``ds.url`` per remote recording, or as the live protocol name with one
+    ``ds.url``. ``urlencode`` performs the single query-component encoding;
+    callers must pass the original absolute source URLs, not pre-encoded query
+    fragments.
+    """
+    source = data_source if isinstance(data_source, dict) else {}
+    source_type = str(source.get("type") or "").strip()
+    query: list[tuple[str, str]] = []
+    web_open_mode = ""
+
+    if source_type == "remote-file":
+        urls = [
+            str(value).strip()
+            for value in (source.get("urls") or [])
+            if str(value).strip()
+        ]
+        if not urls:
+            reason = "No remote MCAP URL is selected for Foxglove Web."
+        elif not all(public_https_url_allowed(url) for url in urls):
+            reason = (
+                "Foxglove Web remote-file links require public absolute HTTPS URLs "
+                "without credentials."
+            )
+        else:
+            reason = ""
+            query.append(("ds", "remote-file"))
+            query.extend(("ds.url", url) for url in urls)
+            web_open_mode = "remote-file"
+            if start_time_ns > 0 and end_time_ns >= start_time_ns:
+                seek_ns = min(end_time_ns, start_time_ns + 250_000_000)
+                query.append(("time", _rfc3339_ns(seek_ns)))
+    elif source_type == "live":
+        protocol = str(source.get("protocol") or "").strip()
+        url = str(source.get("url") or "").strip()
+        if protocol not in FOXGLOVE_LIVE_PROTOCOLS or not live_url_allowed(url):
+            reason = "No supported public live Foxglove data source is selected."
+        else:
+            reason = ""
+            query.extend((("ds", protocol), ("ds.url", url)))
+            web_open_mode = "live"
+    else:
+        reason = "Foxglove Web supports the selected live or remote-file source only."
+
+    if reason:
+        return {
+            "available": False,
+            "reason": reason,
+            "web_url": "",
+            "data_source": source_type,
+            "web_open_mode": "",
+        }
+
+    safe_layout = str(layout_id or "").strip()
+    if safe_layout and re.fullmatch(r"[A-Za-z0-9_-]+", safe_layout):
+        query.append(("layoutId", safe_layout))
+    else:
+        safe_layout = ""
+    return {
+        "available": True,
+        "reason": "",
+        "web_url": f"{FOXGLOVE_WEB_APP_URL}?{urlencode(query)}",
+        "data_source": source_type,
+        "layout_id": safe_layout,
+        "web_open_mode": web_open_mode,
     }
 
 
@@ -663,10 +741,20 @@ def select_viewer_backend(
     """
     sdk_usable = bool(sdk_ready and _valid_embed_src(embed_src))
     requested = str(env.get("NPA_FOXGLOVE_VIEWER_BACKEND", "")).strip().lower()
-    if requested == FOXGLOVE_BACKEND_SDK and sdk_usable:
-        return FOXGLOVE_BACKEND_SDK, ""
-    if requested == FOXGLOVE_BACKEND_SELF_HOSTED and self_hosted_ready:
-        return FOXGLOVE_BACKEND_SELF_HOSTED, ""
+    if requested == FOXGLOVE_BACKEND_SDK:
+        if sdk_usable:
+            return FOXGLOVE_BACKEND_SDK, ""
+        return "", (
+            "The explicitly selected foxglove-sdk backend is unavailable: install "
+            "the SDK assets and configure an absolute NPA_FOXGLOVE_EMBED_SRC."
+        )
+    if requested == FOXGLOVE_BACKEND_SELF_HOSTED:
+        if self_hosted_ready:
+            return FOXGLOVE_BACKEND_SELF_HOSTED, ""
+        return "", (
+            "The explicitly selected self-hosted backend is unavailable: the "
+            "Lichtblick viewer is not ready."
+        )
     if sdk_usable:
         return FOXGLOVE_BACKEND_SDK, ""
     if self_hosted_ready:
@@ -800,6 +888,7 @@ def describe_foxglove_context(config: dict | None, sim_viz: dict | None = None) 
 
 
 __all__ = [
+    "foxglove_data_source_link",
     "foxglove_download_export",
     "foxglove_recording_link",
     "public_https_url_allowed",
