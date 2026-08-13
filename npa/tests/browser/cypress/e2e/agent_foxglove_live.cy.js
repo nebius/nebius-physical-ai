@@ -209,6 +209,12 @@ describe("NPA agent official Foxglove Web against live infra", () => {
         // artifact hydration writes viewer state, so overlapping it with the first
         // export would turn this into a browser-startup race rather than an export
         // idempotency test.
+        let viewerBackend = "";
+        liveAgentRequest("/api/foxglove/config").then((configResponse) => {
+          expect(configResponse.status).to.eq(200);
+          viewerBackend = String(configResponse.body.viewer_backend || "");
+          expect(viewerBackend).to.be.oneOf(["foxglove-sdk", "self-hosted"]);
+        });
         cy.visitLiveAgent();
         cy.get("meta[name='npa-ui-version']")
           .should("have.attr", "content")
@@ -220,19 +226,29 @@ describe("NPA agent official Foxglove Web against live infra", () => {
           "contain.text",
           "Runs (latest first)",
         );
-        // Exercise the deployed @foxglove/embed path itself. The hosted viewer
-        // is cross-origin (and may require the customer's Foxglove sign-in), so
-        // this verifies the supported SDK iframe + connection-state contract,
-        // not pixels inside the hosted application.
+        // Exercise the configured backend. Hosted deployments use the real
+        // @foxglove/embed SDK; stock deployments intentionally use the supported
+        // self-hosted fallback when NPA_FOXGLOVE_EMBED_SRC is unset. In either
+        // case this verifies the iframe + connection-state contract, not pixels
+        // inside the viewer application.
         cy.get("#tabRerun").click();
         cy.get("#renderModeFoxglove").click();
         cy.get("#viewerPaneFoxglove").should("have.class", "is-active-viewer");
         cy.get("#viewerPaneFoxglove iframe", { timeout: 30000 })
           .should("have.attr", "src")
-          .and("match", /^https:\/\/embed\.foxglove\.dev\//);
+          .then((src) => {
+            if (viewerBackend === "foxglove-sdk") {
+              expect(src).to.match(/^https:\/\/embed\.foxglove\.dev\//);
+            } else {
+              expect(src).to.match(/^\/lichtblick\//);
+            }
+          });
         cy.get("#foxgloveStatus", { timeout: 30000 }).should(($status) => {
           expect($status, "no deployed SDK error state").not.to.have.class("is-error");
-          expect($status.text()).to.match(/Connecting to|Foxglove viewer ready/);
+          const expectedStatus = viewerBackend === "foxglove-sdk"
+            ? /Connecting to|Foxglove viewer ready/
+            : /Opening the self-hosted viewer|Self-hosted Foxglove-compatible viewer ready/;
+          expect($status.text()).to.match(expectedStatus);
         });
         cy.intercept("POST", "/api/foxglove/export").as("liveFoxgloveUiExport");
         cy.window().then((win) => {
