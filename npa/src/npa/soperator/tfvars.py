@@ -79,7 +79,14 @@ def render_tfvars(spec: SoperatorSpec) -> str:
     # (variables.tf validation rejects ""), so on CPU-only clusters use "essential",
     # which sets runAfterCreation=false for every GPU/NCCL/IB/perf check and only
     # runs CPU-safe checks (ssh-check, etc.).
-    active_checks_scope = "dev" if any(p.is_gpu() for p in spec.workers) else "essential"
+    # Soperator 4.1 skips slurmrestd unless accounting is enabled, while its
+    # GPU bootstrap checks require that REST service to observe submitted Slurm
+    # jobs. Selecting those checks with accounting disabled leaves Terraform's
+    # activechecks HelmRelease waiting forever. Keep the full dev checks only
+    # when their REST dependency can exist.
+    active_checks_scope = (
+        "dev" if spec.accounting and any(p.is_gpu() for p in spec.workers) else "essential"
+    )
     # filestore_accounting must be non-null only when accounting is enabled, but
     # slurm_nodeset_accounting's variable validation dereferences it even when
     # disabled -- so always provide a valid accounting nodeset object.
@@ -165,39 +172,6 @@ slurm_nodeset_system = {{
   }}
 }}
 
-# Trimmed so the operator stack fits small (>=8vcpu) system nodes.
-system_resources = {{
-  rest = {{
-    cpu_cores                   = 3
-    memory_gibibytes            = 8
-    ephemeral_storage_gibibytes = 5
-  }}
-  exporter = {{
-    cpu_cores                   = 1
-    memory_gibibytes            = 4
-    ephemeral_storage_gibibytes = 2
-  }}
-  mariadb = {{
-    cpu_cores                   = 2
-    memory_gibibytes            = 6
-    ephemeral_storage_gibibytes = 32
-  }}
-  node_configurator = {{
-    requests = {{ cpu_cores = 0.5, memory_gibibytes = 0.25 }}
-    limits   = {{ memory_gibibytes = 0.25 }}
-  }}
-  slurm_operator = {{
-    requests = {{ cpu_cores = 1, memory_gibibytes = 4 }}
-    limits   = {{ memory_gibibytes = 4 }}
-  }}
-  slurm_checks = {{
-    requests = {{ cpu_cores = 1, memory_gibibytes = 4 }}
-    limits   = {{ memory_gibibytes = 4 }}
-  }}
-  kruise_daemon = {{ cpu_cores = 1, memory_gibibytes = 4 }}
-  dcgm_exporter = {{ cpu_cores = 0.05, memory_gibibytes = 0.5 }}
-}}
-
 slurm_nodeset_controller = {{
   size = 1
   resource = {{
@@ -265,6 +239,7 @@ soperator_notifier   = {{ enabled = false }}
 nccl_inspector_profiling = {{ enabled = false }}
 
 accounting_enabled = {_bool(spec.accounting)}
+slurm_rest_enabled = {_bool(spec.accounting)}
 
 backups_enabled           = "force_disable"
 backups_password          = "unused-backups-disabled"
@@ -273,7 +248,8 @@ backups_prune_schedule    = "@daily-random"
 backups_retention         = {{ keepDaily = 7 }}
 cleanup_bucket_on_destroy = false
 
-k8s_version = 1.33
+k8s_version        = "{spec.k8s_version}"
+node_group_version = "{spec.node_group_version}"
 nvidia_config_lines = [
   "options nvidia NVreg_RestrictProfilingToAdminUsers=0",
   "options nvidia NVreg_EnableStreamMemOPs=1",

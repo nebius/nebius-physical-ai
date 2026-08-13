@@ -106,6 +106,76 @@ def test_render_tfvars_emits_multi_preset_and_io_m3_cache() -> None:
     # AppArmor default off (unconfined) and accounting/telemetry off.
     assert "use_default_apparmor_profile = false" in tf
     assert "accounting_enabled = false" in tf
+    assert 'active_checks_scope    = "essential"' in tf
+    assert "slurm_rest_enabled = false" in tf
+    # Current upstream main requires an explicit node-group bundle version and
+    # replaced the old root-level system_resources input with sizing tiers.
+    assert 'k8s_version        = "1.34"' in tf
+    assert 'node_group_version = "72"' in tf
+    assert "system_resources =" not in tf
+
+
+def test_gpu_bootstrap_checks_require_accounting_backed_rest_api() -> None:
+    data = _base_spec_mapping()
+    data["accounting"] = True
+
+    tf = render_tfvars(spec_from_mapping(data))
+
+    assert "accounting_enabled = true" in tf
+    assert "slurm_rest_enabled = true" in tf
+    assert 'active_checks_scope    = "dev"' in tf
+
+
+def test_k8s_and_node_group_versions_parse_and_must_be_non_empty() -> None:
+    data = _base_spec_mapping()
+    data["k8s_version"] = "1.35"
+    data["node_group_version"] = "80"
+    spec = spec_from_mapping(data)
+    spec.validate()
+    assert spec.k8s_version == "1.35"
+    assert spec.node_group_version == "80"
+    assert 'k8s_version        = "1.35"' in render_tfvars(spec)
+    assert 'node_group_version = "80"' in render_tfvars(spec)
+
+    spec.node_group_version = ""
+    with pytest.raises(SoperatorSpecError, match="must both be non-empty"):
+        spec.validate()
+
+
+def test_current_sizing_tier_control_plane_defaults() -> None:
+    spec = SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")])
+    assert spec.system_preset == "16vcpu-64gb"
+    assert spec.controller_preset == "16vcpu-64gb"
+    assert spec.login_preset == "16vcpu-64gb"
+
+
+def test_resolve_login_ssh_key_from_operator_home(tmp_path) -> None:
+    from npa.soperator.lifecycle import _with_resolved_ssh_public_keys
+
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+    (ssh_dir / "id_ed25519.pub").write_text("ssh-ed25519 AAAA operator\n")
+    original = SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")])
+
+    resolved = _with_resolved_ssh_public_keys(original, home=tmp_path)
+
+    assert resolved.ssh_public_keys == ["ssh-ed25519 AAAA operator"]
+    assert original.ssh_public_keys == []
+
+
+def test_explicit_login_ssh_key_wins_and_missing_fallback_fails(tmp_path) -> None:
+    from npa.soperator.lifecycle import _with_resolved_ssh_public_keys
+
+    explicit = SoperatorSpec(
+        name="c",
+        workers=[WorkerPoolSpec(name="w")],
+        ssh_public_keys=["ssh-rsa AAAA explicit"],
+    )
+    assert _with_resolved_ssh_public_keys(explicit, home=tmp_path) is explicit
+
+    missing = SoperatorSpec(name="c", workers=[WorkerPoolSpec(name="w")])
+    with pytest.raises(ValueError, match="requires at least one login SSH public key"):
+        _with_resolved_ssh_public_keys(missing, home=tmp_path)
 
 
 def test_render_tfvars_cpu_only_disables_image_disk() -> None:
@@ -367,6 +437,8 @@ def test_install_monitoring_crds_strips_token_and_verifies(monkeypatch) -> None:
 
     def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
         seen_envs.append(dict(env or {}))
+        if "helmreleases" in cmd:
+            return _Done(stdout='{"items": []}')
         if "get" in cmd and "crd" in cmd:
             return _Done(stdout="customresourcedefinition.apiextensions.k8s.io/"
                                 "servicemonitors.monitoring.coreos.com\n")
@@ -380,6 +452,194 @@ def test_install_monitoring_crds_strips_token_and_verifies(monkeypatch) -> None:
     # call must run without it so the plugin mints a fresh credential.
     assert seen_envs, "expected kubectl to be invoked"
     assert all("NEBIUS_IAM_TOKEN" not in e for e in seen_envs)
+
+
+def test_monitoring_prerequisites_create_namespace_when_telemetry_is_off(
+    monkeypatch,
+) -> None:
+    from npa.soperator import lifecycle
+
+    calls: list[list[str]] = []
+
+    def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        calls.append(cmd)
+        if "helmreleases" in cmd:
+            return _Done(stdout='{"items": []}')
+        if "get" in cmd and "namespace" in cmd:
+            return _Done(stderr="NotFound", returncode=1)
+        if "get" in cmd and "crd" in cmd:
+            return _Done(stdout="servicemonitors.monitoring.coreos.com")
+        return _Done(stdout="created")
+
+    monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+
+    lifecycle._install_monitoring_crds("kubectl", "ctx")
+
+    assert [
+        "kubectl",
+        "--context",
+        "ctx",
+        "create",
+        "namespace",
+        "monitoring-system",
+    ] in calls
+
+
+def test_monitoring_namespace_creation_failure_is_actionable(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        if "get" in cmd and "namespace" in cmd:
+            return _Done(stderr="NotFound", returncode=1)
+        if "create" in cmd and "namespace" in cmd:
+            return _Done(stderr="Forbidden", returncode=1)
+        return _Done(stdout="")
+
+    monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+
+    with pytest.raises(RuntimeError, match="failed to ensure monitoring-system"):
+        lifecycle._install_monitoring_crds("kubectl", "ctx")
+
+
+def test_monitoring_namespace_creation_race_accepts_existing_namespace(
+    monkeypatch,
+) -> None:
+    from npa.soperator import lifecycle
+
+    namespace_reads = 0
+
+    def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        nonlocal namespace_reads
+        if "helmreleases" in cmd:
+            return _Done(stdout='{"items": []}')
+        if "get" in cmd and "namespace" in cmd:
+            namespace_reads += 1
+            if namespace_reads == 1:
+                return _Done(stderr="NotFound", returncode=1)
+            return _Done(stdout="namespace/monitoring-system")
+        if "create" in cmd and "namespace" in cmd:
+            return _Done(stderr="AlreadyExists", returncode=1)
+        if "get" in cmd and "crd" in cmd:
+            return _Done(stdout="servicemonitors.monitoring.coreos.com")
+        return _Done(stdout="created")
+
+    monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+
+    lifecycle._install_monitoring_crds("kubectl", "ctx")
+    assert namespace_reads == 2
+
+
+def test_monitoring_prerequisites_reset_only_stalled_dashboard_release(
+    monkeypatch,
+) -> None:
+    from npa.soperator import lifecycle
+
+    calls: list[list[str]] = []
+    releases = {
+        "items": [
+            {
+                "metadata": {"name": "stack-monitoring-dashboards"},
+                "status": {
+                    "conditions": [
+                        {
+                            "type": "Ready",
+                            "status": "False",
+                            "reason": "RetriesExceeded",
+                        }
+                    ]
+                },
+            },
+            {
+                "metadata": {"name": "healthy-monitoring-dashboards"},
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}]
+                },
+            },
+            {
+                "metadata": {"name": "progressing-monitoring-dashboards"},
+                "status": {
+                    "conditions": [
+                        {
+                            "type": "Ready",
+                            "status": "Unknown",
+                            "reason": "Progressing",
+                        }
+                    ]
+                },
+            },
+            {"metadata": {"name": "unrelated"}},
+        ]
+    }
+
+    def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        calls.append(cmd)
+        if "namespace" in cmd:
+            return _Done(stdout="namespace/monitoring-system")
+        if "helmreleases" in cmd:
+            return _Done(stdout=json.dumps(releases))
+        if "get" in cmd and "crd" in cmd:
+            return _Done(stdout="established")
+        return _Done(stdout="ok")
+
+    monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+    monkeypatch.setattr(lifecycle.time, "time_ns", lambda: 1234)
+
+    lifecycle._install_monitoring_crds("kubectl", "ctx")
+
+    annotation_calls = [cmd for cmd in calls if "annotate" in cmd]
+    assert annotation_calls == [
+        [
+            "kubectl",
+            "--context",
+            "ctx",
+            "-n",
+            "flux-system",
+            "annotate",
+            "helmrelease",
+            "stack-monitoring-dashboards",
+            "reconcile.fluxcd.io/requestedAt=1234",
+            "reconcile.fluxcd.io/resetAt=1234",
+            "--overwrite",
+        ]
+    ]
+
+
+def test_monitoring_release_inspection_failure_is_actionable(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        if "namespace" in cmd:
+            return _Done(stdout="namespace/monitoring-system")
+        if "helmreleases" in cmd:
+            return _Done(stderr="Forbidden", returncode=1)
+        if "get" in cmd and "crd" in cmd:
+            return _Done(stdout="established")
+        return _Done(stdout="ok")
+
+    monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+
+    with pytest.raises(RuntimeError, match="failed to inspect monitoring HelmReleases"):
+        lifecycle._install_monitoring_crds("kubectl", "ctx")
+
+
+def test_monitoring_release_inspection_allows_clean_pre_flux_install(monkeypatch) -> None:
+    from npa.soperator import lifecycle
+
+    def fake_capture(cmd, *, cwd=None, env=None, timeout=None, check=True):
+        if "namespace" in cmd:
+            return _Done(stdout="namespace/monitoring-system")
+        if "helmreleases" in cmd:
+            return _Done(
+                stderr='the server doesn\'t have a resource type "helmreleases"',
+                returncode=1,
+            )
+        if "get" in cmd and "crd" in cmd:
+            return _Done(stdout="established")
+        return _Done(stdout="ok")
+
+    monkeypatch.setattr(lifecycle, "_run_capture", fake_capture)
+
+    lifecycle._install_monitoring_crds("kubectl", "ctx")
 
 
 def test_install_monitoring_crds_raises_on_failure(monkeypatch) -> None:
@@ -478,3 +738,45 @@ def test_patch_active_checks_locals_missing_file(tmp_path) -> None:
 
     # No modules/slurm/locals_active_checks.tf -> no-op, no crash.
     assert lifecycle._patch_active_checks_locals(tmp_path) is False
+
+
+def test_patch_nodeconfigurator_allows_enroot_userns_and_is_idempotent(
+    tmp_path,
+) -> None:
+    from npa.soperator import lifecycle
+
+    template = (
+        tmp_path
+        / "modules"
+        / "slurm"
+        / "templates"
+        / "helm_values"
+        / "terraform_fluxcd_values.yaml.tftpl"
+    )
+    template.parent.mkdir(parents=True)
+    template.write_text(
+        "        fluxcd:\n"
+        "          nodeConfigurator:\n"
+        "            enabled: true\n"
+        "            values:\n"
+        "              resources: {}\n"
+        "          anotherRelease:\n"
+    )
+
+    assert lifecycle._patch_nodeconfigurator_userns(tmp_path) is True
+    patched = template.read_text()
+    assert "sysctl -w kernel.unprivileged_userns_clone=1" in patched
+    assert "sysctl -w kernel.apparmor_restrict_unprivileged_userns=0" in patched
+    assert '[ "${apparmor_enabled}" = "false" ]' in patched
+    assert "sysctl -w net.core.rmem_max=536870912" in patched
+    assert patched.index("initContainers:") < patched.index("resources: {}")
+
+    assert lifecycle._patch_nodeconfigurator_userns(tmp_path) is False
+    assert template.read_text() == patched
+    assert patched.count("# npa: allow Enroot user namespaces on Ubuntu hosts") == 1
+
+
+def test_patch_nodeconfigurator_missing_template_is_safe(tmp_path) -> None:
+    from npa.soperator import lifecycle
+
+    assert lifecycle._patch_nodeconfigurator_userns(tmp_path) is False

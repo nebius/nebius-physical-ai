@@ -19,11 +19,12 @@ import yaml
 
 API_VERSION = "npa.soperator/v0.0.1"
 
-# Minimum sufficient cpu-d3 presets per soperator node role (from the recipe's
-# available_resources sufficiency map): system>=8, controller>=4, login>=16.
+# Minimum sufficient cpu-d3 presets per soperator node role.  The current
+# sizing-tier recipe places the XS system and controller components on 16-vCPU
+# nodes; smaller historical presets no longer have enough allocatable capacity.
 _MIN_PRESET = {
-    "system": "8vcpu-32gb",
-    "controller": "4vcpu-16gb",
+    "system": "16vcpu-64gb",
+    "controller": "16vcpu-64gb",
     "login": "16vcpu-64gb",
 }
 
@@ -113,6 +114,11 @@ class SoperatorSpec:
     use_default_apparmor_profile: bool = False
     jail_size_gib: int = 512
     slurm_operator_version: str = "4.1.0"
+    # Keep these explicit because the upstream recipe intentionally has no
+    # node_group_version default.  They must advance together when the tested
+    # solutions-library contract advances.
+    k8s_version: str = "1.34"
+    node_group_version: str = "72"
 
     def validate(self) -> None:
         if not self.name or not self.name.replace("-", "").isalnum():
@@ -121,6 +127,10 @@ class SoperatorSpec:
             raise SoperatorSpecError("system_min_size must be >= 3 (recipe rule)")
         if not self.workers:
             raise SoperatorSpecError("at least one worker pool is required")
+        if not self.k8s_version or not self.node_group_version:
+            raise SoperatorSpecError(
+                "k8s_version and node_group_version must both be non-empty"
+            )
         seen: set[str] = set()
         for pool in self.workers:
             pool.validate()
@@ -181,6 +191,8 @@ def spec_from_mapping(data: dict[str, Any]) -> SoperatorSpec:
         use_default_apparmor_profile=bool(data.get("use_default_apparmor_profile", False)),
         jail_size_gib=int(data.get("jail_size_gib", 512)),
         slurm_operator_version=str(data.get("slurm_operator_version", "4.1.0")),
+        k8s_version=str(data.get("k8s_version", "1.34")),
+        node_group_version=str(data.get("node_group_version", "72")),
     )
     return spec
 

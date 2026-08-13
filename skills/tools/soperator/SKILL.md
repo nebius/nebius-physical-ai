@@ -30,8 +30,8 @@ apiVersion: npa.soperator/v0.0.1
 name: npasop                 # company_name; kube context = nebius-<name>-slurm
 region: us-central1          # or resolved from ~/.npa config
 control_plane:
-  system: { min_size: 3, preset: 8vcpu-32gb }   # min_size >= 3 (recipe rule)
-  controller: { preset: 8vcpu-32gb }
+  system: { min_size: 3, preset: 16vcpu-64gb }  # min_size >= 3; XS sizing-tier floor
+  controller: { preset: 16vcpu-64gb }           # current sizing-tier floor
   login: { preset: 16vcpu-64gb }                 # login needs >= 16vcpu (sufficiency)
 workers:
   - name: cpu8
@@ -46,13 +46,17 @@ workers:
     fabric: us-central1-b       # required for GPU presets; 1-GPU can't cluster
     preemptible: true           # on-demand GPU quota is often 0; preemptible works
     docker_cache: true
+k8s_version: "1.34"
+node_group_version: "72"     # required by current solutions-library main
 ```
 
 ## Procedure
 
 1. Keep committed files public-safe: never hardcode project/tenant/registry IDs
    or SSH keys in the skill or spec templates. The spec resolves region/tenant/
-   project from `~/.npa/config.yaml` when its fields are empty.
+   project from `~/.npa/config.yaml` when its fields are empty. If
+   `ssh_public_keys` is omitted, deploy uses `~/.ssh/id_ed25519.pub` (then
+   `id_rsa.pub`); it fails before Terraform when neither exists.
 2. **Preflight quotas** (the deploy hits these in order; raise before applying):
    - `compute.instance.count` — ~7 instances for a 2-pool cluster.
    - `compute.instance.non-gpu.vcpu` — sum of all node vCPUs.
@@ -63,11 +67,19 @@ workers:
 3. Deploy: `npa soperator deploy --spec cluster.yaml --terraform-dir <solutions-lib>/soperator`
    (omit `--terraform-dir` to clone the library). Requires terraform >= 1.12
    (set `NPA_TERRAFORM_BIN` if the system terraform is older).
+   The current recipe requires a Kubernetes node-group bundle version; keep
+   `k8s_version` and `node_group_version` aligned with its example installation.
 4. `--apply-fixes` (default) applies the 4.1.0-stable post-deploy fixes:
-   prometheus-operator CRDs (operator chart needs ServiceMonitor even with
-   telemetry off), the `plugStackConfig.ncclInspectorPreConf` CRD
-   preserve-unknown-fields patch, and the cluster-name-prefixed
-   `<ns>-slurm-scripts` configmap.
+   the `monitoring-system` namespace and prometheus-operator CRDs (charts need
+   both even with telemetry off), recovery for a dashboards HelmRelease whose
+   remediation retries were exhausted before those prerequisites existed, the
+   `plugStackConfig.ncclInspectorPreConf` CRD preserve-unknown-fields patch, and
+   the cluster-name-prefixed `<ns>-slurm-scripts` configmap. For the default
+   unconfined worker profile, NPA also extends the node configurator's sysctls so
+   Ubuntu's AppArmor user-namespace gate does not block Enroot/Pyxis jobs.
+   Accounting-disabled clusters use the `essential` active-check scope because
+   Soperator does not create the REST service required by its Slurm GPU checks
+   without accounting; accounting-enabled GPU clusters keep the `dev` scope.
 5. Verify: `npa soperator status --name <name>` runs `sinfo` on the controller.
 
 ## Gotchas

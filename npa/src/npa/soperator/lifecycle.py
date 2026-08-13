@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -39,6 +40,8 @@ _PROMETHEUS_CRDS = (
     "monitoring.coreos.com_podmonitors.yaml",
     "monitoring.coreos.com_probes.yaml",
 )
+_MONITORING_NAMESPACE = "monitoring-system"
+_MONITORING_RELEASE_SUFFIX = "-monitoring-dashboards"
 
 # Sidecar written next to the generated tfvars so ``destroy`` can rebuild the
 # same TF_VAR_* env the recipe requires. region/tenant/project/subnet/o11y are
@@ -91,6 +94,34 @@ def _api_domain(region: str) -> str:
     """Nebius API domain for a region (the recipe hardcodes the EU domain)."""
 
     return "api.eu.nebius.cloud:443" if region.startswith("eu") else "api.nebius.cloud:443"
+
+
+def _with_resolved_ssh_public_keys(
+    spec: SoperatorSpec, *, home: Path | None = None
+) -> SoperatorSpec:
+    """Return *spec* with a standard operator SSH public key when omitted.
+
+    Current solutions-library installations require at least one login key.
+    Keep explicit spec values authoritative; otherwise mirror the repository's
+    other infrastructure lifecycles and use the first conventional local key.
+    The key is rendered only into the private installation, never logged.
+    """
+
+    if spec.ssh_public_keys:
+        return spec
+    ssh_dir = (home or Path.home()).expanduser() / ".ssh"
+    for name in ("id_ed25519.pub", "id_rsa.pub"):
+        candidate = ssh_dir / name
+        try:
+            value = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if value:
+            return replace(spec, ssh_public_keys=[value])
+    raise ValueError(
+        "soperator requires at least one login SSH public key: set "
+        "ssh_public_keys in the spec or create ~/.ssh/id_ed25519.pub"
+    )
 
 
 def _resolve_solutions_library(terraform_dir: Path | None, work_root: Path, ref: str) -> Path:
@@ -159,6 +190,33 @@ _ESSENTIAL_HEALTHY_NODES_OVERRIDE = (
     "        runAfterCreation = false\n"
     "      }\n"
 )
+_NODECONFIGURATOR_USERNS_MARKER = "# npa: allow Enroot user namespaces on Ubuntu hosts"
+_NODECONFIGURATOR_USERNS_VALUES = (
+    "              " + _NODECONFIGURATOR_USERNS_MARKER + "\n"
+    "              # Preserve the chart's complete default init-container list; Helm\n"
+    "              # replaces arrays rather than merging individual list entries.\n"
+    "              initContainers:\n"
+    "                - name: node-sysctl-params\n"
+    "                  image: cr.eu-north1.nebius.cloud/soperator/busybox\n"
+    "                  securityContext:\n"
+    "                    privileged: true\n"
+    "                    runAsUser: 0\n"
+    "                    runAsGroup: 0\n"
+    "                    readOnlyRootFilesystem: false\n"
+    "                    allowPrivilegeEscalation: true\n"
+    "                  command:\n"
+    "                    - /bin/sh\n"
+    "                    - -c\n"
+    "                    - |-\n"
+    "                      sysctl -w kernel.unprivileged_userns_clone=1\n"
+    "                      if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ] && [ \"${apparmor_enabled}\" = \"false\" ]; then\n"
+    "                        sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n"
+    "                      fi\n"
+    "                      sysctl -w net.core.rmem_max=536870912\n"
+    "                      sysctl -w net.core.wmem_max=536870912\n"
+    "                      sysctl -w net.ipv4.tcp_rmem=\"4096 131072 536870912\"\n"
+    "                      sysctl -w net.ipv4.tcp_wmem=\"4096 16384 536870912\"\n"
+)
 
 
 def _patch_active_checks_locals(recipe_dir: Path) -> bool:
@@ -192,10 +250,47 @@ def _patch_active_checks_locals(recipe_dir: Path) -> bool:
     return True
 
 
+def _patch_nodeconfigurator_userns(recipe_dir: Path) -> bool:
+    """Teach the upstream node configurator about Ubuntu's AppArmor userns gate.
+
+    The 4.1.0 chart enables ``kernel.unprivileged_userns_clone`` but Ubuntu's
+    newer host images independently deny unprivileged user namespaces through
+    ``kernel.apparmor_restrict_unprivileged_userns``. Enroot/Pyxis image startup
+    then fails even though the worker container itself is AppArmor-unconfined.
+    Override the chart's full init-container list and disable the second gate
+    only when Soperator's default AppArmor profile is intentionally disabled.
+    """
+
+    template = (
+        recipe_dir
+        / "modules"
+        / "slurm"
+        / "templates"
+        / "helm_values"
+        / "terraform_fluxcd_values.yaml.tftpl"
+    )
+    if not template.exists():
+        return False
+    text = template.read_text()
+    if _NODECONFIGURATOR_USERNS_MARKER in text:
+        return False
+    section = text.find("          nodeConfigurator:\n")
+    if section == -1:
+        return False
+    marker = "            values:\n"
+    insert_at = text.find(marker, section)
+    if insert_at == -1:
+        return False
+    insert_at += len(marker)
+    template.write_text(text[:insert_at] + _NODECONFIGURATOR_USERNS_VALUES + text[insert_at:])
+    return True
+
+
 def _prepare_installation(recipe_dir: Path, spec: SoperatorSpec, region: str) -> Path:
     """Create installations/<name> with the recipe files + generated tfvars."""
 
     _patch_active_checks_locals(recipe_dir)
+    _patch_nodeconfigurator_userns(recipe_dir)
     example = recipe_dir / "installations" / "example"
     install_dir = recipe_dir / "installations" / spec.name
     install_dir.mkdir(parents=True, exist_ok=True)
@@ -315,6 +410,7 @@ def _install_monitoring_crds(
     """
 
     kube_env = _nebius_cli_env()
+    _ensure_monitoring_namespace(kubectl_bin, context, env=kube_env)
     _log(on_status, "installing prometheus-operator CRDs (ServiceMonitor/PodMonitor/Probe)")
     for crd in _PROMETHEUS_CRDS:
         last: subprocess.CompletedProcess[str] | None = None
@@ -349,6 +445,174 @@ def _install_monitoring_crds(
             "prometheus-operator ServiceMonitor CRD not present after install"
             + (f": {detail}" if detail else "")
         )
+    reset = _reset_stalled_monitoring_releases(kubectl_bin, context, env=kube_env)
+    if reset:
+        _log(on_status, f"reset {reset} stalled monitoring HelmRelease(s)")
+
+
+def _ensure_monitoring_namespace(
+    kubectl_bin: str, context: str, *, env: dict[str, str] | None = None
+) -> None:
+    """Ensure the namespace required by the unconditional dashboards chart.
+
+    Soperator 4.1.0 still reconciles monitoring dashboards when observability is
+    disabled, but that mode does not create ``monitoring-system``.  Creating the
+    namespace is idempotent and lets Flux install the chart instead of leaving a
+    permanently failed HelmRelease in an otherwise healthy cluster.
+    """
+
+    kube_env = env or _nebius_cli_env()
+    get = _run_capture(
+        [
+            kubectl_bin,
+            "--context",
+            context,
+            "get",
+            "namespace",
+            _MONITORING_NAMESPACE,
+            "-o",
+            "name",
+        ],
+        env=kube_env,
+        check=False,
+    )
+    if get.returncode == 0 and get.stdout.strip():
+        return
+    create = _run_capture(
+        [
+            kubectl_bin,
+            "--context",
+            context,
+            "create",
+            "namespace",
+            _MONITORING_NAMESPACE,
+        ],
+        env=kube_env,
+        check=False,
+    )
+    if create.returncode == 0:
+        return
+
+    # Another reconciler may create the namespace between our read and write.
+    # Confirm the desired end state before treating a failed create as fatal.
+    confirm = _run_capture(
+        [
+            kubectl_bin,
+            "--context",
+            context,
+            "get",
+            "namespace",
+            _MONITORING_NAMESPACE,
+            "-o",
+            "name",
+        ],
+        env=kube_env,
+        check=False,
+    )
+    if confirm.returncode == 0 and confirm.stdout.strip():
+        return
+
+    detail = (create.stderr or create.stdout).strip()
+    raise RuntimeError(
+        f"failed to ensure {_MONITORING_NAMESPACE} namespace"
+        + (f": {detail}" if detail else "")
+    )
+
+
+def _reset_stalled_monitoring_releases(
+    kubectl_bin: str, context: str, *, env: dict[str, str] | None = None
+) -> int:
+    """Reset failed dashboards releases after repairing their prerequisites.
+
+    Flux stops retrying a HelmRelease after its remediation budget is exhausted.
+    A rerun of NPA can therefore repair ``monitoring-system`` and the CRDs yet
+    remain blocked on the old failure. Flux's paired ``requestedAt``/``resetAt``
+    annotations reset that counter. Clean installs have no HelmRelease at this
+    point, and healthy releases are left untouched.
+    """
+
+    kube_env = env or _nebius_cli_env()
+    listed = _run_capture(
+        [
+            kubectl_bin,
+            "--context",
+            context,
+            "-n",
+            "flux-system",
+            "get",
+            "helmreleases",
+            "-o",
+            "json",
+        ],
+        env=kube_env,
+        check=False,
+    )
+    if listed.returncode != 0:
+        raw_detail = (listed.stderr or listed.stdout).strip()
+        detail = raw_detail.lower()
+        if (
+            "not found" in detail
+            or "doesn't have a resource type" in detail
+            or "the server could not find the requested resource" in detail
+        ):
+            return 0
+        raise RuntimeError(
+            "failed to inspect monitoring HelmReleases"
+            + (f": {raw_detail}" if raw_detail else "")
+        )
+
+    try:
+        payload = json.loads(listed.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("failed to inspect monitoring HelmReleases: invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("failed to inspect monitoring HelmReleases: invalid JSON object")
+
+    reset = 0
+    for item in payload.get("items") or []:
+        metadata = item.get("metadata") or {}
+        name = str(metadata.get("name") or "")
+        if not name.endswith(_MONITORING_RELEASE_SUFFIX):
+            continue
+        conditions = (item.get("status") or {}).get("conditions") or []
+        stalled = any(
+            condition.get("status") == "True" and condition.get("type") == "Stalled"
+            for condition in conditions
+        )
+        retries_exhausted = any(
+            condition.get("type") == "Ready"
+            and condition.get("status") == "False"
+            and condition.get("reason") == "RetriesExceeded"
+            for condition in conditions
+        )
+        if not (stalled or retries_exhausted):
+            continue
+        token = str(time.time_ns())
+        annotated = _run_capture(
+            [
+                kubectl_bin,
+                "--context",
+                context,
+                "-n",
+                "flux-system",
+                "annotate",
+                "helmrelease",
+                name,
+                f"reconcile.fluxcd.io/requestedAt={token}",
+                f"reconcile.fluxcd.io/resetAt={token}",
+                "--overwrite",
+            ],
+            env=kube_env,
+            check=False,
+        )
+        if annotated.returncode != 0:
+            detail = (annotated.stderr or annotated.stdout).strip()
+            raise RuntimeError(
+                f"failed to reset monitoring HelmRelease {name}"
+                + (f": {detail}" if detail else "")
+            )
+        reset += 1
+    return reset
 
 
 def _patch_slurmcluster_crd(kubectl_bin: str, context: str) -> bool:
@@ -473,6 +737,7 @@ def deploy_cluster(
 ) -> dict[str, Any]:
     """Deploy a soperator cluster described by *spec*. Returns cluster metadata."""
 
+    spec = _with_resolved_ssh_public_keys(spec)
     spec.validate()
     envcfg = resolve_environment(
         project=project,
