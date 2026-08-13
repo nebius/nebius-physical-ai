@@ -26,6 +26,14 @@ SPEC = (
     / "npa-workflows"
     / "physical-ai-data-factory.yaml"
 )
+SIM2REAL_SPEC = (
+    Path(__file__).resolve().parents[3]
+    / "npa"
+    / "workflows"
+    / "workbench"
+    / "npa-workflows"
+    / "sim2real.yaml"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -346,6 +354,36 @@ def test_image_override_satisfies_the_npa_source_requirement(
     result = _submit("--image", "cr.example.invalid/reg/npa-tool:v1", "--plan-only")
 
     assert "NPA_SRC_S3_URI is unset" not in result.output
+
+
+def test_config_pinned_resource_images_satisfy_the_npa_source_requirement() -> None:
+    """Submit preflight must inspect the same ``--var`` config as rendering."""
+    from npa.cli.workbench.workflow import _plan_requires_npa_source
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
+    image_vars = {
+        name: digest_image
+        for name in (
+            "controller_image",
+            "transfer_image",
+            "envgen_image",
+            "reason_image",
+            "isaac_image",
+            "viewer_image",
+        )
+    }
+
+    assert (
+        _plan_requires_npa_source(
+            SIM2REAL_SPEC,
+            run_id="config-pinned-images",
+            assume_decision="promote_checkpoint",
+            config_overrides=image_vars,
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+        is False
+    )
 
 
 def test_image_none_automatically_plans_npa_source_staging() -> None:

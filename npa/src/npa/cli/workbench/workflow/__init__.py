@@ -728,6 +728,7 @@ def submit_cmd(
                 yaml_path,
                 run_id=resolved_run_id,
                 assume_decision=assume_decision,
+                config_overrides=substitutions,
                 options=SkypilotRenderOptions(
                     registry=_resolve_submit_registry(registry, project),
                     image_overrides={
@@ -2017,17 +2018,23 @@ def _plan_requires_npa_source(
     *,
     run_id: str,
     assume_decision: str,
+    config_overrides: Mapping[str, str] | None = None,
     options,
 ) -> bool:
-    """Return whether any planned step lacks a resolved container image."""
+    """Return whether any fully configured planned step lacks a container image."""
 
     from npa.orchestration.npa_workflow import build_plan, load_spec
     from npa.orchestration.npa_workflow.skypilot_render import (
         build_scheduler_task,
         resolve_task_image,
     )
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
-    spec = load_spec(yaml_path)
+    # Resource image fields may be config tokens populated only by submit
+    # ``--var`` values. Inspect the same merged spec that render/runtime will use;
+    # otherwise a fully digest-pinned workflow is incorrectly forced to stage an
+    # unused source tree (and ``--no-stage-src`` cannot submit it at all).
+    spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     for step in plan.steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
