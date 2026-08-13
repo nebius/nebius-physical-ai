@@ -68,7 +68,9 @@ RUN python -m pip install --no-cache-dir \
 # stdlib-only precisely so the tested code and the enforcing code are the same
 # code; a shell re-implementation would be a second version of a legal control.
 COPY --chmod=0444 src/npa/workbench/ltx2/licensing.py /opt/npa/ltx2/licensing.py
+COPY --chmod=0444 src/npa/workbench/ltx2/video_check.py /opt/npa/ltx2/video_check.py
 COPY --chmod=0555 docker/workbench/ltx2/ltx_gate.py /opt/npa/ltx2/ltx_gate.py
+COPY --chmod=0555 docker/workbench/ltx2/validate_video.py /opt/npa/ltx2/validate_video.py
 COPY --chmod=0755 docker/workbench/ltx2/ltx_runtime.sh /usr/local/bin/ltx-runtime
 COPY --chmod=0755 docker/workbench/ltx2/entrypoint.sh /usr/local/bin/ltx-entrypoint
 COPY --chmod=0755 docker/workbench/ltx2/smoke.sh /opt/npa/ltx2/smoke.sh
@@ -88,6 +90,17 @@ RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
     && su "${NPA_RUNTIME_USER}" -s /bin/bash -c 'ltx-runtime assert-refusal' \
       | grep -Fq NPA_LTX_BOOTSTRAP_REFUSES_WITHOUT_DECLARATION_OK \
     && test -z "$(find /workspace -mindepth 2 -print -quit)" \
+    # The output validator decides whether a GPU run passed, so prove here that
+    # it can tell a real clip from a plausible-looking one. ffmpeg's own synthetic
+    # sources supply both cases; no LTX bytes are involved and both files are
+    # removed within this layer.
+    && ffmpeg -v error -f lavfi -i life=size=64x64:rate=24 -t 2 \
+         -pix_fmt yuv420p /tmp/npa-ltx-moving.mp4 \
+    && ffmpeg -v error -f lavfi -i color=c=black:size=64x64:rate=24:duration=2 \
+         -pix_fmt yuv420p /tmp/npa-ltx-flat.mp4 \
+    && /opt/npa/ltx2/validate_video.py --video /tmp/npa-ltx-moving.mp4 >/dev/null \
+    && ! /opt/npa/ltx2/validate_video.py --video /tmp/npa-ltx-flat.mp4 >/dev/null 2>&1 \
+    && rm -f /tmp/npa-ltx-moving.mp4 /tmp/npa-ltx-flat.mp4 \
     # No LTX payload, no weights, no CUDA wheels may exist in any layer.
     && test -z "$(find / -xdev \( -name 'ltx_core' -o -name 'ltx_pipelines' \) -print -quit)" \
     && test -z "$(find / -xdev \( -name '*.safetensors' -o -name '*.ckpt' \) -print -quit)" \

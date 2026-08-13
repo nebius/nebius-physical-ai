@@ -53,7 +53,22 @@ DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 #: rendered YAML). Without this a run provisions, pulls the image, executes the profile
 #: and then dies at the upload with
 #: ``botocore.exceptions.NoCredentialsError: Unable to locate credentials``.
-OPERATOR_RUNTIME_ENVS = ("NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",)
+#: Operator-held runtime state that a vendor gate reads inside the pod: licence
+#: acceptances and the operator's own gated-repository token. These are answers a
+#: person gave, not workflow configuration, so they travel through SkyPilot's
+#: redacted secret channel and never appear in a rendered YAML. Unset names are
+#: dropped, so a run that declares nothing forwards nothing and the container's
+#: own gate refuses — which is the behaviour under test in the ltx2 and wan2-2
+#: image smokes.
+OPERATOR_RUNTIME_ENVS = (
+    "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
+    "NPA_LTX_ACCEPT_COMMUNITY_LICENSE",
+    "NPA_LTX_ENTITY_CLASS",
+    "NPA_LTX_USE_CLASS",
+    "NPA_LTX_COMMERCIAL_AGREEMENT_REF",
+    "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
+    "HF_TOKEN",
+)
 DEFAULT_SECRET_ENVS = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",

@@ -1,0 +1,132 @@
+# LTX-2.5 solution smoke on one RTX PRO 6000 Blackwell (96 GB). The floors here
+# are set by what the operator has to pull at run time, because the image ships
+# none of it: the LTX-2.5 checkpoint set is roughly 66 GiB on disk before the
+# uv-resolved CUDA closure, and the 22B transformer plus the Gemma-4 12B text
+# encoder do not both fit in 96 GB at bf16 — hence the CPU-offload headroom in
+# `memory` and the fp8-cast quantization the workflow's smoke command passes.
+# None of this has been measured on hardware yet; it is a starting shape for the
+# first real run, not a validated one.
+name: byof-solution-smoke-ltx2-rtxpro-gpu
+execution: serial
+---
+name: byof-solution-smoke-ltx2-rtxpro
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+  cpus: 16+
+  memory: 192+
+  disk_size: 500
+  image_id: "docker:cr.eu-north1.nebius.cloud/<your-registry-id>/npa-byof:<your-run-id>"
+envs:
+  NPA_BYOF_RUN_ID: "<your-run-id>"
+  BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_SMOKE_COMMAND: ""
+  BYOF_SOLUTION_NAME: ""
+  BYOF_CAPABILITY_NAME: ""
+  BYOF_SMOKE_ARTIFACT_NAME: ""
+  BYOF_IMAGE: ""
+  NVIDIA_VISIBLE_DEVICES: "all"
+  NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  test -d "${BYOF_REPO_ROOT}"
+  test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
+  python3 - <<'PY' || python3 -m pip install --quiet --break-system-packages boto3 || python3 -m pip install --quiet boto3
+  import boto3
+  PY
+run: |
+  set -euo pipefail
+  OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  mkdir -p "${OUTPUT_DIR}"
+  export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
+  cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
+  ls -la "${BYOF_REPO_ROOT}" | tee "${OUTPUT_DIR}/byof_repo_listing.txt"
+  nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1 || true
+  nvidia-smi -L > "${OUTPUT_DIR}/nvidia_smi_list.txt" 2>&1 || true
+  SMOKE_EXIT_CODE=0
+  if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
+    set +e
+    (
+      cd "${BYOF_REPO_ROOT}"
+      /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
+    ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
+    SMOKE_EXIT_CODE=$?
+    set -e
+  fi
+  if [ -n "${BYOF_SMOKE_COMMAND}" ] && [ -n "${BYOF_SMOKE_ARTIFACT_NAME}" ] && [ "${SMOKE_EXIT_CODE}" -eq 0 ]; then
+    test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
+  fi
+  export SMOKE_EXIT_CODE
+  python3 <<'PY'
+  import json
+  import os
+  import time
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+  from botocore.config import Config
+
+  run_id = os.environ["NPA_BYOF_RUN_ID"]
+  root = Path(f"/workspace/byof-runs/{run_id}")
+  meta_path = Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json"
+  metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+  summary = {
+      "status": "success" if int(os.environ.get("SMOKE_EXIT_CODE", "0")) == 0 else "failed",
+      "tool": "byof",
+      "workload": "solution-smoke-ltx2-rtxpro",
+      "run_id": run_id,
+      "image": os.environ.get("BYOF_IMAGE", ""),
+      "repo_root": os.environ["BYOF_REPO_ROOT"],
+      "metadata": metadata,
+      "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
+      "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
+      "smoke_command": os.environ.get("BYOF_SMOKE_COMMAND", ""),
+      "smoke_artifact_name": os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
+      "smoke_exit_code": int(os.environ.get("SMOKE_EXIT_CODE", "0")),
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_byof_summary.json").write_text(json.dumps(summary, indent=2))
+  print(json.dumps(summary, indent=2), flush=True)
+
+  output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
+  parsed = urlparse(output)
+  if parsed.scheme == "s3" and parsed.netloc:
+      endpoint = (os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or "").strip() or None
+      kwargs = {
+          "endpoint_url": endpoint,
+          "config": Config(s3={"addressing_style": "path"}),
+          "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1"),
+      }
+      access_key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+      secret_key = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+      session_token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+      if access_key and secret_key:
+          kwargs["aws_access_key_id"] = access_key
+          kwargs["aws_secret_access_key"] = secret_key
+          if session_token:
+              kwargs["aws_session_token"] = session_token
+      s3 = boto3.client("s3", **kwargs)
+      prefix = parsed.path.lstrip("/")
+      uploaded = 0
+      for path in root.rglob("*"):
+          if path.is_file():
+              key = prefix + str(path.relative_to(root))
+              s3.put_object(
+                  Bucket=parsed.netloc,
+                  Key=key,
+                  Body=path.read_bytes(),
+                  IfNoneMatch="*",
+              )
+              uploaded += 1
+              print(f"uploaded s3://{parsed.netloc}/{key}", flush=True)
+      summary_key = prefix + "npa_byof_summary.json"
+      s3.head_object(Bucket=parsed.netloc, Key=summary_key)
+      print(f"verified s3://{parsed.netloc}/{summary_key}", flush=True)
+      print(f"uploaded_file_count={uploaded}", flush=True)
+  PY
+  if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
+    exit "${SMOKE_EXIT_CODE}"
+  fi

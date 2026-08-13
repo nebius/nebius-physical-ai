@@ -1,0 +1,244 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# LTX-2.5 generation chained into the workbench tools that already exist, with
+# the licence carried between them as an artifact rather than as an assumption.
+#
+#   generate (GPU, npa-ltx2) -> stamp (CPU) -> curate (CPU, FiftyOne)
+#     -> gate (CPU) -> train (GPU, LeRobot)
+#
+# The two CPU states in the middle are the point of the spec. LTX-2.5 is
+# governed by the LTX-2.x Community License Agreement, whose Attachment A(18)
+# forbids using Outputs to "train, improve, or fine-tune any other machine
+# learning model" for commercial use. A robot policy is another machine learning
+# model, so the last state of this pipeline is exactly the thing that becomes
+# illegal under a commercial declaration. `gate` reads back what the operator
+# declared at generation time and fails the run rather than letting `train`
+# start. See npa/docker/workbench/ltx2/REDISTRIBUTION.md.
+
+metadata:
+  name: byof-ltx2
+  description: >
+    Generate video with LTX-2.5 in the zero-payload npa-ltx2 image, stamp the
+    operator's LTX-2.x Community License declaration onto the artifacts, curate
+    the result with FiftyOne, and gate LeRobot policy training on Attachment
+    A(18) before any trainer may consume the video. The image contains no
+    Lightricks code and no weights: the run fetches upstream source at an
+    immutable ref and gated weights under the operator's own HF token, only
+    after the declaration validates.
+
+config:
+  bucket: example-bucket
+  prefix: "oss-solutions/ltx2/{{run.id}}"
+
+  prompt: "A robot arm lifts a red cube from a cluttered workbench and places it into a bin, static camera, bright even lighting, shallow depth of field."
+
+  repo_url: "https://github.com/Lightricks/LTX-2.git"
+  # Immutable upstream ref. It is also what the provenance manifest records, and
+  # ltx_runtime.sh verifies the fetched HEAD against it before installing.
+  repo_ref: "fd4ded7f2d88d3da713abcdd4ad41ecc4a9314ca"
+  base_profile: prebuilt
+  base_image: "tool://ltx2"
+  build_command: ""
+  workload: solution-smoke
+  smoke_command: |
+    set -euo pipefail
+    # Prompt text crosses the shell boundary as base64 only; the Python consumer
+    # decodes it without the shell ever evaluating it.
+    export LTX2_PROMPT_B64="{{config.prompt|base64}}"
+    export LTX2_OUT="${NPA_SMOKE_OUTPUT_DIR:-/workspace/out}"
+    export LTX2_MODELS="${NPA_LTX_MODEL_CACHE:-/workspace/model-cache/ltx-2.5}"
+
+    # Both fetches refuse (exit 78) unless the operator declared. Nothing above
+    # this line has touched the network.
+    ltx-runtime ensure
+    ltx-runtime fetch-weights
+
+    ltx-runtime exec python - <<'PY'
+    import base64
+    import os
+    import subprocess
+    from pathlib import Path
+
+    models = Path(os.environ["LTX2_MODELS"])
+    out = Path(os.environ["LTX2_OUT"])
+    out.mkdir(parents=True, exist_ok=True)
+    video = out / "ltx2_5_text_to_video.mp4"
+
+    # Upstream's own documented entrypoint at the pinned ref: the distilled
+    # pipeline, one file per component. fp8-cast plus CPU offload is what makes
+    # the 22B transformer and the Gemma-4 12B encoder co-resident on 96 GB.
+    subprocess.run(
+        [
+            "python",
+            "-m",
+            "ltx_pipelines.distilled",
+            "--transformer-path",
+            str(models / "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors"),
+            "--text-encoder-path",
+            str(models / "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors"),
+            "--video-vae-path",
+            str(models / "vae/ltx-2.5-video-vae-bf16.safetensors"),
+            "--audio-vae-path",
+            str(models / "vae/ltx-2.5-audio-vae-bf16.safetensors"),
+            "--spatial-upsampler-path",
+            str(models / "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"),
+            "--quantization",
+            "fp8-cast",
+            "--offload",
+            "cpu",
+            "--num-frames",
+            "121",
+            "--seed",
+            "42",
+            "--output-path",
+            str(video),
+            "--prompt",
+            base64.b64decode(os.environ["LTX2_PROMPT_B64"], validate=True).decode("utf-8"),
+        ],
+        check=True,
+    )
+    PY
+
+    # A file that exists proves nothing; decode it. An MP4 that ffprobe cannot
+    # read, or that carries no frames, is a failure the smoke must not pass.
+    /opt/npa/ltx2/validate_video.py \
+      --video "${LTX2_OUT}/ltx2_5_text_to_video.mp4" \
+      --min-frames 24 \
+      --artifact "${LTX2_OUT}/ltx2_5_text_to_video.json" \
+      --capability "${BYOF_CAPABILITY_NAME}"
+  solution_name: "ltx2.5"
+  capability_name: "ltx2_5_text_to_video"
+  smoke_artifact_name: "ltx2_5_text_to_video.json"
+  resource_profile_yaml: "byof-solution-smoke-ltx2-rtxpro-gpu"
+  task: "ltx-2.5-distilled"
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  # Negative sentinel: wait until terminal. A 22B two-stage generation after a
+  # 66 GiB weight pull has no useful artificial deadline.
+  wait_timeout: "-1"
+  poll_interval: "60"
+  output_root: "s3://{{config.bucket}}/oss-solutions/ltx2"
+  summary_uri: "s3://{{config.bucket}}/{{config.prefix}}/npa_byof_summary.json"
+  artifact_uri: "s3://{{config.bucket}}/{{config.prefix}}/{{config.smoke_artifact_name}}"
+  video_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_5_text_to_video.mp4"
+
+  ltx2_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_provenance.json"
+  ltx2_gate_uri: "s3://{{config.bucket}}/{{config.prefix}}/ltx2_gate.json"
+  ltx2_consumer: "LeRobot policy training"
+
+  # FiftyOne curation over the generated set. No Cosmos Curator ran here, so the
+  # optional curator report is empty rather than pointed at a file that does not
+  # exist.
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  curation_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/curation/report.json"
+  curator_report_uri: ""
+  fiftyone_dedup_threshold: "0.10"
+
+  lerobot_dataset: "lerobot/pusht"
+  lerobot_output_dir: "/workspace/ltx2-policy"
+  policy_type: "act"
+  policy_device: "cuda"
+  train_steps: "200"
+  train_batch_size: "8"
+  artifacts_uri: "s3://{{config.bucket}}/{{config.prefix}}/policy/"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 16
+    memory: 192Gi
+    disk_size: 500
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: generate
+
+states:
+  generate:
+    description: >
+      Fetch upstream LTX-2.5 source at the pinned ref and the gated weights under
+      the operator's own token, run the distilled pipeline on one RTX PRO 6000
+      Blackwell, validate the decoded MP4, and upload the evidence through the
+      BYOF S3 runner. Both fetches refuse with exit 78 unless the operator has
+      declared entity class and use class.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.artifact_uri}}"
+        schema: npa.workbench.byof.ltx2_5_text_to_video.v1
+      - uri: "{{config.video_uri}}"
+        schema: video/mp4
+    next: stamp
+
+  stamp:
+    description: >
+      Record which licence text was accepted, by what class of entity, for what
+      class of use, and what Attachment A(18) therefore permits — next to the
+      video rather than in a wiki.
+    needs: [generate]
+    toolRef: workbench.ltx2.stamp
+    resources: cpu
+    inputs:
+      - uri: "{{config.video_uri}}"
+        schema: video/mp4
+    outputs:
+      - uri: "{{config.ltx2_manifest_uri}}"
+        schema: npa.ltx2.provenance.v1
+    next: curate
+
+  curate:
+    description: >
+      Curate the generated set with real FiftyOne Brain uniqueness and duplicate
+      detection. Curation is licence-neutral: it inspects Outputs without
+      training anything on them, so it runs before the gate.
+    needs: [stamp]
+    toolRef: workbench.fiftyone.curate_augmented
+    resources: cpu
+    inputs:
+      - uri: "{{config.augment_uri}}"
+        schema: npa.sim2real.augmented_frames.v1
+    outputs:
+      - uri: "{{config.curation_report_uri}}"
+        schema: npa.fiftyone.curation.v1
+    next: gate
+
+  gate:
+    description: >
+      Fail-closed Attachment A(18) check before the trainer. Denies on a
+      commercial declaration, on a missing manifest, and on a manifest whose
+      terms it does not recognise; only an explicit non-commercial declaration
+      lets the run continue.
+    needs: [curate]
+    toolRef: workbench.ltx2.gate
+    resources: cpu
+    inputs:
+      - uri: "{{config.ltx2_manifest_uri}}"
+        schema: npa.ltx2.provenance.v1
+    outputs:
+      - uri: "{{config.ltx2_gate_uri}}"
+        schema: npa.ltx2.gate.v1
+    next: train
+
+  train:
+    description: >
+      Train a LeRobot policy on the curated set. Reachable only through the
+      gate, so any checkpoint produced here carries a recorded, non-commercial
+      licence basis — and is itself a Derivative of LTX-2.x under Section 1.5,
+      still bound by the Agreement.
+    needs: [gate]
+    toolRef: workbench.lerobot.policy_train
+    resources: gpu
+    inputs:
+      - uri: "{{config.curation_report_uri}}"
+        schema: npa.fiftyone.curation.v1
+    outputs:
+      - uri: "{{config.artifacts_uri}}"
+        schema: npa.lerobot.checkpoint.v1
+    terminal: true

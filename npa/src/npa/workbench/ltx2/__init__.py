@@ -10,6 +10,7 @@ of downstream trainers.
 
 from __future__ import annotations
 
+from npa.workbench.ltx2.gate import GateResult, StampResult, gate_run, stamp_run
 from npa.workbench.ltx2.licensing import (
     GateDecision,
     LicenseDeclaration,
@@ -21,9 +22,13 @@ from npa.workbench.ltx2.licensing import (
 
 __all__ = [
     "GateDecision",
+    "GateResult",
     "LicenseDeclaration",
     "LtxLicenseError",
     "ProvenanceRecord",
+    "StampResult",
     "check_training_consumer",
     "declaration_from_env",
+    "gate_run",
+    "stamp_run",
 ]
