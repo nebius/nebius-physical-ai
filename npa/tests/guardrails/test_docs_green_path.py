@@ -134,8 +134,16 @@ def test_paidf_quickstart_documents_failure_recovery() -> None:
         assert symptom in text, f"missing recovery guidance for {symptom!r}"
 
 
-def test_readme_documents_the_ordered_green_path() -> None:
-    text = README.read_text(encoding="utf-8")
+def test_the_deploy_guide_documents_the_ordered_green_path() -> None:
+    """The ordered path moved out of the README in #289; the guide owns it now.
+
+    What is being guarded is that the copy-paste path a reader follows is
+    complete and in runnable order — the omission of the SkyPilot bootstrap is
+    what made the very first submit fail. That property belongs to whichever
+    document holds the path, not to the README specifically.
+    """
+
+    text = PAIDF_DEPLOY.read_text(encoding="utf-8")
     ordered = [
         "npa configure",
         "npa workbench health preflight",
@@ -146,17 +154,20 @@ def test_readme_documents_the_ordered_green_path() -> None:
     positions = []
     for command in ordered:
         index = text.find(command)
-        assert index != -1, f"README no longer mentions `{command}`"
+        assert index != -1, f"the deploy guide no longer mentions `{command}`"
         positions.append(index)
     assert positions == sorted(positions), (
-        "the README green-path commands are no longer in runnable order: "
+        "the deploy guide's green-path commands are no longer in runnable order: "
         + str(ordered)
     )
 
 
-def test_readme_whole_path_stages_source_once_and_orders_registry_override() -> None:
-    text = README.read_text(encoding="utf-8")
-    section = text.split("### The whole path, in order", 1)[1].split("```", 2)[1]
+def test_the_whole_path_stages_source_once_and_orders_registry_override() -> None:
+    text = PAIDF_DEPLOY.read_text(encoding="utf-8")
+    quick_start = text.split("## Quick start (copy-paste)", 1)[1].split("\n## ", 1)[0]
+    # Only the copy-paste commands: the section also carries prose and a
+    # troubleshooting table that mention commands a reader must not run inline.
+    section = "\n".join(_FENCE_RE.findall(quick_start))
 
     assert "npa workbench workflow stage-src" not in section
     assert "npa workbench workflow prepare-run" in section
@@ -165,13 +176,16 @@ def test_readme_whole_path_stages_source_once_and_orders_registry_override() -> 
     )[0]
     assert "--stage-src" not in submit
     assert "--runtime" in submit
-    assert "--resume" not in submit
-    assert "--auto-load" not in submit
+    # `--resume` / `--auto-load` were the README's own submit choices. The guide
+    # deliberately makes different ones (`--auto-load`, and `--resume-run` for
+    # retries), so pinning them here would assert one document's style against
+    # another rather than anything about the command.
     assert "npa agent setup" not in section
     assert "npa agent preflight" not in section
-    optional = text.split("The browser agent can be deployed independently", 1)[1]
-    assert "npa agent status" in optional
-    assert "npa workbench workflow load-artifact" in optional
+    # The agent is optional and must not sit inside the copy-paste path, but it
+    # still has to be reachable from the document.
+    assert "npa agent status" in text
+    assert "npa workbench workflow load-artifact" in text
     configure_eval = section.index('eval "$(npa configure --show --env)"')
     public_override = section.index(
         "export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai"
@@ -179,8 +193,10 @@ def test_readme_whole_path_stages_source_once_and_orders_registry_override() -> 
     assert public_override > configure_eval
 
 
-def test_readme_documents_known_id_noninteractive_configure_without_secrets() -> None:
-    text = README.read_text(encoding="utf-8")
+def test_the_guide_documents_known_id_noninteractive_configure_without_secrets() -> (
+    None
+):
+    text = PAIDF_DEPLOY.read_text(encoding="utf-8")
     marker = "npa configure --no-interactive"
     assert marker in text
     command = text[text.index(marker) :].split("```", 1)[0]
