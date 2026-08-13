@@ -518,6 +518,39 @@ def test_successful_job_without_declared_output_fails_closed(tmp_path: Path) -> 
     assert any(wave["status"] == "failed" for wave in report.waves)
 
 
+def test_declared_output_checker_receives_uri_and_ledger_keeps_schema(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    checked: list[str] = []
+
+    def checker(uri: str) -> bool:
+        assert isinstance(uri, str)
+        checked.append(uri)
+        return True
+
+    executor = _executor(spec, output_checker=checker)
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-output-declaration",
+        executor=executor,
+        options=executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+    )
+
+    assert report.status == "succeeded"
+    assert checked == [
+        "s3://example-bucket/gate-loop/rt-output-declaration/gate/decision.json"
+    ]
+    gate = next(wave for wave in report.waves if wave["states"] == ["gate"])
+    assert gate["outputs"] == [
+        {
+            "uri": checked[0],
+            "schema": "npa.sim2real.threshold_decision.v1",
+        }
+    ]
+
+
 # ------------------------------------------------------------------- early exit
 
 
@@ -954,6 +987,69 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     # Successful waves replay, while a terminal workload failure remains terminal.
     assert second_submitter.calls == []
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
+
+
+def test_resume_adopts_terminal_success_after_output_check_driver_failure(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    first_submitter = FakeSubmitter()
+
+    def interrupted_checker(uri: str) -> bool:
+        assert uri.endswith("/gate/decision.json")
+        raise RuntimeError("driver interrupted after scheduler success")
+
+    first = _executor(
+        spec,
+        run_id="rt-post-success-adopt",
+        submitter=first_submitter,
+        store=store,
+        output_checker=interrupted_checker,
+    )
+    first_report = run_workflow_runtime(
+        spec,
+        run_id="rt-post-success-adopt",
+        executor=first,
+        options=first.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+    )
+
+    assert first_report.status == "failed"
+    assert [call["tasks"] for call in first_submitter.calls] == [["work"], ["gate"]]
+    failed_gate = first_report.waves[-1]
+    assert failed_gate["status"] == "failed"
+    assert failed_gate["sky_status"] == "SUCCEEDED"
+
+    resumed_submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-post-success-adopt",
+        submitter=resumed_submitter,
+        options=options,
+        store=store,
+        output_checker=lambda uri: uri.endswith("/gate/decision.json"),
+    )
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-post-success-adopt",
+        executor=resumed,
+        options=options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+    )
+
+    assert report.status == "succeeded"
+    assert [call["tasks"] for call in resumed_submitter.calls] == [["publish"]]
+    adopted_gate = next(wave for wave in report.waves if wave["states"] == ["gate"])
+    assert adopted_gate["job_id"] == failed_gate["job_id"]
+    assert adopted_gate["status"] == "succeeded"
+    assert adopted_gate["adopted"] is True
+    assert adopted_gate["replayed"] is True
+    assert (
+        adopted_gate["recovery_decision"]
+        == "adopted_terminal_success_after_driver_failure"
+    )
 
 
 def test_resume_with_explicit_retry_replays_success_and_retries_terminal_wave(

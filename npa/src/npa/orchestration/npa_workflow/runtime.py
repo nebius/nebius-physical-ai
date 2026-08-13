@@ -133,6 +133,20 @@ def s3_artifact_exists(uri: str) -> bool:
         raise
 
 
+def _declared_output_uri(output: Any) -> str:
+    """Return the URI from either a plan declaration or a legacy ledger string.
+
+    ``PlanStep.outputs`` intentionally retains the output schema alongside its URI,
+    and that complete declaration is persisted in the runtime ledger for audit.  The
+    storage checker, however, accepts a URI string.  Keep those two contracts
+    explicit instead of relying on every caller to discard provenance metadata.
+    """
+
+    if isinstance(output, Mapping):
+        return str(output.get("uri") or "").strip()
+    return str(output or "").strip()
+
+
 @dataclass
 class RuntimeOptions:
     """Knobs for one runtime-orchestrated run."""
@@ -475,6 +489,32 @@ class SkyPilotWaveExecutor:
                 prior_attempt = int(latest.get("attempt") or 1)
                 category = str(latest.get("error_category") or "")
                 sky_status = str(latest.get("sky_status") or "").upper()
+                # The scheduler can reach SUCCEEDED and publish every declared
+                # artifact before the driver fails while checking/persisting that
+                # evidence.  Resubmitting such a wave would duplicate completed GPU
+                # work.  A terminal-success scheduler observation plus the durable
+                # outputs is the same evidence accepted for an ordinary completed
+                # replay, so converge the failed driver record to succeeded.
+                if is_terminal_ok(sky_status) and self._outputs_exist(
+                    list(latest.get("outputs") or [])
+                ):
+                    attempt = self._attempt_from_record(
+                        latest, steps=steps, kind=kind, group=group
+                    )
+                    attempt.status = "succeeded"
+                    attempt.adopted = True
+                    attempt.replayed = True
+                    attempt.recovery_decision = (
+                        "adopted_terminal_success_after_driver_failure"
+                    )
+                    attempt.ended_at = attempt.ended_at or utc_now()
+                    self._log(
+                        f"wave {key}: scheduler and durable outputs prove the prior "
+                        "attempt succeeded; adopting it without resubmission"
+                    )
+                    self.ledger.record(attempt)
+                    self.attempts.append(attempt)
+                    return attempt
                 safe_transport_retry = category in {
                     "kubernetes_transport",
                     "kubernetes_rate_limit",
@@ -771,11 +811,19 @@ class SkyPilotWaveExecutor:
         self.ledger.record(attempt)
         return attempt
 
-    def _outputs_exist(self, outputs: Sequence[str]) -> bool:
-        return all(self._output_checker(uri) for uri in outputs if uri)
+    def _outputs_exist(self, outputs: Sequence[Any]) -> bool:
+        for output in outputs:
+            uri = _declared_output_uri(output)
+            if not uri or not self._output_checker(uri):
+                return False
+        return True
 
-    def _require_outputs(self, outputs: Sequence[str], *, key: str) -> None:
-        missing = [uri for uri in outputs if uri and not self._output_checker(uri)]
+    def _require_outputs(self, outputs: Sequence[Any], *, key: str) -> None:
+        missing: list[str] = []
+        for output in outputs:
+            uri = _declared_output_uri(output)
+            if not uri or not self._output_checker(uri):
+                missing.append(uri or repr(output))
         if missing:
             raise NpaWorkflowError(
                 f"wave {key} completed without declared durable output(s): {missing}"
