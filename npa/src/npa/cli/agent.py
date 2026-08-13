@@ -9434,6 +9434,7 @@ def deploy_cmd(
         progress=lambda payload: typer.echo(
             "progress: " + json.dumps(payload, sort_keys=True), err=True
         ),
+        fatal_errors=(DeploymentIdentityError,),
         transport_errors=(ConfigError, SSHError, ValueError),
     )
     reconciliation = convergence.evidence
@@ -10038,6 +10039,7 @@ def bootstrap_cmd(
         progress=lambda payload: typer.echo(
             "progress: " + json.dumps(payload, sort_keys=True), err=True
         ),
+        fatal_errors=(DeploymentIdentityError,),
         transport_errors=(ConfigError, SSHError, ValueError),
     )
     reconciliation = convergence.evidence

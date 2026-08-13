@@ -126,6 +126,7 @@ def converge_remote_agent_setup(
     status: Callable[[str], None],
     progress: Callable[[dict[str, Any]], None],
     transport_errors: tuple[type[BaseException], ...],
+    fatal_errors: tuple[type[BaseException], ...] = (),
 ) -> AgentSetupConvergence:
     """Reconcile, resume if needed, then reconcile again without replacement."""
 
@@ -167,6 +168,11 @@ def converge_remote_agent_setup(
                 operation, phase="remote_bootstrap", emit=progress
             ):
                 bootstrap(**remote_kwargs)
+        except fatal_errors:
+            # Identity/ownership refusals happen before mutation and are not
+            # uncertain transport outcomes. Never reconcile them into success
+            # merely because an older deployment is still healthy.
+            raise
         except transport_errors as exc:
             primary_error = exc
         evidence = reconcile(**dict(reconcile_kwargs))

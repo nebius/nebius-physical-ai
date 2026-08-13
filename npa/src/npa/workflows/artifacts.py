@@ -1606,7 +1606,15 @@ def _list_artifact_run_index(
                 )
                 if identity is None:
                     continue
-                parent, run_id = identity
+                parent, untrusted_run_id = identity
+                try:
+                    run_id = _validate_run_basename(untrusted_run_id)
+                except ArtifactDiscoveryError:
+                    # Buckets can contain abandoned template output such as a
+                    # literal ``${RUN_ID}`` directory. It is not an NPA run and
+                    # must not poison discovery for every valid sibling.
+                    continue
+                identity = (parent, run_id)
                 discovered_path = "/".join(part for part in (parent, run_id) if part)
                 if _is_excluded_prefix(discovered_path, excluded):
                     continue

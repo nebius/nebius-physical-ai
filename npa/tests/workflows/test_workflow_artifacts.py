@@ -590,6 +590,23 @@ def test_list_all_runs_merges_across_categories_latest_first() -> None:
     assert page.total_runs == 3
 
 
+def test_list_all_runs_ignores_malformed_historical_template_prefixes() -> None:
+    s3 = _PrefixAwareS3(
+        _LAYOUT
+        + [
+            (
+                "checkpoints/isaac/2026-07-31_${NPA_ISAAC_RUN_ID}/report.json",
+                "2026-07-31T08:01:11+00:00",
+            )
+        ]
+    )
+
+    page = list_all_runs("bucket", base_prefix="checkpoints", limit=50, s3=s3)
+
+    assert {item.run_id for item in page.runs} == {"paidf-1", "run-a", "default"}
+    assert page.discovery_complete is True
+
+
 def test_find_run_artifacts_locates_run_in_any_category() -> None:
     s3 = _PrefixAwareS3(_LAYOUT)
     arts = find_run_artifacts("bucket", base_prefix="checkpoints", run_id="paidf-1", s3=s3)
