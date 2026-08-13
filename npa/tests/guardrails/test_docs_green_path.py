@@ -139,8 +139,9 @@ def test_readme_documents_the_ordered_green_path() -> None:
     ordered = [
         "npa configure",
         "npa workbench health preflight",
-        "npa provision-if-absent",
-        "npa skypilot bootstrap",
+        "npa workbench workflow validate-spec",
+        "npa workbench workflow plan-spec",
+        "npa workbench workflow preflight-images",
         "npa workbench workflow submit",
     ]
     positions = []
@@ -154,9 +155,13 @@ def test_readme_documents_the_ordered_green_path() -> None:
     )
 
 
-def test_readme_whole_path_stages_source_once_and_orders_registry_override() -> None:
-    text = README.read_text(encoding="utf-8")
-    section = text.split("### The whole path, in order", 1)[1].split("```", 2)[1]
+def test_paidf_whole_path_stages_source_once_and_orders_registry_override() -> None:
+    text = PAIDF_DEPLOY.read_text(encoding="utf-8")
+    section = (
+        text.split("## Quick start (copy-paste)", 1)[1]
+        .split("```bash", 1)[1]
+        .split("```", 1)[0]
+    )
 
     assert "npa workbench workflow stage-src" not in section
     assert "npa workbench workflow prepare-run" in section
@@ -166,12 +171,9 @@ def test_readme_whole_path_stages_source_once_and_orders_registry_override() -> 
     assert "--stage-src" not in submit
     assert "--runtime" in submit
     assert "--resume" not in submit
-    assert "--auto-load" not in submit
+    assert "--auto-load" in submit
     assert "npa agent setup" not in section
     assert "npa agent preflight" not in section
-    optional = text.split("The browser agent can be deployed independently", 1)[1]
-    assert "npa agent status" in optional
-    assert "npa workbench workflow load-artifact" in optional
     configure_eval = section.index('eval "$(npa configure --show --env)"')
     public_override = section.index(
         "export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai"
@@ -179,8 +181,8 @@ def test_readme_whole_path_stages_source_once_and_orders_registry_override() -> 
     assert public_override > configure_eval
 
 
-def test_readme_documents_known_id_noninteractive_configure_without_secrets() -> None:
-    text = README.read_text(encoding="utf-8")
+def test_paidf_noninteractive_configure_uses_ids_not_secrets() -> None:
+    text = PAIDF_DEPLOY.read_text(encoding="utf-8")
     marker = "npa configure --no-interactive"
     assert marker in text
     command = text[text.index(marker) :].split("```", 1)[0]
