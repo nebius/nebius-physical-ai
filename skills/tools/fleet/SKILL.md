@@ -109,6 +109,11 @@ depends on it.
    valid on fabric-capable 8-GPU SXM presets. Single-GPU presets (e.g. RTX PRO
    6000 `1gpu-24vcpu-218gb`) auto-set `enable_gpu_cluster=false`; set it `true`
    only with an 8-GPU preset **and** `infiniband_fabric`.
+   B200 pools (`gpu-b200-sxm` and the recipe/API alias `gpu-b200-sxm-a`)
+   automatically use Nebius's `cuda13.0` driver-full node image and the provider
+   device plugin. This is the supported Managed Kubernetes path and prevents
+   the pod-managed GPU driver from racing the Network Operator while the NVLink
+   fabric is initialized. The same rule applies to `npa cluster up` and fleet.
 4. **Bind reserved GPU capacity explicitly when required.** Set
    `gpu_nodes.capacity_block_group` to a runtime-supplied Capacity Block Group
    ID. Fleet renders `gpu_nodes_reservation_policy = { policy = "STRICT", ... }`,
@@ -141,16 +146,42 @@ depends on it.
    frequently **0**), `compute.disk.count`/`compute.disk.size.network-ssd`,
    `compute.gpucluster.count` when `enable_gpu_cluster`, and
    `compute.filesystem.count` + `compute.filesystem.size.network-ssd` when
-   `enable_filestore`. List them all at once with
-   `nebius --profile <p> quotas quota-allowance list --parent-id <tenant> --format json`
+   `enable_filestore`. Each private worker consumes two
+   `vpc.allocation.count` slots (its private address and pod alias range); the
+   managed control-plane endpoint is service-owned. A create-on-demand project
+   additionally needs one `vpc.network.count`, one `vpc.subnet.count`, two
+   `vpc.pool.count`, one `vpc.routetable.count`, and one `vpc.route.count`.
+   List them all at once with
+   `nebius --profile <p> quotas quota-allowance list --parent-id <tenant> --all --format json`
    (each item carries `metadata.name`, `spec.region`, `spec.limit`).
 
    `deploy` does this automatically (`--preflight`, on by default) and refuses to
    apply when a capacity block or tenant limit cannot cover the in-scope
-   clusters; `--no-preflight` attempts it anyway. Ordinary quota checks subtract
-   exact usage when reported, otherwise the live wire's 0..1 fractional
-   `status.usage_percentage`. Filesystem size is byte-valued and must report
-   `status.unit: byte`; an incompatible/missing unit fails closed.
+   clusters; `--no-preflight` attempts it anyway. Before calculating
+   creation-only VPC requirements, preflight lists projects once and reuses an
+   existing immutable project ID when a name already exists. An unreadable
+   project inventory fails closed rather than assuming the project exists.
+
+   The allowance read is paged to completion and selects records whose
+   `metadata.parent_id` is the requested tenant. A project/unset allowance can
+   never shadow a finite tenant allowance; duplicate finite evidence must agree
+   exactly. Older unscoped records are a fallback only when no authoritative
+   tenant record exists. Required finite allowances fail closed when their
+   limit, unit, state, or consumption evidence cannot be interpreted. Exact
+   usage wins; otherwise the API's fractional `status.usage_percentage` is used
+   (values above 1 mean over-limit), and `USAGE_STATE_NOT_USED` is accepted as
+   zero consumption. Disk/filesystem sizes require `byte`; vCPU and GPU quotas
+   accept only their explicit compatible `count`/`vcpu` and `count`/`gpu` units.
+   A selected unlimited allowance may omit status because no arithmetic is
+   required.
+
+   The five creation-topology allowances (`vpc.network.count`,
+   `vpc.subnet.count`, `vpc.pool.count`, `vpc.routetable.count`, and
+   `vpc.route.count`) are optional catalog entries: when absent from a completed,
+   readable regional tenant catalog, preflight reports them as unadvertised and
+   does not reject the region. If any is advertised with a finite limit, it is
+   checked strictly. All compute, disk, mk8s, allocation, GPU-cluster, and
+   filesystem allowances required by the selected shape remain mandatory.
 
    Project-level allowances only *subdivide* the tenant allowance, so a tenant
    limit of 0 cannot be worked around by creating a project quota: raising a
@@ -166,7 +197,11 @@ depends on it.
    deployed vs failed clusters with kube contexts.
 7. **Consume the latest recipe**: `--k8s-training-ref main` clones
    `nebius-solutions-library` and uses its `k8s-training` (or `--k8s-training-dir`
-   for a local checkout). Omit both to use the repo-vendored, tested copy.
+   for a local checkout). Omit both to use the repo-vendored, tested copy. NPA
+   applies its compatibility preparation after materializing every source,
+   including the package-only pinned-ref fallback; currently this removes
+   `kubectl debug --quiet` from the filesystem verifier because kubectl 1.36
+   otherwise hides both required success evidence and the debugger-pod name.
 8. **Status / teardown**: `npa fleet status --spec fleet.yaml`; `npa fleet
    destroy --spec fleet.yaml` (prompts; `--yes`/`-y` or `--force` to skip).
 

@@ -55,6 +55,9 @@ _MODULES_SUBDIR = "modules"
 # copy (deploy/cluster/vendor + the single-cluster wrapper) so a fleet run from an
 # installed package doesn't silently drift onto upstream ``main`` HEAD.
 _PINNED_LIBRARY_REF = "main-v2026-05-25+local-cluster-patches"
+_FILESYSTEM_VERIFIER = (
+    Path("filesystem-csi-validation") / "01-verify-node-filesystem-mounts.sh"
+)
 _ENV_SIDECAR = ".npa-fleet-env.json"
 _PROJECT_NETWORK_STATE = ".npa-fleet-network.json"
 _FLEET_STATE = "fleet-state.json"
@@ -322,6 +325,7 @@ def _list_projects(
             "list",
             "--parent-id",
             tenant_id,
+            "--all",
             "--format",
             "json",
         ],
@@ -705,6 +709,19 @@ def _prepare_install_dir(
     if modules_dst.exists():
         shutil.rmtree(modules_dst, ignore_errors=True)
     shutil.copytree(recipe_root / _MODULES_SUBDIR, modules_dst)
+
+    # kubectl 1.36's `debug --quiet` suppresses both attached verifier output and
+    # the generated debugger-pod name. That defeats success-evidence checking and
+    # cleanup. Apply this compatibility shim to the materialized recipe so local,
+    # ref-cloned, package-fallback, and vendored sources all receive the fix.
+    verifier = workdir / _FILESYSTEM_VERIFIER
+    if verifier.is_file():
+        original = verifier.read_text()
+        patched = re.sub(r"(?m)^[ \t]*--quiet[ \t]*\\\n", "", original)
+        patched = patched.replace("kubectl debug --quiet ", "kubectl debug ")
+        if patched != original:
+            verifier.write_text(patched)
+            _log(on_status, "patched filesystem verifier for kubectl debug output")
 
     provider_tf = workdir / "provider.tf"
     if provider_tf.exists():
@@ -1312,21 +1329,50 @@ def deploy_fleet(
     # Phase 0: quota preflight, before any project is created. Regions come from
     # the spec, so this needs no project ids -- and running it first means a
     # quota-blocked deploy does not leave a freshly created, empty project behind.
+    preflight_project_ids: dict[str, str] = {}
     if preflight:
         scoped: dict[str, list[ClusterSpec]] = {}
+        new_projects_by_region: dict[str, int] = {}
+        scoped_projects: list[tuple[ProjectSpec, str]] = []
         for project in spec.projects:
             if not _project_in_scope(project, only_projects, prefix):
                 continue
             region = project.region or fleet_region
+            project_has_scoped_cluster = False
             for cluster in project.clusters:
                 if only_clusters and cluster.name not in only_clusters:
                     continue
                 scoped.setdefault(region, []).append(cluster)
+                project_has_scoped_cluster = True
+            if project_has_scoped_cluster:
+                scoped_projects.append((project, region))
+
+        named_projects = [
+            project for project, _region in scoped_projects if not project.project_id
+        ]
+        existing_projects = (
+            _list_projects(nebius_bin, tenant_id, cli_env, nebius_profile)
+            if named_projects
+            else []
+        )
+        for project, region in scoped_projects:
+            if project.project_id:
+                continue
+            name = project.display_name(prefix)
+            found = _find_project_id(existing_projects, name)
+            if found:
+                preflight_project_ids[project.key()] = found
+                _log(on_status, f"project {name!r} exists ({found})")
+            else:
+                new_projects_by_region[region] = (
+                    new_projects_by_region.get(region, 0) + 1
+                )
         if scoped:
             _preflight_quotas(
                 nebius_bin,
                 tenant_id=tenant_id,
                 by_region=scoped,
+                new_projects_by_region=new_projects_by_region,
                 env=cli_env,
                 profile=nebius_profile,
                 on_status=on_status,
@@ -1347,17 +1393,21 @@ def deploy_fleet(
             continue
         region = project.region or fleet_region
         try:
-            project_id, created = resolve_project_id(
-                nebius_bin,
-                tenant_id,
-                project,
-                prefix=prefix,
-                create=create_projects,
-                env=cli_env,
-                region=region,
-                profile=nebius_profile,
-                on_status=on_status,
-            )
+            if project.key() in preflight_project_ids:
+                project_id = preflight_project_ids[project.key()]
+                created = False
+            else:
+                project_id, created = resolve_project_id(
+                    nebius_bin,
+                    tenant_id,
+                    project,
+                    prefix=prefix,
+                    create=create_projects,
+                    env=cli_env,
+                    region=region,
+                    profile=nebius_profile,
+                    on_status=on_status,
+                )
             shared_subnet_id = ""
             if any(not cluster.subnet_id for cluster in scoped_clusters):
                 shared_subnet_id, _created_network_id = ensure_subnet(
@@ -1471,6 +1521,7 @@ def _preflight_quotas(
     *,
     tenant_id: str,
     by_region: dict[str, list[ClusterSpec]],
+    new_projects_by_region: dict[str, int],
     env: dict[str, str],
     profile: str,
     on_status: Callable[[str], None] | None,
@@ -1488,6 +1539,7 @@ def _preflight_quotas(
             tenant_id=tenant_id,
             region=region,
             clusters=clusters,
+            new_projects=new_projects_by_region.get(region, 0),
             env=env,
             profile=profile,
             run_capture=_run_capture,

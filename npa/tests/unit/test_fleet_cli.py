@@ -289,6 +289,9 @@ def test_vendored_filestore_contract_matches_official_guide() -> None:
     assert main_tf.count("filestore_mount_tag  = local.filestore.mount_tag") == 2
     assert 'filestore_mount_tag  = "data"' in egress_tf
     assert 'grep -Fq \\' in mount_validation
+    # kubectl 1.36 suppresses attached output and the created pod name under
+    # --quiet, defeating both evidence checking and debugger-pod cleanup.
+    assert "--quiet" not in mount_validation
     assert "completed without the required shared-filesystem success evidence" in (
         mount_validation
     )
@@ -318,6 +321,44 @@ def test_render_tfvars_capacity_block_is_strict() -> None:
         'gpu_nodes_reservation_policy = { policy = "STRICT", '
         'reservation_ids = ["capacityblockgroup-test"] }' in tf
     )
+
+
+def test_render_tfvars_b200_uses_managed_driver_image() -> None:
+    b200 = render_tfvars(
+        ClusterSpec(
+            name="b200",
+            gpu_nodes=NodePoolSpec(
+                count=2, platform="gpu-b200-sxm", preset="8gpu-160vcpu-1792gb"
+            ),
+            enable_gpu_cluster=True,
+            infiniband_fabric="us-central1-b",
+        )
+    )
+    assert "gpu_nodes_driverfull_image   = true" in b200
+
+    b200_alias = render_tfvars(
+        ClusterSpec(
+            name="b200-alias",
+            gpu_nodes=NodePoolSpec(
+                count=1, platform="gpu-b200-sxm-a", preset="8gpu-160vcpu-1792gb"
+            ),
+            enable_gpu_cluster=True,
+            infiniband_fabric="ramon",
+        )
+    )
+    assert "gpu_nodes_driverfull_image   = true" in b200_alias
+
+    h200 = render_tfvars(
+        ClusterSpec(
+            name="h200",
+            gpu_nodes=NodePoolSpec(
+                count=1, platform="gpu-h200-sxm", preset="8gpu-128vcpu-1600gb"
+            ),
+            enable_gpu_cluster=True,
+            infiniband_fabric="us-central1-a",
+        )
+    )
+    assert "gpu_nodes_driverfull_image   = false" in h200
 
 
 def test_patch_provider_domain_region_aware() -> None:
@@ -747,6 +788,80 @@ def test_prepare_install_dir_warns_when_provider_domain_not_matched(tmp_path) ->
     assert any("not patched" in m for m in msgs)
 
 
+def _add_quiet_filesystem_verifier(recipe_root: Path) -> Path:
+    verifier = (
+        recipe_root
+        / "k8s-training"
+        / "filesystem-csi-validation"
+        / "01-verify-node-filesystem-mounts.sh"
+    )
+    verifier.parent.mkdir(parents=True, exist_ok=True)
+    verifier.write_text(
+        "#!/usr/bin/env bash\n"
+        "kubectl debug node/test \\\n"
+        "  --attach=true \\\n"
+        "  --quiet \\\n"
+        "  --image=ubuntu -- true\n"
+    )
+    return verifier
+
+
+def test_prepare_install_dir_patches_external_recipe_debug_quiet(tmp_path) -> None:
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(
+        tmp_path, 'provider "nebius" { domain = "api.eu.nebius.cloud:443" }\n'
+    )
+    source = _add_quiet_filesystem_verifier(root)
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=L._resolve_recipe_root(
+            root, ref=None, work_root=tmp_path / "clones", on_status=None
+        ),
+        region="us-central1",
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        ssh_public_key="k",
+    )
+    installed = (
+        workdir
+        / "filesystem-csi-validation"
+        / "01-verify-node-filesystem-mounts.sh"
+    )
+    assert "--quiet" in source.read_text()
+    assert "--quiet" not in installed.read_text()
+
+
+def test_prepare_install_dir_patches_fetched_recipe_debug_quiet(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.fleet import lifecycle as L
+
+    def clone(args, **_kwargs):
+        clone_root = Path(args[-1])
+        (clone_root / "k8s-training").mkdir(parents=True)
+        (clone_root / "modules").mkdir()
+        (clone_root / "k8s-training" / "variables.tf").write_text("")
+        _add_quiet_filesystem_verifier(clone_root)
+
+    monkeypatch.setattr(L, "_require_bin", lambda name: name)
+    monkeypatch.setattr(L, "_run_stream", clone)
+    root = L._resolve_recipe_root(
+        None, ref="upstream-test", work_root=tmp_path / "fetch", on_status=None
+    )
+    workdir = L._prepare_install_dir(
+        tmp_path / "install",
+        recipe_root=root,
+        region="us-central1",
+        cluster=ClusterSpec(name="c", cpu_nodes=NodePoolSpec(count=1)),
+        ssh_public_key="k",
+    )
+    assert "--quiet" not in (
+        workdir
+        / "filesystem-csi-validation"
+        / "01-verify-node-filesystem-mounts.sh"
+    ).read_text()
+
+
 # --------------------------------------------------------------------------- #
 # _deploy_one_cluster sidecar status transitions (mocked)
 # --------------------------------------------------------------------------- #
@@ -1052,7 +1167,10 @@ def test_deploy_only_clusters_targets_a_single_cluster(tmp_path, monkeypatch) ->
 
     monkeypatch.setattr(L, "_deploy_one_cluster", fake_one)
     res = L.deploy_fleet(
-        _two_cluster_project_spec(), work_root=tmp_path, only_clusters=["c2"]
+        _two_cluster_project_spec(),
+        work_root=tmp_path,
+        only_clusters=["c2"],
+        preflight=False,
     )
     assert built == ["c2"]  # only the targeted cluster is (re)deployed
     assert res["deployed"] == 1
@@ -1074,9 +1192,11 @@ def _mock_deploy_fleet_boundary(monkeypatch, tmp_path):
     monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda *a, **k: "k")
     monkeypatch.setattr(L, "_resolve_recipe_root", lambda *a, **k: tmp_path / "recipe")
     monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
+    monkeypatch.setattr(L, "_list_projects", lambda *a, **k: [])
     monkeypatch.setattr(L, "resolve_project_id", lambda *a, **k: ("proj-1", False))
     monkeypatch.setattr(L, "ensure_subnet", lambda *a, **k: ("subnet-1", ""))
-    # No quota API in unit tests: an unreadable allowance list skips the preflight.
+    # Tests outside the preflight section opt out explicitly when this generic
+    # boundary does not model the quota API.
     monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 1))
     return L
 
@@ -1109,7 +1229,12 @@ def test_deploy_fleet_parallel_runs_all_targets_and_prewarms_once(
         }
 
     monkeypatch.setattr(L, "_deploy_one_cluster", fake_one)
-    res = L.deploy_fleet(_two_cluster_project_spec(), work_root=tmp_path, concurrency=2)
+    res = L.deploy_fleet(
+        _two_cluster_project_spec(),
+        work_root=tmp_path,
+        concurrency=2,
+        preflight=False,
+    )
     assert sorted(ran) == ["c1", "c2"]  # both targets applied
     assert res["deployed"] == 2
     assert prewarm["n"] == 1  # plugin cache pre-warmed exactly once for parallel
@@ -1137,7 +1262,12 @@ def test_deploy_fleet_sequential_skips_prewarm_and_streams(
         }
 
     monkeypatch.setattr(L, "_deploy_one_cluster", fake_one)
-    L.deploy_fleet(_two_cluster_project_spec(), work_root=tmp_path, concurrency=1)
+    L.deploy_fleet(
+        _two_cluster_project_spec(),
+        work_root=tmp_path,
+        concurrency=1,
+        preflight=False,
+    )
     assert prewarm["n"] == 0  # no pre-warm when sequential
     assert log_paths == [None, None]  # sequential -> stream to stdout, no log file
 
@@ -1312,11 +1442,13 @@ def test_deploy_fleet_cli_profile_overrides_spec(tmp_path, monkeypatch) -> None:
             )
         ],
     )
-    res = L.deploy_fleet(spec, work_root=tmp_path)
+    res = L.deploy_fleet(spec, work_root=tmp_path, preflight=False)
     assert seen == ["from-spec"]
     assert res["profile"] == "from-spec"
     seen.clear()
-    res = L.deploy_fleet(spec, work_root=tmp_path, profile="from-cli")
+    res = L.deploy_fleet(
+        spec, work_root=tmp_path, profile="from-cli", preflight=False
+    )
     assert seen == ["from-cli"]
     assert res["profile"] == "from-cli"
 
@@ -1804,12 +1936,46 @@ def test_fleet_deploy_toolref_is_non_interactive() -> None:
 # --------------------------------------------------------------------------- #
 # tenant quota preflight (mk8s accepts node groups it cannot fill)
 # --------------------------------------------------------------------------- #
-def _allowance(name: str, region: str, limit, unit: str = "count") -> dict:
+def _allowance(
+    name: str,
+    region: str,
+    limit,
+    unit: str = "count",
+    *,
+    parent_id: str = "",
+) -> dict:
+    metadata = {"name": name}
+    if parent_id:
+        metadata["parent_id"] = parent_id
     return {
-        "metadata": {"name": name},
+        "metadata": metadata,
         "spec": {"region": region, "limit": limit},
-        "status": {"unit": unit},
+        "status": {"unit": unit, "usage_percentage": "0.00"},
     }
+
+
+def _complete_allowances(*overrides: dict) -> str:
+    """Return sufficient evidence for every quota in the RTX fleet fixture."""
+
+    defaults = [
+        _allowance("mk8s.cluster.count", "us-central1", 100),
+        _allowance("compute.instance.count", "us-central1", 100),
+        _allowance("compute.disk.count", "us-central1", 100),
+        _allowance(
+            "compute.disk.size.network-ssd", "us-central1", 100 * 1024**4, "byte"
+        ),
+        _allowance("compute.instance.non-gpu.vcpu", "us-central1", 1000),
+        _allowance("compute.instance.gpu.rtx6000", "us-central1", 100),
+        _allowance("vpc.allocation.count", "us-central1", 1000),
+        _allowance("vpc.network.count", "us-central1", 100),
+        _allowance("vpc.pool.count", "us-central1", 100),
+        _allowance("vpc.route.count", "us-central1", 100),
+        _allowance("vpc.routetable.count", "us-central1", 100),
+        _allowance("vpc.subnet.count", "us-central1", 100),
+    ]
+    indexed = {item["metadata"]["name"]: item for item in defaults}
+    indexed.update({item["metadata"]["name"]: item for item in overrides})
+    return json.dumps({"items": list(indexed.values())})
 
 
 def _capacity_block(
@@ -1873,7 +2039,17 @@ def test_required_quotas_counts_nodes_vcpu_gpus_and_filesystem() -> None:
     assert needed["compute.filesystem.count"] == 1
     assert needed["compute.filesystem.size.network-ssd"] == 2048 * 1024**3
     assert needed["mk8s.cluster.count"] == 1
+    assert needed["vpc.allocation.count"] == 8
     assert "compute.gpucluster.count" not in needed
+
+    with_project_topology = required_quotas(
+        [ClusterSpec(name="cpu", cpu_nodes=NodePoolSpec(count=1))], new_projects=1
+    )
+    assert with_project_topology["vpc.network.count"] == 1
+    assert with_project_topology["vpc.pool.count"] == 2
+    assert with_project_topology["vpc.route.count"] == 1
+    assert with_project_topology["vpc.routetable.count"] == 1
+    assert with_project_topology["vpc.subnet.count"] == 1
 
 
 def test_required_quotas_excludes_managed_control_plane_compute_resources() -> None:
@@ -2013,7 +2189,7 @@ def test_reservation_capacity_parser_treats_live_usage_percentage_as_fraction() 
     assert exact["capacityblockgroup-test"]["available_gpus"] == 40
 
 
-def test_parse_allowances_filters_region_and_skips_unset_limits() -> None:
+def test_parse_allowances_filters_region_and_preserves_unlimited() -> None:
     from npa.fleet.quotas import parse_allowances
 
     payload = json.dumps(
@@ -2028,7 +2204,269 @@ def test_parse_allowances_filters_region_and_skips_unset_limits() -> None:
     )
     parsed = parse_allowances(payload, "us-central1")
     assert parsed["compute.instance.count"]["limit"] == 10
-    assert "compute.instance.gpu.rtx6000" not in parsed
+    assert parsed["compute.instance.gpu.rtx6000"]["unlimited"] is True
+
+
+@pytest.mark.parametrize("tenant_first", [True, False])
+def test_parse_allowances_tenant_finite_cannot_be_shadowed_by_project_unlimited(
+    tenant_first: bool,
+) -> None:
+    from npa.fleet.quotas import find_shortfalls, parse_allowances
+
+    tenant = _allowance(
+        "compute.disk.count",
+        "us-central1",
+        3,
+        parent_id="tenant-test",
+    )
+    project = _allowance(
+        "compute.disk.count",
+        "us-central1",
+        None,
+        parent_id="project-test",
+    )
+    project.pop("status")  # Unlimited wire entries may omit status entirely.
+    items = [tenant, project] if tenant_first else [project, tenant]
+
+    parsed = parse_allowances(
+        json.dumps({"items": items}),
+        "us-central1",
+        required={"compute.disk.count"},
+        container_id="tenant-test",
+    )
+
+    assert parsed["compute.disk.count"]["unlimited"] is False
+    assert parsed["compute.disk.count"]["limit"] == 3
+    assert len(
+        find_shortfalls(
+            {"compute.disk.count": 4}, parsed, "us-central1"
+        )
+    ) == 1
+
+
+@pytest.mark.parametrize("unlimited_first", [True, False])
+def test_parse_allowances_unscoped_finite_wins_concrete_unlimited_collision(
+    unlimited_first: bool,
+) -> None:
+    from npa.fleet.quotas import parse_allowances
+
+    finite = _allowance("compute.instance.count", "us-central1", 8)
+    unlimited = _allowance("compute.instance.count", "us-central1", None)
+    unlimited.pop("status")
+    items = [unlimited, finite] if unlimited_first else [finite, unlimited]
+
+    parsed = parse_allowances(json.dumps({"items": items}), "us-central1")
+
+    assert parsed["compute.instance.count"]["limit"] == 8
+    assert parsed["compute.instance.count"]["unlimited"] is False
+
+
+def test_parse_allowances_authoritative_tenant_scope_beats_project_finite() -> None:
+    from npa.fleet.quotas import parse_allowances
+
+    tenant = _allowance(
+        "compute.instance.count",
+        "us-central1",
+        None,
+        parent_id="tenant-test",
+    )
+    tenant.pop("status")
+    project = _allowance(
+        "compute.instance.count",
+        "us-central1",
+        0,
+        parent_id="project-test",
+    )
+
+    parsed = parse_allowances(
+        json.dumps({"items": [project, tenant]}),
+        "us-central1",
+        container_id="tenant-test",
+    )
+
+    assert parsed["compute.instance.count"]["unlimited"] is True
+
+
+def test_parse_allowances_duplicate_finite_candidates_are_deterministic_or_fail_closed() -> (
+    None
+):
+    from npa.fleet.quotas import parse_allowances
+
+    first = _allowance(
+        "compute.instance.count", "us-central1", 10, parent_id="tenant-test"
+    )
+    duplicate = json.loads(json.dumps(first))
+    parsed = parse_allowances(
+        json.dumps({"items": [duplicate, first]}),
+        "us-central1",
+        container_id="tenant-test",
+    )
+    assert parsed["compute.instance.count"]["limit"] == 10
+
+    conflicting = _allowance(
+        "compute.instance.count", "us-central1", 11, parent_id="tenant-test"
+    )
+    with pytest.raises(ValueError, match="ambiguous finite candidates"):
+        parse_allowances(
+            json.dumps({"items": [first, conflicting]}),
+            "us-central1",
+            container_id="tenant-test",
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "unit"),
+    [
+        ("compute.disk.size.network-ssd", "byte"),
+        ("compute.disk.count", "count"),
+        ("compute.instance.non-gpu.vcpu", "vcpu"),
+        ("compute.instance.non-gpu.vcpu", "count"),
+        ("compute.instance.gpu.b200", "gpu"),
+        ("compute.instance.gpu.b200", "count"),
+    ],
+)
+def test_parse_allowances_accepts_only_known_compatible_units(
+    name: str, unit: str
+) -> None:
+    from npa.fleet.quotas import parse_allowances
+
+    parsed = parse_allowances(
+        json.dumps({"items": [_allowance(name, "us-central1", 10, unit)]}),
+        "us-central1",
+    )
+    assert parsed[name]["unit"] == unit
+
+
+@pytest.mark.parametrize(
+    ("name", "unit"),
+    [
+        ("compute.disk.size.network-ssd", "gibibyte"),
+        ("compute.disk.count", "vcpu"),
+        ("compute.instance.non-gpu.vcpu", "byte"),
+        ("compute.instance.gpu.b200", "vcpu"),
+    ],
+)
+def test_parse_allowances_rejects_incompatible_units(name: str, unit: str) -> None:
+    from npa.fleet.quotas import parse_allowances
+
+    with pytest.raises(ValueError, match="incompatible unit"):
+        parse_allowances(
+            json.dumps({"items": [_allowance(name, "us-central1", 10, unit)]}),
+            "us-central1",
+        )
+
+
+def test_parse_allowances_unlimited_may_omit_status_but_finite_may_not() -> None:
+    from npa.fleet.quotas import parse_allowances
+
+    unlimited = _allowance("compute.instance.count", "us-central1", None)
+    unlimited.pop("status")
+    parsed = parse_allowances(json.dumps({"items": [unlimited]}), "us-central1")
+    assert parsed["compute.instance.count"]["unlimited"] is True
+
+    finite = _allowance("compute.instance.count", "us-central1", 10)
+    finite.pop("status")
+    with pytest.raises(ValueError, match="unusable capacity evidence"):
+        parse_allowances(json.dumps({"items": [finite]}), "us-central1")
+
+
+@pytest.mark.parametrize("missing_status_first", [True, False])
+def test_parse_allowances_duplicate_unlimited_candidates_are_deterministic(
+    missing_status_first: bool,
+) -> None:
+    from npa.fleet.quotas import parse_allowances
+
+    without_status = _allowance("compute.instance.count", "us-central1", None)
+    without_status.pop("status")
+    with_status = _allowance("compute.instance.count", "us-central1", None)
+    items = (
+        [without_status, with_status]
+        if missing_status_first
+        else [with_status, without_status]
+    )
+
+    parsed = parse_allowances(json.dumps({"items": items}), "us-central1")
+
+    assert parsed["compute.instance.count"]["unlimited"] is True
+    assert parsed["compute.instance.count"]["unit"] == "count"
+
+    with_status["status"]["unit"] = "byte"
+    with pytest.raises(ValueError, match="incompatible unit"):
+        parse_allowances(
+            json.dumps({"items": [without_status, with_status]}), "us-central1"
+        )
+
+
+def test_parse_allowances_finite_status_variations_remain_fail_closed() -> None:
+    from npa.fleet.quotas import parse_allowances
+
+    not_used = _allowance("compute.instance.count", "us-central1", 10)
+    not_used["status"] = {
+        "unit": "count",
+        "usage_state": "USAGE_STATE_NOT_USED",
+    }
+    parsed = parse_allowances(json.dumps({"items": [not_used]}), "us-central1")
+    assert parsed["compute.instance.count"]["available"] == 10
+    assert parsed["compute.instance.count"]["usage_source"] == "not-used"
+
+    over_limit = _allowance("compute.instance.count", "us-central1", 10)
+    over_limit["status"]["usage_percentage"] = "1.25"
+    parsed = parse_allowances(json.dumps({"items": [over_limit]}), "us-central1")
+    assert parsed["compute.instance.count"]["available"] == 0
+
+    no_usage = _allowance("compute.instance.count", "us-central1", 10)
+    no_usage["status"] = {"unit": "count"}
+    with pytest.raises(ValueError, match="unusable capacity evidence"):
+        parse_allowances(json.dumps({"items": [no_usage]}), "us-central1")
+
+    frozen = _allowance("compute.instance.count", "us-central1", 10)
+    frozen["status"]["state"] = "STATE_FROZEN"
+    with pytest.raises(ValueError, match="unusable capacity evidence"):
+        parse_allowances(json.dumps({"items": [frozen]}), "us-central1")
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"metadata": {"name": "compute.instance.count"}, "spec": []},
+        {
+            "metadata": {"name": "compute.instance.count"},
+            "spec": {"region": "us-central1", "limit": 1.5},
+            "status": {"unit": "count", "usage": 0},
+        },
+        {
+            "metadata": {"name": "compute.instance.count"},
+            "spec": {"region": "us-central1", "limit": 10},
+            "status": "active",
+        },
+    ],
+)
+def test_parse_allowances_rejects_malformed_relevant_candidates(broken: dict) -> None:
+    from npa.fleet.quotas import parse_allowances
+
+    with pytest.raises(ValueError):
+        parse_allowances(
+            json.dumps({"items": [broken]}),
+            "us-central1",
+            required={"compute.instance.count"},
+        )
+
+
+def test_parse_allowances_rejects_incomplete_paginated_response() -> None:
+    from npa.fleet.quotas import parse_allowances
+
+    with pytest.raises(ValueError, match="incomplete after paginated read"):
+        parse_allowances(
+            json.dumps(
+                {
+                    "items": [
+                        _allowance("compute.instance.count", "us-central1", 10)
+                    ],
+                    "next_page_token": "still-more",
+                }
+            ),
+            "us-central1",
+        )
 
 
 def test_find_shortfalls_flags_zero_limit_and_ignores_unadvertised() -> None:
@@ -2065,6 +2503,9 @@ def test_gpu_family_maps_platform_to_quota_family() -> None:
 
 def _preflight_boundary(monkeypatch, tmp_path, allowances_json: str, *, rc: int = 0):
     L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    if rc == 0:
+        supplied = json.loads(allowances_json or "{}").get("items", [])
+        allowances_json = _complete_allowances(*supplied)
     monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap(allowances_json, rc))
     deployed: list[str] = []
     monkeypatch.setattr(
@@ -2123,13 +2564,7 @@ def _reserved_preflight_boundary(
         if "capacity-block-group" in args:
             return _Cap(capacity_payload, rc)
         return _Cap(
-            json.dumps(
-                {
-                    "items": [
-                        _allowance("compute.instance.gpu.rtx6000", "us-central1", "0")
-                    ]
-                }
-            ),
+            _complete_allowances(),
             0,
         )
 
@@ -2163,7 +2598,9 @@ def test_reserved_preflight_uses_capacity_and_ignores_public_gpu_quota(
     )
     assert deployed == ["c"]
     assert any("capacity-block-group" in call for call in calls)
+    assert any("quota-allowance" in call and "--all" in call for call in calls)
     assert any("ordinary GPU quota excluded" in message for message in messages)
+    assert any("compute.disk.count" in message for message in messages)
 
 
 def test_reserved_preflight_fails_closed_when_block_unreadable_or_too_small(
@@ -2191,6 +2628,29 @@ def test_deploy_preflight_blocks_on_zero_gpu_quota(tmp_path, monkeypatch) -> Non
     assert deployed == []  # nothing applied
 
 
+def test_deploy_preflight_blocks_when_four_workers_have_only_three_disk_slots(
+    tmp_path, monkeypatch
+) -> None:
+    disk_allowance = _allowance("compute.disk.count", "us-central1", "25")
+    disk_allowance["status"]["usage"] = "22"
+    L, deployed = _preflight_boundary(
+        monkeypatch,
+        tmp_path,
+        json.dumps({"items": [disk_allowance]}),
+    )
+    spec = _rtx_cluster_spec()
+    spec.projects[0].clusters[0].cpu_nodes = NodePoolSpec(
+        count=2, platform="cpu-d3", preset="16vcpu-64gb"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"compute\.disk\.count .*needs 4 count, 3 available.*limit 25",
+    ):
+        L.deploy_fleet(spec, work_root=tmp_path)
+    assert deployed == []
+
+
 def test_deploy_no_preflight_skips_the_check(tmp_path, monkeypatch) -> None:
     payload = json.dumps(
         {"items": [_allowance("compute.instance.gpu.rtx6000", "us-central1", "0")]}
@@ -2211,17 +2671,100 @@ def test_deploy_preflight_passes_when_quota_is_sufficient(
     assert deployed == ["c"]
 
 
-def test_deploy_preflight_unreadable_quota_api_does_not_block(
+def test_deploy_preflight_unreadable_quota_api_fails_closed(
     tmp_path, monkeypatch
 ) -> None:
-    # Losing the preflight (no quota read permission) must not block a deploy.
+    # Losing the preflight is not proof of capacity and must block mutation.
     L, deployed = _preflight_boundary(monkeypatch, tmp_path, "", rc=1)
-    msgs: list[str] = []
-    L.deploy_fleet(
-        _rtx_cluster_spec(), work_root=tmp_path, on_status=lambda m: msgs.append(m)
+    with pytest.raises(ValueError, match="refusing to create projects"):
+        L.deploy_fleet(_rtx_cluster_spec(), work_root=tmp_path)
+    assert deployed == []
+
+
+def test_deploy_preflight_missing_required_allowance_fails_closed(
+    tmp_path, monkeypatch
+) -> None:
+    L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        L,
+        "_run_capture",
+        lambda *a, **k: _Cap(
+            json.dumps(
+                {
+                    "items": [
+                        _allowance(
+                            "compute.instance.gpu.rtx6000", "us-central1", 100
+                        )
+                    ]
+                }
+            ),
+            0,
+        ),
     )
-    assert deployed == ["c"]
-    assert any("skipping quota preflight" in m for m in msgs)
+    with pytest.raises(ValueError, match="omitted required allowances"):
+        L.deploy_fleet(_rtx_cluster_spec(), work_root=tmp_path)
+
+
+def test_preflight_allows_only_explicit_optional_unadvertised_topology_quotas() -> (
+    None
+):
+    from npa.fleet.quotas import preflight_region, required_quotas
+
+    cluster = ClusterSpec(
+        name="cpu",
+        cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="4vcpu-16gb"),
+    )
+    needed = required_quotas([cluster], new_projects=1)
+    optional = {
+        "vpc.network.count",
+        "vpc.subnet.count",
+        "vpc.pool.count",
+        "vpc.routetable.count",
+        "vpc.route.count",
+    }
+    items = [
+        _allowance(
+            name,
+            "us-central1",
+            10 * 1024**4 if name == "compute.disk.size.network-ssd" else 100,
+            "byte" if name == "compute.disk.size.network-ssd" else "count",
+            parent_id="tenant-test",
+        )
+        for name in sorted(set(needed) - optional)
+    ]
+    messages: list[str] = []
+    shortfalls = preflight_region(
+        nebius_bin="nebius",
+        tenant_id="tenant-test",
+        region="us-central1",
+        clusters=[cluster],
+        env={},
+        new_projects=1,
+        run_capture=lambda *a, **k: _Cap(json.dumps({"items": items})),
+        nebius_argv=lambda binary, profile: [binary],
+        on_status=messages.append,
+    )
+    assert shortfalls == []
+    assert sum("unadvertised optional quota" in message for message in messages) == 5
+
+    missing_core = [
+        item
+        for item in items
+        if item["metadata"]["name"] != "compute.instance.count"
+    ]
+    with pytest.raises(ValueError, match="omitted required allowances"):
+        preflight_region(
+            nebius_bin="nebius",
+            tenant_id="tenant-test",
+            region="us-central1",
+            clusters=[cluster],
+            env={},
+            new_projects=1,
+            run_capture=lambda *a, **k: _Cap(
+                json.dumps({"items": missing_core})
+            ),
+            nebius_argv=lambda binary, profile: [binary],
+        )
 
 
 def test_preflight_runs_before_any_project_is_created(tmp_path, monkeypatch) -> None:
@@ -2246,12 +2789,8 @@ def test_preflight_runs_before_any_project_is_created(tmp_path, monkeypatch) -> 
         L,
         "_run_capture",
         lambda *a, **k: _Cap(
-            json.dumps(
-                {
-                    "items": [
-                        _allowance("compute.instance.gpu.rtx6000", "us-central1", "0")
-                    ]
-                }
+            _complete_allowances(
+                _allowance("compute.instance.gpu.rtx6000", "us-central1", "0")
             ),
             0,
         ),
@@ -2260,6 +2799,133 @@ def test_preflight_runs_before_any_project_is_created(tmp_path, monkeypatch) -> 
     with pytest.raises(ValueError, match="quota is too low"):
         L.deploy_fleet(_rtx_cluster_spec(), work_root=tmp_path)
     assert resolved == []  # no project touched
+
+
+def _project_quota_accounting_boundary(monkeypatch, tmp_path, projects):
+    L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    list_calls: list[str] = []
+    preflight_calls: list[dict[str, int]] = []
+    resolve_calls: list[str] = []
+    deployed: list[str] = []
+
+    def list_projects(*_args, **_kwargs):
+        list_calls.append("list")
+        if isinstance(projects, BaseException):
+            raise projects
+        return projects
+
+    monkeypatch.setattr(L, "_list_projects", list_projects)
+    monkeypatch.setattr(
+        L,
+        "_preflight_quotas",
+        lambda *a, **k: preflight_calls.append(dict(k["new_projects_by_region"])),
+    )
+
+    def resolve(_binary, _tenant, project, **_kwargs):
+        resolve_calls.append(project.key())
+        return f"resolved-{project.key()}", not bool(project.project_id)
+
+    monkeypatch.setattr(L, "resolve_project_id", resolve)
+    monkeypatch.setattr(
+        L,
+        "_deploy_one_cluster",
+        lambda **k: (
+            deployed.append(k["project"].key()),
+            {
+                "project_key": k["project"].key(),
+                "cluster_name": k["cluster"].name,
+                "status": "deployed",
+            },
+        )[1],
+    )
+    return L, list_calls, preflight_calls, resolve_calls, deployed
+
+
+def test_preflight_project_accounting_existing_named_and_genuinely_new(
+    tmp_path, monkeypatch
+) -> None:
+    existing_spec = _rtx_cluster_spec()
+    existing_name = existing_spec.projects[0].display_name(
+        existing_spec.project_prefix
+    )
+    L, list_calls, preflight_calls, resolve_calls, deployed = (
+        _project_quota_accounting_boundary(
+            monkeypatch,
+            tmp_path,
+            [{"metadata": {"name": existing_name, "id": "project-existing"}}],
+        )
+    )
+    L.deploy_fleet(existing_spec, work_root=tmp_path)
+    assert list_calls == ["list"]
+    assert preflight_calls == [{}]
+    assert resolve_calls == []
+    assert deployed == ["a"]
+
+    new_root = tmp_path / "new"
+    L, list_calls, preflight_calls, resolve_calls, deployed = (
+        _project_quota_accounting_boundary(monkeypatch, new_root, [])
+    )
+    L.deploy_fleet(_rtx_cluster_spec(), work_root=new_root)
+    assert list_calls == ["list"]
+    assert preflight_calls == [{"us-central1": 1}]
+    assert resolve_calls == ["a"]
+    assert deployed == ["a"]
+
+
+def test_preflight_project_accounting_explicit_id_and_mixed_projects(
+    tmp_path, monkeypatch
+) -> None:
+    cluster = ClusterSpec(
+        name="c", cpu_nodes=NodePoolSpec(count=1, preset="4vcpu-16gb")
+    )
+    explicit_only = FleetSpec(
+        name="f",
+        region="us-central1",
+        projects=[ProjectSpec(project_id="project-explicit", clusters=[cluster])],
+    )
+    L, list_calls, preflight_calls, _resolve_calls, _deployed = (
+        _project_quota_accounting_boundary(monkeypatch, tmp_path / "explicit", [])
+    )
+    L.deploy_fleet(explicit_only, work_root=tmp_path / "explicit")
+    assert list_calls == []
+    assert preflight_calls == [{}]
+
+    mixed = FleetSpec(
+        name="mixed",
+        region="us-central1",
+        projects=[
+            ProjectSpec(name="existing", clusters=[cluster]),
+            ProjectSpec(name="new", region="eu-north1", clusters=[cluster]),
+            ProjectSpec(project_id="project-explicit", clusters=[cluster]),
+        ],
+    )
+    L, list_calls, preflight_calls, resolve_calls, deployed = (
+        _project_quota_accounting_boundary(
+            monkeypatch,
+            tmp_path / "mixed",
+            [{"metadata": {"name": "existing", "id": "project-existing"}}],
+        )
+    )
+    L.deploy_fleet(mixed, work_root=tmp_path / "mixed")
+    assert list_calls == ["list"]
+    assert preflight_calls == [{"eu-north1": 1}]
+    assert resolve_calls == ["new", "project-explicit"]
+    assert sorted(deployed) == ["existing", "new", "project-explicit"]
+
+
+def test_preflight_project_lookup_failure_cannot_undercount(
+    tmp_path, monkeypatch
+) -> None:
+    L, _list_calls, preflight_calls, resolve_calls, deployed = (
+        _project_quota_accounting_boundary(
+            monkeypatch, tmp_path, RuntimeError("project inventory unavailable")
+        )
+    )
+    with pytest.raises(RuntimeError, match="project inventory unavailable"):
+        L.deploy_fleet(_rtx_cluster_spec(), work_root=tmp_path)
+    assert preflight_calls == []
+    assert resolve_calls == []
+    assert deployed == []
 
 
 def test_plan_resolves_tenant_from_named_profile(monkeypatch) -> None:
@@ -2417,7 +3083,12 @@ def test_parallel_deploy_resolves_one_project_subnet_before_workers(
             },
         )[1],
     )
-    L.deploy_fleet(_two_cluster_project_spec(), work_root=tmp_path, concurrency=2)
+    L.deploy_fleet(
+        _two_cluster_project_spec(),
+        work_root=tmp_path,
+        concurrency=2,
+        preflight=False,
+    )
     assert calls == [tmp_path / "f" / "a" / L._PROJECT_NETWORK_STATE]
     assert sorted(seen) == [("c1", "shared-subnet"), ("c2", "shared-subnet")]
 
@@ -2442,7 +3113,7 @@ def test_explicit_subnet_override_bypasses_shared_project_subnet(
             },
         )[1],
     )
-    L.deploy_fleet(spec, work_root=tmp_path)
+    L.deploy_fleet(spec, work_root=tmp_path, preflight=False)
     assert seen == {"c1": "explicit-subnet", "c2": "shared-subnet"}
 
 
@@ -2634,7 +3305,7 @@ def test_quota_filesystem_byte_unit_usage_and_drift() -> None:
     drift = _allowance(
         "compute.filesystem.size.network-ssd", "us-central1", 1, "gibibyte"
     )
-    with pytest.raises(ValueError, match="expected 'byte'"):
+    with pytest.raises(ValueError, match="expected.*byte"):
         parse_allowances(json.dumps({"items": [drift]}), "us-central1")
 
 

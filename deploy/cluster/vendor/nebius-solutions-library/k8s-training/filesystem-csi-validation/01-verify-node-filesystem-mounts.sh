@@ -113,7 +113,6 @@ for node in "${NODES_TO_CHECK[@]}"; do
   output_file="$(mktemp)"
   if kubectl debug -n "${TEST_NAMESPACE}" "${node}" \
     --attach=true \
-    --quiet \
     --image="${DEBUG_IMAGE}" \
     --profile=sysadmin -- \
     chroot /host sh -lc "

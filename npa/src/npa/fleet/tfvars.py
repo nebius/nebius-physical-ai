@@ -12,6 +12,7 @@ from __future__ import annotations
 from npa.fleet.spec import ClusterSpec
 
 _EU_DOMAIN = "api.eu.nebius.cloud:443"
+_B200_DRIVERFULL_PLATFORMS = frozenset({"gpu-b200-sxm", "gpu-b200-sxm-a"})
 
 
 def provider_domain(region: str) -> str:
@@ -24,6 +25,12 @@ def patch_provider_domain(provider_tf: str, region: str) -> str:
     """Patch the recipe's hardcoded EU provider domain for *region*."""
 
     return provider_tf.replace(_EU_DOMAIN, provider_domain(region))
+
+
+def managed_gpu_driverfull_image(platform: str) -> bool:
+    """Whether *platform* requires Nebius's managed CUDA driver-full image."""
+
+    return platform.strip().lower() in _B200_DRIVERFULL_PLATFORMS
 
 
 def _tfstr(value: str) -> str:
@@ -58,7 +65,17 @@ def render_tfvars(cluster: ClusterSpec, *, ssh_public_key: str = "") -> str:
     lines.append("gpu_nodes_preemptible        = false")
     lines.append('mig_strategy                 = "none"')
     lines.append("custom_driver                = false")
-    lines.append("gpu_nodes_driverfull_image   = false")
+    # Nebius exposes an authoritative CUDA 13 driver-full image for B200. It
+    # starts the NVLink fabric stack before kubelet advertises GPUs, avoiding a
+    # live race observed with the marketplace GPU Operator where its driver pod
+    # and Network Operator install/reload host components concurrently and CUDA
+    # remains SYSTEM_NOT_READY. The recipe installs only the provider device
+    # plugin when this is true.
+    managed_gpu_drivers = bool(gpu and managed_gpu_driverfull_image(gpu.platform))
+    lines.append(
+        "gpu_nodes_driverfull_image   = "
+        f"{'true' if managed_gpu_drivers else 'false'}"
+    )
 
     cpu_count = cpu.count if cpu else 0
     lines.append(f"cpu_nodes_fixed_count = {cpu_count}")

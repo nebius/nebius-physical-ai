@@ -11,6 +11,17 @@ from npa.cli.cluster import app
 from npa.cli.cluster import terraform_lifecycle as tf_mod
 
 
+def test_cluster_terraform_uses_managed_driver_image_for_b200_platforms_only() -> None:
+    main_tf = (
+        Path(__file__).resolve().parents[3] / "deploy" / "cluster" / "main.tf"
+    ).read_text()
+
+    assert '"gpu-b200-sxm"' in main_tf
+    assert '"gpu-b200-sxm-a"' in main_tf
+    assert "gpu_nodes_driverfull_image      = local.gpu_nodes_driverfull_image" in main_tf
+    assert "gpu_nodes_driverfull_image      = false" not in main_tf
+
+
 runner = CliRunner()
 _REAL_WHOLE_PATH_PREFLIGHT = tf_mod._preflight_whole_path_capacity
 
