@@ -54,6 +54,7 @@ describe("GR00T learning experience (live system)", () => {
     // Enter it directly instead of waiting for the broad run-picker scan.
     cy.get("#runIdInput").clear().type(activeRun, { delay: 0 });
     cy.get("#loadRunData").click();
+    cy.get("#statusBar", { timeout: 300000 }).should("contain.text", "Load run data done");
     cy.get("#artifactRunSummary", { timeout: 120000 }).should("contain.text", activeRun);
   });
 

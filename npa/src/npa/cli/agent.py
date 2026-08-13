@@ -40,7 +40,6 @@ from npa.cli.agent_quota import (
 from npa.cli.agent_assets import (  # noqa: F401 - re-exported for tests/callers
     _agent_public_login_form_html,
     _lichtblick_default_layout_json,
-    _nginx_agent_site_body,
 )
 from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
     _stage_private_text,
@@ -125,7 +124,7 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
     rendered_agent_ui_html,
 )
 from npa.cli.agent_embed import embedded_python_source
-from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT
+from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body as _nginx_agent_site_body
 from npa.cli.agent_deployment import (
     DeploymentIdentityError,
     assert_remote_owner_if_present,
@@ -1074,16 +1073,6 @@ def _agent_mobile_login_help_html() -> str:
         <li>Username is prefilled; password is in your operator <code>auth.env</code> file.</li>
       </ol>
     </details>"""
-
-
-# Placeholder token the Lichtblick web bundle ships in its index.html inline
-# script: ``LICHTBLICK_SUITE_DEFAULT_LAYOUT = [/*...PLACEHOLDER*/][0];``. Replacing
-# the comment with a layout object is the upstream-supported self-hosting hook, so
-# the embedded viewer opens with the sim2real point cloud + camera already shown
-# (Lichtblick otherwise hides point-cloud topics and picks no image topic).
-LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER = (
-    "/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/"
-)
 
 
 def _bootstrap_agent_stack(

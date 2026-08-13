@@ -7374,7 +7374,7 @@
         const countText = Object.keys(counts).sort().map((key) => key + "=" + counts[key]).join(" · ");
         const roleCounts = artifacts.reduce((acc, item) => {
           const artifactRole = String(item.role || "output");
-          acc[role] = (acc[role] || 0) + 1;
+          acc[artifactRole] = (acc[artifactRole] || 0) + 1;
           return acc;
         }, {});
         const roleCountText = ["output", "input", "metadata"]
@@ -9286,6 +9286,7 @@
         }
       }
       async function _ensureFrankaRerunLoadedInner() {
+        const explicitMediaSelected = () => operatorMediaPreviewActive;
         // Mobile browsers can't run the Rerun wasm 3D viewer — never mount it;
         // show a notice that points to the Voxel51 data view instead.
         if (isMobileLayout()) {
@@ -9293,6 +9294,15 @@
           return "mobile";
         }
         const simViz = await loadJson("/api/sim-viz/status");
+        // Boot-time Rerun warming can finish after an operator has opened a
+        // media artifact. Preserve that newer explicit viewer choice instead
+        // of repainting the pane when the stale warm/mount request resumes.
+        if (explicitMediaSelected()) {
+          if (activeArtifactRender && activeArtifactRender !== "rerun") {
+            setRenderMode(activeArtifactRender);
+          }
+          return "media";
+        }
         const artifactRender = String((simViz && simViz.artifact_render) || "");
         const runId = String((simViz && (simViz.active_run_id || simViz.run_id)) || "").trim();
         const stage = String((simViz && simViz.stage) || "").trim();
@@ -9308,6 +9318,12 @@
           if (!rerunIframeLoaded) {
             setStatus("Opening Rerun viewer...");
             await loadRerunViewer(camera);
+            if (explicitMediaSelected()) {
+              if (activeArtifactRender && activeArtifactRender !== "rerun") {
+                setRenderMode(activeArtifactRender);
+              }
+              return "media";
+            }
           }
           return isDemo ? "demo" : "run";
         }

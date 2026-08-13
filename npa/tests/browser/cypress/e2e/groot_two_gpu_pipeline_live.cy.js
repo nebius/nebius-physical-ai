@@ -50,6 +50,7 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
   let activeRun = "";
   let inventory = {};
   let artifacts = [];
+  let primaryCamera = "";
 
   before(function () {
     if (!liveEnvAvailable() || !runId()) this.skip();
@@ -59,14 +60,18 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
       expect(resp.body.run_id, "exact run identity").to.eq(activeRun);
       inventory = resp.body;
       artifacts = resp.body.artifacts || [];
+      primaryCamera = String(
+        (((resp.body.summary || {}).learning || {}).artifact_contract || {}).primary_camera || "",
+      ).trim();
+      expect(primaryCamera, "validated report primary camera").to.match(/^[A-Za-z0-9_.-]+$/);
       expect(artifacts.length, "published artifact count").to.be.greaterThan(0);
       cy.visitLiveAgent();
       cy.get("#statusBar", { timeout: 60000 }).should("exist");
       cy.get("#tabRerun").click();
       cy.get("#runIdInput").clear().type(activeRun, { delay: 0 });
       cy.get("#loadRunData").click();
-      cy.get("#artifactRunSummary", { timeout: 180000 }).should("contain.text", activeRun);
       cy.get("#statusBar", { timeout: 300000 }).should("contain.text", "Load run data done");
+      cy.get("#artifactRunSummary", { timeout: 180000 }).should("contain.text", activeRun);
       cy.get("#stageList .stage-item", { timeout: 180000 }).should("have.length", 7);
     });
   });
@@ -162,7 +167,7 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
       const body = String(resp.body || "");
       expect(resp.status).to.eq(200);
       for (const topic of [
-        "/camera/front",
+        `/camera/${primaryCamera}`,
         "/policy/predicted_action",
         "/expert/action",
         "/metrics/action_error",
@@ -188,7 +193,7 @@ describe("GR00T operational two-GPU pipeline (live system)", { testIsolation: fa
       const text = String((doc && doc.body && doc.body.innerText) || "");
       expect(text, "Lichtblick initializes the remote MCAP").not.to.include("Error initializing");
       expect(text, "the configured camera topic exists").not.to.include("Image topic does not exist");
-      expect(text, "the camera topic is visible in the viewer").to.include("/camera/front");
+      expect(text, "the camera topic is visible in the viewer").to.include(`/camera/${primaryCamera}`);
     });
     cy.get("#simvizCta")
       .should("contain.text", "OFFLINE EVALUATION")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from npa.cli import agent as agent_module
 from npa.cli.agent import rendered_agent_ui_html
 
+import base64
 import json
 import subprocess
 import re
@@ -160,6 +161,14 @@ def _agent_source() -> str:
 def _agent_ui_bundle() -> str:
     """Agent deploy source plus rendered UI HTML (UI lives in agent_ui.html)."""
     return _agent_source() + "\n" + rendered_agent_ui_html()
+
+
+def _agent_nginx_site() -> str:
+    """Render the nginx policy the bootstrap actually writes."""
+
+    from npa.cli.agent import _nginx_agent_site_body
+
+    return _nginx_agent_site_body(backend_port=8787, rerun_port=9090)
 
 
 def test_build_agent_urls_https_default() -> None:
@@ -932,10 +941,10 @@ def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
     no CORS grant at all.
     """
 
-    source = _agent_source()
-    recordings_location = source.split("location /lichtblick/recordings/ {{", 1)[
+    source = _agent_nginx_site()
+    recordings_location = source.split("location /lichtblick/recordings/ {", 1)[
         1
-    ].split("location = /lichtblick/ {{", 1)[0]
+    ].split("location = /lichtblick/ {", 1)[0]
     # Compare directives only: the block's comment names these headers to explain
     # why they are absent, so a bare substring check would match the prose.
     directives = [
@@ -968,9 +977,9 @@ def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
 def test_lichtblick_uses_native_static_size_and_range_semantics() -> None:
     """The reader gets size/ranges from nginx without a script import proxy."""
 
-    source = _agent_source()
-    block = source.split("location /lichtblick/recordings/ {{", 1)[1].split(
-        "location = /lichtblick/ {{", 1
+    source = _agent_nginx_site()
+    block = source.split("location /lichtblick/recordings/ {", 1)[1].split(
+        "location = /lichtblick/ {", 1
     )[0]
     assert "alias /opt/npa-agent/recordings/;" in block
     assert "proxy_pass" not in block
@@ -1001,16 +1010,18 @@ def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() ->
 
 def test_bootstrap_injects_lichtblick_default_layout() -> None:
     source = _agent_source()
+    nginx = _agent_nginx_site()
     # The viewer document is exact-matched so nginx can inject a default layout via
     # the upstream-provided placeholder, so the point cloud + camera show on load.
-    assert "location = /lichtblick/ {{" in source
+    assert "location = /lichtblick/ {" in nginx
     assert (
-        "sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';"
-        in source
+        "sub_filter '/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/' '(()=>{"
+        in nginx
     )
     assert "def _lichtblick_default_layout_json" in source
 
     from npa.cli import agent_assets
+    from npa.cli import agent_site as agent_site_module
 
     layout = json.loads(agent_assets._lichtblick_default_layout_json())
     panels = layout["configById"]
@@ -1034,8 +1045,8 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     assert 'imageTopic="/camera/"+camera' in script
     assert 'window.Worker=function(scriptUrl,options)' in script
     assert 'new URL("/lichtblick/npa-worker.js"' in script
-    assert "location = /lichtblick/npa-worker.js {{" in source
-    assert "npa.target" in source
+    assert "location = /lichtblick/npa-worker.js {" in nginx
+    assert "npa.target" in nginx
 
 
 def test_lichtblick_nginx_inline_javascript_has_no_nginx_variables_or_controls() -> None:
@@ -1102,11 +1113,11 @@ eval(Buffer.from(process.argv[2], "base64").toString("utf8"));
 
 
 def test_lichtblick_anonymous_routes_do_not_disable_api_authentication() -> None:
-    source = _agent_source()
-    api_block = source.split("location /api/ {{", 1)[1].split("location /assets/api/", 1)[0]
+    source = _agent_nginx_site()
+    api_block = source.split("location /api/ {", 1)[1].split("location /assets/api/", 1)[0]
     assert "auth_basic off" not in api_block
-    assert "location = /lichtblick/npa-worker.js {{" in source
-    assert "location /lichtblick/recordings/ {{" in source
+    assert "location = /lichtblick/npa-worker.js {" in source
+    assert "location /lichtblick/recordings/ {" in source
 
 
 def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
@@ -1643,10 +1654,11 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "Artifact summary only — FiftyOne did not run" in source
     assert 'id="voxelReview"' in source
     assert "data_role_label" in source
-    # Loading by run-relative key resolves a discovered object and exact S3 keys
-    # infer the full run id instead of truncating it to the top-level workflow name.
+    # Loading by run-relative key resolves a discovered object. An unscoped exact
+    # S3 URI receives the structured v2 migration error instead of guessing a run.
     assert "resolve_run_artifacts(" in source
-    assert '_run_id_for_key(key, "")' in source
+    assert '"contract_version": "npa.agent.load-artifact.v2"' in source
+    assert '"code": "run_id_required_for_s3_uri"' in source
     assert 'may_use_default_recording = payload_run in {"", "franka-demo"}' in source
     # Regression: #panelVoxel must be a SIBLING of #panelRerun, not nested inside
     # it. If nested, panelRerun.is-inactive (opacity:0) makes the whole Voxel tab
@@ -5037,6 +5049,22 @@ def test_ui_script_calls_no_undefined_local_helper() -> None:
     }
     undefined = sorted(called - defined - allowed)
     assert not undefined, f"UI script calls undefined helper(s): {undefined}"
+
+
+def test_artifact_role_summary_uses_the_declared_role() -> None:
+    """Guard the conflict-prone semantic-role/artifact-role UI merge."""
+
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    assert "acc[artifactRole] = (acc[artifactRole] || 0) + 1" in script
+    assert "acc[role] = (acc[role] || 0) + 1" not in script
+
+
+def test_boot_rerun_mount_preserves_a_newer_operator_media_preview() -> None:
+    """A late boot-time Rerun mount must not replace an explicit replay video."""
+
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    assert "const explicitMediaSelected = () => operatorMediaPreviewActive;" in script
+    assert "if (explicitMediaSelected())" in script
 
 
 def test_ui_recomputes_the_viewer_cta_once_the_iframe_mounts() -> None:

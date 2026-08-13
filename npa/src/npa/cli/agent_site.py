@@ -238,10 +238,14 @@ def nginx_agent_site_body(
     *,
     backend_port: int,
     rerun_port: int,
-    ui_version: str,
+    ui_version: str = "",
     lichtblick_port: int = DEFAULT_LICHTBLICK_PORT,
 ) -> str:
     """Shared nginx locations for the agent UI (HTTP and HTTPS server blocks)."""
+    if not ui_version:
+        from npa.cli.agent import AGENT_UI_VERSION
+
+        ui_version = AGENT_UI_VERSION
     foxglove_locations = foxglove_nginx_locations()
     lichtblick_default_layout = _lichtblick_default_layout_script()
     lichtblick_worker = _lichtblick_worker_script()
