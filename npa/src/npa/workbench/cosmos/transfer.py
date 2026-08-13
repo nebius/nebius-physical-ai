@@ -103,6 +103,28 @@ def resolve_control_modality(control: str) -> str:
     return modality
 
 
+def resolve_control_weight(control_weight: float | str) -> float:
+    """Return ``control_weight`` after enforcing upstream's range.
+
+    Upstream types it ``Field(ge=0.0, le=1.0)``, so an out-of-range weight is a
+    pydantic error raised inside the container — after the accelerator is held and
+    the ControlNet weights are loaded. Reject it while that is still cheap.
+    """
+
+    try:
+        weight = float(control_weight)
+    except (TypeError, ValueError) as exc:
+        raise ControlModalityError(
+            f"control weight {control_weight!r} is not a number"
+        ) from exc
+    if not 0.0 <= weight <= 1.0:
+        raise ControlModalityError(
+            f"control weight {weight} is outside Cosmos Transfer's accepted range "
+            "0.0-1.0 (0 ignores the control, 1 adheres to it most strongly)"
+        )
+    return weight
+
+
 def _spec_for_input_video(
     repo: Path,
     *,
@@ -143,7 +165,9 @@ def _spec_for_input_video(
             f"{modality!r} control is not text-driven, so a control prompt has no "
             f"effect; only {', '.join(CONTROL_PROMPT_MODALITIES)} accepts one"
         )
-    control_config: dict[str, Any] = {"control_weight": float(control_weight)}
+    control_config: dict[str, Any] = {
+        "control_weight": resolve_control_weight(control_weight)
+    }
     if control_asset:
         control_config["control_path"] = str(Path(control_asset).resolve())
     if control_prompt:
@@ -861,7 +885,7 @@ def merge_shard_manifests(
     run_id: str = "",
     node_count: int,
     storage_client: Any = None,
-    timeout_s: float = 3600.0,
+    timeout_s: float | None = None,
     poll_interval_s: float = 15.0,
     sleep: Any = None,
 ) -> dict[str, Any]:
@@ -870,9 +894,17 @@ def merge_shard_manifests(
     Called by rank 0 only. The gang's nodes run the same augment command
     concurrently, so this is the join: it fetches ``manifest-rank-<k>.json`` for
     every expected rank, orders the clips by their global variant index, and
-    writes the same ``manifest.json`` a single-node run would have produced.
-    Waiting is bounded -- a rank that never reports is a hard failure naming the
-    missing ranks, not a manifest that silently omits its variants.
+    writes the same ``manifest.json`` a single-node run would have produced. A
+    rank that never reports must not become a manifest that silently omits its
+    variants.
+
+    The wait is unbounded by default, because there is no defensible duration to
+    cap it at: a sibling's remaining work is however long its diffusions take, and
+    a deadline short enough to be useful would fail runs that were about to
+    succeed. An unbounded wait cannot outlive a dead sibling either — SkyPilot
+    fails the whole task when any node's process exits nonzero. Set
+    ``NPA_COSMOS_SHARD_JOIN_TIMEOUT_S`` (or pass ``timeout_s``) when an operator
+    does want a deadline, and the failure then names the missing ranks.
     """
 
     import json as _json
@@ -886,7 +918,11 @@ def merge_shard_manifests(
     client = storage_client or StorageClient.from_environment()
     waiter = sleep or _time.sleep
     expected = max(1, int(node_count or 1))
-    deadline = _time.monotonic() + max(0.0, float(timeout_s))
+    limit = timeout_s
+    if limit is None:
+        env_limit = str(os.environ.get("NPA_COSMOS_SHARD_JOIN_TIMEOUT_S", "")).strip()
+        limit = float(env_limit) if env_limit else None
+    deadline = None if limit is None else _time.monotonic() + max(0.0, float(limit))
     shards: dict[int, dict[str, Any]] = {}
 
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-shard-") as tmp:
@@ -912,13 +948,13 @@ def merge_shard_manifests(
                     local.unlink(missing_ok=True)
             if len(shards) == expected:
                 break
-            if _time.monotonic() >= deadline:
+            if deadline is not None and _time.monotonic() >= deadline:
                 missing = [r for r in range(expected) if r not in shards]
                 raise RuntimeError(
                     "multi-node augment: no shard manifest from rank(s) "
-                    f"{missing} after {timeout_s:.0f}s at {output_uri}. Those nodes "
-                    "did not finish publishing their variants, so the run manifest "
-                    "would understate the fan-out."
+                    f"{missing} after {float(limit or 0):.0f}s at {output_uri}. Those "
+                    "nodes did not finish publishing their variants, so the run "
+                    "manifest would understate the fan-out."
                 )
             waiter(max(0.1, float(poll_interval_s)))
 
@@ -1181,6 +1217,7 @@ __all__ = [
     "publish_transfer_to_s3",
     "reference_augment_frames",
     "resolve_control_modality",
+    "resolve_control_weight",
     "run_cosmos_transfer",
     "shard_manifest_uri_for",
     "transfer_manifest_uri_for",

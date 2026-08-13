@@ -747,6 +747,12 @@ How the nodes divide the work and rejoin:
   `cosmos_augmented/manifest.json`, ordered by variant index, with `node_count` and
   a per-rank `shards` block added. A rank that never reports is a hard failure that
   names it — the run manifest never quietly understates the fan-out.
+- That join waits as long as the slowest sibling needs. It carries no default
+  deadline, because a sibling's remaining work is however long its diffusions take,
+  and it cannot hang past a dead sibling either: SkyPilot fails the whole task when
+  any node's process exits nonzero. Export
+  `NPA_COSMOS_SHARD_JOIN_TIMEOUT_S=<seconds>` if you do want rank 0 to give up, and
+  the failure then names the ranks that never reported.
 - Downstream stages are unchanged: they enumerate clip dirs, and the shard files
   are objects at the prefix root rather than a subdirectory, so nothing counts them
   as a variant.
@@ -796,7 +802,8 @@ npa workbench workflow submit "$SPEC" \
   segmentation map from an earlier pipeline) for the on-the-fly one. A named asset
   that is missing fails the stage instead of reverting to on-the-fly.
 - `augment_control_weight` (default `1.0`) trades control fidelity against prompt
-  freedom.
+  freedom. Upstream accepts `0.0`–`1.0`; anything outside that fails the submit
+  rather than the loaded model.
 - Each modality is a separate ControlNet checkpoint, so the first `seg` or `depth`
   run downloads different gated weights than an `edge` run.
 - An unsupported modality fails before the GPU is held. NPA previously rewrote

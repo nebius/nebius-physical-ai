@@ -91,7 +91,11 @@ global variant indices (so clip names stay disjoint), and writes
 `cosmos_augmented/manifest-rank-<k>.json`. **Rank 0 is the join**: it waits for all N
 shards and merges them into the usual `cosmos_augmented/manifest.json` in sampled
 combo order, adding `node_count` and a per-rank `shards` block; a rank that never
-reports fails the stage by name instead of publishing an understated fan-out. Shard
+reports fails the stage by name instead of publishing an understated fan-out. That
+wait has no default deadline — a sibling's remaining work is however long its
+diffusions take, and SkyPilot already fails the task when a node's process dies, so
+a timeout could only turn a slow success into a failure. `NPA_COSMOS_SHARD_JOIN_TIMEOUT_S`
+opts into one. Shard
 manifests are objects at the augment prefix root, never a subdirectory — every
 consumer (`curate`, `finalize`, the evaluator, provenance) treats a subdirectory
 there as a scenario variant. With `augment_nodes=1` no shard file is written and the
@@ -154,6 +158,9 @@ an unsupported modality now fails closed instead.
   `config.augment_mask_prompt` has SAM2 segment the region from text;
   `config.augment_mask_asset_uri` supplies a precomputed binary spatiotemporal mask
   video. They are mutually exclusive — upstream accepts one or the other.
+- **`config.augment_control_weight`** is bounded `0.0`–`1.0` upstream
+  (`ControlWeight = Field(ge=0.0, le=1.0)`), which pydantic would only enforce
+  after the accelerator is held, so NPA rejects an out-of-range weight at submit.
 - **`config.augment_control_asset_uri`** substitutes a precomputed control video
   (e.g. a segmentation map from an earlier pipeline) for the on-the-fly one. A named
   asset that does not exist fails rather than quietly reverting to on-the-fly.

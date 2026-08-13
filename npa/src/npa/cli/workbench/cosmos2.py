@@ -578,10 +578,15 @@ def transfer_cmd(
         # Reject an unusable conditioning request before the GPU is held. The spec
         # builder enforces the same rules, but it only runs after the model and its
         # weights are loaded, which is minutes of a held accelerator later.
-        from npa.workbench.cosmos.transfer import ControlModalityError, resolve_control_modality
+        from npa.workbench.cosmos.transfer import (
+            ControlModalityError,
+            resolve_control_modality,
+            resolve_control_weight,
+        )
 
         try:
             control = resolve_control_modality(control)
+            control_weight = resolve_control_weight(control_weight)
         except ControlModalityError as exc:
             raise typer.BadParameter(str(exc)) from exc
         if mask_asset and mask_prompt:

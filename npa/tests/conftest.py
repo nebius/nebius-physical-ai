@@ -83,6 +83,7 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "NPA_COSMOS_CONTROL_PROMPT",
     "NPA_COSMOS_MASK_ASSET",
     "NPA_COSMOS_MASK_PROMPT",
+    "NPA_COSMOS_SHARD_JOIN_TIMEOUT_S",
     # Upstream Cosmos OSS checkouts: a dev VM with these exported would let unit
     # tests import a real checkout and take the upstream code path.
     "NPA_COSMOS_CURATE_SRC",

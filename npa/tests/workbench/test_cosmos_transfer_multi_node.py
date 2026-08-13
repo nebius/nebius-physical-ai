@@ -235,6 +235,65 @@ def test_merge_fails_naming_the_ranks_that_never_reported() -> None:
     assert tx.transfer_manifest_uri_for(output_uri) not in storage.objects
 
 
+def test_the_join_keeps_waiting_rather_than_timing_out_a_slow_sibling() -> None:
+    """A sibling's remaining work is however long its diffusions take.
+
+    Any default deadline short enough to be useful would fail runs that were
+    about to succeed, and an unbounded wait cannot outlive a dead sibling:
+    SkyPilot fails the whole task when a node's process exits nonzero.
+    """
+
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    tx.write_shard_manifest(
+        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
+        variant_parallelism=1, variant_total=2, storage_client=storage,
+    )
+    waits: list[float] = []
+
+    def very_late_arrival(seconds: float) -> None:
+        waits.append(seconds)
+        if len(waits) < 40:
+            return
+        tx.write_shard_manifest(
+            [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
+            variant_parallelism=1, variant_total=2, storage_client=storage,
+        )
+
+    manifest = tx.merge_shard_manifests(
+        output_uri,
+        run_id="run1",
+        node_count=2,
+        storage_client=storage,
+        poll_interval_s=0.01,
+        sleep=very_late_arrival,
+    )
+
+    assert len(waits) == 40
+    assert manifest["clips"] == ["aug-run1-0", "aug-run1-1"]
+
+
+def test_an_operator_can_ask_for_a_join_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    tx.write_shard_manifest(
+        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
+        variant_parallelism=1, variant_total=2, storage_client=storage,
+    )
+    monkeypatch.setenv("NPA_COSMOS_SHARD_JOIN_TIMEOUT_S", "0")
+
+    with pytest.raises(RuntimeError, match=r"rank\(s\) \[1\]"):
+        tx.merge_shard_manifests(
+            output_uri,
+            run_id="run1",
+            node_count=2,
+            storage_client=storage,
+            sleep=lambda _s: None,
+        )
+
+
 def _multiply_cli(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, storage: FakeStorage
 ) -> list[dict]:

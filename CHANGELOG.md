@@ -32,7 +32,9 @@ operator asking for segmentation conditioning got an edge render and no signal.
   and the control then applies only inside it (mutually exclusive, as upstream).
   `augment_control_prompt` names what `seg` should segment;
   `augment_control_asset_uri` substitutes a precomputed control video, failing when
-  the named asset is absent rather than reverting to on-the-fly.
+  the named asset is absent rather than reverting to on-the-fly. An out-of-range
+  `augment_control_weight` also fails at submit: upstream bounds it `0.0`–`1.0` and
+  would otherwise raise the pydantic error after the accelerator is held.
 - **The conditioning is now reviewable**, not discarded with the container: the
   control map and mask publish to `config.augment_control_uri`
   (`cosmos_control/<clip>/control_<modality>.mp4`, `mask_<modality>.mp4`, plus
@@ -70,7 +72,10 @@ diffusions, so they now shard across a gang-scheduled block as well.
   `cosmos_augmented/manifest-rank-<k>.json`; rank 0 waits for every shard and merges
   them into the usual `manifest.json` (ordered by variant index, plus `node_count`
   and per-rank `shards`). A rank that never reports fails the stage by name rather
-  than publishing an understated fan-out. Shard manifests are objects at the augment
+  than publishing an understated fan-out. The join carries no default deadline — a
+  sibling's remaining work is however long its diffusions take, and SkyPilot already
+  fails the task when a node's process dies; `NPA_COSMOS_SHARD_JOIN_TIMEOUT_S` opts
+  into one. Shard manifests are objects at the augment
   prefix root, because every consumer counts a *subdirectory* there as a variant.
   With one node nothing is written that was not written before.
 

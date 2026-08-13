@@ -168,6 +168,28 @@ def test_an_unsupported_modality_fails_instead_of_quietly_becoming_edge(
             name="bad",
         )
     assert tx.resolve_control_modality("SEG ") == "seg"
+
+
+def test_a_control_weight_outside_upstreams_range_fails_early(tmp_path: Path) -> None:
+    """Upstream types control_weight ge=0.0 le=1.0 and validates it on the GPU."""
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"x" * 100)
+
+    with pytest.raises(tx.ControlModalityError, match="outside .* 0.0-1.0"):
+        tx._spec_for_input_video(
+            repo,
+            input_video=str(clip),
+            prompt="",
+            control="seg",
+            control_weight=1.5,
+            guidance=3,
+            name="heavy",
+        )
+    assert tx.resolve_control_weight("0.75") == 0.75
+    assert tx.resolve_control_weight(0.0) == 0.0
     assert tx.resolve_control_modality("") == "edge"
 
 
@@ -447,6 +469,41 @@ def test_cli_refuses_an_unknown_modality_before_holding_the_gpu(monkeypatch) -> 
 
     assert result.exit_code != 0
     assert "unsupported Cosmos Transfer control modality" in result.output
+
+
+def test_cli_refuses_an_out_of_range_control_weight_before_holding_the_gpu(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
+    monkeypatch.setattr(cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4")
+    monkeypatch.setattr(
+        tx,
+        "run_cosmos_transfer",
+        lambda **_kwargs: pytest.fail("inference must not start for a bad weight"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "cosmos2",
+            "transfer",
+            "--input-uri",
+            "s3://bkt/input/",
+            "--output-uri",
+            "s3://bkt/augment/",
+            "--execute",
+            "--condition-on-input",
+            "--control-weight",
+            "2.0",
+        ],
+    )
+
+    assert result.exit_code != 0
+    # Rich wraps the message inside a box, so the phrase only reads contiguously
+    # once the borders and line breaks are collapsed.
+    output = " ".join(result.output.replace("│", " ").split())
+    assert "is outside Cosmos Transfer's accepted range 0.0-1.0" in output
 
 
 def test_cli_refuses_both_mask_forms_before_holding_the_gpu(monkeypatch) -> None:
