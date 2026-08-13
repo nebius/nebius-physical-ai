@@ -45,9 +45,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from packaging.requirements import Requirement
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
-from packaging.version import Version
+from packaging.version import InvalidVersion, Version
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CACHE_DIR = REPO_ROOT / ".tmp-lerobot-wheels"
@@ -56,7 +57,11 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 # ── The surface this repo binds to ──────────────────────────────────────────
 # (module, symbol, call-site provenance). symbol=None checks the module only.
 IMPORT_SURFACE: tuple[tuple[str, str | None, str], ...] = (
-    ("lerobot.datasets.lerobot_dataset", "LeRobotDataset", "npa/workflows/lerobot_dataset.py"),
+    (
+        "lerobot.datasets.lerobot_dataset",
+        "LeRobotDataset",
+        "npa/workflows/lerobot_dataset.py, npa/demo/generate_observation.py",
+    ),
     ("lerobot.datasets", "LeRobotDataset", "npa/setup/install_lerobot.sh"),
     ("lerobot.datasets.factory", "make_dataset", "research/lerobot-deploy/training/profile_train.py"),
     ("lerobot.datasets.sampler", "EpisodeAwareSampler", "research/lerobot-deploy/training/profile_train.py"),
@@ -211,17 +216,46 @@ def _top_level_names(path: Path) -> set[str]:
         tree = _parse(path)
     except SyntaxError:
         return names
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.Assign):
-            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names.add(node.target.id)
-        elif isinstance(node, ast.ImportFrom):
-            names.update(a.asname or a.name for a in node.names)
-        elif isinstance(node, ast.Import):
-            names.update(a.asname or a.name.split(".")[0] for a in node.names)
+
+    def is_type_checking(test: ast.expr) -> bool:
+        return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+            isinstance(test, ast.Attribute)
+            and isinstance(test.value, ast.Name)
+            and test.value.id == "typing"
+            and test.attr == "TYPE_CHECKING"
+        )
+
+    def catches_import_error(handler: ast.ExceptHandler) -> bool:
+        error = handler.type
+        return (isinstance(error, ast.Name) and error.id == "ImportError") or (
+            isinstance(error, ast.Tuple)
+            and any(isinstance(item, ast.Name) and item.id == "ImportError" for item in error.elts)
+        )
+
+    def collect(statements: list[ast.stmt]) -> None:
+        for node in statements:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.Assign):
+                names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.add(node.target.id)
+            elif isinstance(node, ast.ImportFrom):
+                names.update(a.asname or a.name for a in node.names)
+            elif isinstance(node, ast.Import):
+                names.update(a.asname or a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.If) and is_type_checking(node.test):
+                collect(node.body)
+                collect(node.orelse)
+            elif isinstance(node, ast.Try):
+                import_handlers = [handler for handler in node.handlers if catches_import_error(handler)]
+                if import_handlers:
+                    collect(node.body)
+                    collect(node.orelse)
+                    for handler in import_handlers:
+                        collect(handler.body)
+
+    collect(tree.body)
     return names
 
 
@@ -273,21 +307,33 @@ def _dataclass_fields(root: Path, relpath: str, cls_name: str) -> set[str]:
     return set()
 
 
-def _dist_info(root: Path) -> Path:
-    return next(root.glob("lerobot-*.dist-info"))
+def _dist_info(root: Path) -> Path | None:
+    return next(root.glob("lerobot-*.dist-info"), None)
 
 
 def _declared_bounds(root: Path) -> dict[str, str]:
-    """First declared specifier per dependency we care about."""
+    """Intersection of applicable specifiers for dependencies we care about."""
 
-    bounds: dict[str, str] = {}
-    for line in (_dist_info(root) / "METADATA").read_text(encoding="utf-8").splitlines():
-        if not line.startswith("Requires-Dist:"):
+    collected: dict[str, list[str]] = {}
+    per_extra, base = _extra_requirements(root)
+    applicable = [
+        *(req for req in base if req.marker is None or req.marker.evaluate()),
+        *(
+            req
+            for extra, requirements in per_extra.items()
+            for req in requirements
+            if req.marker is None or req.marker.evaluate({"extra": extra})
+        ),
+    ]
+    for req in applicable:
+        package = canonicalize_name(req.name)
+        if package not in {"torch", "torchvision", "diffusers", "torchcodec"}:
             continue
-        req = Requirement(line.split(":", 1)[1].strip())
-        if req.name in {"torch", "torchvision", "diffusers", "torchcodec"}:
-            bounds.setdefault(req.name, str(req.specifier))
-    return bounds
+        collected.setdefault(package, []).append(str(req.specifier))
+    return {
+        package: str(SpecifierSet(",".join(specifier for specifier in specifiers if specifier)))
+        for package, specifiers in collected.items()
+    }
 
 
 def _extra_requirements(root: Path) -> tuple[dict[str, list[Requirement]], list[Requirement]]:
@@ -295,7 +341,13 @@ def _extra_requirements(root: Path) -> tuple[dict[str, list[Requirement]], list[
 
     per_extra: dict[str, list[Requirement]] = {}
     base: list[Requirement] = []
-    for line in (_dist_info(root) / "METADATA").read_text(encoding="utf-8").splitlines():
+    dist_info = _dist_info(root)
+    if dist_info is None:
+        return per_extra, base
+    metadata = dist_info / "METADATA"
+    if not metadata.exists():
+        return per_extra, base
+    for line in metadata.read_text(encoding="utf-8").splitlines():
         if not line.startswith("Requires-Dist:"):
             continue
         req = Requirement(line.split(":", 1)[1].strip())
@@ -365,7 +417,10 @@ def _require_package_gates(root: Path, relpath: str) -> list[tuple[str, str]]:
 
 
 def _entry_points(root: Path) -> set[str]:
-    path = _dist_info(root) / "entry_points.txt"
+    dist_info = _dist_info(root)
+    if dist_info is None:
+        return set()
+    path = dist_info / "entry_points.txt"
     if not path.exists():
         return set()
     return {
@@ -376,7 +431,10 @@ def _entry_points(root: Path) -> set[str]:
 
 
 def _requires_python(root: Path) -> str:
-    for line in (_dist_info(root) / "METADATA").read_text(encoding="utf-8").splitlines():
+    dist_info = _dist_info(root)
+    if dist_info is None:
+        return ""
+    for line in (dist_info / "METADATA").read_text(encoding="utf-8").splitlines():
         if line.startswith("Requires-Python:"):
             return line.split(":", 1)[1].strip()
     return ""
@@ -387,18 +445,33 @@ def _requires_python(root: Path) -> str:
 
 def check_imports(root: Path, report: Report) -> None:
     missing = []
+    lazy = []
     for module, symbol, provenance in IMPORT_SURFACE:
         path = _module_file(root, module)
         if path is None:
             missing.append(f"{module} (module gone) <- {provenance}")
-        elif symbol and symbol not in _top_level_names(path):
-            missing.append(f"{module}:{symbol} (symbol gone) <- {provenance}")
+        elif symbol:
+            names = _top_level_names(path)
+            if symbol not in names:
+                if "__getattr__" in names:
+                    lazy.append(
+                        f"{module}:{symbol} (lazily re-exported, could not verify statically)"
+                        f" <- {provenance}"
+                    )
+                else:
+                    missing.append(f"{module}:{symbol} (symbol gone) <- {provenance}")
     total = len(IMPORT_SURFACE)
+    resolved = total - len(missing) - len(lazy)
+    detail = f"{resolved}/{total} bindings resolve statically"
+    if lazy:
+        detail += "; lazy: " + ", ".join(lazy)
+    if missing:
+        detail += "; missing: " + ", ".join(missing)
     report.add(
         "import-surface",
-        not missing,
-        f"{total - len(missing)}/{total} bindings resolve"
-        + ("; missing: " + ", ".join(missing) if missing else ""),
+        not missing and not lazy,
+        detail,
+        warn=bool(lazy) and not missing,
     )
 
 
@@ -530,7 +603,12 @@ def check_cli_flags(root: Path, report: Report, manifest_entry: dict[str, Any] |
 def _pin_floor(spec: str) -> str:
     """Lowest version a pin like ``torch==2.12.1`` or ``diffusers>=0.38.0`` allows."""
 
-    return spec.split("==")[-1].split(">=")[-1].strip()
+    parsed: SpecifierSet = Requirement(spec).specifier
+    specifiers = list(parsed)
+    if len(specifiers) != 1 or specifiers[0].operator not in {"==", ">="}:
+        raise ValueError("expected one == or >= specifier")
+    Version(specifiers[0].version)
+    return specifiers[0].version
 
 
 def _conflicts(pins: dict[str, str], bounds: dict[str, str]) -> list[str]:
@@ -569,11 +647,19 @@ def check_dependency_bounds(
         )
         return
 
-    pins = {
-        package: _pin_floor(str(manifest_entry[key]))
-        for key, package in MANIFEST_PIN_KEYS.items()
-        if manifest_entry.get(key)
-    }
+    pins: dict[str, str] = {}
+    invalid_pins: list[str] = []
+    for key, package in MANIFEST_PIN_KEYS.items():
+        value = manifest_entry.get(key)
+        if not value:
+            continue
+        try:
+            pins[package] = _pin_floor(str(value))
+        except (InvalidRequirement, InvalidVersion, ValueError) as exc:
+            invalid_pins.append(f"{key}={value!r} is not a supported pin ({exc})")
+    if invalid_pins:
+        report.add("manifest torch pins", False, "; ".join(invalid_pins))
+        return
     if not pins:
         report.add(
             "manifest torch pins",
@@ -605,6 +691,14 @@ def audit(version: str, cache_dir: Path, *, offline: bool) -> Report:
     root = fetch_wheel(version, cache_dir, offline=offline)
     manifest_entry = load_manifest_entry(version)
     report = Report(version=version)
+    dist_info = _dist_info(root)
+    if dist_info is None or not (dist_info / "METADATA").exists():
+        report.add(
+            "wheel-metadata",
+            False,
+            f"no complete lerobot-*.dist-info/METADATA found under {root}",
+        )
+        return report
     check_imports(root, report)
     check_signatures(root, report)
     check_entry_points(root, report)
@@ -649,8 +743,15 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"\nPASS: lerobot {candidate.version} satisfies this repo's static LeRobot surface.")
-    print("Static pre-flight only -- a real GPU train+eval smoke is still the merge gate.")
+    summary_stream = sys.stderr if args.json else sys.stdout
+    print(
+        f"\nPASS: lerobot {candidate.version} satisfies this repo's static LeRobot surface.",
+        file=summary_stream,
+    )
+    print(
+        "Static pre-flight only -- a real GPU train+eval smoke is still the merge gate.",
+        file=summary_stream,
+    )
     return 0
 
 

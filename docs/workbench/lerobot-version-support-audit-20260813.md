@@ -94,8 +94,8 @@ Checked against the 0.5.1, 0.6.0, and 0.6.1 wheels:
 
 - **Import surface: 19/19 bindings resolve in 0.6.1**, unchanged all the way
   back from 0.5.1. `lerobot.types` is not imported anywhere in this repo — the
-  only reference is an archived work log — so 0.6.1's one breaking change is a
-  no-op here.
+  module is not referenced anywhere else in the tree — so 0.6.1's one breaking
+  change is a no-op here.
 - **Signatures are additive only.** `make_pre_post_processors` gained
   `pretrained_revision` and `EpisodeAwareSampler` gained `seed` /
   `absolute_to_relative_idx` (both in 0.6.0); `LeRobotDataset.__init__` gained

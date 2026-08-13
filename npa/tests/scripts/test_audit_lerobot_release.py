@@ -9,8 +9,11 @@ inspection, which is all the script does — it never imports LeRobot.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
+import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -134,6 +137,18 @@ def test_removed_symbol_is_caught(monkeypatch, wheel):
     assert _status(report, "import-surface") == "FAIL"
 
 
+def test_symbol_nested_inside_a_function_is_not_a_module_export(monkeypatch, wheel):
+    path = wheel / "lerobot/utils/device_utils.py"
+    path.write_text(
+        "def device_factory():\n"
+        "    def get_safe_torch_device(): ...\n"
+        "    return get_safe_torch_device\n",
+        encoding="utf-8",
+    )
+    report = _run(monkeypatch, wheel)
+    assert _status(report, "import-surface") == "FAIL"
+
+
 def test_dropped_keyword_parameter_is_caught(monkeypatch, wheel):
     # `env_cfg` is passed by keyword from npa/server/app.py.
     (wheel / "lerobot/policies/factory.py").write_text(
@@ -197,6 +212,42 @@ def test_forced_torch_pin_inside_declared_bounds_passes(monkeypatch, wheel):
     assert _status(report, "manifest torch pins") == "PASS"
 
 
+def test_bare_requires_dist_does_not_disable_pin_check(monkeypatch, wheel):
+    metadata = wheel / "lerobot-9.9.9.dist-info" / "METADATA"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8").replace(
+            "Requires-Dist: torch<2.12.0,>=2.7",
+            "Requires-Dist: torch\nRequires-Dist: torch<2.12.0,>=2.7",
+        ),
+        encoding="utf-8",
+    )
+    report = _run(monkeypatch, wheel, manifest={"torch_pin": "torch==99.0.0"})
+    assert _status(report, "manifest torch pins") == "FAIL"
+
+
+def test_marker_gated_requirement_is_not_applied_unconditionally(monkeypatch, wheel):
+    metadata = wheel / "lerobot-9.9.9.dist-info" / "METADATA"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8").replace(
+            "Requires-Dist: torch<2.12.0,>=2.7",
+            'Requires-Dist: torch==2.5.0; platform_machine == "aarch64"\n'
+            "Requires-Dist: torch<2.12.0,>=2.7",
+        ),
+        encoding="utf-8",
+    )
+    report = _run(monkeypatch, wheel)
+    assert _status(report, "b300-image torch stack") == "PASS"
+
+
+@pytest.mark.parametrize(
+    "pin",
+    ["torch<2.11.0", "torch~=2.9.0", "torch!=2.10.0", "torch>=2.7,<2.11"],
+)
+def test_pin_floor_handles_every_specifier_form(monkeypatch, wheel, pin):
+    report = _run(monkeypatch, wheel, manifest={"torch_pin": pin})
+    assert _status(report, "manifest torch pins") == "FAIL"
+
+
 def test_lower_bound_pin_below_declared_ceiling_is_caught(monkeypatch, wheel):
     # `diffusers>=0.30.0` floors below the declared >=0.38.0 floor.
     report = _run(monkeypatch, wheel, manifest={"diffusers_pin": "diffusers>=0.30.0"})
@@ -241,6 +292,56 @@ def test_ungated_policy_needs_no_extra(monkeypatch, wheel):
     # ACT declares no require_package gate, so a bare install can construct it.
     report = _run(monkeypatch, wheel, manifest={"pip_extras": "pusht"})
     assert _status(report, "policy-extras") == "PASS"
+
+
+def test_missing_dist_info_is_a_check_failure_not_a_traceback(monkeypatch, wheel):
+    shutil.rmtree(wheel / "lerobot-9.9.9.dist-info")
+    report = _run(monkeypatch, wheel)
+    assert report.failed
+
+
+def test_json_mode_stdout_is_pure_json(monkeypatch, wheel, capsys):
+    monkeypatch.setattr(audit_mod, "fetch_wheel", lambda *a, **k: wheel)
+    monkeypatch.setattr(audit_mod, "load_manifest_entry", lambda version: None)
+
+    assert audit_mod.main(["9.9.9", "--offline", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["version"] == "9.9.9"
+
+
+def test_import_surface_covers_every_static_lerobot_import():
+    covered = {(module, symbol) for module, symbol, _ in audit_mod.IMPORT_SURFACE}
+    imports: dict[tuple[str, str | None], set[str]] = {}
+
+    for root in (REPO_ROOT / "npa/src", REPO_ROOT / "npa/demo", REPO_ROOT / "research"):
+        for path in root.rglob("*.py"):
+            relative = path.relative_to(REPO_ROOT).as_posix()
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom) and node.module and (
+                    node.module == "lerobot" or node.module.startswith("lerobot.")
+                ):
+                    for alias in node.names:
+                        imports.setdefault((node.module, alias.name), set()).add(relative)
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "lerobot" or alias.name.startswith("lerobot."):
+                            imports.setdefault((alias.name, None), set()).add(relative)
+
+    missing = {binding: paths for binding, paths in imports.items() if binding not in covered}
+    assert missing == {}
+
+
+def test_b300_image_pins_match_the_dockerfile():
+    dockerfile = (REPO_ROOT / "npa/docker/workbench/lerobot/Dockerfile.b300").read_text(
+        encoding="utf-8"
+    )
+    found = {}
+    for package in audit_mod.B300_IMAGE_PINS:
+        matches = re.findall(rf"(?<![\w-]){re.escape(package)}==([\w.+-]+)", dockerfile)
+        assert len(matches) == 1, f"expected one {package} pin, found {matches}"
+        found[package] = matches[0]
+
+    assert found == audit_mod.B300_IMAGE_PINS
 
 
 def test_repo_manifest_versions_are_all_auditable():
