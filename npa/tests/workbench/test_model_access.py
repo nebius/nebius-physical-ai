@@ -44,7 +44,10 @@ def test_catalog_has_known_gated_nvidia_models() -> None:
 
 
 def test_hf_model_url() -> None:
-    assert hf_model_url("nvidia/GR00T-N1.7-3B") == "https://huggingface.co/nvidia/GR00T-N1.7-3B"
+    assert (
+        hf_model_url("nvidia/GR00T-N1.7-3B")
+        == "https://huggingface.co/nvidia/GR00T-N1.7-3B"
+    )
 
 
 def test_all_capabilities_includes_core_tools() -> None:
@@ -85,7 +88,11 @@ def test_hf_pass_when_validator_ok() -> None:
 def test_hf_gated_fail_points_at_acceptance_url() -> None:
     asset = _gated_asset()
     result = check_hf_asset(
-        asset, "hf_x", hf_validator=lambda t, r: _HFResult(ok=False, status_code=403, error="no access")
+        asset,
+        "hf_x",
+        hf_validator=lambda t, r: _HFResult(
+            ok=False, status_code=403, error="no access"
+        ),
     )
     assert result.status == FAIL
     assert hf_model_url(asset.repo) in result.remedy
@@ -94,7 +101,9 @@ def test_hf_gated_fail_points_at_acceptance_url() -> None:
 
 def test_hf_public_401_is_token_problem_not_gating() -> None:
     result = check_hf_asset(
-        _public_asset(), "hf_bad", hf_validator=lambda t, r: _HFResult(ok=False, status_code=401, error="bad")
+        _public_asset(),
+        "hf_bad",
+        hf_validator=lambda t, r: _HFResult(ok=False, status_code=401, error="bad"),
     )
     assert result.status == FAIL
     assert "settings/tokens" in result.remedy
@@ -102,7 +111,11 @@ def test_hf_public_401_is_token_problem_not_gating() -> None:
 
 def test_hf_transient_error_warns() -> None:
     result = check_hf_asset(
-        _gated_asset(), "hf_x", hf_validator=lambda t, r: _HFResult(ok=False, status_code=None, error="timeout")
+        _gated_asset(),
+        "hf_x",
+        hf_validator=lambda t, r: _HFResult(
+            ok=False, status_code=None, error="timeout"
+        ),
     )
     assert result.status == WARN
 
@@ -127,7 +140,9 @@ def test_ngc_warns_on_bad_prefix() -> None:
 
 
 def test_check_workbench_access_ngc_first_then_hf() -> None:
-    results = check_workbench_access(hf_token="hf_x", ngc_key="nvapi-x", hf_validator=None)
+    results = check_workbench_access(
+        hf_token="hf_x", ngc_key="nvapi-x", hf_validator=None
+    )
     assert results[0].name == "ngc"
     hf_names = {r.name for r in results[1:]}
     assert "nvidia/GR00T-N1.7-3B" in hf_names
@@ -193,7 +208,9 @@ def test_access_note_lists_hf_failures_on_one_line() -> None:
     denied = {"nvidia/GR00T-N1.7-3B"}
 
     def _validator(token, repo):
-        return _HFResult(ok=repo not in denied, status_code=403 if repo in denied else 200)
+        return _HFResult(
+            ok=repo not in denied, status_code=403 if repo in denied else 200
+        )
 
     results = check_workbench_access(
         hf_token="hf_x", ngc_key="nvapi-x", hf_validator=_validator, gated_only=True
@@ -232,6 +249,7 @@ def test_access_note_counts_unverified() -> None:
 # If a tool changes its default model constant, one of these fails until
 # WORKBENCH_ASSETS is updated, so the access check never silently goes stale.
 
+
 def _catalog_repos() -> set[str]:
     return {asset.repo for asset in WORKBENCH_ASSETS}
 
@@ -246,10 +264,13 @@ def test_catalog_covers_light_default_constants() -> None:
         constants.DEFAULT_REASON2_MODEL,
         constants.DEFAULT_REASON3_MODEL,
         constants.DEFAULT_REFERENCE_VLM_MODEL,
-        constants.DEFAULT_LEROBOT_DATASET_ID,
     }
+    # DEFAULT_LEROBOT_DATASET_ID names the S3 task-seed contract, not a model
+    # or Hugging Face repository; task/dataset compatibility has its own tests.
     missing = expected - repos
-    assert not missing, f"WORKBENCH_ASSETS is missing tool default models: {sorted(missing)}"
+    assert not missing, (
+        f"WORKBENCH_ASSETS is missing tool default models: {sorted(missing)}"
+    )
 
 
 def test_catalog_covers_groot_and_cosmos_cli_defaults() -> None:

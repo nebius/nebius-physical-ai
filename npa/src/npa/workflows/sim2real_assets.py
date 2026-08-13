@@ -8,8 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from npa.workflows.sim2real.camera_views import CAMERA_VIEW_SPECS
+
 if TYPE_CHECKING:
-    from npa.workflows.sim2real_loop import Sim2RealLoopConfig
+    from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
 STOCK_SCENE_SCHEMA = "npa.sim2real.stock_scene_spec.v1"
 STOCK_ROBOT_SCHEMA = "npa.sim2real.stock_robot_spec.v1"
@@ -75,16 +77,17 @@ def resolve_robot_spec_from_consumed_doc(
 
 
 DEFAULT_CAMERA_STOCK = {
-    "workspace": {
-        "placement": "stock_overhead",
+    name: {
+        "placement": "task_contract_fixed",
+        "position": list(spec.position),
+        "rotation_wxyz": list(spec.rotation),
         "resolution": [640, 480],
         "dtype": "uint8",
-    },
-    "wrist": {
-        "placement": "stock_ee_mounted",
-        "resolution": [640, 480],
-        "dtype": "uint8",
-    },
+        "runtime_source": "isaac_tiled_camera_stage_07_and_10",
+        "materialized_in_scenario_record": False,
+        "policy_observation": False,
+    }
+    for name, spec in CAMERA_VIEW_SPECS.items()
 }
 
 
@@ -124,9 +127,9 @@ def resolve_stage_cameras(
     *,
     client: Any | None = None,
 ) -> dict[str, Any]:
-    """Resolve workspace/wrist cameras from CAMERAS_URI or a scene-spec cameras block."""
+    """Resolve task-contract cameras from CAMERAS_URI or a scene-spec camera block."""
 
-    from npa.workflows.sim2real_loop import _storage_client
+    from npa.workflows.sim2real.engine import _storage_client
 
     cameras_uri = (
         (config.cameras_uri or "").strip()
@@ -184,7 +187,7 @@ def run_assets_stage(config: Sim2RealLoopConfig, local_dir: Path) -> AssetsStage
     """Materialize stock or BYO scene + robot specs for downstream envgen and eval."""
 
     from npa.genesis import robot_assets, scene_assets
-    from npa.workflows.sim2real_loop import (
+    from npa.workflows.sim2real.engine import (
         SIM_BACKEND_ISAAC,
         _consume_stage_assets,
         _storage_client,
@@ -234,9 +237,13 @@ def run_assets_stage(config: Sim2RealLoopConfig, local_dir: Path) -> AssetsStage
             "n_gripper_joints": robot.n_gripper_joints,
             "isaac_robot_hint": robot.isaac_robot_hint,
             "robot_uri": config.robot_source if robot.is_byo() else "",
-            "status": "stock_preset" if robot.is_stock_franka() else "preset_pending_urdf",
+            "status": "stock_preset"
+            if robot.is_stock_franka()
+            else "preset_pending_urdf",
         }
-        robot_status = "stock_franka" if robot.is_stock_franka() else "preset_pending_urdf"
+        robot_status = (
+            "stock_franka" if robot.is_stock_franka() else "preset_pending_urdf"
+        )
         robot_name = f"Stock robot preset ({preset})"
 
     storage_client = None
@@ -333,8 +340,12 @@ def build_envgen_scene_spec(
 ) -> Any:
     """Build the envgen SceneSpec from Stage 2 outputs."""
 
-    from npa.workflows.sim2real_envgen import SceneSpec, build_scene_spec
-    from npa.workflows.sim2real_loop import SIM_BACKEND_ISAAC
+    from npa.workflows.sim2real_envgen import (
+        SceneSpec,
+        build_scene_spec,
+        frame_uris_from_augmented_index,
+    )
+    from npa.workflows.sim2real.constants import SIM_BACKEND_ISAAC
 
     base = build_scene_spec(
         byo_mesh_uri=config.assets_uri,
@@ -344,11 +355,24 @@ def build_envgen_scene_spec(
             f"sim_backend={config.sim_backend}",
         ),
     )
+    from npa.workflows.sim2real.task_contract import build_task_contract
+
+    task_contract = build_task_contract(
+        task_id=config.isaac_task,
+        dataset_id=config.trigger_dataset_id,
+        dataset_uri=config.trigger_dataset_uri,
+        robot_source=config.robot_source,
+        robot_preset=config.robot_preset,
+    )
+    # Fail closed if Stage 3's exact frame index cannot be resolved.  Inventing
+    # prefix-derived frame names would turn augmentation into decorative lineage.
+    indexed_frames = frame_uris_from_augmented_index(augmented_frames_uri)
     return SceneSpec(
         schema=base.schema,
         simready_catalog=base.simready_catalog,
         byo_mesh_uri=base.byo_mesh_uri,
         augmented_frames_uri=base.augmented_frames_uri,
+        augmented_frame_uris=indexed_frames,
         camera_names=base.camera_names,
         physics_profile=(
             "isaac-lift-franka"
@@ -361,6 +385,9 @@ def build_envgen_scene_spec(
         robot_preset=config.robot_preset or "franka",
         sim_backend=config.sim_backend or SIM_BACKEND_ISAAC,
         cameras=cameras_from_consumed_uri(scene_spec_uri),
+        task_id=config.isaac_task,
+        dataset_id=config.trigger_dataset_id,
+        task_contract=task_contract,
     )
 
 
@@ -371,4 +398,6 @@ def _artifact_root(config: Sim2RealLoopConfig) -> str:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )

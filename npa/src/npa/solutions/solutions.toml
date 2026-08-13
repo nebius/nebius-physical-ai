@@ -7,7 +7,7 @@ cli_command = "npa workbench"
 [[solutions]]
 name = "sim-to-real"
 description = "Generic sim-to-real pipeline tools within the Workbench solution"
-cli_command = "npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml"
+cli_command = "npa workbench workflow submit npa/workflows/workbench/npa-workflows/sim2real.yaml --runtime"
 
 [[solutions]]
 name = "retargeting"

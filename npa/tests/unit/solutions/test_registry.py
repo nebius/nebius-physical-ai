@@ -17,12 +17,10 @@ CONFIGURED_SOLUTIONS = [
     {
         "name": "sim-to-real",
         "description": "Generic sim-to-real pipeline tools within the Workbench solution",
-        # The staged 14-stage engine is the maintained sim-to-real path, and
-        # `workflow submit` detects the runbook and routes to direct K8s. The retiring
-        # skypilot/sim-to-real-loop.yaml was only the VLM-eval loop stage of it; that
-        # capability now lives in `npa workbench vlm-eval loop` and vlm-eval-loop.yaml.
+        # The canonical 14-stage path is an ordinary npa.workflow graph.
         "cli_command": (
-            "npa workbench workflow submit npa/workflows/workbench/sim2real/runbook.yaml"
+            "npa workbench workflow submit "
+            "npa/workflows/workbench/npa-workflows/sim2real.yaml --runtime"
         ),
     },
     {
@@ -68,7 +66,7 @@ def test_configured_solution_workflow_paths_exist() -> None:
         command = entry["cli_command"]
         if "workflow submit " not in command:
             continue
-        path = command.split("workflow submit ", 1)[1].strip()
+        path = command.split("workflow submit ", 1)[1].split()[0]
         resolved = REPO_ROOT / path
         if not resolved.is_file():
             missing.append(f"{entry['name']}: {path}")
@@ -79,9 +77,9 @@ def test_configured_solution_workflow_paths_exist() -> None:
     )
     # Existing is not enough: submit has to recognise the file. The retiring raw catalog
     # classified as "skypilot"; every shipped solution should now name either an
-    # npa.workflow spec or the sim2real runbook.
+    # npa.workflow spec.
     assert formats, "expected at least one solution to advertise a workflow file"
-    assert set(formats.values()) <= {"npa.workflow", "sim2real_runbook"}, formats
+    assert set(formats.values()) == {"npa.workflow"}, formats
 
 
 @pytest.fixture(autouse=True)

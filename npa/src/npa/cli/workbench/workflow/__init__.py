@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import hashlib
 import json
 import logging
@@ -12,7 +12,7 @@ import tempfile
 import time
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Console
@@ -691,49 +691,15 @@ def submit_cmd(
         )
         return
 
-    from npa.workflows.sim2real.k8s_submit import (
-        is_sim2real_runbook,
-        status_monitor_command,
-        submit_sim2real_from_workflow_vars,
-    )
-
-    is_npa_spec = is_npa_workflow_spec(yaml_path)
-    if is_sim2real_runbook(yaml_path):
-        try:
-            result = submit_sim2real_from_workflow_vars(
-                run_id=resolved_run_id,
-                substitutions=substitutions,
-                s3_bucket=s3_bucket,
-                s3_prefix=s3_prefix or "sim2real-b",
-                s3_endpoint=s3_endpoint,
-                sky_bin=sky_bin,
-            )
-        except (RuntimeError, ValueError, FileNotFoundError) as exc:
-            _fail(str(exc))
-            return
-        payload = {
-            "status": result.status,
-            "run_id": result.run_id,
-            "job_id": result.job_name,
-            "k8s_context": result.k8s_context,
-            "run_prefix_uri": result.run_prefix_uri,
-            "log_path": result.log_path,
-            "manifest_path": result.manifest_path,
-        }
-        if output_format == OutputFormat.json:
-            typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            typer.echo(f"status: {result.status}")
-            typer.echo(f"run_id: {result.run_id}")
-            typer.echo(f"job_id: {result.job_name}")
-            typer.echo(f"k8s_context: {result.k8s_context}")
-            typer.echo(f"run_prefix_uri: {result.run_prefix_uri}")
-            typer.echo(f"monitor: {status_monitor_command(result.run_id)}")
-        return
-
     prepared_npa = None
+    # The runtime registry-auth render has its own temporary directory.  Keep
+    # the cleanup sentinel in the enclosing submit scope: fully image-pinned
+    # workflows with --no-stage-src never enter the source-staging branch
+    # below, but their fail-fast render errors must still cleanly reach the
+    # operator instead of being masked by an unbound local in ``finally``.
+    registry_auth_plan = None
     deploy_targets = []
-    resolved_deploy_plans: dict[str, object] = {}
+    resolved_deploy_plans: dict[str, Any] = {}
     source_action = "not-required"
     planned_source_uri = ""
     if is_npa_spec:
@@ -768,6 +734,7 @@ def submit_cmd(
                 yaml_path,
                 run_id=resolved_run_id,
                 assume_decision=assume_decision,
+                config_overrides=substitutions,
                 options=SkypilotRenderOptions(
                     registry=_resolve_submit_registry(registry, project),
                     image_overrides={
@@ -812,7 +779,6 @@ def submit_cmd(
             os.environ["NPA_SRC_S3_URI"] = existing_source_uri
         local_source_fingerprint = ""
         if requires_npa_source or stage_src is True:
-            registry_auth_plan = None
             try:
                 local_source_fingerprint = _local_source_fingerprint()
             except Exception as exc:
@@ -1201,8 +1167,9 @@ def submit_cmd(
                 secret_env_values=extra_env,
                 controller_backend=controller_backend.value,
                 infra=infra,
-                config_path=config_path,
                 isolated_config_dir=isolated_config_dir,
+                config_path=config_path,
+                sky_bin=sky_bin or "",
                 submit_timeout=submit_timeout,
                 poll_seconds=poll_seconds,
                 max_wait_seconds=max_wait_seconds,
@@ -1287,7 +1254,7 @@ def submit_cmd(
                 if "unknown" in decisions
                 else "ready"
             )
-            payload = {
+            planned_payload: dict[str, Any] = {
                 "status": "PLANNED",
                 "lifecycle_state": "PLAN_ONLY",
                 "submission_state": "NOT_SUBMITTED",
@@ -1309,7 +1276,7 @@ def submit_cmd(
                 "skypilot_yaml": rendered,
             }
             if output_format == OutputFormat.json:
-                typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+                typer.echo(json.dumps(planned_payload, indent=2, sort_keys=True))
             else:
                 typer.echo("status: PLANNED")
                 typer.echo("lifecycle_state: PLAN_ONLY")
@@ -1372,6 +1339,7 @@ def submit_cmd(
     try:
         source_yaml_path = yaml_path
         if substitutions:
+            assert submitted_yaml_context is not None
             substituted = _substitute_workflow_vars(yaml_path, substitutions)
             source_yaml_path = (
                 Path(submitted_yaml_context.name) / f"substituted-{yaml_path.name}"
@@ -1763,8 +1731,8 @@ def _run_npa_workflow_runtime(
     secret_env_values: dict[str, str],
     controller_backend: str,
     infra: str,
-    config_path: Path | None,
     isolated_config_dir: Path | None,
+    config_path: Path | None,
     submit_timeout: int,
     poll_seconds: int,
     max_wait_seconds: int,
@@ -1837,8 +1805,8 @@ def _run_npa_workflow_runtime(
         submit_timeout=submit_timeout,
         infra=infra,
         controller_backend=controller_backend,
-        config_path=config_path,
         isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
         resume=resume,
         project=project or "default",
         sky_bin=sky_bin,
@@ -2055,17 +2023,23 @@ def _plan_requires_npa_source(
     *,
     run_id: str,
     assume_decision: str,
+    config_overrides: Mapping[str, str] | None = None,
     options,
 ) -> bool:
-    """Return whether any planned step lacks a resolved container image."""
+    """Return whether any fully configured planned step lacks a container image."""
 
     from npa.orchestration.npa_workflow import build_plan, load_spec
     from npa.orchestration.npa_workflow.skypilot_render import (
         build_scheduler_task,
         resolve_task_image,
     )
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
-    spec = load_spec(yaml_path)
+    # Resource image fields may be config tokens populated only by submit
+    # ``--var`` values. Inspect the same merged spec that render/runtime will use;
+    # otherwise a fully digest-pinned workflow is incorrectly forced to stage an
+    # unused source tree (and ``--no-stage-src`` cannot submit it at all).
+    spec = merge_config_overrides(load_spec(yaml_path), config_overrides)
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     for step in plan.steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
@@ -2222,7 +2196,7 @@ def _preflight_submit_images(
 def _preflight_image_bootstrap_contracts(
     *,
     images: list[str],
-    pull_checks: list[object],
+    pull_checks: Sequence[object],
     context: str,
 ) -> list[dict[str, object]]:
     """Verify each selected digest, never a mutable tag, against one contract."""
@@ -2936,7 +2910,7 @@ def _latest_runtime_wave_states(
     for position, wave in enumerate(runtime_waves):
         key = str(wave.get("key") or "").strip() or f"__legacy_{position}"
         try:
-            attempt = int(wave.get("attempt") or 1)
+            attempt = int(str(wave.get("attempt") or 1))
         except (TypeError, ValueError):
             attempt = 1
         status = str(wave.get("status") or "").upper()
@@ -3375,30 +3349,30 @@ def _durable_workflow_status(
     stages: dict[str, dict[str, object]] = {}
     for stage, info in (manifest.get("stages", {}) or {}).items():
         stage_info = dict(info) if isinstance(info, dict) else {"name": str(stage)}
-        status = read_stage_status(state, str(stage))
-        if status:
-            stage_info.update(status)
+        stage_status = read_stage_status(state, str(stage))
+        if stage_status:
+            stage_info.update(stage_status)
         stages[str(stage)] = stage_info
 
     job_id = str(manifest.get("sky_job_id") or "")
     live_status = ""
-    verification_errors: list[str] = []
+    legacy_verification_errors: list[str] = []
     if job_id and not cached:
         try:
             live = workflow_status(job_id, sky_bin=sky_bin or None)
             if live.error:
-                verification_errors.append(str(live.error))
+                legacy_verification_errors.append(str(live.error))
             elif str(live.status or "").upper() in {"", "UNKNOWN"}:
-                verification_errors.append(
+                legacy_verification_errors.append(
                     f"managed job {job_id} was not present in a parseable live queue response"
                 )
             else:
                 live_status = live.status
         except Exception as exc:
-            verification_errors.append(f"{type(exc).__name__}: {exc}")
+            legacy_verification_errors.append(f"{type(exc).__name__}: {exc}")
             live_status = ""
     status = _aggregate_stage_status(stages, live_status)
-    payload: dict[str, object] = {
+    legacy_payload: dict[str, object] = {
         "run_id": manifest.get("run_id") or _display_run_id(run_id),
         "workflow_name": manifest.get("workflow_name", ""),
         "status": status,
@@ -3415,19 +3389,19 @@ def _durable_workflow_status(
     }
     blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
     if blockers:
-        payload["blockers"] = blockers
+        legacy_payload["blockers"] = blockers
     last_known = str(status or manifest.get("status") or "UNKNOWN")
     if cached:
         verification_status = CACHED
         reason = "live controller query intentionally skipped (--cached)"
-    elif verification_errors:
+    elif legacy_verification_errors:
         verification_status = VERIFICATION_UNAVAILABLE
-        reason = "; ".join(verification_errors)
+        reason = "; ".join(legacy_verification_errors)
     else:
         verification_status = VERIFIED
         reason = ""
     return apply_verification(
-        payload,
+        legacy_payload,
         status=verification_status,
         target=job_id or state.uri,
         last_known_state=last_known,
@@ -3560,7 +3534,7 @@ def _manifest_pending_status(
             if isinstance(item, dict)
         ]
     if not steps and task_rows:
-        rows = sorted(task_rows, key=lambda item: int(item.get("task_id") or 0))
+        rows = sorted(task_rows, key=lambda item: int(str(item.get("task_id") or 0)))
         steps = [
             {
                 "state": str(row.get("task_name") or f"step-{index}"),
@@ -4226,6 +4200,7 @@ def status_cmd(
                         update_run_observation,
                     )
 
+                    last_known = result.get("last_known")
                     update_run_observation(
                         project=project,
                         workflow_identity=str(
@@ -4233,8 +4208,8 @@ def status_cmd(
                         ),
                         run_id=str(result.get("run_id") or resolved_run_id),
                         last_known_state=str(
-                            (result.get("last_known") or {}).get("state")
-                            if isinstance(result.get("last_known"), dict)
+                            last_known.get("state")
+                            if isinstance(last_known, dict)
                             else result.get("status")
                         ),
                         verification_status=str(
@@ -4962,6 +4937,7 @@ def cancel_cmd(
     """Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops."""
     resolved_run_id = ""
     identity = None
+    result: dict[str, Any]
     try:
         from npa.orchestration.npa_workflow.cancellation import (
             assess_run_cancellation,

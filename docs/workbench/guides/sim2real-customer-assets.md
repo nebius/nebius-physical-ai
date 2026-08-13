@@ -15,10 +15,10 @@
 | Sim assets (scene/robot/cameras) | BYO URIs, stage 2 assets, operator env | `ASSETS_URI`, `SCENE_SPEC_URI`, `CAMERAS_URI`, `NPA_SIM2REAL_CAMERAS_URI`, `ROBOT_SPEC_URI`, `NPA_SIM2REAL_ROBOT_SPEC_URI`, `ROBOT_PRESET`, `NPA_SIM2REAL_ROBOT_PRESET` |
 | Artifact bucket vs trigger bucket | `config.yaml`, operator env, runbook `NPA_SIM2REAL_*` | `NPA_SIM2REAL_BUCKET` (alias `S3_BUCKET`), `NPA_SIM2REAL_TRIGGER_DATASET_URI` (alias `TRIGGER_DATASET_URI`), `storage.bucket`, `storage.sim2real_stock_trigger_uri` |
 | External object-store bucket | endpoint + HMAC keys | `AWS_ENDPOINT_URL`, `S3_ENDPOINT_URL`, `storage.endpoint_url`, `~/.npa/credentials.yaml` `storage.aws_*` |
-| LeRobot custom/trigger dataset | trigger URI, dataset id | `NPA_SIM2REAL_TRIGGER_DATASET_URI`, `NPA_SIM2REAL_TRIGGER_DATASET_ID` (alias `TRIGGER_DATASET_ID`), default `lerobot/pusht` |
+| Task seed/trigger dataset | trigger URI, dataset id | `NPA_SIM2REAL_TRIGGER_DATASET_URI`, `NPA_SIM2REAL_TRIGGER_DATASET_ID` (alias `TRIGGER_DATASET_ID`), default `npa/isaac-lift-cube-franka-seed-v1`; real mode requires a matching `task-dataset-manifest.json` and fails closed on PushT/Franka mismatch |
 | Custom container images | operator env before submit | `AUGMENT_IMAGE`, `ENVGEN_IMAGE`, `POLICY_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE`, `TRAINER_IMAGE`, `ISAAC_IMAGE`, `NPA_SIM2REAL_RERUN_IMAGE` |
 
-Trace env names from `<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh`, `runbook.yaml` `envs:`, and `npa.workflows.sim2real.config.build_config_from_env`.
+Trace portable inputs from `npa/workflows/workbench/npa-workflows/sim2real.yaml` `config:` and the stateless `workflow_stage` adapters.
 
 ---
 
@@ -26,7 +26,7 @@ Trace env names from `<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-
 
 | Path | When to use |
 | --- | --- |
-| **`stock-smoke`** | Platform validation — LeRobot trigger only, stock Franka/table/cameras |
+| **`stock-smoke`** | Platform validation — task-aligned Isaac lift seed, stock Franka/table/cameras |
 | **`industrial`** | Production — UR/Flexiv URDF, OBJ parts, scene fixtures, custom cameras together |
 
 Each onboarding axis is independent in one profile:
@@ -205,27 +205,22 @@ the operator supplies a registry-qualified image or customer asset.
 
 | Step | Pipeline stage | NPA fit | Notes |
 | --- | --- | --- | --- |
-| 1 | LeRobot trigger | **WORKS** | `NPA_SIM2REAL_TRIGGER_DATASET_URI` at submit |
+| 1 | Task-aligned seed trigger | **WORKS** | Verified Isaac trajectory manifest at `NPA_SIM2REAL_TRIGGER_DATASET_URI` |
 | 2 | LanceDB curation | **SEAM** | Trigger path only; no LanceDB stage |
-| 3 | Cosmos augment | **WORKS** / **SEAM** | Cosmos Transfer 2.5 K8s job when `AUGMENT_IMAGE` qualified; else reference augment |
+| 3 | Cosmos augment | **WORKS** | Canonical submit requires qualified Cosmos Transfer 2.5 and real Job evidence |
 | 4 | Sim assets / catalog | **WORKS** | Stock SceneSpec + Franka; BYO mesh / SceneSpec / RobotSpec; UR/Flexiv pending URDF |
 | 5 | 10K envgen | **WORKS** | `NPA_ENV_COUNT=10000` via `sim2real_envgen` |
-| 6 | 80/20 split | **WORKS** | `NPA_TRAIN_FRACTION=0.8`; state carries `train_envs_uri` / `heldout_envs_uri` |
-| 7 | Policy action rollouts | **WORKS** / **SEAM** | `POLICY_IMAGE` K8s job when qualified; placeholder → reference rollouts; `BYO_POLICY_COMMAND` |
-| 8–9 | VLM + RL trainer | **WORKS** | Cosmos3 Reason + LeRobot VLM-signal trainer on cluster |
-| 10 | Held-out eval | **PARTIAL** | Genesis or Isaac Lab rollouts; BYO robot/scene must load (no silent Franka fallback) |
+| 5–6 | Curated train/validation/gold splits and feature lineage | **WORKS** | `NPA_TRAIN_FRACTION=0.8`; state carries all three disjoint split URIs and Stage 6 declares state-PPO consumption honestly |
+| 7 | Policy action rollouts | **WORKS** | Real Isaac standard-workflow task; every frame names the loaded checkpoint |
+| 8–9 | VLM + RL trainer | **WORKS** | Cosmos Reason + real Isaac RSL-RL PPO on cluster |
+| 10 | Held-out eval | **WORKS** | Candidate-loaded Isaac inference; BYO robot/scene must load with no silent fallback |
 | 11 | Threshold gate | **WORKS** | Promote vs loop-back |
 | 12 | Real-world validation | **SEAM** | `stage_12_external_validation/external_stub.json` — customer deploys checkpoint |
-| 13 | Next batch | **Explicit trigger** | Customer uploads new LeRobot batch + runs `trigger-pipeline.sh` (no S3 polling) |
+| 13 | Next batch | **Explicit data gate** | Retriggers only after verified new real failure data or corrected scenario data; no S3 polling |
 
-**Overall:** ~**80%** as an NPA orchestration framework on RTX PRO class GPUs; ~**20%**
-gap is third-party asset catalogs, LanceDB stage, live real-world loop, and UR/Flexiv
-URDF upload before full embodiment parity.
-
-**PR stack:** [#109](https://github.com/nebius/nebius-physical-ai/pull/109) staged
-runbook + direct K8s submit (`<private-operator-pack>/sim2real-rtxpro/submit-k8s-staged-job.sh`);
-[#110](https://github.com/nebius/nebius-physical-ai/pull/110) mandatory stages +
-Stage 2 asset materialization + `POLICY_IMAGE` / augment placeholder fallbacks.
+The remaining intentional seam is Stage 12 external real-world validation.
+LanceDB curation and customer embodiment assets are separate capabilities, not
+silent substitutions inside the canonical 14-stage qualification run.
 
 ---
 
@@ -246,11 +241,31 @@ cluster-side preflight (kube context, registry secret, gated HF models).
 
 ## Customer onboarding checklist
 
-1. **Upload** — Land a complete **LeRobot dataset** at your chosen S3 prefix.
+1. **Upload** — Land a complete task-aligned dataset at your chosen S3 prefix.
+   LeRobot format is valid when its task contract matches; the canonical stock
+   path uses verified Isaac lift-cube trajectories and never relabels PushT.
 2. **Trigger** — `export TRIGGER_DATASET_URI=s3://…/` then `<private-operator-pack>/sim2real-rtxpro/trigger-pipeline.sh` (or workflow submit with the same URI).
 3. **Robot** — For production: `ROBOT_PRESET` + `ROBOT_SPEC_URI` (UR/Flexiv URDF). Stock Franka is smoke-only.
 4. **Images** — Registry-qualified `POLICY_IMAGE`, `AUGMENT_IMAGE`, `VLM_IMAGE`, etc.
 5. **Real-world loop** — Deploy promoted checkpoint (BYO), collect new data, upload, trigger again.
+
+### Capacity-aware GPU placement
+
+Direct-Kubernetes runs accept a preferred product in
+`NPA_SIM2REAL_K8S_GPU_PRODUCT` and an ordered surface in
+`NPA_SIM2REAL_K8S_GPU_CANDIDATES`. The engine normalizes those values against
+actual `nvidia.com/gpu.product` node labels, filters them for the component and
+image architecture plus the model/workload VRAM floor, and retries only when Kubernetes reports concrete GPU
+capacity or selector evidence. Isaac candidates are limited to L40S and RTX PRO
+6000 variants; H100/H200 are never an Isaac fallback. Image pull, credential,
+checkpoint, container, and application failures do not change GPU products.
+Set `NPA_SIM2REAL_MIN_GPU_VRAM_GB` only when a model requires a stricter floor
+than the built-in workload/model rule; an invalid or unsatisfied value fails closed.
+
+The final ComponentRecords expose candidate order, attempts and scheduler
+reasons, selected product/node, allocated resource/count, Job name, runtime
+image digest, status, duration, and artifact links. Exhausting compatible
+candidates blocks the real tier; it never changes to a reference/SEAM backend.
 
 ---
 
@@ -265,12 +280,12 @@ Run prefix: `s3://<bucket>/sim2real-b/<run-id>/`
 
 | Path | Format | Contents |
 | --- | --- | --- |
-| `checkpoints/candidate/candidate.json` | `npa.sim2real.candidate_checkpoint.v1` | Promote record: run id, held-out success rate, threshold; **`deployable_policy: false`** (metadata only) |
-| `outer_loop/decision.json` | `npa.sim2real.threshold_decision.v1` | `promote_checkpoint` + local `checkpoint_uri` |
-| `inner_loop/outer-XX/evidence.json` | inner-loop evidence | Reference trainer `policy_output_after` (action bias), not LeRobot weights |
+| `checkpoints/candidate/candidate.json` | `npa.sim2real.candidate_checkpoint.v1` | Exact best real `model_*.pt`, SHA-256, size, authenticated download command, and promotion status. Below-threshold runs retain available bytes but set **`deployable_policy: false`**; only passing gates set it true. |
+| `outer_loop/decision.json` | `npa.sim2real.threshold_decision.v1` | `promote_checkpoint` or truthful loopback plus the exact S3 `checkpoint_uri` |
+| `inner_loop/outer-XX/evidence.json` | inner-loop evidence | Simulator-grounded reward/advantage calibration, PPO telemetry, fixed-validation results, and exact per-iteration checkpoint lineage. |
 | `stage_12_external_validation/external_stub.json` | `npa.sim2real.external_stub.v1` | **SEAM** — documents `input_checkpoint`; no robot deploy |
-| `eval/heldout/report.json` | `npa.sim2real.heldout_eval.v1` | Held-out `success_rate`, `threshold`, per-env scores (stage 10) |
-| `reports/sim2real-report.json` | `npa.sim2real.e2e_report.v1` | E2E summary + `rerun_serve.public_url` when auto-serve ran |
+| `eval/gold-heldout/outer-XX/report.json` | `npa.sim2real.heldout_eval.v1` | Final gold-heldout strict stable-placement success, distance diagnostics, decomposed metrics, applied scenario digests, and exact checkpoint proof (stage 10) |
+| `reports/sim2real-report.json` | `npa.sim2real.e2e_report.v1` | E2E summary, GPU placement provenance, `policy_access`, recording details, and `rerun_serve.public_url` when auto-serve ran. |
 
 Fetch and inspect (replace bucket/run id):
 
@@ -279,7 +294,7 @@ PREFIX=s3://<bucket>/sim2real-b/<run-id>
 aws s3 cp "${PREFIX}/outer_loop/decision.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
   | jq '{decision, success_rate, threshold, checkpoint_uri}'
 aws s3 cp "${PREFIX}/checkpoints/candidate/candidate.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
-  | jq '{run_id, success_rate, threshold}'
+  | jq '{run_id, deployable_policy, policy_checkpoint_uri, policy_checkpoint_sha256, policy_checkpoint_size_bytes, heldout_success_rate, threshold, policy_download_command}'
 aws s3 cp "${PREFIX}/inner_loop/outer-01/evidence.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
   | jq '{policy_output_after: (.policy_output_after|keys), reward_trend}'
 aws s3 cp "${PREFIX}/stage_12_external_validation/external_stub.json" - --endpoint-url "${AWS_ENDPOINT_URL}" \
@@ -287,27 +302,31 @@ aws s3 cp "${PREFIX}/stage_12_external_validation/external_stub.json" - --endpoi
 ```
 
 The reference VLM→RL loop updates a lightweight policy representation inside the
-orchestrator. It does **not** emit a LeRobot `pretrained_model/` checkpoint tree
-suitable for `npa workbench lerobot serve` without a BYO trainer or export step.
+orchestrator and remains metadata-only. The strict real Isaac path invokes the
+BYO RSL-RL trainer and promotes its real PyTorch checkpoint. Rerun visualizes
+policy behavior and provides artifact access; it does not execute that checkpoint.
 
 ### What the customer deploys
 
 | Deployable today | Status | Notes |
 | --- | --- | --- |
-| Promote metadata JSON on S3 | **WORKS** | Audit / handoff record; `deployable_policy: false` in `candidate.json` |
-| LeRobot policy checkpoint for robot | **SEAM (BYO)** | Customer maps trainer output or runs `BYO_TRAINER_COMMAND` to write deployable weights |
+| Promote metadata JSON on S3 | **WORKS** | Audit/handoff record; includes byte identity and access instructions when a real `.pt` exists. |
+| Isaac RSL-RL PyTorch checkpoint | **WORKS in strict real tier** | `BYO_TRAINER_COMMAND` produces and Stage 11 verifies the promoted `.pt`; the customer still owns on-robot conversion/integration. |
+| Reference-mode policy checkpoint for robot | **SEAM (BYO)** | Reference mode emits adapter metadata, not deployable robot weights. |
 | `POLICY_IMAGE` container | **WORKS** in sim | Stage 7 rollouts in cluster — not the on-robot runtime |
-| New LeRobot trigger batch | **WORKS** | Stage 13 retrigger → upload dataset → `trigger-pipeline.sh` |
+| New task-aligned trigger batch | **WORKS** | Stage 13 records a retrigger only for verified new failure/corrected scenario data |
 
 ### Suggested BYO robot flow
 
 1. Wait for `outer_loop/decision.json` with `"decision": "promote_checkpoint"`.
-2. Export or convert your policy to a LeRobot-compatible checkpoint on S3 (BYO
-   trainer hook or offline export from inner-loop evidence).
+2. Download the promoted `.pt` using `policy_download_command`, then export or
+   convert it to the customer's on-robot format when that runtime does not load
+   the Isaac RSL-RL checkpoint directly.
 3. On the robot workstation or edge server:
    `npa workbench lerobot serve --input-path s3://<bucket>/policies/<run-id>/`
    (see [LeRobot skill](../../../skills/tools/lerobot/SKILL.md)).
-4. Run hardware episodes; upload a new LeRobot dataset to your trigger prefix.
+4. Run hardware episodes; upload a new task-aligned dataset and its provenance
+   manifest to your trigger prefix.
 5. Re-run the workflow with `NPA_SIM2REAL_TRIGGER_DATASET_URI` pointing at the new batch.
 
 Stage 12 remains a **documented external-validation stub** until a customer wires

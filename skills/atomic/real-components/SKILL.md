@@ -24,8 +24,7 @@ downstream stages that consume them fail (or silently pass on fake data).
 For each `toolRef`, inspect its argv in
 `npa/src/npa/orchestration/npa_workflow/catalog.py`:
 
-- `argv[0] == "echo"` → **stub** (e.g. `workbench.fiftyone.launch_app`,
-  `workbench.sim2real.finalize`).
+- `argv[0] == "echo"` → **stub** (e.g. `workbench.fiftyone.launch_app`).
 - a Python one-liner that writes `"status": "contract_ready"` or a fixed
   `write_decision` → **stub / demo** (e.g.
   `workbench.sim2real.write_decision`).
@@ -37,7 +36,7 @@ Known stub toolRefs (do NOT advertise as real output):
 | Stub | Real replacement |
 | --- | --- |
 | `workbench.fiftyone.launch_app` (echo) | real `npa workbench fiftyone load-dataset`, or a real `run.shell` curation function |
-| `workbench.sim2real.finalize` / `write_decision` (echo/demo) | real `run.shell` module fns (e.g. `npa.workflows.data_factory_stages.finalize` / `grade_gate`) |
+| `workbench.sim2real.write_decision` (demo) | real `run.shell` module decision function for the advertised pipeline |
 
 `run.shell` stages count as real when they invoke a real `npa workbench ...`
 command or import a real, tested module (e.g.

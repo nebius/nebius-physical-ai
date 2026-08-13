@@ -26,7 +26,10 @@ from npa.deploy.images import (
     registry_from_env,
     supported_tool_version,
 )
-from npa.viz.adapters.lerobot_to_rerun import RerunAdapterError, lerobot_dataset_logical_to_rerun
+from npa.viz.adapters.lerobot_to_rerun import (
+    RerunAdapterError,
+    lerobot_dataset_logical_to_rerun,
+)
 from npa.workbench.lerobot.policy_container import (
     DEFAULT_POLICY_TYPE,
     DEFAULT_TRAIN_BATCH_SIZE,
@@ -191,15 +194,21 @@ class SimToRealConfig:
         if not self.run_id:
             raise SimToRealError("run_id must not be empty")
         if not 0.0 < self.split_fraction < 1.0:
-            raise SimToRealError(f"split_fraction must be in (0, 1), got {self.split_fraction}")
+            raise SimToRealError(
+                f"split_fraction must be in (0, 1), got {self.split_fraction}"
+            )
         if self.env_count < 2:
             raise SimToRealError(f"env_count must be at least 2, got {self.env_count}")
         if self.episodes <= 0:
             raise SimToRealError(f"episodes must be positive, got {self.episodes}")
         if self.train_steps <= 0:
-            raise SimToRealError(f"train_steps must be positive, got {self.train_steps}")
+            raise SimToRealError(
+                f"train_steps must be positive, got {self.train_steps}"
+            )
         if self.eval_episodes <= 0:
-            raise SimToRealError(f"eval_episodes must be positive, got {self.eval_episodes}")
+            raise SimToRealError(
+                f"eval_episodes must be positive, got {self.eval_episodes}"
+            )
         if not 0.0 <= self.threshold <= 1.0:
             raise SimToRealError(f"threshold must be in [0, 1], got {self.threshold}")
         if self.max_training_iterations <= 0:
@@ -207,21 +216,33 @@ class SimToRealConfig:
                 f"max_training_iterations must be positive, got {self.max_training_iterations}"
             )
         if self.train_step_budget <= 0:
-            raise SimToRealError(f"train_step_budget must be positive, got {self.train_step_budget}")
+            raise SimToRealError(
+                f"train_step_budget must be positive, got {self.train_step_budget}"
+            )
         if self.train_step_budget < self.train_steps:
             raise SimToRealError(
                 f"train_step_budget must be >= train_steps ({self.train_steps}), got {self.train_step_budget}"
             )
         if self.min_eval_improvement < 0.0:
-            raise SimToRealError(f"min_eval_improvement must be non-negative, got {self.min_eval_improvement}")
+            raise SimToRealError(
+                f"min_eval_improvement must be non-negative, got {self.min_eval_improvement}"
+            )
         if self.train_batch_size <= 0:
-            raise SimToRealError(f"train_batch_size must be positive, got {self.train_batch_size}")
+            raise SimToRealError(
+                f"train_batch_size must be positive, got {self.train_batch_size}"
+            )
         if self.train_num_workers < 0:
-            raise SimToRealError(f"train_num_workers must be non-negative, got {self.train_num_workers}")
+            raise SimToRealError(
+                f"train_num_workers must be non-negative, got {self.train_num_workers}"
+            )
         if self.vlm_eval_max_frames <= 0:
-            raise SimToRealError(f"vlm_eval_max_frames must be positive, got {self.vlm_eval_max_frames}")
+            raise SimToRealError(
+                f"vlm_eval_max_frames must be positive, got {self.vlm_eval_max_frames}"
+            )
         if self.vlm_eval_score is not None and not 0.0 <= self.vlm_eval_score <= 1.0:
-            raise SimToRealError(f"vlm_eval_score must be in [0, 1], got {self.vlm_eval_score}")
+            raise SimToRealError(
+                f"vlm_eval_score must be in [0, 1], got {self.vlm_eval_score}"
+            )
         if self.rerun_max_frames_per_episode <= 0:
             raise SimToRealError(
                 f"rerun_max_frames_per_episode must be positive, got {self.rerun_max_frames_per_episode}"
@@ -236,7 +257,9 @@ class SimToRealConfig:
         except FeedbackSourceError as exc:
             raise SimToRealError(str(exc)) from exc
         if not accelerator_candidates(self.gpu, self.gpu_failover):
-            raise SimToRealError("gpu or gpu_failover must provide at least one accelerator candidate")
+            raise SimToRealError(
+                "gpu or gpu_failover must provide at least one accelerator candidate"
+            )
 
 
 @dataclass
@@ -307,9 +330,22 @@ def normalize_accelerator(candidate: str) -> str:
 def build_config_from_env(**overrides: Any) -> SimToRealConfig:
     """Build a config from explicit overrides and environment fallbacks."""
 
-    run_id = str(overrides.get("run_id") or os.environ.get("NPA_SIM_TO_REAL_RUN_ID") or new_run_id())
-    s3_bucket = str(overrides.get("s3_bucket") or os.environ.get("S3_BUCKET") or os.environ.get("NPA_S3_BUCKET") or "")
-    s3_prefix = str(overrides.get("s3_prefix") or os.environ.get("NPA_S3_PREFIX") or default_s3_prefix(run_id))
+    run_id = str(
+        overrides.get("run_id")
+        or os.environ.get("NPA_SIM_TO_REAL_RUN_ID")
+        or new_run_id()
+    )
+    s3_bucket = str(
+        overrides.get("s3_bucket")
+        or os.environ.get("S3_BUCKET")
+        or os.environ.get("NPA_S3_BUCKET")
+        or ""
+    )
+    s3_prefix = str(
+        overrides.get("s3_prefix")
+        or os.environ.get("NPA_S3_PREFIX")
+        or default_s3_prefix(run_id)
+    )
     dataset_repo_id = str(
         overrides.get("dataset_repo_id")
         or os.environ.get("LEROBOT_DATASET_REPO_ID")
@@ -329,7 +365,11 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
         ),
         bucket=s3_bucket,
     )
-    policy_image = str(overrides.get("policy_image") or os.environ.get("POLICY_IMAGE") or default_policy_image())
+    policy_image = str(
+        overrides.get("policy_image")
+        or os.environ.get("POLICY_IMAGE")
+        or default_policy_image()
+    )
     checkpoint_uri = str(
         overrides.get("checkpoint_uri")
         or os.environ.get("CHECKPOINT_URI")
@@ -347,7 +387,12 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
     gpu_override = overrides.get("gpu")
     legacy_gpu = os.environ.get("GPU") or ""
     primary_candidates = accelerator_candidates(
-        str(gpu_override or os.environ.get("NPA_GPU_TYPE") or legacy_gpu or DEFAULT_GPU_TYPE)
+        str(
+            gpu_override
+            or os.environ.get("NPA_GPU_TYPE")
+            or legacy_gpu
+            or DEFAULT_GPU_TYPE
+        )
     )
     gpu = primary_candidates[0] if primary_candidates else DEFAULT_GPU_TYPE
     extra_from_primary = primary_candidates[1:]
@@ -355,7 +400,11 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
     if failover_override is not None:
         gpu_failover = str(failover_override)
     else:
-        gpu_failover = os.environ.get("NPA_GPU_FAILOVER") or ",".join(extra_from_primary) or DEFAULT_GPU_FAILOVER
+        gpu_failover = (
+            os.environ.get("NPA_GPU_FAILOVER")
+            or ",".join(extra_from_primary)
+            or DEFAULT_GPU_FAILOVER
+        )
     return SimToRealConfig(
         run_id=run_id,
         s3_endpoint=str(
@@ -371,42 +420,90 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
         dataset_repo_id=dataset_repo_id,
         dataset_revision=dataset_revision,
         policy_image=policy_image,
-        sim_backend=str(overrides.get("sim_backend") or os.environ.get("SIM_BACKEND") or DEFAULT_SIM_BACKEND),
-        eval_backend=str(overrides.get("eval_backend") or os.environ.get("EVAL_BACKEND") or DEFAULT_EVAL_BACKEND),
-        feedback_source=str(overrides.get("feedback_source") or os.environ.get("FEEDBACK_SOURCE") or DEFAULT_FEEDBACK_SOURCE),
-        feedback_type=str(overrides.get("feedback_type") or os.environ.get("FEEDBACK_TYPE") or DEFAULT_FEEDBACK_TYPE),
-        split_fraction=float(overrides.get("split_fraction", os.environ.get("SPLIT_FRACTION", DEFAULT_SPLIT_FRACTION))),
+        sim_backend=str(
+            overrides.get("sim_backend")
+            or os.environ.get("SIM_BACKEND")
+            or DEFAULT_SIM_BACKEND
+        ),
+        eval_backend=str(
+            overrides.get("eval_backend")
+            or os.environ.get("EVAL_BACKEND")
+            or DEFAULT_EVAL_BACKEND
+        ),
+        feedback_source=str(
+            overrides.get("feedback_source")
+            or os.environ.get("FEEDBACK_SOURCE")
+            or DEFAULT_FEEDBACK_SOURCE
+        ),
+        feedback_type=str(
+            overrides.get("feedback_type")
+            or os.environ.get("FEEDBACK_TYPE")
+            or DEFAULT_FEEDBACK_TYPE
+        ),
+        split_fraction=float(
+            overrides.get(
+                "split_fraction",
+                os.environ.get("SPLIT_FRACTION", DEFAULT_SPLIT_FRACTION),
+            )
+        ),
         env_count=int(overrides.get("env_count", os.environ.get("ENV_COUNT", "10"))),
         episodes=int(overrides.get("episodes", os.environ.get("EPISODES", "4"))),
-        train_steps=int(overrides.get("train_steps", os.environ.get("TRAIN_STEPS", "2000"))),
-        eval_episodes=int(overrides.get("eval_episodes", os.environ.get("EVAL_EPISODES", "10"))),
-        threshold=float(overrides.get("threshold", os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD))),
+        train_steps=int(
+            overrides.get("train_steps", os.environ.get("TRAIN_STEPS", "2000"))
+        ),
+        eval_episodes=int(
+            overrides.get("eval_episodes", os.environ.get("EVAL_EPISODES", "10"))
+        ),
+        threshold=float(
+            overrides.get(
+                "threshold", os.environ.get("SUCCESS_THRESHOLD", DEFAULT_THRESHOLD)
+            )
+        ),
         seed=int(overrides.get("seed", os.environ.get("SEED", "42"))),
         gpu=gpu,
         gpu_failover=gpu_failover,
         max_training_iterations=int(
             overrides.get(
                 "max_training_iterations",
-                os.environ.get("MAX_TRAINING_ITERATIONS", str(DEFAULT_MAX_TRAINING_ITERATIONS)),
+                os.environ.get(
+                    "MAX_TRAINING_ITERATIONS", str(DEFAULT_MAX_TRAINING_ITERATIONS)
+                ),
             )
         ),
         train_step_budget=int(
-            overrides.get("train_step_budget", os.environ.get("TRAIN_STEP_BUDGET", str(DEFAULT_TRAIN_STEP_BUDGET)))
+            overrides.get(
+                "train_step_budget",
+                os.environ.get("TRAIN_STEP_BUDGET", str(DEFAULT_TRAIN_STEP_BUDGET)),
+            )
         ),
         min_eval_improvement=float(
             overrides.get(
                 "min_eval_improvement",
-                os.environ.get("MIN_EVAL_IMPROVEMENT", str(DEFAULT_MIN_EVAL_IMPROVEMENT)),
+                os.environ.get(
+                    "MIN_EVAL_IMPROVEMENT", str(DEFAULT_MIN_EVAL_IMPROVEMENT)
+                ),
             )
         ),
-        policy_type=str(overrides.get("policy_type") or os.environ.get("POLICY_TYPE") or DEFAULT_POLICY_TYPE),
+        policy_type=str(
+            overrides.get("policy_type")
+            or os.environ.get("POLICY_TYPE")
+            or DEFAULT_POLICY_TYPE
+        ),
         train_batch_size=int(
-            overrides.get("train_batch_size", os.environ.get("TRAIN_BATCH_SIZE", str(DEFAULT_TRAIN_BATCH_SIZE)))
+            overrides.get(
+                "train_batch_size",
+                os.environ.get("TRAIN_BATCH_SIZE", str(DEFAULT_TRAIN_BATCH_SIZE)),
+            )
         ),
         train_num_workers=int(
-            overrides.get("train_num_workers", os.environ.get("TRAIN_NUM_WORKERS", str(DEFAULT_TRAIN_NUM_WORKERS)))
+            overrides.get(
+                "train_num_workers",
+                os.environ.get("TRAIN_NUM_WORKERS", str(DEFAULT_TRAIN_NUM_WORKERS)),
+            )
         ),
-        policy_device=str(overrides.get("policy_device") or os.environ.get("POLICY_DEVICE") or "cuda"),
+        policy_device=str(
+            overrides.get("policy_device") or os.environ.get("POLICY_DEVICE") or "cuda"
+        ),
         vlm_eval_backend=str(
             overrides.get("vlm_eval_backend")
             or os.environ.get("VLM_EVAL_BACKEND")
@@ -418,7 +515,9 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
             or DEFAULT_VLM_EVAL_MODEL
         ),
         vlm_eval_endpoint_url=str(
-            overrides.get("vlm_eval_endpoint_url") or os.environ.get("VLM_EVAL_ENDPOINT_URL") or ""
+            overrides.get("vlm_eval_endpoint_url")
+            or os.environ.get("VLM_EVAL_ENDPOINT_URL")
+            or ""
         ),
         vlm_eval_frame_selection=str(
             overrides.get("vlm_eval_frame_selection")
@@ -426,25 +525,42 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
             or "keyframes"
         ),
         vlm_eval_max_frames=int(
-            overrides.get("vlm_eval_max_frames", os.environ.get("VLM_EVAL_MAX_FRAMES", "4"))
+            overrides.get(
+                "vlm_eval_max_frames", os.environ.get("VLM_EVAL_MAX_FRAMES", "4")
+            )
         ),
-        vlm_eval_score=float(vlm_score) if vlm_score is not None and str(vlm_score) else None,
-        trainer_command=str(overrides.get("trainer_command") or os.environ.get("CUSTOM_LEROBOT_TRAINER_COMMAND") or ""),
+        vlm_eval_score=float(vlm_score)
+        if vlm_score is not None and str(vlm_score)
+        else None,
+        trainer_command=str(
+            overrides.get("trainer_command")
+            or os.environ.get("CUSTOM_LEROBOT_TRAINER_COMMAND")
+            or ""
+        ),
         byo_feedback_endpoint_url=str(
-            overrides.get("byo_feedback_endpoint_url") or os.environ.get("BYO_FEEDBACK_ENDPOINT_URL") or ""
+            overrides.get("byo_feedback_endpoint_url")
+            or os.environ.get("BYO_FEEDBACK_ENDPOINT_URL")
+            or ""
         ),
         byo_feedback_command=str(
-            overrides.get("byo_feedback_command") or os.environ.get("BYO_FEEDBACK_COMMAND") or ""
+            overrides.get("byo_feedback_command")
+            or os.environ.get("BYO_FEEDBACK_COMMAND")
+            or ""
         ),
         byo_feedback_mode=str(
-            overrides.get("byo_feedback_mode") or os.environ.get("BYO_FEEDBACK_MODE") or "provided-rollout"
+            overrides.get("byo_feedback_mode")
+            or os.environ.get("BYO_FEEDBACK_MODE")
+            or "provided-rollout"
         ),
         checkpoint_uri=checkpoint_uri,
         rrd_path=rrd_path,
         rerun_max_frames_per_episode=int(
             overrides.get(
                 "rerun_max_frames_per_episode",
-                os.environ.get("RERUN_MAX_FRAMES_PER_EPISODE", str(DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE)),
+                os.environ.get(
+                    "RERUN_MAX_FRAMES_PER_EPISODE",
+                    str(DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE),
+                ),
             )
         ),
         output_dir=Path(output_dir) if output_dir else None,
@@ -454,7 +570,11 @@ def build_config_from_env(**overrides: Any) -> SimToRealConfig:
 def artifact_uris(config: SimToRealConfig) -> dict[str, str]:
     """Return the canonical S3 artifact layout for a run."""
 
-    root = f"s3://{config.s3_bucket}/{config.s3_prefix.strip('/')}" if config.s3_bucket else ""
+    root = (
+        f"s3://{config.s3_bucket}/{config.s3_prefix.strip('/')}"
+        if config.s3_bucket
+        else ""
+    )
     if not root:
         return {}
     return {
@@ -519,7 +639,10 @@ def build_policy_container_contract(config: SimToRealConfig) -> dict[str, Any]:
             "CUSTOM_LEROBOT_TRAINER_COMMAND": config.trainer_command,
         },
         "observation_schema": {
-            "observation.images.workspace": {"dtype": "uint8", "shape": ["T", "H", "W", 3]},
+            "observation.images.workspace": {
+                "dtype": "uint8",
+                "shape": ["T", "H", "W", 3],
+            },
             "observation.images.wrist": {"dtype": "uint8", "shape": ["T", "H", "W", 3]},
             "observation.state": {"dtype": "float32", "shape": ["T", "state_dim"]},
             "language.instruction": {"dtype": "string", "shape": ["T"]},
@@ -531,13 +654,23 @@ def build_policy_container_contract(config: SimToRealConfig) -> dict[str, Any]:
             "feedback_type": {
                 "dtype": "string",
                 "required": True,
-                "examples": ["scalar", "dense-per-step", "pass-fail", "critique", "preference"],
+                "examples": [
+                    "scalar",
+                    "dense-per-step",
+                    "pass-fail",
+                    "critique",
+                    "preference",
+                ],
             },
             "value": {"dtype": "json", "required": True},
             "score": {"dtype": "float32", "range": [0.0, 1.0], "required": False},
             "success": {"dtype": "bool", "required": False},
             "rationale": {"dtype": "string", "required": False},
-            "source": {"dtype": "string", "required": False, "examples": ["none", "sim-env", "vlm", "byo-container"]},
+            "source": {
+                "dtype": "string",
+                "required": False,
+                "examples": ["none", "sim-env", "vlm", "byo-container"],
+            },
         },
         "byo_feedback_container": byo_feedback_contract(
             declared_type=config.feedback_type,
@@ -601,7 +734,9 @@ def seeded_train_heldout_split(
     return train, heldout
 
 
-def parse_feedback_result(payload: dict[str, Any], *, source: str = DEFAULT_FEEDBACK_SOURCE) -> FeedbackResult:
+def parse_feedback_result(
+    payload: dict[str, Any], *, source: str = DEFAULT_FEEDBACK_SOURCE
+) -> FeedbackResult:
     """Parse and guard feedback from a VLM or VLA backend."""
 
     missing = [key for key in ("success", "score", "rationale") if key not in payload]
@@ -679,12 +814,16 @@ def collect_feedback_payload(
 
 def _feedback_payload_to_result(payload: FeedbackPayload) -> FeedbackResult:
     critique = ""
-    if payload.feedback_type == FeedbackType.CRITIQUE and isinstance(payload.value, dict):
+    if payload.feedback_type == FeedbackType.CRITIQUE and isinstance(
+        payload.value, dict
+    ):
         critique = str(payload.value.get("critique") or "")
     return FeedbackResult(
         success=payload.success,
         score=payload.score,
-        rationale=payload.rationale or critique or f"{payload.feedback_type.value} feedback",
+        rationale=payload.rationale
+        or critique
+        or f"{payload.feedback_type.value} feedback",
         critique=critique,
         source=payload.source,
     )
@@ -713,7 +852,9 @@ def feedback_to_training_signal(feedback: FeedbackResult) -> dict[str, Any]:
     }
 
 
-def outer_loop_decision(score: float, threshold: float, checkpoint_uri: str) -> dict[str, Any]:
+def outer_loop_decision(
+    score: float, threshold: float, checkpoint_uri: str
+) -> dict[str, Any]:
     """Decide whether to promote a checkpoint or request another loop."""
 
     if not 0.0 <= score <= 1.0:
@@ -749,7 +890,8 @@ def s3_roundtrip(config: SimToRealConfig, *, local_dir: Path) -> ComponentStatus
 
     marker = local_dir / "s3-roundtrip.json"
     marker.write_text(
-        json.dumps({"run_id": config.run_id, "created_at": _utc_now()}, sort_keys=True) + "\n",
+        json.dumps({"run_id": config.run_id, "created_at": _utc_now()}, sort_keys=True)
+        + "\n",
         encoding="utf-8",
     )
     uri = f"s3://{config.s3_bucket}/{config.s3_prefix.strip('/')}/health/s3-roundtrip.json"
@@ -769,7 +911,9 @@ def s3_roundtrip(config: SimToRealConfig, *, local_dir: Path) -> ComponentStatus
             evidence=f"S3 round trip failed: {exc}",
             artifacts={"target_uri": uri},
         )
-    if not downloaded.exists() or downloaded.read_text(encoding="utf-8") != marker.read_text(encoding="utf-8"):
+    if not downloaded.exists() or downloaded.read_text(
+        encoding="utf-8"
+    ) != marker.read_text(encoding="utf-8"):
         return ComponentStatus(
             name="nebius_s3",
             tier=Tier.BLOCKED,
@@ -784,7 +928,9 @@ def s3_roundtrip(config: SimToRealConfig, *, local_dir: Path) -> ComponentStatus
     )
 
 
-def write_rerun_summary(report_payload: dict[str, Any], output_path: Path) -> ComponentStatus:
+def write_rerun_summary(
+    report_payload: dict[str, Any], output_path: Path
+) -> ComponentStatus:
     """Write a small Rerun recording, falling back to a labeled partial artifact."""
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -793,17 +939,28 @@ def write_rerun_summary(report_payload: dict[str, Any], output_path: Path) -> Co
 
         recording = rr.RecordingStream(APPLICATION_ID)
         rr.save(output_path, recording=recording)
-        scalar = rr.Scalars if hasattr(rr, "Scalars") else rr.Scalar
+        scalar = rr.Scalars if hasattr(rr, "Scalars") else getattr(rr, "Scalar")
         if hasattr(rr, "set_time_sequence"):
             rr.set_time_sequence("run_step", 0, recording=recording)
         else:
             rr.set_time("run_step", sequence=0, recording=recording)
-        rr.log("pipeline/outer_score", scalar(float(report_payload["outer_loop"]["score"])), recording=recording)
-        rr.log("pipeline/threshold", scalar(float(report_payload["outer_loop"]["threshold"])), recording=recording)
+        rr.log(
+            "pipeline/outer_score",
+            scalar(float(report_payload["outer_loop"]["score"])),
+            recording=recording,
+        )
+        rr.log(
+            "pipeline/threshold",
+            scalar(float(report_payload["outer_loop"]["threshold"])),
+            recording=recording,
+        )
         rr.disconnect(recording=recording)
     except Exception as exc:
         output_path.write_text(
-            json.dumps({"format": "npa.rerun.partial.v1", "error": str(exc), **report_payload}, indent=2)
+            json.dumps(
+                {"format": "npa.rerun.partial.v1", "error": str(exc), **report_payload},
+                indent=2,
+            )
             + "\n",
             encoding="utf-8",
         )
@@ -855,11 +1012,12 @@ def run_structural_spine(
             )
         )
 
-    staged_example_uri = default_staged_dataset_uri(config.s3_bucket) if config.s3_bucket else ""
-    source_is_default_staged = (
-        bool(staged_example_uri)
-        and config.input_data_uri.rstrip("/") == staged_example_uri.rstrip("/")
+    staged_example_uri = (
+        default_staged_dataset_uri(config.s3_bucket) if config.s3_bucket else ""
     )
+    source_is_default_staged = bool(
+        staged_example_uri
+    ) and config.input_data_uri.rstrip("/") == staged_example_uri.rstrip("/")
     dataset_source_used = config.input_data_uri
     staging_fallback_error = ""
     try:
@@ -893,7 +1051,9 @@ def run_structural_spine(
         raise SimToRealError(str(exc)) from exc
     dataset_summary_path = local_dir / "lerobot-dataset-summary.json"
     _write_json(dataset_summary_path, dataset_summary.to_dict())
-    dataset_tier = Tier.WORKS if dataset_summary.loaded_with_lerobot_dataset else Tier.PARTIAL
+    dataset_tier = (
+        Tier.WORKS if dataset_summary.loaded_with_lerobot_dataset else Tier.PARTIAL
+    )
     components.append(
         ComponentStatus(
             name="real_lerobot_dataset",
@@ -909,15 +1069,21 @@ def run_structural_spine(
                     else dataset_summary.lerobot_dataset_error
                 )
             ),
-            artifacts={"summary": str(dataset_summary_path), "source": dataset_source_used},
+            artifacts={
+                "summary": str(dataset_summary_path),
+                "source": dataset_source_used,
+            },
         )
     )
     if staged_example_uri:
         try:
             staged_uri = (
                 config.input_data_uri
-                if config.input_data_uri.rstrip("/") == staged_example_uri.rstrip("/") and not staging_fallback_error
-                else stage_dataset_to_s3(local_dataset, staged_example_uri, s3_endpoint=config.s3_endpoint)
+                if config.input_data_uri.rstrip("/") == staged_example_uri.rstrip("/")
+                and not staging_fallback_error
+                else stage_dataset_to_s3(
+                    local_dataset, staged_example_uri, s3_endpoint=config.s3_endpoint
+                )
             )
             components.append(
                 ComponentStatus(
@@ -941,7 +1107,10 @@ def run_structural_spine(
                         if staging_fallback_error
                         else str(exc)
                     ),
-                    artifacts={"staged_uri": staged_example_uri, "public_source": dataset_source_used},
+                    artifacts={
+                        "staged_uri": staged_example_uri,
+                        "public_source": dataset_source_used,
+                    },
                 )
             )
 
@@ -985,7 +1154,9 @@ def run_structural_spine(
         )
     )
 
-    rollout_dir = _write_lerobot_rollout_fixture(local_dir / "rollouts", heldout_episodes[0], dataset_summary)
+    rollout_dir = _write_lerobot_rollout_fixture(
+        local_dir / "rollouts", heldout_episodes[0], dataset_summary
+    )
     vlm_output = local_dir / "feedback" / "vlm-eval"
     checkpoint_uri = config.checkpoint_uri or str(local_dir / "checkpoints" / "policy")
     rollout_frame = rollout_dir / "frame_000.ppm"
@@ -1018,7 +1189,11 @@ def run_structural_spine(
         "eval_metric": asdict(eval_metric),
         "feedback_source": config.feedback_source,
         "feedback_type": config.feedback_type,
-        "rubric": {"success": "task completed", "score": "float in [0,1]", "rationale": "brief reason"},
+        "rubric": {
+            "success": "task completed",
+            "score": "float in [0,1]",
+            "rationale": "brief reason",
+        },
         "observation": {
             "images": dataset_summary.camera_keys,
             "language": "Complete the demonstrated manipulation task.",
@@ -1166,7 +1341,9 @@ def run_structural_spine(
             evidence="Wrote and verified logical LeRobot/Rerun entities for input demos, policy rollout, and per-episode feedback.",
             artifacts={
                 "rrd": logical_rerun.output_rrd_path,
-                "entity_counts": json.dumps(logical_rerun.entity_counts, sort_keys=True),
+                "entity_counts": json.dumps(
+                    logical_rerun.entity_counts, sort_keys=True
+                ),
                 "view_command": f"rerun {logical_rerun.output_rrd_path}",
             },
         )
@@ -1244,11 +1421,12 @@ def run_real_lerobot_loop(
     except PolicyContainerError as exc:
         raise SimToRealError(str(exc)) from exc
 
-    staged_example_uri = default_staged_dataset_uri(config.s3_bucket) if config.s3_bucket else ""
-    source_is_default_staged = (
-        bool(staged_example_uri)
-        and config.input_data_uri.rstrip("/") == staged_example_uri.rstrip("/")
+    staged_example_uri = (
+        default_staged_dataset_uri(config.s3_bucket) if config.s3_bucket else ""
     )
+    source_is_default_staged = bool(
+        staged_example_uri
+    ) and config.input_data_uri.rstrip("/") == staged_example_uri.rstrip("/")
     dataset_source_used = config.input_data_uri
     staging_fallback_error = ""
     try:
@@ -1292,15 +1470,21 @@ def run_real_lerobot_loop(
                 f"Loaded {dataset_summary.repo_id}@{dataset_summary.revision} via LeRobotDataset with "
                 f"{dataset_summary.total_episodes} real episodes and {dataset_summary.total_frames} frames."
             ),
-            artifacts={"summary": str(dataset_summary_path), "source": dataset_source_used},
+            artifacts={
+                "summary": str(dataset_summary_path),
+                "source": dataset_source_used,
+            },
         )
     )
     if staged_example_uri:
         try:
             staged_uri = (
                 config.input_data_uri
-                if config.input_data_uri.rstrip("/") == staged_example_uri.rstrip("/") and not staging_fallback_error
-                else stage_dataset_to_s3(local_dataset, staged_example_uri, s3_endpoint=config.s3_endpoint)
+                if config.input_data_uri.rstrip("/") == staged_example_uri.rstrip("/")
+                and not staging_fallback_error
+                else stage_dataset_to_s3(
+                    local_dataset, staged_example_uri, s3_endpoint=config.s3_endpoint
+                )
             )
             components.append(
                 ComponentStatus(
@@ -1316,7 +1500,10 @@ def run_real_lerobot_loop(
                     name="lerobot_dataset_staging",
                     tier=Tier.BLOCKED,
                     evidence=str(exc),
-                    artifacts={"staged_uri": staged_example_uri, "public_source": dataset_source_used},
+                    artifacts={
+                        "staged_uri": staged_example_uri,
+                        "public_source": dataset_source_used,
+                    },
                 )
             )
 
@@ -1405,7 +1592,9 @@ def run_real_lerobot_loop(
                 resume=iteration > 1,
                 log_path=local_dir / "logs" / f"train-iter-{iteration:02d}.log",
             )
-            checkpoint_validation = validate_lerobot_checkpoint(train_result.checkpoint_path)
+            checkpoint_validation = validate_lerobot_checkpoint(
+                train_result.checkpoint_path
+            )
             eval_output_dir = eval_root / f"iter-{iteration:02d}"
             eval_metric, eval_status = evaluate_backend(
                 config.eval_backend,
@@ -1421,7 +1610,9 @@ def run_real_lerobot_loop(
                             "env_type": rollout_env,
                             "episodes": config.eval_episodes,
                             "device": config.policy_device,
-                            "log_path": local_dir / "logs" / f"eval-iter-{iteration:02d}.log",
+                            "log_path": local_dir
+                            / "logs"
+                            / f"eval-iter-{iteration:02d}.log",
                         }
                     },
                 ),
@@ -1434,7 +1625,9 @@ def run_real_lerobot_loop(
         try:
             feedback_payload, feedback_status = collect_feedback_payload(
                 config,
-                rollout_path=Path(str(eval_metric.metadata.get("output_dir") or eval_output_dir)),
+                rollout_path=Path(
+                    str(eval_metric.metadata.get("output_dir") or eval_output_dir)
+                ),
                 output_path=local_dir / "feedback" / f"iter-{iteration:02d}",
                 task="Complete the demonstrated manipulation task.",
                 eval_metric=eval_metric,
@@ -1483,7 +1676,9 @@ def run_real_lerobot_loop(
             break
 
     if not loop_history:
-        raise SimToRealError("real LeRobot loop did not complete any train/eval iteration")
+        raise SimToRealError(
+            "real LeRobot loop did not complete any train/eval iteration"
+        )
     if latest_eval_status is not None:
         components.append(_component_from_status(latest_eval_status))
     if latest_feedback_status is not None:
@@ -1499,7 +1694,10 @@ def run_real_lerobot_loop(
                 f"Ran {len(loop_history)} LeRobot training iteration(s), cumulative_steps={cumulative_steps}, "
                 f"checkpoint={latest_checkpoint}."
             ),
-            artifacts={"checkpoint": latest_checkpoint, "training_log": loop_history[-1]["train"]["log_path"]},
+            artifacts={
+                "checkpoint": latest_checkpoint,
+                "training_log": loop_history[-1]["train"]["log_path"],
+            },
         )
     )
     components.append(
@@ -1510,7 +1708,10 @@ def run_real_lerobot_loop(
                 f"Measured {loop_history[-1]['eval']['metric_name']}={trend[-1]} in env={rollout_env} "
                 f"over {config.eval_episodes} rollout episode(s)."
             ),
-            artifacts={"eval_info": loop_history[-1]["eval"]["eval_info_path"], "eval_log": loop_history[-1]["eval"]["log_path"]},
+            artifacts={
+                "eval_info": loop_history[-1]["eval"]["eval_info_path"],
+                "eval_log": loop_history[-1]["eval"]["log_path"],
+            },
         )
     )
     components.append(
@@ -1521,7 +1722,13 @@ def run_real_lerobot_loop(
                 f"Closed feedback loop used measured eval scores {trend} to resume training until {stop_reason}; "
                 f"final_score={trend[-1]}, threshold={config.threshold}."
             ),
-            artifacts={"latest_training_signal": str(local_dir / "training-signals" / f"iter-{len(loop_history):02d}.json")},
+            artifacts={
+                "latest_training_signal": str(
+                    local_dir
+                    / "training-signals"
+                    / f"iter-{len(loop_history):02d}.json"
+                )
+            },
         )
     )
     customer_note = (
@@ -1530,7 +1737,11 @@ def run_real_lerobot_loop(
         "heldout dataset metrics remain real when no matching rollout env is supplied."
     )
     outer = {
-        **outer_loop_decision(latest_feedback.score, config.threshold, config.checkpoint_uri or latest_checkpoint),
+        **outer_loop_decision(
+            latest_feedback.score,
+            config.threshold,
+            config.checkpoint_uri or latest_checkpoint,
+        ),
         "iterations": len(loop_history),
         "stop_reason": stop_reason,
         "trend": trend,
@@ -1572,7 +1783,11 @@ def run_real_lerobot_loop(
             "matching_rollout_env": rollout_env,
             "customer_note": customer_note,
         },
-        artifacts={**artifact_uris(config), "local_report_dir": str(local_dir), "local_checkpoint": latest_checkpoint},
+        artifacts={
+            **artifact_uris(config),
+            "local_report_dir": str(local_dir),
+            "local_checkpoint": latest_checkpoint,
+        },
         components=components,
         feedback=latest_feedback,
         training_signal=latest_signal,
@@ -1594,7 +1809,9 @@ def run_real_lerobot_loop(
             evidence="Wrote and verified logical LeRobot/Rerun entities for input demos, heldout rollout, and feedback.",
             artifacts={
                 "rrd": logical_rerun.output_rrd_path,
-                "entity_counts": json.dumps(logical_rerun.entity_counts, sort_keys=True),
+                "entity_counts": json.dumps(
+                    logical_rerun.entity_counts, sort_keys=True
+                ),
             },
         )
     except RerunAdapterError as exc:
@@ -1612,7 +1829,9 @@ def run_real_lerobot_loop(
     upload_status = _upload_run_artifacts(
         config,
         {
-            "training_signal": local_dir / "training-signals" / f"iter-{len(loop_history):02d}.json",
+            "training_signal": local_dir
+            / "training-signals"
+            / f"iter-{len(loop_history):02d}.json",
             "dataset_summary": dataset_summary_path,
             "split": split_path,
             "checkpoint": Path(latest_checkpoint),
@@ -1640,7 +1859,7 @@ def main(argv: list[str] | None = None) -> int:
 
     warnings.warn(
         "npa.workflows.sim_to_real is legacy. Use npa.workflows.sim2real "
-        "(Sim2RealWorkflow / runbook.yaml) for the production VLM→RL loop.",
+        "(npa/workflows/workbench/npa-workflows/sim2real.yaml) for the production VLM→RL loop.",
         DeprecationWarning,
         stacklevel=1,
     )
@@ -1651,7 +1870,9 @@ def main(argv: list[str] | None = None) -> int:
     _add_common_args(local)
     local.add_argument("--attempt-s3-roundtrip", action="store_true")
     local.add_argument("--report-path", type=Path, default=None)
-    real = subparsers.add_parser("real-loop", help="Run the real LeRobot train/eval feedback loop.")
+    real = subparsers.add_parser(
+        "real-loop", help="Run the real LeRobot train/eval feedback loop."
+    )
     _add_common_args(real)
     real.add_argument("--attempt-s3-roundtrip", action="store_true")
     real.add_argument("--report-path", type=Path, default=None)
@@ -1704,9 +1925,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         try:
             if args.command == "local-smoke":
-                report = run_structural_spine(config, attempt_s3_roundtrip=args.attempt_s3_roundtrip)
+                report = run_structural_spine(
+                    config, attempt_s3_roundtrip=args.attempt_s3_roundtrip
+                )
             else:
-                report = run_real_lerobot_loop(config, attempt_s3_roundtrip=args.attempt_s3_roundtrip)
+                report = run_real_lerobot_loop(
+                    config, attempt_s3_roundtrip=args.attempt_s3_roundtrip
+                )
         except SimToRealError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
@@ -1740,12 +1965,22 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--gpu", default=DEFAULT_GPU_TYPE)
     parser.add_argument("--gpu-failover", default=DEFAULT_GPU_FAILOVER)
-    parser.add_argument("--max-training-iterations", type=int, default=DEFAULT_MAX_TRAINING_ITERATIONS)
-    parser.add_argument("--train-step-budget", type=int, default=DEFAULT_TRAIN_STEP_BUDGET)
-    parser.add_argument("--min-eval-improvement", type=float, default=DEFAULT_MIN_EVAL_IMPROVEMENT)
+    parser.add_argument(
+        "--max-training-iterations", type=int, default=DEFAULT_MAX_TRAINING_ITERATIONS
+    )
+    parser.add_argument(
+        "--train-step-budget", type=int, default=DEFAULT_TRAIN_STEP_BUDGET
+    )
+    parser.add_argument(
+        "--min-eval-improvement", type=float, default=DEFAULT_MIN_EVAL_IMPROVEMENT
+    )
     parser.add_argument("--policy-type", default=DEFAULT_POLICY_TYPE)
-    parser.add_argument("--train-batch-size", type=int, default=DEFAULT_TRAIN_BATCH_SIZE)
-    parser.add_argument("--train-num-workers", type=int, default=DEFAULT_TRAIN_NUM_WORKERS)
+    parser.add_argument(
+        "--train-batch-size", type=int, default=DEFAULT_TRAIN_BATCH_SIZE
+    )
+    parser.add_argument(
+        "--train-num-workers", type=int, default=DEFAULT_TRAIN_NUM_WORKERS
+    )
     parser.add_argument("--policy-device", default="cuda")
     parser.add_argument("--vlm-eval-backend", default=DEFAULT_VLM_EVAL_BACKEND)
     parser.add_argument("--vlm-eval-model", default=DEFAULT_VLM_EVAL_MODEL)
@@ -1756,14 +1991,24 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--trainer-command", default="")
     parser.add_argument("--byo-feedback-endpoint-url", default="")
     parser.add_argument("--byo-feedback-command", default="")
-    parser.add_argument("--byo-feedback-mode", choices=("provided-rollout", "self-rollout"), default="provided-rollout")
+    parser.add_argument(
+        "--byo-feedback-mode",
+        choices=("provided-rollout", "self-rollout"),
+        default="provided-rollout",
+    )
     parser.add_argument("--checkpoint-uri", default="")
     parser.add_argument("--rrd-path", default="")
-    parser.add_argument("--rerun-max-frames-per-episode", type=int, default=DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE)
+    parser.add_argument(
+        "--rerun-max-frames-per-episode",
+        type=int,
+        default=DEFAULT_RERUN_MAX_FRAMES_PER_EPISODE,
+    )
     parser.add_argument("--output-dir", type=Path, default=None)
 
 
-def _write_lerobot_rollout_fixture(output_dir: Path, episode_index: int, dataset_summary: Any) -> Path:
+def _write_lerobot_rollout_fixture(
+    output_dir: Path, episode_index: int, dataset_summary: Any
+) -> Path:
     """Write a tiny rollout fixture tied to a real LeRobot episode for vlm-eval."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1848,7 +2093,14 @@ def _matching_rollout_env(config: SimToRealConfig) -> str:
     backend = config.eval_backend.strip().lower().replace("_", "-")
     if backend in {"pusht", "gym-pusht", "lerobot-pusht"}:
         return "pusht"
-    if backend in {"", "auto", "state-success", "sim-env", "pc-success", "lerobot-eval"}:
+    if backend in {
+        "",
+        "auto",
+        "state-success",
+        "sim-env",
+        "pc-success",
+        "lerobot-eval",
+    }:
         if config.dataset_repo_id == DEFAULT_PUBLIC_LEROBOT_REPO:
             return "pusht"
         return "pusht"
@@ -1908,7 +2160,9 @@ def _assert_uploaded_real_artifacts(config: SimToRealConfig) -> ComponentStatus 
         client.head_object(Bucket=rrd_bucket, Key=rrd_key)
         checkpoint_bucket, checkpoint_prefix = _split_s3_uri(checkpoint_uri)
         checkpoint_prefix = checkpoint_prefix.rstrip("/") + "/"
-        page = client.list_objects_v2(Bucket=checkpoint_bucket, Prefix=checkpoint_prefix)
+        page = client.list_objects_v2(
+            Bucket=checkpoint_bucket, Prefix=checkpoint_prefix
+        )
         keys = [item["Key"] for item in page.get("Contents", [])]
         weight_keys = [
             key
@@ -1919,7 +2173,9 @@ def _assert_uploaded_real_artifacts(config: SimToRealConfig) -> ComponentStatus 
             or key.endswith("pytorch_model.bin")
         ]
         if not weight_keys:
-            raise SimToRealError(f"No real checkpoint weight object found under {checkpoint_uri}")
+            raise SimToRealError(
+                f"No real checkpoint weight object found under {checkpoint_uri}"
+            )
     except Exception as exc:
         return ComponentStatus(
             name="s3_real_artifact_assertions",
@@ -1931,11 +2187,17 @@ def _assert_uploaded_real_artifacts(config: SimToRealConfig) -> ComponentStatus 
         name="s3_real_artifact_assertions",
         tier=Tier.WORKS,
         evidence="Asserted the uploaded .rrd object and at least one real checkpoint weight object in S3.",
-        artifacts={"rrd": rrd_uri, "checkpoint": checkpoint_uri, "weight": f"s3://{checkpoint_bucket}/{weight_keys[0]}"},
+        artifacts={
+            "rrd": rrd_uri,
+            "checkpoint": checkpoint_uri,
+            "weight": f"s3://{checkpoint_bucket}/{weight_keys[0]}",
+        },
     )
 
 
-def _upload_run_artifacts(config: SimToRealConfig, local_files: dict[str, Path]) -> ComponentStatus | None:
+def _upload_run_artifacts(
+    config: SimToRealConfig, local_files: dict[str, Path]
+) -> ComponentStatus | None:
     """Upload selected run artifacts to configured S3 paths when possible."""
 
     paths = artifact_uris(config)
@@ -1945,7 +2207,9 @@ def _upload_run_artifacts(config: SimToRealConfig, local_files: dict[str, Path])
     if "dataset_summary" in local_files and paths.get("dataset_summary"):
         upload_targets["dataset_summary"] = paths["dataset_summary"]
     if "split" in local_files and paths.get("train_envs"):
-        upload_targets["split"] = paths["train_envs"].rstrip("/") + "/episode-split.json"
+        upload_targets["split"] = (
+            paths["train_envs"].rstrip("/") + "/episode-split.json"
+        )
     if "checkpoint" in local_files and paths.get("checkpoint"):
         checkpoint_uri = paths["checkpoint"]
         if checkpoint_uri.endswith("/") and not local_files["checkpoint"].is_dir():
@@ -1961,7 +2225,9 @@ def _upload_run_artifacts(config: SimToRealConfig, local_files: dict[str, Path])
         upload_targets["report"] = paths["report"]
     if "rrd" in local_files and paths.get("rrd"):
         upload_targets["rrd"] = paths["rrd"]
-    upload_targets = {key: uri for key, uri in upload_targets.items() if _is_s3_uri(uri)}
+    upload_targets = {
+        key: uri for key, uri in upload_targets.items() if _is_s3_uri(uri)
+    }
     if not upload_targets:
         return None
 
@@ -2018,14 +2284,21 @@ def _redacted_config(config: SimToRealConfig) -> dict[str, Any]:
     payload["output_dir"] = str(config.output_dir) if config.output_dir else ""
     for key in list(payload):
         lowered = key.lower()
-        if "secret" in lowered or "token" in lowered or "password" in lowered or "access_key" in lowered:
+        if (
+            "secret" in lowered
+            or "token" in lowered
+            or "password" in lowered
+            or "access_key" in lowered
+        ):
             payload[key] = "***" if payload[key] else ""
     return payload
 
 
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _is_s3_uri(value: str) -> bool:

@@ -185,10 +185,13 @@ def test_accelerator_name_override_preserves_each_profile_gpu_count(
 
 
 def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
-    assert normalize_resources(
-        {"accelerators": "RTXPRO6000:8"},
-        accelerator_overrides={"RTXPRO6000:8": "resolved-product"},
-    )["accelerators"] == "resolved-product:8"
+    assert (
+        normalize_resources(
+            {"accelerators": "RTXPRO6000:8"},
+            accelerator_overrides={"RTXPRO6000:8": "resolved-product"},
+        )["accelerators"]
+        == "resolved-product:8"
+    )
 
 
 def test_nebius_cloud_render_injects_docker_secrets(
@@ -352,7 +355,14 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     monkeypatch.setenv("NPA_COSMOS_VARIANT_PARALLELISM", "4")
     monkeypatch.setenv("NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS", "1")
-    spec = load_spec(REPO_ROOT / "npa" / "workflows" / "physical-ai-data-factory.yaml")
+    spec = load_spec(
+        REPO_ROOT
+        / "npa"
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "physical-ai-data-factory.yaml"
+    )
     rendered = render_skypilot_yaml(
         spec,
         build_plan(spec, run_id="demo", assume_decision="promote_checkpoint"),
@@ -538,9 +548,7 @@ def test_resolve_task_image_uses_override() -> None:
 def test_first_party_image_rejects_uid_zero_pod_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv(
-        "NPA_REGISTRY", "cr.us-central1.nebius.cloud/project"
-    )
+    monkeypatch.setenv("NPA_REGISTRY", "cr.us-central1.nebius.cloud/project")
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     for profile in spec.resources.values():
         if isinstance(profile, dict):
@@ -615,7 +623,7 @@ def test_resolve_task_image_can_clear_tool_family_image() -> None:
 def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
     with pytest.raises(Exception, match="assume-decision"):
         prepare_npa_workflow_for_submit(
-            NPA_SPECS / "sim2real-vlm-rl.yaml",
+            NPA_SPECS / "tokenfactory-cosmos-gate.yaml",
             run_id="dyn-demo",
         )
 

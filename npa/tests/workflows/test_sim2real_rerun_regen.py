@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
+    _ensure_policy_access_metadata,
     regen_sim2real_rrd,
     resolve_local_rrd_path,
     sync_heldout_renders,
@@ -23,12 +25,19 @@ def _config(run_id: str = "sim2real-staged-20260616t093101z") -> Sim2RealLoopCon
     )
 
 
-def test_resolve_local_rrd_path_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_local_rrd_path_env_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("LOCAL_RRD_PATH", str(tmp_path / "custom.rrd"))
-    assert resolve_local_rrd_path("sim2real-staged-20260616t093101z") == tmp_path / "custom.rrd"
+    assert (
+        resolve_local_rrd_path("sim2real-staged-20260616t093101z")
+        == tmp_path / "custom.rrd"
+    )
 
 
-def test_regen_sim2real_rrd_requires_heldout_frames(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_regen_sim2real_rrd_requires_heldout_frames(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     local_dir = tmp_path / "run"
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
     (local_dir / "eval/heldout").mkdir(parents=True)
@@ -56,7 +65,9 @@ def test_regen_sim2real_rrd_requires_heldout_frames(monkeypatch: pytest.MonkeyPa
         regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
 
-def test_regen_sim2real_rrd_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_regen_sim2real_rrd_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     local_dir = tmp_path / "run"
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
     (local_dir / "eval/heldout").mkdir(parents=True)
@@ -80,7 +91,9 @@ def test_regen_sim2real_rrd_success(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         lambda **_kwargs: FakeResult(),
     )
 
-    result = regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False, upload=False)
+    result = regen_sim2real_rrd(
+        _config(), local_dir=local_dir, sync_inputs=False, upload=False
+    )
     assert result.heldout_frame_count == 4
     assert result.local_rrd_path.endswith("sim2real.rrd")
 
@@ -111,7 +124,9 @@ def _patch_rrd_emit(monkeypatch: pytest.MonkeyPatch, local_dir: Path) -> None:
     )
 
 
-def test_regen_also_refreshes_the_mcap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_regen_also_refreshes_the_mcap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Finalize writes both recordings from one set of inputs, so regen must too.
 
     Refreshing only the .rrd leaves the run's MCAP frozen at whatever the emitter
@@ -178,11 +193,104 @@ def test_regen_mcap_failure_never_breaks_the_rrd_regen(
         lambda **_kwargs: {"status": "skipped", "reason": "mcap not installed"},
     )
 
-    result = regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False, upload=False)
+    result = regen_sim2real_rrd(
+        _config(), local_dir=local_dir, sync_inputs=False, upload=False
+    )
     assert result.heldout_frame_count == 4
     assert result.mcap_status == "skipped"
     assert result.local_mcap_path == ""
     assert result.mcap_upload_uri == ""
+
+
+def test_policy_access_metadata_hashes_real_checkpoint_without_secrets(
+    tmp_path: Path,
+) -> None:
+    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    checkpoint_uri = "s3://demo-bucket/run/model_latest.pt"
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_checkpoint_uri": checkpoint_uri,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            assert uri == checkpoint_uri
+            Path(destination).write_bytes(b"real-policy-bytes")
+
+    access = _ensure_policy_access_metadata(
+        _config(), tmp_path, storage=FakeStorage(), report={}
+    )
+
+    assert access["deployable_policy"] is True
+    assert access["identity"] == "model_latest.pt"
+    assert len(access["sha256"]) == 64
+    assert access["size_bytes"] == len(b"real-policy-bytes")
+    assert checkpoint_uri in access["authenticated_download_command"]
+    assert "$AWS_ENDPOINT_URL" in access["authenticated_download_command"]
+    assert access["viewer_executes_policy"] is False
+    assert "secret" not in json.dumps(access).lower()
+
+
+def test_progress_metrics_embed_all_outer_reward_loss_and_success(
+    tmp_path: Path,
+) -> None:
+    history = []
+    for outer, success in ((1, 0.5), (2, 1.0)):
+        evidence_path = tmp_path / "inner_loop" / f"outer-{outer:02d}" / "evidence.json"
+        evidence_path.parent.mkdir(parents=True)
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "reward_trend": [0.1 * outer, 0.2 * outer],
+                    "final_quality": 0.7 + outer / 10,
+                    "iterations": [
+                        {
+                            "iteration": 1,
+                            "mean_reward": 0.1 * outer,
+                            "quality_after": 0.7,
+                            "update": {
+                                "loss_before": 0.8,
+                                "loss_after": 0.4,
+                                "checkpoint_path": f"s3://run/model_{outer}.pt",
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        history.append(
+            {
+                "outer_iteration": outer,
+                "inner_loop": str(evidence_path),
+                "checkpoint_uri": f"s3://run/model_{outer}.pt",
+                "decision": {
+                    "success_rate": success,
+                    "threshold": 0.8,
+                    "decision": "promote_checkpoint" if success >= 0.8 else "loop_back",
+                },
+            }
+        )
+
+    metrics = build_progress_metrics(tmp_path, history)
+    assert metrics["outer_iteration_count"] == 2
+    assert [
+        item["evaluation_success_rate"] for item in metrics["outer_iterations"]
+    ] == [
+        0.5,
+        1.0,
+    ]
+    assert metrics["outer_iterations"][0]["loss_trend"] == [
+        {"before": 0.8, "after": 0.4}
+    ]
+    assert metrics["outer_iterations"][1]["reward_trend"] == [0.2, 0.4]
+    assert metrics["stage_12_external_stub"]["tier"] == "SEAM"
 
 
 def test_sync_heldout_renders_falls_back_to_byo_eval_tree(tmp_path: Path) -> None:
@@ -227,13 +335,17 @@ def test_sync_heldout_renders_falls_back_to_byo_eval_tree(tmp_path: Path) -> Non
             raise OSError(uri)
 
         def download_path(self, uri: str, local_path: str) -> None:
-            if uri.endswith(f"/byo-eval/s2r-byo-isaac-eval-{run_id}/render-manifest.json"):
+            if uri.endswith(
+                f"/byo-eval/s2r-byo-isaac-eval-{run_id}/render-manifest.json"
+            ):
                 Path(local_path).parent.mkdir(parents=True)
                 Path(local_path).write_text(
                     json.dumps(
                         {
                             "schema": "npa.sim2real.heldout_renders.v1",
-                            "episodes": [{"env_id": "env-00006", "frames": ["camera-000.png"]}],
+                            "episodes": [
+                                {"env_id": "env-00006", "frames": ["camera-000.png"]}
+                            ],
                         }
                     ),
                     encoding="utf-8",
@@ -241,7 +353,76 @@ def test_sync_heldout_renders_falls_back_to_byo_eval_tree(tmp_path: Path) -> Non
                 return
             raise OSError(uri)
 
-    assert sync_heldout_renders(config, local_dir, heldout_report={"success_rate": 1.0}, client=FakeStorage())
-    assert (local_dir / "eval" / "heldout" / "renders" / "env-00006" / "camera-000.png").is_file()
+    assert sync_heldout_renders(
+        config, local_dir, heldout_report={"success_rate": 1.0}, client=FakeStorage()
+    )
+    assert (
+        local_dir / "eval" / "heldout" / "renders" / "env-00006" / "camera-000.png"
+    ).is_file()
     updated_report = json.loads(report_path.read_text(encoding="utf-8"))
     assert updated_report["render_manifest"]["episodes"][0]["env_id"] == "env-00006"
+
+
+def test_gold_render_sync_uses_only_explicit_lineage(tmp_path: Path) -> None:
+    config = _config("gold-run")
+    local_dir = tmp_path / "run"
+    exact_uri = "s3://demo-bucket/sim2real-b/gold-run/byo-eval/gold-exact/renders/"
+    downloads: list[str] = []
+
+    class FakeStorage:
+        def download_directory(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            assert uri == exact_uri
+            episode = Path(destination) / "gold-0001"
+            episode.mkdir(parents=True)
+            (episode / "camera-000.png").write_bytes(b"gold-frame")
+
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 3,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "renders_s3_uri": exact_uri,
+            "checkpoint_uri": "s3://demo-bucket/checkpoints/model_500.pt",
+        },
+    }
+    assert sync_heldout_renders(
+        config, local_dir, heldout_report=report, client=FakeStorage()
+    )
+    assert downloads == [exact_uri]
+    assert (
+        local_dir
+        / "eval"
+        / "gold-heldout"
+        / "outer-03"
+        / "renders"
+        / "gold-0001"
+        / "camera-000.png"
+    ).read_bytes() == b"gold-frame"
+
+
+def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) -> None:
+    class UnusedStorage:
+        def download_directory(self, *_args, **_kwargs):
+            raise AssertionError("must fail before S3")
+
+    with pytest.raises(Sim2RealRerunRegenError, match="no exact render_lineage"):
+        sync_heldout_renders(
+            _config("gold-run"),
+            tmp_path,
+            heldout_report={"evaluation_split": "gold_heldout"},
+            client=UnusedStorage(),
+        )
+    with pytest.raises(Sim2RealRerunRegenError, match="wrong evaluation split"):
+        sync_heldout_renders(
+            _config("gold-run"),
+            tmp_path,
+            heldout_report={
+                "evaluation_split": "gold_heldout",
+                "render_lineage": {
+                    "evaluation_split": "validation",
+                    "renders_s3_uri": "s3://bucket/validation/renders/",
+                },
+            },
+            client=UnusedStorage(),
+        )

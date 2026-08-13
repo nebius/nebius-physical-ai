@@ -175,7 +175,9 @@ def test_identity_refusal_is_never_reconciled_as_transport_success() -> None:
     assert reconciled is False
 
 
-def test_blocking_calls_emit_structured_secret_free_heartbeats(monkeypatch, tmp_path) -> None:
+def test_blocking_calls_emit_structured_secret_free_heartbeats(
+    monkeypatch, tmp_path
+) -> None:
     monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
     operation = ProvisioningOperation.prepare(
         command="npa agent bootstrap",

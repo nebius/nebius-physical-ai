@@ -78,6 +78,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-groot` | supported | supported | supported | blocked | blocked |
 | `npa-cosmos-curate` | CPU | CPU | CPU | CPU | CPU |
 | `npa-cosmos-evaluator` | CPU | CPU | CPU | CPU | CPU |
+| `npa-sim2real-control` | CPU | CPU | CPU | CPU | CPU |
 | `npa-fiftyone` | CPU | CPU | CPU | CPU | CPU |
 | `npa-retargeting` | CPU | CPU | CPU | CPU | CPU |
 | `npa-rerun-viewer` | CPU | CPU | CPU | CPU | CPU |

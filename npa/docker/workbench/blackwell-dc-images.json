@@ -315,6 +315,14 @@
       ]
     },
     {
+      "name": "npa-sim2real-control",
+      "dockerfile": "sim2real-control/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "smoke": "canonical compositional stage-adapter CLI contract",
+      "notes": "CPU-only Python control-plane image with no torch or CUDA payload. Datacenter Blackwell architecture validation does not apply; only node-pool scheduling and the standard-workflow golden eval apply."
+    },
+    {
       "name": "npa-envgen",
       "dockerfile": "sim2real-envgen/Dockerfile",
       "verdict": "ready",

@@ -184,7 +184,7 @@ the first failed core prerequisite and defaults to on-demand capacity:
 set -eu
 set -o pipefail
 CONTEXT=npa-cluster
-SPEC=npa/workflows/physical-ai-data-factory.yaml
+SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
 
 npa configure
 # For prompt-free setup, export supported credential variables first and use:
@@ -368,7 +368,7 @@ identity even while the final manifest is pending; `logs` uses the same resolver
 eval "$(npa configure --show --env)"
 # Select the public mirror after eval so a saved project registry cannot replace it.
 export NPA_REGISTRY=ghcr.io/nebius/nebius-physical-ai
-SPEC=npa/workflows/physical-ai-data-factory.yaml
+SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
 PROJECT="$NPA_PROJECT_ALIAS"
 BUCKET="$NPA_BUCKET"
 REGISTRY="$NPA_REGISTRY"

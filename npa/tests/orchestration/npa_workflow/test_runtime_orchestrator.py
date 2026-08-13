@@ -364,6 +364,7 @@ def _executor(
     sleeps: list[float] | None = None,
     cancels: list[dict[str, Any]] | None = None,
     name_lookup_fn: Any | None = None,
+    output_checker: Any | None = None,
     reconcile_fn: Any | None = None,
 ) -> SkyPilotWaveExecutor:
     opts = options or RuntimeOptions(poll_seconds=0, max_wait_seconds=60)
@@ -390,7 +391,9 @@ def _executor(
     return SkyPilotWaveExecutor(
         spec,
         run_id=run_id,
-        render_options=SkypilotRenderOptions(image_overrides={"*": "cr.example/x:1"}),
+        render_options=SkypilotRenderOptions(
+            image_overrides={"*": "cr.example/x@sha256:" + "c" * 64}
+        ),
         options=opts,
         ledger=ledger,
         submitter=submitter or FakeSubmitter(),
@@ -403,6 +406,7 @@ def _executor(
         else None,
         # Default: the launched name resolves to the id the fake submitter reported.
         name_lookup_fn=effective_lookup,
+        output_checker=output_checker or (lambda _uri: True),
         reconcile_fn=reconcile_fn or default_reconcile,
         sleeper=(sleeps.append if sleeps is not None else (lambda _seconds: None)),
         clock=_fake_clock(),
@@ -417,6 +421,134 @@ def _fake_clock():
         return ticks["now"]
 
     return clock
+
+
+def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
+    tmp_path: Path, mocker
+) -> None:
+    """Every live control call must use the same run-local Sky state/config."""
+
+    spec = load_spec(_write_spec(tmp_path, TRIGGER_SPEC))
+    isolated = tmp_path / "isolated-sky"
+    config_path = tmp_path / "sky.yaml"
+    sky_bin = tmp_path / "sky"
+    options = RuntimeOptions(
+        isolated_config_dir=isolated,
+        config_path=config_path,
+        sky_bin=str(sky_bin),
+        infra="k8s/test-context",
+    )
+    executor = SkyPilotWaveExecutor(
+        spec,
+        run_id="rt-isolated",
+        options=options,
+        output_checker=lambda _uri: True,
+    )
+    submit = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=FakeResult(),
+    )
+    status = mocker.patch(
+        "npa.orchestration.skypilot.workflow.workflow_status",
+        return_value=FakeResult(status="SUCCEEDED"),
+    )
+    timeline = mocker.patch(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses",
+        return_value=[],
+    )
+    lookup = mocker.patch(
+        "npa.orchestration.skypilot.workflow.find_job_ids_by_name",
+        return_value=["1"],
+    )
+
+    rendered = tmp_path / "rendered.yaml"
+    rendered.write_text("name: isolated\n", encoding="utf-8")
+    attempt = WaveAttempt(
+        key="isolated-wave",
+        states=["trigger"],
+        kind="serial",
+        group="",
+        attempt=1,
+    )
+    executor._submit(rendered, "isolated-job", attempt)
+    executor._status("1")
+    executor._timeline("1")
+    assert executor._job_ids_by_name("isolated-job") == ["1"]
+
+    expected = {
+        "isolated_config_dir": isolated,
+        "config_path": config_path,
+        "sky_bin": str(sky_bin),
+    }
+    call = submit.call_args
+    assert call.args == (rendered, "isolated-job")
+    assert callable(call.kwargs["transaction_recorder"])
+    assert {
+        key: value
+        for key, value in call.kwargs.items()
+        if key != "transaction_recorder"
+    } == {
+        **expected,
+        "controller_backend": "kubernetes",
+        "infra": "k8s/test-context",
+        "secret_envs": [],
+        "extra_env": {},
+        "timeout": 1800,
+        "logical_launch_id": "",
+    }
+    status.assert_called_once_with("1", **expected)
+    timeline.assert_called_once_with("1", **expected)
+    lookup.assert_called_once_with("isolated-job", **expected)
+
+
+def test_successful_job_without_declared_output_fails_closed(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, output_checker=lambda _uri: False)
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-missing-output",
+        executor=executor,
+        options=executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+    )
+
+    assert report.status == "failed"
+    assert "completed without declared durable output" in report.error
+    assert any(wave["status"] == "failed" for wave in report.waves)
+
+
+def test_declared_output_checker_receives_uri_and_ledger_keeps_schema(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    checked: list[str] = []
+
+    def checker(uri: str) -> bool:
+        assert isinstance(uri, str)
+        checked.append(uri)
+        return True
+
+    executor = _executor(spec, output_checker=checker)
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-output-declaration",
+        executor=executor,
+        options=executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+    )
+
+    assert report.status == "succeeded"
+    assert checked == [
+        "s3://example-bucket/gate-loop/rt-output-declaration/gate/decision.json"
+    ]
+    gate = next(wave for wave in report.waves if wave["states"] == ["gate"])
+    assert gate["outputs"] == [
+        {
+            "uri": checked[0],
+            "schema": "npa.sim2real.threshold_decision.v1",
+        }
+    ]
 
 
 # ------------------------------------------------------------------- early exit
@@ -465,7 +597,9 @@ def test_runtime_persists_exact_submitted_workflow_yaml(tmp_path: Path) -> None:
     assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
 
 
-def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(tmp_path: Path) -> None:
+def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(
+    tmp_path: Path,
+) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     store = MemoryStore()
     executor = _executor(spec, store=store)
@@ -484,7 +618,9 @@ def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(tmp_path: Pa
     assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
 
 
-def test_runtime_rejects_workflow_yaml_without_any_durable_store(tmp_path: Path) -> None:
+def test_runtime_rejects_workflow_yaml_without_any_durable_store(
+    tmp_path: Path,
+) -> None:
     spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
     executor = _executor(spec)
 
@@ -737,7 +873,9 @@ def test_timeout_cancels_the_managed_job(tmp_path: Path) -> None:
 def test_timeout_without_cancel_preserves_the_in_flight_job(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     cancels: list[dict[str, Any]] = []
-    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=2, cancel_on_timeout=False)
+    options = RuntimeOptions(
+        poll_seconds=0, max_wait_seconds=2, cancel_on_timeout=False
+    )
     executor = _executor(
         spec,
         status_fn=FakeStatus(["RUNNING"] * 20),
@@ -851,6 +989,69 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
 
 
+def test_resume_adopts_terminal_success_after_output_check_driver_failure(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    first_submitter = FakeSubmitter()
+
+    def interrupted_checker(uri: str) -> bool:
+        assert uri.endswith("/gate/decision.json")
+        raise RuntimeError("driver interrupted after scheduler success")
+
+    first = _executor(
+        spec,
+        run_id="rt-post-success-adopt",
+        submitter=first_submitter,
+        store=store,
+        output_checker=interrupted_checker,
+    )
+    first_report = run_workflow_runtime(
+        spec,
+        run_id="rt-post-success-adopt",
+        executor=first,
+        options=first.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+    )
+
+    assert first_report.status == "failed"
+    assert [call["tasks"] for call in first_submitter.calls] == [["work"], ["gate"]]
+    failed_gate = first_report.waves[-1]
+    assert failed_gate["status"] == "failed"
+    assert failed_gate["sky_status"] == "SUCCEEDED"
+
+    resumed_submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-post-success-adopt",
+        submitter=resumed_submitter,
+        options=options,
+        store=store,
+        output_checker=lambda uri: uri.endswith("/gate/decision.json"),
+    )
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-post-success-adopt",
+        executor=resumed,
+        options=options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+    )
+
+    assert report.status == "succeeded"
+    assert [call["tasks"] for call in resumed_submitter.calls] == [["publish"]]
+    adopted_gate = next(wave for wave in report.waves if wave["states"] == ["gate"])
+    assert adopted_gate["job_id"] == failed_gate["job_id"]
+    assert adopted_gate["status"] == "succeeded"
+    assert adopted_gate["adopted"] is True
+    assert adopted_gate["replayed"] is True
+    assert (
+        adopted_gate["recovery_decision"]
+        == "adopted_terminal_success_after_driver_failure"
+    )
+
+
 def test_resume_with_explicit_retry_replays_success_and_retries_terminal_wave(
     tmp_path: Path,
 ) -> None:
@@ -908,6 +1109,179 @@ def test_long_run_id_preserves_retry_attempt_suffix(tmp_path: Path) -> None:
 
     assert len(name) <= 60
     assert name.endswith("-a3")
+
+
+def _canonical_sim2real_1x1():
+    root = Path(__file__).resolve().parents[4]
+    spec = load_spec(
+        root / "npa" / "workflows" / "workbench" / "npa-workflows" / "sim2real.yaml"
+    )
+    image = "cr.example/npa/runtime@sha256:" + "b" * 64
+    spec.config.update(
+        {
+            "source_sha": "a" * 40,
+            "outer_iterations": "1",
+            "inner_iterations": "1",
+            "env_count": "12",
+            "rollout_count": "1",
+            "ppo_iterations": "2",
+            "validation_count": "3",
+            "gold_count": "3",
+            "controller_image": image,
+            "transfer_image": image,
+            "envgen_image": image,
+            "reason_image": image,
+            "isaac_image": image,
+            "viewer_image": image,
+            "isaac_cache_pvc": "isaac-cache",
+        }
+    )
+    return spec
+
+
+def _trigger_ready(_state, _run_id, _context):
+    return {"uri": "s3://unit/trigger/", "objects": 1}
+
+
+def test_canonical_three_iteration_budget_promotes_and_finalizes_outer_one() -> None:
+    spec = _canonical_sim2real_1x1()
+    spec.config.update({"outer_iterations": "3", "allow_early_exit": "1"})
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="canonical-early-one", submitter=submitter)
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="canonical-early-one",
+        executor=executor,
+        options=executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        trigger_waiter=_trigger_ready,
+    )
+
+    assert report.status == "succeeded"
+    assert sum("stage-07-rollouts" in call["tasks"] for call in submitter.calls) == 1
+    decision_yaml = next(
+        call["yaml"]
+        for call in submitter.calls
+        if call["tasks"] == ["stage-11-decision"]
+    )
+    assert "--allow-early-exit" in decision_yaml
+    assert "--allow-early-exit 1" in decision_yaml
+    for state in ("stage-13-retrigger", "stage-14-visualize"):
+        rendered = next(
+            call["yaml"] for call in submitter.calls if call["tasks"] == [state]
+        )
+        assert "--outer-iteration 1" in rendered
+        assert "--outer-iteration 3" not in rendered
+
+
+def test_canonical_resume_replays_stage8_wave_then_restarts_at_stage9() -> None:
+    spec = _canonical_sim2real_1x1()
+    store = MemoryStore()
+    first_submitter = FakeSubmitter()
+    first = _executor(
+        spec,
+        run_id="canonical-stage8-resume",
+        submitter=first_submitter,
+        status_fn=FakeStatus(["SUCCEEDED"] * 8 + ["FAILED"]),
+        store=store,
+    )
+    first_report = run_workflow_runtime(
+        spec,
+        run_id="canonical-stage8-resume",
+        executor=first,
+        options=first.options,
+        decision_reader=_decision_reader(["loop_back"]),
+        trigger_waiter=_trigger_ready,
+    )
+    assert first_report.status == "failed"
+    assert first_submitter.calls[-2]["tasks"] == [
+        "stage-08-reason2",
+        "stage-08-reason3",
+    ]
+    assert first_submitter.calls[-1]["tasks"] == ["stage-09-ppo"]
+
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retries=1,
+        retry_backoff_seconds=0,
+    )
+    resumed_submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id="canonical-stage8-resume",
+        submitter=resumed_submitter,
+        options=options,
+        store=store,
+    )
+    report = run_workflow_runtime(
+        spec,
+        run_id="canonical-stage8-resume",
+        executor=resumed,
+        options=options,
+        decision_reader=_decision_reader(["loop_back"]),
+        trigger_waiter=_trigger_ready,
+    )
+    assert report.status == "succeeded"
+    assert [call["tasks"] for call in resumed_submitter.calls] == [
+        ["stage-09-ppo"],
+        ["stage-10-gold"],
+        ["stage-11-decision"],
+        ["stage-12-external-seam"],
+        ["stage-13-retrigger"],
+        ["stage-14-visualize"],
+    ]
+    stage8 = next(wave for wave in report.waves if "stage-08-reason2" in wave["states"])
+    assert stage8["replayed"] is True
+
+
+def test_canonical_finalization_resume_submits_only_stage14() -> None:
+    spec = _canonical_sim2real_1x1()
+    store = MemoryStore()
+    first = _executor(
+        spec,
+        run_id="canonical-finalize-resume",
+        status_fn=FakeStatus(["SUCCEEDED"] * 13 + ["FAILED"]),
+        store=store,
+    )
+    first_report = run_workflow_runtime(
+        spec,
+        run_id="canonical-finalize-resume",
+        executor=first,
+        options=first.options,
+        decision_reader=_decision_reader(["loop_back"]),
+        trigger_waiter=_trigger_ready,
+    )
+    assert first_report.status == "failed"
+    assert first_report.waves[-1]["states"] == ["stage-14-visualize"]
+
+    options = RuntimeOptions(
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retries=1,
+        retry_backoff_seconds=0,
+    )
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id="canonical-finalize-resume",
+        submitter=submitter,
+        options=options,
+        store=store,
+    )
+    report = run_workflow_runtime(
+        spec,
+        run_id="canonical-finalize-resume",
+        executor=resumed,
+        options=options,
+        decision_reader=_decision_reader(["loop_back"]),
+        trigger_waiter=_trigger_ready,
+    )
+    assert report.status == "succeeded"
+    assert [call["tasks"] for call in submitter.calls] == [["stage-14-visualize"]]
 
 
 # --------------------------------------------------------------------- trigger

@@ -25,12 +25,18 @@ class WorkflowState:
     stage_records: list[dict[str, Any]] = field(default_factory=list)
     components: list[dict[str, Any]] = field(default_factory=list)
     train_envs_uri: str = ""
+    validation_envs_uri: str = ""
     heldout_envs_uri: str = ""
+    gold_heldout_envs_uri: str = ""
+    task_contract_uri: str = ""
+    task_contract_digest: str = ""
     scene_spec_uri: str = ""
     robot_spec_uri: str = ""
     env_count: int = 0
     train_env_count: int = 0
+    validation_env_count: int = 0
     heldout_env_count: int = 0
+    gold_heldout_env_count: int = 0
     outer_history: list[dict[str, Any]] = field(default_factory=list)
     final_inner: dict[str, Any] | None = None
     final_eval: dict[str, Any] | None = None
@@ -56,7 +62,9 @@ class WorkflowState:
 
     @classmethod
     def from_payload(cls, local_dir: Path, payload: dict[str, Any]) -> WorkflowState:
-        artifact_dir = Path(payload.get("local_artifact_dir") or local_dir)
+        # Controller pods are replaceable. Never retain a predecessor pod's
+        # ephemeral path when hydrating a durable checkpoint.
+        artifact_dir = local_dir
         return cls(
             run_id=str(payload["run_id"]),
             local_artifact_dir=artifact_dir,
@@ -65,12 +73,22 @@ class WorkflowState:
             stage_records=list(payload.get("stage_records") or []),
             components=list(payload.get("components") or []),
             train_envs_uri=str(payload.get("train_envs_uri") or ""),
+            validation_envs_uri=str(payload.get("validation_envs_uri") or ""),
             heldout_envs_uri=str(payload.get("heldout_envs_uri") or ""),
+            gold_heldout_envs_uri=str(payload.get("gold_heldout_envs_uri") or ""),
+            task_contract_uri=str(payload.get("task_contract_uri") or ""),
+            task_contract_digest=str(payload.get("task_contract_digest") or ""),
             scene_spec_uri=str(payload.get("scene_spec_uri") or ""),
             robot_spec_uri=str(payload.get("robot_spec_uri") or ""),
             env_count=int(payload.get("env_count") or 0),
             train_env_count=int(payload.get("train_env_count") or 0),
+            validation_env_count=int(payload.get("validation_env_count") or 0),
             heldout_env_count=int(payload.get("heldout_env_count") or 0),
+            gold_heldout_env_count=int(
+                payload.get("gold_heldout_env_count")
+                or payload.get("heldout_env_count")
+                or 0
+            ),
             outer_history=list(payload.get("outer_history") or []),
             final_inner=payload.get("final_inner"),
             final_eval=payload.get("final_eval"),
@@ -90,12 +108,18 @@ class WorkflowState:
             "stage_records": self.stage_records,
             "components": self.components,
             "train_envs_uri": self.train_envs_uri,
+            "validation_envs_uri": self.validation_envs_uri,
             "heldout_envs_uri": self.heldout_envs_uri,
+            "gold_heldout_envs_uri": self.gold_heldout_envs_uri,
+            "task_contract_uri": self.task_contract_uri,
+            "task_contract_digest": self.task_contract_digest,
             "scene_spec_uri": self.scene_spec_uri,
             "robot_spec_uri": self.robot_spec_uri,
             "env_count": self.env_count,
             "train_env_count": self.train_env_count,
+            "validation_env_count": self.validation_env_count,
             "heldout_env_count": self.heldout_env_count,
+            "gold_heldout_env_count": self.gold_heldout_env_count,
             "outer_history": self.outer_history,
             "final_inner": self.final_inner,
             "final_eval": self.final_eval,
@@ -109,7 +133,9 @@ class WorkflowState:
 
     def save(self) -> dict[str, Any]:
         self.updated_at = _utc_now()
-        record = _write_json_artifact(self.path_for(self.local_artifact_dir), self.to_payload())
+        record = _write_json_artifact(
+            self.path_for(self.local_artifact_dir), self.to_payload()
+        )
         return record["payload"]
 
     @property

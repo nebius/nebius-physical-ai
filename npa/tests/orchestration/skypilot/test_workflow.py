@@ -16,6 +16,7 @@ from npa.orchestration.skypilot.workflow import (
     submit_workflow,
     workflow_status,
 )
+from npa.orchestration.skypilot.workflow_state import cancel_workflow_job
 from npa.orchestration.skypilot.launch_transaction import (
     FailureCategory,
     LaunchState,
@@ -604,6 +605,86 @@ def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
 
     assert result.status == "SUCCEEDED"
     assert result.job_id == "42"
+
+
+def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
+    monkeypatch, tmp_path
+) -> None:
+    """A successful empty queue authoritatively proves that the job is absent."""
+
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "ABSENT"
+    assert result.job_id == "42"
+    assert result.error == ""
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        workflow_module.workflow_status,
+        workflow_module.workflow_task_statuses,
+        workflow_module.find_job_ids_by_name,
+    ],
+)
+def test_workflow_queries_preserve_explicit_config(
+    operation, monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    config_path = tmp_path / "sky.yaml"
+    config_path.write_text("kubernetes: {}\n", encoding="utf-8")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    operation("42", sky_bin=sky_bin, config_path=config_path)
+
+    assert calls
+    assert calls[0][0][3:5] == ["--config", str(config_path)]
+
+
+def test_cancel_workflow_preserves_explicit_runtime_isolation(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    isolated = tmp_path / "isolated-sky"
+    config_path = tmp_path / "sky.yaml"
+    config_path.write_text("kubernetes: {}\n", encoding="utf-8")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = cancel_workflow_job(
+        sky_bin=str(sky_bin),
+        job_id="42",
+        run_id="isolated-run",
+        isolated_config_dir=isolated,
+        config_path=config_path,
+        timeout=0,
+        poll_seconds=0,
+    )
+
+    assert result["cancel_returncode"] == 0
+    assert result["down_returncode"] == 0
+    assert [call[0][1] for call in calls] == ["jobs", "down"]
+    for _cmd, kwargs in calls:
+        assert kwargs["env"]["HOME"] == str(isolated / "home")
+        assert kwargs["env"]["SKYPILOT_GLOBAL_CONFIG"] == str(config_path)
 
 
 def test_workflow_status_treats_real_empty_queue_as_verified_absence(
@@ -1466,8 +1547,5 @@ def test_submit_transaction_recovers_controller_creation_refusal(
     assert result.job_id == "501"
     assert launch_calls == 2
     assert result.launch_transaction["launch_sequence"] == 2
-    assert (
-        result.launch_transaction["recovery_decision"]
-        == "submitted_and_reconciled"
-    )
+    assert result.launch_transaction["recovery_decision"] == "submitted_and_reconciled"
     assert result.launch_transaction["controller"]["state"] == "absent"

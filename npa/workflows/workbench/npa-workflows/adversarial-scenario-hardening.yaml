@@ -7,7 +7,7 @@ kind: Workflow
 # enter a bounded outer loop: retrain the policy on the mined hard scenarios,
 # re-evaluate on the adversarial set, and gate on the failure rate. If the
 # policy is still brittle, loop back and retrain; once it is robust, publish the
-# hardened checkpoint. Modeled on sim2real-vlm-rl.yaml (loop + writesDecision
+# hardened checkpoint. Uses the standard workflow loop + writesDecision
 # gate + loop-back transition).
 
 metadata:

@@ -27,6 +27,9 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 - **Loops:** `loop.max: "{{config.attr}}"` or integer; `loop.until` for dynamic exit.
 - **Parallel:** `parallel: [<leaf members>]` + optional `maxConcurrency`; the group's
   `next` state is the barrier. Members may not declare `next`/`transitions`.
+  Use optional `parallelCount: "{{config.count}}"` when a public config count
+  must exactly equal the explicit member list; override validation then fails
+  before plan, rendering, or submission instead of silently under-fanning out.
 - **Params:** `params: {k: v}` is a per-state config overlay — how sweep members share
   one `toolRef` and still differ.
 - **Trigger:** `trigger: {uri, pollSeconds, maxPolls, minObjects}` makes the runtime
@@ -134,7 +137,7 @@ Tmux full matrix (all npa.workflow YAMLs, real S3, credential leak checks):
 | --- | --- |
 | `vlm-eval-single.yaml` | Single-tool minimal |
 | `tokenfactory-rollout-judge.yaml` | Serial two-tool |
-| `sim2real-vlm-rl.yaml` | Nested loops + dynamic gate |
+| `sim2real.yaml` | Canonical compositional 14-stage Sim2Real runtime; real component boundaries and nested durable loops |
 | `bdd100k-pipeline.yaml` | AV failure-mode LanceDB → train → eval |
 | `av-night-scene-hardening.yaml` | AV night-scene fan-out — two per-view detector train→eval branches |
 | `cosmos-synth-fanout-curation.yaml` | Cosmos Transfer 2.5 synthetic fan-out → Voxel51 (FiftyOne) curation |

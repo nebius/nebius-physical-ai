@@ -21,6 +21,11 @@ REGISTRY=""
 PUSH=0
 IMAGE_TAG_OVERRIDE=""
 IMAGE_NAME="npa-isaac-lab"
+NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_ROOT}/.." rev-parse HEAD)}"
+if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
+  exit 2
+fi
 
 usage() {
   cat <<'EOF'
@@ -116,6 +121,7 @@ BUILD_ARGS=(
   --build-arg "ISAAC_LAB_VERSION=${VERSION}"
   --build-arg "ISAAC_SIM_VERSION=${ISAAC_SIM_VERSION}"
   --build-arg "ISAAC_LAB_SRC_COMMIT=${ISAAC_LAB_SRC_COMMIT}"
+  --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}"
 )
 if [ -n "$REGISTRY" ]; then
   REGISTRY_IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"

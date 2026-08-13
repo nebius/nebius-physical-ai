@@ -38,6 +38,7 @@
 #   NPA_ISAAC_INDEX_URL           NVIDIA wheel index               (https://pypi.nvidia.com)
 #   NPA_ISAAC_BASE_PYTHON         image python3.11 that has torch  (per image)
 #   NPA_ISAAC_WHEELS_FILE         hash-pinned wheel manifest       (next to this script)
+#   NPA_ISAAC_OSS_DEPS_FILE        image-baked OSS dependency lock  (beside wheel manifest)
 #   ISAAC_SIM_VERSION             pin                              (5.1.0.0)
 #   ISAAC_LAB_VERSION             pin                              (2.3.2.post1)
 #   NPA_ISAAC_LAB_SRC_COMMIT      BSD-3 IsaacLab commit for scripts/ (pinned below)
@@ -61,6 +62,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CACHE_DIR="${NPA_ISAAC_CACHE_DIR:-/opt/isaac-cache}"
 INDEX_URL="${NPA_ISAAC_INDEX_URL:-https://pypi.nvidia.com}"
 WHEELS_FILE="${NPA_ISAAC_WHEELS_FILE:-$SCRIPT_DIR/isaac-nvidia-wheels.txt}"
+OSS_DEPS_FILE="${NPA_ISAAC_OSS_DEPS_FILE:-$(dirname "$WHEELS_FILE")/isaac-oss-deps.txt}"
 BASE_PYTHON="${NPA_ISAAC_BASE_PYTHON:-}"
 ISAAC_SIM_VERSION="${ISAAC_SIM_VERSION:-5.1.0.0}"
 ISAAC_LAB_VERSION="${ISAAC_LAB_VERSION:-2.3.2.post1}"
@@ -156,13 +158,15 @@ resolve_base_python() {
 }
 
 cache_stamp() {
-  local base_python="$1" abi wheels_sha
+  local base_python="$1" abi wheels_sha bootstrap_sha oss_deps_sha
   abi="$("$base_python" -c 'import sys,sysconfig; print("%d.%d-%s" % (sys.version_info[0], sys.version_info[1], sysconfig.get_platform()))' 2>/dev/null || echo unknown)"
-  wheels_sha="$(sha256sum "$WHEELS_FILE" 2>/dev/null | cut -c1-16 || echo nowheels)"
-  printf '%s|%s|%s|%s|%s|%s' \
+  wheels_sha="$(sha256sum "$WHEELS_FILE" 2>/dev/null | cut -d' ' -f1 || echo nowheels)"
+  bootstrap_sha="$(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -d' ' -f1 || echo nobootstrap)"
+  oss_deps_sha="$(sha256sum "$OSS_DEPS_FILE" 2>/dev/null | cut -d' ' -f1 || echo noossdeps)"
+  printf '%s|%s|%s|%s|%s|%s|%s|%s' \
     "$ISAAC_SIM_VERSION" "$ISAAC_LAB_VERSION" "$ISAAC_LAB_SRC_COMMIT" \
-    "$INDEX_URL" "$wheels_sha" "$abi" \
-    | sha256sum | cut -c1-16
+    "$INDEX_URL" "$wheels_sha" "$bootstrap_sha" "$oss_deps_sha" "$abi" \
+    | sha256sum | cut -d' ' -f1
 }
 
 # ---------------------------------------------------------------------------------
@@ -226,11 +230,14 @@ PY
   cat > "$tmp/MANIFEST.json" <<EOF
 {
   "format": "npa_isaac_runtime_cache_v1",
+  "cache_stamp": "$(basename "$target")",
   "isaacsim_version": "${ISAAC_SIM_VERSION}",
   "isaaclab_version": "${ISAAC_LAB_VERSION}",
   "isaaclab_src_commit": "${ISAAC_LAB_SRC_COMMIT}",
   "index_url": "${INDEX_URL}",
   "wheels_file_sha256": "$(sha256sum "$WHEELS_FILE" | cut -d' ' -f1)",
+  "bootstrap_sha256": "$(sha256sum "${BASH_SOURCE[0]}" | cut -d' ' -f1)",
+  "oss_dependencies_sha256": "$(sha256sum "$OSS_DEPS_FILE" | cut -d' ' -f1)",
   "base_python": "${base_python}",
   "bytes": ${bytes},
   "install_seconds": ${elapsed},
@@ -295,9 +302,17 @@ deep_verify() {
   local venv="$1"
   log "launching Isaac Sim headless (deep verify; needs a GPU with RT cores)"
   "$venv/bin/python" - >&2 <<'PY'
+import os
+
 from isaaclab.app import AppLauncher
 
-launcher = AppLauncher(headless=True, enable_cameras=True)
+launcher = AppLauncher(
+    headless=True,
+    enable_cameras=True,
+    kit_args=os.environ.get(
+        "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+    ),
+)
 app = launcher.app
 for _ in range(8):
     app.update()
@@ -313,6 +328,10 @@ tree_is_ready() { [ -f "$1/.complete" ] && [ -x "$1/venv/bin/python" ]; }
 
 ensure() {
   local deep="${1:-0}" base_python target
+  [ -f "$WHEELS_FILE" ] \
+    || die "$EX_CONFIG" "Isaac wheel manifest is missing: ${WHEELS_FILE}"
+  [ -f "$OSS_DEPS_FILE" ] \
+    || die "$EX_CONFIG" "Isaac OSS dependency lock is missing: ${OSS_DEPS_FILE}"
   base_python="$(resolve_base_python)" \
     || die "$EX_SOFTWARE" "no python3.11 interpreter found; set NPA_ISAAC_BASE_PYTHON"
   target="${CACHE_DIR}/v/$(cache_stamp "$base_python")"

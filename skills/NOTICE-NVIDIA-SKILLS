@@ -3,7 +3,7 @@ NVIDIA Physical AI Skills
 Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 
 The NPA `physical-ai-data-factory` skill and the blueprint it documents
-(`npa/workflows/physical-ai-data-factory.yaml`) are an
+(`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml`) are an
 NPA-native re-implementation on Nebius + SkyPilot of the NVIDIA Physical AI Data
 Factory / Video Data Augmentation workflow. The design analysis was adapted from
 NVIDIA agent skills:

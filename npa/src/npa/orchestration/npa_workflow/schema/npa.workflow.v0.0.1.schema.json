@@ -46,6 +46,7 @@
         "toolRef": { "type": "string" },
         "sequence": { "type": "array", "items": { "type": "string" } },
         "parallel": { "type": "array", "items": { "type": "string" } },
+        "parallelCount": {},
         "maxConcurrency": {},
         "params": { "type": "object" },
         "trigger": {

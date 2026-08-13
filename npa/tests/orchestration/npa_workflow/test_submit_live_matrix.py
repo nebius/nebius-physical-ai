@@ -104,12 +104,13 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
         "byof-robocasa.yaml",
         "cosmos-synth-fanout-curation.yaml",
         "hardening-with-insights.yaml",
-        "sim2real-gpu-cross-region-agent.yaml",
     }
 
     for name in plan_only:
         case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == name)
-        assert case.plan_only, f"{name} must retain its reviewed plan-only classification"
+        assert case.plan_only, (
+            f"{name} must retain its reviewed plan-only classification"
+        )
 
 
 def test_reviewed_matrix_cases_have_honest_gpu_eligibility() -> None:
@@ -129,7 +130,11 @@ def test_reviewed_matrix_cases_have_honest_gpu_eligibility() -> None:
 
 def test_reviewed_matrix_notes_disclose_the_execution_contracts() -> None:
     expected_fragments = {
-        "adversarial-scenario-hardening.yaml": ("VM config", "does not consume", "/tmp"),
+        "adversarial-scenario-hardening.yaml": (
+            "VM config",
+            "does not consume",
+            "/tmp",
+        ),
         "hardening-with-insights.yaml": ("VM config", "ignores evaluation", "/tmp"),
         "sim2real-two-step.yaml": (
             "dedicated toolRef",
@@ -204,9 +209,7 @@ def test_two_step_real_augment_flows_into_envgen(name: str) -> None:
     assert "--execute" in augment.argv
     assert "--condition-on-input" in augment.argv
     assert consumed_uri == f"{augment_uri.rstrip('/')}/manifest.json"
-    assert envgen.inputs == [
-        {"uri": consumed_uri, "schema": "npa.cosmos2.transfer.v1"}
-    ]
+    assert envgen.inputs == [{"uri": consumed_uri, "schema": "npa.cosmos2.transfer.v1"}]
 
 
 @pytest.mark.parametrize(
@@ -345,7 +348,9 @@ def test_physical_ai_data_factory_registered_for_live_infra() -> None:
     dynamic gate must be in SUBMIT_LIVE_MATRIX and DYNAMIC_SPECS."""
     spec = "physical-ai-data-factory.yaml"
     matrix_case = next((c for c in SUBMIT_LIVE_MATRIX if c.spec == spec), None)
-    assert matrix_case is not None, "physical-ai-data-factory.yaml missing from SUBMIT_LIVE_MATRIX"
+    assert matrix_case is not None, (
+        "physical-ai-data-factory.yaml missing from SUBMIT_LIVE_MATRIX"
+    )
     assert matrix_case.requires_token_factory
     assert matrix_case.tier == "multi"
     assert matrix_case.runtime
@@ -362,15 +367,30 @@ def test_physical_ai_data_factory_registered_for_live_infra() -> None:
     assert helpers.assume_decision_for(spec) == "promote_checkpoint"
 
 
+def test_canonical_sim2real_registered_for_runtime_live_infra() -> None:
+    spec = "sim2real.yaml"
+    matrix_case = next((case for case in SUBMIT_LIVE_MATRIX if case.spec == spec), None)
+    assert matrix_case is not None
+    assert matrix_case.runtime
+    assert matrix_case.expected_parallel_tasks == 2
+    assert matrix_case.tier == "multi"
+    helpers = _load_live_helpers()
+    assert spec in helpers.DYNAMIC_SPECS
+
+
 def test_cosmos3_generate_registered_for_live_infra() -> None:
     """The Cosmos 3 generate twin is the live proof for retiring its raw template."""
 
-    case = next((c for c in SUBMIT_LIVE_MATRIX if c.spec == "cosmos3-generate.yaml"), None)
+    case = next(
+        (c for c in SUBMIT_LIVE_MATRIX if c.spec == "cosmos3-generate.yaml"), None
+    )
 
     assert case is not None, "cosmos3-generate.yaml missing from SUBMIT_LIVE_MATRIX"
     assert case.tier == "gpu"
     assert case.image_tool == "cosmos3"
-    assert {"HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} <= set(case.secret_envs)
+    assert {"HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} <= set(
+        case.secret_envs
+    )
     assert not case.plan_only
     assert not case.runtime
 
@@ -458,8 +478,12 @@ def test_expected_parallel_tasks_matches_the_spec_fan_out() -> None:
         assert path is not None, case.spec
         spec = load_spec(path)
         groups = [state for state in spec.states.values() if state.parallel]
-        assert groups, f"{case.spec} declares expected_parallel_tasks but has no parallel group"
-        assert max(len(state.parallel) for state in groups) == case.expected_parallel_tasks
+        assert groups, (
+            f"{case.spec} declares expected_parallel_tasks but has no parallel group"
+        )
+        assert (
+            max(len(state.parallel) for state in groups) == case.expected_parallel_tasks
+        )
 
 
 def test_specs_with_a_parallel_group_are_registered_as_runtime_cases() -> None:
@@ -484,14 +508,19 @@ def test_gate_loop_case_drives_the_gate_through_config_vars() -> None:
     )
     helpers = _load_live_helpers()
     assert "token-factory-gate-loop.yaml" in helpers.DYNAMIC_SPECS
-    assert helpers.assume_decision_for("token-factory-gate-loop.yaml") == "promote_checkpoint"
+    assert (
+        helpers.assume_decision_for("token-factory-gate-loop.yaml")
+        == "promote_checkpoint"
+    )
 
 
 def test_image_tool_is_a_known_container_image(monkeypatch) -> None:
     from npa.deploy.images import container_image_for_tool
 
     for case in (c for c in SUBMIT_LIVE_MATRIX if c.image_tool):
-        image = container_image_for_tool(case.image_tool, registry="cr.example.invalid/reg")
+        image = container_image_for_tool(
+            case.image_tool, registry="cr.example.invalid/reg"
+        )
         assert image.startswith("cr.example.invalid/reg/"), case.spec
     for case in (c for c in SUBMIT_LIVE_MATRIX if c.image_overrides):
         for _tool_ref, tool in case.image_overrides:
@@ -509,7 +538,9 @@ def test_runtime_and_one_shot_selections_are_disjoint(monkeypatch) -> None:
     assert runtime and one_shot
     assert not (runtime & one_shot)
     assert runtime | one_shot == {
-        case.spec for case in selected_submit_cases() if not (case.runtime and case.plan_only)
+        case.spec
+        for case in selected_submit_cases()
+        if not (case.runtime and case.plan_only)
     }
 
 

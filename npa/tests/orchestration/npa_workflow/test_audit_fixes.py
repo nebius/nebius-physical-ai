@@ -7,19 +7,34 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan, load_spec, run_workflow
+from npa.orchestration.npa_workflow import (
+    NpaWorkflowError,
+    build_plan,
+    load_spec,
+    run_workflow,
+)
 from npa.orchestration.npa_workflow.predicates import evaluate_predicate
 from npa.orchestration.npa_workflow.run_state import RunManifest, RunStateStore
 from npa.orchestration.npa_workflow.spec import LoopSpec, StateSpec, validate_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SIM2REAL_DEMO = (
+    REPO_ROOT
+    / "npa"
+    / "tests"
+    / "fixtures"
+    / "npa-workflows"
+    / "sim2real-vlm-rl-demo.yaml"
+)
 RUNNER = CliRunner()
 
 
 def test_promote_checkpoint_plans_finalize_once() -> None:
-    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
-    plan = build_plan(spec, run_id="audit-promote", assume_decision="promote_checkpoint")
+    spec = load_spec(SIM2REAL_DEMO)
+    plan = build_plan(
+        spec, run_id="audit-promote", assume_decision="promote_checkpoint"
+    )
     states = [step.state for step in plan.steps]
     assert states.count("finalize") == 1
     assert len(plan.steps) == 11
@@ -52,7 +67,7 @@ def test_transition_cycle_not_whitelisted_by_loop_block() -> None:
 
 
 def test_zero_loop_max_rejected_at_validate() -> None:
-    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
+    spec = load_spec(SIM2REAL_DEMO)
     spec.config["inner_iterations"] = 0
     with pytest.raises(NpaWorkflowError, match="loop.max must be >= 1"):
         validate_spec(spec)
@@ -70,7 +85,7 @@ def test_missing_config_token_rejected_at_validate() -> None:
 
 
 def test_non_int_loop_max_rejected_at_validate() -> None:
-    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
+    spec = load_spec(SIM2REAL_DEMO)
     spec.config["inner_iterations"] = "not-an-int"
     with pytest.raises(NpaWorkflowError, match="must be an integer loop bound"):
         validate_spec(spec)
@@ -109,7 +124,7 @@ states:
 
 
 def test_execution_step_limit_guard(monkeypatch) -> None:
-    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
+    spec = load_spec(SIM2REAL_DEMO)
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.interpreter._execution_step_limit",
         lambda _spec: 4,

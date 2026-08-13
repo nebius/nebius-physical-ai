@@ -19,7 +19,7 @@ RUNNER = CliRunner()
 # Specs with dynamic transitions / decision-gated loops need an assumed decision
 # to plan deterministically (CLI plan-spec / run-spec require --assume-decision).
 ASSUME_DECISION_SPECS = {
-    "sim2real-vlm-rl.yaml",
+    "sim2real.yaml",
     "tokenfactory-cosmos-gate.yaml",
     "rl-policy-training-sim-success.yaml",
     "physical-ai-data-factory.yaml",
@@ -47,11 +47,16 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
     payload = json.loads(validate.output)
     assert payload["status"] == "valid"
 
-    assume = "loop_back" if path.name in {
-        "sim2real-vlm-rl.yaml",
-        "tokenfactory-cosmos-gate.yaml",
-        "rl-policy-training-sim-success.yaml",
-    } else "promote_checkpoint"
+    assume = (
+        "loop_back"
+        if path.name
+        in {
+            "sim2real.yaml",
+            "tokenfactory-cosmos-gate.yaml",
+            "rl-policy-training-sim-success.yaml",
+        }
+        else "promote_checkpoint"
+    )
     plan_args = [
         "workbench",
         "workflow",
@@ -87,7 +92,11 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
             "--plan-only",
             "--scheduler-plan",
             "--json",
-            *(["--assume-decision", assume] if path.name in ASSUME_DECISION_SPECS else []),
+            *(
+                ["--assume-decision", assume]
+                if path.name in ASSUME_DECISION_SPECS
+                else []
+            ),
         ],
     )
     assert scheduler.exit_code == 0, scheduler.output

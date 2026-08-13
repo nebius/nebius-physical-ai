@@ -12,12 +12,19 @@ VLM_TAG="${VLM_TAG:-cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T03415
 ENVGEN_TAG="${ENVGEN_TAG:-cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 EVAL_TAG="${EVAL_TAG:-cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 VLM_RL_TAG="${VLM_RL_TAG:-cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
+CONTROL_TAG="${CONTROL_TAG:-0.1.2}"
+NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_ROOT}/.." rev-parse HEAD)}"
+if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
+  exit 2
+fi
 
 usage() {
   cat <<EOF
 Usage: sim2real-build.sh [--registry REGISTRY] [--push]
 
 Builds the Sim2Real reference images one at a time:
+  npa-sim2real-control:${CONTROL_TAG}
   npa-cosmos3-reason:${VLM_TAG} (skipped when SKIP_COSMOS3_REASON=1)
   npa-envgen:${ENVGEN_TAG}
   npa-reference-policy:${ENVGEN_TAG}
@@ -71,7 +78,7 @@ build_one() {
   local base_arg="$4"
   local local_image="${name}:${tag}"
   local registry_image=""
-  local args=(-f "${dockerfile}" --build-arg "${base_arg}" -t "${local_image}")
+  local args=(-f "${dockerfile}" --build-arg "${base_arg}" --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}" -t "${local_image}")
   if [ -n "$REGISTRY" ]; then
     registry_image="${REGISTRY}/${name}:${tag}"
     args+=(-t "${registry_image}")
@@ -86,6 +93,7 @@ build_one() {
   fi
 }
 
+build_one "npa-sim2real-control" "${CONTROL_TAG}" "${SCRIPT_DIR}/sim2real-control/Dockerfile" "SIM2REAL_CONTROL_VERSION=${CONTROL_TAG}"
 if [ -n "${SKIP_COSMOS3_REASON:-}" ]; then
   echo "Skipping npa-cosmos3-reason (SKIP_COSMOS3_REASON=${SKIP_COSMOS3_REASON})"
 else

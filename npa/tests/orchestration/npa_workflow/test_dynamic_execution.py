@@ -4,15 +4,27 @@ import json
 from pathlib import Path
 
 from npa.orchestration.npa_workflow import load_spec, run_workflow
-from npa.orchestration.npa_workflow.decisions import DECISION_LOOP_BACK, DECISION_PROMOTE
+from npa.orchestration.npa_workflow.decisions import (
+    DECISION_LOOP_BACK,
+    DECISION_PROMOTE,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
+SIM2REAL_DEMO = (
+    REPO_ROOT
+    / "npa"
+    / "tests"
+    / "fixtures"
+    / "npa-workflows"
+    / "sim2real-vlm-rl-demo.yaml"
+)
 
 
 def test_dynamic_execute_reads_decision_for_promote(monkeypatch) -> None:
-    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
+    spec = load_spec(SIM2REAL_DEMO)
+
     def fake_reader(_bucket: str, _key: str) -> str:
         return json.dumps({"decision": DECISION_PROMOTE})
 
@@ -33,7 +45,7 @@ def test_dynamic_execute_reads_decision_for_promote(monkeypatch) -> None:
 
 
 def test_dynamic_execute_reads_decision_for_loop_back(monkeypatch) -> None:
-    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
+    spec = load_spec(SIM2REAL_DEMO)
     decisions = iter([DECISION_LOOP_BACK, DECISION_PROMOTE])
 
     def fake_reader(_bucket: str, _key: str) -> str:
@@ -51,4 +63,7 @@ def test_dynamic_execute_reads_decision_for_loop_back(monkeypatch) -> None:
         decision_reader=fake_reader,
     )
     states = [step["state"] for step in report["steps"]]
-    assert states.count("rollouts") == spec.config["inner_iterations"] * spec.config["outer_iterations"]
+    assert (
+        states.count("rollouts")
+        == spec.config["inner_iterations"] * spec.config["outer_iterations"]
+    )

@@ -9,14 +9,10 @@ Covers the degenerate-signal root causes:
 
 from __future__ import annotations
 
-import json
-import subprocess
-
 import pytest
 
 import npa.workflows.sim2real_loop as loop_module
 from npa.workflows.sim2real_loop import (
-    Sim2RealLoopConfig,
     _apply_reference_adapter_heldout_gate,
     _heldout_env_score,
     _image_pull_policy,
@@ -65,7 +61,12 @@ def test_inner_loop_progress_score_uses_vlm_final_quality_and_reward_trend() -> 
 
 def test_apply_reference_adapter_heldout_gate_preserves_sim_details() -> None:
     per_env = [
-        {"env_id": "heldout-0000", "score": 0.11, "success": False, "details": {"source": "sim"}},
+        {
+            "env_id": "heldout-0000",
+            "score": 0.11,
+            "success": False,
+            "details": {"source": "sim"},
+        },
     ]
     envs = [{"env_id": "heldout-0000", "physics": {"friction": 0.5}}]
 
@@ -139,43 +140,53 @@ def test_image_pull_policy_env_override(monkeypatch: pytest.MonkeyPatch) -> None
     )
 
 
-def test_component_pod_info_captures_image_digests(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    digest = "registry.example/npa-cosmos3-reason@sha256:" + "b" * 64
-    pod_payload = {
-        "items": [
-            {
-                "metadata": {"name": "pod-1"},
-                "spec": {"nodeName": "node-1", "containers": [{"resources": {}}]},
-                "status": {
-                    "phase": "Succeeded",
-                    "containerStatuses": [
-                        {
-                            "name": "component",
-                            "ready": False,
-                            "restartCount": 0,
-                            "image": "npa-cosmos3-reason:cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
-                            "imageID": digest,
-                            "state": {"terminated": {"exitCode": 0}},
-                        }
-                    ],
-                },
-            }
-        ]
-    }
-
-    def fake_kubectl(config, args, **kwargs):  # noqa: ANN001 - test stub
-        return subprocess.CompletedProcess(
-            args=args, returncode=0, stdout=json.dumps(pod_payload), stderr=""
-        )
-
-    monkeypatch.setattr(loop_module, "_kubectl", fake_kubectl)
-    config = Sim2RealLoopConfig(run_id="rca-test")
-
-    info = loop_module._component_pod_info(
-        config, namespace="default", job_name="job-1"
+def test_component_pod_info_captures_image_digests() -> None:
+    from npa.workflows.sim2real.engine import _pod_info_from_snapshot
+    from npa.workflows.sim2real.k8s_client import (
+        ContainerSnapshot,
+        JobSnapshot,
+        KueueAdmission,
+        PodSnapshot,
     )
+
+    digest = "registry.example/npa-cosmos3-reason@sha256:" + "b" * 64
+    container = ContainerSnapshot(
+        name="component",
+        image="npa-cosmos3-reason:exact",
+        image_id=digest,
+        restart_count=0,
+        terminated_reason="Completed",
+        exit_code=0,
+    )
+    pod = PodSnapshot(
+        name="pod-1",
+        uid="pod-uid",
+        owner_uid="job-uid",
+        phase="Succeeded",
+        node_name="node-1",
+        deletion_timestamp="",
+        scheduled_status="True",
+        scheduled_reason="",
+        resource_requests={"nvidia.com/gpu": "1"},
+        containers=(container,),
+    )
+    snapshot = JobSnapshot(
+        name="job-1",
+        namespace="default",
+        uid="job-uid",
+        resource_version="1",
+        state="complete",
+        active=0,
+        succeeded=1,
+        failed=0,
+        deleting=False,
+        condition_type="Complete",
+        condition_reason="CompletionsReached",
+        condition_message="",
+        pods=(pod,),
+        kueue=KueueAdmission(workload_name="job-1-workload", admitted=True),
+    )
+    info = _pod_info_from_snapshot(snapshot)
 
     assert info["image_digests"] == [digest]
     assert info["container_statuses"][0]["image_id"] == digest

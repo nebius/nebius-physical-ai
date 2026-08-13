@@ -41,11 +41,35 @@ def _build_text(tool: str) -> str:
             parts.append(script.read_text(encoding="utf-8"))
     return "\n".join(parts)
 
+
 # Images whose stages are submitted through SkyPilot (npa.workflow / workbench
 # workflows) and therefore must be schedulable in a pod. This list grows as the raw
 # SkyPilot task catalog is retired: once a tool's only workflow surface is an
 # npa.workflow spec, its image MUST be able to host a SkyPilot task.
-SKYPILOT_HOSTED_IMAGES = ("cosmos3-reason", "groot", "isaac-lab", "lerobot", "sonic")
+SKYPILOT_HOSTED_IMAGES = (
+    "cosmos2-transfer",
+    "cosmos3-reason",
+    "groot",
+    "isaac-lab",
+    "lerobot",
+    "sim2real-control",
+    "sim2real-envgen",
+    "sim2real-eval",
+    "sonic",
+)
+
+# Only these images publish a lightweight repair Dockerfile for an existing
+# vendor base.  The purpose-built canonical Sim2Real images above must satisfy
+# the same runtime contract, but rebuilding their primary Dockerfile is the
+# supported repair path.
+DERIVED_PREREQ_IMAGES = (
+    "cosmos3-reason",
+    "groot",
+    "isaac-lab",
+    "lerobot",
+    "sim2real-control",
+    "sonic",
+)
 
 #: Images built on an Isaac base, where /isaac-sim is mode 750 owned by
 #: isaac-sim:isaac-sim and the runtime user therefore has to join that GROUP (a
@@ -99,7 +123,9 @@ def test_the_prereq_guard_is_not_satisfied_by_the_dockerfile_alone() -> None:
     the guard would silently stop checking anything - which is exactly what happened when
     the layer was factored out.
     """
-    dockerfile_only = (DOCKER_ROOT / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    dockerfile_only = (DOCKER_ROOT / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
     combined = _build_text("isaac-lab")
     assert len(combined) > len(dockerfile_only), "no scripts were followed"
     moved = [
@@ -176,7 +202,7 @@ def test_isaac_lab_grants_its_runtime_user_access_to_isaac_sim() -> None:
     )
 
 
-@pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
+@pytest.mark.parametrize("tool", DERIVED_PREREQ_IMAGES)
 def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
     """The derived recipe exists and applies the same prerequisites.
 
@@ -189,7 +215,9 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
     assert derived.is_file(), derived
     text = derived.read_text(encoding="utf-8")
     ingredients = tuple(
-        item for item in _ingredients_for(tool) if not (tool == "groot" and item[0] == "NOPASSWD")
+        item
+        for item in _ingredients_for(tool)
+        if not (tool == "groot" and item[0] == "NOPASSWD")
     )
     for token, _why in (*ingredients, ("ARG BASE_IMAGE", "derived build")):
         assert token in text, f"{tool}: derived prereq Dockerfile is missing {token!r}"
@@ -202,7 +230,11 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
         # directories Isaac boots, fails to save its user config, and then renders nothing
         # while burning CPU — live job 271 stalled for 45 minutes that way, which is far
         # harder to diagnose than a pod that never starts.
-        for kit_dir in ("/isaac-sim/kit/data", "/isaac-sim/kit/logs", "/isaac-sim/kit/cache"):
+        for kit_dir in (
+            "/isaac-sim/kit/data",
+            "/isaac-sim/kit/logs",
+            "/isaac-sim/kit/cache",
+        ):
             assert kit_dir in text, (
                 f"{tool}: {kit_dir} must exist and belong to the runtime user, or Kit stalls"
             )
@@ -212,8 +244,32 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
         assert "OMNI_USER_DIR" in text and "OMNI_LOG_DIR" in text
 
 
+@pytest.mark.parametrize("tool", ("sim2real-envgen", "sim2real-eval"))
+def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) -> None:
+    """The two Genesis-derived canonical stages failed identically without sudo."""
+
+    dockerfile = (DOCKER_ROOT / tool / "Dockerfile").read_text(encoding="utf-8")
+    assert "ARG UBUNTU_SNAPSHOT=20260801T053000Z" in dockerfile
+    assert "install_workflow_runtime_prereqs.sh" in dockerfile
+    assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
+
+    installer = (
+        DOCKER_ROOT / "common" / "install_workflow_runtime_prereqs.sh"
+    ).read_text(encoding="utf-8")
+    assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in installer
+    assert "ubuntu:22.04" in installer
+    assert "apt-get --fix-broken install -y --no-install-recommends" in installer
+    assert "sudo" in installer and "rsync" in installer
+    assert "NOPASSWD" in installer
+    assert "sudo -n true" in installer
+
+
 def test_in_cluster_build_script_is_executable_and_generic() -> None:
-    script = Path(__file__).resolve().parents[3] / "scripts" / "build-workbench-image-in-cluster.sh"
+    script = (
+        Path(__file__).resolve().parents[3]
+        / "scripts"
+        / "build-workbench-image-in-cluster.sh"
+    )
     assert script.is_file(), script
     assert os.access(script, os.X_OK), script
     text = script.read_text(encoding="utf-8")

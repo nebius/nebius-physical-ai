@@ -23,7 +23,7 @@ SPECS = REPO_ROOT / "npa" / "workflows" / "workbench" / "npa-workflows"
     [
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
-        "sim2real-vlm-rl.yaml",
+        "sim2real.yaml",
         "bdd100k-pipeline.yaml",
         "tokenfactory-cosmos-gate.yaml",
         "av-night-scene-hardening.yaml",
@@ -77,27 +77,60 @@ def test_state_output_token() -> None:
     assert text == "s3://bucket/decision.json"
 
 
+def test_named_loop_token() -> None:
+    text = resolve_tokens(
+        "outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}",
+        config={},
+        run={"id": "run-1"},
+        loop_iterations={"outer-loop": 2, "inner-loop": 3},
+    )
+    assert text == "outer-2/iter-3"
+
+
+def test_named_loop_token_supports_safe_transform() -> None:
+    text = resolve_tokens(
+        "{{loop.outer-loop|base64}}",
+        config={},
+        run={"id": "run-1"},
+        loop_iterations={"outer-loop": 2},
+    )
+    assert text == base64.b64encode(b"2").decode()
+
+
 def test_sim2real_plan_expands_loops() -> None:
-    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
+    spec = load_spec(SPECS / "sim2real.yaml")
     plan = build_plan(spec, run_id="test-run", assume_decision="loop_back")
     states = [step.state for step in plan.steps]
-    assert states.count("rollouts") == spec.config["inner_iterations"] * spec.config["outer_iterations"]
-    assert "finalize" in states
+    expected = int(spec.config["inner_iterations"]) * int(
+        spec.config["outer_iterations"]
+    )
+    assert states.count("stage-07-rollouts") == expected
+    assert states[-1] == "stage-14-visualize"
+    rollout_outputs = [
+        step.outputs[0]["uri"]
+        for step in plan.steps
+        if step.state == "stage-07-rollouts"
+    ]
+    assert len(set(rollout_outputs)) == expected
+    assert rollout_outputs[0].endswith("outer-1/iter-1/rollouts-result.json")
+    assert rollout_outputs[-1].endswith("outer-3/iter-3/rollouts-result.json")
 
 
 def test_sim2real_plan_promote_early_exit() -> None:
-    spec = load_spec(SPECS / "sim2real-vlm-rl.yaml")
+    spec = load_spec(SPECS / "sim2real.yaml")
     plan = build_plan(spec, run_id="test-run", assume_decision="promote_checkpoint")
     states = [step.state for step in plan.steps]
-    assert states.count("rollouts") == spec.config["inner_iterations"]
-    assert states.count("finalize") == 1
-    assert states[-1] == "finalize"
+    assert states.count("stage-07-rollouts") == int(spec.config["inner_iterations"])
+    assert states.count("stage-14-visualize") == 1
+    assert states[-1] == "stage-14-visualize"
 
 
 def test_loop_max_accepts_braced_config_ref() -> None:
     from npa.orchestration.npa_workflow.spec import resolve_config_int
 
-    assert resolve_config_int("{{config.outer_iterations}}", {"outer_iterations": 4}) == 4
+    assert (
+        resolve_config_int("{{config.outer_iterations}}", {"outer_iterations": 4}) == 4
+    )
 
 
 def test_bdd100k_pipeline_plan_expands_eleven_stages() -> None:
@@ -158,5 +191,9 @@ def test_invalid_api_version() -> None:
 
 
 def test_predicate_promote() -> None:
-    assert evaluate_predicate("promote_checkpoint", {"last_decision": "promote_checkpoint"})
-    assert not evaluate_predicate("promote_checkpoint", {"last_decision": "loop_back_to_inner_loop"})
+    assert evaluate_predicate(
+        "promote_checkpoint", {"last_decision": "promote_checkpoint"}
+    )
+    assert not evaluate_predicate(
+        "promote_checkpoint", {"last_decision": "loop_back_to_inner_loop"}
+    )

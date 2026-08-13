@@ -2,7 +2,7 @@
 
 This guide runs the **NVIDIA Physical AI Data Factory** blueprint natively on
 Nebius + SkyPilot. It is delivered as a single npa.workflow spec
-(`npa/workflows/physical-ai-data-factory.yaml`) that
+(`npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml`) that
 **composes existing workbench tools** — there is no OSMO orchestrator and no new
 "data factory" tool. SkyPilot is the sole orchestrator; every stage hands off
 through one S3 run prefix so input, intermediate, and output artifacts are all
@@ -261,7 +261,7 @@ models` reports which of the two is visible along with what is already on disk.
 ## Validate / plan / render
 
 ```bash
-SPEC=npa/workflows/physical-ai-data-factory.yaml
+SPEC=npa/workflows/workbench/npa-workflows/physical-ai-data-factory.yaml
 npa workbench workflow validate-spec "$SPEC" --json
 # --var bucket= is what ties the plan to your storage; without it the spec's
 # `example-bucket` placeholder is planned (plan-spec warns when that happens).

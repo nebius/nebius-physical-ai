@@ -47,7 +47,10 @@ from pathlib import Path
 PAYLOAD_SIGNATURES: tuple[tuple[str, str], ...] = (
     (r"(?i)site-packages/isaacsim/", "the isaacsim wheel's installed package tree"),
     (r"(?i)site-packages/isaaclab/", "the isaaclab wheel's installed package tree"),
-    (r"(?i)(^|/)isaac-sim/(kit|exts|extscache|extsPhysics|apps)/", "an Isaac Sim install tree"),
+    (
+        r"(?i)(^|/)isaac-sim/(kit|exts|extscache|extsPhysics|apps)/",
+        "an Isaac Sim install tree",
+    ),
     (r"(?i)(^|/)kit/kernel/", "Omniverse Kit's kernel"),
     (r"(?i)libcarb", "carb, Omniverse Kit's core runtime library"),
     (r"(?i)libomni[a-z0-9_.]*\.so", "an Omniverse Kit shared library"),
@@ -65,7 +68,14 @@ PAYLOAD_SIGNATURES: tuple[tuple[str, str], ...] = (
 # This scanner only sees a tar listing (names, not contents), so it reports weight-shaped
 # paths for a human to eyeball rather than failing on them - the authoritative
 # content-based check runs inside the image build, where the bytes are available.
-WEIGHT_SUFFIXES: tuple[str, ...] = (".pt", ".pth", ".safetensors", ".ckpt", ".onnx", ".gguf")
+WEIGHT_SUFFIXES: tuple[str, ...] = (
+    ".pt",
+    ".pth",
+    ".safetensors",
+    ".ckpt",
+    ".onnx",
+    ".gguf",
+)
 
 # Paths we DO ship that a loose name filter would flag. Deliberately short and exact: an
 # unlisted path that matches a signature fails the scan.
@@ -84,7 +94,13 @@ ALLOWED_PREFIXES: tuple[str, ...] = (
 )
 # Directory entries that are legitimately present but empty (mount points, workdirs).
 ALLOWED_DIRS: frozenset[str] = frozenset(
-    {"isaac-sim", "opt/isaac-cache", "opt/isaac-cache/v", "workspace/isaaclab", "opt/isaac-lab"}
+    {
+        "isaac-sim",
+        "opt/isaac-cache",
+        "opt/isaac-cache/v",
+        "workspace/isaaclab",
+        "opt/isaac-lab",
+    }
 )
 
 # Layer commands that would mean Isaac was installed during the build. Kept in step with
@@ -94,7 +110,10 @@ ALLOWED_DIRS: frozenset[str] = frozenset(
 HISTORY_BAKE_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"(?i)pip[^\n]*install[^\n]*\bisaacsim\b", "a build layer pip-installed isaacsim"),
     (r"(?i)pip[^\n]*install[^\n]*\bisaaclab\b", "a build layer pip-installed isaaclab"),
-    (r"(?i)nvcr\.io/nvidia/(isaac-lab|isaac-sim|omniverse)", "a layer references an NVIDIA vendor image"),
+    (
+        r"(?i)nvcr\.io/nvidia/(isaac-lab|isaac-sim|omniverse)",
+        "a layer references an NVIDIA vendor image",
+    ),
     (
         r"(?i)\b(isaac-bootstrap|isaac_bootstrap\.sh)\s+(ensure|warm|verify)\b",
         "a build layer ran the runtime bootstrap, materialising Isaac into the image",
@@ -144,9 +163,7 @@ def _history_instructions(command: str) -> str:
     Same prose-versus-instruction distinction the packaging guard makes on Dockerfiles.
     """
     return "\n".join(
-        line
-        for line in command.splitlines()
-        if not line.lstrip().startswith("#")
+        line for line in command.splitlines() if not line.lstrip().startswith("#")
     )
 
 
@@ -187,6 +204,10 @@ class ScanReport:
             # a full-filesystem proof: a history-only "clean" says the build ran no Isaac
             # install, not that the image ships no Isaac bytes.
             "history_only": self.history_only,
+            # A report is serialized only after every requested registry/tar stream and
+            # history query has completed successfully. Consumers can therefore require
+            # this marker instead of treating a partial listing as authoritative.
+            "scan_complete": True,
             "entries_scanned": self.entries_scanned,
             "verdict": "clean" if self.clean else "omniverse-payload-detected",
             "payload_hits": self.payload_hits,
@@ -206,8 +227,9 @@ def _require(tool: str) -> str:
 def _iter_crane_export(image: str):
     """Stream the flattened filesystem of a remote image, member by member."""
     crane = _require("crane")
+    command = [crane, "export", image, "-"]
     process = subprocess.Popen(  # noqa: S603 - fixed argv
-        [crane, "export", image, "-"], stdout=subprocess.PIPE
+        command, stdout=subprocess.PIPE
     )
     assert process.stdout is not None
     try:
@@ -218,7 +240,9 @@ def _iter_crane_export(image: str):
     finally:
         if process.stdout:
             process.stdout.close()
-        process.wait()
+        returncode = process.wait()
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, command)
 
 
 def _iter_tarball(tarball: Path):
@@ -247,24 +271,31 @@ def _iter_tarball(tarball: Path):
 
 def _image_history(image: str) -> tuple[list[str], str | None]:
     crane = _require("crane")
+    config_command = [crane, "config", image]
     config = subprocess.run(  # noqa: S603 - fixed argv
-        [crane, "config", image], capture_output=True, text=True, check=False
+        config_command, capture_output=True, text=True, check=False
     )
     if config.returncode != 0:
-        return [], None
+        raise subprocess.CalledProcessError(config.returncode, config_command)
     payload = json.loads(config.stdout)
     commands = [
         entry.get("created_by", "")
         for entry in payload.get("history", [])
         if entry.get("created_by")
     ]
+    digest_command = [crane, "digest", "--platform", "linux/amd64", image]
     digest = subprocess.run(  # noqa: S603 - fixed argv
-        [crane, "digest", "--platform", "linux/amd64", image],
+        digest_command,
         capture_output=True,
         text=True,
         check=False,
     )
-    return commands, (digest.stdout.strip() or None)
+    if digest.returncode != 0:
+        raise subprocess.CalledProcessError(digest.returncode, digest_command)
+    digest_value = digest.stdout.strip()
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", digest_value) is None:
+        raise RuntimeError("crane returned an invalid linux/amd64 image digest")
+    return commands, digest_value
 
 
 def scan(
@@ -301,7 +332,10 @@ def scan(
         if is_allowed(path):
             report.allowlisted_hits.append(_normalize(path))
             continue
-        if path.endswith(WEIGHT_SUFFIXES) and len(report.weight_shaped_paths) < max_report:
+        if (
+            path.endswith(WEIGHT_SUFFIXES)
+            and len(report.weight_shaped_paths) < max_report
+        ):
             report.weight_shaped_paths.append(_normalize(path))
         why = classify_path(path)
         if why and len(report.payload_hits) < max_report:
@@ -319,7 +353,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("image", nargs="?", help="Image reference to scan with crane.")
     parser.add_argument(
-        "--tarball", type=Path, help="Scan a `docker save` tarball instead of a registry."
+        "--tarball",
+        type=Path,
+        help="Scan a `docker save` tarball instead of a registry.",
     )
     parser.add_argument("--json", type=Path, help="Write the JSON report here.")
     parser.add_argument(
@@ -345,7 +381,9 @@ def main(argv: list[str] | None = None) -> int:
     if report.history_only:
         print("mode             history-only (layer commands; filesystem NOT scanned)")
     print(f"entries scanned  {payload['entries_scanned']}")
-    print(f"allowlisted      {len(payload['allowlisted_paths_present'])} path(s) we do ship:")
+    print(
+        f"allowlisted      {len(payload['allowlisted_paths_present'])} path(s) we do ship:"
+    )
     for path in payload["allowlisted_paths_present"][:20]:
         print(f"                   {path}")
     if report.payload_hits:
@@ -353,7 +391,9 @@ def main(argv: list[str] | None = None) -> int:
         for hit in report.payload_hits:
             print(f"  {hit['path']}\n      -> {hit['why']}")
     if report.history_hits:
-        print(f"\nBUILD-TIME ISAAC INSTALL DETECTED ({len(report.history_hits)} layer(s)):")
+        print(
+            f"\nBUILD-TIME ISAAC INSTALL DETECTED ({len(report.history_hits)} layer(s)):"
+        )
         for hit in report.history_hits:
             print(f"  {hit['why']}\n      {hit['command']}")
     if report.weight_shaped_paths:

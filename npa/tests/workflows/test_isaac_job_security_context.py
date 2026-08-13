@@ -1,12 +1,4 @@
-"""Isaac sibling jobs run as root — deliberately, and only that far.
-
-The npa-isaac-lab image defaults to the non-root ``ubuntu`` user, which cannot
-traverse the image's ``/isaac-sim`` tree, so ``/isaac-sim/python.sh`` resolves
-empty and every Isaac job exits 127. Running the pod as root is the fix. These
-tests pin that decision so it stays explicit, and — more importantly — pin its
-boundary: root inside the container must not grow into a privileged container,
-host namespaces, or host-path mounts.
-"""
+"""Retained standalone Isaac jobs preserve the hardened non-root image contract."""
 
 from __future__ import annotations
 
@@ -82,17 +74,29 @@ def _pod_spec(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("job", sorted(MANIFEST_BUILDERS))
-def test_isaac_job_runs_as_root(job: str) -> None:
+def test_isaac_job_runs_as_non_root_runtime_user(job: str) -> None:
     pod = _pod_spec(MANIFEST_BUILDERS[job]())
-    assert pod["securityContext"]["runAsUser"] == 0, (
-        f"{job}: Isaac jobs must run as root; the image's default ubuntu user "
-        "cannot traverse /isaac-sim and python.sh resolves empty (exit 127)"
-    )
+    assert pod["securityContext"] == {
+        "runAsNonRoot": True,
+        "runAsUser": 1000,
+        "runAsGroup": 1000,
+        "fsGroup": 1000,
+        "fsGroupChangePolicy": "OnRootMismatch",
+        "seccompProfile": {"type": "RuntimeDefault"},
+    }, job
+    for container in pod["containers"]:
+        assert container["securityContext"] == {
+            "runAsNonRoot": True,
+            "runAsUser": 1000,
+            "runAsGroup": 1000,
+            "allowPrivilegeEscalation": False,
+            "capabilities": {"drop": ["ALL"]},
+        }, job
 
 
 @pytest.mark.parametrize("job", sorted(MANIFEST_BUILDERS))
-def test_isaac_job_root_stays_bounded(job: str) -> None:
-    """Root in-container is the whole grant: no privileged escalation beyond it."""
+def test_isaac_job_non_root_boundary_stays_bounded(job: str) -> None:
+    """Non-root jobs must not gain host or container privilege escape hatches."""
 
     pod = _pod_spec(MANIFEST_BUILDERS[job]())
 
@@ -111,4 +115,6 @@ def test_isaac_job_root_stays_bounded(job: str) -> None:
             f"{job}: Isaac containers must not be privileged"
         )
         added = ((container_security.get("capabilities") or {}).get("add")) or []
-        assert not added, f"{job}: Isaac containers must not add capabilities, got {added}"
+        assert not added, (
+            f"{job}: Isaac containers must not add capabilities, got {added}"
+        )

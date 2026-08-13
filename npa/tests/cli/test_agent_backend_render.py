@@ -1038,9 +1038,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     import sys
 
     module_name = "npa_rendered_artifact_range_backend"
-    module = _import_rendered_backend(
-        monkeypatch, tmp_path, module_name=module_name
-    )
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     artifact = module.Artifact(
         "run-one",
         "run-one/report.bin",
@@ -1127,7 +1125,9 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
             "categories": [{"id": "project", "status": "configured"}],
         },
     )
-    resource_route = next(route for route in module.app.routes if route.path == "/resources")
+    resource_route = next(
+        route for route in module.app.routes if route.path == "/resources"
+    )
     assert resource_route.endpoint(refresh=True) == {
         "ok": True,
         "force_refresh": True,
@@ -1169,7 +1169,9 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     state = {"workflow_draft": {}}
     monkeypatch.setattr(module, "_load_state", lambda: state)
     monkeypatch.setattr(module, "_save_state", lambda payload: state.update(payload))
-    monkeypatch.setattr(module, "_agent_s3_settings", lambda: {"bucket": "configured-bucket"})
+    monkeypatch.setattr(
+        module, "_agent_s3_settings", lambda: {"bucket": "configured-bucket"}
+    )
     monkeypatch.setattr(
         module,
         "_agent_k8s_backends",
@@ -1187,15 +1189,22 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
             "cloud_clusters": [],
         },
     )
-    reply, _used, _suggested, yaml_text, validation, intent = module._maybe_toolground_chat_reply(
-        "create sim2real yaml with isaac task Isaac-Lift-Cube-Franka-v0 and 5000 environments"
+    reply, _used, _suggested, yaml_text, validation, intent = (
+        module._maybe_toolground_chat_reply(
+            "create sim2real yaml with isaac task Isaac-Lift-Cube-Franka-v0 and 5000 environments"
+        )
     )
     assert intent == "create_vlm_rl_workflow"
     assert validation["ok"] is True
     assert yaml_text and "bucket: configured-bucket" in yaml_text
-    assert "configured-cluster" in yaml_text
+    # The canonical graph stays infrastructure-generic. The selected backend is
+    # carried beside the draft and supplied to the standard runtime at submit.
+    assert "configured-cluster" not in yaml_text
     assert state["workflow_draft"]["runnable"] is True
-    assert "warnings" not in state["workflow_draft"] or not state["workflow_draft"]["warnings"]
+    assert (
+        "warnings" not in state["workflow_draft"]
+        or not state["workflow_draft"]["warnings"]
+    )
     assert "Could not generate runnable" not in reply
 
     monkeypatch.setattr(module, "_agent_s3_settings", lambda: {"bucket": ""})
@@ -1979,7 +1988,9 @@ def test_rendered_backend_labels_nurec_camera_without_inheriting(monkeypatch) ->
     assert "camera = NEURAL_RECONSTRUCTION_CAMERA_LABEL" in body
 
 
-def test_rendered_backend_labels_groot_training_without_rollout_claim(monkeypatch) -> None:
+def test_rendered_backend_labels_groot_training_without_rollout_claim(
+    monkeypatch,
+) -> None:
     body = _render_backend_body(monkeypatch)
 
     assert 'GROOT_TRAINING_CAMERA_LABEL = "camera"' in body

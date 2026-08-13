@@ -15,6 +15,7 @@ API_VERSION_STABLE = "npa.workflow/v0.0.1"
 API_VERSION_BETA = "npa.workflow/v0.0.1-beta"
 API_VERSION = API_VERSION_STABLE
 _SUPPORTED_API_VERSIONS = frozenset({API_VERSION_STABLE, API_VERSION_BETA})
+_EMBEDDED_CANONICAL_SIM2REAL_YAML = ""
 
 _TEMPLATES = (
     "two-step",
@@ -22,7 +23,6 @@ _TEMPLATES = (
     "vlm-rl-loop",
     "token-factory-gate",
     "byof",
-    "gpu-cross-region",
     "rl-policy-success",
     "physical-ai-data-factory",
     "sim2real-staged",
@@ -35,6 +35,24 @@ class _FoldedStr(str):
 
 class _LiteralStr(str):
     """YAML scalar rendered with literal (|) style."""
+
+
+def _real_finalize_run() -> OrderedDict[str, Any]:
+    """A real S3 bookkeeping adapter shared by generated non-Sim2Real demos."""
+
+    return OrderedDict(
+        {
+            "argv": [
+                "python3",
+                "-c",
+                (
+                    "from npa.workflows.data_factory_stages import finalize; "
+                    "finalize('s3://{{config.bucket}}/{{config.prefix}}/', "
+                    "'{{config.finalize_report_uri}}')"
+                ),
+            ]
+        }
+    )
 
 
 class _WorkflowDumper(yaml.SafeDumper):
@@ -68,11 +86,6 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "isaac-lab": "byof",
     "leisaac": "byof",
     "byof": "byof",
-    "gpu_cross_region": "gpu-cross-region",
-    "multi_region": "gpu-cross-region",
-    "cross_region": "gpu-cross-region",
-    "multi-region": "gpu-cross-region",
-    "cross-region": "gpu-cross-region",
     "rl-policy": "rl-policy-success",
     "rl_policy": "rl-policy-success",
     "policy-training": "rl-policy-success",
@@ -139,16 +152,6 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "promote",
     ),
     "loop-gate": ("loop", "gate", "decision", "transition", "multi-step", "multistep"),
-    "gpu-cross-region": (
-        "multi-region",
-        "cross-region",
-        "two regions",
-        "2 regions",
-        "cross project",
-        "multi project",
-        "gpu workflow",
-        "tenant",
-    ),
     "rl-policy-success": (
         "rl policy",
         "policy training",
@@ -195,8 +198,8 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
         "two-step": {
             "name": "sim2real-two-step",
             "description": (
-                "Two-step Sim2Real pipeline: Cosmos Transfer augment, then raw env "
-                "generation."
+                "DEMO ONLY: agent-generated Cosmos Transfer and raw-env fixture; "
+                "it does not run the canonical 14-stage Sim2Real engine."
             ),
             "config_runtime": OrderedDict(
                 {
@@ -222,7 +225,9 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
             ),
             "resources": OrderedDict(
                 {
-                    "gpu": OrderedDict({"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"}),
+                    "gpu": OrderedDict(
+                        {"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"}
+                    ),
                 }
             ),
             "initial": "augment",
@@ -285,116 +290,6 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                 }
             ),
         },
-        "sim2real-staged": {
-            "name": "sim2real-staged",
-            "description": (
-                "Full real Sim2Real engine: conditioned augmentation, environment generation, "
-                "policy and VLM learning loops, held-out simulation evaluation, threshold "
-                "decision, artifact upload, and Rerun visualization."
-            ),
-            "config_runtime": OrderedDict(
-                {
-                    "s3_prefix": "sim2real-b",
-                    "trigger_dataset_id": "lerobot/pusht",
-                    "sim_backend": "isaac",
-                    "isaac_task": "Isaac-Lift-Cube-Franka-v0",
-                    "robot_source": "",
-                    "robot_preset": "franka",
-                    "vlm_model": "nvidia/Cosmos-Reason2-8B",
-                    "success_threshold": "0.75",
-                    "inner_iterations": "2",
-                    "outer_iterations": "1",
-                    "loop_of_loops_iterations": "1",
-                    "rollout_count": "3",
-                    "steps_per_rollout": "4",
-                    "heldout_env_count": "8",
-                    "env_count": "10000",
-                    "train_fraction": "0.8",
-                    "envgen_shard_count": "16",
-                    "action_env_limit": "256",
-                    "seed": "42",
-                    # Sibling-job placement is resolved from the selected agent
-                    # backend. Empty values preserve the engine's public defaults;
-                    # generated drafts fill them only from real configuration.
-                    "k8s_namespace": "",
-                    "k8s_service_account": "",
-                    "k8s_image_pull_secrets": "",
-                    "k8s_env_secret_names": "",
-                    "k8s_gpu_product": "",
-                    "augment_image": "",
-                    "envgen_image": "",
-                    "policy_image": "",
-                    "trainer_image": "",
-                    "vlm_image": "",
-                    "eval_image": "",
-                    "isaac_image": "",
-                }
-            ),
-            "config_uri": OrderedDict(
-                {
-                    "trigger_dataset_uri": (
-                        "s3://{{config.bucket}}/sim2real-triggers/{{run.id}}/lerobot-pusht/"
-                    ),
-                    "assets_uri": "",
-                    "scene_spec_uri": "",
-                    "cameras_uri": "",
-                    "robot_spec_uri": "",
-                    "run_root_uri": "s3://{{config.bucket}}/{{config.s3_prefix}}/{{run.id}}/",
-                    "finalize_report_uri": "{{config.run_root_uri}}reports/sim2real-report.json",
-                    "rrd_uri": "{{config.run_root_uri}}reports/sim2real.rrd",
-                }
-            ),
-            "resources": OrderedDict(
-                {
-                    "gpu": OrderedDict(
-                        {
-                            "cloud": "kubernetes",
-                            "accelerators": "RTXPRO6000:1",
-                            "cpus": 16,
-                            "memory": "80Gi",
-                        }
-                    )
-                }
-            ),
-            "initial": "run-sim2real",
-            "states": OrderedDict(
-                {
-                    "run-sim2real": OrderedDict(
-                        {
-                            "description": (
-                                "Run the maintained 14-stage Sim2Real engine. This is a real "
-                                "orchestrator entry point, not the legacy echo/demo toolRefs."
-                            ),
-                            "toolRef": "workbench.sim2real.run",
-                            "resources": "gpu",
-                            "inputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.trigger_dataset_uri}}",
-                                        "schema": "npa.lerobot.dataset.v1",
-                                    }
-                                )
-                            ],
-                            "outputs": [
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.finalize_report_uri}}",
-                                        "schema": "npa.sim2real.e2e_report.v1",
-                                    }
-                                ),
-                                OrderedDict(
-                                    {
-                                        "uri": "{{config.rrd_uri}}",
-                                        "schema": "npa.sim2real.rerun.v1",
-                                    }
-                                ),
-                            ],
-                            "terminal": True,
-                        }
-                    )
-                }
-            ),
-        },
         "byof": {
             "name": "byof",
             "description": (
@@ -432,7 +327,9 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
             ),
             "resources": OrderedDict(
                 {
-                    "gpu": OrderedDict({"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"}),
+                    "gpu": OrderedDict(
+                        {"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"}
+                    ),
                 }
             ),
             "initial": "byof-run",
@@ -496,7 +393,9 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
             ),
             "resources": OrderedDict(
                 {
-                    "gpu": OrderedDict({"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"}),
+                    "gpu": OrderedDict(
+                        {"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"}
+                    ),
                 }
             ),
             "initial": "augment",
@@ -531,7 +430,10 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "description": "Iterate critique and decision gate until promoted.",
                             "needs": ["augment"],
                             "loop": OrderedDict(
-                                {"max": "{{config.refinement_iterations}}", "until": "promote_checkpoint"}
+                                {
+                                    "max": "{{config.refinement_iterations}}",
+                                    "until": "promote_checkpoint",
+                                }
                             ),
                             "sequence": ["vlm-critique", "quality-gate"],
                             "next": "publish",
@@ -543,7 +445,12 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "toolRef": "workbench.vlm_eval.run",
                             "resources": "gpu",
                             "inputs": [
-                                OrderedDict({"uri": "{{config.rollouts_uri}}", "schema": "npa.workbench.rollout_set.v1"})
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.rollouts_uri}}",
+                                        "schema": "npa.workbench.rollout_set.v1",
+                                    }
+                                )
                             ],
                             "outputs": [
                                 OrderedDict(
@@ -570,7 +477,9 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                                 )
                             ],
                             "transitions": [
-                                OrderedDict({"when": "promote_checkpoint", "goto": "publish"}),
+                                OrderedDict(
+                                    {"when": "promote_checkpoint", "goto": "publish"}
+                                ),
                                 OrderedDict({"when": "loop_back", "goto": "augment"}),
                             ],
                         }
@@ -579,7 +488,7 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                         {
                             "description": "Finalize report once promoted.",
                             "needs": ["refine"],
-                            "toolRef": "workbench.sim2real.finalize",
+                            "run": _real_finalize_run(),
                             "outputs": [
                                 OrderedDict(
                                     {
@@ -633,7 +542,9 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
             ),
             "resources": OrderedDict(
                 {
-                    "gpu": OrderedDict({"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"}),
+                    "gpu": OrderedDict(
+                        {"cloud": "kubernetes", "accelerators": "RTXPRO6000:1"}
+                    ),
                     "cpu": OrderedDict({"cloud": "kubernetes", "cpus": 8}),
                 }
             ),
@@ -693,7 +604,12 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                         {
                             "description": "Outer loop: inner train pass, held-out eval, threshold gate.",
                             "needs": ["envgen"],
-                            "loop": OrderedDict({"max": "{{config.outer_iterations}}", "until": "promote_checkpoint"}),
+                            "loop": OrderedDict(
+                                {
+                                    "max": "{{config.outer_iterations}}",
+                                    "until": "promote_checkpoint",
+                                }
+                            ),
                             "sequence": ["inner", "heldout", "decide"],
                             "next": "finalize",
                         }
@@ -708,10 +624,17 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "rollouts": OrderedDict(
                         {
                             "description": "Policy action rollouts on train envs.",
-                            "toolRef": "workbench.sim2real.policy_rollouts",
+                            "run": OrderedDict(
+                                {"shell": "false # retired stub template"}
+                            ),
                             "resources": "gpu",
                             "outputs": [
-                                OrderedDict({"uri": "{{config.rollouts_uri}}", "schema": "npa.sim2real.action_rollout.v1"})
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.rollouts_uri}}",
+                                        "schema": "npa.sim2real.action_rollout.v1",
+                                    }
+                                )
                             ],
                         }
                     ),
@@ -734,7 +657,9 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "heldout": OrderedDict(
                         {
                             "description": "Held-out simulation evaluation report.",
-                            "toolRef": "workbench.sim2real.heldout_eval",
+                            "run": OrderedDict(
+                                {"shell": "false # retired stub template"}
+                            ),
                             "resources": "gpu",
                             "outputs": [
                                 OrderedDict(
@@ -761,7 +686,9 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                                 )
                             ],
                             "transitions": [
-                                OrderedDict({"when": "promote_checkpoint", "goto": "finalize"}),
+                                OrderedDict(
+                                    {"when": "promote_checkpoint", "goto": "finalize"}
+                                ),
                                 OrderedDict({"when": "loop_back", "goto": "outer"}),
                             ],
                         }
@@ -770,7 +697,7 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                         {
                             "description": "Report upload and visualization artifacts.",
                             "needs": ["outer"],
-                            "toolRef": "workbench.sim2real.finalize",
+                            "run": _real_finalize_run(),
                             "outputs": [
                                 OrderedDict(
                                     {
@@ -815,7 +742,12 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
             "resources": OrderedDict(
                 {
                     "gpu": OrderedDict(
-                        {"cloud": "kubernetes", "accelerators": "RTXPRO6000:1", "cpus": 16, "memory": "80Gi"}
+                        {
+                            "cloud": "kubernetes",
+                            "accelerators": "RTXPRO6000:1",
+                            "cpus": 16,
+                            "memory": "80Gi",
+                        }
                     ),
                 }
             ),
@@ -828,10 +760,20 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "toolRef": "workbench.token_factory.reason",
                             "resources": "gpu",
                             "inputs": [
-                                OrderedDict({"uri": "{{config.scene_uri}}", "schema": "npa.token_factory.scene.v1"})
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.scene_uri}}",
+                                        "schema": "npa.token_factory.scene.v1",
+                                    }
+                                )
                             ],
                             "outputs": [
-                                OrderedDict({"uri": "{{config.plan_uri}}plan.json", "schema": "npa.token_factory.plan.v1"})
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.plan_uri}}plan.json",
+                                        "schema": "npa.token_factory.plan.v1",
+                                    }
+                                )
                             ],
                             "next": "augment-scene",
                         }
@@ -843,7 +785,12 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "toolRef": "workbench.cosmos2.transfer_conditioned_execute",
                             "resources": "gpu",
                             "inputs": [
-                                OrderedDict({"uri": "{{config.trigger_uri}}", "schema": "npa.token_factory.scene.v1"})
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.trigger_uri}}",
+                                        "schema": "npa.token_factory.scene.v1",
+                                    }
+                                )
                             ],
                             "outputs": [
                                 OrderedDict(
@@ -861,7 +808,10 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "description": "VLM critique loop with promote versus re-augment gate.",
                             "needs": ["augment-scene"],
                             "loop": OrderedDict(
-                                {"max": "{{config.refinement_iterations}}", "until": "promote_checkpoint"}
+                                {
+                                    "max": "{{config.refinement_iterations}}",
+                                    "until": "promote_checkpoint",
+                                }
                             ),
                             "sequence": ["vlm-critique", "quality-gate"],
                             "next": "publish",
@@ -873,7 +823,12 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             "toolRef": "workbench.vlm_eval.run",
                             "resources": "gpu",
                             "inputs": [
-                                OrderedDict({"uri": "{{config.rollouts_uri}}", "schema": "npa.workbench.rollout_set.v1"})
+                                OrderedDict(
+                                    {
+                                        "uri": "{{config.rollouts_uri}}",
+                                        "schema": "npa.workbench.rollout_set.v1",
+                                    }
+                                )
                             ],
                             "outputs": [
                                 OrderedDict(
@@ -900,8 +855,12 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                                 )
                             ],
                             "transitions": [
-                                OrderedDict({"when": "promote_checkpoint", "goto": "publish"}),
-                                OrderedDict({"when": "loop_back", "goto": "augment-scene"}),
+                                OrderedDict(
+                                    {"when": "promote_checkpoint", "goto": "publish"}
+                                ),
+                                OrderedDict(
+                                    {"when": "loop_back", "goto": "augment-scene"}
+                                ),
                             ],
                         }
                     ),
@@ -909,7 +868,7 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                         {
                             "description": "Write final report when the batch is promoted.",
                             "needs": ["refine"],
-                            "toolRef": "workbench.sim2real.finalize",
+                            "run": _real_finalize_run(),
                             "outputs": [
                                 OrderedDict(
                                     {
@@ -986,7 +945,9 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "primary-rollout": OrderedDict(
                         {
                             "description": "Run primary GPU rollout workload.",
-                            "toolRef": "workbench.sim2real.policy_rollouts",
+                            "run": OrderedDict(
+                                {"shell": "false # retired stub template"}
+                            ),
                             "resources": "gpu-primary",
                             "outputs": [
                                 OrderedDict(
@@ -1029,7 +990,9 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "secondary-eval": OrderedDict(
                         {
                             "description": "Run secondary GPU held-out evaluation workload.",
-                            "toolRef": "workbench.sim2real.heldout_eval",
+                            "run": OrderedDict(
+                                {"shell": "false # retired stub template"}
+                            ),
                             "resources": "gpu-secondary",
                             "inputs": [
                                 OrderedDict(
@@ -1072,7 +1035,7 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                     "finalize": OrderedDict(
                         {
                             "description": "Finalize tenant-scoped cross-region run report.",
-                            "toolRef": "workbench.sim2real.finalize",
+                            "run": _real_finalize_run(),
                             "resources": "gpu-secondary",
                             "outputs": [
                                 OrderedDict(
@@ -1220,8 +1183,18 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                                 )
                             ],
                             "transitions": [
-                                OrderedDict({"when": "promote_checkpoint", "goto": "publish-policy"}),
-                                OrderedDict({"when": "loop_back", "goto": "training-not-success"}),
+                                OrderedDict(
+                                    {
+                                        "when": "promote_checkpoint",
+                                        "goto": "publish-policy",
+                                    }
+                                ),
+                                OrderedDict(
+                                    {
+                                        "when": "loop_back",
+                                        "goto": "training-not-success",
+                                    }
+                                ),
                             ],
                         }
                     ),
@@ -1398,7 +1371,9 @@ def _data_factory_spec() -> dict[str, Any]:
                         "memory": "128Gi",
                     }
                 ),
-                "cpu": OrderedDict({"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"}),
+                "cpu": OrderedDict(
+                    {"cloud": "kubernetes", "cpus": 4, "memory": "16Gi"}
+                ),
             }
         ),
         "initial": "generate-configs",
@@ -1559,7 +1534,7 @@ def _data_factory_spec() -> dict[str, Any]:
                         "run": OrderedDict(
                             {
                                 "shell": (
-                                    "python3 -c \"from npa.workflows.data_factory_stages import "
+                                    'python3 -c "from npa.workflows.data_factory_stages import '
                                     "grade_gate; grade_gate('{{config.scores_uri}}', "
                                     "'{{config.decision_uri}}', '{{config.grade_threshold}}')\""
                                 )
@@ -1623,11 +1598,11 @@ def _data_factory_spec() -> dict[str, Any]:
                             {
                                 "shell": (
                                     "npa workbench token-factory caption "
-                                    "--input-path \"{{config.augmented_frames_uri}}\" "
-                                    "--output-path \"{{config.labeled_augmented_uri}}\" "
-                                    "--model \"{{config.caption_model}}\" "
-                                    "--max-images \"{{config.max_images}}\" "
-                                    "--max-tokens \"{{config.max_tokens}}\" --output json"
+                                    '--input-path "{{config.augmented_frames_uri}}" '
+                                    '--output-path "{{config.labeled_augmented_uri}}" '
+                                    '--model "{{config.caption_model}}" '
+                                    '--max-images "{{config.max_images}}" '
+                                    '--max-tokens "{{config.max_tokens}}" --output json'
                                 )
                             }
                         ),
@@ -1736,7 +1711,7 @@ def _data_factory_spec() -> dict[str, Any]:
                         "run": OrderedDict(
                             {
                                 "shell": (
-                                    "python3 -c \"from npa.workflows.data_factory_stages import "
+                                    'python3 -c "from npa.workflows.data_factory_stages import '
                                     "finalize; finalize('{{config.run_root_uri}}', "
                                     "'{{config.finalize_report_uri}}')\""
                                 )
@@ -1772,7 +1747,9 @@ def choose_workflow_template(
     """Select the best workflow template from user intent and capability hints."""
     text = str(user_text or "").lower()
     scores = {name: 0 for name in _TEMPLATES}
-    default_template = _INTENT_DEFAULT_TEMPLATE.get(str(intent or "").strip(), "two-step")
+    default_template = _INTENT_DEFAULT_TEMPLATE.get(
+        str(intent or "").strip(), "two-step"
+    )
     scores[default_template] += 3
     if str(intent or "").strip() == "create_vlm_rl_workflow":
         # Explicit VLM-RL / outer+inner loop language reaches the loop template;
@@ -1805,25 +1782,41 @@ def choose_workflow_template(
         scores["vlm-rl-loop"] += 5
     data_factory_explicit = any(
         token in text
-        for token in ("paidf", "data factory", "physical ai data factory", "video data augmentation")
+        for token in (
+            "paidf",
+            "data factory",
+            "physical ai data factory",
+            "video data augmentation",
+        )
     )
     if data_factory_explicit:
         scores["physical-ai-data-factory"] += 10
     if ("augment" in text or "cosmos transfer" in text) and any(
-        token in text for token in ("fan out", "fan-out", "fanout", "multiply", "scenario", "variant", "amplify")
+        token in text
+        for token in (
+            "fan out",
+            "fan-out",
+            "fanout",
+            "multiply",
+            "scenario",
+            "variant",
+            "amplify",
+        )
     ):
         scores["physical-ai-data-factory"] += 6
-    if re.search(r"\b(?:sim2real|sim[\s-]?to[\s-]?real|sim\s*[- ]?2\s*[- ]?real)\b", text):
+    if re.search(
+        r"\b(?:sim2real|sim[\s-]?to[\s-]?real|sim\s*[- ]?2\s*[- ]?real)\b", text
+    ):
         scores["sim2real-staged"] += 6
     if re.search(r"\b(?:2[\s-]?step|two[\s-]?step)\b", text):
         scores["two-step"] += 10
-    if "gpu" in text and ("region" in text or "project" in text):
-        scores["gpu-cross-region"] += 5
     if "rl" in text and ("policy" in text or "training" in text or "isaac" in text):
         if not byof_explicit:
             scores["rl-policy-success"] += 5
     if capabilities and not byof_explicit:
-        capabilities_text = " ".join(f"{k}:{v}" for k, v in sorted(capabilities.items())).lower()
+        capabilities_text = " ".join(
+            f"{k}:{v}" for k, v in sorted(capabilities.items())
+        ).lower()
         if "token" in capabilities_text:
             scores["token-factory-gate"] += 2
         if "vlm" in capabilities_text and "rl" in capabilities_text:
@@ -1832,9 +1825,9 @@ def choose_workflow_template(
             scores["rl-policy-success"] += 2
         if any(k in capabilities_text for k in ("loop", "gate", "transition")):
             scores["loop-gate"] += 1
-        if any(k in capabilities_text for k in ("tenant", "project", "region")):
-            scores["gpu-cross-region"] += 2
-    selected = sorted(scores.items(), key=lambda item: (item[1], item[0]), reverse=True)[0][0]
+    selected = sorted(
+        scores.items(), key=lambda item: (item[1], item[0]), reverse=True
+    )[0][0]
     return {"template": selected, "scores": scores}
 
 
@@ -1978,7 +1971,9 @@ def extract_data_factory_params(user_text: str) -> dict[str, Any]:
     if gpus is not None and gpus > 0:
         params["gpu_count"] = gpus
 
-    refinement = _named_number(text, r"refinement(?:\s+iterations?|\s+passes?)", integer=True)
+    refinement = _named_number(
+        text, r"refinement(?:\s+iterations?|\s+passes?)", integer=True
+    )
     threshold = _named_number(
         text, r"(?:grade|quality)(?:\s+score)?\s+threshold", fraction=True
     )
@@ -1987,14 +1982,20 @@ def extract_data_factory_params(user_text: str) -> dict[str, Any]:
     max_images = _named_number(text, r"max(?:imum)?\s+images?", integer=True)
     max_tokens = _named_number(text, r"max(?:imum)?\s+tokens?", integer=True)
     if max_images is None:
-        max_images = _first_int(re.search(r"\bmax(?:imum)?\s+(\d+)\s+images?\b", text, re.I))
+        max_images = _first_int(
+            re.search(r"\bmax(?:imum)?\s+(\d+)\s+images?\b", text, re.I)
+        )
     if max_tokens is None:
-        max_tokens = _first_int(re.search(r"\bmax(?:imum)?\s+(\d+)\s+tokens?\b", text, re.I))
+        max_tokens = _first_int(
+            re.search(r"\bmax(?:imum)?\s+(\d+)\s+tokens?\b", text, re.I)
+        )
     if isinstance(refinement, int) and refinement > 0:
         params["refinement_iterations"] = refinement
     if isinstance(threshold, float):
         if not 0 <= threshold <= 1:
-            raise WorkflowParameterError("grade threshold must be between 0 and 1 (or 0% and 100%)")
+            raise WorkflowParameterError(
+                "grade threshold must be between 0 and 1 (or 0% and 100%)"
+            )
         params["grade_threshold"] = threshold
     if isinstance(clip_len, (int, float)) and clip_len > 0:
         params["curator_clip_len_s"] = clip_len
@@ -2007,9 +2008,13 @@ def extract_data_factory_params(user_text: str) -> dict[str, Any]:
     accelerator = _requested_accelerator(text)
     if accelerator:
         params["accelerator"] = accelerator
-    if re.search(r"\bmotion\s+filter(?:ing)?\b.{0,20}\b(?:off|none|disabled)\b", text, re.I):
+    if re.search(
+        r"\bmotion\s+filter(?:ing)?\b.{0,20}\b(?:off|none|disabled)\b", text, re.I
+    ):
         params["curator_motion_filter"] = "disabled"
-    elif re.search(r"\bmotion\s+filter(?:ing)?\b.{0,20}\b(?:score|score-only)\b", text, re.I):
+    elif re.search(
+        r"\bmotion\s+filter(?:ing)?\b.{0,20}\b(?:score|score-only)\b", text, re.I
+    ):
         params["curator_motion_filter"] = "score-only"
 
     subject_match = _DATA_FACTORY_SUBJECT_RE.search(text)
@@ -2017,7 +2022,10 @@ def extract_data_factory_params(user_text: str) -> dict[str, Any]:
         subject = subject_match.group(1).strip(" .,\"'`")
         # Drop trailing fan-out/scenario phrasing that leaked into the subject.
         subject = re.sub(
-            r"\s+(?:and\s+)?(?:fan[\s-]?out|multiply|amplify).*$", "", subject, flags=re.IGNORECASE
+            r"\s+(?:and\s+)?(?:fan[\s-]?out|multiply|amplify).*$",
+            "",
+            subject,
+            flags=re.IGNORECASE,
         ).strip(" .,\"'`")
         if subject and len(subject) <= 120:
             params["augment_subject"] = subject
@@ -2084,9 +2092,9 @@ def extract_sim2real_params(user_text: str) -> dict[str, Any]:
     if gpu_count and gpu_count > 0:
         params["gpu_count"] = gpu_count
     for field, labels in _SIM2REAL_URI_FIELDS:
-        value = _named_uri(text, labels)
-        if value:
-            params[field] = value
+        uri_value = _named_uri(text, labels)
+        if uri_value:
+            params[field] = uri_value
     task = _named_text(text, r"isaac(?:\s+lab)?\s+task")
     if task:
         params["isaac_task"] = task
@@ -2099,15 +2107,19 @@ def extract_sim2real_params(user_text: str) -> dict[str, Any]:
 _DATA_FACTORY_DEFAULT_GPUS = 4
 
 
-def _data_factory_gpu_count(config: OrderedDict[str, Any], params: dict[str, Any]) -> int:
-    """Resolve the positive GPU accelerator count for a PAIDF run."""
+def _data_factory_gpu_count(
+    config: OrderedDict[str, Any], params: dict[str, Any]
+) -> int:
+    """Resolve the GPU accelerator count for a paidf run (>=1, <=8)."""
     gpus = params.get("gpu_count")
     if gpus:
         return max(1, int(gpus))
     return _DATA_FACTORY_DEFAULT_GPUS
 
 
-def _apply_data_factory_params(config: OrderedDict[str, Any], params: dict[str, Any]) -> None:
+def _apply_data_factory_params(
+    config: OrderedDict[str, Any], params: dict[str, Any]
+) -> None:
     """Overlay parsed chat knobs onto a paidf config (in place).
 
     Keeps ``variant_parallelism`` <= the GPU accelerator count so the fan-out
@@ -2140,11 +2152,23 @@ def _apply_data_factory_params(config: OrderedDict[str, Any], params: dict[str, 
     config["variant_parallelism"] = str(max(1, min(resolved_variants, gpu_count)))
 
 
-def _apply_sim2real_params(config: OrderedDict[str, Any], params: dict[str, Any]) -> None:
+def _apply_sim2real_params(
+    config: OrderedDict[str, Any], params: dict[str, Any]
+) -> None:
+    """Overlay only knobs exposed by the canonical compositional spec."""
+
     if "trigger_dataset_uri" in params and "trigger_uri" in config:
         config["trigger_uri"] = str(params["trigger_dataset_uri"])
     if "seed" in params and "envgen_seed" in config:
         config["envgen_seed"] = str(params["seed"])
+    if "success_threshold" in params and "threshold" in config:
+        config["threshold"] = str(params["success_threshold"])
+    if "heldout_env_count" in params:
+        for key in ("validation_count", "gold_count"):
+            if key in config:
+                config[key] = str(params["heldout_env_count"])
+    if "envgen_shard_count" in params and "shard_count" in config:
+        config["shard_count"] = str(params["envgen_shard_count"])
     for key in (
         "trigger_dataset_uri",
         "trigger_dataset_id",
@@ -2181,7 +2205,11 @@ def _infra_entry_key(
     name = str(entry.get("cluster_name") or entry.get("name") or "")
     project_match = bool(project and project.lower() in name.lower())
     return (
-        0 if bool(entry.get("selected") or entry.get("default") or entry.get("is_default")) else 1,
+        0
+        if bool(
+            entry.get("selected") or entry.get("default") or entry.get("is_default")
+        )
+        else 1,
         0 if project_match else 1,
         0 if str(entry.get("context") or entry.get("kubeconfig") or "").strip() else 1,
         name,
@@ -2189,7 +2217,9 @@ def _infra_entry_key(
     )
 
 
-def resolve_workflow_infrastructure(infrastructure: dict[str, Any] | None) -> dict[str, Any]:
+def resolve_workflow_infrastructure(
+    infrastructure: dict[str, Any] | None,
+) -> dict[str, Any]:
     """Select deterministic, real, non-secret workflow placement facts.
 
     Configured backends take precedence over locally cached kubeconfigs, which
@@ -2199,21 +2229,28 @@ def resolve_workflow_infrastructure(infrastructure: dict[str, Any] | None) -> di
     payload = infrastructure if isinstance(infrastructure, dict) else {}
     project = str(payload.get("project") or "").strip()
     configured = payload.get("configured")
-    entries = [item for item in configured if isinstance(item, dict)] if isinstance(configured, list) else []
+    entries = (
+        [item for item in configured if isinstance(item, dict)]
+        if isinstance(configured, list)
+        else []
+    )
     source = "configured"
     reason = ""
     if entries:
         entries.sort(key=lambda item: _infra_entry_key(item, project))
         entry = entries[0]
-        reason = (
-            f"selected configured backend deterministically from {len(entries)} candidate(s)"
-        )
+        reason = f"selected configured backend deterministically from {len(entries)} candidate(s)"
     else:
         local = payload.get("local_clusters")
-        local_entries = [
-            item for item in local
-            if isinstance(item, dict) and bool(item.get("kubeconfig_exists"))
-        ] if isinstance(local, list) else []
+        local_entries = (
+            [
+                item
+                for item in local
+                if isinstance(item, dict) and bool(item.get("kubeconfig_exists"))
+            ]
+            if isinstance(local, list)
+            else []
+        )
         if local_entries:
             local_entries.sort(key=lambda item: _infra_entry_key(item, project))
             entry = local_entries[0]
@@ -2221,15 +2258,21 @@ def resolve_workflow_infrastructure(infrastructure: dict[str, Any] | None) -> di
             reason = f"selected usable cached kubeconfig from {len(local_entries)} candidate(s)"
         else:
             cloud = payload.get("cloud_clusters")
-            cloud_entries = [item for item in cloud if isinstance(item, dict)] if isinstance(cloud, list) else []
+            cloud_entries = (
+                [item for item in cloud if isinstance(item, dict)]
+                if isinstance(cloud, list)
+                else []
+            )
             cloud_entries.sort(key=lambda item: _infra_entry_key(item, project))
             entry = cloud_entries[0] if cloud_entries else {}
             source = "cloud" if entry else "none"
             reason = (
                 "identified cloud cluster from live discovery; configure its context/kubeconfig before submit"
-                if entry else "no configured, local, or cloud Kubernetes backend is available"
+                if entry
+                else "no configured, local, or cloud Kubernetes backend is available"
             )
-    raw = entry.get("raw") if isinstance(entry.get("raw"), dict) else {}
+    raw_value = entry.get("raw")
+    raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
     available_raw = raw.get("available_accelerators")
     available = (
         [str(value).strip() for value in available_raw if str(value).strip()]
@@ -2244,12 +2287,16 @@ def resolve_workflow_infrastructure(infrastructure: dict[str, Any] | None) -> di
         or (available[0] if len(available) == 1 else "")
         or ""
     ).strip()
-    profile = str(entry.get("gpu_profile") or raw.get("gpu_profile") or "").strip().lower()
+    profile = (
+        str(entry.get("gpu_profile") or raw.get("gpu_profile") or "").strip().lower()
+    )
     if not accelerator and profile in {"rtxpro", "rtx6000", "rtx-pro"}:
         accelerator = "RTXPRO6000"
     return {
         "project": project,
-        "cluster_name": str(entry.get("cluster_name") or entry.get("name") or "").strip(),
+        "cluster_name": str(
+            entry.get("cluster_name") or entry.get("name") or ""
+        ).strip(),
         "context": str(entry.get("context") or "").strip(),
         "kubeconfig": str(entry.get("kubeconfig") or "").strip(),
         "accelerator": accelerator,
@@ -2257,11 +2304,21 @@ def resolve_workflow_infrastructure(infrastructure: dict[str, Any] | None) -> di
         "gpu_profile": profile,
         "source": source,
         "selection_reason": reason,
-        "k8s_namespace": str(raw.get("namespace") or raw.get("k8s_namespace") or "").strip(),
-        "k8s_service_account": str(raw.get("service_account") or raw.get("k8s_service_account") or "").strip(),
-        "k8s_image_pull_secrets": str(raw.get("image_pull_secrets") or raw.get("k8s_image_pull_secrets") or "").strip(),
-        "k8s_env_secret_names": str(raw.get("env_secret_names") or raw.get("k8s_env_secret_names") or "").strip(),
-        "k8s_gpu_product": str(raw.get("gpu_product") or raw.get("k8s_gpu_product") or "").strip(),
+        "k8s_namespace": str(
+            raw.get("namespace") or raw.get("k8s_namespace") or ""
+        ).strip(),
+        "k8s_service_account": str(
+            raw.get("service_account") or raw.get("k8s_service_account") or ""
+        ).strip(),
+        "k8s_image_pull_secrets": str(
+            raw.get("image_pull_secrets") or raw.get("k8s_image_pull_secrets") or ""
+        ).strip(),
+        "k8s_env_secret_names": str(
+            raw.get("env_secret_names") or raw.get("k8s_env_secret_names") or ""
+        ).strip(),
+        "k8s_gpu_product": str(
+            raw.get("gpu_product") or raw.get("k8s_gpu_product") or ""
+        ).strip(),
         "augment_image": str(raw.get("augment_image") or "").strip(),
         "envgen_image": str(raw.get("envgen_image") or "").strip(),
         "policy_image": str(raw.get("policy_image") or "").strip(),
@@ -2297,7 +2354,11 @@ def _accelerator_family(accelerator: str) -> str:
         "",
         str(accelerator or "").split(":", 1)[0],
     ).upper()
-    if compact == "RTX6000" or compact.startswith("RTXPRO6000") or "RTX6000BLACKWELL" in compact:
+    if (
+        compact == "RTX6000"
+        or compact.startswith("RTXPRO6000")
+        or "RTX6000BLACKWELL" in compact
+    ):
         return "RTXPRO6000"
     return compact
 
@@ -2323,7 +2384,9 @@ def _apply_workflow_infrastructure(
     count = int(params.get("gpu_count") or current_count)
     requested = str(params.get("accelerator") or "").strip()
     configured = str(resolved.get("accelerator") or "").strip()
-    accelerator = requested or configured or (current if params.get("gpu_count") else "")
+    accelerator = (
+        requested or configured or (current if params.get("gpu_count") else "")
+    )
     if accelerator:
         gpu["accelerators"] = _accelerator_with_count(accelerator, count)
     elif infrastructure is not None:
@@ -2356,8 +2419,13 @@ def _build_spec(
     params: dict[str, Any] | None = None,
     infrastructure: dict[str, Any] | None = None,
 ) -> OrderedDict[str, Any]:
-    catalog = _workflow_specs()
     normalized = _normalize_template(template)
+    if normalized in {"vlm-rl-loop", "sim2real-staged"}:
+        canonical = _canonical_sim2real_spec(bucket=bucket, name=name)
+        if params:
+            _apply_sim2real_params(canonical["config"], params)
+        return canonical
+    catalog = _workflow_specs()
     spec = catalog[normalized]
     metadata_name = str(name or spec["name"])
     description = _FoldedStr(str(spec["description"]))
@@ -2377,7 +2445,11 @@ def _build_spec(
             elif key == "run" and isinstance(value, dict):
                 run_payload: OrderedDict[str, Any] = OrderedDict()
                 for run_key, run_value in value.items():
-                    if run_key == "shell" and isinstance(run_value, str) and "\n" in run_value:
+                    if (
+                        run_key == "shell"
+                        and isinstance(run_value, str)
+                        and "\n" in run_value
+                    ):
                         run_payload[run_key] = _LiteralStr(run_value)
                     else:
                         run_payload[run_key] = run_value
@@ -2423,14 +2495,43 @@ def _build_spec(
         ):
             if resolved_infra.get(key):
                 config[key] = resolved_infra[key]
-        config["k8s_gpu_product"] = (
-            resolved_infra.get("k8s_gpu_product")
-            or _gpu_product_for_accelerator(accelerator)
-        )
+        config["k8s_gpu_product"] = resolved_infra.get(
+            "k8s_gpu_product"
+        ) or _gpu_product_for_accelerator(accelerator)
     root["resources"] = resources
     root["initial"] = spec["initial"]
     root["states"] = states
     return root
+
+
+def _canonical_sim2real_spec(*, bucket: str, name: str | None) -> OrderedDict[str, Any]:
+    """Load the one operator Sim2Real graph instead of generating a stub twin."""
+
+    if _EMBEDDED_CANONICAL_SIM2REAL_YAML:
+        payload = yaml.safe_load(_EMBEDDED_CANONICAL_SIM2REAL_YAML)
+    else:
+        here = Path(__file__).resolve()
+        candidates = (
+            here.parents[3]
+            / "workflows"
+            / "workbench"
+            / "npa-workflows"
+            / "sim2real.yaml",
+            here.parents[1]
+            / "workflows"
+            / "workbench"
+            / "npa-workflows"
+            / "sim2real.yaml",
+        )
+        path = next(
+            (candidate for candidate in candidates if candidate.is_file()), None
+        )
+        if path is None:
+            raise FileNotFoundError("canonical packaged sim2real.yaml is missing")
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    payload["metadata"]["name"] = str(name or "sim2real")
+    payload["config"]["bucket"] = str(bucket)
+    return OrderedDict(payload)
 
 
 def _insert_config_spacing(yaml_text: str) -> str:
@@ -2440,13 +2541,19 @@ def _insert_config_spacing(yaml_text: str) -> str:
         if re.match(r"^\s{2}[A-Za-z0-9_-]*_uri:\s", line):
             first_uri_idx = idx
             break
-    if first_uri_idx is not None and first_uri_idx > 0 and lines[first_uri_idx - 1].strip():
+    if (
+        first_uri_idx is not None
+        and first_uri_idx > 0
+        and lines[first_uri_idx - 1].strip()
+    ):
         lines.insert(first_uri_idx, "")
     return "\n".join(lines).rstrip() + "\n"
 
 
 def _render_spec_yaml(spec: OrderedDict[str, Any]) -> str:
-    rendered = yaml.dump(_to_builtin(spec), Dumper=_WorkflowDumper, sort_keys=False, width=96)
+    rendered = yaml.dump(
+        _to_builtin(spec), Dumper=_WorkflowDumper, sort_keys=False, width=96
+    )
     return _insert_config_spacing(rendered)
 
 
@@ -2460,7 +2567,9 @@ def _to_builtin(value: Any) -> Any:
     return value
 
 
-def generate_workflow_yaml(template: str = "two-step", *, bucket: str = "example-bucket") -> str:
+def generate_workflow_yaml(
+    template: str = "two-step", *, bucket: str = "example-bucket"
+) -> str:
     """Render npa.workflow YAML from a declarative template catalog."""
     normalized = _normalize_template(template)
     spec = _build_spec(normalized, bucket=bucket, name=None)
@@ -2483,7 +2592,9 @@ def generate_workflow_draft(
         selected_template = _normalize_template(template)
         selection = {"template": selected_template, "scores": {selected_template: 1}}
     else:
-        selection = choose_workflow_template(user_text=user_text, intent=intent, capabilities=capabilities)
+        selection = choose_workflow_template(
+            user_text=user_text, intent=intent, capabilities=capabilities
+        )
         selected_template = str(selection["template"])
     parameter_errors: list[str] = []
     try:
@@ -2502,7 +2613,9 @@ def generate_workflow_draft(
     resolved_bucket = str(bucket or "").strip()
     if not resolved_bucket:
         resolved_bucket = "<configure-s3-bucket>"
-        warnings.append("No agent S3 bucket is configured; config.bucket is an explicit placeholder.")
+        warnings.append(
+            "No agent S3 bucket is configured; config.bucket is an explicit placeholder."
+        )
     requested_accel = str((params or {}).get("accelerator") or "").strip()
     configured_accel = str(resolved_infra.get("accelerator") or "").strip()
     available_accels = {
@@ -2524,9 +2637,14 @@ def generate_workflow_draft(
             context_errors.append(
                 f"requested accelerator {requested_base} is not the configured profile {configured_base}"
             )
-    if selected_template == "sim2real-staged" and str((params or {}).get("sim_backend") or "isaac") == "isaac":
+    if (
+        selected_template == "sim2real-staged"
+        and str((params or {}).get("sim_backend") or "isaac") == "isaac"
+    ):
         selected_accel = (requested_accel or configured_accel).upper()
-        if selected_accel and any(name in selected_accel for name in ("H100", "H200", "B200", "B300")):
+        if selected_accel and any(
+            name in selected_accel for name in ("H100", "H200", "B200", "B300")
+        ):
             context_errors.append(
                 "Isaac Sim2Real requires an RT-core accelerator (L40S or RTX PRO 6000)"
             )
@@ -2539,6 +2657,15 @@ def generate_workflow_draft(
             "The configured Kubernetes backend does not declare an accelerator; "
             "the generated resource uses an explicit placeholder."
         )
+    if selected_template == "sim2real-staged" and infrastructure is not None:
+        if not bool((infrastructure or {}).get("has_infra")):
+            context_errors.append(
+                "a configured Kubernetes backend is required before Sim2Real submit"
+            )
+        elif not configured_accel and not requested_accel:
+            context_errors.append(
+                "the selected Kubernetes backend must declare an RT-core accelerator"
+            )
     selection_reason = str(resolved_infra.get("selection_reason") or "").strip()
     if selection_reason:
         warnings.append(selection_reason)
@@ -2564,7 +2691,10 @@ def generate_workflow_draft(
             tool_refs=tool_refs,
         )
     else:
-        plan = {"ok": False, "error": str(validation.get("error") or "validation failed")}
+        plan = {
+            "ok": False,
+            "error": str(validation.get("error") or "validation failed"),
+        }
     runnable = bool(validation.get("ok") and plan.get("ok") and not context_errors)
     return {
         "template": selected_template,
@@ -2590,10 +2720,40 @@ _WORKFLOW_NAME_RE = re.compile(
 )
 _AUTHOR_STOPWORDS = frozenset(
     {
-        "write", "me", "a", "an", "the", "step", "steps", "npa", "yaml", "spec",
-        "workflow", "pipeline", "that", "uses", "use", "using", "with", "and",
-        "for", "to", "of", "create", "generate", "build", "make", "draft",
-        "compose", "please", "give", "show", "new", "simple", "minimal", "example",
+        "write",
+        "me",
+        "a",
+        "an",
+        "the",
+        "step",
+        "steps",
+        "npa",
+        "yaml",
+        "spec",
+        "workflow",
+        "pipeline",
+        "that",
+        "uses",
+        "use",
+        "using",
+        "with",
+        "and",
+        "for",
+        "to",
+        "of",
+        "create",
+        "generate",
+        "build",
+        "make",
+        "draft",
+        "compose",
+        "please",
+        "give",
+        "show",
+        "new",
+        "simple",
+        "minimal",
+        "example",
     }
 )
 
@@ -2716,7 +2876,9 @@ def _author_semantic_stages(goal: str, n_steps: int | None = None) -> list[str]:
             if positions:
                 mentions.append((min(positions), canonical))
         mentions.sort()
-        return [canonical for _, canonical in mentions][:6] if len(mentions) >= 2 else []
+        return (
+            [canonical for _, canonical in mentions][:6] if len(mentions) >= 2 else []
+        )
     stages = [part.strip(" ,;:") for part in parts if part.strip(" ,;:")]
     return stages[:6]
 
@@ -2747,7 +2909,11 @@ def _semantic_stage_score(stage: str, tool_ref: str) -> int:
 
 def _flow_binding_kind(key: str, flag: str, role: str) -> str:
     text = f"{key} {flag}".lower()
-    if "checkpoint" in text or "policy" in text or (role == "output" and "train" in text):
+    if (
+        "checkpoint" in text
+        or "policy" in text
+        or (role == "output" and "train" in text)
+    ):
         return "checkpoint"
     if any(term in text for term in ("eval", "report", "metric", "score", "benchmark")):
         return "report"
@@ -2779,7 +2945,8 @@ def _tool_flow_bindings(tool_ref: str) -> list[dict[str, str]]:
         output_flag = (
             "output" in flag
             or flag.startswith("--out-")
-            or flag in {
+            or flag
+            in {
                 "--artifacts-s3-uri",
                 "--checkpoint-s3-uri",
                 "--rollouts-s3-uri",
@@ -2815,8 +2982,16 @@ def _tool_flow_bindings(tool_ref: str) -> list[dict[str, str]]:
 
 
 def _best_flow_link(upstream: str, downstream: str) -> dict[str, Any]:
-    outputs = [binding for binding in _tool_flow_bindings(upstream) if binding["role"] == "output"]
-    inputs = [binding for binding in _tool_flow_bindings(downstream) if binding["role"] == "input"]
+    outputs = [
+        binding
+        for binding in _tool_flow_bindings(upstream)
+        if binding["role"] == "output"
+    ]
+    inputs = [
+        binding
+        for binding in _tool_flow_bindings(downstream)
+        if binding["role"] == "input"
+    ]
     best: dict[str, Any] = {}
     best_score = 0
     for output in outputs:
@@ -2858,16 +3033,18 @@ def _select_semantic_tool_refs(
         return []
     candidates: list[list[tuple[int, str]]] = []
     for stage in stages:
-        ranked = [
-            (_semantic_stage_score(stage, ref), ref)
-            for ref in catalog
-        ]
-        ranked = sorted((item for item in ranked if item[0] > 0), key=lambda item: (-item[0], item[1]))
+        ranked = [(_semantic_stage_score(stage, ref), ref) for ref in catalog]
+        ranked = sorted(
+            (item for item in ranked if item[0] > 0),
+            key=lambda item: (-item[0], item[1]),
+        )
         if not ranked:
             return []
         candidates.append(ranked[:24])
 
-    paths: list[tuple[int, list[str]]] = [(score, [ref]) for score, ref in candidates[0]]
+    paths: list[tuple[int, list[str]]] = [
+        (score, [ref]) for score, ref in candidates[0]
+    ]
     for stage_candidates in candidates[1:]:
         next_paths: list[tuple[int, list[str]]] = []
         for path_score, path in paths:
@@ -2899,9 +3076,26 @@ def _author_placeholder_for(key: str) -> str:
         return "example-bucket"
     if low == "prefix":
         return "npa-workflow/{{run.id}}"
-    if low.endswith("_uri") or low.endswith("_path") or "uri" in low or low == "output_root":
+    if (
+        low.endswith("_uri")
+        or low.endswith("_path")
+        or "uri" in low
+        or low == "output_root"
+    ):
         return "s3://{{config.bucket}}/{{config.prefix}}/" + key + "/"
-    if any(tok in low for tok in ("count", "iterations", "num", "size", "timeout", "interval", "episodes", "steps")):
+    if any(
+        tok in low
+        for tok in (
+            "count",
+            "iterations",
+            "num",
+            "size",
+            "timeout",
+            "interval",
+            "episodes",
+            "steps",
+        )
+    ):
         return "1"
     return "<" + key + ">"
 
@@ -2983,9 +3177,7 @@ def _build_authored_spec(
                 "",
             )
         if output_key:
-            state["outputs"] = [
-                OrderedDict({"uri": "{{config." + output_key + "}}"})
-            ]
+            state["outputs"] = [OrderedDict({"uri": "{{config." + output_key + "}}"})]
         if idx < len(selected) - 1:
             state["next"] = state_names[idx + 1]
         else:
@@ -2996,7 +3188,12 @@ def _build_authored_spec(
     root["apiVersion"] = API_VERSION
     root["kind"] = "Workflow"
     root["metadata"] = OrderedDict(
-        {"name": str(name), "description": _FoldedStr(f"Authored {len(selected)}-state npa.workflow composed from the live tool catalog.")}
+        {
+            "name": str(name),
+            "description": _FoldedStr(
+                f"Authored {len(selected)}-state npa.workflow composed from the live tool catalog."
+            ),
+        }
     )
     root["config"] = config
     root["initial"] = state_names[0]
@@ -3047,7 +3244,13 @@ def author_workflow_from_goal(
     """
     catalog = frozenset(str(t) for t in (tool_refs or []))
     if not catalog:
-        return {"ok": False, "runnable": False, "yaml": "", "error": "no toolRefs available in the live catalog", "tool_refs": []}
+        return {
+            "ok": False,
+            "runnable": False,
+            "yaml": "",
+            "error": "no toolRefs available in the live catalog",
+            "tool_refs": [],
+        }
     explicit_refs = list(
         dict.fromkeys(re.findall(r"\bworkbench\.[A-Za-z0-9_.-]+", str(goal or "")))
     )
@@ -3086,11 +3289,15 @@ def author_workflow_from_goal(
     else:
         selected, matched = _select_author_tool_refs(goal, catalog, n_steps)
     if not selected:
-        return {"ok": False, "runnable": False, "yaml": "", "error": "could not select any toolRef from the catalog", "tool_refs": []}
+        return {
+            "ok": False,
+            "runnable": False,
+            "yaml": "",
+            "error": "could not select any toolRef from the catalog",
+            "tool_refs": [],
+        }
     resolved_name = (
-        str(name or "").strip()
-        or extract_workflow_name(goal)
-        or "authored-workflow"
+        str(name or "").strip() or extract_workflow_name(goal) or "authored-workflow"
     )
     resolved_name = _slugify_workflow_name(resolved_name) or "authored-workflow"
     described = _infer_stage_count_from_goal(goal) or n_steps
@@ -3120,9 +3327,14 @@ def author_workflow_from_goal(
         yaml_text = _render_spec_yaml(spec)
         validation = validate_workflow_yaml_text(yaml_text, tool_refs=catalog)
         if validation.get("ok"):
-            plan = plan_workflow_yaml_text(yaml_text, run_id="authored-workflow-plan", tool_refs=catalog)
+            plan = plan_workflow_yaml_text(
+                yaml_text, run_id="authored-workflow-plan", tool_refs=catalog
+            )
         else:
-            plan = {"ok": False, "error": str(validation.get("error") or "validation failed")}
+            plan = {
+                "ok": False,
+                "error": str(validation.get("error") or "validation failed"),
+            }
         if validation.get("ok") and plan.get("ok"):
             break
         # Repair: add any config token the planner/validator flagged as missing.
@@ -3133,7 +3345,9 @@ def author_workflow_from_goal(
         config_keys.extend(new_keys)
 
     unresolved = sorted(set(re.findall(r"<[^<>\n]+>", yaml_text)))
-    runnable = bool(validation.get("ok") and plan.get("ok") and not unresolved and not padded)
+    runnable = bool(
+        validation.get("ok") and plan.get("ok") and not unresolved and not padded
+    )
     return {
         "ok": runnable,
         "runnable": runnable,
@@ -3153,8 +3367,16 @@ def author_workflow_from_goal(
         "desired_steps": n_steps,
         "data_flow": flow_links,
         "context_errors": (
-            (["unresolved configuration placeholders: " + ", ".join(unresolved)] if unresolved else [])
-            + (["catalog composition contains unmatched placeholder stages"] if padded else [])
+            (
+                ["unresolved configuration placeholders: " + ", ".join(unresolved)]
+                if unresolved
+                else []
+            )
+            + (
+                ["catalog composition contains unmatched placeholder stages"]
+                if padded
+                else []
+            )
         ),
     }
 
@@ -3197,11 +3419,11 @@ def generate_sim2real_two_step_yaml(
 def generate_sim2real_staged_yaml(
     *,
     bucket: str = "example-bucket",
-    name: str = "sim2real-staged",
+    name: str = "sim2real",
     user_text: str = "",
     infrastructure: dict[str, Any] | None = None,
 ) -> str:
-    """Render the real staged Sim2Real engine workflow with chat parameter overlays."""
+    """Render the canonical compositional Sim2Real workflow with chat overlays."""
     params = extract_sim2real_params(user_text) if user_text else None
     return _render_spec_yaml(
         _build_spec(
@@ -3226,7 +3448,7 @@ def generate_sim2real_loop_gate_yaml(
 def generate_vlm_rl_loop_yaml(
     *,
     bucket: str = "example-bucket",
-    name: str = "sim2real-vlm-rl",
+    name: str = "sim2real",
 ) -> str:
     """Compatibility wrapper for VLM-RL loop template generation."""
     return _render_spec_yaml(_build_spec("vlm-rl-loop", bucket=bucket, name=name))
@@ -3238,7 +3460,9 @@ def generate_token_factory_gate_yaml(
     name: str = "tokenfactory-cosmos-gate",
 ) -> str:
     """Compatibility wrapper for token-factory gate template generation."""
-    return _render_spec_yaml(_build_spec("token-factory-gate", bucket=bucket, name=name))
+    return _render_spec_yaml(
+        _build_spec("token-factory-gate", bucket=bucket, name=name)
+    )
 
 
 def generate_isaac_byof_yaml(
@@ -3264,8 +3488,12 @@ def generate_gpu_cross_region_yaml(
     bucket: str = "example-bucket",
     name: str = "sim2real-gpu-cross-region",
 ) -> str:
-    """Compatibility wrapper for tenant-scoped cross-region GPU template generation."""
-    return _render_spec_yaml(_build_spec("gpu-cross-region", bucket=bucket, name=name))
+    """Reject the retired stub template instead of advertising fake GPU work."""
+    del bucket, name
+    raise ValueError(
+        "gpu-cross-region was a demo with stub Sim2Real components and is retired; "
+        "author a generic npa.workflow with real solution toolRefs instead"
+    )
 
 
 def generate_rl_policy_training_yaml(
@@ -3345,26 +3573,39 @@ def format_workflow_chat_reply(
 ) -> str:
     """Markdown reply for chat when a workflow YAML is generated."""
     name = str(validation.get("name") or "unnamed")
-    status = str(validation.get("status") or ("valid" if validation.get("ok") else "invalid"))
+    status = str(
+        validation.get("status") or ("valid" if validation.get("ok") else "invalid")
+    )
     states = validation.get("states") or []
-    state_label = ", ".join(str(s) for s in states) if isinstance(states, list) else str(states)
+    state_label = (
+        ", ".join(str(s) for s in states) if isinstance(states, list) else str(states)
+    )
     resolved_plan = plan if isinstance(plan, dict) else {}
     plan_ok = bool(resolved_plan.get("ok"))
-    resolved_runnable = bool(runnable) if runnable is not None else bool(validation.get("ok") and plan_ok)
-    plan_step_count = len(resolved_plan.get("steps") or []) if isinstance(resolved_plan.get("steps"), list) else 0
+    resolved_runnable = (
+        bool(runnable)
+        if runnable is not None
+        else bool(validation.get("ok") and plan_ok)
+    )
+    plan_step_count = (
+        len(resolved_plan.get("steps") or [])
+        if isinstance(resolved_plan.get("steps"), list)
+        else 0
+    )
     _desc_map = {
         "vlm-rl-loop": "VLM-RL outer/inner loop with promote/loop-back gate",
         "token-factory-gate": "Token Factory scene→augment→VLM quality gate loop",
         "loop-gate": "Sim2Real loop + decision gate pipeline",
         "byof": "Generic BYOF workflow (OSS repo → Ubuntu/Isaac base image → workload on Kubernetes)",
-        "gpu-cross-region": "Tenant-scoped GPU workflow across two project/region targets",
         "rl-policy-success": "Simulation RL policy training with success gate and publish/fail outcomes",
         "physical-ai-data-factory": (
             "Physical AI Data Factory: annotate → Cosmos Transfer augment & multiply "
             "(fan out scenarios across GPUs) → Cosmos Evaluator gate → Cosmos Curator "
             "→ FiftyOne review → Rerun visualize"
         ),
-        "sim2real-staged": "Real maintained 14-stage Sim2Real VLM-RL engine",
+        "sim2real-staged": (
+            "Canonical compositional 14-stage Sim2Real VLM-RL workflow"
+        ),
         "two-step": "2-step Sim2Real pipeline",
     }
     t = str(template or "two-step").strip().lower()
@@ -3398,7 +3639,9 @@ def format_workflow_chat_reply(
         drop_note = str(validation.get("dropped_stages_note") or "").strip()
     if drop_note:
         lines.insert(6, f"- **note**: {drop_note}")
-    for warning in reversed([str(item) for item in (warnings or []) if str(item).strip()]):
+    for warning in reversed(
+        [str(item) for item in (warnings or []) if str(item).strip()]
+    ):
         lines.insert(6, f"- **infrastructure**: {warning}")
     if not validation.get("ok"):
         err = str(validation.get("error") or "validation failed")
@@ -3436,7 +3679,9 @@ def _validate_with_npa(yaml_text: str) -> dict[str, Any]:
     }
 
 
-def _plan_with_npa(yaml_text: str, *, run_id: str, assume_decision: str) -> dict[str, Any]:
+def _plan_with_npa(
+    yaml_text: str, *, run_id: str, assume_decision: str
+) -> dict[str, Any]:
     from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan, load_spec
 
     path = _write_temp_yaml(_npa_compatible_yaml(yaml_text))
@@ -3452,7 +3697,9 @@ def _plan_with_npa(yaml_text: str, *, run_id: str, assume_decision: str) -> dict
     return payload
 
 
-def _validate_lightweight(yaml_text: str, *, tool_refs: frozenset[str] | None) -> dict[str, Any]:
+def _validate_lightweight(
+    yaml_text: str, *, tool_refs: frozenset[str] | None
+) -> dict[str, Any]:
     import yaml
 
     try:
@@ -3460,7 +3707,11 @@ def _validate_lightweight(yaml_text: str, *, tool_refs: frozenset[str] | None) -
     except yaml.YAMLError as exc:
         return {"ok": False, "status": "invalid", "error": f"invalid YAML: {exc}"}
     if not isinstance(data, dict):
-        return {"ok": False, "status": "invalid", "error": "workflow spec must be a mapping"}
+        return {
+            "ok": False,
+            "status": "invalid",
+            "error": "workflow spec must be a mapping",
+        }
 
     api_version = str(data.get("apiVersion") or "")
     if api_version not in _SUPPORTED_API_VERSIONS:
@@ -3474,22 +3725,42 @@ def _validate_lightweight(yaml_text: str, *, tool_refs: frozenset[str] | None) -
         }
 
     metadata = data.get("metadata") or {}
-    name = str(metadata.get("name") or "unnamed") if isinstance(metadata, dict) else "unnamed"
+    name = (
+        str(metadata.get("name") or "unnamed")
+        if isinstance(metadata, dict)
+        else "unnamed"
+    )
     states_raw = data.get("states") or {}
     if not isinstance(states_raw, dict) or not states_raw:
-        return {"ok": False, "status": "invalid", "error": "states must be a non-empty mapping"}
+        return {
+            "ok": False,
+            "status": "invalid",
+            "error": "states must be a non-empty mapping",
+        }
 
     initial = str(data.get("initial") or next(iter(states_raw)))
     if initial not in states_raw:
-        return {"ok": False, "status": "invalid", "error": f"initial state {initial!r} not found"}
+        return {
+            "ok": False,
+            "status": "invalid",
+            "error": f"initial state {initial!r} not found",
+        }
 
     catalog = tool_refs or frozenset()
     for state_name, entry in states_raw.items():
         if not isinstance(entry, dict):
-            return {"ok": False, "status": "invalid", "error": f"state {state_name!r} must be a mapping"}
+            return {
+                "ok": False,
+                "status": "invalid",
+                "error": f"state {state_name!r} must be a mapping",
+            }
         tool_ref = str(entry.get("toolRef") or "").strip()
         if tool_ref and catalog and tool_ref not in catalog:
-            return {"ok": False, "status": "invalid", "error": f"unknown toolRef {tool_ref!r}"}
+            return {
+                "ok": False,
+                "status": "invalid",
+                "error": f"unknown toolRef {tool_ref!r}",
+            }
         for edge in _state_edges(entry):
             if edge not in states_raw:
                 return {
@@ -3509,10 +3780,15 @@ def _validate_lightweight(yaml_text: str, *, tool_refs: frozenset[str] | None) -
     }
 
 
-def _plan_lightweight(yaml_text: str, *, run_id: str, tool_refs: frozenset[str] | None) -> dict[str, Any]:
+def _plan_lightweight(
+    yaml_text: str, *, run_id: str, tool_refs: frozenset[str] | None
+) -> dict[str, Any]:
     validation = _validate_lightweight(yaml_text, tool_refs=tool_refs)
     if not validation.get("ok"):
-        return {"ok": False, "error": str(validation.get("error") or "validation failed")}
+        return {
+            "ok": False,
+            "error": str(validation.get("error") or "validation failed"),
+        }
 
     import yaml
 
@@ -3520,7 +3796,11 @@ def _plan_lightweight(yaml_text: str, *, run_id: str, tool_refs: frozenset[str] 
     api_version = str(data.get("apiVersion") or API_VERSION)
     states_raw = data.get("states") or {}
     metadata = data.get("metadata") or {}
-    name = str(metadata.get("name") or "unnamed") if isinstance(metadata, dict) else "unnamed"
+    name = (
+        str(metadata.get("name") or "unnamed")
+        if isinstance(metadata, dict)
+        else "unnamed"
+    )
     initial = str(data.get("initial") or next(iter(states_raw)))
     resolved_run_id = run_id or f"{name}-plan"
 
@@ -3571,7 +3851,9 @@ def _state_edges(entry: dict[str, Any]) -> list[str]:
     elif isinstance(transitions, list):
         for item in transitions:
             if isinstance(item, dict):
-                label = str(item.get("next") or item.get("target") or item.get("goto") or "").strip()
+                label = str(
+                    item.get("next") or item.get("target") or item.get("goto") or ""
+                ).strip()
                 if label:
                     edges.append(label)
 
@@ -3588,7 +3870,9 @@ def _state_edges(entry: dict[str, Any]) -> list[str]:
 
 
 def _write_temp_yaml(yaml_text: str) -> Path:
-    handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".yaml", delete=False)
+    handle = tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", suffix=".yaml", delete=False
+    )
     try:
         handle.write(yaml_text)
         handle.flush()
