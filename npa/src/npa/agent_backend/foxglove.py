@@ -30,6 +30,7 @@ import secrets
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode, urlparse
 
 # Kept in sync with npa.workbench.foxglove by npa/tests/cli/test_agent_foxglove.py
@@ -490,7 +491,13 @@ def data_source_for_state(
     published = str(state.get("foxglove_url") or "").strip()
     if published:
         urls = [_absolute(published, origin)]
-        return remote_file_data_source(urls)
+        start_ns, end_ns = _recording_time_bounds(state)
+        start_time = (
+            min(end_ns, start_ns + 250_000_000) / 1_000_000_000
+            if start_ns > 0 and end_ns >= start_ns
+            else None
+        )
+        return remote_file_data_source(urls, start_time=start_time)
     # A live URL set for this session (POST /api/foxglove/live) wins over the
     # deploy-time default; session state survives a backend restart, the process
     # environment does not.
@@ -511,6 +518,19 @@ def _absolute(url: str, origin: str) -> str:
     if not base:
         return raw
     return f"{base}{raw}" if raw.startswith("/") else f"{base}/{raw}"
+
+
+def _recording_time_bounds(state: Mapping[str, Any]) -> tuple[int, int]:
+    provenance = state.get("canonical_mcap_provenance")
+    if not isinstance(provenance, dict):
+        return 0, 0
+    try:
+        return (
+            int(provenance.get("start_time_ns") or 0),
+            int(provenance.get("end_time_ns") or 0),
+        )
+    except (TypeError, ValueError):
+        return 0, 0
 
 
 def _truthy(value: str, *, default: bool = True) -> bool:
@@ -578,8 +598,13 @@ def resolve_foxglove_config(
     self_hosted_recording = str(
         state.get("mcap_uri") and LICHTBLICK_RECORDING_PATH or ""
     )
+    start_time_ns, end_time_ns = _recording_time_bounds(state)
     self_hosted_url = (
-        self_hosted_viewer_url(self_hosted_recording)
+        self_hosted_viewer_url(
+            self_hosted_recording,
+            start_time_ns=start_time_ns,
+            end_time_ns=end_time_ns,
+        )
         if backend == FOXGLOVE_BACKEND_SELF_HOSTED
         else ""
     )

@@ -2366,7 +2366,7 @@ def _build_spec(
     config.update(spec["config_uri"])
     if normalized == "physical-ai-data-factory" and params:
         _apply_data_factory_params(config, params)
-    if normalized in {"sim2real-staged", "two-step"} and params:
+    if normalized in {"sim2real-staged", "two-step", "vlm-rl-loop"} and params:
         _apply_sim2real_params(config, params)
     states = OrderedDict()
     for state_name, state_spec in spec["states"].items():
@@ -2489,7 +2489,7 @@ def generate_workflow_draft(
     try:
         if selected_template == "physical-ai-data-factory":
             params = extract_data_factory_params(user_text)
-        elif selected_template in {"sim2real-staged", "two-step"}:
+        elif selected_template in {"sim2real-staged", "two-step", "vlm-rl-loop"}:
             params = extract_sim2real_params(user_text)
         else:
             params = None

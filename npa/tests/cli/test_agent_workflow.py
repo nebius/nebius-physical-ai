@@ -1127,6 +1127,23 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "sim2real-two-step" in default
 
 
+def test_vlm_rl_draft_applies_explicit_accelerator_without_live_infra() -> None:
+    draft = generate_workflow_draft(
+        template="vlm-rl-loop",
+        user_text=(
+            "create a VLM/RL outer loop with an RTX PRO 6000 accelerator and 1 GPU"
+        ),
+        bucket="run-bucket",
+        infrastructure={"has_infra": False},
+    )
+
+    assert draft["runnable"] is True
+    spec = yaml.safe_load(draft["yaml"])
+    assert spec["resources"]["gpu"]["accelerators"] == (
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    )
+
+
 def test_choose_workflow_template_by_intent_and_text() -> None:
     selected = choose_workflow_template(
         user_text="create a multi-step outer loop with inner loop gate",

@@ -679,6 +679,8 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
         ("retrieval", "def build_lance_store"),
         ("trace", "def analyze_traces"),
         ("artifact_routes", "def register_artifact_routes"),
+        ("canonical_mcap", "def prepare_canonical_mcap"),
+        ("foxglove_cloud", "class FoxgloveCloudClient"),
     ],
 )
 def test_shipped_agent_backend_modules_compile(monkeypatch, module, marker) -> None:

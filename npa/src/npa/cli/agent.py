@@ -1094,6 +1094,7 @@ def _bootstrap_agent_stack(
     llm_models: list[str] | tuple[str, ...] = DEFAULT_LLM_MODELS,
     tf_api_key: str = "",
     nebius_ai_key: str = "",
+    foxglove_api_token: str = "",
     service_account_id: str = "",
     s3_bucket: str = "",
     s3_prefix: str = "",
@@ -1347,6 +1348,8 @@ from npa.cli.agent_resources import (
 {_AGENT_RRD_PROXY_EMBED}
 
 # Foxglove viewer helpers + routes are SHIPPED modules (see agent_backend/).
+from agent_backend.canonical_mcap import prepare_canonical_mcap
+from agent_backend.canonical_mcap import clear_cross_run_mcap_state
 from agent_backend.foxglove import (
     convert_run_request,
     describe_foxglove_context,
@@ -1354,7 +1357,9 @@ from agent_backend.foxglove import (
     is_foxglove_artifact,
     publish_recording,
     resolve_foxglove_config,
+    self_hosted_viewer_url,
 )
+from agent_backend.foxglove_cloud import ensure_recording_and_layout_from_credentials
 from agent_backend.foxglove_routes import FoxgloveDeps, register_foxglove_routes
 
 RERUN_CAPABILITY_NAME_RE = re.compile(r"cap-[A-Za-z0-9_-]{{43}}\\.rrd")
@@ -1409,19 +1414,27 @@ def _lichtblick_recording_url(*, cache_bust: bool = False) -> str:
 
 
 def _lichtblick_iframe_url(
-    *, mcap_url: str = "", mcap_size: int = 0, primary_camera: str = ""
+    *,
+    mcap_url: str = "",
+    mcap_size: int = 0,
+    primary_camera: str = "",
+    start_time_ns: int = 0,
+    end_time_ns: int = 0,
 ) -> str:
     # Lichtblick opens a remote MCAP the same way the standalone tool does; the MCAP is
     # co-served same-origin under /lichtblick/recordings/ so the browser fetch needs no CORS.
     source = mcap_url or _lichtblick_recording_url()
+    url = self_hosted_viewer_url(
+        source,
+        base="/lichtblick/",
+        start_time_ns=start_time_ns,
+        end_time_ns=end_time_ns,
+    )
     size_hint = max(0, int(mcap_size or 0))
     size_query = f"&npa.size={{size_hint}}" if size_hint else ""
     camera = str(primary_camera or "").strip()
     camera_query = f"&npa.camera={{quote(camera, safe='')}}" if camera else ""
-    return (
-        f"/lichtblick/?ds=remote-file&ds.url={{quote(source, safe='')}}"
-        f"{{size_query}}{{camera_query}}"
-    )
+    return f"{{url}}{{size_query}}{{camera_query}}"
 
 
 def _publish_mcap_recording(source: Path) -> Path:
@@ -1509,6 +1522,14 @@ DEFAULT_SIM_VIZ = {{
     "lichtblick_iframe_url": "/lichtblick/",
     "foxglove_ready": False,
     "foxglove_url": "",
+    "canonical_mcap_s3_uri": "",
+    "canonical_mcap_key": "",
+    "canonical_mcap_sha256": "",
+    "canonical_mcap_size_bytes": 0,
+    "canonical_mcap_source": "",
+    "canonical_mcap_provenance": {{}},
+    "transport_state": "",
+    "foxglove_cloud": {{}},
 }}
 SIM2REAL_STAGE_TEMPLATE = [
     ("submit", "Submit request"),
@@ -7251,6 +7272,55 @@ def _foxglove_convert_run(**kwargs):
     return convert_run(**kwargs)
 
 
+def _foxglove_prepare_canonical_mcap(
+    *, run_id: str, run_ref: str = "", fps: float, max_frames: int
+):
+    from npa.sdk.workbench.foxglove import inspect_mcap
+
+    s3, settings = _agent_s3_client()
+    resolution = resolve_run_artifacts(
+        _agent_s3_buckets(s3, settings),
+        base_prefix=settings.get("prefix", ""),
+        run_ref_or_id=run_ref or run_id,
+        s3=s3,
+    )
+    if resolution is None:
+        raise RuntimeError(f"run_id not found: {{run_id}}")
+
+    def _resolved_artifacts(*_args, **_kwargs):
+        return resolution.bucket, list(resolution.artifacts)
+
+    return prepare_canonical_mcap(
+        run_id=run_id,
+        source_bucket=resolution.bucket,
+        source_prefix=resolution.source_prefix,
+        fps=fps,
+        max_frames=max_frames,
+        validate_run_id=validate_run_id,
+        s3_client=lambda: (s3, settings),
+        list_buckets=_agent_s3_buckets,
+        find_artifacts=_resolved_artifacts,
+        safe_key=_safe_artifact_key,
+        download=download_s3_uri,
+        convert=_foxglove_convert_run,
+        summarize=inspect_mcap,
+        invalidate_cache=_run_list_cache_clear,
+        now_iso=_now_iso,
+        recordings_dir=RECORDINGS_DIR,
+    )
+
+
+def _foxglove_ensure_cloud_recording(
+    local_path: Path, run_id: str, *, provenance: dict
+):
+    return ensure_recording_and_layout_from_credentials(
+        local_path,
+        run_id,
+        provenance,
+        credentials_path="/root/.npa/credentials.yaml",
+    )
+
+
 register_foxglove_routes(
     app,
     FoxgloveDeps(
@@ -7265,6 +7335,8 @@ register_foxglove_routes(
         data_dir=FOXGLOVE_DATA_DIR,
         runs_dir=Path("/opt/npa-agent/runs"),
         keep_published=FOXGLOVE_KEEP_PUBLISHED,
+        ensure_cloud_recording=_foxglove_ensure_cloud_recording,
+        prepare_canonical_mcap=_foxglove_prepare_canonical_mcap,
     ),
     HTTPException,
 )
@@ -8253,7 +8325,16 @@ WantedBy=multi-user.target
 UNIT
 # Lichtblick (Foxglove-compatible MCAP viewer) sidecar — best-effort: the agent UI
 # embeds it at /lichtblick/ and co-serves the run MCAP at /lichtblick/recordings/.
-# Requires docker + the npa-lichtblick image on the VM; degrades gracefully if absent.
+# Fresh driverless agent images do not include Docker, so install the Ubuntu
+# package before acquiring the sidecar image. If package or registry access is
+# unavailable, the UI retains its explicit viewer-unavailable state.
+if ! command -v docker >/dev/null 2>&1; then
+  if sudo apt-get update -qq && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io >/dev/null; then
+    sudo systemctl enable --now docker
+  else
+    echo "docker install failed; Lichtblick self-hosted fallback will be unavailable"
+  fi
+fi
 # The sidecar serves only the viewer bundle: the MCAP itself is served by nginx from
 # the recordings alias below (so it needs no mount into the container), and the file
 # is pre-created so that location returns an empty 200 rather than 404 before a run
@@ -8368,6 +8449,7 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         region=region,
         tf_api_key=tf_api_key,
         nebius_ai_key=nebius_ai_key,
+        foxglove_api_token=foxglove_api_token,
         s3_bucket=s3_bucket,
         s3_prefix=s3_prefix,
         s3_endpoint=s3_endpoint,
@@ -10718,7 +10800,7 @@ def verify_live_cmd(
             auth=(auth_user, auth_password),
             json={
                 "messages": [
-                    {"role": "user", "content": "create 2-step sim2real workflow"}
+                    {"role": "user", "content": "create 2-step sim2real workflow with 5000 environments, seed 9, an RTX PRO 6000 accelerator, and 1 GPU"}
                 ]
             },
             timeout=30.0,

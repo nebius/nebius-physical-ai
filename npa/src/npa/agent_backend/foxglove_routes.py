@@ -14,9 +14,26 @@ VM's filesystem, session state, or object storage.
 from __future__ import annotations
 
 import secrets
+import threading
+from functools import wraps
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+
+_EXPORT_LOCK = threading.RLock()
+
+
+def _serialized_export(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Serialize canonical conversion/publication state transitions."""
+
+    @wraps(func)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        with _EXPORT_LOCK:
+            return func(*args, **kwargs)
+
+    return wrapped
+
 
 try:  # agent VM: /opt/npa-agent is on sys.path and the package is flat there
     from agent_backend.foxglove_cloud import FoxgloveCloudError
@@ -108,6 +125,7 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
         return result
 
     @app.post("/foxglove/convert-run")
+    @_serialized_export
     def foxglove_convert_run_route(payload: dict | None = None) -> dict:
         # Resolve one canonical S3 artifact.  A valid native
         # reports/sim2real.mcap is authoritative; otherwise the callback stages
@@ -218,6 +236,7 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
         }
 
     @app.post("/foxglove/export")
+    @_serialized_export
     def foxglove_export_route(payload: dict | None = None) -> dict:
         """Export the active MCAP through the existing public recording path.
 

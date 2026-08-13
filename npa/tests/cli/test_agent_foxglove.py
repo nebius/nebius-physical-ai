@@ -299,6 +299,29 @@ def test_data_source_for_state_prefers_published_recording() -> None:
     assert both["type"] == "remote-file"
 
 
+def test_recording_time_bounds_seed_both_embedded_viewers(tmp_path: Path) -> None:
+    start_ns = 1_700_000_000_000_000_000
+    state = {
+        "foxglove_url": "/foxglove/data/abc-run.mcap",
+        "mcap_uri": "file:///opt/npa-agent/recordings/sim2real.mcap",
+        "canonical_mcap_provenance": {
+            "start_time_ns": start_ns,
+            "end_time_ns": start_ns + 10_000_000_000,
+        },
+    }
+
+    source = data_source_for_state(state, origin="https://agent.example", env={})
+    assert source["startTime"] == (start_ns + 250_000_000) / 1_000_000_000
+
+    config = resolve_foxglove_config(
+        {"NPA_FOXGLOVE_EMBED_SRC": ""},
+        assets_dir=_install_assets(tmp_path),
+        sim_viz=state,
+        self_hosted_ready=True,
+    )
+    assert "time=2023-11-14T22%3A13%3A20.250000000Z" in config["self_hosted_url"]
+
+
 # --------------------------------------------------------------------------- #
 # config resolution
 # --------------------------------------------------------------------------- #

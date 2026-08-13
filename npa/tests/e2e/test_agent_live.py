@@ -66,6 +66,11 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
     mp4_key = ""
     mp4_uri = ""
     for entry in run_list[:20]:
+        # Incomplete summaries are intentionally non-authoritative: the secure
+        # loader refuses them until the operator selects an exact, fully
+        # discovered source. They cannot be used for this media-type gate.
+        if (entry or {}).get("summary_complete") is False:
+            continue
         run_id = str((entry or {}).get("run_id") or "").strip()
         if not run_id:
             continue
@@ -557,7 +562,8 @@ def test_agent_chat_grounded_field(ctx: AgentLiveContext) -> None:
         ),
         (
             "create sim-to-real YAML for Franka on Isaac with 5000 environments, "
-            "3 inner iterations and success threshold 80%",
+            "3 inner iterations, success threshold 80%, an RTX PRO 6000 accelerator, "
+            "and 1 GPU",
             "sim2real-staged",
             {"env_count": "5000", "inner_iterations": "3", "success_threshold": "0.8"},
         ),
@@ -677,7 +683,8 @@ def test_agent_chat_complex_workflow_yaml_intent(ctx: AgentLiveContext) -> None:
                     "role": "user",
                     "content": (
                         "Draft a VLM/RL outer-loop workflow YAML for non-stock assets with policy rollout, "
-                        "heldout eval, a Token Factory quality gate, promote_checkpoint, and loop_back."
+                        "heldout eval, a Token Factory quality gate, promote_checkpoint, loop_back, "
+                        "an RTX PRO 6000 accelerator, and 1 GPU."
                     ),
                 }
             ]

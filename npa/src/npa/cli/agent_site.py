@@ -38,7 +38,8 @@ def foxglove_nginx_locations(*, asset_root: str = FOXGLOVE_ASSET_ROOT) -> str:
     default_type application/octet-stream;
     # Byte ranges carry MCAP playback; a compressed response would break them.
     gzip off;
-    add_header Accept-Ranges bytes always;
+    # nginx's static module already emits exactly one `Accept-Ranges: bytes`.
+    # Adding it here yields `bytes, bytes`, which strict MCAP readers reject.
     add_header Access-Control-Allow-Origin * always;
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
     add_header Access-Control-Allow-Headers "Range, If-Range, Content-Type" always;

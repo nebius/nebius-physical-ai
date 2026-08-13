@@ -8,8 +8,8 @@ The NPA agent preserves two distinct operations over one canonical artifact:
   Foxglove Cloud under a content-derived key, waits until the recording is
   indexed, and opens the official recording deep link.
 
-There is no Foxglove Desktop action. The single user-facing Lichtblick control
-is the in-page **Lichtblick** viewer tab.
+There is no Foxglove Desktop action. Lichtblick remains the in-page MCAP viewer
+tab, with its established open and reload controls.
 
 ## Canonical S3 artifact contract
 
@@ -44,7 +44,8 @@ https://app.foxglove.dev/~/view?ds=foxglove-stream&ds.recordingId=<recording-id>
 
 The agent derives a v1 presentation from the canonical MCAP inspection: up to
 two Image panels are bound only to real `foxglove.CompressedImage` topics, 3D is
-included only when a PointCloud, FrameTransform, or SceneUpdate schema exists,
+included only when a renderable PointCloud, SceneUpdate, pose, or scan schema
+exists (a FrameTransform alone does not paint geometry),
 Plot paths come only from numeric JSON-schema fields, and Log is included only
 for a real `foxglove.Log` topic. The first seek is 250 ms into the bounded
 recording range, where synchronized topics have begun painting.
@@ -64,6 +65,16 @@ The API token is read server-side from
 used only in the Foxglove API Authorization header. It is never included in the
 recording link, agent config/status responses, subprocess arguments, browser
 payloads, or normal logs.
+
+When the token is already exported in the operator shell, persist it without
+putting its value on a command line:
+
+```bash
+npa configure --no-interactive --save-env-credentials
+```
+
+The next agent deploy or bootstrap copies it into the VM's private
+`credentials.yaml`; it is not added to the shared workbench environment.
 
 Uploads are explicit: only **Open in Foxglove Web** invokes them. The content
 SHA-256 determines a stable recording key, so unchanged MCAPs and in-progress

@@ -28,6 +28,7 @@ if __name__ == "npa.cli.agent_viewer_runtime":
         RRD_PATH,
         _ARTIFACT_LOAD_LOCK,
         _copy_artifact_preview,
+        clear_cross_run_mcap_state,
         _is_data_factory_recording,
         _is_sim2real_pipeline_recording,
         _lichtblick_iframe_url,
@@ -240,6 +241,7 @@ def _apply_loaded_artifact(
         sim_viz.update(current)
     # Never let a previous RRD's binding survive a later media load.
     sim_viz.pop("served_recording_sha256", None)
+    clear_cross_run_mcap_state(sim_viz, run_id)
     camera = str(sim_viz.get("camera") or "workspace")
     contract = artifact_contract if isinstance(artifact_contract, dict) else {}
     contract_matches = contract.get("matches") if isinstance(contract.get("matches"), dict) else {}
@@ -372,6 +374,18 @@ def _apply_loaded_artifact(
         if is_mcap:
             _publish_mcap_recording(local_path)
             mcap_url = _lichtblick_recording_url()
+            start_time_ns = 0
+            end_time_ns = 0
+            try:
+                from npa.workbench.foxglove.inspect import summarize_mcap
+
+                mcap_info = summarize_mcap(local_path)
+                start_time_ns = int(mcap_info.start_time_ns)
+                end_time_ns = int(mcap_info.end_time_ns)
+            except (ImportError, OSError, RuntimeError, ValueError):
+                # Timing is an initial-seek optimization; the validated download
+                # and embedded viewer remain available when inspection fails.
+                pass
             sim_viz["mcap_uri"] = f"file://{MCAP_RECORDING_PATH}"
             sim_viz["artifact_preview_url"] = LICHTBLICK_RECORDING_HTTP_PATH
             sim_viz["artifact_download_url"] = LICHTBLICK_RECORDING_HTTP_PATH
@@ -379,6 +393,8 @@ def _apply_loaded_artifact(
                 mcap_url=mcap_url,
                 mcap_size=MCAP_RECORDING_PATH.stat().st_size,
                 primary_camera=camera if is_learning else "",
+                start_time_ns=start_time_ns,
+                end_time_ns=end_time_ns,
             )
             sim_viz["lichtblick_ready"] = MCAP_RECORDING_PATH.is_file()
             if is_learning:

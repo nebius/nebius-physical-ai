@@ -111,7 +111,10 @@ denial is an explicit fallback without `layoutId`; never claim immediate visual
 success in that state. A server-side API token is required at
 `tokens.FOXGLOVE_API_TOKEN` in `~/.npa/credentials.yaml` (mode `0600`). It is
 never part of browser config, deep links, subprocess arguments, shared
-workbench env, or the agent's `foxglove.env`.
+workbench env, or the agent's `foxglove.env`. If it is already exported in the
+operator shell, persist it with
+`npa configure --no-interactive --save-env-credentials`; never pass its value as
+an argument.
 
 `convert-run` packs real artifacts into Foxglove well-known schemas:
 `foxglove.CompressedImage` on `/camera/<name>` (PNG/JPEG passed through, PPM/BMP/TIFF

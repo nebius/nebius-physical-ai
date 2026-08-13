@@ -852,11 +852,11 @@ Workbench is the main product surface. Every tool lives under `npa workbench`
 - **`workflow validate-spec` / `plan-spec` / `run-spec` / `submit`** operate on
   customer-facing `npa.workflow/v0.0.1` specs — see
   [Author and submit workflows](#author-and-submit-workflows).
-- **`foxglove`** packs run frames/metrics/logs into MCAP, exports/downloads an
-  active recording, and opens an indexed recording in official Foxglove Web.
-  The web action uploads once by content key and reuses unchanged recordings — see
-  [Foxglove MCAP export](docs/workbench/foxglove-export.md) and
-  [docs/cli/foxglove.md](docs/cli/foxglove.md).
+- **`foxglove`** packs run frames/metrics/logs into MCAP, installs the pinned
+  [`@foxglove/embed`](https://docs.foxglove.dev/docs/embed/typescript-sdk) assets
+  for the agent's embedded viewer, and exports or opens the canonical recording
+  in Foxglove Web — see [docs/cli/foxglove.md](docs/cli/foxglove.md) and the
+  [canonical export / Foxglove Web contract](docs/workbench/foxglove-export.md).
 - **`trigger`** watches S3-compatible prefixes and retriggers workflows.
 - **`golden-eval`** runs per-container hello-world reruns as a CI gate.
 - Public GHCR releases and exact hardware-specific tags are listed in the

@@ -1290,18 +1290,24 @@ describe("NPA agent UI with mocked APIs", () => {
     });
     cy.get("#artifactLoadRunArtifacts").click();
     cy.wait("@evilArtifactList");
-    cy.get("#artifactList").then(($el) => {
+    // The request finishing and the async artifact render are separate ticks;
+    // retry the assertion until the malicious row is actually in the DOM.
+    cy.get("#artifactList").should(($el) => {
       const html = $el.html() || "";
       // Attribute values must be quote-escaped so the key cannot break out of
       // data-*="..." and inject an event handler. Text nodes may still show
       // literal quotes after the browser parses escaped HTML.
       expect(html).to.include('data-key="a&quot; onmouseover=&quot;alert(1)"');
-      expect(html).to.not.match(/data-(?:key|name)="a"\s+onmouseover=/i);
-      cy.get("#artifactList button[data-action='download-artifact']").should(($btn) => {
-        // DOM getAttribute returns the decoded value; no separate attribute breakout.
-        expect($btn.attr("data-key")).to.eq(evilKey);
-        expect($btn.attr("onmouseover")).to.eq(undefined);
-      });
+      expect(html).to.include('data-s3-uri="s3://mock/a&quot; onmouseover=&quot;alert(1)"');
+      expect(html).to.not.match(/data-(?:key|s3-uri|name)="a"\s+onmouseover=/i);
+    });
+    cy.get(
+      "#artifactList button[data-action='download-artifact'], " +
+      "#artifactList button[data-action='load-artifact']"
+    ).first().should(($btn) => {
+      // DOM getAttribute returns the decoded value; no separate attribute breakout.
+      expect($btn.attr("data-key")).to.eq(evilKey);
+      expect($btn.attr("onmouseover")).to.eq(undefined);
     });
   });
 
