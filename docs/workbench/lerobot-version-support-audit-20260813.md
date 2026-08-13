@@ -13,6 +13,11 @@ document:
 npa/.venv/bin/python npa/scripts/audit_lerobot_release.py 0.6.1 --baseline 0.5.1
 ```
 
+The conclusions were then **executed** against a real LeRobot 0.6.1 install on
+the dev VM and against the shipped `npa-lerobot:0.6.0` image on an H100. That
+step is what turned up D6, a defect no amount of static reading would have
+found — see [Executed validation](#executed-validation).
+
 ## Recommendation
 
 **Adopt 0.6.1 as an additional supported version, and make it the default once
@@ -27,10 +32,12 @@ repo; the dataset format is unchanged; and the CLI contract is identical to
 [#191](https://github.com/nebius/nebius-physical-ai/pull/191) means adding a
 third version is mostly manifest data, not new code.
 
-The more consequential finding is separate from the upgrade: **two published
+The more consequential findings are separate from the upgrade. **Two published
 images install a torch/torchvision/diffusers stack that upstream 0.5.1 declares
 incompatible**, and one of them — `npa-lerobot-policy:0.1.1` — is a current pin,
-not a superseded tag.
+not a superseded tag. And running the existing `npa-lerobot:0.6.0` image on an
+H100 showed **it cannot construct a Diffusion Policy at all** (D6): 0.6.0 moved
+`diffusers` behind an extra we never requested. That one is fixed in this PR.
 
 ## Scope: what "supporting LeRobot" actually spans
 
@@ -150,7 +157,9 @@ an `image_tag` and an `image_digest`; the 0.6.0 entry carries neither, so
 `resolve_lerobot_image_tag("0.6.0")` falls through to the bare `0.6.0` semver
 tag built from the CUDA 12 Dockerfile. Selecting `--lerobot-version 0.6.0`
 therefore silently opts out of the Blackwell-validated image family that the
-default uses.
+default uses. That bare tag does exist in the registry and runs — it is what D6
+was reproduced on — it simply has no recorded digest and no hardware gate, which
+is why a defect of D6's size could sit in it unnoticed.
 
 **D4 — The stated reason for pinning the default at 0.5.1 is stale.**
 `skills/tools/lerobot/SKILL.md` and `skills/workflows/byof-onboard/SKILL.md`
@@ -158,6 +167,34 @@ justify the 0.5.1 default as "keep for GR00T N1.5 / sim2real policy image
 parity". But `npa-groot` clones NVIDIA's Isaac-GR00T directly and already ships
 **N1.7** — it does not consume LeRobot's `groot` extra at all. Only the sim2real
 parity half of that justification survives.
+
+**D6 — `npa-lerobot:0.6.0` cannot run Diffusion Policy.** *(found by running the
+image; fixed in this PR)* 0.6.0 moved `diffusers` and `transformers` out of the
+base install and behind extras, and enforces them with `require_package()`
+**inside each policy's `__init__`**. Our extras string was never updated, so
+`lerobot[training,evaluation,pusht,libero]` installs no `diffusers`, the module
+still imports cleanly, and the failure lands at
+`make_policy()` — that is, at run time, on the real training command:
+
+```
+lerobot/policies/diffusion/modeling_diffusion.py:77 in __init__
+    require_package("diffusers", extra="diffusion")
+ImportError: 'diffusers' is required but not installed.
+             Install it with: pip install 'lerobot[diffusion]'
+```
+
+0.5.1 is unaffected because `diffusers` is a *core* dependency there, which is
+also why the default B300 image — built from a genuine 0.5.1 commit — was never
+exposed. The blast radius is anyone who opts into `--lerobot-version 0.6.0`,
+plus anyone who would have promoted 0.6.x to default. Two details corroborate
+that the extras set has been drifting: the Dockerfiles hand-install `num2words`,
+which is precisely what the `smolvla` extra supplies, and `libero` is the only
+reason `transformers` is present at all (transitively, by accident).
+
+Fixed here by requesting the extras the policies gate on
+(`…,libero,diffusion,smolvla`) in both the manifest and the Dockerfile, and by
+teaching the pre-flight to resolve the extras graph and cross-check it against
+the `require_package` gates it finds in each policy module.
 
 **D5 — The sim2real stack is hard-capped at LeRobot 0.4.4 by Python, not by
 choice.** LeRobot has required **Python ≥3.12 since 0.5.0**. `npa-base` builds a
@@ -176,7 +213,7 @@ manifest entry is the 0.6.0 entry plus an image tag:
 
 ```json
 "0.6.1": {
-  "pip_extras": "training,evaluation,pusht,libero",
+  "pip_extras": "training,evaluation,pusht,libero,diffusion,smolvla",
   "train_env_eval_flag": "env_eval_freq",
   "eval_checkpoint_flag": "policy.path",
   "policy_eval_checkpoint_flag": "policy.pretrained_path",
@@ -192,6 +229,9 @@ branch condition to all 0.6.x), `lerobot/build.sh`, `terraform/variables.tf`,
 `cloud_init.yaml.tpl`, `setup/install_lerobot.sh`, `smoke/golden_evals.yaml`, and
 the four skill/doc files. `smoke/_versions.py` needs no change: its
 `startswith("0.6")` test already yields `env_eval_freq` for 0.6.1.
+
+The extras string carries the D6 fix forward; without `diffusion` and `smolvla`
+a 0.6.1 entry would inherit the same broken policy coverage 0.6.0 shipped with.
 
 Note that 0.6.1 tightens `diffusers` to `<0.40.0,>=0.38.0` — the opposite
 direction from 0.5.1's `<0.36.0`. Any image that pins diffusers must pin it
@@ -246,27 +286,89 @@ that does not pass `--lerobot-version`. Sequence it as add-then-promote, and
 when promoting, correct the stale GR00T N1.5 rationale in the two skill files
 (D4) rather than copying it forward.
 
-## Validation plan
+## Executed validation
 
-Static pre-flight is a triage tool, not a merge gate. The gates should match the
-precedent set by #191, which validated 0.6.0 on a real H100:
+Static pre-flight is triage, not a merge gate, so the audit's conclusions were
+executed against a real install. This is what found D6.
 
-1. `npa/.venv/bin/python npa/scripts/audit_lerobot_release.py 0.6.1` — passes today.
-2. Unit and CLI suites (`make test`).
-3. Build `npa-lerobot:0.6.1` from the CUDA 12 Dockerfile and the B300 variant.
-4. On real GPU: `python -m npa.smoke.test_lerobot_env` (4/4) and
+**Real LeRobot 0.6.1, dev VM, Python 3.12.13, torch 2.9.0, CPU.** Installed
+`lerobot[training,evaluation,pusht]==0.6.1` into a clean venv and ran the
+contract rather than reading it:
+
+| Claim | Result |
+|---|---|
+| 19/19 bindings resolve | all 19 **import** for real, including `DiffusionPolicy` and `SmolVLAPolicy` |
+| `env_eval_freq` replaces `eval_freq` | `lerobot-train --help` offers `--env_eval_freq`, and no longer `--eval_freq` |
+| `--policy.path` still works | accepted — parsing reaches a Hub lookup, while a bogus `--policy.x` is rejected as unrecognized. It is absent from `--help` because draccus resolves the path alias before argument parsing, which is easy to misread as a break |
+| adapters need no migration | a dataset written by `npa/adapter/sim_to_lerobot.py` loads under 0.6.1 `LeRobotDataset`, with video frames decoded and the expected `observation.state` / `action` / `observation.images.*` keys |
+| the workbench train path works | `lerobot-train --policy.type=act` runs real steps on that dataset and checkpoints (exit 0) |
+
+**The gap between "imports" and "works".** Every policy imported, so a smoke
+test built on imports would have passed. Constructing them is where 0.6.x
+actually enforces its extras, and that is the failure the workbench would hit:
+
+```
+--policy.type=act        exit 0   trains and checkpoints
+--policy.type=diffusion  exit 1   ImportError in make_policy(): 'diffusers' is required
+--policy.type=diffusion  exit 0   trains and checkpoints, after adding lerobot[diffusion]
+```
+
+### Executed validation — GPU
+
+The above is a hand-built CPU venv, so it proves the *contract* but not the
+*artifact*. Pulling the shipped `npa-lerobot:0.6.0` image onto an H100 80GB
+(driver 580.126.09, CUDA 13.0) confirms the defect is in the image itself:
+
+```
+lerobot 0.6.0 | torch 2.11.0+cu130 | cuda available: True | NVIDIA H100 80GB HBM3
+diffusers in image:    0        <- absent
+transformers in image: 1        <- present, but only transitively via [libero]
+
+A. DiffusionPolicy as shipped  -> ImportError: 'diffusers' is required but not installed
+B. ACTPolicy as shipped        -> ValueError: You must provide at least one image ...
+C. DiffusionPolicy + diffusers -> ValueError: You must provide at least one image ...
+```
+
+B is the control: `ValueError` means construction got past dependency checks and
+reached ordinary config validation of the deliberately empty config used here.
+C returning *the same* error as B is the point — once the extra is present,
+Diffusion behaves exactly like ACT, so the missing extra was the entire defect.
+
+Incidentally the image ships `torch 2.11.0+cu130`, which already sits inside
+0.6.1's declared `torch<2.12,>=2.7`.
+
+The pre-flight now models this: it resolves the manifest's extras through the
+self-referential extra graph (`diffusion` → `diffusers-dep` → `diffusers`) and
+cross-checks the result against the `require_package` gates it finds in each
+policy module. Run against the pre-fix manifest it reports:
+
+```
+LeRobot 0.6.0
+  [FAIL] policy-extras: --policy.type=diffusion needs diffusers (add extra 'diffusion')
+LeRobot 0.5.1
+  [PASS] policy-extras: lerobot[pusht,libero] constructs ['act', 'diffusion', 'smolvla']
+```
+
+## Remaining gates before 0.6.1 becomes default
+
+The above covers the API, CLI, dataset, and extras contract. What is left is
+image-level and needs a build, matching the precedent set by #191:
+
+1. Build `npa-lerobot:0.6.1` from the CUDA 12 Dockerfile and the B300 variant.
+2. On real GPU: `python -m npa.smoke.test_lerobot_env` (4/4) and
    `python -m npa.smoke.test_lerobot_functional` (5/5, 50-step PushT train +
    eval) with `NPA_LEROBOT_VERSION=0.6.1`.
-5. `validate_blackwell_image.sh` for the B300 tag, recording `published_digest`
+3. `validate_blackwell_image.sh` for the B300 tag, recording `published_digest`
    into `blackwell-dc-images.json` and the manifest.
-6. A `workbench.lerobot.policy_train` workflow run end-to-end, since that stage
-   installs npa into `/opt/lerobot/venv` and is the path most sensitive to the
-   0.6.x lean-extras change.
+4. A `workbench.lerobot.policy_train` workflow run end-to-end, since that stage
+   installs npa into `/opt/lerobot/venv`.
 
-Step 4 is the one that cannot be skipped: 0.6.0's move to mandatory extras means
-an import that resolves statically can still fail at runtime if the extra set is
-wrong. That failure mode is exactly what `[training,evaluation,pusht,libero]`
-exists to prevent, and only a real run proves it.
+One caveat the CPU rig surfaced and could not settle: in a CPU-only venv,
+`torchcodec` 0.11.1 failed to load against `torch 2.9.0+cpu` and LeRobot fell
+back to PyAV. That is a property of the ad-hoc CPU rig, not of the workbench
+images, which pin torchcodec 0.8.1 against cu130 torch — but it is the same
+torch/torchcodec ABI coupling that D1 describes, so step 2 should confirm
+torchcodec loads rather than silently falling back.
 
 ## What this audit does not cover
 
