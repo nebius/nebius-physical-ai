@@ -234,7 +234,13 @@ def test_a_config_token_lets_submit_choose_the_block_size(tmp_path: Path) -> Non
     assert num_nodes_for_step(spec, step) == 1
 
     scaled = merge_config_overrides(spec, {"augment_nodes": "4"})
-    assert num_nodes_for_step(scaled, step) == 4
+    # Planned steps intentionally carry their already-resolved resource profile.
+    # A real submit merges --var overrides before planning, so rebuild the step
+    # rather than asking an old plan to change shape retroactively.
+    scaled_step = next(
+        s for s in build_plan(scaled, run_id="probe").steps if s.state == "augment"
+    )
+    assert num_nodes_for_step(scaled, scaled_step) == 4
 
 
 def test_a_config_token_resolving_to_nonsense_still_fails(tmp_path: Path) -> None:

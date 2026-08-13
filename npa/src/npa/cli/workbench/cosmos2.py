@@ -347,16 +347,28 @@ def _materialize_control_asset(src: str, *, label: str) -> str:
         if not Path(value).is_file():
             raise typer.BadParameter(f"{label} does not exist: {value!r}")
         return value
+    import atexit
+    import shutil
     import tempfile
     from urllib.parse import urlsplit
 
     from npa.clients.storage import StorageClient
 
     tmp = tempfile.mkdtemp(prefix="npa-cosmos-control-")
+
+    def cleanup() -> None:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # The downloaded asset must remain available for every variant in this CLI
+    # process, including concurrent renders. Remove it when the process exits;
+    # also clean it immediately when the download itself fails.
+    atexit.register(cleanup)
     name = Path(urlsplit(value).path).name or "control.mp4"
     try:
         return StorageClient.from_environment().download_path(value, str(Path(tmp) / name))
     except Exception as exc:  # noqa: BLE001 - sanitize storage failures
+        cleanup()
+        atexit.unregister(cleanup)
         raise typer.BadParameter(
             f"could not download {label} from {value!r}; verify the object-storage "
             "endpoint, credentials, permissions, and that the object exists"

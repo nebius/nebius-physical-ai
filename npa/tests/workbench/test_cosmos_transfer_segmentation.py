@@ -570,6 +570,35 @@ def test_cli_fails_when_a_named_control_asset_is_missing(monkeypatch, tmp_path: 
     assert "does not exist" in result.output
 
 
+def test_failed_control_asset_download_removes_its_temporary_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tempfile
+
+    from npa.clients.storage import StorageClient
+
+    scratch = tmp_path / "control-download"
+
+    def make_scratch(*, prefix: str) -> str:
+        assert prefix == "npa-cosmos-control-"
+        scratch.mkdir()
+        return str(scratch)
+
+    class FailingStorage:
+        def download_path(self, _uri: str, _local: str) -> str:
+            raise PermissionError("denied")
+
+    monkeypatch.setattr(tempfile, "mkdtemp", make_scratch)
+    monkeypatch.setattr(StorageClient, "from_environment", lambda: FailingStorage())
+
+    with pytest.raises(cosmos2.typer.BadParameter, match="could not download"):
+        cosmos2._materialize_control_asset(
+            "s3://bkt/controls/seg.mp4", label="--control-asset"
+        )
+
+    assert not scratch.exists()
+
+
 def test_cli_threads_seg_conditioning_through_the_multiply_fan_out(monkeypatch) -> None:
     seen: list[dict] = []
     published: list[dict] = []

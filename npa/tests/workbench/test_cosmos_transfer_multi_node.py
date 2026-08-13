@@ -212,6 +212,55 @@ def test_merge_waits_for_a_slow_rank_then_joins() -> None:
     assert manifest["clips"] == ["aug-run1-0", "aug-run1-1"]
 
 
+def test_merge_ignores_a_stale_shard_until_the_current_rank_overwrites_it() -> None:
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    tx.write_shard_manifest(
+        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
+        variant_parallelism=1, variant_total=2, storage_client=storage,
+    )
+    tx.write_shard_manifest(
+        [_clip(1, run_id="old")], output_uri, run_id="old", rank=1, node_count=2,
+        variant_parallelism=1, variant_total=2, storage_client=storage,
+    )
+
+    def current_arrival(_seconds: float) -> None:
+        tx.write_shard_manifest(
+            [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
+            variant_parallelism=1, variant_total=2, storage_client=storage,
+        )
+
+    manifest = tx.merge_shard_manifests(
+        output_uri,
+        run_id="run1",
+        node_count=2,
+        storage_client=storage,
+        sleep=current_arrival,
+    )
+
+    assert manifest["clips"] == ["aug-run1-0", "aug-run1-1"]
+
+
+def test_merge_refuses_duplicate_or_missing_global_variant_indices() -> None:
+    storage = FakeStorage()
+    output_uri = "s3://bkt/run1/cosmos_augmented/"
+    tx.write_shard_manifest(
+        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
+        variant_parallelism=1, variant_total=2, storage_client=storage,
+    )
+    tx.write_shard_manifest(
+        [_clip(0)], output_uri, run_id="run1", rank=1, node_count=2,
+        variant_parallelism=1, variant_total=2, storage_client=storage,
+    )
+
+    with pytest.raises(RuntimeError, match="cover every variant exactly once"):
+        tx.merge_shard_manifests(
+            output_uri, run_id="run1", node_count=2, storage_client=storage
+        )
+
+    assert tx.transfer_manifest_uri_for(output_uri) not in storage.objects
+
+
 def test_merge_fails_naming_the_ranks_that_never_reported() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"

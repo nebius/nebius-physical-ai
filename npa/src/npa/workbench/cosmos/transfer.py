@@ -925,6 +925,23 @@ def merge_shard_manifests(
     deadline = None if limit is None else _time.monotonic() + max(0.0, float(limit))
     shards: dict[int, dict[str, Any]] = {}
 
+    def _is_current_shard(document: Any, rank: int) -> bool:
+        """Reject stale/partial objects until the current rank overwrites them."""
+
+        if not isinstance(document, dict):
+            return False
+        descriptors = document.get("clip_descriptors")
+        return bool(
+            document.get("schema") == SHARD_MANIFEST_SCHEMA
+            and document.get("mode") == TRANSFER_MANIFEST_MODE
+            and document.get("status") == TRANSFER_MANIFEST_STATUS
+            and str(document.get("run_id") or "") == str(run_id or "")
+            and int(document.get("rank", -1)) == rank
+            and int(document.get("node_count", 0)) == expected
+            and isinstance(descriptors, list)
+            and int(document.get("variant_count", -1)) == len(descriptors)
+        )
+
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-shard-") as tmp:
         while True:
             for rank in range(expected):
@@ -942,8 +959,12 @@ def merge_shard_manifests(
                 if not local.is_file():
                     continue
                 try:
-                    shards[rank] = _json.loads(local.read_text(encoding="utf-8"))
-                except ValueError:
+                    candidate = _json.loads(local.read_text(encoding="utf-8"))
+                    if _is_current_shard(candidate, rank):
+                        shards[rank] = candidate
+                    else:
+                        local.unlink(missing_ok=True)
+                except (TypeError, ValueError):
                     # A partially visible object: drop it and re-read next pass.
                     local.unlink(missing_ok=True)
             if len(shards) == expected:
@@ -958,10 +979,23 @@ def merge_shard_manifests(
                 )
             waiter(max(0.1, float(poll_interval_s)))
 
+    totals = {int(shard.get("variant_total", -1)) for shard in shards.values()}
+    if len(totals) != 1 or next(iter(totals), -1) < 1:
+        raise RuntimeError(
+            "multi-node augment: shard manifests disagree on the total variant "
+            f"count for run {run_id!r}: {sorted(totals)}"
+        )
+    variant_total = next(iter(totals))
     ordered = sorted(
         (clip for shard in shards.values() for clip in shard.get("clip_descriptors", [])),
         key=lambda c: int(c.get("variant_index", 0) or 0),
     )
+    indices = [int(clip.get("variant_index", -1)) for clip in ordered]
+    if indices != list(range(variant_total)):
+        raise RuntimeError(
+            "multi-node augment: shard manifests do not cover every variant exactly "
+            f"once for run {run_id!r}; expected 0..{variant_total - 1}, got {indices}"
+        )
     return write_run_manifest(
         ordered,
         output_uri,
