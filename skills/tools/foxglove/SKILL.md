@@ -72,7 +72,7 @@ Published names are random (`<token>-<stem>.mcap`) and pruned to the newest few.
 | --- | --- |
 | `GET /api/foxglove/config` | Everything the UI needs to mount a viewer: `viewer_backend`, `self_hosted_url`, SDK/embed settings, data source; `available:false` + `reason` when neither backend can render |
 | `GET /api/foxglove/status` | Readiness + active recording (also grounds the `foxglove_viewer` chat intent) |
-| `POST /api/foxglove/load-artifact` | Load an `.mcap`/`.bag`/`.db3`/`.ulg`/`.ulog` artifact (`s3_uri` or `run_id`+`key`) |
+| `POST /api/foxglove/load-artifact` | Load a discovered `.mcap`/`.bag`/`.db3`/`.ulg`/`.ulog` artifact (`run_id` + `s3_uri`, or `run_id` + `key`) |
 | `POST /api/foxglove/convert-run` | Convert the active run's local artifacts to MCAP and load it |
 | `POST /api/foxglove/live` | Point the viewer at a public `ws://`/`wss://` Foxglove or ROS-bridge URL |
 

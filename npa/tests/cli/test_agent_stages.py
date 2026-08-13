@@ -345,7 +345,15 @@ def test_authoritative_manifest_preserves_all_explicit_statuses_with_provenance(
                 "status": "running",
                 "updated_at": "2026-08-07T01:02:03Z",
                 "steps": [
-                    {"state": "prepare", "status": "ok", "returncode": 0},
+                    {
+                        "state": "prepare",
+                        "status": "ok",
+                        "returncode": 0,
+                        "job_id": "33",
+                        "job_name": "run-8-01-prepare",
+                        "sky_status": "SUCCEEDED",
+                        "wave_key": "001|serial|:prepare:-",
+                    },
                     {"state": "train", "status": "failed", "returncode": 17},
                     {"state": "evaluate", "status": "running"},
                     {"state": "optional", "status": "skipped"},
@@ -368,6 +376,11 @@ def test_authoritative_manifest_preserves_all_explicit_statuses_with_provenance(
         "publish": "pending",
     }
     assert by_id["publish"]["status_label"] == "Submitted"
+    assert by_id["prepare"]["job_id"] == "33"
+    assert by_id["prepare"]["job_name"] == "run-8-01-prepare"
+    assert by_id["prepare"]["sky_status"] == "SUCCEEDED"
+    assert by_id["prepare"]["wave_key"] == "001|serial|:prepare:-"
+    assert "job_id" not in by_id["train"]
     assert all(stage["authority"] == "authoritative" for stage in by_id.values())
     assert all(stage["evidence_source"].endswith("/npa-workflow/manifest.json") for stage in by_id.values())
 
@@ -402,6 +415,40 @@ def test_authoritative_graph_is_workflow_specific_and_artifacts_do_not_turn_it_g
     assert stages[0]["artifact_count"] == 1
     assert stages[1]["artifact_count"] == 0
     assert all(not stage["id"].startswith("stage-0") for stage in stages)
+
+
+def test_authoritative_graph_does_not_append_unmatched_artifact_pseudo_stages() -> None:
+    parsed = parse_stage_evidence_documents(
+        [
+            {
+                "key": "runs/run-9/npa-workflow/manifest.json",
+                "payload": {
+                    "schema_version": "npa.workflow.run.v1",
+                    "workflow": "two-stage-inspection",
+                    "status": "succeeded",
+                    "steps": [
+                        {"state": "inspect", "status": "succeeded", "job_id": "41"},
+                        {"state": "publish", "status": "succeeded", "job_id": "42"},
+                    ],
+                },
+            }
+        ]
+    )
+    stages = build_artifact_backed_stages(
+        [
+            "runs/run-9/inspect/result.json",
+            "runs/run-9/reports/summary.json",
+            "runs/run-9/checkpoints/model.bin",
+        ],
+        run_id="run-9",
+        prefix="runs",
+        workflow_stage_defs=[],
+        overlay_unmatched=False,
+        authoritative_stages=parsed["stages"],
+    )
+
+    assert [stage["id"] for stage in stages] == ["inspect", "publish"]
+    assert [stage["job_id"] for stage in stages] == ["41", "42"]
 
 
 def test_status_document_overrides_manifest_snapshot_and_preserves_timestamps() -> None:

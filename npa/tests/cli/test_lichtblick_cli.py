@@ -296,12 +296,21 @@ def test_build_rerun_rrd_from_mcap_decodes_schemas(tmp_path: Path) -> None:
     _write_multi_schema_mcap(str(mcap_path))
     out_rrd = tmp_path / "out.rrd"
     fake = _FakeRerunSink()
-    summary = build_rerun_rrd_from_mcap(str(mcap_path), str(out_rrd), rr=fake)
+    summary = build_rerun_rrd_from_mcap(
+        str(mcap_path),
+        str(out_rrd),
+        rr=fake,
+        application_id="npa_groot_training",
+        recording_id="groot-run",
+    )
 
     assert summary["image_count"] == 1
     assert summary["log_count"] == 1
     assert summary["scalar_count"] == 1
     assert summary["message_count"] == 3
+    assert summary["application_id"] == "npa_groot_training"
+    assert summary["recording_id"] == "groot-run"
+    assert summary["timeline"] == "mcap_time"
     assert out_rrd.is_file() and out_rrd.stat().st_size > 0
     kinds = {kind for _entity, kind in fake.logged}
     assert {"encoded_image", "text_log", "scalars"} <= kinds

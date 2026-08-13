@@ -22,6 +22,10 @@ conversion, serving, inference, and validation.
 2. Use `download` to stage model artifacts and credentials, `finetune` for
    training, `eval` for offline scoring, `serve` and `infer` for runtime calls,
    and `convert` when transforming checkpoints for downstream use.
+   For declarative N1.7 training, use
+   `npa/workflows/workbench/npa-workflows/groot-1-7-finetune.yaml`; its
+   `gpu_count` is a positive single-node world size that controls both the
+   scheduler allocation and the real trainer.
 3. Use `status`, `system-info`, and `list` for operational checks. Keep
    `ensure-ingress`, `register-byovm`, `reload-env`, and `cleanup-partial`
    scoped to setup and recovery flows.
@@ -33,8 +37,9 @@ conversion, serving, inference, and validation.
   `convert`, `status`, and `system-info` are the main user commands.
 - SDK/API: keep model, checkpoint, and storage path normalization in shared
   helpers so service and CLI routes do not diverge.
-- YAML: workflow YAML should pass model refs, checkpoint S3 URIs, output S3
-  prefixes, and GPU selection as env vars or explicit task inputs.
+- YAML: `groot-1-7-finetune.yaml` calls `workbench.groot.finetune` in the
+  stage's own image. Keep model/source pins, checkpoint S3 URIs, run ID, and
+  GPU count explicit; counts above one must use the upstream `torchrun` path.
 
 ## Routing And Validation
 
@@ -73,9 +78,10 @@ What this changes in practice:
   `isaac-bootstrap verify` additionally launches Isaac Sim headless (needs a GPU).
 - No NGC credentials are needed to build or run this image.
 
-GR00T inference itself is unaffected: it runs in `GROOT_VENV`
-(`python -m npa.smoke.test_groot_functional`) and needs no Isaac and no EULA acceptance,
-so it pays no first-run download. Only the Isaac Lab simulation paths do.
+GR00T inference and fine-tuning run in `GROOT_VENV`
+(`python -m npa.smoke.test_groot_functional` covers inference) and need no Isaac
+or EULA acceptance, so they pay no first-run download. Only the Isaac Lab
+simulation paths do.
 
 ## Gotchas
 
@@ -90,12 +96,18 @@ so it pays no first-run download. Only the Isaac Lab simulation paths do.
   SSH-local route.
 - Known issue: output truncation at high step counts must be validated with
   artifacts, not subjective evaluation.
+- Multi-GPU fine-tuning defaults to NCCL's native transport selection. When a
+  clean two-rank collective proves that both P2P and SHM are unsafe on a
+  single-node host, use the workflow's `nccl_transport=socket` compatibility
+  fallback. It disables both transports, so do not use it speculatively on
+  healthy high-bandwidth hosts.
 
 ## Verify
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
+npa/.venv/bin/python -m pytest npa/tests/orchestration/npa_workflow/test_groot_finetune_workflow.py -q
 ```
 
-The skill smoke invokes current GR00T `download` and `convert` help, which
-protects against stale deploy/status-only documentation.
+The skill smoke invokes current GR00T training help and parses the reference
+N1.7 workflow in addition to the download/convert command checks.

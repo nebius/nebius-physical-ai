@@ -157,6 +157,30 @@ def test_runtime_run_state_roundtrip_is_separate_from_the_manifest() -> None:
     assert ("bucket", "runs/demo/npa-workflow/manifest.json") not in store
 
 
+def test_run_state_store_persists_exact_nonempty_workflow_artifact() -> None:
+    written: dict[tuple[str, str], bytes] = {}
+    state_store = RunStateStore(
+        bucket="bucket",
+        prefix="runs/groot",
+        writer=lambda bucket, key, body: written.__setitem__((bucket, key), body),
+    )
+    body = b"apiVersion: npa.workflow/v0.0.1\nkind: Workflow\n"
+
+    uri = state_store.write_artifact(
+        "workflow.yaml", body, content_type="application/yaml"
+    )
+
+    assert uri == "s3://bucket/runs/groot/workflow.yaml"
+    assert written[("bucket", "runs/groot/workflow.yaml")] == body
+
+    import pytest
+
+    with pytest.raises(ValueError, match="non-empty"):
+        state_store.write_artifact("empty.yaml", b"")
+    with pytest.raises(ValueError, match="safe relative"):
+        state_store.write_artifact("../escape.yaml", body)
+
+
 def test_completed_wave_ignores_failed_attempts() -> None:
     from npa.orchestration.npa_workflow.run_state import RuntimeRunState
 
@@ -346,6 +370,8 @@ def test_dispatch_step_records_carry_resources_for_any_executor() -> None:
         state="retrain",
         resources="trainer-gpu",
         resources_profile={"accelerators": "RTXPRO6000:2", "cpus": 16},
+        inputs=[{"uri": "s3://bucket/data/", "schema": "dataset.v1"}],
+        outputs=[{"uri": "s3://bucket/checkpoint.bin", "schema": "checkpoint.v1"}],
     )
 
     class _WaveExecutor:
@@ -356,3 +382,5 @@ def test_dispatch_step_records_carry_resources_for_any_executor() -> None:
     assert record["resources_profile"]["accelerators"] == "RTXPRO6000:2"
     assert record["resources"] == "trainer-gpu"
     assert record["job_id"] == "42"
+    assert record["inputs"][0]["schema"] == "dataset.v1"
+    assert record["outputs"][0]["schema"] == "checkpoint.v1"

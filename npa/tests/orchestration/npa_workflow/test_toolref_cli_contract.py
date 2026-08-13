@@ -36,6 +36,7 @@ def _toolref_flags(tool_ref: str) -> list[str]:
 
 
 CHECKED_TOOLREFS = [
+    ("workbench.groot.finetune", "npa.cli.groot", "finetune"),
     ("workbench.cosmos2.transfer", "npa.cli.workbench.cosmos2", "transfer"),
     ("workbench.cosmos2.transfer_execute", "npa.cli.workbench.cosmos2", "transfer"),
     (

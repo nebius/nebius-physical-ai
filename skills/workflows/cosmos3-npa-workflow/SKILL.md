@@ -148,7 +148,7 @@ The stage publishes `vision.jpg` (or the video artifact) plus `generate.json`
 `hf_auth`, `artifact_uri`.
 
 To view the result, load `artifact_uri` in the agent viewer
-(`POST /api/sim-viz/load-artifact` with `{"s3_uri": ...}`); see
+(`POST /api/sim-viz/load-artifact` with `{"run_id": ..., "s3_uri": ...}`); see
 `skills/atomic/find-artifacts/SKILL.md`.
 
 ## Verified

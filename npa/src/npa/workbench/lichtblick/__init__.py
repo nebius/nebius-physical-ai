@@ -752,6 +752,7 @@ def build_rerun_rrd_from_mcap(
     *,
     rr: Any | None = None,
     application_id: str = "npa_mcap_to_rerun",
+    recording_id: str = "",
 ) -> dict[str, Any]:
     """Decode a foxglove/JSON MCAP into a native Rerun ``.rrd`` recording.
 
@@ -781,10 +782,16 @@ def build_rerun_rrd_from_mcap(
     rr = rr or _import_rerun_sdk()
     os.makedirs(os.path.dirname(os.path.abspath(output_rrd)) or ".", exist_ok=True)
 
-    recording = rr.RecordingStream(application_id) if hasattr(rr, "RecordingStream") else None
+    recording = None
+    if hasattr(rr, "RecordingStream"):
+        try:
+            recording = rr.RecordingStream(application_id, recording_id=recording_id or None)
+        except TypeError:  # compatibility with older SDKs and injected test doubles
+            recording = rr.RecordingStream(application_id)
     rr.save(output_rrd, recording=recording)
 
     counts = {"images": 0, "scalars": 0, "logs": 0, "other": 0}
+    metadata: dict[str, str] = {}
     with open(mcap_path, "rb") as handle:
         reader = make_reader(handle)
         for schema, channel, message in reader.iter_messages():
@@ -814,6 +821,20 @@ def build_rerun_rrd_from_mcap(
                     recording=recording,
                 )
                 counts["other"] += 1
+        handle.seek(0)
+        for item in make_reader(handle).iter_metadata():
+            if item.name == "npa":
+                metadata.update(
+                    {str(key): str(value) for key, value in item.metadata.items()}
+                )
+
+    if metadata:
+        rr.log(
+            "run/provenance",
+            rr.TextDocument(_json.dumps(metadata, sort_keys=True)),
+            recording=recording,
+        )
+        counts["other"] += 1
 
     disconnect = getattr(rr, "disconnect", None)
     if callable(disconnect):
@@ -832,6 +853,10 @@ def build_rerun_rrd_from_mcap(
         "scalar_count": counts["scalars"],
         "log_count": counts["logs"],
         "other_count": counts["other"],
+        "application_id": application_id,
+        "recording_id": recording_id,
+        "timeline": _MCAP_RERUN_TIMELINE,
+        "provenance": metadata,
     }
 
 

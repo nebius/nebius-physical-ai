@@ -169,6 +169,28 @@ def test_normalize_resources_leaves_exact_nebius_shapes() -> None:
     }
 
 
+def test_accelerator_name_override_preserves_each_profile_gpu_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "NPA_WORKFLOW_GPU_ACCELERATOR",
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+    )
+    assert normalize_resources({"accelerators": "RTXPRO6000:1"})["accelerators"] == (
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+    )
+    assert normalize_resources({"accelerators": "RTXPRO6000:8"})["accelerators"] == (
+        "RTXPRO-6000-BLACKWELL-SERVER-EDITION:8"
+    )
+
+
+def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
+    assert normalize_resources(
+        {"accelerators": "RTXPRO6000:8"},
+        accelerator_overrides={"RTXPRO6000:8": "resolved-product"},
+    )["accelerators"] == "resolved-product:8"
+
+
 def test_nebius_cloud_render_injects_docker_secrets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

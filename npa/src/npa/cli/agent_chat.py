@@ -1344,7 +1344,7 @@ def format_find_artifacts() -> str:
             "**Artifact finder (generic, no workflow allowlist):**",
             "1. Discover runs: `GET /api/artifacts/runs?prefix=&limit=100`",
             "2. Inspect one run: `GET /api/artifacts/run/{run_id}`",
-            "3. Load selected artifact: `POST /api/sim-viz/load-artifact` with `s3_uri` or `run_id` + `key`",
+            "3. Load selected artifact: `POST /api/sim-viz/load-artifact` with `run_id` + `s3_uri` or `run_id` + `key`",
             "- Render hints are additive (`rerun`, `video`, `image`, `json`, `text`, `download`).",
             "- Unknown/new file types are still listed and selectable as `download`.",
             "- Use `GET /api/sim-viz/status` after load to confirm `artifact_render`, `artifact_key`, and `rerun_ready`.",
@@ -1566,7 +1566,7 @@ def format_foxglove_status(state: dict[str, Any]) -> str:
             lines.append(
                 "- No recording is loaded yet: pick an `.mcap`/`.bag` artifact in "
                 "**Runs & artifacts** (Type = Foxglove), or "
-                "`POST /api/foxglove/load-artifact` with `s3_uri` / `run_id`+`key`."
+                "`POST /api/foxglove/load-artifact` with `run_id`+`s3_uri` or `run_id`+`key`."
             )
     else:
         lines.append(

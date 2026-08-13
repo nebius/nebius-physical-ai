@@ -7,6 +7,14 @@ Source of truth: `npa/src/npa/orchestration/npa_workflow/catalog.py`.
 This table must list every `TOOL_CATALOG` key (enforced by
 `npa/tests/orchestration/npa_workflow/test_catalog_doc_sync.py`).
 
+Catalog reachability is fail-closed: every entry is consumed by a shipped spec
+except the explicitly public composition primitives `infra.fleet.deploy`,
+`infra.soperator.deploy`, `workbench.cosmos2.transfer`,
+`workbench.foxglove.convert`, `workbench.insights.record`,
+`workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`, and
+`workbench.sim2real.run`. The reusable-only list is machine-checked against
+`PUBLIC_REUSABLE_TOOLREFS`; accidental dead entries fail the guardrail.
+
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
 | `infra.fleet.deploy` | `npa fleet deploy` | `config.fleet_spec` | fleet deploy JSON | no |
@@ -36,6 +44,17 @@ This table must list every `TOOL_CATALOG` key (enforced by
 | `workbench.retargeting.run` | `npa workbench sonic retargeting run` | `config.motion_uri` | `config.retargeted_uri` | no |
 | `workbench.mjlab.eval` | `npa workbench mjlab eval` | `config.motion_uri`, `config.checkpoint_uri` | `config.mjlab_uri` | no |
 | `workbench.sonic.train` | `npa workbench sonic train` | `config.checkpoint_uri`, `config.data_uri` | training checkpoint | no |
+| `workflow.groot.prepare_split` | `npa.workflows.groot_learning prepare-split` | source GR00T LeRobot dataset | hashed, episode-disjoint train/held-out datasets + split manifest with train-only statistics | no |
+| `workflow.groot.preflight_rigor` | `npa.workflows.groot_learning preflight-rigor` | declared GPU, batch, split, and training-budget configuration | fail-fast absolute-action, effective-batch, cohort, and optimizer-step contract | no |
+| `workbench.groot.baseline_eval` | `npa.workflows.groot_learning baseline-eval` | split manifest, train/held-out datasets, pinned N1.7 base model | zero-update custom-embodiment checkpoint + real held-out predictions/expert actions/metrics | yes (real `Gr00tPolicy.get_action` forwards) |
+| `workbench.groot.finetune` | `npa workbench groot finetune --runtime local` | GR00T-format LeRobot dataset at `config.data_uri`, pinned N1.7 base model, positive `config.gpu_count` | vendor checkpoints + `npa_groot_finetune_manifest.json` at `config.checkpoint_uri` | yes (real upstream multi-GPU trainer) |
+| `workflow.groot.resolve_trained_checkpoint` | `npa.workflows.groot_task_performance resolve-trained-checkpoint` | split/training manifests and uploaded trainer output | step-contract-checked immutable checkpoint reference | no |
+| `workbench.groot.posttrain_eval` | `npa.workflows.groot_learning posttrain-eval` | resolved immutable checkpoint reference and unchanged held-out split | aligned real held-out predictions/expert actions plus aggregate/per-dimension errors | yes (real `Gr00tPolicy.get_action` forwards) |
+| `workflow.groot.compare_learning` | `npa.workflows.groot_learning compare-learning` | baseline/post evaluations, split and real training manifest | structurally fail-closed report with separate pipeline status and `improved`/`not_improved` outcome, plus offline held-out comparison video | no |
+| `workflow.groot.emit_learning_mcap` | `npa.workflows.groot_learning emit-mcap` | completed learning report and aligned evaluation tensors, including `not_improved` | inspected camera/action/error/metric `reports/groot-offline-evaluation.mcap` | no |
+| `workflow.groot.emit_learning_rrd` | `npa.workflows.groot_learning emit-rrd` | completed learning report and aligned evaluation tensors, including `not_improved` | native-archetype `reports/groot-offline-evaluation.rrd` with camera/action/error blueprint | no |
+| `workflow.groot.publish_learning` | `npa.workflows.groot_learning publish` | learning report, MCAP, RRD, video, exact workflow YAML | hashed `publish-manifest.json` and validated report index | no |
+| `workflow.groot.verify_agent_ui` | `npa.workflows.groot_learning verify-agent-ui` | exact run report, RRD, MCAP, deployed agent URL, runtime-only Basic auth | run discovery, artifact association, Rerun/Lichtblick readiness, and byte-range verification report | no |
 | `workbench.sonic.export` | `npa workbench sonic export` | `config.checkpoint_uri` | `config.onnx_uri` | no |
 | `workbench.sonic.eval` | `npa workbench sonic eval` | `config.onnx_uri` | eval report | no |
 | `workbench.lerobot.policy_rollout` | `python3 -m npa.workbench.lerobot.policy_container eval` | `config.policy_checkpoint`, `config.rollout_episodes` | rendered episodes under `config.rollouts_uri` | no |

@@ -192,7 +192,7 @@ Then load the artifact and open the **Rerun → IMAGE** viewer tab:
 ```bash
 curl -s -X POST http://127.0.0.1:8088/api/sim-viz/load-artifact \
   -H 'content-type: application/json' \
-  -d '{"s3_uri":"s3://<bucket>/runs/<run-id>/cosmos3-generate/generated/vision.jpg"}'
+  -d '{"run_id":"<run-id>","s3_uri":"s3://<bucket>/runs/<run-id>/cosmos3-generate/generated/vision.jpg"}'
 ```
 
 The Runs & Artifacts panel also finds the run by name (`cosmos3-`), and

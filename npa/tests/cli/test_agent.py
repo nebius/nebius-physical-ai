@@ -3,10 +3,11 @@ from __future__ import annotations
 from npa.cli import agent as agent_module
 from npa.cli.agent import rendered_agent_ui_html
 
+import base64
 import json
+import subprocess
 import re
 import shutil
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -25,6 +26,14 @@ from npa.cli.agent import (
 )
 
 runner = CliRunner()
+
+
+def test_artifact_only_timeout_allows_preserved_run_inventory() -> None:
+    from npa.cli.agent import ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS
+
+    # S3-backed workflow status can legitimately take more than the generic
+    # 30-second HTTP default while it inventories a large preserved run.
+    assert ARTIFACT_ONLY_HTTP_TIMEOUT_SECONDS >= 60.0
 
 
 def test_staged_agent_source_is_readable_by_unprivileged_runtime(
@@ -129,7 +138,7 @@ def _agent_source() -> str:
     from npa.cli import agent_site as agent_site_module
     from npa.cli import agent_viewer_runtime as agent_viewer_runtime_module
 
-    return "\n".join(
+    sources = [
         Path(module.__file__).read_text(encoding="utf-8")
         for module in (
             agent_module,
@@ -140,12 +149,26 @@ def _agent_source() -> str:
             agent_site_module,
             agent_viewer_runtime_module,
         )
+    ]
+    sources.append(
+        Path(agent_module.__file__)
+        .with_name("agent_artifact_content.py")
+        .read_text(encoding="utf-8")
     )
+    return "\n".join(sources)
 
 
 def _agent_ui_bundle() -> str:
     """Agent deploy source plus rendered UI HTML (UI lives in agent_ui.html)."""
     return _agent_source() + "\n" + rendered_agent_ui_html()
+
+
+def _agent_nginx_site() -> str:
+    """Render the nginx policy the bootstrap actually writes."""
+
+    from npa.cli.agent import _nginx_agent_site_body
+
+    return _nginx_agent_site_body(backend_port=8787, rerun_port=9090)
 
 
 def test_build_agent_urls_https_default() -> None:
@@ -918,10 +941,10 @@ def test_lichtblick_recordings_grant_no_cross_origin_read() -> None:
     no CORS grant at all.
     """
 
-    source = _agent_source()
-    recordings_location = source.split("location /lichtblick/recordings/ {{", 1)[
+    source = _agent_nginx_site()
+    recordings_location = source.split("location /lichtblick/recordings/ {", 1)[
         1
-    ].split("location = /lichtblick/ {{", 1)[0]
+    ].split("location = /lichtblick/ {", 1)[0]
     # Compare directives only: the block's comment names these headers to explain
     # why they are absent, so a bare substring check would match the prose.
     directives = [
@@ -944,7 +967,26 @@ def test_ui_pins_lichtblick_recording_fetch_to_the_page_origin() -> None:
     assert "function pinLichtblickDsToSameOrigin" in source
     assert "window.location.origin" in source
     # The iframe URL always flows through the rewrite.
-    assert 'return pinLichtblickDsToSameOrigin(url) || "/lichtblick/";' in source
+    assert "const pinned = pinLichtblickDsToSameOrigin(url) || \"/lichtblick/\";" in source
+    assert 'viewer.searchParams.set("npa.layout", layoutKind);' in source
+    assert 'viewer.searchParams.set("npa.camera"' in source
+    assert "learningArtifactContractFor" in source
+    assert "contract.matches.mcap" in source
+
+
+def test_lichtblick_uses_native_static_size_and_range_semantics() -> None:
+    """The reader gets size/ranges from nginx without a script import proxy."""
+
+    source = _agent_nginx_site()
+    block = source.split("location /lichtblick/recordings/ {", 1)[1].split(
+        "location = /lichtblick/ {", 1
+    )[0]
+    assert "alias /opt/npa-agent/recordings/;" in block
+    assert "proxy_pass" not in block
+    assert "gzip off;" in block
+    assert 'Cache-Control "no-cache, no-transform"' in block
+    assert "Accept-Ranges" in block
+    assert "Access-Control-Allow-Origin" not in block
 
 
 def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() -> None:
@@ -961,23 +1003,25 @@ def test_ui_seeds_the_lichtblick_layout_once_rather_than_wiping_every_mount() ->
     mount = source.split("function mountLichtblickIframe", 1)[1].split(
         "async function ensureLichtblickForActiveRun", 1
     )[0]
-    assert "if (lichtblickNeedsLayoutSeed()) {" in mount
+    assert "if (lichtblickNeedsLayoutSeed(simViz)) {" in mount
     reset_calls = mount.count("resetLichtblickLayoutStorage()")
     assert reset_calls == 1, f"expected one guarded wipe, found {reset_calls}"
 
 
 def test_bootstrap_injects_lichtblick_default_layout() -> None:
     source = _agent_source()
+    nginx = _agent_nginx_site()
     # The viewer document is exact-matched so nginx can inject a default layout via
     # the upstream-provided placeholder, so the point cloud + camera show on load.
-    assert "location = /lichtblick/ {{" in source
+    assert "location = /lichtblick/ {" in nginx
     assert (
-        "sub_filter '{lichtblick_layout_placeholder}' '{lichtblick_default_layout}';"
-        in source
+        "sub_filter '/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/' '(()=>{"
+        in nginx
     )
     assert "def _lichtblick_default_layout_json" in source
 
     from npa.cli import agent_assets
+    from npa.cli import agent_site as agent_site_module
 
     layout = json.loads(agent_assets._lichtblick_default_layout_json())
     panels = layout["configById"]
@@ -986,6 +1030,94 @@ def test_bootstrap_injects_lichtblick_default_layout() -> None:
     assert three_d["followTf"] == "sim2real"
     image = next(v for k, v in panels.items() if k.startswith("Image!"))
     assert image["imageMode"]["imageTopic"] == "/camera"
+    learning_layout = json.loads(agent_site_module._lichtblick_learning_layout_json())
+    learning_image = next(
+        v for k, v in learning_layout["configById"].items() if k.startswith("Image!")
+    )
+    assert learning_layout["layout"].startswith("Image!")
+    assert (
+        learning_image["imageMode"]["imageTopic"]
+        == "/camera/__NPA_PRIMARY_CAMERA__"
+    )
+    script = agent_site_module._lichtblick_default_layout_script()
+    assert 'query.get("npa.layout")!=="learning"' in script
+    assert 'query.get("npa.camera")' in script
+    assert 'imageTopic="/camera/"+camera' in script
+    assert 'window.Worker=function(scriptUrl,options)' in script
+    assert 'new URL("/lichtblick/npa-worker.js"' in script
+    assert "location = /lichtblick/npa-worker.js {" in nginx
+    assert "npa.target" in nginx
+
+
+def test_lichtblick_nginx_inline_javascript_has_no_nginx_variables_or_controls() -> None:
+    """Inline nginx directive values cannot contain raw controls or bare ``$``."""
+
+    from npa.cli.agent_site import (
+        _lichtblick_default_layout_script,
+        _lichtblick_worker_script,
+    )
+
+    for script in (_lichtblick_default_layout_script(), _lichtblick_worker_script()):
+        assert "$" not in script
+        assert "\\" not in script
+        assert not [char for char in script if ord(char) < 32 or ord(char) == 127]
+
+
+def test_lichtblick_worker_accepts_only_same_origin_lichtblick_javascript() -> None:
+    from npa.cli.agent_site import _lichtblick_worker_script
+
+    worker = _lichtblick_worker_script()
+    harness = r"""
+const target = process.argv[1];
+global.self = {
+  location: new URL("https://agent.example/lichtblick/npa-worker.js?npa.size=217423&npa.target=" + encodeURIComponent(target)),
+  fetch: async () => new Response(null, {status: 200, headers: {"accept-ranges": "bytes"}}),
+};
+global.importScripts = (url) => process.stdout.write("IMPORTED=" + url);
+eval(Buffer.from(process.argv[2], "base64").toString("utf8"));
+"""
+    encoded = base64.b64encode(worker.encode()).decode()
+    allowed = "/lichtblick/assets/mcap.worker.js"
+    result = subprocess.run(
+        ["node", "-e", harness, allowed, encoded],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "IMPORTED=https://agent.example/lichtblick/assets/mcap.worker.js"
+    for target in (
+        "//foreign.invalid/worker.js",
+        "https://foreign.invalid/worker.js",
+        "https://user:password@agent.example/lichtblick/worker.js",
+        "javascript:alert(1)",
+        "data:text/javascript,alert(1)",
+        "/api/private.js",
+        "/lichtblick/recordings/run.mcap",
+        "/lichtblick/npa-worker.js",
+        "/lichtblick/%252e%252e/api/private.js",
+        "/lichtblick/worker.js?next=/lichtblick/good.js",
+        "/lichtblick/worker.js%3fnext=/lichtblick/good.js",
+        "/lichtblick/worker.js#fragment",
+        "/lichtblick\\worker.js",
+        "/lichtblick/worker.js\x01",
+    ):
+        rejected = subprocess.run(
+            ["node", "-e", harness, target, encoded],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert rejected.returncode != 0, target
+        assert "invalid Lichtblick worker target" in rejected.stderr
+
+
+def test_lichtblick_anonymous_routes_do_not_disable_api_authentication() -> None:
+    source = _agent_nginx_site()
+    api_block = source.split("location /api/ {", 1)[1].split("location /assets/api/", 1)[0]
+    assert "auth_basic off" not in api_block
+    assert "location = /lichtblick/npa-worker.js {" in source
+    assert "location /lichtblick/recordings/ {" in source
 
 
 def test_bootstrap_ui_embeds_lichtblick_render_mode() -> None:
@@ -1011,7 +1143,6 @@ def test_bootstrap_ui_lichtblick_autoloads_run_mcap() -> None:
 
 
 def test_bootstrap_artifact_file_transcodes_ppm_to_png() -> None:
-
     source = _agent_source()
     # .ppm/.bmp/.tiff are transcoded to PNG on serve so the browser can render them.
     assert "needs_image_transcode(safe_name)" in source
@@ -1413,7 +1544,7 @@ def test_bootstrap_embeds_franka_rerun_ux() -> None:
     assert '"/api/sim-viz/status?run_id="' in source
     # Media preview uses authenticated blob URLs; Rerun still avoids parent blob URLs for wasm.
     assert "does not reliably consume parent-created blob URLs" in source
-    assert "media_type=artifact_media_type(safe_name)" in source
+    assert "local_media_type = artifact_media_type(safe_name)" in source
     assert "apis_used" in source
     assert "format_live_context_block" in source
     assert "match_chat_intent" in source
@@ -1492,13 +1623,13 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '@app.post("/sim-viz/load-artifact")' in source
     # Every artifact must be directly downloadable: streaming download endpoint
     # + a per-artifact Download button wired to it.
-    assert '@app.get("/artifacts/download")' in source
+    assert '@app.api_route("/artifacts/download", methods=["GET", "HEAD"])' in source
     assert (
         'data-action="download-artifact"' in source
         or "data-action='download-artifact'" in source
     )
-    assert "async function downloadArtifact(" in source
-    assert "/api/artifacts/download?" in source
+    assert "function downloadArtifact(" in source
+    assert "/api/artifacts/content?" in source
     # Clicking a stage describes it and inlines its artifacts/info/configs.
     assert '@app.get("/artifacts/stage/{{run_id:path}}")' in source
     assert "async function showStageDetail(" in source
@@ -1523,10 +1654,11 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "Artifact summary only — FiftyOne did not run" in source
     assert 'id="voxelReview"' in source
     assert "data_role_label" in source
-    # Loading by run-relative key resolves a discovered object and exact S3 keys
-    # infer the full run id instead of truncating it to the top-level workflow name.
+    # Loading by run-relative key resolves a discovered object. An unscoped exact
+    # S3 URI receives the structured v2 migration error instead of guessing a run.
     assert "resolve_run_artifacts(" in source
-    assert '_run_id_for_key(key, "")' in source
+    assert '"contract_version": "npa.agent.load-artifact.v2"' in source
+    assert '"code": "run_id_required_for_s3_uri"' in source
     assert 'may_use_default_recording = payload_run in {"", "franka-demo"}' in source
     # Regression: #panelVoxel must be a SIBLING of #panelRerun, not nested inside
     # it. If nested, panelRerun.is-inactive (opacity:0) makes the whole Voxel tab
@@ -1583,6 +1715,42 @@ def test_bootstrap_run_finder_filters_by_name_or_id_not_path() -> None:
     assert "artifactPrefixValue" not in source
 
 
+def test_direct_run_load_cancels_background_discovery_and_uses_exact_artifacts() -> None:
+    source = _agent_ui_bundle()
+
+    assert "let artifactRunsAbortController = null;" in source
+    assert "artifactRunsAbortController.abort();" in source
+    assert "Exact run loading takes precedence" in source
+    assert "await loadArtifactsForSelectedRun(runRef || runId, null, exactEntry" in source
+    assert "if (loaded && activeArtifactInventory.length)" in source
+    assert 'refreshArtifactRuns("", { singlePage: true })' in source
+    assert "Render the authoritative workflow timeline before attempting" in source
+    assert "!context.deferPreferredViewer && preferred" in source
+    assert "deferPreferredViewer: true" in source
+    assert 'showToast("Run loaded; preferred viewer failed: "' in source
+    assert '"#stageList .stage-physical-job"' in source
+    assert "if (!physicalStageCount) await loadRunDetails(runId, detailOptions);" in source
+
+
+def test_artifact_backed_training_run_loads_without_rerun_recording() -> None:
+    source = _agent_ui_bundle()
+    backend = Path(__file__).resolve().parents[2].joinpath("src/npa/cli/agent.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"output_artifact_count"' in backend
+    assert '"preview_status": "no_previewable_recording"' in backend
+    assert '"artifacts_available": True' in backend
+    status_body = backend.split('@app.get("/sim-viz/status")', 1)[1].split(
+        '@app.get("/sim-viz/runs")', 1
+    )[0]
+    assert 'preview_status == "no_previewable_recording"' in status_body
+    assert 'payload["rerun_ready"] = False' in status_body
+    assert 'state: "no-preview-artifacts"' in source
+    assert 'placeholder.setAttribute("data-state"' in source
+    assert "No RRD/MCAP recording; use the artifacts below" in source
+
+
 def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
     """The stages/artifact browser must let you choose a workflow-progress step.
 
@@ -1604,7 +1772,7 @@ def test_bootstrap_artifact_stage_selector_and_clickable_timeline() -> None:
         "if (stageFilter && deriveArtifactStage(item.key, runId, stageWrapper) !== stageFilter) return false;"
         in source
     )
-    assert '["artifactStageFilter", "artifactTypeFilter", "artifactSort"]' in source
+    assert '["artifactStageFilter", "artifactTypeFilter", "artifactRoleFilter", "artifactSort"]' in source
     # Timeline stage rows are tagged and clickable to drive the stage filter.
     assert "stage_key: stageKey," in source
     assert 'data-stage-key="' in source
@@ -1640,6 +1808,26 @@ def test_data_factory_recording_note_wired_in_apply_loaded_artifact() -> None:
         "_is_sim2real_pipeline_recording(key) and not _is_data_factory_recording(key)"
         in source
     )
+
+
+def test_groot_learning_recording_activates_real_rrd_and_truthful_note() -> None:
+    from npa.cli import agent as agent_module
+    from npa.cli import agent_viewer_runtime
+
+    source = Path(agent_viewer_runtime.__file__).read_text(encoding="utf-8")
+    branch = source.split('if render == "rerun":', 1)[1].split('elif render == "mcap":', 1)[0]
+    assert "if is_learning:" in branch
+    assert 'sim_viz["preview_entity"] = f"heldout/camera/{camera}"' in branch
+    assert "validated primary camera is {camera}" in branch
+    assert "Offline held-out GR00T policy evaluation loaded (not a rollout)." in branch
+    assert "finite training loss, and provenance" in branch
+    assert (
+        "Offline held-out GR00T policy evaluation loaded (not a rollout)"
+        in agent_module._embedded_agent_viewer_runtime_source()
+    )
+    assert 'rrd_tmp = RRD_PATH.with_suffix(".rrd.tmp")' in branch
+    assert "shutil.copy2(local_path, rrd_tmp)" in branch
+    assert branch.index("rrd_tmp.replace(RRD_PATH)") < branch.index("_restart_rerun_serve(force=True)")
 
 
 def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
@@ -1742,6 +1930,24 @@ def test_run_details_resolves_run_generically_by_id() -> None:
     assert 'params.set("resolved_prefix", resolvedPrefix)' in ui
     assert 'params.set("source_selected", "1")' in ui
     assert '"stages succeeded"' not in ui
+
+
+def test_artifact_cards_define_runtime_metadata_before_rendering() -> None:
+    """Artifact card rendering must not fail on undefined metadata variables."""
+    ui = _agent_ui_bundle()
+
+    assert "const learningSummary = data && data.summary && data.summary.learning" in ui
+    assert "list.hidden = Boolean(learningSummary);" in ui
+    assert 'const s3uri = String(item.s3_uri || "");' in ui
+    assert 'data-s3-uri="\' + escapeHtml(s3uri)' in ui
+
+
+def test_agent_ui_surfaces_physical_managed_job_ids_per_stage() -> None:
+    ui = _agent_ui_bundle()
+
+    assert 'const managedJobId = String(stage.job_id || "").trim();' in ui
+    assert 'class="stage-physical-job"' in ui
+    assert "Physical managed job ID:" in ui
 
 
 def test_bootstrap_chat_has_scroll_to_bottom_button() -> None:
@@ -3386,7 +3592,6 @@ def test_run_details_surface_per_stage_workflow_logs() -> None:
 def test_artifact_file_transcodes_non_web_images_to_png() -> None:
     """Non-web images (.ppm sim camera frames, .bmp, .tiff) must be transcoded to
     PNG by the artifact file endpoint so they are viewable in the Rerun/Image panes."""
-
     source = _agent_source()
     assert "needs_image_transcode(safe_name)" in source
     assert 'format="PNG"' in source
@@ -4844,6 +5049,22 @@ def test_ui_script_calls_no_undefined_local_helper() -> None:
     }
     undefined = sorted(called - defined - allowed)
     assert not undefined, f"UI script calls undefined helper(s): {undefined}"
+
+
+def test_artifact_role_summary_uses_the_declared_role() -> None:
+    """Guard the conflict-prone semantic-role/artifact-role UI merge."""
+
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    assert "acc[artifactRole] = (acc[artifactRole] || 0) + 1" in script
+    assert "acc[role] = (acc[role] || 0) + 1" not in script
+
+
+def test_boot_rerun_mount_preserves_a_newer_operator_media_preview() -> None:
+    """A late boot-time Rerun mount must not replace an explicit replay video."""
+
+    script = rendered_agent_ui_html().split("<script>")[-1].split("</script>")[0]
+    assert "const explicitMediaSelected = () => operatorMediaPreviewActive;" in script
+    assert "if (explicitMediaSelected())" in script
 
 
 def test_ui_recomputes_the_viewer_cta_once_the_iframe_mounts() -> None:

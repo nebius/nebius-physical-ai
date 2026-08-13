@@ -22,14 +22,20 @@ from npa.workflows.artifacts import (
 
 AGENT_MODULE = Path(__file__).resolve().parents[2] / "src" / "npa" / "cli" / "agent.py"
 AGENT_CONTRACTS_MODULE = AGENT_MODULE.with_name("agent_contracts.py")
+AGENT_UI = AGENT_MODULE.with_name("agent_ui.html")
+ARTIFACT_CONTENT_MODULE = AGENT_MODULE.with_name("agent_artifact_content.py")
 ARTIFACTS_MODULE = (
     Path(__file__).resolve().parents[2] / "src" / "npa" / "workflows" / "artifacts.py"
 )
 
 
 def test_agent_media_preview_contract_present_in_source() -> None:
-    source = AGENT_MODULE.read_text(encoding="utf-8")
-    contract_source = source + AGENT_CONTRACTS_MODULE.read_text(encoding="utf-8")
+    source = AGENT_MODULE.read_text(encoding="utf-8") + AGENT_UI.read_text(encoding="utf-8")
+    contract_source = (
+        source
+        + AGENT_CONTRACTS_MODULE.read_text(encoding="utf-8")
+        + ARTIFACT_CONTENT_MODULE.read_text(encoding="utf-8")
+    )
     assert f'AGENT_UI_VERSION = "{AGENT_UI_VERSION}"' in source
     for marker in AGENT_MEDIA_PREVIEW_CONTRACT:
         assert marker in contract_source, (
@@ -66,7 +72,7 @@ def test_artifact_media_type_aligned_with_render_hint(ext: str) -> None:
     elif render == "json":
         assert media == "application/json"
     elif render == "text":
-        assert media.startswith("text/")
+        assert media.startswith("text/") or media.startswith("application/x-ndjson")
 
 
 def test_embedded_artifacts_source_includes_media_type_helper() -> None:
@@ -80,9 +86,12 @@ def test_embedded_artifacts_source_includes_media_type_helper() -> None:
 
 
 def test_bootstrap_embeds_artifacts_module_with_media_type() -> None:
-    source = AGENT_MODULE.read_text(encoding="utf-8")
+    source = AGENT_MODULE.read_text(encoding="utf-8") + ARTIFACT_CONTENT_MODULE.read_text(
+        encoding="utf-8"
+    )
     assert "_AGENT_ARTIFACTS_EMBED" in source
-    assert "media_type=artifact_media_type(safe_name)" in source
+    assert "content_type = artifact_media_type(str(artifact.key))" in source
+    assert '"X-Content-Type-Options": "nosniff"' in source
     assert "def _artifact_media_type(" not in source
     # load-run must echo the applied snapshot (not re-enter status) to avoid
     # racing concurrent UI artifact loads from returning the wrong run.

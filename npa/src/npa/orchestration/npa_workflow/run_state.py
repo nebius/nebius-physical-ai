@@ -562,6 +562,35 @@ class RunStateStore:
         manifest.steps.append(dict(step_record))
         return self.write_manifest(manifest)
 
+    def write_artifact(
+        self,
+        relative_key: str,
+        body: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Write one non-empty run artifact beneath this run's exact prefix."""
+
+        key = str(relative_key or "").strip().lstrip("/")
+        if not key or ".." in key.split("/"):
+            raise ValueError("run artifact key must be a safe relative path")
+        if not body:
+            raise ValueError("run artifact body must be non-empty")
+        target = f"{self.prefix}/{key}"
+        if self._writer is not None:
+            self._writer(self.bucket, target, body)
+        else:
+            from npa.clients.storage import StorageClient
+
+            client = StorageClient.from_environment()
+            client._s3.put_object(
+                Bucket=self.bucket,
+                Key=target,
+                Body=body,
+                ContentType=content_type,
+            )
+        return f"s3://{self.bucket}/{target}"
+
     def _read(self, key: str) -> str:
         if self._reader is not None:
             return str(self._reader(self.bucket, key))
@@ -1083,6 +1112,8 @@ def plan_step_records(
             value = getattr(step, optional, "")
             if value:
                 record[optional] = value
+        record["inputs"] = [dict(item) for item in getattr(step, "inputs", ()) or ()]
+        record["outputs"] = [dict(item) for item in getattr(step, "outputs", ()) or ()]
         records.append(record)
     return records
 

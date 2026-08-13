@@ -712,12 +712,13 @@ describe("NPA agent UI against live infra", () => {
           if (!mp4) {
             return findMp4(index + 1);
           }
-          return {
-            runId,
-            key: String(mp4.key),
-            s3Uri: String(mp4.s3_uri || ""),
-            entry,
-          };
+            return {
+              runId,
+              key: String(mp4.key),
+              s3Uri: String(mp4.s3_uri || ""),
+              entry,
+              role: String(mp4.role || "output"),
+            };
         });
       };
 
@@ -727,7 +728,7 @@ describe("NPA agent UI against live infra", () => {
         cy.log("no mp4 artifact discoverable in live runs — skipping Video viewer assertions");
         return;
       }
-      const { runId, s3Uri, entry } = found;
+      const { runId, s3Uri, entry, role } = found;
       return liveAgentRequest("/api/sim-viz/load-artifact", {
         method: "POST",
         body: { run_id: runId, run_ref: String(entry.run_ref || ""), s3_uri: s3Uri },
@@ -761,6 +762,9 @@ describe("NPA agent UI against live infra", () => {
         });
         cy.get("#runIdInput", { timeout: 120000 }).should("have.value", runId);
         cy.get("#artifactList", { timeout: 120000 }).should("contain.text", ".mp4");
+        // Artifact inventory is role-separated. Follow the discovered artifact's
+        // role before applying the video render filter.
+        cy.get("#artifactRoleFilter").select(role);
         cy.get("#artifactTypeFilter").select("video");
         cy.get("#artifactList", { timeout: 120000 }).should("contain.text", ".mp4");
         cy.contains("#artifactList button", "Play").first().click();
@@ -836,6 +840,52 @@ describe("NPA agent UI against live infra", () => {
         });
       });
     });
+  });
+
+  it("selects a live artifact-backed training run and shows outputs without Rerun", function () {
+    const runId = String(
+      Cypress.env("NPA_AGENT_CYPRESS_TRAINING_RUN_ID") ||
+        Cypress.env("NPA_AGENT_TRAINING_RUN_ID") ||
+        "",
+    ).trim();
+    if (!runId) this.skip();
+
+    cy.get("#tabRerun").click();
+    cy.get("#artifactPrefix").clear().type(runId, { delay: 0 });
+    cy.get("#runIdSelect option", { timeout: 60000 }).should(($opts) => {
+      const values = [...$opts].map((opt) => opt.value).filter(Boolean);
+      expect(values, "artifact run selector contains exact training run").to.include(runId);
+      expect(values, "workflow stages are not run ids").not.to.include("checkpoints");
+      expect(values, "workflow stages are not run ids").not.to.include("evidence");
+    });
+
+    cy.intercept("POST", "/api/sim-viz/load-run").as("trainingLoadRunLive");
+    cy.intercept("GET", `/api/artifacts/run/${runId}*`).as("trainingArtifactsLive");
+    cy.get("#runIdInput").clear().type(runId, { delay: 0 });
+    cy.get("#loadRunData").click();
+    cy.wait("@trainingLoadRunLive", { timeout: 120000 })
+      .its("response.statusCode")
+      .should("eq", 200);
+    cy.wait("@trainingArtifactsLive", { timeout: 120000 })
+      .its("response.statusCode")
+      .should("eq", 200);
+
+    cy.get("#artifactRoleFilter").should("have.value", "output");
+    cy.get("#artifactList .artifact-card[data-role='output']", { timeout: 120000 })
+      .its("length")
+      .should("be.greaterThan", 0);
+    cy.get("#artifactList .artifact-card[data-role='input']").should("not.exist");
+    cy.get("#artifactList").should("contain.text", "manifest.json");
+    cy.get("#artifactList").should("contain.text", "workflow.yaml");
+    cy.get("#artifactList button[data-action='download-artifact']").should("exist");
+    cy.get("#simRunId").should("contain.text", runId);
+    cy.get("#rerunPlaceholder", { timeout: 30000 })
+      .should("have.attr", "data-state", "no-preview-artifacts")
+      .and("contain.text", "No RRD/MCAP recording; use the artifacts below");
+    cy.get("#renderedDataSummary").should(
+      "contain.text",
+      "No RRD/MCAP recording; use the artifacts below",
+    );
   });
 
   it("submits Sim2Real from the UI when live destructive Cypress is enabled", function () {

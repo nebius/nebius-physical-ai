@@ -76,11 +76,14 @@ WORKDIR /opt/lerobot
 
 # 0.5.1 keeps the historic [pusht,libero] extra bundle + pinned torch upgrades.
 # 0.6.0 uses lean feature extras and must NOT force torch>=2.12 (upstream ceiling).
+# 0.6.0 also moved diffusers/transformers behind extras and enforces them in each
+# policy's __init__, so diffusion and smolvla must be requested explicitly or
+# --policy.type=diffusion fails inside make_policy() at run time, not at build.
 RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
          /opt/lerobot/venv/bin/pip install \
-           "lerobot[training,evaluation,pusht,libero]==${LEROBOT_VERSION}" \
+           "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${LEROBOT_VERSION}" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \

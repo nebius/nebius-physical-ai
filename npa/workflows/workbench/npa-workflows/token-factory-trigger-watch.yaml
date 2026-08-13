@@ -30,8 +30,8 @@ config:
   max_images: "4"
   max_tokens: "128"
 
-  # How patient the watch is. maxPolls bounds the wait in polls; the run's
-  # --max-wait-seconds bounds it in wall-clock regardless.
+  # How patient the watch is. maxPolls bounds the wait in polls; a positive
+  # --max-wait-seconds also bounds it in wall-clock time (0 waits indefinitely).
   inbox_poll_seconds: 15
   inbox_max_polls: 40
   inbox_min_objects: 1

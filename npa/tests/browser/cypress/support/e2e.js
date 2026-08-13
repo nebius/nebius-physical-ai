@@ -420,6 +420,7 @@ const FIELD_IDS = [
   "artifactSort",
   "artifactStageFilter",
   "runsArtifactsPanel",
+  "artifactRunSummary",
   "artifactList",
   "simRunId",
   "simStage",
@@ -801,6 +802,88 @@ function installAgentApiMocks() {
     }
     req.reply({ statusCode: 200, headers: { "content-type": "application/octet-stream" }, body: "mock-bytes" });
   }).as("artifactDownload");
+  cy.intercept({ method: /GET|HEAD/, url: "/api/artifacts/content*" }, (req) => {
+    const url = new URL(req.url);
+    const key = url.searchParams.get("key") || "";
+    const download = url.searchParams.get("download") === "true";
+    if (!download && key.endsWith(".json")) req.alias = "artifactContentJson";
+    else if (!download && key.match(/\.ya?ml$/i)) req.alias = "artifactContentYaml";
+    else if (!download && key.match(/\.(log|txt)$/i)) req.alias = "artifactContentText";
+    else if (!download && key.match(/\.(png|jpe?g|gif|webp)$/i)) req.alias = "artifactContentImage";
+    else if (!download && key.match(/\.(mp4|webm|mov)$/i)) req.alias = "artifactContentVideo";
+    const baseHeaders = {
+      "accept-ranges": "bytes",
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+      "content-disposition": download
+        ? `attachment; filename="${key.split("/").pop() || "artifact.bin"}"`
+        : `inline; filename="${key.split("/").pop() || "artifact.bin"}"`,
+    };
+    if (req.method === "HEAD") {
+      req.reply({ statusCode: 200, headers: { ...baseHeaders, "content-length": "4096" }, body: "" });
+      return;
+    }
+    if (!download && key.endsWith("manifest.json")) {
+      const text = JSON.stringify({ run_id: key.split("/")[0], status: "completed" }, null, 2);
+      req.reply({
+        statusCode: 200,
+        headers: { ...baseHeaders, "content-type": "application/json" },
+        body: { ok: true, render: "json", text, bytes_read: text.length, total_bytes: text.length, truncated: false, redacted: false },
+      });
+      return;
+    }
+    if (!download && key.endsWith(".json")) {
+      const text = JSON.stringify({ run_id: NON_STOCK_RUN_ID, result: "promoted", non_stock: true }, null, 2);
+      req.reply({
+        statusCode: 200,
+        headers: { ...baseHeaders, "content-type": "application/json" },
+        body: { ok: true, render: "json", text, bytes_read: text.length, total_bytes: text.length, truncated: false, redacted: false },
+      });
+      return;
+    }
+    if (!download && key.match(/\.ya?ml$/i)) {
+      const text = "apiVersion: npa.workflow/v0.0.1\nmetadata:\n  name: groot-1-7-finetune\n";
+      req.reply({
+        statusCode: 200,
+        headers: { ...baseHeaders, "content-type": "application/json" },
+        body: { ok: true, render: "text", text, bytes_read: text.length, total_bytes: text.length, truncated: false, redacted: false },
+      });
+      return;
+    }
+    if (!download && key.match(/\.(log|txt)$/i)) {
+      const text = key.endsWith("orchestrator.log")
+        ? "loaded customer scene mesh\npublished non-stock sim2real artifacts\n"
+        : "training completed\ntrain_loss=1.03125\n";
+      req.reply({
+        statusCode: 200,
+        headers: { ...baseHeaders, "content-type": "application/json" },
+        body: { ok: true, render: "text", text, bytes_read: text.length, total_bytes: text.length, truncated: false, redacted: false },
+      });
+      return;
+    }
+    if (!download && key.match(/\.(png|jpe?g|gif|webp)$/i)) {
+      req.reply({ statusCode: 200, headers: { ...baseHeaders, "content-type": "image/png" }, body: "mock-image-bytes" });
+      return;
+    }
+    if (!download && key.match(/\.(mp4|webm|mov)$/i)) {
+      const ranged = Boolean(req.headers.range);
+      req.reply({
+        statusCode: ranged ? 206 : 200,
+        headers: {
+          ...baseHeaders,
+          "content-type": "video/mp4",
+          ...(ranged ? { "content-range": "bytes 0-99/4096", "content-length": "100" } : {}),
+        },
+        body: "mock-video-bytes",
+      });
+      return;
+    }
+    req.reply({
+      statusCode: 200,
+      headers: { ...baseHeaders, "content-type": "application/octet-stream" },
+      body: "mock artifact payload",
+    });
+  }).as("artifactContent");
   cy.intercept("GET", "/api/artifacts/file/*", (req) => {
     const decoded = decodeURIComponent(req.url.split("/").pop() || "");
     if (decoded.includes("sim2real-report.json")) {

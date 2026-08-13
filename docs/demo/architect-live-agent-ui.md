@@ -115,7 +115,7 @@ Optional: Isaac-only G1 skeleton (no predictions):
 
 ```bash
 curl -sk -u "$AGENT_USER:$AGENT_PASSWORD" -H "Content-Type: application/json" \
-  -d "{\"s3_uri\":\"s3://${BUCKET}/checkpoints/sim2real-b/demo-workbench-ui/reports/isaac-lab-trajectory.rrd\"}" \
+  -d "{\"run_id\":\"demo-workbench-ui\",\"s3_uri\":\"s3://${BUCKET}/checkpoints/sim2real-b/demo-workbench-ui/reports/isaac-lab-trajectory.rrd\"}" \
   "$AGENT_PUBLIC_URL/api/sim-viz/load-artifact"
 ```
 
@@ -128,7 +128,7 @@ MP4 companions (Artifacts / preview URL):
 
 ```bash
 curl -sk -u "$AGENT_USER:$AGENT_PASSWORD" -H "Content-Type: application/json" \
-  -d "{\"s3_uri\":\"s3://${BUCKET}/checkpoints/sim2real-b/demo-workbench-ui/reports/sim2real-closedloop-multienv.rrd\"}" \
+  -d "{\"run_id\":\"demo-workbench-ui\",\"s3_uri\":\"s3://${BUCKET}/checkpoints/sim2real-b/demo-workbench-ui/reports/sim2real-closedloop-multienv.rrd\"}" \
   "$AGENT_PUBLIC_URL/api/sim-viz/load-artifact"
 ```
 
@@ -152,7 +152,7 @@ multi-env eval cameras.”
 
 ```bash
 curl -sk -u "$AGENT_USER:$AGENT_PASSWORD" -H "Content-Type: application/json" \
-  -d "{\"s3_uri\":\"s3://${BUCKET}/checkpoints/sim2real-b/demo-workbench-ui/reports/cosmos-augmented-a.mp4\"}" \
+  -d "{\"run_id\":\"demo-workbench-ui\",\"s3_uri\":\"s3://${BUCKET}/checkpoints/sim2real-b/demo-workbench-ui/reports/cosmos-augmented-a.mp4\"}" \
   "$AGENT_PUBLIC_URL/api/sim-viz/load-artifact"
 ```
 
@@ -174,11 +174,11 @@ vs primary, or the second Cosmos clip:
 
 ```bash
 curl -sk -u "$AGENT_USER:$AGENT_PASSWORD" -H "Content-Type: application/json" \
-  -d "{\"s3_uri\":\"s3://${BUCKET}/checkpoints/sim2real-b/demo-workbench-ui/reports/groot-predictions-overlay-alt.rrd\"}" \
+  -d "{\"run_id\":\"demo-workbench-ui\",\"s3_uri\":\"s3://${BUCKET}/checkpoints/sim2real-b/demo-workbench-ui/reports/groot-predictions-overlay-alt.rrd\"}" \
   "$AGENT_PUBLIC_URL/api/sim-viz/load-artifact"
 
 curl -sk -u "$AGENT_USER:$AGENT_PASSWORD" -H "Content-Type: application/json" \
-  -d "{\"s3_uri\":\"s3://${BUCKET}/checkpoints/sim2real-b/demo-workbench-ui/reports/cosmos-augmented-b.mp4\"}" \
+  -d "{\"run_id\":\"demo-workbench-ui\",\"s3_uri\":\"s3://${BUCKET}/checkpoints/sim2real-b/demo-workbench-ui/reports/cosmos-augmented-b.mp4\"}" \
   "$AGENT_PUBLIC_URL/api/sim-viz/load-artifact"
 ```
 

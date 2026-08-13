@@ -45,9 +45,10 @@ def test_install_is_conditional_on_the_executable_being_absent() -> None:
     assert "if ! command -v huggingface-cli >/dev/null 2>&1; then" in setup
     assert "-m pip install -q 'huggingface_hub[cli]>=0.23,<1.0'" in setup
     # Same PEP 668 fallbacks default_npa_setup uses: plain, --break-system-packages, --user.
-    # Four mentions: the echo plus the three PEP 668 fallbacks (plain,
-    # --break-system-packages, --user) that default_npa_setup also uses.
-    assert setup.count("huggingface_hub[cli]>=0.23,<1.0") == 4
+    # Five mentions: the echo, three pip/PEP 668 attempts, and the uv fallback
+    # required by vendor environments whose interpreter deliberately omits pip.
+    assert setup.count("huggingface_hub[cli]>=0.23,<1.0") == 5
+    assert 'uv pip install -q --python "$npa_req_python"' in setup
 
 
 def test_no_requirements_renders_nothing() -> None:
@@ -97,6 +98,32 @@ def test_a_library_requirement_is_probed_by_import_not_by_command_v() -> None:
     assert "-c 'import huggingface_hub' >/dev/null 2>&1; then" in setup
     assert "command -v" not in setup
     assert "-m pip install -q 'huggingface_hub>=0.23,<1.0'" in setup
+
+
+def test_groot_restores_exact_upstream_transformers_runtime() -> None:
+    requirements = tool_pip_requirements("workbench.groot.baseline_eval")
+    assert requirements == (
+        ("python:tomli", "tomli>=2.0.0"),
+        (
+            'python:transformers;assert(__import__("importlib.metadata").metadata.version("transformers")=="4.57.3")',
+            "transformers==4.57.3",
+        ),
+    )
+    setup = render_pip_requirements_setup(requirements)
+    assert (
+        '-c \'import transformers;assert(__import__("importlib.metadata").metadata.version("transformers")=="4.57.3")\''
+        in setup
+    )
+    assert "-m pip install -q 'transformers==4.57.3'" in setup
+    assert 'uv pip install -q --python "$npa_req_python"' in setup
+
+
+def test_groot_finetune_installs_python310_tomli_into_the_recorded_environment() -> None:
+    requirements = tool_pip_requirements("workbench.groot.finetune")
+    assert requirements[0] == ("python:tomli", "tomli>=2.0.0")
+    setup = render_pip_requirements_setup(requirements)
+    assert '"$npa_req_python" -c \'import tomli\'' in setup
+    assert 'uv pip install -q --python "$npa_req_python" \'tomli>=2.0.0\'' in setup
 
 
 def test_executable_and_module_probes_can_coexist() -> None:

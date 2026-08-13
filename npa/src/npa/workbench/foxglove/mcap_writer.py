@@ -23,14 +23,16 @@ import error is turned into an actionable message rather than a stack trace.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from npa.workbench.lichtblick import compressed_image_message
 
 NS_PER_S = 1_000_000_000
+MAX_SIGNED_TIMESTAMP_NS = (1 << 63) - 1
 
 # Browser/Foxglove-native compressed image formats.
 _DIRECT_IMAGE_FORMATS = {
@@ -119,6 +121,7 @@ class FrameInput:
     path: Path
     camera: str = "camera"
     timestamp_ns: int | None = None
+    topic: str | None = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +139,8 @@ class MetricsInput:
 
     path: Path
     name: str = "metrics"
+    topic: str | None = None
+    timestamp_ns: int | None = None
 
 
 @dataclass
@@ -192,8 +197,21 @@ def safe_topic(name: str, *, prefix: str) -> str:
 
 
 def _time_fields(timestamp_ns: int) -> dict[str, int]:
-    ts = max(0, int(timestamp_ns))
+    ts = _validated_timestamp_ns(timestamp_ns)
     return {"sec": ts // NS_PER_S, "nsec": ts % NS_PER_S}
+
+
+def _validated_timestamp_ns(value: int | float) -> int:
+    """Validate the explicit NPA time domain without imposing a run-length cap."""
+    if isinstance(value, float) and not math.isfinite(value):
+        raise McapWriteError("MCAP timestamp must be finite")
+    try:
+        timestamp = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise McapWriteError("MCAP timestamp must be an integer nanosecond value") from exc
+    if not 0 <= timestamp <= MAX_SIGNED_TIMESTAMP_NS:
+        raise McapWriteError("MCAP timestamp is outside the nonnegative int64 domain")
+    return timestamp
 
 
 # Cheap content checks so a mislabeled/corrupt file is skipped with a reason
@@ -249,6 +267,8 @@ def _read_image(path: Path) -> tuple[bytes, str] | None:
 def _metric_schema(payload: dict[str, Any], title: str) -> dict[str, Any]:
     properties: dict[str, Any] = {"timestamp": dict(_TIME_SCHEMA)}
     for key, value in payload.items():
+        if key == "_timestamp_ns":
+            continue
         if isinstance(value, bool):
             properties[key] = {"type": "boolean"}
         elif isinstance(value, (int, float)):
@@ -326,6 +346,7 @@ def write_run_mcap(
     run_id: str = "",
     camera_topic_prefix: str = "/camera",
     metrics_topic_prefix: str = "/metrics",
+    metadata: Mapping[str, str] | None = None,
 ) -> McapSummary:
     """Write an MCAP recording from real run artifacts and return a summary."""
     Writer = _require_mcap()
@@ -338,15 +359,41 @@ def write_run_mcap(
             "nothing to convert: no image, metrics, or log artifacts were provided"
         )
 
-    rate = float(fps) if float(fps) > 0 else 10.0
+    rate = float(fps)
+    if not math.isfinite(rate) or rate <= 0:
+        raise McapWriteError("fps must be finite and greater than zero")
     step_ns = int(NS_PER_S / rate)
-    base_ns = int(start_time_ns) if int(start_time_ns) > 0 else _default_start_ns(
-        frame_list, metric_list, log_list
+    if step_ns <= 0:
+        raise McapWriteError("fps is too high for a nanosecond timebase")
+    requested_base_ns = _validated_timestamp_ns(start_time_ns)
+    base_ns = (
+        requested_base_ns
+        if requested_base_ns > 0
+        else _validated_timestamp_ns(
+            _default_start_ns(frame_list, metric_list, log_list)
+        )
+    )
+
+    metadata_payload = {
+        str(key): str(value)
+        for key, value in dict(metadata or {}).items()
+        if str(key).strip() and value is not None
+    }
+    # ``write_run_mcap`` is also the shared writer for domain-specific
+    # recordings.  Preserve their explicit producer identity; only the generic
+    # convert-run caller gets this default.
+    metadata_payload.setdefault("producer", "npa workbench foxglove convert-run")
+    metadata_payload.update(
+        {
+            "run_id": str(run_id or ""),
+            "timestamps": metadata_payload.get("timestamps", "synthetic-fps"),
+            "fps": str(rate),
+        }
     )
 
     summary = McapSummary(
         output=str(output),
-        timestamps="synthetic-fps",
+        timestamps=metadata_payload["timestamps"],
         fps=rate,
     )
 
@@ -368,6 +415,17 @@ def write_run_mcap(
         log_channel_id: int | None = None
         first_ns = 0
         last_ns = 0
+        previous_by_topic: dict[str, int] = {}
+
+        def validate_channel_timestamp(topic: str, value: int | float) -> int:
+            timestamp = _validated_timestamp_ns(value)
+            previous = previous_by_topic.get(topic)
+            if previous is not None and timestamp < previous:
+                raise McapWriteError(
+                    f"MCAP timestamps are not monotonic on channel {topic}"
+                )
+            previous_by_topic[topic] = timestamp
+            return timestamp
 
         for index, frame in enumerate(frame_list):
             try:
@@ -379,16 +437,20 @@ def write_run_mcap(
                 summary.skipped.append(f"{frame.path.name}: unsupported image format")
                 continue
             payload, image_format = loaded
-            topic = safe_topic(frame.camera, prefix=camera_topic_prefix)
+            topic = (
+                safe_topic(frame.topic, prefix="")
+                if frame.topic
+                else safe_topic(frame.camera, prefix=camera_topic_prefix)
+            )
             if topic not in camera_channels:
                 camera_channels[topic] = writer.register_channel(
                     topic=topic, message_encoding="json", schema_id=image_schema_id
                 )
-            timestamp_ns = (
-                int(frame.timestamp_ns)
+            timestamp_ns = validate_channel_timestamp(topic, (
+                frame.timestamp_ns
                 if frame.timestamp_ns is not None
                 else base_ns + index * step_ns
-            )
+            ))
             # Shared message builder: identical wire shape to the Lichtblick writer.
             message: dict[str, Any] = compressed_image_message(
                 payload, fmt=image_format, stamp_ns=timestamp_ns, frame_id=frame.camera
@@ -426,10 +488,23 @@ def write_run_mcap(
             if not records:
                 summary.skipped.append(f"{metric.path.name}: empty metrics document")
                 continue
-            topic = safe_topic(metric.name, prefix=metrics_topic_prefix)
+            topic = (
+                safe_topic(metric.topic, prefix="")
+                if metric.topic
+                else safe_topic(metric.name, prefix=metrics_topic_prefix)
+            )
             for offset, record in enumerate(records):
                 flat = _flatten_metric_payload(record)
-                timestamp_ns = base_ns + (index if len(records) == 1 else offset) * step_ns
+                record_timestamp = record.get("_timestamp_ns")
+                if isinstance(record_timestamp, (int, float)):
+                    timestamp_candidate: int | float = record_timestamp
+                else:
+                    timestamp_candidate = (
+                        metric.timestamp_ns + offset * step_ns
+                        if metric.timestamp_ns is not None
+                        else base_ns + (index if len(records) == 1 else offset) * step_ns
+                    )
+                timestamp_ns = validate_channel_timestamp(topic, timestamp_candidate)
                 if topic not in metric_channels:
                     schema_id = writer.register_schema(
                         name=f"npa.RunMetrics.{metric.name}",
@@ -477,7 +552,9 @@ def write_run_mcap(
                 )
             level = LOG_LEVELS.get(str(entry.level).lower(), LOG_LEVELS["info"])
             for line in lines:
-                timestamp_ns = base_ns + log_sequence * step_ns
+                timestamp_ns = validate_channel_timestamp(
+                    "/log", base_ns + log_sequence * step_ns
+                )
                 message = {
                     "timestamp": _time_fields(timestamp_ns),
                     "level": level,
@@ -499,19 +576,14 @@ def write_run_mcap(
                 last_ns = max(last_ns, timestamp_ns)
                 log_sequence += 1
 
-        writer.add_metadata(
-            name="npa",
-            data={
-                "producer": "npa workbench foxglove convert-run",
-                "run_id": str(run_id or ""),
-                # Be explicit: these are not sensor capture times.
-                "timestamps": "synthetic-fps",
-                "fps": str(rate),
+        metadata_payload.update(
+            {
                 "frames": str(summary.frames),
                 "metrics": str(summary.metrics),
                 "logs": str(summary.logs),
-            },
+            }
         )
+        writer.add_metadata(name="npa", data=metadata_payload)
         writer.finish()
 
     if summary.frames + summary.metrics + summary.logs == 0:

@@ -1,4 +1,5 @@
-# npa-groot: NVIDIA Isaac-GR00T inference, with NVIDIA Isaac fetched at FIRST RUN.
+# npa-groot: NVIDIA Isaac-GR00T inference and fine-tuning, with NVIDIA Isaac
+# fetched at FIRST RUN.
 #
 # This image contains no NVIDIA Isaac Sim or Isaac Lab code. It used to bake
 # `isaaclab[isaacsim,all]` into /opt/isaac-lab/venv (then delete extscache to claw back
@@ -7,9 +8,9 @@
 # of /isaac-sim/python.sh, under the OPERATOR's own EULA acceptance; see
 # npa/docker/workbench/common/isaac_bootstrap.sh.
 #
-# GR00T inference itself is unaffected and needs no Isaac and no EULA acceptance: it runs
-# in GROOT_VENV (`python -m npa.smoke.test_groot_functional`). Only the Isaac Lab
-# simulation paths pay the first-run download.
+# GR00T inference and fine-tuning need no Isaac or EULA acceptance: they run in
+# GROOT_VENV (`python -m npa.smoke.test_groot_functional` covers inference). Only
+# the Isaac Lab simulation paths pay the first-run download.
 #
 # Digest pinned 2026-05-12. Tag: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 # To update: re-resolve via registry API and update digest below.
@@ -158,6 +159,20 @@ replace_once(
     f"    config.model.model_revision = \"{cosmos_revision}\"\n",
 )
 replace_once(
+    "gr00t/configs/finetune_config.py",
+    "    tune_diffusion_model: bool = True\n"
+    "    \"\"\"If True, fine-tune the diffusion-based action decoder (if present in the model).\"\"\"\n\n",
+    "    tune_diffusion_model: bool = True\n"
+    "    \"\"\"If True, fine-tune the diffusion-based action decoder (if present in the model).\"\"\"\n\n"
+    "    use_relative_action: bool = True\n"
+    "    \"\"\"Convert action groups declared RELATIVE when training and inference.\"\"\"\n\n",
+)
+replace_once(
+    "gr00t/experiment/launch_finetune.py",
+    "    config.model.use_relative_action = True\n",
+    "    config.model.use_relative_action = ft_config.use_relative_action\n",
+)
+replace_once(
     "gr00t/model/gr00t_n1d7/gr00t_n1d7.py",
     "        super().__init__(config)\n"
     "        self.config = config\n\n"
@@ -249,7 +264,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
        NPA_ISAAC_VENV=/opt/isaac-lab/venv \
        NPA_ISAAC_SKIP_TORCH=0 \
        REQUIRE_TORCH_SM120=1 \
-       NPA_INSTALL_SKYPILOT_PREREQS=0 \
+       NPA_INSTALL_SKYPILOT_PREREQS=1 \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
     && chown -R ubuntu:ubuntu /opt/isaac-lab
 # common/ deliberately stays root-owned 0755: the bootstrap downloads and executes code at
@@ -324,7 +339,8 @@ PY
 USER root
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade gpgv openssl libssl3 \
+    && apt-get install -y --no-install-recommends --only-upgrade \
+      gpgv openssl libssl3 linux-libc-dev \
     && apt-get purge -y --auto-remove \
       dirmngr \
       gnupg \
@@ -333,7 +349,6 @@ RUN apt-get update \
       gpg \
       gpg-agent \
       software-properties-common \
-    && dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /opt/nvidia/nsight-compute \
     `# The isaacsim extscache / pip_prebundle cleanup that used to be here existed only` \
     `# to claw back size from a BAKED Isaac install. There is no baked Isaac any more,` \

@@ -13,6 +13,7 @@ so a reviewer can see *why* the lines exist.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,7 @@ def _build_text(tool: str) -> str:
 SKYPILOT_HOSTED_IMAGES = (
     "cosmos2-transfer",
     "cosmos3-reason",
+    "groot",
     "isaac-lab",
     "lerobot",
     "sim2real-control",
@@ -62,6 +64,7 @@ SKYPILOT_HOSTED_IMAGES = (
 # supported repair path.
 DERIVED_PREREQ_IMAGES = (
     "cosmos3-reason",
+    "groot",
     "isaac-lab",
     "lerobot",
     "sim2real-control",
@@ -136,6 +139,22 @@ def test_the_prereq_guard_is_not_satisfied_by_the_dockerfile_alone() -> None:
     )
 
 
+def test_groot_enables_the_shared_skypilot_prerequisite_layer() -> None:
+    """GR00T invokes the shared installer conditionally, so pin the enabled branch."""
+
+    dockerfile = (DOCKER_ROOT / "groot" / "Dockerfile").read_text(encoding="utf-8")
+    assert "NPA_INSTALL_SKYPILOT_PREREQS=1" in dockerfile
+    assert "NPA_INSTALL_SKYPILOT_PREREQS=0" not in dockerfile
+    assert "dpkg --purge --force-depends linux-libc-dev" not in dockerfile
+
+    derived = (DOCKER_ROOT / "groot" / "Dockerfile.k8s-prereqs").read_text(
+        encoding="utf-8"
+    )
+    assert "--fix-broken" in derived
+    assert "NOPASSWD:ALL" not in derived
+    assert "sudo -V" not in derived
+
+
 @pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
 def test_skypilot_hosted_image_stays_non_root(tool: str) -> None:
     """The prerequisites make a NON-root image schedulable; keep it that way.
@@ -195,7 +214,12 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
     derived = DOCKER_ROOT / tool / "Dockerfile.k8s-prereqs"
     assert derived.is_file(), derived
     text = derived.read_text(encoding="utf-8")
-    for token, _why in (*_ingredients_for(tool), ("ARG BASE_IMAGE", "derived build")):
+    ingredients = tuple(
+        item
+        for item in _ingredients_for(tool)
+        if not (tool == "groot" and item[0] == "NOPASSWD")
+    )
+    for token, _why in (*ingredients, ("ARG BASE_IMAGE", "derived build")):
         assert token in text, f"{tool}: derived prereq Dockerfile is missing {token!r}"
     if tool in ISAAC_BASED_IMAGES:
         assert "usermod -aG isaac-sim" in text, (
@@ -247,6 +271,7 @@ def test_in_cluster_build_script_is_executable_and_generic() -> None:
         / "build-workbench-image-in-cluster.sh"
     )
     assert script.is_file(), script
+    assert os.access(script, os.X_OK), script
     text = script.read_text(encoding="utf-8")
     # No hardcoded registry/bucket/project identifiers.
     assert "cr.us-central1" not in text and "cr.eu-north1" not in text

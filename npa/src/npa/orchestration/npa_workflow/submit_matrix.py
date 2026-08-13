@@ -488,6 +488,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
         requires_token_factory=True,
     ),
+    # --- Multi-stage multi-GPU training and visualization ---
+    SubmitLiveCase(
+        "groot-1-7-finetune.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        image_tool="groot",
+        notes=(
+            "Runs deterministic offline held-out baseline inference, configurable "
+            "one-to-many-GPU GR00T training (live evidence used two GPUs), and "
+            "post-training inference on the identical split. It emits RRD/MCAP "
+            "diagnostics and reports learning outcome separately from pipeline "
+            "status; it is not closed-loop or physical-robot task evidence."
+        ),
+    ),
     # --- Multi-stage GPU ---
     SubmitLiveCase(
         "sonic-export-eval.yaml",

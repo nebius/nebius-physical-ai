@@ -186,6 +186,7 @@ def test_workbench_workflow_submit_dispatches_skypilot(
 
     assert result.exit_code == 0
     assert "SUBMITTED" in result.output
+    assert "run_id: run-1" in result.output
     assert "42" in result.output
     submit_mock.assert_called_once()
     assert submit_mock.call_args.args == (yaml_path, "run-1")
@@ -264,6 +265,34 @@ def test_submit_injects_configured_secret_without_printing_it(
     assert result.exit_code == 0, result.output
     assert secret not in result.output
     assert submit_mock.call_args.kwargs["extra_env"] == {"HF_TOKEN": secret}
+
+
+def test_workbench_workflow_submit_json_exposes_run_id(mocker, tmp_path) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(status="SUBMITTED", job_id="42", returncode=0),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--run-id",
+            "json-run-1",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["run_id"] == "json-run-1"
+    assert payload["status"] == "SUBMITTED"
 
 
 def test_stage_src_uses_resolved_project_storage_credentials(
@@ -652,6 +681,58 @@ def test_workflow_run_remote_requires_s3_bucket() -> None:
 
     assert result.exit_code == 1
     assert "--remote requires --s3-bucket" in result.output
+
+
+def test_workflow_list_discovers_npa_workflow_run_manifest(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    manifest = {
+        "schema_version": "npa.workflow.run.v1",
+        "run_id": "groot-run-4gpu",
+        "workflow": "groot-1-7-finetune",
+        "run_prefix_uri": "s3://bucket/groot-1-7-finetune/groot-run-4gpu",
+        "updated_at": "2026-08-05T13:47:40Z",
+        "steps": [],
+    }
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key=(
+            "groot-1-7-finetune/groot-run-4gpu/"
+            "npa-workflow/manifest.json"
+        ),
+        Body=json.dumps(manifest).encode("utf-8"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "list",
+            "--workflow-s3-prefix",
+            "groot-1-7-finetune",
+            "--s3-bucket",
+            "bucket",
+            "--s3-endpoint",
+            "https://storage.example",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {
+        "runs": [
+            {
+                "run_id": "groot-run-4gpu",
+                "workflow_name": "groot-1-7-finetune",
+                "run_prefix_uri": (
+                    "s3://bucket/groot-1-7-finetune/groot-run-4gpu/npa-workflow"
+                ),
+                "updated_at": "2026-08-05T13:47:40Z",
+                "sky_job_id": "",
+            }
+        ]
+    }
 
 
 def test_workflow_status_prints_status(mocker) -> None:
