@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from npa.deploy.images import CONTAINER_IMAGE_NAMES
+from npa.deploy.images import (
+    CONTAINER_IMAGE_NAMES,
+    SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
@@ -139,6 +142,36 @@ def test_packaging_contract_file_exists() -> None:
     assert contract["images"]
 
 
+def test_images_that_install_npa_copy_forced_workflow_package_data() -> None:
+    """Hatch metadata generation must see every force-included workflow YAML.
+
+    ``pyproject.toml`` force-includes files below ``workflows/``. A Dockerfile that
+    copies the project metadata and installs ``/opt/npa`` therefore cannot copy only
+    ``src/npa``: pip fails before it can build editable or regular package metadata.
+    """
+
+    missing: list[str] = []
+    for dockerfile in sorted(WORKBENCH_DOCKER.rglob("Dockerfile*")):
+        if not dockerfile.is_file():
+            continue
+        instructions = _normalize_dockerfile(dockerfile.read_text(encoding="utf-8"))
+        installs_npa = any(
+            re.search(pattern, instructions)
+            for pattern in (
+                r"\b(?:uv\s+)?pip\s+install\b[^\n]*/opt/npa",
+                r"\bpython\s+-m\s+pip\s+install\b[^\n]*/opt/npa",
+            )
+        )
+        if not installs_npa or "/opt/npa/pyproject.toml" not in instructions:
+            continue
+        if not re.search(
+            r"\bCOPY\b[^\n]*\b(?:npa/)?workflows\s+/opt/npa/workflows\b",
+            instructions,
+        ):
+            missing.append(str(dockerfile.relative_to(ROOT)))
+    assert not missing, "missing workflow package data: " + ", ".join(missing)
+
+
 def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None:
     contract = _load_contract()
     for name, item in contract["images"].items():
@@ -162,6 +195,16 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         assert (
             'exec "$@"' in entrypoint_text or 'exec "$MODE" "$@"' in entrypoint_text
         ), name
+
+
+def test_packaged_skypilot_attestation_inventory_matches_contract() -> None:
+    contract = _load_contract()
+    declared = {
+        name
+        for name, item in contract["images"].items()
+        if item.get("skypilot_bootstrap_contract")
+    }
+    assert SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS == declared
 
 
 def test_fiftyone_image_has_skypilot_kubernetes_prerequisites() -> None:

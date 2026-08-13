@@ -546,7 +546,7 @@ for tool in cosmos-evaluator cosmos-curate; do
   # Tag must match npa/src/npa/deploy/images.py; submit pulls exactly that tag.
   docker buildx build --builder npa-cosmos-oss --push \
     -f "npa/docker/workbench/$tool/Dockerfile" \
-    -t "$REGISTRY/npa-$tool:0.1.2" npa
+    -t "$REGISTRY/npa-$tool:0.1.2-skypilot-v1-20260813T164700Z" npa
 done
 docker buildx rm npa-cosmos-oss
 ```
@@ -556,7 +556,7 @@ stages fetch theirs at run time with your Hugging Face token:
 
 ```bash
 docker run --rm -e HF_TOKEN="$HF_TOKEN" -v curator-weights:/config/models \
-  "$REGISTRY/npa-cosmos-curate:0.1.2" fetch-models --models split-annotate
+  "$REGISTRY/npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z" fetch-models --models split-annotate
 ```
 
 The loop below is only a registry reachability diagnostic. The mandatory
@@ -566,7 +566,8 @@ bootstrap attestation before spending GPU time:
 
 ```bash
 for ref in npa-cosmos2-transfer:2.5.1-skypilot-ready-20260801T053000Z \
-           npa-cosmos-evaluator:0.1.2 npa-cosmos-curate:0.1.2; do
+           npa-cosmos-evaluator:0.1.2-skypilot-v1-20260813T164700Z \
+           npa-cosmos-curate:0.1.2-skypilot-v1-20260813T164700Z; do
   docker manifest inspect "$REGISTRY/$ref" >/dev/null && echo "OK   $ref" || echo "MISS $ref"
 done
 

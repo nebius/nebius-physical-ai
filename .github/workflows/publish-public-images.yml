@@ -67,7 +67,9 @@ on:
         required: false
         default: ""
       tool:
-        description: "Optional single workbench tool to publish without touching unrelated images"
+        description: >-
+          Optional comma/space-separated workbench tools to publish without touching
+          unrelated images (for example: cosmos-curate,cosmos-evaluator,fiftyone,lichtblick)
         required: false
         default: ""
 
@@ -118,15 +120,15 @@ jobs:
           # workflow-dispatch schema reaches the default branch. Operators must remove
           # one-off variables after the run; explicit inputs always win once available.
           SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
-          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+          SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           args=(--target "${{ steps.target.outputs.value }}")
           if [ -n "$SOURCE_REGISTRY" ]; then
             args+=(--source-registry "$SOURCE_REGISTRY")
           fi
-          if [ -n "$SELECTED_TOOL" ]; then
+          if [ -n "$SELECTED_TOOLS" ]; then
             python .github/scripts/publish_selected_public_image.py \
-              "${args[@]}" --tool "$SELECTED_TOOL" --mode plan
+              "${args[@]}" --tool "$SELECTED_TOOLS" --mode plan
           else
             python -m npa.deploy.publish_public "${args[@]}" --dry-run
           fi
@@ -173,15 +175,15 @@ jobs:
         if: ${{ steps.source-login.outputs.available == 'true' }}
         env:
           SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
-          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+          SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           args=(--target "${{ steps.target.outputs.value }}")
           if [ -n "$SOURCE_REGISTRY" ]; then
             args+=(--source-registry "$SOURCE_REGISTRY")
           fi
-          if [ -n "$SELECTED_TOOL" ]; then
+          if [ -n "$SELECTED_TOOLS" ]; then
             python .github/scripts/publish_selected_public_image.py \
-              "${args[@]}" --tool "$SELECTED_TOOL" --mode preflight
+              "${args[@]}" --tool "$SELECTED_TOOLS" --mode preflight
           else
             python -m npa.deploy.publish_public \
               "${args[@]}" \
@@ -240,15 +242,15 @@ jobs:
         if: ${{ inputs.dry_run == false }}
         env:
           SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
-          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+          SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           args=(--target "${{ steps.target.outputs.value }}")
           if [ -n "$SOURCE_REGISTRY" ]; then
             args+=(--source-registry "$SOURCE_REGISTRY")
           fi
-          if [ -n "$SELECTED_TOOL" ]; then
+          if [ -n "$SELECTED_TOOLS" ]; then
             python .github/scripts/publish_selected_public_image.py \
-              "${args[@]}" --tool "$SELECTED_TOOL" --mode publish
+              "${args[@]}" --tool "$SELECTED_TOOLS" --mode publish
           else
             python -m npa.deploy.publish_public \
               "${args[@]}" \
@@ -259,7 +261,7 @@ jobs:
         if: ${{ failure() && inputs.dry_run == false && steps.publish.outputs.copy_phase_completed == 'true' }}
         env:
           SOURCE_REGISTRY: ${{ inputs.source_registry || vars.NPA_PUBLISH_SOURCE_REGISTRY }}
-          SELECTED_TOOL: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
+          SELECTED_TOOLS: ${{ inputs.tool || vars.NPA_PUBLISH_TOOL }}
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
           ## Images copied, but not yet public
@@ -282,9 +284,9 @@ jobs:
           if [ -n "$SOURCE_REGISTRY" ]; then
             args+=(--source-registry "$SOURCE_REGISTRY")
           fi
-          if [ -n "$SELECTED_TOOL" ]; then
+          if [ -n "$SELECTED_TOOLS" ]; then
             python .github/scripts/publish_selected_public_image.py \
-              "${args[@]}" --tool "$SELECTED_TOOL" --mode checklist 2>/dev/null \
+              "${args[@]}" --tool "$SELECTED_TOOLS" --mode checklist 2>/dev/null \
               | grep '^- \[ \]' >> "$GITHUB_STEP_SUMMARY" || true
           else
             python -m npa.deploy.publish_public \
@@ -310,5 +312,8 @@ jobs:
 
           The job did not record completion of the registry copy phase. Do **not** infer
           that a package was created, and do not change GHCR visibility based on this run.
-          Inspect the failing step and fix that error before dispatching another publish.
+          In a multi-image batch, earlier images may have copied before a later copy failed;
+          inspect the failing step, fix the error, and safely rerun the same batch. Already
+          current digests are skipped, and visibility guidance is emitted only after every
+          selected copy completes.
           MD

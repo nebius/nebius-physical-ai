@@ -178,6 +178,51 @@ def test_publication_accepts_exact_digest_bootstrap_attestation(monkeypatch) -> 
     assert digest in detail
 
 
+def test_preflight_skips_bootstrap_gate_for_uncontracted_image(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    item = PublishItem(
+        tool="cosmos",
+        source_ref="source.example/npa-cosmos:release",
+        target_ref="target.example/npa-cosmos:release",
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
+    )
+
+    def unexpected_gate(_item):  # pragma: no cover - must not run
+        raise AssertionError("uncontracted image reached the bootstrap gate")
+
+    monkeypatch.setattr(
+        publish_public, "verify_bootstrap_publication_source", unexpected_gate
+    )
+
+    assert publish_public.preflight_sources([item]) == []
+
+
+def test_preflight_runs_bootstrap_gate_for_contracted_image(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    item = PublishItem(
+        tool="fiftyone",
+        source_ref="source.example/npa-fiftyone@sha256:" + "a" * 64,
+        target_ref="target.example/npa-fiftyone:release",
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
+    )
+    checked: list[PublishItem] = []
+
+    def gate(candidate: PublishItem) -> tuple[bool, str]:
+        checked.append(candidate)
+        return True, "attested"
+
+    monkeypatch.setattr(publish_public, "verify_bootstrap_publication_source", gate)
+
+    assert publish_public.preflight_sources([item]) == []
+    assert checked == [item]
+
+
 def test_isaac_images_are_no_longer_restricted() -> None:
     """Removing baked Omniverse Kit made the Isaac images publishable.
 
@@ -557,6 +602,79 @@ def test_verify_public_does_not_copy_anything(monkeypatch) -> None:
     assert (
         publish_public.main(
             ["--target", "ghcr.io/example/workbench", "--verify-public"]
+        )
+        == 0
+    )
+
+
+def test_verify_parity_reports_missing_and_mismatched_targets(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    plan = [
+        PublishItem(
+            tool="cosmos",
+            source_ref="source.example/npa-cosmos@sha256:" + "a" * 64,
+            target_ref="target.example/npa-cosmos:release",
+        ),
+        PublishItem(
+            tool="lerobot",
+            source_ref="source.example/npa-lerobot@sha256:" + "b" * 64,
+            target_ref="target.example/npa-lerobot:release",
+        ),
+        PublishItem(
+            tool="groot",
+            source_ref="source.example/npa-groot@sha256:" + "c" * 64,
+            target_ref="target.example/npa-groot:release",
+        ),
+    ]
+    digests = {
+        plan[0].source_ref: "sha256:" + "a" * 64,
+        plan[0].target_ref: "sha256:" + "a" * 64,
+        plan[1].source_ref: "sha256:" + "b" * 64,
+        plan[1].target_ref: "sha256:" + "d" * 64,
+        plan[2].source_ref: "sha256:" + "c" * 64,
+    }
+
+    def digest(ref: str, **_: object) -> tuple[bool, str]:
+        value = digests.get(ref)
+        return (True, value) if value else (False, "MANIFEST_UNKNOWN")
+
+    monkeypatch.setattr(publish_public, "_crane_digest", digest)
+    failures = publish_public.verify_parity(plan)
+
+    assert failures == [
+        (
+            plan[1],
+            "digest mismatch — source sha256:"
+            + "b" * 64
+            + "; target sha256:"
+            + "d" * 64,
+        ),
+        (plan[2], "target digest unreadable — MANIFEST_UNKNOWN"),
+    ]
+
+
+def test_verify_parity_is_read_only(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    plan = [
+        PublishItem(
+            tool="cosmos",
+            source_ref="source.example/npa-cosmos@sha256:" + "a" * 64,
+            target_ref="target.example/npa-cosmos:release",
+        )
+    ]
+    monkeypatch.setattr(publish_public, "build_publish_plan", lambda **_: plan)
+    monkeypatch.setattr(publish_public, "_preflight_or_explain", lambda *a, **k: plan)
+    monkeypatch.setattr(publish_public, "verify_parity", lambda items: [])
+
+    def explode(item) -> None:  # pragma: no cover - must not run
+        raise AssertionError(f"--verify-parity must not copy {item.target_ref}")
+
+    monkeypatch.setattr(publish_public, "_crane_copy", explode)
+    assert (
+        publish_public.main(
+            ["--target", "target.example/workbench", "--verify-parity"]
         )
         == 0
     )
