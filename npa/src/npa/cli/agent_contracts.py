@@ -9,6 +9,8 @@ from npa.cli.agent_source_embed import embedded_module_source
 
 AGENT_LEISAAC_CONTRACT = (
     "ensureLeIsaacTab",
+    "ensureLeIsaacTab(leisaacCapability)",
+    "unavailableLeIsaacStatus",
     "removeLeIsaacTab",
     "refreshLeIsaacCapability",
     "connectLeIsaac",

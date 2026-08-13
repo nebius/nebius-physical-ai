@@ -190,6 +190,36 @@ describe("NPA agent UI against live infra", () => {
     });
   });
 
+  it("keeps the LeIsaac panel discoverable without an active GPU session", () => {
+    cy.get("#tabLeIsaac", { timeout: 10000 }).should("be.visible").click();
+    cy.get("#panelLeIsaac").should("have.class", "is-active");
+    cy.get("#leisaacConnect").should("be.disabled");
+    cy.get("#leisaacRetry").should("be.visible");
+    cy.get("#leisaacEpisodesTitle").should("be.visible");
+    cy.screenshot("leisaac-unavailable-panel-live", { capture: "viewport" });
+    cy.window().then(async (win) => {
+      const controller = new win.AbortController();
+      const deadline = win.setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await win.fetch("/api/leisaac/status", {
+          credentials: "include",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        expect(response.status, "same-origin authenticated status").to.equal(200);
+        expect(
+          String(response.headers.get("cache-control") || ""),
+          "status response cache policy",
+        ).to.include("no-store");
+        const status = await response.json();
+        expect(status.available, "no EULA-gated simulator was launched").to.equal(false);
+        expect(String(status.reason || ""), "honest unavailable reason").not.to.equal("");
+      } finally {
+        win.clearTimeout(deadline);
+      }
+    });
+  });
+
   it("selects live project access states without duplicate or stale details", () => {
     liveAgentRequest("/api/access").then((response) => {
       expect(response.status).to.eq(200);

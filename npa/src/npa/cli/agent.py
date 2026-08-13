@@ -11146,6 +11146,22 @@ def verify_live_cmd(
         _fail("health endpoint did not return ok=true")
 
     try:
+        leisaac_status_resp = httpx.get(
+            f"{agent_base}/api/leisaac/status",
+            auth=(auth_user, auth_password),
+            timeout=10.0,
+            verify=tls_verify,
+        )
+        leisaac_status_resp.raise_for_status()
+        leisaac_status_payload = leisaac_status_resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"LeIsaac status endpoint failed: {exc}")
+    if not isinstance(leisaac_status_payload, dict) or not isinstance(
+        leisaac_status_payload.get("available"), bool
+    ):
+        _fail("LeIsaac status endpoint did not return an availability object")
+
+    try:
         workflow_status_resp = httpx.get(
             f"{agent_base}/api/workflows/sim2real/status",
             auth=(auth_user, auth_password),
@@ -11253,6 +11269,8 @@ def verify_live_cmd(
         "Configured references",
         # Capability-gated LeIsaac tab and authenticated WebRTC bridge.
         "ensureLeIsaacTab",
+        "ensureLeIsaacTab(leisaacCapability)",
+        "unavailableLeIsaacStatus",
         "removeLeIsaacTab",
         "refreshLeIsaacCapability",
         "connectLeIsaac",

@@ -6233,6 +6233,17 @@
         leisaacRecorderPending = null;
         leisaacRecorderUiError = "";
       }
+      function unavailableLeIsaacStatus(runId, reason) {
+        return {
+          available: false,
+          episodes_available: false,
+          run_id: String(runId || "").trim(),
+          reason: String(
+            reason ||
+            "No active LeIsaac session. Launch one with the Workbench CLI, or retry capability discovery."
+          ),
+        };
+      }
       async function refreshLeIsaacCapability(runId) {
         const target = String(runId || "").trim();
         const mountedPanel = document.getElementById("panelLeIsaac");
@@ -6301,12 +6312,11 @@
           return status;
         } catch (err) {
           if (generation === leisaacCapabilityGeneration) {
-            const status = {
-              available: false,
-              episodes_available: false,
-              run_id: target,
-              reason: "LeIsaac status is unavailable; retry without reloading the page. " + String((err && err.message) || ""),
-            };
+            const status = unavailableLeIsaacStatus(
+              target,
+              "LeIsaac status is unavailable; retry without reloading the page. " +
+                String((err && err.message) || ""),
+            );
             leisaacCapability = status;
             ensureLeIsaacTab(status);
           }
@@ -14779,6 +14789,11 @@
           selectActiveRunId,
         };
         try {
+          // The tab is a persistent product surface, while a live simulator is
+          // optional. Mount its honest unavailable/retry state before any
+          // authenticated status or artifact request can block first paint.
+          leisaacCapability = unavailableLeIsaacStatus("");
+          ensureLeIsaacTab(leisaacCapability);
           wireUi();
           setStatus("UI wired");
         } catch (err) {

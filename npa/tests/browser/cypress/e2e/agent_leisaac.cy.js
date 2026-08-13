@@ -61,6 +61,25 @@ describe("NPA agent LeIsaac capability tab", () => {
     cy.get("#leisaacEpisodesTitle").should("be.visible");
   });
 
+  it("mounts before a slow capability request can block first paint", () => {
+    cy.intercept("GET", "/api/leisaac/status*", {
+      delay: 5000,
+      statusCode: 200,
+      body: {
+        available: false,
+        episodes_available: false,
+        run_id: "",
+        reason: "delayed unavailable capability",
+      },
+    }).as("slowLeIsaacStatus");
+    cy.reload();
+    cy.get("#tabLeIsaac", { timeout: 1000 }).should("be.visible").click();
+    cy.get("#panelLeIsaac").should("have.class", "is-active");
+    cy.get("#leisaacConnect").should("be.disabled");
+    cy.get("#leisaacRetry").should("be.visible");
+    cy.get("#leisaacAvailability").should("contain.text", "No active LeIsaac session");
+  });
+
   it("shows and preserves four real defaults for a completely fresh client", () => {
     const status = {
       available: true,

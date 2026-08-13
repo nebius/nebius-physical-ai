@@ -212,16 +212,14 @@ def selected_run_id(state: dict | None, requested: str = "") -> str:
         return explicit if _RUN_ID_RE.fullmatch(explicit) else ""
     data = state if isinstance(state, dict) else {}
     leisaac_value = data.get("leisaac")
-    sim_viz_value = data.get("sim_viz")
     leisaac: dict[str, Any] = leisaac_value if isinstance(leisaac_value, dict) else {}
-    sim_viz: dict[str, Any] = sim_viz_value if isinstance(sim_viz_value, dict) else {}
-    candidate = str(
-        leisaac.get("run_id")
-        or sim_viz.get("active_run_id")
-        or sim_viz.get("run_id")
-        or data.get("active_run_id")
-        or ""
-    ).strip()
+    # A request without a run ID means "the independently registered live
+    # capability", not "whatever artifact the shared Sim/Viz viewer happens to
+    # show". Falling through to Sim/Viz made the initial status request perform
+    # a full remote artifact lookup for unrelated runs, so the browser could not
+    # mount even the honest unavailable LeIsaac panel. Selected artifact runs
+    # are still supported through the explicit ``requested`` path above.
+    candidate = str(leisaac.get("run_id") or "").strip()
     return candidate if _RUN_ID_RE.fullmatch(candidate) else ""
 
 

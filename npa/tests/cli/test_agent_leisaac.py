@@ -119,10 +119,10 @@ def _manifest_v2(**overrides):
 
 
 def test_selected_run_requires_safe_exact_identifier() -> None:
-    assert (
-        selected_run_id({"sim_viz": {"active_run_id": "leisaac-live-1"}})
-        == "leisaac-live-1"
-    )
+    # An unrelated shared-viewer selection must not turn the default status
+    # probe into remote artifact discovery. The UI passes selected artifacts as
+    # an explicit request and live launches register their own LeIsaac run.
+    assert selected_run_id({"sim_viz": {"active_run_id": "leisaac-live-1"}}) == ""
     assert selected_run_id({}, "../../etc/passwd") == ""
     assert selected_run_id({"sim_viz": {"run_id": "other"}}, "explicit") == "explicit"
     assert (
@@ -134,6 +134,30 @@ def test_selected_run_requires_safe_exact_identifier() -> None:
         )
         == "leisaac-live-1"
     )
+
+
+def test_default_status_does_not_discover_an_unrelated_simviz_run() -> None:
+    resolved: list[str] = []
+    api = FastAPI()
+    register_leisaac_routes(
+        api,
+        LeIsaacDeps(
+            load_state=lambda: {"sim_viz": {"active_run_id": "ordinary-run"}},
+            resolve_manifest=lambda run_id: resolved.append(run_id),
+            http_get=lambda *_args, **_kwargs: None,
+            response=Response,
+            websocket_connect=lambda *_args, **_kwargs: None,
+        ),
+    )
+
+    response = TestClient(api).get(
+        "/leisaac/status", headers={"x-forwarded-proto": "https"}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.json()["available"] is False
+    assert resolved == []
 
 
 def test_manifest_artifact_loader_requires_one_bounded_canonical_object() -> None:

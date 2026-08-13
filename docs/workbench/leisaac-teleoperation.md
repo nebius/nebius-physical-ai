@@ -52,12 +52,14 @@ parallel control routing.
 
 ## What makes the tab appear
 
-The `LeIsaac` tab is not present in the initial HTML. An agent-relay launch
-registers its live run through the agent's authenticated, certificate-pinned
-HTTPS API. The browser first asks about the selected artifact run, then falls
-back to that independently registered LeIsaac run. This keeps the tab visible
-when an operator opens an unrelated Rerun or Voxel51 artifact. The backend discovers
-exactly one `reports/leisaac-session.json` artifact, validates its schema,
+The browser mounts the `LeIsaac` tab and its explicit unavailable/retry panel as
+soon as the UI is wired, before remote capability or artifact discovery. A live
+simulator is optional; an agent-relay launch registers its run through the
+agent's authenticated, certificate-pinned HTTPS API. The browser first checks
+that independently registered LeIsaac run and can then ask about an explicitly
+selected artifact run. An unrelated Rerun or Voxel51 selection is never treated
+as the default LeIsaac capability and cannot delay the tab's first paint. The
+backend discovers exactly one `reports/leisaac-session.json` artifact, validates its schema,
 run/task/device, fixed transport endpoints, expiry, source commit, and
 digest-pinned image, registry fingerprint, task/environment identity, and S3
 dataset destination, then verifies the live service's matching one-way nonce

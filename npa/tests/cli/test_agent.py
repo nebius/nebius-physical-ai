@@ -2878,6 +2878,15 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
             return _Resp(b"RRD" * 32, status_code=200)
         if url_s.endswith("/api/health"):
             return _Resp({"ok": True})
+        if url_s.endswith("/api/leisaac/status"):
+            return _Resp(
+                {
+                    "available": False,
+                    "episodes_available": False,
+                    "run_id": "",
+                    "reason": "Select a run that exposes a LeIsaac teleoperation session.",
+                }
+            )
         if url_s.endswith("/api/infra/k8s"):
             return _Resp({"ok": True, "agent_npa_ready": True})
         if "/api/resources" in url_s:
@@ -2956,7 +2965,8 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                 "function captureCanvasDataUrl(){} function ensureRerunCaptureBridge(){} "
                 "function pickBestIframeCanvas(){} function sampleFrameStats(){} "
                 "function ensureLeIsaacTab(){} function removeLeIsaacTab(){} "
-                "function refreshLeIsaacCapability(){} function connectLeIsaac(){} "
+                "function unavailableLeIsaacStatus(){} function refreshLeIsaacCapability(){} "
+                "function connectLeIsaac(){} ensureLeIsaacTab(leisaacCapability); "
                 "/api/leisaac/status /api/leisaac/select /api/leisaac/bundles/reset "
                 "/api/leisaac/client/index.js /api/leisaac/signal "
                 "LeIsaac-SO101-LiftCube-v0 "
