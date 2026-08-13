@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -23,6 +24,45 @@ def test_build_var_args_preserves_key_values() -> None:
         "-var",
         "b=two",
     ]
+
+
+def test_secrets_go_through_a_var_file_not_the_process_table(tmp_path: Path) -> None:
+    """`ps` is world-readable, so `-var iam_token=...` leaked the deploy's token."""
+    tf_vars = {
+        "iam_token": "t1.token-value",
+        "nebius_secret_key": "SK_SECRET",
+        "nebius_api_key": "AK_SECRET",
+        "tf_api_key": "v1.token-factory",
+        "instance_name": "agent-prod-agent",
+        "ssh_public_key_path": "/home/op/.ssh/id_ed25519.pub",
+    }
+
+    with provisioner._var_args(tf_path := tmp_path, tf_vars) as args:
+        joined = " ".join(args)
+        assert "t1.token-value" not in joined
+        assert "SK_SECRET" not in joined
+        assert "AK_SECRET" not in joined
+        assert "v1.token-factory" not in joined
+        # Non-secret vars stay visible, which keeps `-var` debugging useful.
+        assert "-var" in args and "instance_name=agent-prod-agent" in args
+        # A path that merely contains "key" is not a secret.
+        assert "ssh_public_key_path=/home/op/.ssh/id_ed25519.pub" in args
+
+        var_file = next(path for path in tf_path.iterdir() if path.name.endswith(".tfvars.json"))
+        assert json.loads(var_file.read_text())["iam_token"] == "t1.token-value"
+        assert var_file.stat().st_mode & 0o077 == 0
+        # Not `*.auto.tfvars.json`: it must apply only to the command that passes it.
+        assert not var_file.name.endswith(".auto.tfvars.json")
+        assert f"-var-file={var_file}" in args
+
+    # Removed once the command finishes.
+    assert not list(tmp_path.glob("*.tfvars.json"))
+
+
+def test_var_file_is_skipped_when_nothing_is_sensitive(tmp_path: Path) -> None:
+    with provisioner._var_args(tmp_path, {"instance_name": "agent"}) as args:
+        assert args == ["-var", "instance_name=agent"]
+        assert not list(tmp_path.glob("*.tfvars.json"))
 
 
 def test_state_list_treats_terraform_missing_state_as_empty(
@@ -86,6 +126,42 @@ def test_prepare_working_dir_copies_tf_files_and_writes_backend(
     assert 's3 = "https://storage"' in backend
 
 
+def test_state_resource_id_reads_only_the_named_network_resource(
+    mocker, tmp_path
+) -> None:
+    run = mocker.patch(
+        "npa.deploy.provisioner._run",
+        return_value=subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                '# nebius_vpc_v1_network.workbench:\n'
+                'resource "nebius_vpc_v1_network" "workbench" {\n'
+                '    id = "vpcnetwork-owned"\n'
+                '}\n'
+            ),
+            stderr="",
+        ),
+    )
+
+    assert (
+        provisioner.state_resource_id(
+            "nebius_vpc_v1_network.workbench", tf_dir=tmp_path
+        )
+        == "vpcnetwork-owned"
+    )
+    run.assert_called_once_with(
+        [
+            "state",
+            "show",
+            "-no-color",
+            "nebius_vpc_v1_network.workbench",
+        ],
+        cwd=tmp_path,
+        capture=True,
+    )
+
+
 def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
     template = (PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text()
     assert "\t" not in template
@@ -98,7 +174,6 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
     groot_branch = template.split(groot_base_marker, 1)[1].split("%{ else ~}", 1)[0]
     container_and_lerobot = template.split(container_marker, 1)[1]
     container_branch, lerobot_branch = container_and_lerobot.split("%{ else ~}", 1)
-
     assert "/etc/npa-fiftyone/env" in fiftyone_branches
     assert "/opt/fiftyone/venv" in fiftyone_branches
     assert "npa-fiftyone-app.service" in fiftyone_branches
@@ -124,6 +199,116 @@ def test_cloud_init_branches_bootstrap_by_workbench_type() -> None:
     assert "$DEPLOY_ROOT/checkpoints" in container_branch
     assert "Installing LeRobot ${lerobot_version}" not in container_branch
     assert "lerobot[pusht,libero]" not in container_branch
+
+
+def test_agent_cloud_init_renders_without_s3_secrets(tmp_path: Path) -> None:
+    terraform = shutil.which("terraform")
+    if terraform is None:
+        pytest.skip("terraform is required to parse the deployment template")
+    template = PACKAGE_ROOT / "src/npa/deploy/terraform/cloud_init.yaml.tpl"
+    config = tmp_path / "main.tf"
+    config.write_text(
+        f'''locals {{
+  rendered = templatefile({json.dumps(str(template))}, {{
+    ssh_user = "ubuntu"
+    ssh_public_key = "ssh-ed25519 fixture"
+    workbench_type = "agent"
+    server_port = 8088
+    lerobot_version = "0.6.0"
+    fiftyone_version = "1.8.0"
+    s3_bucket = "fixture-bucket"
+    s3_endpoint = "https://storage.invalid"
+    aws_access_key = "NPA_PR218_ACCESS_SENTINEL_DO_NOT_PERSIST"
+    aws_secret_key = "NPA_PR218_SECRET_SENTINEL_DO_NOT_PERSIST"
+    nebius_region = "us-central1"
+  }})
+}}
+output "rendered" {{
+  value = local.rendered
+}}
+''',
+        encoding="utf-8",
+    )
+
+    rendered = subprocess.run(
+        [terraform, "apply", "-auto-approve", "-no-color"],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert rendered.returncode == 0, rendered.stderr
+    assert "NPA_PR218_ACCESS_SENTINEL_DO_NOT_PERSIST" not in rendered.stdout
+    assert "NPA_PR218_SECRET_SENTINEL_DO_NOT_PERSIST" not in rendered.stdout
+    assert "write_files:" not in rendered.stdout
+
+
+def test_terraform_outputs_use_compute_and_cpu_names_with_legacy_aliases() -> None:
+    outputs = (PACKAGE_ROOT / "src/npa/deploy/terraform/outputs.tf").read_text()
+
+    assert 'output "platform"' in outputs
+    assert 'output "preset"' in outputs
+    assert 'output "cpu_platform"' in outputs
+    assert 'output "cpu_preset"' in outputs
+    assert "CPU-only instances" in outputs
+    assert 'output "gpu_platform"' in outputs
+    assert 'output "gpu_preset"' in outputs
+    assert "DEPRECATED compatibility alias" in outputs
+    # The aliases remain for schema compatibility, but CPU-only instances must
+    # never publish CPU selectors under machine-readable GPU field names.
+    assert (
+        'value       = startswith(var.gpu_platform, "cpu-") ? null : var.gpu_platform'
+        in outputs
+    )
+    assert (
+        'value       = startswith(var.gpu_platform, "cpu-") ? null : var.gpu_preset'
+        in outputs
+    )
+
+
+def test_agent_destroy_hides_deprecated_gpu_aliases_from_human_terraform_output() -> None:
+    assert (
+        provisioner._filter_destroy_output_line(
+            '  - gpu_platform = "cpu-d3" -> null\n'
+        )
+        == ""
+    )
+    assert (
+        provisioner._filter_destroy_output_line(
+            '  - gpu_preset = "8vcpu-32gb" -> null\n'
+        )
+        == ""
+    )
+    # Canonical CPU/compute output remains visible, and a genuine resource-level
+    # GPU fact is not hidden merely because its value contains "gpu".
+    assert "cpu-d3" in provisioner._filter_destroy_output_line(
+        '  - cpu_platform = "cpu-d3" -> null\n'
+    )
+    assert "gpu-h100-sxm" in provisioner._filter_destroy_output_line(
+        '  - platform = "gpu-h100-sxm" -> null\n'
+    )
+
+
+def test_agent_apply_compacts_terraform_local_exec_script_body() -> None:
+    visible, suppressing = provisioner._compact_local_exec_error_line(
+        "Error running command 'set -euo pipefail\n", suppressing_body=False
+    )
+    assert visible == ""
+    assert suppressing is True
+
+    visible, suppressing = provisioner._compact_local_exec_error_line(
+        "echo thousands-of-bytes-of-provisioner\n", suppressing_body=suppressing
+    )
+    assert visible == ""
+    visible, suppressing = provisioner._compact_local_exec_error_line(
+        "': exit status 1. Output: ERROR: SSH never authenticated\n",
+        suppressing_body=suppressing,
+    )
+    assert suppressing is False
+    assert "thousands-of-bytes" not in visible
+    assert "exit status 1" in visible
+    assert "SSH never authenticated" in visible
 
 
 def test_cloud_init_mounts_cosmos_data_disk() -> None:
@@ -286,14 +471,16 @@ def test_terraform_command_wrappers_delegate_to_run(tmp_path: Path, mocker) -> N
         ),
     )
 
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
     provisioner.init(tmp_path, backend_config={"access_key": "key"})
     assert run.call_args.args[0] == [
         "init",
         "-input=false",
+        "-lockfile=readonly",
         "-reconfigure",
-        "-backend-config",
-        "access_key=key",
     ]
+    assert run.call_args.kwargs["env_overrides"] == {"AWS_ACCESS_KEY_ID": "key"}
 
     assert provisioner.plan(tmp_path, {"gpu": "h100"}) == "planned"
     assert "-var" in run.call_args.args[0]
@@ -305,9 +492,110 @@ def test_terraform_command_wrappers_delegate_to_run(tmp_path: Path, mocker) -> N
     assert run.call_args.args[0][0] == "destroy"
 
 
+def test_backend_rotation_forces_reconfigure_without_secret_argv(
+    tmp_path: Path, mocker
+) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    run = mocker.patch(
+        "npa.deploy.provisioner._run",
+        return_value=subprocess.CompletedProcess(
+            args=["terraform"], returncode=0, stdout="", stderr=""
+        ),
+    )
+
+    provisioner.init(
+        tmp_path,
+        backend_config={"access_key": "fresh-access", "secret_key": "fresh-secret"},
+    )
+
+    argv = run.call_args.args[0]
+    assert "-reconfigure" in argv
+    assert "fresh-access" not in " ".join(argv)
+    assert "fresh-secret" not in " ".join(argv)
+    assert run.call_args.kwargs["env_overrides"] == {
+        "AWS_ACCESS_KEY_ID": "fresh-access",
+        "AWS_SECRET_ACCESS_KEY": "fresh-secret",
+    }
+
+
+def test_changed_backend_target_can_force_reconfigure_without_credentials(
+    tmp_path: Path, mocker
+) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    run = mocker.patch(
+        "npa.deploy.provisioner._run",
+        return_value=subprocess.CompletedProcess(
+            args=["terraform"], returncode=0, stdout="", stderr=""
+        ),
+    )
+
+    provisioner.init(tmp_path, force_reconfigure=True)
+
+    assert "-reconfigure" in run.call_args.args[0]
+    assert "env_overrides" not in run.call_args.kwargs
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        ("NoSuchBucket: backend is gone", provisioner.BackendBucketMissingError),
+        ("403 Forbidden", provisioner.BackendAuthenticationError),
+        ("dial tcp: no such host", provisioner.BackendEndpointError),
+        ("Error acquiring the state lock", provisioner.BackendLockError),
+    ],
+)
+def test_backend_init_failures_are_typed(
+    tmp_path: Path, mocker, detail: str, expected: type[Exception]
+) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+    mocker.patch(
+        "npa.deploy.provisioner._run",
+        side_effect=ProvisionerError(f"terraform init failed: {detail}"),
+    )
+
+    with pytest.raises(expected):
+        provisioner.init(
+            tmp_path,
+            backend_config={"access_key": "access", "secret_key": "secret"},
+            retries=1,
+        )
+
+
+def test_state_push_failure_preserves_cause_and_type(tmp_path: Path, mocker) -> None:
+    state = tmp_path / "errored.tfstate"
+    state.write_text('{"version":4}')
+    mocker.patch(
+        "npa.deploy.provisioner._run",
+        side_effect=ProvisionerError("NoSuchBucket while uploading state"),
+    )
+
+    with pytest.raises(provisioner.BackendBucketMissingError) as caught:
+        provisioner.state_push(state, tmp_path)
+
+    assert isinstance(caught.value.__cause__, ProvisionerError)
+    assert state.is_file()
+
+
+def test_state_pull_failure_preserves_cause_and_type(tmp_path: Path, mocker) -> None:
+    mocker.patch(
+        "npa.deploy.provisioner._run",
+        side_effect=ProvisionerError("403 Forbidden while downloading state"),
+    )
+
+    with pytest.raises(provisioner.BackendAuthenticationError) as caught:
+        provisioner.state_pull(tmp_path)
+
+    assert isinstance(caught.value.__cause__, ProvisionerError)
+
+
 def test_run_sets_terraform_plugin_cache_dir(tmp_path: Path, monkeypatch, mocker) -> None:
     monkeypatch.delenv("TF_PLUGIN_CACHE_DIR", raising=False)
     monkeypatch.setattr(provisioner, "_TF_PLUGIN_CACHE_DIR", tmp_path / "tf-cache")
+    module_dir = tmp_path / "module"
+    module_dir.mkdir()
     mocker.patch("shutil.which", return_value="/usr/bin/terraform")
     run = mocker.patch(
         "subprocess.run",
@@ -316,15 +604,18 @@ def test_run_sets_terraform_plugin_cache_dir(tmp_path: Path, monkeypatch, mocker
         ),
     )
 
-    provisioner._run(["init"], cwd=tmp_path, capture=True)
+    provisioner._run(["init"], cwd=module_dir, capture=True)
 
     env = run.call_args.kwargs["env"]
-    assert env["TF_PLUGIN_CACHE_DIR"] == str(tmp_path / "tf-cache")
-    assert (tmp_path / "tf-cache").is_dir()
+    assert env["TF_PLUGIN_CACHE_DIR"] == str(tmp_path / "tf-cache" / "linux_amd64")
+    assert (tmp_path / "tf-cache" / "linux_amd64").is_dir()
 
 
 def test_run_respects_preexisting_plugin_cache_env(tmp_path: Path, monkeypatch, mocker) -> None:
-    monkeypatch.setenv("TF_PLUGIN_CACHE_DIR", "/custom/cache")
+    module_dir = tmp_path / "module"
+    module_dir.mkdir()
+    cache_root = tmp_path / "custom-cache"
+    monkeypatch.setenv("TF_PLUGIN_CACHE_DIR", str(cache_root))
     mocker.patch("shutil.which", return_value="/usr/bin/terraform")
     run = mocker.patch(
         "subprocess.run",
@@ -333,12 +624,16 @@ def test_run_respects_preexisting_plugin_cache_env(tmp_path: Path, monkeypatch, 
         ),
     )
 
-    provisioner._run(["init"], cwd=tmp_path, capture=True)
+    provisioner._run(["init"], cwd=module_dir, capture=True)
 
-    assert run.call_args.kwargs["env"]["TF_PLUGIN_CACHE_DIR"] == "/custom/cache"
+    assert run.call_args.kwargs["env"]["TF_PLUGIN_CACHE_DIR"] == (
+        str(cache_root / "linux_amd64")
+    )
 
 
 def test_init_retries_transient_registry_failure(tmp_path: Path, mocker) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
     calls = {"n": 0}
 
     def fake_run(args, *, cwd, capture=False, stream=False):
@@ -361,6 +656,8 @@ def test_init_retries_transient_registry_failure(tmp_path: Path, mocker) -> None
 
 
 def test_init_does_not_retry_config_error(tmp_path: Path, mocker) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
     def fake_run(args, *, cwd, capture=False, stream=False):
         raise ProvisionerError("terraform init failed (exit 1):\nInvalid provider configuration")
 
@@ -374,6 +671,8 @@ def test_init_does_not_retry_config_error(tmp_path: Path, mocker) -> None:
 
 
 def test_init_gives_up_after_retries(tmp_path: Path, mocker) -> None:
+    (tmp_path / ".terraform.lock.hcl").write_text("lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
     def fake_run(args, *, cwd, capture=False, stream=False):
         raise ProvisionerError("could not connect to registry.terraform.io: i/o timeout")
 
@@ -384,6 +683,24 @@ def test_init_gives_up_after_retries(tmp_path: Path, mocker) -> None:
         provisioner.init(tmp_path, retries=3, backoff_seconds=0.01, sleep=slept.append)
 
     assert len(slept) == 2  # retried after attempts 1 and 2, then raised on 3
+
+
+def test_init_keeps_provider_lock_immutable(tmp_path: Path, mocker) -> None:
+    lock_file = tmp_path / ".terraform.lock.hcl"
+    lock_file.write_text("tracked-lock\n")
+    mocker.patch("npa.terraform_lock.validate_provider_lock", return_value="linux_amd64")
+
+    def mutate_lock(args, *, cwd, capture=False, stream=False):
+        assert "-lockfile=readonly" in args
+        lock_file.write_text("mutated-lock\n")
+        return subprocess.CompletedProcess(
+            args=["terraform"], returncode=0, stdout="", stderr=""
+        )
+
+    mocker.patch("npa.deploy.provisioner._run", side_effect=mutate_lock)
+
+    with pytest.raises(ProvisionerError, match="changed.*despite -lockfile=readonly"):
+        provisioner.init(tmp_path)
 
 
 def test_apply_and_destroy_raise_on_nonzero(tmp_path: Path, mocker) -> None:

@@ -237,6 +237,7 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
         "grade",
         "evaluate",
         "quality-gate",
+        "quality-disposition",
         "annotate-augmented",
         "cosmos-curate",
         "curate",
@@ -254,6 +255,11 @@ def test_generate_data_factory_yaml_validates_and_plans() -> None:
     assert "workbench.fiftyone.curate_augmented" in tool_refs
     assert generated["states"]["cosmos-curate"]["resources"] == "gpu"
     assert generated["config"]["trigger_uri"] == generated["config"]["input_uri"]
+    assert generated["config"]["grade_threshold"] == "0.75"
+    assert generated["config"]["default_decision"] == "loop_back"
+    assert generated["config"]["appearance_fidelity_mode"] == "advisory"
+    assert generated["states"]["grade"]["next"] == "quality-disposition"
+    assert generated["states"]["annotate-augmented"]["needs"] == ["quality-disposition"]
     assert "supported video" in generated["states"]["augment"]["description"].lower()
 
 

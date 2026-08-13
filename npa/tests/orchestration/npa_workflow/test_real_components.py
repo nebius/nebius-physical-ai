@@ -131,8 +131,8 @@ def test_augment_runs_real_cosmos_transfer() -> None:
     assert "--input-uri" in argv and "--output-uri" in argv
     assert spec["config"]["trigger_uri"] == spec["config"]["input_uri"]
     description = states["augment"]["description"].lower()
-    assert "supported video" in description
-    assert "no bundled upstream media" in description
+    assert "input/conditioning.mp4" in description
+    assert "no bundled or geometric fallback" in description
 
 
 def test_input_conditioned_cosmos_toolref_fails_closed_without_input() -> None:
@@ -154,10 +154,37 @@ def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
     # The hallucination check needs the run's source clip and attribute
     # verification needs the sampled option table, so both must be passed.
     assert "--input-uri" in argv and "--configs-uri" in argv
+    for option in (
+        "--temporal-mode",
+        "--temporal-threshold",
+        "--temporal-noise-floor",
+        "--temporal-blur-ksize",
+        "--temporal-regions-json",
+        "--appearance-mode",
+        "--appearance-threshold",
+        "--appearance-regions-json",
+        "--appearance-luminance-tolerance",
+        "--appearance-global-chroma-tolerance",
+        "--appearance-local-chroma-tolerance",
+        "--appearance-chroma-instability-tolerance",
+        "--appearance-blur-ksize",
+        "--appearance-max-dimension",
+    ):
+        assert option in argv
 
     loop = states["grade"]["loop"]
     assert loop["until"] == "promote_checkpoint"
     assert states["grade"]["sequence"] == ["augment", "evaluate", "quality-gate"]
+    assert states["grade"]["next"] == "quality-disposition"
+    assert states["annotate-augmented"]["needs"] == ["quality-disposition"]
+    assert (
+        "enforce_quality_disposition" in states["quality-disposition"]["run"]["shell"]
+    )
+    assert float(_spec()["config"]["grade_threshold"]) >= 0.75
+    assert float(_spec()["config"]["temporal_consistency_threshold"]) >= 0.8
+    assert _spec()["config"]["temporal_consistency_mode"] == "advisory"
+    assert float(_spec()["config"]["appearance_fidelity_threshold"]) >= 0.8
+    assert _spec()["config"]["appearance_fidelity_mode"] == "advisory"
 
 
 def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
@@ -175,7 +202,9 @@ def test_curation_runs_the_real_cosmos_curator_before_review() -> None:
     assert states["curate"]["needs"] == ["cosmos-curate"]
     assert states["curate"]["toolRef"] == "workbench.fiftyone.curate_augmented"
     fiftyone_argv = TOOL_CATALOG["workbench.fiftyone.curate_augmented"].argv_template
+    assert fiftyone_argv[:4] == ["npa", "workbench", "fiftyone", "curate-augmented"]
     assert "--curator-report-uri" in fiftyone_argv
+    assert "--require-fiftyone" in fiftyone_argv
 
 
 def test_quality_gate_reads_the_evaluator_report() -> None:

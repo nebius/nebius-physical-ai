@@ -19,12 +19,14 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     assert_no_unresolved_placeholders,
     normalize_resources,
+    plan_image_pull_secrets,
     render_skypilot_yaml,
     resolve_task_image,
     tool_image_key,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
+from npa.orchestration.npa_workflow.submission_state import load_submission_state
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -239,6 +241,42 @@ def test_render_ok_when_registry_matches_credentials(
     assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "cr.eu-north1.nebius.cloud"
 
 
+def test_kubernetes_private_image_references_the_refreshed_pull_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="demo")
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="cr.eu-north1.nebius.cloud/reg"),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+
+    assert task["config"]["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
+        {"name": "npa-nebius-registry"}
+    ]
+
+
+def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
+    spec = load_spec(NPA_SPECS / "nurec-reconstruct.yaml")
+    plan = build_plan(spec, run_id="demo")
+
+    authorities = plan_image_pull_secrets(
+        spec,
+        plan.steps,
+        run_id="demo",
+        options=SkypilotRenderOptions(),
+    )
+
+    assert authorities["nvcr.io/nvidia/nre/nre-ga:26.04"] == (
+        "ngc-nvcr-imagepullsecret",
+    )
+
+
 def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("workbench.vlm_eval.run") == "cosmos"
     assert tool_image_key("workbench.token_factory.caption") is None
@@ -284,6 +322,32 @@ def test_render_token_factory_uses_env_aws_endpoint(
         assert docs[1]["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/npa"
     finally:
         prepared.temp_dir.cleanup()
+
+
+def test_render_transfer_forwards_explicit_runtime_tuning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    monkeypatch.setenv("NPA_COSMOS_VARIANT_PARALLELISM", "4")
+    monkeypatch.setenv("NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS", "1")
+    spec = load_spec(
+        REPO_ROOT
+        / "npa"
+        / "workflows"
+        / "workbench"
+        / "npa-workflows"
+        / "physical-ai-data-factory.yaml"
+    )
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="demo", assume_decision="promote_checkpoint"),
+        run_id="demo",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    docs = [doc for doc in yaml.safe_load_all(rendered) if doc]
+    transfer = next(doc for doc in docs if "cosmos2 transfer" in doc.get("run", ""))
+    assert transfer["envs"]["NPA_COSMOS_VARIANT_PARALLELISM"] == "4"
+    assert transfer["envs"]["NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"] == "1"
 
 
 def test_render_vlm_eval_single_produces_serial_pipeline() -> None:
@@ -456,6 +520,39 @@ def test_resolve_task_image_uses_override() -> None:
     assert image == "cr.example/custom:1"
 
 
+def test_first_party_image_rejects_uid_zero_pod_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_REGISTRY", "cr.us-central1.nebius.cloud/project")
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    for profile in spec.resources.values():
+        if isinstance(profile, dict):
+            profile["kubernetes"] = {
+                "pod_config": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "worker",
+                                "securityContext": {"runAsUser": 0},
+                            }
+                        ]
+                    }
+                }
+            }
+    with pytest.raises(NpaWorkflowRenderError, match="runAsUser: 0"):
+        render_skypilot_yaml(
+            spec,
+            build_plan(spec, run_id="no-root"),
+            run_id="no-root",
+            options=SkypilotRenderOptions(
+                image_overrides={
+                    "*": "cr.us-central1.nebius.cloud/project/npa-fiftyone:validation"
+                },
+                materialize_registry_secrets=False,
+            ),
+        )
+
+
 def test_resolve_task_image_uses_longest_tool_family_override() -> None:
     image = resolve_task_image(
         "workbench.fiftyone.curate_augmented",
@@ -533,6 +630,11 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
             "cr.example.invalid/reg",
             "--submit-timeout",
             "30",
+            # Rendering test: the real SkyPilot CLI / npa-source prerequisites
+            # are mocked out, so skip the submit preflight.
+            "--skip-preflight",
+            "--no-preflight-images",
+            "--no-resolve-accelerators",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -543,6 +645,14 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
     assert "execution: serial" in content
     assert "score-rollouts" in content
     assert "${" not in content
+    receipt = load_submission_state("default", "npa-submit-1")
+    assert receipt["launch"]["sky_job_id"] == "42"
+    assert receipt["workflow"]["name"] == "vlm-eval-single"
+    assert receipt["workflow"]["run_prefix_uri"] == (
+        "s3://example-bucket/runs/npa-submit-1/vlm-eval"
+    )
+    assert receipt["workflow"]["manifest_uri"].endswith("/npa-workflow/manifest.json")
+    assert receipt["workflow"]["steps"][0]["state"] == "score-rollouts"
 
 
 def test_workbench_workflow_submit_npa_plan_only(
@@ -560,6 +670,7 @@ def test_workbench_workflow_submit_npa_plan_only(
             "--run-id",
             "plan-only-1",
             "--plan-only",
+            "--details",
             "--registry",
             "cr.example.invalid/reg",
         ],
@@ -585,8 +696,10 @@ def test_workbench_workflow_submit_plan_only_redacts_registry_password(
             "--run-id",
             "plan-only-redact",
             "--plan-only",
+            "--details",
             "--registry",
             "cr.eu-north1.nebius.cloud/reg",
+            "--skip-preflight",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -612,8 +725,13 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
             "--run-id",
             "env-clear-is-test-only",
             "--plan-only",
+            "--details",
             "--registry",
             "cr.example.invalid/reg",
+            # This spec's steps keep their workbench images (that is the assertion
+            # below), but the prerequisite check cannot know that before planning
+            # and asks for a source it will not need.
+            "--skip-preflight",
         ],
     )
 
@@ -649,6 +767,7 @@ def test_workbench_workflow_submit_npa_var_merges_config(
             "bucket=my-live-bucket",
             "--registry",
             "cr.example.invalid/reg",
+            "--skip-preflight",
         ],
     )
     assert result.exit_code == 0, result.output

@@ -153,6 +153,8 @@ def ensure_nebius_registry_pull_secret(
     kubeconfig: str = "",
     k8s_context: str = "",
     nebius_cli: str = "nebius",
+    username: str = "iam",
+    token: str = "",
 ) -> None:
     """Apply a fresh docker-registry secret so orchestrator pulls do not 401.
 
@@ -173,9 +175,9 @@ def ensure_nebius_registry_pull_secret(
     if not servers:
         return
     credentials: dict[str, tuple[str, str]] = {}
-    fallback_token = ""
+    fallback_token = token
     for server in servers:
-        credential = _docker_helper_credential(server)
+        credential = (username, token) if token else _docker_helper_credential(server)
         if credential is None:
             if not fallback_token:
                 fallback_token = mint_nebius_registry_token(nebius_cli=nebius_cli)

@@ -34,6 +34,7 @@ on:
           - e2e-daily
           - gpu-daily
           - e2e-serverless
+          - mutation-live
           - live-gpu
       git_ref:
         description: "Branch, tag, or sha to test on the dev VM"
@@ -94,8 +95,9 @@ jobs:
           fi
 
           # Hard guardrail: never let a schedule trigger the GPU-spending path.
-          if [ "$tier" = "live-gpu" ] && [ "$EVENT_NAME" = "schedule" ]; then
-            echo "::error::live-gpu must never run on a schedule (docs/testing/live-e2e.md)."
+          if { [ "$tier" = "live-gpu" ] || [ "$tier" = "mutation-live" ]; } \
+             && [ "$EVENT_NAME" = "schedule" ]; then
+            echo "::error::${tier} must never run on a schedule (docs/testing/live-e2e.md)."
             exit 1
           fi
 
@@ -149,6 +151,9 @@ jobs:
           # Optional passthroughs; empty when not configured.
           NPA_E2E_SERVERLESS_PROJECT: ${{ vars.NPA_E2E_SERVERLESS_PROJECT }}
           NPA_E2E_PROJECT: ${{ vars.NPA_E2E_PROJECT }}
+          NPA_E2E_CLUSTER_CONTEXT: ${{ vars.NPA_E2E_CLUSTER_CONTEXT }}
+          NPA_E2E_AGENT_NAME: ${{ vars.NPA_E2E_AGENT_NAME }}
+          NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID: ${{ vars.NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID }}
           # Registry id enables the daily all-image reachability check on the dev VM.
           NPA_REGISTRY_ID: ${{ vars.NPA_REGISTRY_ID }}
           NPA_DAILY_E2E_SHARDS: ${{ vars.NPA_DAILY_E2E_SHARDS }}
@@ -165,6 +170,9 @@ jobs:
           for pair in "git_ref=$REF" \
                       "NPA_E2E_SERVERLESS_PROJECT=$NPA_E2E_SERVERLESS_PROJECT" \
                       "NPA_E2E_PROJECT=$NPA_E2E_PROJECT" \
+                      "NPA_E2E_CLUSTER_CONTEXT=$NPA_E2E_CLUSTER_CONTEXT" \
+                      "NPA_E2E_AGENT_NAME=$NPA_E2E_AGENT_NAME" \
+                      "NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID=$NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID" \
                       "NPA_REGISTRY_ID=$NPA_REGISTRY_ID" \
                       "NPA_DAILY_E2E_SHARDS=$NPA_DAILY_E2E_SHARDS" \
                       "NPA_DAILY_ENABLE_GPU=$NPA_DAILY_ENABLE_GPU"; do
@@ -187,6 +195,9 @@ jobs:
             NPA_DAILY_ALLOW_LIVE_GPU=${allow_gpu} \
             NPA_E2E_SERVERLESS_PROJECT='${NPA_E2E_SERVERLESS_PROJECT}' \
             NPA_E2E_PROJECT='${NPA_E2E_PROJECT}' \
+            NPA_E2E_CLUSTER_CONTEXT='${NPA_E2E_CLUSTER_CONTEXT}' \
+            NPA_E2E_AGENT_NAME='${NPA_E2E_AGENT_NAME}' \
+            NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID='${NPA_E2E_CONTROLLER_TRANSACTION_RUN_ID}' \
             NPA_REGISTRY_ID='${NPA_REGISTRY_ID}' \
             NPA_DAILY_E2E_SHARDS='${NPA_DAILY_E2E_SHARDS}' \
             NPA_DAILY_ENABLE_GPU='${NPA_DAILY_ENABLE_GPU}' \

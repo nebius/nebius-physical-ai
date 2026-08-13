@@ -16,6 +16,8 @@ from npa.cli.agent import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TMUX_SCRIPT = REPO_ROOT / "npa" / "scripts" / "start_agent_live_tmux.sh"
 AGENT_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent.py"
+# The nginx site body lives in a sibling module (agent.py is size-ratcheted).
+AGENT_ASSETS_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_assets.py"
 AGENT_UI_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_ui.html"
 
 UI_BUTTON_IDS = (
@@ -48,7 +50,11 @@ RERUN_STATIC_CANDIDATES = (
 
 
 def test_agent_bootstrap_source_smoke() -> None:
-    source = AGENT_MODULE.read_text(encoding="utf-8")
+    source = (
+        AGENT_MODULE.read_text(encoding="utf-8")
+        + "\n"
+        + AGENT_ASSETS_MODULE.read_text(encoding="utf-8")
+    )
     ui_source = AGENT_UI_MODULE.read_text(encoding="utf-8")
     ui = rendered_agent_ui_html()
     bundled = source + "\n" + ui_source + "\n" + ui

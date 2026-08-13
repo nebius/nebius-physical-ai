@@ -33,6 +33,7 @@ DEFAULT_SPEC = ""
 # control file, so they are not used for self-contained input-only conditioning.
 INPUT_AUTO_CONTROLS = ("edge", "vis")
 DEFAULT_INPUT_CONTROL = "edge"
+DISABLE_CONTENT_GUARDRAILS_ENV = "NPA_COSMOS_DISABLE_CONTENT_GUARDRAILS"
 # Live job 339 reported SUCCEEDED while the spec promised ``manifest.json`` and
 # the then-reference-only tool wrote ``index.json`` with a different schema.
 # Keep these two artifact contracts named and distinct: the real publisher now
@@ -201,6 +202,7 @@ def run_cosmos_transfer(
     guidance: float = 3.0,
     cuda_visible_devices: str | None = None,
     variant_tag: str = "",
+    disable_content_guardrails: bool | None = None,
 ) -> dict[str, Any]:
     """Run a real Cosmos-Transfer2.5 inference; return the generated video + metadata.
 
@@ -265,9 +267,19 @@ def run_cosmos_transfer(
             spec_json = _json.loads(temp_spec.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
             spec_json = None
+    if disable_content_guardrails is None:
+        disable_content_guardrails = os.environ.get(
+            DISABLE_CONTENT_GUARDRAILS_ENV, ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+    argv = [str(py), "examples/inference.py", "-i", spec, "-o", out]
+    if disable_content_guardrails:
+        # Upstream exposes this explicit setup option for domains whose valid
+        # generated pixels are outside the generic video guardrail's calibration
+        # set. Keep the NPA default fail-closed; operators must opt out per run.
+        argv.append("--disable-guardrails")
     try:
         subprocess.run(
-            [str(py), "examples/inference.py", "-i", spec, "-o", out],
+            argv,
             cwd=repo,
             env=env,
             check=True,
@@ -311,6 +323,7 @@ def run_cosmos_transfer(
         "input_conditioned": bool(input_video),
         "input_video": str(input_video or ""),
         "control": conditioned_control,
+        "content_guardrails_enabled": not disable_content_guardrails,
     }
 
 
@@ -408,6 +421,10 @@ def publish_transfer_clip(
     input_conditioned = bool(transfer.get("input_conditioned"))
     conditioned_input = Path(str(transfer.get("input_video") or "")).name
     conditioned_control = str(transfer.get("control") or "")
+    content_guardrails_enabled = bool(
+        transfer.get("content_guardrails_enabled", True)
+    )
+    conditioning_clip_uri = str(transfer.get("conditioning_clip_uri") or "")
 
     frame_index: list[dict[str, str]] = []
     with _tempfile.TemporaryDirectory(prefix="npa-cosmos-pub-") as tmp:
@@ -435,7 +452,9 @@ def publish_transfer_clip(
             "control_spec": transfer.get("spec", ""),
             "input_conditioned": input_conditioned,
             "conditioned_input": conditioned_input,
+            "conditioning_clip_uri": conditioning_clip_uri,
             "control": conditioned_control,
+            "content_guardrails_enabled": content_guardrails_enabled,
         }
         cm = Path(tmp) / "metadata.json"
         cm.write_text(_json.dumps(clip_meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -452,7 +471,9 @@ def publish_transfer_clip(
         "video_bytes": int(transfer.get("video_bytes", 0) or 0),
         "input_conditioned": input_conditioned,
         "conditioned_input": conditioned_input,
+        "conditioning_clip_uri": conditioning_clip_uri,
         "control": conditioned_control,
+        "content_guardrails_enabled": content_guardrails_enabled,
         "variables": variables or {},
     }
 
@@ -503,7 +524,11 @@ def write_run_manifest(
         "video_bytes": sum(int(c.get("video_bytes", 0) or 0) for c in clips),
         "input_conditioned": bool(first.get("input_conditioned")),
         "conditioned_input": first.get("conditioned_input", ""),
+        "conditioning_clip_uri": first.get("conditioning_clip_uri", ""),
         "control": first.get("control", ""),
+        "content_guardrails_enabled": bool(
+            first.get("content_guardrails_enabled", True)
+        ),
         "variants": [
             {
                 "clip": c.get("clip", ""),

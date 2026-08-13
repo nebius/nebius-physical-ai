@@ -2,15 +2,126 @@
 
 from __future__ import annotations
 
+import json
 import typer
 
-from npa.clients.network import NetworkIngressError, ensure_ingress as ensure_ingress_impl, parse_ports
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
+
+from npa.clients.network import (
+    NetworkIngressError,
+    ensure_ingress as ensure_ingress_impl,
+    parse_ports,
+)
 
 app = typer.Typer(
     name="network",
     help="Network operations for Nebius resources.",
     no_args_is_help=True,
 )
+
+
+@app.command("delete-project-default")
+@intent_boundary(OperationIntent.DESTROY)
+@json_stdout_contract
+def delete_project_default(
+    project: str = typer.Option(..., "--project", help="Exact NPA project alias."),
+    project_id: str = typer.Option(..., "--project-id", help="Exact project ID."),
+    tenant_id: str = typer.Option(..., "--tenant-id", help="Exact tenant ID."),
+    profile: str = typer.Option("", "--profile", help="Exact Nebius CLI profile."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm exact deletion."),
+    output_json: bool = typer.Option(False, "--json", help="Emit JSON."),
+) -> None:
+    """Delete only the unique default topology of an NPA-created project."""
+
+    from npa.clients.nebius import (
+        NebiusError,
+        delete_project_default_network,
+        get_project_default_network_identity,
+        get_project_identity,
+    )
+    from npa.project_destroy import _project_ownership_operation
+    from npa.teardown_receipts import record_teardown_event
+
+    try:
+        if (
+            get_project_identity(
+                project_id, tenant_id=tenant_id, profile=profile or None
+            )
+            is None
+        ):
+            raise RuntimeError("exact project is absent")
+        ownership = _project_ownership_operation(project, project_id, tenant_id)
+        if ownership is None:
+            raise RuntimeError(
+                "default-network deletion requires unique durable NPA project-creation proof"
+            )
+        identity = get_project_default_network_identity(
+            project_id, profile=profile or None
+        )
+        if identity is None:
+            payload = {
+                "outcome": "already_absent",
+                "project_id": project_id,
+                "verified": True,
+            }
+        else:
+            payload = {
+                "outcome": "planned",
+                "project_id": project_id,
+                "network_id": identity.network_id,
+                "subnet_id": identity.subnet_id,
+                "security_group_id": identity.security_group_id,
+                "verified": True,
+            }
+            if yes:
+                record_teardown_event(
+                    phase="network",
+                    resource=identity.network_id,
+                    terminal_state="deletion_approved",
+                    project_alias=project,
+                    project_id=project_id,
+                    identity={
+                        "project_id": project_id,
+                        "network_id": identity.network_id,
+                        "subnet_id": identity.subnet_id,
+                        "security_group_id": identity.security_group_id,
+                        "ownership": "npa_disposable_project",
+                        "project_operation_id": ownership.operation_id,
+                    },
+                    action={"kind": "delete_exact_project_default_network"},
+                )
+                delete_project_default_network(identity, profile=profile or None)
+                if get_project_default_network_identity(
+                    project_id, profile=profile or None
+                ):
+                    raise RuntimeError(
+                        "default-network cleanup did not converge to absence"
+                    )
+                payload["outcome"] = "verified_deleted"
+                record_teardown_event(
+                    phase="network",
+                    resource=identity.network_id,
+                    terminal_state="verified_deleted",
+                    project_alias=project,
+                    project_id=project_id,
+                    identity={
+                        "project_id": project_id,
+                        "network_id": identity.network_id,
+                        "subnet_id": identity.subnet_id,
+                        "security_group_id": identity.security_group_id,
+                        "ownership": "npa_disposable_project",
+                        "project_operation_id": ownership.operation_id,
+                    },
+                    verification={"exact_default_topology_absent": True},
+                )
+    except (NebiusError, RuntimeError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if output_json
+        else f"network: {payload['outcome']}"
+    )
 
 
 @app.command("ensure-ingress", help="Ensure TCP ingress to a VM security group.")

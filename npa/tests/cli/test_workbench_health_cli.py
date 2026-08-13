@@ -143,6 +143,11 @@ class _EmptyCreds:
     s3_bucket = ""
 
 
+class _AccessCreds(_EmptyCreds):
+    hf_token = "hf_from_environment"
+    ngc_api_key = "nvapi-from-environment"
+
+
 def test_preflight_offline_all_warn_exit_zero(monkeypatch) -> None:
     from npa.cli.workbench import health as health_module
 
@@ -271,28 +276,20 @@ class _HFOK:
 def test_access_registered_and_help() -> None:
     result = runner.invoke(app, ["workbench", "health", "access", "--help"])
     assert result.exit_code == 0
-    assert "--hf-token" in result.output
-    assert "--ngc-key" in result.output
+    assert "--save-env-credentials" in result.output
+    assert "--hf-token" not in result.output
+    assert "--ngc-key" not in result.output
 
 
 def test_access_offline_reports_gated_models(monkeypatch) -> None:
     from npa.cli.workbench import health as health_module
 
     monkeypatch.setattr(
-        health_module, "load_credentials", lambda *a, **k: _EmptyCreds()
+        health_module, "load_credentials", lambda *a, **k: _AccessCreds()
     )
     result = runner.invoke(
         app,
-        [
-            "workbench",
-            "health",
-            "access",
-            "--offline",
-            "--hf-token",
-            "hf_x",
-            "--ngc-key",
-            "nvapi-x",
-        ],
+        ["workbench", "health", "access", "--offline"],
     )
     assert result.exit_code == 0
     assert "nvidia/GR00T-N1.7-3B" in result.output
@@ -303,7 +300,7 @@ def test_access_fails_on_gated_denial(monkeypatch) -> None:
     from npa.cli.workbench import health as health_module
 
     monkeypatch.setattr(
-        health_module, "load_credentials", lambda *a, **k: _EmptyCreds()
+        health_module, "load_credentials", lambda *a, **k: _AccessCreds()
     )
     monkeypatch.setattr(
         health_module,
@@ -312,17 +309,7 @@ def test_access_fails_on_gated_denial(monkeypatch) -> None:
     )
     result = runner.invoke(
         app,
-        [
-            "workbench",
-            "health",
-            "access",
-            "--hf-token",
-            "hf_x",
-            "--ngc-key",
-            "nvapi-x",
-            "--capability",
-            "groot",
-        ],
+        ["workbench", "health", "access", "--capability", "groot"],
     )
     assert result.exit_code == 1
     assert "FAIL" in result.output
@@ -333,7 +320,7 @@ def test_access_warn_only_suppresses_exit(monkeypatch) -> None:
     from npa.cli.workbench import health as health_module
 
     monkeypatch.setattr(
-        health_module, "load_credentials", lambda *a, **k: _EmptyCreds()
+        health_module, "load_credentials", lambda *a, **k: _AccessCreds()
     )
     monkeypatch.setattr(
         health_module,
@@ -346,10 +333,6 @@ def test_access_warn_only_suppresses_exit(monkeypatch) -> None:
             "workbench",
             "health",
             "access",
-            "--hf-token",
-            "hf_x",
-            "--ngc-key",
-            "nvapi-x",
             "--capability",
             "groot",
             "--warn-only",
@@ -362,23 +345,14 @@ def test_access_pass_when_validator_ok(monkeypatch) -> None:
     from npa.cli.workbench import health as health_module
 
     monkeypatch.setattr(
-        health_module, "load_credentials", lambda *a, **k: _EmptyCreds()
+        health_module, "load_credentials", lambda *a, **k: _AccessCreds()
     )
     monkeypatch.setattr(
         health_module, "validate_hf_access", lambda token, repo: _HFOK(ok=True)
     )
     result = runner.invoke(
         app,
-        [
-            "workbench",
-            "health",
-            "access",
-            "--hf-token",
-            "hf_x",
-            "--ngc-key",
-            "nvapi-x",
-            "--json",
-        ],
+        ["workbench", "health", "access", "--json"],
     )
     assert result.exit_code == 0
     payload = json.loads(result.output)
@@ -399,19 +373,30 @@ def test_access_rejects_unknown_capability(monkeypatch) -> None:
     assert "unknown capability" in result.output.lower()
 
 
-def test_access_set_credentials_persists(monkeypatch) -> None:
+def test_access_save_env_credentials_persists(monkeypatch) -> None:
     from npa.cli.workbench import health as health_module
+    from npa.clients import credentials as credentials_module
 
+    monkeypatch.setenv("HF_TOKEN", "hf_new")
+    monkeypatch.setenv("NGC_API_KEY", "nvapi-new")
     monkeypatch.setattr(
-        health_module, "load_credentials", lambda *a, **k: _EmptyCreds()
+        health_module, "load_credentials", lambda *a, **k: _AccessCreds()
     )
-    captured: dict = {}
-
-    def _fake_write(data, *, path=None):
-        captured.update(data)
-        return "/tmp/fake-credentials.yaml"
-
-    monkeypatch.setattr(health_module, "write_credentials_file", _fake_write)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        credentials_module,
+        "persist_supported_env_credentials",
+        lambda: (
+            captured.update(
+                {
+                    "detected": ["HF_TOKEN", "NGC_API_KEY"],
+                    "persisted": ["HF_TOKEN", "NGC_API_KEY"],
+                    "path": "/tmp/fake-credentials.yaml",
+                }
+            )
+            or captured
+        ),
+    )
     result = runner.invoke(
         app,
         [
@@ -419,13 +404,49 @@ def test_access_set_credentials_persists(monkeypatch) -> None:
             "health",
             "access",
             "--offline",
-            "--hf-token",
-            "hf_new",
-            "--ngc-key",
-            "nvapi-new",
-            "--set-credentials",
+            "--save-env-credentials",
         ],
     )
     assert result.exit_code == 0
-    assert captured["tokens"]["HF_TOKEN"] == "hf_new"
-    assert captured["ngc"]["api_key"] == "nvapi-new"
+    assert captured["persisted"] == ["HF_TOKEN", "NGC_API_KEY"]
+    assert "hf_new" not in result.output
+    assert "nvapi-new" not in result.output
+
+
+def test_access_save_env_credentials_json_stays_valid_and_redacted(monkeypatch) -> None:
+    from npa.cli.workbench import health as health_module
+    from npa.clients import credentials as credentials_module
+
+    secret = "hf_json_secret"
+    monkeypatch.setenv("HF_TOKEN", secret)
+    monkeypatch.setattr(
+        health_module, "load_credentials", lambda *a, **k: _AccessCreds()
+    )
+    monkeypatch.setattr(
+        credentials_module,
+        "persist_supported_env_credentials",
+        lambda: {
+            "detected": ["HF_TOKEN"],
+            "persisted": ["HF_TOKEN"],
+            "sources": {"HF_TOKEN": "environment"},
+            "warnings": [],
+            "path": "/tmp/synthetic-credentials.yaml",
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "access",
+            "--offline",
+            "--save-env-credentials",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["credential_persistence"]["persisted"] == ["HF_TOKEN"]
+    assert secret not in result.output

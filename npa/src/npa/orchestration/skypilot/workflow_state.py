@@ -358,10 +358,18 @@ def list_runs(
                 manifest = read_manifest(run_state)
             except WorkflowStateError:
                 continue
+            if not is_durable_workflow_manifest(manifest):
+                # Buckets also contain component/config manifests (for example
+                # npa-src package metadata and PAIDF configs/cosmos_augmented
+                # manifests).  A filename alone does not make those workflow
+                # runs, and presenting their parent directories as runs is
+                # actively misleading.
+                continue
             runs.append(
                 {
                     "run_id": manifest.get("run_id", run_prefix.rsplit("/", 1)[-1]),
-                    "workflow_name": manifest.get("workflow_name", ""),
+                    "workflow_name": manifest.get("workflow_name")
+                    or manifest.get("workflow", ""),
                     "run_prefix_uri": run_state.uri,
                     "updated_at": manifest.get("updated_at", ""),
                     "sky_job_id": manifest.get("sky_job_id", ""),
@@ -372,6 +380,85 @@ def list_runs(
                     runs, key=lambda item: str(item.get("updated_at", "")), reverse=True
                 )
     return sorted(runs, key=lambda item: str(item.get("updated_at", "")), reverse=True)
+
+
+def is_durable_workflow_manifest(payload: Mapping[str, Any]) -> bool:
+    """Return whether *payload* is one of NPA's durable run manifests.
+
+    There are two supported contracts: the declarative ``npa.workflow`` run
+    ledger and the older instrumented raw-SkyPilot manifest.  Component-level
+    files named ``manifest.json`` intentionally fail this predicate.
+    """
+
+    schema = payload.get("schema_version")
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        return False
+    if schema == "npa.workflow.run.v1":
+        return bool(
+            str(payload.get("workflow") or "").strip()
+            and isinstance(payload.get("steps"), list)
+        )
+    return bool(
+        schema in {WORKFLOW_SCHEMA_VERSION, str(WORKFLOW_SCHEMA_VERSION)}
+        and str(payload.get("workflow_name") or "").strip()
+        and isinstance(payload.get("stages"), dict)
+    )
+
+
+def discover_workflow_run_state(
+    *,
+    state_parent: WorkflowS3Config,
+    run_id: str,
+) -> WorkflowS3Config | None:
+    """Find a durable manifest by its declared run id below a bucket prefix.
+
+    Declarative workflows store their state beside the workflow artifacts, e.g.
+    ``physical-ai-data-factory/<run>/npa-workflow/manifest.json``.  The project
+    configuration only supplies a bucket/base prefix, so status/log/artifact
+    commands need to discover that manifest instead of assuming
+    ``<bucket>/<run>/manifest.json``.
+    """
+
+    wanted = str(run_id or "").strip()
+    if not wanted:
+        return None
+    prefix = state_parent.prefix.strip("/")
+    if prefix:
+        prefix += "/"
+    paginator = state_parent.client().get_paginator("list_objects_v2")
+    candidates: list[tuple[str, str, WorkflowS3Config]] = []
+    for page in paginator.paginate(Bucket=state_parent.bucket, Prefix=prefix):
+        for item in page.get("Contents", []) or []:
+            key = str(item.get("Key") or "")
+            if not key.endswith("/manifest.json"):
+                continue
+            run_prefix = key.removesuffix("/manifest.json")
+            state = WorkflowS3Config(
+                bucket=state_parent.bucket,
+                prefix=run_prefix,
+                endpoint_url=state_parent.endpoint_url,
+                aws_access_key_id=state_parent.aws_access_key_id,
+                aws_secret_access_key=state_parent.aws_secret_access_key,
+                project=state_parent.project,
+            )
+            try:
+                manifest = read_manifest(state)
+            except WorkflowStateError:
+                continue
+            if not is_durable_workflow_manifest(manifest):
+                continue
+            if str(manifest.get("run_id") or "").strip() != wanted:
+                continue
+            # Prefer the newest declaration if a retried/migrated run left more
+            # than one durable copy.  Prefix is the deterministic tie-breaker.
+            candidates.append(
+                (str(manifest.get("updated_at") or ""), run_prefix, state)
+            )
+    if not candidates:
+        return None
+    candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    return candidates[0][2]
 
 
 def put_json(state: WorkflowS3Config, *parts: str, payload: Mapping[str, Any]) -> None:
@@ -408,6 +495,20 @@ def get_text(state: WorkflowS3Config, *parts: str) -> str:
     return response["Body"].read().decode("utf-8", errors="replace")
 
 
+def workflow_state_error_is_missing(exc: BaseException) -> bool:
+    """Return whether a read failure is an actual missing object, not auth/network."""
+
+    cause = exc.__cause__
+    if isinstance(cause, (FileNotFoundError, KeyError)):
+        return True
+    response = getattr(cause, "response", None)
+    if not isinstance(response, dict):
+        return False
+    error = response.get("Error")
+    code = str(error.get("Code") or "") if isinstance(error, dict) else ""
+    return code.lower() in {"404", "nosuchkey", "notfound", "no_such_key"}
+
+
 def tail_live_job_logs(
     *,
     sky_bin: str,
@@ -440,6 +541,7 @@ def cancel_workflow_job(
     config_path: Path | None = None,
     timeout: int = 900,
     poll_seconds: float = 10.0,
+    also_down_cluster: bool = True,
 ) -> dict[str, Any]:
     from npa.orchestration.skypilot._bin import resolve_config
     from npa.orchestration.skypilot.cleanup import sky_environment
@@ -463,18 +565,25 @@ def cancel_workflow_job(
         check=False,
     )
     cluster_name = cluster or run_id
-    down = subprocess.run(
+    down = subprocess.CompletedProcess(
         [executable, "down", "--yes", cluster_name],
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
+        0,
+        stdout="not requested",
+        stderr="",
     )
+    if also_down_cluster:
+        down = subprocess.run(
+            [executable, "down", "--yes", cluster_name],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
     deadline = time.monotonic() + timeout
     last_status = ""
-    while time.monotonic() < deadline:
+    while also_down_cluster and time.monotonic() < deadline:
         status = subprocess.run(
             [executable, "status", "--refresh"],
             env=env,
@@ -625,7 +734,7 @@ npa_workflow_redact_stream() {
 npa_workflow_write_manifest() {
   [ -n "${npa_workflow_python}" ] || return 0
   "${npa_workflow_python}" -c '
-import json, os
+import json, os, tempfile
 from pathlib import Path
 raw = os.environ.get("NPA_WORKFLOW_MANIFEST_JSON", "")
 if not raw:
@@ -655,7 +764,21 @@ for info in stages.values():
         info["sky_job_id"] = str(job_id)
 if stage in stages and isinstance(stages[stage], dict):
     stages[stage]["sky_task_id"] = str(task_id or "")
-target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+fd, raw_tmp = tempfile.mkstemp(prefix=".manifest.", dir=target.parent)
+tmp = Path(raw_tmp)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, target)
+except BaseException:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    tmp.unlink(missing_ok=True)
+    raise
 '
 }
 npa_workflow_write_status() {
@@ -669,7 +792,7 @@ npa_workflow_write_status() {
   NPA_WORKFLOW_STATUS_ERROR="${error_summary}" \
   NPA_WORKFLOW_STATUS_END="${end_time}" \
   "${npa_workflow_python}" -c '
-import json, os
+import json, os, tempfile
 from pathlib import Path
 mount = Path(os.environ["NPA_WORKFLOW_MOUNT_ROOT_RESOLVED"])
 prefix = os.environ["NPA_WORKFLOW_S3_PREFIX_RESOLVED"]
@@ -700,7 +823,21 @@ payload = {
     "error_summary": os.environ.get("NPA_WORKFLOW_STATUS_ERROR", ""),
 }
 target = mount / prefix / "logs" / stage / "status.json"
-target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+fd, raw_tmp = tempfile.mkstemp(prefix=".status.", dir=target.parent)
+tmp = Path(raw_tmp)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, target)
+except BaseException:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    tmp.unlink(missing_ok=True)
+    raise
 '
 }
 npa_workflow_finalize() {

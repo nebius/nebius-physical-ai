@@ -194,6 +194,31 @@ def test_scanner_is_executable_and_self_documenting() -> None:
     assert "python.sh" in text and "allowlist" in text.lower()
 
 
+def test_oci_layout_tarball_scans_root_level_blob_layers(tmp_path: Path) -> None:
+    """Docker's containerd image store saves layers as ``blobs/sha256/*``.
+
+    The root-level form must be opened as a nested tar, not counted as one opaque
+    outer member and incorrectly declared clean.
+    """
+    layer_stream = io.BytesIO()
+    with tarfile.open(fileobj=layer_stream, mode="w") as layer:
+        payload = b"kit"
+        member = tarfile.TarInfo("isaac-sim/kit/libcarb.so")
+        member.size = len(payload)
+        layer.addfile(member, io.BytesIO(payload))
+    outer_path = tmp_path / "image.tar"
+    with tarfile.open(outer_path, mode="w") as outer:
+        payload = layer_stream.getvalue()
+        member = tarfile.TarInfo("blobs/sha256/exact-layer")
+        member.size = len(payload)
+        outer.addfile(member, io.BytesIO(payload))
+
+    paths = list(scanner._iter_tarball(outer_path))
+
+    assert "isaac-sim/kit/libcarb.so" in paths
+    assert scanner.classify_path(paths[0])
+
+
 # --------------------------------------------------------------------------------------
 # Gated model weights are a separate licence axis from Omniverse Kit, and the workbench
 # rule is the same: never baked. The distinction that matters is a git-LFS POINTER (a

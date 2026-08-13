@@ -20,6 +20,25 @@ cd npa
 .venv/bin/python -m pytest tests/ --ignore=tests/e2e --timeout=120 -q
 ```
 
+**Run it in parallel.** The suite is xdist-safe (`pytest-xdist` is in the `dev`
+extra); `-n auto` takes ~6 min down to ~2 min on 8 cores with an identical pass
+count, which is the difference between running the whole suite each iteration and
+only running a slice:
+
+```bash
+.venv/bin/python -m pytest tests/ -q -n auto
+```
+
+Use the serial form when a failure needs a readable, ordered traceback. CI still
+runs serially with coverage, so treat a parallel pass as the fast signal, not as a
+replacement for the gate.
+
+**Docs drift is a required gate and is slow to re-run blind.** `scripts/build_docs.sh`
+memoizes and prefetches its `npa --help` walk (~1 min, was ~5), but it still costs a
+minute — so change CLI options first, then regenerate once, rather than checking
+after each edit. Per-subcommand *options* do not change the generated pages; a new
+top-level command adds `docs/cli/<name>.md` plus a README index line.
+
 `ruff` is available in the venv:
 
 ```bash

@@ -65,6 +65,9 @@ verdicts in `npa/docker/workbench/blackwell-dc-images.json`.
   classifies these as `datacenter-headless` and rejects render workloads.
 - L40S capacity can be constrained; if the task only needs non-render training,
   H100 may be the pragmatic target.
+- Preemptible GPU placement does not change any boot-disk allocation. Preserve
+  the identical `compute.disk.count` and `compute.disk.size.network-ssd` byte
+  requirements in quota plans.
 - B200/B300 enablement depends on upstream library support per tool. Treat it as
   vendor-paced unless current tests prove the path. The 2026-08-03 final
   Genesis/Sim2Real tags passed real kernel compilation and physics smokes on
@@ -78,6 +81,11 @@ verdicts in `npa/docker/workbench/blackwell-dc-images.json`.
   selected product/node, allocated resource/count, Job name, and runtime image
   digest in the component provenance. Exhaustion is a blocker, not permission
   to change tier, backend, image semantics, or execution mode.
+- Terraform's canonical compute outputs are `platform` and `preset`, with
+  `cpu_platform`/`cpu_preset` for CPU-only instances. Deprecated
+  `gpu_platform`/`gpu_preset` aliases are GPU-only and return null for CPU
+  instances; do not interpret a historical CPU value under those aliases as GPU
+  placement.
 
 ## Verify
 

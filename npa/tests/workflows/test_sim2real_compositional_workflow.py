@@ -300,9 +300,10 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         }
         assert pod_config["spec"]["priorityClassName"] == "sim2real-production"
 
-    isaac_env = spec.resources["isaac-gpu"]["kubernetes"]["pod_config"]["spec"][
-        "containers"
-    ][0]["env"]
+    isaac_pod = spec.resources["isaac-gpu"]["kubernetes"]["pod_config"]["spec"]
+    assert isaac_pod.get("securityContext", {}).get("runAsUser") != 0
+    assert isaac_pod["containers"][0].get("securityContext", {}).get("runAsUser") != 0
+    isaac_env = isaac_pod["containers"][0]["env"]
     isaac_env_by_name = {item["name"]: item["value"] for item in isaac_env}
     assert isaac_env_by_name["NPA_BAKED_PYTHON"] == "/opt/npa/sim/venv/bin/python"
     rendered_isaac_tasks = []

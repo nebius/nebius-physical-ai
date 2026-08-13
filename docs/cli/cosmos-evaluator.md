@@ -5,7 +5,7 @@
 ```text
 Usage: npa workbench cosmos-evaluator [OPTIONS] COMMAND [ARGS]...
 
-NVIDIA Cosmos Evaluator: hallucination + attribute-verification grading of augmented video.
+Cosmos Evaluator checks plus NPA source-relative temporal and protected-appearance diagnostics.
 
 Options
 --help  Show this message and exit.

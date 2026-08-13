@@ -78,7 +78,7 @@ def test_provenance_flags_report_only_curation() -> None:
     prov = build_run_provenance(KEYS, run_id=RUN, read_json=read_report_only)
     cur = next(c for c in prov["components"] if c["stage"] == "Curation")
     assert cur.get("engine") == "report_only"
-    assert "npa-fiftyone image" in cur["detail"]
+    assert "FiftyOne Brain did not run" in cur["detail"]
 
 
 def test_provenance_distinguishes_cpu_standin_from_gpu() -> None:
@@ -175,7 +175,7 @@ def test_origin_when_no_original_input_stored() -> None:
     assert "pseudo-labeled those augmented frames" in origin["summary"]
 
 
-def test_origin_when_source_frames_uploaded() -> None:
+def test_origin_when_source_frames_are_operator_provided() -> None:
     keys = [
         f"{PFX}/input/clip0/frame-00000.png",
         f"{PFX}/input/clip0/frame-00001.png",
@@ -183,9 +183,48 @@ def test_origin_when_source_frames_uploaded() -> None:
         f"{PFX}/cosmos_augmented/manifest.json",
         f"{PFX}/cosmos_augmented/aug-{RUN}/frame-00000.png",
     ]
-    origin = build_run_origin(keys, run_id=RUN, read_json=_read_gpu)
+    def read_with_source(key: str):
+        if key.endswith("configs/manifest.json"):
+            return {
+                "input_source": {
+                    "kind": "operator_provided",
+                    "uri": f"s3://bucket/{PFX}/input/",
+                }
+            }
+        return _read_gpu(key)
+
+    keys.insert(0, f"{PFX}/configs/manifest.json")
+    origin = build_run_origin(keys, run_id=RUN, read_json=read_with_source)
     assert origin["original_present"] is True
     assert len(origin["original_inputs"]) == 2
     assert origin["original_inputs"][0]["kind"] == "image"
-    assert "uploaded source" in origin["summary"].lower()
+    assert "user-supplied input" in origin["summary"].lower()
     assert "input/clip0/frame-00000.png" in origin["summary"]
+    assert origin["input_source"]["kind"] == "operator_provided"
+
+
+def test_origin_truthfully_identifies_seeded_fixture_as_run_input() -> None:
+    keys = [
+        f"{PFX}/configs/manifest.json",
+        f"{PFX}/input/frame_0000.png",
+        f"{PFX}/cosmos_augmented/aug-{RUN}/frame-00000.png",
+    ]
+
+    def read_seeded(key: str):
+        if key.endswith("configs/manifest.json"):
+            return {
+                "input_source": {
+                    "kind": "npa_seeded_fixture",
+                    "uri": f"s3://bucket/{PFX}/input/",
+                    "frame_count": 8,
+                }
+            }
+        return {}
+
+    origin = build_run_origin(keys, run_id=RUN, read_json=read_seeded)
+    assert origin["original_present"] is False
+    assert origin["original_inputs"] == []
+    assert origin["input_source"]["kind"] == "npa_seeded_fixture"
+    assert "synthetic seeded fixture" in origin["summary"].lower()
+    assert "not original real-world data" in origin["summary"].lower()
+    assert "uploaded" not in origin["summary"].lower()

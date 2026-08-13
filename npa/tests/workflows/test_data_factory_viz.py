@@ -82,6 +82,17 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
             {"cloth_color": "red", "prompt": "a red cloth, dim evening light"},
         ],
     }))
+    (run / "input").mkdir(parents=True)
+    (run / "input" / "provenance.json").write_text(
+        json.dumps(
+            {
+                "source_kind": "upstream_sample",
+                "input_origin_label": "Upstream real sample",
+                "sha256": "a" * 64,
+                "derivation": {"kind": "normalized_conditioning_clip"},
+            }
+        )
+    )
     (run / "cosmos_augmented").mkdir(parents=True)
     (run / "cosmos_augmented" / "manifest.json").write_text(json.dumps({
         "mode": "cosmos_transfer2.5_gpu", "variant_count": 2, "input_conditioned": True,
@@ -98,6 +109,7 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
     docs = _load_stage_docs(run)
     assert set(docs) == {
         "pipeline/0_log",
+        "pipeline/0_input_provenance",
         "pipeline/1_scenarios",
         "pipeline/2_augment",
         "pipeline/3_grade",
@@ -106,6 +118,8 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
     }
     assert "2 scenario" in docs["pipeline/1_scenarios"] or "Scenarios sampled:** 2" in docs["pipeline/1_scenarios"]
     assert "a red cloth" in docs["pipeline/1_scenarios"]
+    assert "Upstream real sample" in docs["pipeline/0_input_provenance"]
+    assert "normalized_conditioning_clip" in docs["pipeline/0_input_provenance"]
     # Hallucination / attribute-verify grade + gate decision are both present.
     assert "0.82" in docs["pipeline/3_grade"]
     assert "promote_checkpoint" in docs["pipeline/3_grade"]
@@ -161,7 +175,7 @@ def test_captions_carry_self_identifying_header(tmp_path: Path) -> None:
     )
 
     caps = _load_captions(run)
-    assert "Original-frame captions" in caps["labeled_original"]
+    assert "Derived conditioning-frame captions" in caps["labeled_original"]
     assert "Augmented-clip captions" in caps["labeled_augmented"]
     # Each caption panel points at the grade panel and says it is NOT the gate.
     for body in caps.values():

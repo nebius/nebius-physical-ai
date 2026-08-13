@@ -34,7 +34,7 @@ import shutil
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Generator
 
 import numpy as np
 
@@ -274,7 +274,7 @@ def _probe_size(video: Path) -> tuple[int, int]:
     return height, width
 
 
-def _iter_gray_frames(video: Path, height: int, width: int) -> Iterator[np.ndarray]:
+def _iter_gray_frames(video: Path, height: int, width: int) -> Generator[np.ndarray, None, None]:
     """Yield ``height x width`` uint8 grayscale frames, scaling to match.
 
     Scaling in ffmpeg mirrors upstream's ``ensure_same_size``: the augmented clip

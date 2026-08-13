@@ -468,7 +468,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.cosmos_evaluator.evaluate",
         description=(
             "Grade augmented variants with the REAL NVIDIA Cosmos Evaluator checks "
-            "(hallucination + VLM attribute verification, Apache-2.0)."
+            "(hallucination + VLM attribute verification, Apache-2.0) plus the "
+            "NPA source-relative temporal consistency companion diagnostic."
+            " It also reports source-relative protected-appearance fidelity for "
+            "excessive global colour cast or localized material recolouring."
         ),
         argv_template=[
             "npa",
@@ -485,6 +488,34 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.configs_uri}}",
             "--threshold",
             "{{config.grade_threshold}}",
+            "--temporal-threshold",
+            "{{config.temporal_consistency_threshold}}",
+            "--temporal-regions-json",
+            "{{config.temporal_regions_json}}",
+            "--temporal-mode",
+            "{{config.temporal_consistency_mode}}",
+            "--temporal-noise-floor",
+            "{{config.temporal_noise_floor}}",
+            "--temporal-blur-ksize",
+            "{{config.temporal_blur_ksize}}",
+            "--appearance-threshold",
+            "{{config.appearance_fidelity_threshold}}",
+            "--appearance-regions-json",
+            "{{config.appearance_regions_json}}",
+            "--appearance-mode",
+            "{{config.appearance_fidelity_mode}}",
+            "--appearance-luminance-tolerance",
+            "{{config.appearance_luminance_tolerance}}",
+            "--appearance-global-chroma-tolerance",
+            "{{config.appearance_global_chroma_tolerance}}",
+            "--appearance-local-chroma-tolerance",
+            "{{config.appearance_local_chroma_tolerance}}",
+            "--appearance-chroma-instability-tolerance",
+            "{{config.appearance_chroma_instability_tolerance}}",
+            "--appearance-blur-ksize",
+            "{{config.appearance_blur_ksize}}",
+            "--appearance-max-dimension",
+            "{{config.appearance_max_dimension}}",
             "--vlm-model",
             "{{config.caption_model}}",
             "--output",
@@ -538,27 +569,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.curator_min_clip_len_s}}",
             "--motion-filter",
             "{{config.curator_motion_filter}}",
-            "--output",
-            "json",
-        ],
-    ),
-    "workbench.fiftyone.curate_augmented": ToolEntry(
-        name="workbench.fiftyone.curate_augmented",
-        description=(
-            "Run real FiftyOne Brain uniqueness, similarity, duplicate detection, "
-            "and PCA review over PAIDF variants, merging the Cosmos Curator report."
-        ),
-        argv_template=[
-            "npa",
-            "workbench",
-            "fiftyone",
-            "curate-augmented",
-            "--augment-uri",
-            "{{config.augment_uri}}",
-            "--report-uri",
-            "{{config.curation_report_uri}}",
-            "--curator-report-uri",
-            "{{config.curator_report_uri}}",
             "--output",
             "json",
         ],
@@ -1417,6 +1427,31 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "fiftyone review run {{run.id}} lance {{config.lance_uri}}",
         ],
         stub=True,
+    ),
+    "workbench.fiftyone.curate_augmented": ToolEntry(
+        name="workbench.fiftyone.curate_augmented",
+        description=(
+            "Run real FiftyOne Brain uniqueness, similarity, duplicate detection, "
+            "and PCA review over PAIDF variants, merging the Cosmos Curator report; "
+            "fail closed if the FiftyOne engine does not complete."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "fiftyone",
+            "curate-augmented",
+            "--augment-uri",
+            "{{config.augment_uri}}",
+            "--report-uri",
+            "{{config.curation_report_uri}}",
+            "--curator-report-uri",
+            "{{config.curator_report_uri}}",
+            "--dedup-threshold",
+            "{{config.fiftyone_dedup_threshold}}",
+            "--require-fiftyone",
+            "--output",
+            "json",
+        ],
     ),
     "workbench.token_factory.caption": ToolEntry(
         name="workbench.token_factory.caption",

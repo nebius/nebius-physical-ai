@@ -41,8 +41,10 @@ from npa.deploy.images import (
 )
 from npa.deploy.publish_public import (
     PublishItem,
+    _pin_publication_sources as REAL_PUBLICATION_SOURCE_PIN,
     _pin_wan_publication_sources as REAL_WAN_SOURCE_PIN,
     build_publish_plan,
+    verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
     verify_wan_publication_source as REAL_WAN_PUBLICATION_GATE,
 )
 
@@ -64,6 +66,16 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         publish_public,
         "_pin_wan_publication_sources",
         lambda plan: (list(plan), []),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_pin_publication_sources",
+        lambda plan: (list(plan), []),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_bootstrap_publication_source",
+        lambda item: (True, "test fixture: bootstrap gate verified"),
     )
 
 
@@ -88,6 +100,82 @@ def test_wan_source_tag_is_frozen_before_preflight_and_copy(monkeypatch) -> None
 
     assert failures == []
     assert plan[0].source_ref == f"source.example/npa-wan2-2@{digest}"
+
+
+def test_every_publication_source_is_frozen_before_any_gate(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    digest = "sha256:" + "b" * 64
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, digest)
+    )
+    plan, failures = REAL_PUBLICATION_SOURCE_PIN(
+        [
+            PublishItem(
+                tool="cosmos2-transfer",
+                source_ref="source.example/npa-cosmos2-transfer:release",
+                target_ref="target.example/npa-cosmos2-transfer:release",
+            )
+        ]
+    )
+    assert failures == []
+    assert plan[0].source_ref.endswith(f"@{digest}")
+
+
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        ({}, "missing bootstrap-contract attestation"),
+        (
+            {"org.nebius.npa.skypilot-bootstrap-contract": "stale-contract"},
+            "attestation version mismatch",
+        ),
+    ],
+)
+def test_publication_refuses_missing_or_stale_bootstrap_attestation(
+    monkeypatch, labels, expected
+) -> None:
+    from npa.deploy import publish_public
+
+    digest = "sha256:" + "c" * 64
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: {"config": {"Labels": labels}},
+    )
+    ok, detail = REAL_BOOTSTRAP_PUBLICATION_GATE(
+        PublishItem(
+            tool="cosmos2-transfer",
+            source_ref=f"source.example/npa-cosmos2-transfer@{digest}",
+            target_ref="target.example/npa-cosmos2-transfer:release",
+        )
+    )
+    assert not ok
+    assert expected in detail
+
+
+def test_publication_accepts_exact_digest_bootstrap_attestation(monkeypatch) -> None:
+    from npa.deploy import publish_public
+    from npa.orchestration.skypilot.image_bootstrap_contract import (
+        ATTESTATION_LABEL,
+        CONTRACT_VERSION,
+    )
+
+    digest = "sha256:" + "d" * 64
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: {"config": {"Labels": {ATTESTATION_LABEL: CONTRACT_VERSION}}},
+    )
+    ok, detail = REAL_BOOTSTRAP_PUBLICATION_GATE(
+        PublishItem(
+            tool="cosmos2-transfer",
+            source_ref=f"source.example/npa-cosmos2-transfer@{digest}",
+            target_ref="target.example/npa-cosmos2-transfer:release",
+        )
+    )
+    assert ok
+    assert digest in detail
 
 
 def test_isaac_images_are_no_longer_restricted() -> None:
@@ -1038,7 +1126,7 @@ def test_crane_copy_skips_a_target_with_the_exact_source_digest(
 
     item = PublishItem(
         tool="lerobot",
-        source_ref="source.example/npa-lerobot:1.0",
+        source_ref="source.example/npa-lerobot@sha256:" + "a" * 64,
         target_ref="target.example/npa-lerobot:1.0",
     )
     monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
@@ -1109,7 +1197,7 @@ def test_crane_copy_updates_a_target_with_a_different_digest(
 
     item = PublishItem(
         tool="lerobot",
-        source_ref="source.example/npa-lerobot:1.0",
+        source_ref="source.example/npa-lerobot@sha256:" + "a" * 64,
         target_ref="target.example/npa-lerobot:1.0",
     )
     target_reads = iter([(True, "sha256:old"), (True, "sha256:new")])
@@ -1150,7 +1238,7 @@ def test_crane_copy_creates_a_missing_or_pull_denied_target(
 
     item = PublishItem(
         tool="lerobot",
-        source_ref="source.example/npa-lerobot:1.0",
+        source_ref="source.example/npa-lerobot@sha256:" + "a" * 64,
         target_ref="target.example/npa-lerobot:1.0",
     )
     target_reads = iter([(False, target_error), (True, "sha256:new")])
@@ -1173,16 +1261,16 @@ def test_crane_copy_creates_a_missing_or_pull_denied_target(
     assert calls == [["/usr/bin/crane", "copy", item.source_ref, item.target_ref]]
 
 
-def test_wan_copy_refuses_a_mutable_source_tag(monkeypatch) -> None:
+def test_every_copy_refuses_a_mutable_source_tag(monkeypatch) -> None:
     from npa.deploy import publish_public
 
     monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/crane")
     with pytest.raises(RuntimeError, match="pinned by exact OCI digest"):
         publish_public._crane_copy(
             PublishItem(
-                tool="wan2-2",
-                source_ref="source.example/npa-wan2-2:mutable",
-                target_ref="target.example/npa-wan2-2:mutable",
+                tool="cosmos2-transfer",
+                source_ref="source.example/npa-cosmos2-transfer:mutable",
+                target_ref="target.example/npa-cosmos2-transfer:mutable",
             )
         )
 
@@ -1194,7 +1282,7 @@ def test_crane_copy_refuses_an_unknown_target_digest_failure(monkeypatch) -> Non
 
     item = PublishItem(
         tool="lerobot",
-        source_ref="source.example/npa-lerobot:1.0",
+        source_ref="source.example/npa-lerobot@sha256:" + "a" * 64,
         target_ref="target.example/npa-lerobot:1.0",
     )
     digests = {

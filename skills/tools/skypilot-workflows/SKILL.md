@@ -5,6 +5,14 @@ description: "Use when running or debugging how the engine renders and submits S
 
 # SkyPilot Workflows
 
+For teardown after project/config removal, use the existing immutable teardown
+receipt (`npa skypilot cleanup-controller --receipt <id> --context <context>
+--yes`). A terminal receipt or exact provider-verified missing cluster is a no-op
+without bootstrapping SkyPilot. Otherwise cleanup stays bound to the exact
+recorded project/context and preserves local controller state until remote
+absence is independently verified. Never fall back to the current kube context
+or an unrelated SkyPilot profile.
+
 SkyPilot is the workflow **execution engine** in this repo. Argo is deprecated;
 do not add or revive Argo workflows.
 
@@ -73,4 +81,27 @@ into SkyPilot documents:
 
 Acquire `/tmp/npa-commit-lock/workflows-skypilot` before committing workflow files in parallel-run contexts.
 
-Cleanup is best-effort and must not raise. `also_teardown_controller=False` is the safe default; only opt into controller teardown when no other run can be using it.
+Cleanup is best-effort and must not raise. `also_teardown_controller=False` is
+the safe default; only opt into controller teardown when no other run can be
+using it. Explicit controller teardown requires a single NPA project and its
+exact saved Kubernetes context, cross-checks stable provider identity, performs
+remote deletion against a clone of SkyPilot state, independently proves remote
+absence, checkpoints that evidence, and only then converges the matching local
+metadata. Authentication/RBAC/connectivity/identity uncertainty preserves local
+state; never fall back to an ambient context or unrelated SkyPilot profile.
+
+Runtime-orchestrated workflows persist one immutable managed-job identity per
+wave and attempt. Status and cancellation use that identity for only the wave's
+encoded stage members; retries remain historical records and the final attempt
+is selected deterministically. A discovered/root job ID must never be broadcast
+across runtime stages. Conflicting or missing history is reported as ambiguous
+or unknown. Root-ID fan-out is compatible only with the legacy single-managed-
+job manifest contract.
+
+SkyPilot 0.12.2 job names are not idempotency keys. NPA wraps the non-idempotent
+launch POST in an owner-only logical-identity lock plus structured queue
+reconciliation. The durable wave records readiness samples, launch sequence,
+failure category, reconciliation/adoption, recovery decision, and cancellation
+verification. `UP` and `STOPPED` controllers are usable; controller absence is a
+distinct state that requires stable Kubernetes API readiness before creation.
+Unknown/ambiguous queue evidence blocks both relaunch and fuzzy cancellation.

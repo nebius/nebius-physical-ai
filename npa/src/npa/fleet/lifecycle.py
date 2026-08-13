@@ -584,6 +584,34 @@ def resolve_project_id(
     project_id = _create_project(
         nebius_bin, tenant_id, name, env, region=region, profile=profile
     )
+    from npa.provisioning_journal import ProvisioningOperation, operation_context
+
+    ownership = ProvisioningOperation.prepare(
+        command="npa fleet deploy",
+        project_alias=name,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        region=region,
+        resource_type="project",
+        requested_name=name,
+        ownership_source="fleet-project-create",
+        resume_command="npa fleet status",
+        destroy_command="npa destroy --all --delete-project",
+    )
+    with operation_context(ownership):
+        ownership.transition("mutating")
+        ownership.record_resource(
+            resource_type="nebius_project",
+            requested_name=name,
+            provider_id=project_id,
+            ownership="created_by_this_operation",
+            ownership_source="provider-create-response",
+            project_id=project_id,
+            labels={"tenant_id": tenant_id, "region": region},
+        )
+        ownership.transition("resource-created")
+        ownership.transition("state-durable")
+        ownership.commit()
     _log(on_status, f"created project {name!r} ({project_id})")
     return project_id, True
 

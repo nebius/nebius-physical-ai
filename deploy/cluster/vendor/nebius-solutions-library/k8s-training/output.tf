@@ -8,6 +8,11 @@ output "kube_cluster" {
   }
 }
 
+output "k8s_node_group_service_account_id" {
+  description = "Service account created for Kubernetes node groups when enabled."
+  value       = var.enable_k8s_node_group_sa ? nebius_iam_v1_service_account.k8s_node_group_sa[0].id : null
+}
+
 output "grafana_password" {
   sensitive = true
   value     = module.o11y.nebius_grafana_password

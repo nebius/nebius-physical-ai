@@ -31,7 +31,9 @@ def test_legacy_skill_paths_are_root_symlinks() -> None:
     # Single-tree rule: `skills` is the ONLY skills-like entry under .agents/ and
     # .claude/. Reject stray `skills~<branch>` aliases left behind by merges.
     for parent in (REPO_ROOT / ".agents", REPO_ROOT / ".claude"):
-        skills_like = sorted(p.name for p in parent.iterdir() if p.name.startswith("skills"))
+        skills_like = sorted(
+            p.name for p in parent.iterdir() if p.name.startswith("skills")
+        )
         assert skills_like == ["skills"], (
             f"only `skills` may exist under {parent.name}/; found stray {skills_like}"
         )
@@ -43,7 +45,11 @@ def test_skills_index_covers_every_skill(skills_index: dict) -> None:
     paths = [entry["path"] for entry in entries]
 
     assert len(names) == len(set(names))
-    assert set(entry["category"] for entry in entries) == {"atomic", "tools", "workflows"}
+    assert set(entry["category"] for entry in entries) == {
+        "atomic",
+        "tools",
+        "workflows",
+    }
     assert len(entries) >= 25
 
     indexed_paths = {REPO_ROOT / path for path in paths}
@@ -65,7 +71,9 @@ def test_skills_index_covers_every_skill(skills_index: dict) -> None:
             assert name in names
 
 
-def test_skill_smoke_examples_run(skills_index: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_skill_smoke_examples_run(
+    skills_index: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runner = CliRunner()
     for entry in skills_index["skills"]:
         for smoke in entry["smoke"]:
@@ -76,13 +84,17 @@ def test_skill_smoke_examples_run(skills_index: dict, tmp_path: Path, monkeypatc
                 for relative_path in smoke["paths"]:
                     payloads = [
                         payload
-                        for payload in yaml.safe_load_all((REPO_ROOT / relative_path).read_text())
+                        for payload in yaml.safe_load_all(
+                            (REPO_ROOT / relative_path).read_text()
+                        )
                         if payload is not None
                     ]
                     assert payloads, relative_path
                     for payload in payloads:
                         assert isinstance(payload, dict), relative_path
-                        assert payload.get("name") or payload.get("resources"), relative_path
+                        assert payload.get("name") or payload.get("resources"), (
+                            relative_path
+                        )
             elif smoke_type == "file_exists":
                 assert (REPO_ROOT / smoke["path"]).exists(), smoke["path"]
             elif smoke_type == "npa_workflow_yaml":
@@ -165,6 +177,10 @@ def _assert_configure_provision_dry_run(
     )
     assert provision.exit_code == 0, provision.output
     payload = json.loads(provision.output)
-    assert payload["status"] == "ok"
-    assert "s3:dry-run ensure bucket ci-bucket" in payload["actions"]
-    assert "k8s:dry-run terraform apply deploy/cluster" in payload["actions"]
+    assert payload["status"] == "unknown"
+    assert payload["preflight"]["decision"] == "unknown"
+    assert "s3:dry-run ensure writable bucket ci-bucket" in payload["actions"]
+    assert any(
+        action.startswith("k8s:dry-run terraform apply deploy/cluster")
+        for action in payload["actions"]
+    )

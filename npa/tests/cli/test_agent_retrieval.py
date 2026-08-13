@@ -15,14 +15,22 @@ from npa.cli import agent_retrieval as R
 
 
 def _fake_embed(dim: int = 32):
-    """Deterministic hashing embedder: shared vocabulary -> high cosine."""
+    """Deterministic hashing embedder: shared vocabulary -> high cosine.
+
+    `hash()` on a str is salted per process by PYTHONHASHSEED, so bucketing tokens
+    with it made this embedder -- and the ranking assertions built on it -- differ
+    from run to run. crc32 is stable across processes, which is what "deterministic"
+    has to mean for a test that asserts which document ranks first.
+    """
+
+    import zlib
 
     def embed(texts):
         vectors = []
         for text in texts:
             vec = [0.0] * dim
             for token in str(text).lower().split():
-                vec[hash(token) % dim] += 1.0
+                vec[zlib.crc32(token.encode("utf-8")) % dim] += 1.0
             vectors.append(vec)
         return vectors
 

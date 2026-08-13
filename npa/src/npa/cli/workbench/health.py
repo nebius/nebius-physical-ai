@@ -14,7 +14,7 @@ from typing import Optional
 
 import typer
 
-from npa.clients.credentials import load_credentials, write_credentials_file
+from npa.clients.credentials import load_credentials
 from npa.clients.huggingface import validate_hf_access
 from npa.clients.kube import run_kubectl
 from npa.clients.storage import StorageClient
@@ -163,16 +163,6 @@ def preflight_command(
 
 @app.command("access")
 def access_command(
-    hf_token: str = typer.Option(
-        "",
-        "--hf-token",
-        help="Hugging Face token (default: ~/.npa/credentials.yaml or HF_TOKEN).",
-    ),
-    ngc_key: str = typer.Option(
-        "",
-        "--ngc-key",
-        help="NVIDIA NGC API key (default: ~/.npa/credentials.yaml or NGC_API_KEY).",
-    ),
     capability: str = typer.Option(
         "all",
         "--capability",
@@ -186,10 +176,10 @@ def access_command(
         "--offline",
         help="Skip live Hugging Face probes; only check that a token is present.",
     ),
-    set_credentials: bool = typer.Option(
+    save_env_credentials: bool = typer.Option(
         False,
-        "--set-credentials",
-        help="Persist the provided --hf-token / --ngc-key to ~/.npa/credentials.yaml.",
+        "--save-env-credentials",
+        help="Persist supported credentials from environment variables with an atomic 0600 write.",
     ),
     warn_only: bool = typer.Option(
         False, "--warn-only", help="Exit 0 even when an access check fails."
@@ -204,28 +194,34 @@ def access_command(
     accepted interactively on the model page — there is no API to accept them for
     you — so this command automates the check and the guidance, not the click.
 
-    Pass ``--set-credentials`` to also persist the provided keys to
+    Pass ``--save-env-credentials`` to persist supported environment credentials to
     ~/.npa/credentials.yaml. Exits non-zero on any FAIL unless ``--warn-only``.
     """
 
     credentials = load_credentials()
-    resolved_hf = hf_token or getattr(credentials, "hf_token", "") or ""
-    resolved_ngc = ngc_key or getattr(credentials, "ngc_api_key", "") or ""
+    resolved_hf = getattr(credentials, "hf_token", "") or ""
+    resolved_ngc = getattr(credentials, "ngc_api_key", "") or ""
+    persistence_report: dict[str, object] | None = None
 
-    if set_credentials:
-        payload: dict[str, object] = {}
-        if hf_token:
-            payload["tokens"] = {"HF_TOKEN": hf_token}
-        if ngc_key:
-            payload["ngc"] = {"api_key": ngc_key}
-        if payload:
-            path = write_credentials_file(payload)
-            typer.echo(f"Persisted provided keys to {path} (chmod 600).\n")
-        else:
+    if save_env_credentials:
+        from npa.clients.credentials import persist_supported_env_credentials
+
+        report = persist_supported_env_credentials()
+        persistence_report = report
+        if not output_json:
             typer.echo(
-                "--set-credentials was passed but no --hf-token/--ngc-key given; "
-                "nothing persisted.\n"
+                "Detected environment credential names: "
+                + (", ".join(report["detected"]) if report["detected"] else "none")
             )
+            typer.echo(
+                "Persisted credential names (values redacted): "
+                + (", ".join(report["persisted"]) if report["persisted"] else "none")
+                + f"; store={report['path']}\n"
+            )
+        # Re-resolve after persistence; environment still has highest precedence.
+        credentials = load_credentials()
+        resolved_hf = getattr(credentials, "hf_token", "") or ""
+        resolved_ngc = getattr(credentials, "ngc_api_key", "") or ""
 
     if capability.strip().lower() in {"all", ""}:
         selected: list[str] | None = None
@@ -245,7 +241,13 @@ def access_command(
         hf_validator=None if offline else validate_hf_access,
         capabilities=selected,
     )
-    _emit_results(results, output_json=output_json)
+    if output_json:
+        payload = json_module.loads(format_check_report(results, output_json=True))
+        if persistence_report is not None:
+            payload["credential_persistence"] = persistence_report
+        typer.echo(json_module.dumps(payload, indent=2, sort_keys=True))
+    else:
+        _emit_results(results, output_json=False)
 
     if has_failure(results) and not warn_only:
         raise typer.Exit(code=1)

@@ -16,7 +16,10 @@ import typer
 
 app = typer.Typer(
     name="cosmos-evaluator",
-    help="NVIDIA Cosmos Evaluator: hallucination + attribute-verification grading of augmented video.",
+    help=(
+        "Cosmos Evaluator checks plus NPA source-relative temporal and "
+        "protected-appearance diagnostics."
+    ),
     no_args_is_help=True,
 )
 
@@ -24,6 +27,16 @@ app = typer.Typer(
 class OutputFormat(str, Enum):
     text = "text"
     json = "json"
+
+
+class TemporalMode(str, Enum):
+    advisory = "advisory"
+    required = "required"
+
+
+class AppearanceMode(str, Enum):
+    advisory = "advisory"
+    required = "required"
 
 
 def _fail(message: str) -> None:
@@ -41,28 +54,122 @@ def _emit(payload: dict[str, Any], *, output: OutputFormat, text: str) -> None:
 @app.command("evaluate")
 def evaluate_cmd(
     augment_uri: str = typer.Option(
-        ..., "--augment-uri", "--input-path", help="Augmented-variant prefix (cosmos_augmented/)."
+        ...,
+        "--augment-uri",
+        "--input-path",
+        help="Augmented-variant prefix (cosmos_augmented/).",
     ),
     output_uri: str = typer.Option(
-        ..., "--output-uri", "--output-path", help="Prefix (or .json path) for the evaluator report."
+        ...,
+        "--output-uri",
+        "--output-path",
+        help="Prefix (or .json path) for the evaluator report.",
     ),
     input_uri: str = typer.Option(
-        "", "--input-uri", help="Run input prefix; its first clip is the hallucination check's original."
+        "",
+        "--input-uri",
+        help="Run input prefix; variants match their recorded conditioned-input filename.",
     ),
     configs_uri: str = typer.Option(
-        "", "--configs-uri", help="Config prefix; its manifest supplies the attribute option table."
+        "",
+        "--configs-uri",
+        help="Config prefix; its manifest supplies the attribute option table.",
     ),
     original_video: str = typer.Option(
-        "", "--original-video", help="Explicit original clip for the hallucination check."
+        "",
+        "--original-video",
+        help="Explicit original clip for the hallucination check.",
     ),
-    threshold: float = typer.Option(0.682, "--threshold", help="Pass threshold for the run score."),
+    threshold: float = typer.Option(
+        0.682, "--threshold", help="Pass threshold for the run score."
+    ),
     hallucination_weight: float = typer.Option(
-        0.5, "--hallucination-weight", help="Weight on the hallucination score for input-conditioned variants."
+        0.5,
+        "--hallucination-weight",
+        help="Weight on the hallucination score for input-conditioned variants.",
     ),
-    question_model: str = typer.Option("", "--question-model", help="Token Factory LLM for question generation."),
-    vlm_model: str = typer.Option("", "--vlm-model", help="Token Factory VLM that answers the questions."),
-    max_clips: int = typer.Option(0, "--max-clips", help="Grade at most this many variants (0 = all)."),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    temporal_threshold: float = typer.Option(
+        0.8,
+        "--temporal-threshold",
+        help="Diagnostic temporal score threshold; enforced only with --temporal-mode required.",
+    ),
+    temporal_regions_json: str = typer.Option(
+        "",
+        "--temporal-regions-json",
+        help="Optional JSON list of normalized rectangular regions; default is full frame plus a 2x2 grid.",
+    ),
+    temporal_mode: TemporalMode = typer.Option(
+        TemporalMode.advisory,
+        "--temporal-mode",
+        help="Keep temporal consistency advisory (default) or require it as a calibrated hard check.",
+    ),
+    temporal_noise_floor: float = typer.Option(
+        0.25,
+        "--temporal-noise-floor",
+        help="Fixed mean grayscale-acceleration residual treated as codec/capture noise.",
+    ),
+    temporal_blur_ksize: int = typer.Option(
+        7,
+        "--temporal-blur-ksize",
+        help="Positive odd Gaussian pre-filter kernel used before temporal comparison.",
+    ),
+    appearance_threshold: float = typer.Option(
+        0.8,
+        "--appearance-threshold",
+        help="Protected-appearance score threshold; enforced only with --appearance-mode required.",
+    ),
+    appearance_regions_json: str = typer.Option(
+        "",
+        "--appearance-regions-json",
+        help="Optional JSON list of normalized protected regions; default is full frame plus a 2x2 grid.",
+    ),
+    appearance_mode: AppearanceMode = typer.Option(
+        AppearanceMode.advisory,
+        "--appearance-mode",
+        help="Keep protected-appearance fidelity advisory (default) or require it as a hard check.",
+    ),
+    appearance_luminance_tolerance: float = typer.Option(
+        18.0,
+        "--appearance-luminance-tolerance",
+        help="Allowed p95 CIELAB luminance drift before the appearance score falls.",
+    ),
+    appearance_global_chroma_tolerance: float = typer.Option(
+        8.0,
+        "--appearance-global-chroma-tolerance",
+        help="Allowed p95 scene-wide CIELAB chroma drift.",
+    ),
+    appearance_local_chroma_tolerance: float = typer.Option(
+        6.0,
+        "--appearance-local-chroma-tolerance",
+        help="Allowed p95 regional chroma residual after scene-wide shift.",
+    ),
+    appearance_chroma_instability_tolerance: float = typer.Option(
+        4.0,
+        "--appearance-chroma-instability-tolerance",
+        help="Allowed p95 frame-to-frame change in regional chroma shift.",
+    ),
+    appearance_blur_ksize: int = typer.Option(
+        7,
+        "--appearance-blur-ksize",
+        help="Positive odd Gaussian pre-filter kernel used before appearance comparison.",
+    ),
+    appearance_max_dimension: int = typer.Option(
+        256,
+        "--appearance-max-dimension",
+        help="Longest decoded frame edge used by the appearance comparison.",
+    ),
+    question_model: str = typer.Option(
+        "", "--question-model", help="Token Factory LLM for question generation."
+    ),
+    vlm_model: str = typer.Option(
+        "", "--vlm-model", help="Token Factory VLM that answers the questions."
+    ),
+    max_clips: int = typer.Option(
+        0, "--max-clips", help="Grade at most this many variants (0 = all)."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Grade every augmented variant of a run and write one evaluator report."""
 
@@ -78,6 +185,20 @@ def evaluate_cmd(
             original_video=original_video,
             threshold=threshold,
             hallucination_weight=hallucination_weight,
+            temporal_threshold=temporal_threshold,
+            temporal_regions_json=temporal_regions_json,
+            temporal_mode=temporal_mode.value,
+            temporal_noise_floor=temporal_noise_floor,
+            temporal_blur_ksize=temporal_blur_ksize,
+            appearance_threshold=appearance_threshold,
+            appearance_regions_json=appearance_regions_json,
+            appearance_mode=appearance_mode.value,
+            appearance_luminance_tolerance=appearance_luminance_tolerance,
+            appearance_global_chroma_tolerance=appearance_global_chroma_tolerance,
+            appearance_local_chroma_tolerance=appearance_local_chroma_tolerance,
+            appearance_chroma_instability_tolerance=appearance_chroma_instability_tolerance,
+            appearance_blur_ksize=appearance_blur_ksize,
+            appearance_max_dimension=appearance_max_dimension,
             question_model=question_model,
             vlm_model=vlm_model,
             max_clips=max_clips,

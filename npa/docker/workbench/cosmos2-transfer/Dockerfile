@@ -121,7 +121,8 @@ LABEL org.opencontainers.image.title="NPA Cosmos Transfer 2.5" \
       org.opencontainers.image.source="https://github.com/nvidia-cosmos/cosmos-transfer2.5" \
       org.opencontainers.image.revision="${COSMOS_TRANSFER_REVISION}" \
       org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-NVIDIA-Deep-Learning-Container" \
-      npa.source_revision="${NPA_SOURCE_SHA}"
+      npa.source_revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \

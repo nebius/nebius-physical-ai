@@ -92,6 +92,7 @@ def test_docker_login_honors_nebius_profile_env(monkeypatch) -> None:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         raise AssertionError(f"unexpected command: {cmd}")
 
+    monkeypatch.delenv("NPA_NEBIUS_PROFILE", raising=False)
     monkeypatch.setenv("NEBIUS_PROFILE", "agent-sa")
     monkeypatch.setattr(module, "_run", fake_run)
     module._docker_login_nebius("cr.example.nebius.cloud")

@@ -118,6 +118,8 @@ def _list_vpc_resources(project_id: str, resource: str) -> list[dict[str, Any]]:
         "--format",
         "json",
     ]
+    from npa.clients.nebius import nebius_cli_env
+
     try:
         result = subprocess.run(
             command,
@@ -126,6 +128,8 @@ def _list_vpc_resources(project_id: str, resource: str) -> list[dict[str, Any]]:
             stderr=subprocess.PIPE,
             timeout=60,
             check=False,
+            # Use the active profile, not a stale ambient NEBIUS_IAM_TOKEN.
+            env=nebius_cli_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise SubnetResolutionError(

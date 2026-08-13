@@ -220,14 +220,28 @@ def _candidate_tokens(gpu: str = "", gpu_failover: str = "") -> list[str]:
     return tokens
 
 
-def resolve_kubernetes_gpu_preferences(*_: object, **__: object) -> None:
-    """Extension point for managed-Kubernetes GPU resolution.
+def resolve_kubernetes_gpu_preferences(
+    accelerator: str = "",
+    *,
+    context: str = "",
+    sky_bin: SkyBin = None,
+) -> str | None:
+    """Resolve an accelerator against a managed-Kubernetes cluster.
 
     RTX PRO 6000 (`gpu-rtx6000`, 96 GB) is not a SkyPilot Nebius VM catalog
-    accelerator. It belongs to the managed-Kubernetes path, currently in
-    us-central1, where GPUs are scheduled through node labels and
-    `nvidia.com/gpu` rather than Nebius VM accelerator strings. That path is
-    intentionally not implemented here.
+    accelerator: on managed Kubernetes, GPUs are scheduled through node labels
+    and `nvidia.com/gpu` rather than Nebius VM accelerator strings, so the name a
+    cluster advertises is discovered rather than looked up in a static catalog.
+    Returns the accelerator spec to submit with, or None when no accelerator was
+    requested.
     """
 
-    return None
+    if not str(accelerator or "").strip():
+        return None
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        discover_kubernetes_gpu_catalog,
+        resolve_kubernetes_accelerator,
+    )
+
+    catalog = discover_kubernetes_gpu_catalog(context=context, sky_bin=sky_bin)
+    return resolve_kubernetes_accelerator(accelerator, catalog=catalog).resolved

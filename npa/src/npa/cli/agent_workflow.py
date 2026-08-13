@@ -1298,6 +1298,8 @@ def _data_factory_spec() -> dict[str, Any]:
         "config_runtime": OrderedDict(
             {
                 "prefix": "physical-ai-data-factory/{{run.id}}",
+                "seed_fixture": "false",
+                "seed_default_input": "false",
                 # What to augment: a free-form hint surfaced as the augment prompt /
                 # input-conditioning subject (the run's real input clips are the base).
                 "augment_subject": "the input robot clips",
@@ -1307,8 +1309,22 @@ def _data_factory_spec() -> dict[str, Any]:
                 # with the gpu resource accelerator count for full utilization.
                 "variant_parallelism": "4",
                 "refinement_iterations": "2",
-                "grade_threshold": "0.5",
-                "default_decision": "promote_checkpoint",
+                "grade_threshold": "0.75",
+                "default_decision": "loop_back",
+                "temporal_consistency_mode": "advisory",
+                "temporal_consistency_threshold": "0.8",
+                "temporal_noise_floor": "0.25",
+                "temporal_blur_ksize": "7",
+                "temporal_regions_json": "",
+                "appearance_fidelity_mode": "advisory",
+                "appearance_fidelity_threshold": "0.8",
+                "appearance_luminance_tolerance": "18.0",
+                "appearance_global_chroma_tolerance": "8.0",
+                "appearance_local_chroma_tolerance": "6.0",
+                "appearance_chroma_instability_tolerance": "4.0",
+                "appearance_blur_ksize": "7",
+                "appearance_max_dimension": "256",
+                "appearance_regions_json": "",
                 "caption_model": "Qwen/Qwen2.5-VL-72B-Instruct",
                 "vlm_backend": "api",
                 "max_images": "8",
@@ -1316,6 +1332,7 @@ def _data_factory_spec() -> dict[str, Any]:
                 "curator_clip_len_s": "3",
                 "curator_min_clip_len_s": "1",
                 "curator_motion_filter": "score-only",
+                "fiftyone_dedup_threshold": "0.10",
             }
         ),
         "config_uri": OrderedDict(
@@ -1332,6 +1349,7 @@ def _data_factory_spec() -> dict[str, Any]:
                 "rollouts_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "scores_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/",
                 "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json",
+                "quality_disposition_uri": "s3://{{config.bucket}}/{{config.prefix}}/grade/quality_disposition.json",
                 "augmented_frames_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
                 "labeled_augmented_uri": "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/",
                 "lance_uri": "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/",
@@ -1381,6 +1399,9 @@ def _data_factory_spec() -> dict[str, Any]:
                                     "{{config.configs_uri}}",
                                     "{{config.n_augmentations}}",
                                     "{{run.id}}",
+                                    "{{config.images_uri}}",
+                                    "{{config.seed_default_input}}",
+                                    "{{config.seed_fixture}}",
                                     "{{config.augment_subject}}",
                                 ]
                             }
@@ -1470,7 +1491,7 @@ def _data_factory_spec() -> dict[str, Any]:
                             }
                         ),
                         "sequence": ["augment", "evaluate", "quality-gate"],
-                        "next": "annotate-augmented",
+                        "next": "quality-disposition",
                     }
                 ),
                 "evaluate": OrderedDict(
@@ -1478,7 +1499,8 @@ def _data_factory_spec() -> dict[str, Any]:
                         "description": (
                             "Evaluate with the real NVIDIA Cosmos Evaluator: Token Factory "
                             "attribute verification plus hallucinated-motion comparison against "
-                            "the input-conditioned source clip."
+                            "the input-conditioned source clip, source-relative temporal "
+                            "consistency, and protected-appearance fidelity."
                         ),
                         "toolRef": "workbench.cosmos_evaluator.evaluate",
                         "resources": "cpu",
@@ -1528,13 +1550,49 @@ def _data_factory_spec() -> dict[str, Any]:
                         ],
                     }
                 ),
+                "quality-disposition": OrderedDict(
+                    {
+                        "description": (
+                            "Fail closed after the refinement loop: persist an auditable "
+                            "accepted/rejected disposition before rejecting a degraded, "
+                            "below-threshold, or hard-check-failing batch."
+                        ),
+                        "needs": ["grade"],
+                        "resources": "cpu",
+                        "run": OrderedDict(
+                            {
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import enforce_quality_disposition; "
+                                        "enforce_quality_disposition(*sys.argv[1:])"
+                                    ),
+                                    "{{config.scores_uri}}",
+                                    "{{config.quality_disposition_uri}}",
+                                    "{{config.grade_threshold}}",
+                                ]
+                            }
+                        ),
+                        "outputs": [
+                            OrderedDict(
+                                {
+                                    "uri": "{{config.quality_disposition_uri}}",
+                                    "schema": "npa.data_factory.quality_disposition.v1",
+                                }
+                            )
+                        ],
+                        "next": "annotate-augmented",
+                    }
+                ),
                 "annotate-augmented": OrderedDict(
                     {
                         "description": (
                             "Stage 3 - Pseudo-Label Augmented. Re-caption the promoted augmented "
                             "clips with the same hosted VLM so the amplified set ships labeled."
                         ),
-                        "needs": ["grade"],
+                        "needs": ["quality-disposition"],
                         "resources": "cpu",
                         "run": OrderedDict(
                             {

@@ -13,7 +13,11 @@ runner = CliRunner()
 
 
 def test_curate_augmented_help_documents_flags() -> None:
-    result = runner.invoke(app, ["workbench", "fiftyone", "curate-augmented", "--help"])
+    result = runner.invoke(
+        app,
+        ["workbench", "fiftyone", "curate-augmented", "--help"],
+        env={"COLUMNS": "160"},
+    )
     output = strip_ansi(result.output)
     assert result.exit_code == 0
     for flag in ("--augment-uri", "--report-uri", "--curator-report-uri", "--dedup-threshold"):

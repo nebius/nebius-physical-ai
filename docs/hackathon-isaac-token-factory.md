@@ -58,7 +58,8 @@ cd nebius-physical-ai
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e npa
 
-export NEBIUS_TOKEN_FACTORY_KEY='v1.…'   # or: npa configure --token-factory-key …
+export NEBIUS_TOKEN_FACTORY_KEY='v1.…'
+npa configure --no-interactive --save-env-credentials
 npa workbench token-factory verify
 
 npa/.venv/bin/python npa/examples/isaac_franka_token_factory_reason.py \
@@ -172,7 +173,7 @@ environment origin.
 |---------|-----|
 | `CUDA GPU is required` on capture | Run capture on L40S / RTX Pro; Isaac Lab needs RT cores |
 | `No frames captured` | Confirm `Isaac-Lift-Cube-Franka-v0` and `enable_cameras`; check Isaac image version |
-| `NEBIUS_TOKEN_FACTORY_KEY is not set` | `export NEBIUS_TOKEN_FACTORY_KEY` or `npa configure --token-factory-key` |
+| `NEBIUS_TOKEN_FACTORY_KEY is not set` | `export NEBIUS_TOKEN_FACTORY_KEY`, then `npa configure --no-interactive --save-env-credentials` |
 | Reasoner returns empty `analysis` | Increase `--max-tokens`; confirm Cosmos3 model in `npa workbench token-factory models` |
 | SkyPilot stage 1 can't find NPA repo | Set `NPA_REPO_ROOT=/opt/nebius-physical-ai` or bake repo into image |
 

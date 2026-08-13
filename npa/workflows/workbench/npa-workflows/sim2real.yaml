@@ -128,13 +128,8 @@ resources:
             kueue.x-k8s.io/queue-name: "{{config.gpu_queue}}"
         spec:
           priorityClassName: "{{config.gpu_priority_class}}"
-          securityContext:
-            runAsUser: 0
           containers:
             - name: ray-node
-              securityContext:
-                runAsUser: 0
-                runAsGroup: 0
               env:
                 - name: NPA_SIM2REAL_ISAAC_CACHE_PVC
                   value: "{{config.isaac_cache_pvc}}"

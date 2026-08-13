@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+from unittest.mock import ANY
 
 import pytest
+import yaml
 
+from npa import controller_ownership as ownership
+from npa.controller_ownership import ControllerOwner, bind_controller_owner, controller_owner
 from npa.orchestration.skypilot import _bin as bin_module
 from npa.orchestration.skypilot._bin import (
     REQUIRED_SKYPILOT_VERSION,
@@ -18,6 +23,7 @@ from npa.orchestration.skypilot._bin import (
 
 
 def _executable(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\n", encoding="utf-8")
     path.chmod(0o755)
     return path
@@ -126,6 +132,164 @@ def test_resolve_config_rejects_unknown_config_keys(monkeypatch: pytest.MonkeyPa
         resolve_config()
 
 
+def _controller_owner() -> ControllerOwner:
+    return ControllerOwner(
+        project_alias="demo",
+        project_id="project-a",
+        cluster_id="cluster-a",
+        cluster_name="npa-cluster",
+        context="npa-cluster",
+        context_fingerprint="immutable-fingerprint",
+        operation_id="operation-a",
+    )
+
+
+def test_production_owner_writer_remains_readable_by_runtime_resolver(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky = _executable(tmp_path / "sky")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {"demo": {"project_id": "project-a"}},
+                "skypilot": {"sky_bin": str(sky)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ownership, "CONFIG_PATH", config)
+
+    owner = _controller_owner()
+    bind_controller_owner(owner)
+    resolved = resolve_config(npa_config_path=config)
+
+    assert resolved.sky_bin == sky.resolve()
+    assert controller_owner() == owner
+    saved = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert saved["skypilot"]["controller_owner"] == owner.to_dict()
+
+
+def test_owner_metadata_survives_cancel_verify_and_controller_cleanup_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.skypilot import cleanup, workflow
+
+    sky = _executable(tmp_path / "sky")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {"demo": {"project_id": "project-a"}},
+                "skypilot": {"sky_bin": str(sky)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ownership, "CONFIG_PATH", config)
+    monkeypatch.setattr(bin_module, "CONFIG_PATH", config)
+    monkeypatch.setattr(workflow, "ensure_skypilot_version", lambda value: value)
+    monkeypatch.setattr(cleanup, "ensure_skypilot_version", lambda value: value)
+    owner = _controller_owner()
+    bind_controller_owner(owner)
+
+    workflow_calls: list[list[str]] = []
+
+    def workflow_run(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        workflow_calls.append(list(cmd))
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='[{"job_id":"job-1","status":"SUCCEEDED"}]',
+            stderr="",
+        )
+
+    cleanup_calls: list[list[str]] = []
+
+    def cleanup_run(cmd, **_kwargs):  # noqa: ANN001, ANN202
+        cleanup_calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(workflow.subprocess, "run", workflow_run)
+    monkeypatch.setattr(cleanup, "_run", cleanup_run)
+
+    status = workflow.workflow_status("job-1")
+    cancelled = cleanup._cancel_job(
+        "job-1", isolated_config_dir=None, config_path=None, sky_bin=None
+    )
+    controller = cleanup._down_jobs_controller(
+        "sky-jobs-controller-target",
+        isolated_config_dir=None,
+        config_path=None,
+        sky_bin=None,
+    )
+
+    assert status.status == "SUCCEEDED"
+    assert cancelled.ok
+    assert controller.ok
+    assert any(call[1:3] == ["jobs", "queue"] for call in workflow_calls)
+    assert any(call[1:3] == ["jobs", "cancel"] for call in cleanup_calls)
+    assert any(call[1:3] == ["down", "--yes"] for call in cleanup_calls)
+    assert controller_owner() == owner
+    assert ownership.clear_controller_owner(
+        "demo", project_id="project-a", cluster_id="cluster-a"
+    )
+    assert controller_owner() is None
+    assert resolve_config(npa_config_path=config).sky_bin == sky.resolve()
+
+
+def test_legacy_project_owner_migrates_without_blocking_runtime_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky = _executable(tmp_path / "sky")
+    owner = _controller_owner()
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "demo": {
+                        "project_id": "project-a",
+                        "controller_owner": owner.to_dict(),
+                    }
+                },
+                "skypilot": {"sky_bin": str(sky)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ownership, "CONFIG_PATH", config)
+
+    bind_controller_owner(owner)
+
+    assert resolve_config(npa_config_path=config).sky_bin == sky.resolve()
+    saved = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert saved["skypilot"]["controller_owner"] == owner.to_dict()
+    assert "controller_owner" not in saved["projects"]["demo"]
+
+
+def test_malformed_owner_is_left_to_ownership_validation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sky = _executable(tmp_path / "sky")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "skypilot": {
+                    "sky_bin": str(sky),
+                    "controller_owner": {"project_alias": "incomplete"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ownership, "CONFIG_PATH", config)
+
+    assert resolve_config(npa_config_path=config).sky_bin == sky.resolve()
+    assert controller_owner() is None
+
+
 def test_ensure_skypilot_version_accepts_required_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     clear_skypilot_version_cache()
     sky = _executable(tmp_path / "sky")
@@ -133,13 +297,20 @@ def test_ensure_skypilot_version_accepts_required_version(monkeypatch: pytest.Mo
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
+        if cmd[-1] != "--version":
+            return bin_module.subprocess.CompletedProcess(
+                cmd, 0, stdout="3.12 34.1.0\n", stderr=""
+            )
         return bin_module.subprocess.CompletedProcess(cmd, 0, stdout=f"SkyPilot {REQUIRED_SKYPILOT_VERSION}\n", stderr="")
 
     monkeypatch.setattr(bin_module.subprocess, "run", fake_run)
 
     assert ensure_skypilot_version(sky) == sky.resolve()
     assert ensure_skypilot_version(sky) == sky.resolve()
-    assert calls == [[str(sky.resolve()), "--version"]]
+    assert calls == [
+        [str(sky.resolve()), "--version"],
+        [str(sky.resolve().parent / "python"), "-c", ANY],
+    ]
 
 
 def test_ensure_skypilot_version_rejects_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -152,4 +323,28 @@ def test_ensure_skypilot_version_rejects_mismatch(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(bin_module.subprocess, "run", fake_run)
 
     with pytest.raises(SkyPilotVersionError, match="expected 0.12.2, got 0.12.1"):
+        ensure_skypilot_version(sky)
+
+
+@pytest.mark.parametrize(
+    ("runtime", "match"),
+    [
+        ("3.14 34.1.0\n", "Python 3.14"),
+        ("3.12 36.0.0\n", "kubernetes 36.0.0"),
+        ("3.12 32.0.0\n", "kubernetes 32.0.0"),
+    ],
+)
+def test_ensure_skypilot_version_rejects_runtime_drift_before_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, runtime: str, match: str
+) -> None:
+    clear_skypilot_version_cache()
+    sky = _executable(tmp_path / "bin" / "sky")
+
+    def fake_run(cmd, **kwargs):
+        output = f"SkyPilot {REQUIRED_SKYPILOT_VERSION}\n" if cmd[-1] == "--version" else runtime
+        return bin_module.subprocess.CompletedProcess(cmd, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr(bin_module.subprocess, "run", fake_run)
+
+    with pytest.raises(SkyPilotVersionError, match=match):
         ensure_skypilot_version(sky)

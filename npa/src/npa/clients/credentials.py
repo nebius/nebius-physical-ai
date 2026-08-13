@@ -5,29 +5,45 @@ from __future__ import annotations
 import os
 import re
 import stat
+import tempfile
+import fcntl
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import yaml
 
-CREDENTIALS_PATH = Path.home() / ".npa" / "credentials.yaml"
+NPA_CONFIG_DIR = Path(
+    os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
+)
+CREDENTIALS_PATH = NPA_CONFIG_DIR / "credentials.yaml"
 NGC_ENV_KEYS = ("NGC_API_KEY", "NGC_ORG", "NGC_TEAM")
-AI_CLOUD_ENV_KEY = "NEBIUS_AI_CLOUD_KEY"
 TOKEN_FACTORY_ENV_KEY = "NEBIUS_TOKEN_FACTORY_KEY"
 KNOWN_TOKEN_KEYS = (
     "HF_TOKEN",
-    AI_CLOUD_ENV_KEY,
     TOKEN_FACTORY_ENV_KEY,
     *NGC_ENV_KEYS,
+)
+SUPPORTED_ENV_CREDENTIALS = (
+    "NEBIUS_TOKEN_FACTORY_KEY",
+    "HF_TOKEN",
+    "NGC_API_KEY",
+    "NGC_ORG",
+    "NGC_TEAM",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ENDPOINT_URL",
+    "NEBIUS_S3_ENDPOINT",
+    "NPA_STORAGE_ENDPOINT",
+    "NEBIUS_S3_BUCKET",
+    "NPA_CHECKPOINT_BUCKET",
 )
 HF_TOKEN_MISSING_WARNING = (
     "Warning: HF_TOKEN not found in ~/.npa/credentials.yaml. "
     "Gated model downloads will fail."
 )
-PERMISSIONS_WARNING = (
-    "credentials.yaml is readable by other users. Run chmod 600 ~/.npa/credentials.yaml."
-)
+PERMISSIONS_WARNING = "credentials.yaml is readable by other users. Run chmod 600 ~/.npa/credentials.yaml."
 _TOKEN_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 UK_SOUTH1_STORAGE_ENDPOINT = "storage.uk-south1.nebius.cloud"
 EU_NORTH1_STORAGE_ENDPOINT = "storage.eu-north1.nebius.cloud"
@@ -37,6 +53,15 @@ UK_SOUTH1_STORAGE_WARNING = (
     "storage.eu-north1.nebius.cloud\n"
     "or set NPA_STORAGE_ENDPOINT=storage.eu-north1.nebius.cloud in your environment."
 )
+
+
+class CredentialStoreError(ValueError):
+    """A saved credential store exists but cannot be used safely."""
+
+    def __init__(self, kind: str, path: Path, detail: str) -> None:
+        self.kind = kind
+        self.path = path
+        super().__init__(f"Saved credential store is {kind} ({path}): {detail}")
 
 
 @dataclass
@@ -50,25 +75,17 @@ class CredentialsConfig:
     s3_secret_access_key: str = ""
     s3_endpoint: str = ""
     s3_bucket: str = ""
+    s3_project_id: str = ""
+    s3_ownership: str = ""
 
     @property
     def hf_token(self) -> str:
         return self.tokens.get("HF_TOKEN", "")
 
     @property
-    def nebius_api_key(self) -> str:
-        """Backward-compatible alias for the Nebius AI Cloud key."""
-        return self.ai_cloud_api_key
-
-    @property
     def token_factory_api_key(self) -> str:
         """Explicit alias for the Nebius Token Factory hosted-inference key."""
         return resolve_token_factory_key(self.tokens)
-
-    @property
-    def ai_cloud_api_key(self) -> str:
-        """Nebius AI Cloud API key (``tokens.NEBIUS_AI_CLOUD_KEY``)."""
-        return resolve_ai_cloud_key(self.tokens)
 
     @property
     def ngc_api_key(self) -> str:
@@ -83,11 +100,6 @@ class CredentialsConfig:
         return self.tokens.get("NGC_TEAM", "")
 
 
-def resolve_ai_cloud_key(tokens: Mapping[str, str]) -> str:
-    """Return the Nebius AI Cloud key from a token map."""
-    return tokens.get(AI_CLOUD_ENV_KEY, "")
-
-
 def resolve_token_factory_key(tokens: Mapping[str, str]) -> str:
     """Return the Token Factory key from a token map."""
     return tokens.get(TOKEN_FACTORY_ENV_KEY, "")
@@ -96,6 +108,29 @@ def resolve_token_factory_key(tokens: Mapping[str, str]) -> str:
 def _is_readable_by_other_users(path: Path) -> bool:
     mode = path.stat().st_mode
     return bool(mode & (stat.S_IRWXG | stat.S_IRWXO))
+
+
+def _read_credentials_document(path: Path) -> dict[str, Any]:
+    """Read a credential document with explicit unreadable/malformed outcomes."""
+
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except yaml.YAMLError as exc:
+        # Parser diagnostics may repeat the offending scalar, which can itself
+        # be a secret. Preserve the typed outcome without echoing file content.
+        raise CredentialStoreError(
+            "malformed", path, "YAML could not be parsed"
+        ) from exc
+    except OSError as exc:
+        raise CredentialStoreError("unreadable", path, str(exc)) from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise CredentialStoreError(
+            "malformed", path, "top-level YAML value must be a mapping"
+        )
+    return data
 
 
 def _read_file_tokens(path: Path) -> dict[str, str]:
@@ -135,6 +170,32 @@ def _read_file_tokens(path: Path) -> dict[str, str]:
             value = _first_nonempty(ngc, *field_names)
             if value:
                 cleaned[env_key] = value
+
+    # Service-shaped sections, mirroring `ngc:`. Guides and hand-written files
+    # in the wild use `token_factory: {api_key: ...}` / `huggingface: {token: ...}`,
+    # which used to be parsed and then silently dropped — the operator saw a
+    # populated credentials.yaml and 401s from every hosted call. The canonical
+    # `tokens:` entries always win; these only fill gaps.
+    for section_name, env_key, field_names in (
+        (
+            "token_factory",
+            TOKEN_FACTORY_ENV_KEY,
+            ("api_key", "apikey", "key", "token", TOKEN_FACTORY_ENV_KEY),
+        ),
+        (
+            "huggingface",
+            "HF_TOKEN",
+            ("token", "hf_token", "api_key", "key", "HF_TOKEN"),
+        ),
+    ):
+        if cleaned.get(env_key):
+            continue
+        section = data.get(section_name, {})
+        if not isinstance(section, dict):
+            continue
+        value = _first_nonempty(section, *field_names)
+        if value:
+            cleaned[env_key] = value
     return cleaned
 
 
@@ -183,9 +244,45 @@ def _read_file_storage(path: Path) -> dict[str, str]:
     tokens = data.get("tokens", {})
     if not isinstance(tokens, dict):
         tokens = {}
-    storage = data.get("storage", data.get("s3", data.get("object-storage", data.get("object_storage", {}))))
+    storage = data.get(
+        "storage",
+        data.get("s3", data.get("object-storage", data.get("object_storage", {}))),
+    )
     if not isinstance(storage, dict):
         storage = {}
+    ownership = data.get("storage_iam", {})
+    if not isinstance(ownership, dict):
+        ownership = {}
+
+    recorded_project_id = _first_nonempty(
+        ownership,
+        "service_account_project_id",
+        "project_id",
+    )
+    recorded_ownership = _first_nonempty(
+        ownership,
+        "service_account_managed_by",
+        "managed_by",
+    )
+    if not recorded_project_id:
+        setup = data.get("storage_setup", {})
+        projects = setup.get("projects", {}) if isinstance(setup, dict) else {}
+        bucket_name = _first_nonempty(storage, "bucket", "s3_bucket")
+        matching_projects = (
+            [
+                str(candidate_project)
+                for candidate_project, record in projects.items()
+                if isinstance(record, dict)
+                and record.get("status") == "complete"
+                and _first_nonempty(record, "bucket_name").strip()
+                == bucket_name.removeprefix("s3://").strip("/")
+            ]
+            if isinstance(projects, dict)
+            else []
+        )
+        if len(matching_projects) == 1:
+            recorded_project_id = matching_projects[0]
+            recorded_ownership = "storage-setup-record"
 
     merged: dict[str, Any] = {**tokens, **storage, **data}
     return {
@@ -221,6 +318,8 @@ def _read_file_storage(path: Path) -> dict[str, str]:
             "checkpoint_bucket",
             "s3_bucket",
         ),
+        "project_id": recorded_project_id,
+        "ownership": recorded_ownership,
     }
 
 
@@ -245,6 +344,10 @@ def load_credentials(
     file_storage: dict[str, str] = {}
 
     if credentials_path.exists():
+        # Validate once up front so a present-but-corrupt store can never look
+        # equivalent to a genuinely missing credential. The field readers below
+        # retain their compatibility behavior for optional malformed sections.
+        _read_credentials_document(credentials_path)
         if _is_readable_by_other_users(credentials_path):
             warnings.append(PERMISSIONS_WARNING)
         file_tokens = _read_file_tokens(credentials_path)
@@ -270,18 +373,30 @@ def load_credentials(
     return CredentialsConfig(
         tokens=tokens,
         warnings=warnings,
-        ssh_host=env.get("NPA_BYOVM_HOST") or env.get("NPA_SSH_HOST") or file_ssh.get("host", ""),
-        ssh_user=env.get("NPA_BYOVM_SSH_USER") or env.get("NPA_SSH_USER") or file_ssh.get("user", ""),
-        ssh_key_path=env.get("NPA_BYOVM_SSH_KEY") or env.get("NPA_SSH_KEY") or file_ssh.get("key_path", ""),
-        s3_access_key_id=env.get("AWS_ACCESS_KEY_ID") or file_storage.get("access_key_id", ""),
-        s3_secret_access_key=env.get("AWS_SECRET_ACCESS_KEY") or file_storage.get("secret_access_key", ""),
+        ssh_host=env.get("NPA_BYOVM_HOST")
+        or env.get("NPA_SSH_HOST")
+        or file_ssh.get("host", ""),
+        ssh_user=env.get("NPA_BYOVM_SSH_USER")
+        or env.get("NPA_SSH_USER")
+        or file_ssh.get("user", ""),
+        ssh_key_path=env.get("NPA_BYOVM_SSH_KEY")
+        or env.get("NPA_SSH_KEY")
+        or file_ssh.get("key_path", ""),
+        s3_access_key_id=env.get("AWS_ACCESS_KEY_ID")
+        or file_storage.get("access_key_id", ""),
+        s3_secret_access_key=env.get("AWS_SECRET_ACCESS_KEY")
+        or file_storage.get("secret_access_key", ""),
         s3_endpoint=(
             env.get("AWS_ENDPOINT_URL")
             or env.get("NEBIUS_S3_ENDPOINT")
             or env.get("NPA_STORAGE_ENDPOINT")
             or file_storage.get("endpoint", "")
         ),
-        s3_bucket=env.get("NPA_CHECKPOINT_BUCKET") or env.get("NEBIUS_S3_BUCKET") or file_storage.get("bucket", ""),
+        s3_bucket=env.get("NPA_CHECKPOINT_BUCKET")
+        or env.get("NEBIUS_S3_BUCKET")
+        or file_storage.get("bucket", ""),
+        s3_project_id=file_storage.get("project_id", ""),
+        s3_ownership=file_storage.get("ownership", ""),
     )
 
 
@@ -305,6 +420,64 @@ def _prune_empty(data: dict[str, Any]) -> dict[str, Any]:
         elif value not in ("", None):
             pruned[key] = value
     return pruned
+
+
+_STORAGE_IAM_PROOF_KEYS = (
+    "service_account_id",
+    "service_account_name",
+    "service_account_project_id",
+    "service_account_managed_by",
+)
+
+
+def _separate_legacy_storage_ownership(
+    existing: dict[str, Any], incoming: dict[str, Any]
+) -> None:
+    """Keep legacy storage ownership separate from a new generic SA ID.
+
+    Older credentials stored the complete storage ownership proof under
+    ``nebius``. Agent bootstrap also writes ``nebius.service_account_id``; a
+    normal deep merge could therefore combine the agent ID with the old storage
+    name/project/provenance and make that unrelated identity look NPA-owned.
+    Migrate the complete old proof before a different ID is written, and remove
+    duplicate provenance from the generic section whenever a dedicated record
+    exists. An incomplete or unproven legacy record is never promoted.
+    """
+
+    saved_nebius = existing.get("nebius")
+    incoming_nebius = incoming.get("nebius")
+    if not isinstance(saved_nebius, dict):
+        return
+
+    saved_id = str(saved_nebius.get("service_account_id", "") or "").strip()
+    incoming_id = (
+        str(incoming_nebius.get("service_account_id", "") or "").strip()
+        if isinstance(incoming_nebius, dict)
+        else ""
+    )
+    has_complete_owned_legacy_proof = str(
+        saved_nebius.get("service_account_managed_by", "") or ""
+    ) == "npa" and all(
+        str(saved_nebius.get(key, "") or "").strip() for key in _STORAGE_IAM_PROOF_KEYS
+    )
+    dedicated_exists = isinstance(existing.get("storage_iam"), dict) or isinstance(
+        incoming.get("storage_iam"), dict
+    )
+    if (
+        not dedicated_exists
+        and incoming_id
+        and incoming_id != saved_id
+        and has_complete_owned_legacy_proof
+    ):
+        existing["storage_iam"] = {
+            key: saved_nebius[key] for key in _STORAGE_IAM_PROOF_KEYS
+        }
+        dedicated_exists = True
+
+    if dedicated_exists:
+        for key in _STORAGE_IAM_PROOF_KEYS:
+            if key != "service_account_id":
+                saved_nebius.pop(key, None)
 
 
 def set_token_factory_api_key(api_key: str, *, path: Path | None = None) -> Path:
@@ -331,18 +504,239 @@ def write_credentials_file(
     """
 
     credentials_path = path or CREDENTIALS_PATH
-    existing: dict[str, Any] = {}
-    if credentials_path.exists():
-        with credentials_path.open() as handle:
-            loaded = yaml.safe_load(handle)
-        if isinstance(loaded, dict):
-            existing = loaded
-    merged = _deep_merge(existing, _prune_empty(dict(data)))
-    credentials_path.parent.mkdir(parents=True, exist_ok=True)
-    with credentials_path.open("w") as handle:
-        yaml.dump(merged, handle, default_flow_style=False, sort_keys=False)
-    credentials_path.chmod(0o600)
+    incoming = _prune_empty(dict(data))
+
+    def merge(existing: dict[str, Any]) -> dict[str, Any]:
+        _separate_legacy_storage_ownership(existing, incoming)
+        return _deep_merge(existing, incoming)
+
+    update_private_yaml(credentials_path, merge)
     return credentials_path
+
+
+def persist_supported_env_credentials(
+    *,
+    path: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Persist supported environment credentials without accepting secret argv.
+
+    Returned metadata contains names and sources only. Values are never included,
+    making it safe for human output, JSON, logs, and telemetry.
+    """
+
+    env = environ if environ is not None else os.environ
+    detected = [name for name in SUPPORTED_ENV_CREDENTIALS if str(env.get(name) or "")]
+    payload: dict[str, Any] = {}
+    tokens = {
+        name: str(env[name])
+        for name in ("HF_TOKEN", TOKEN_FACTORY_ENV_KEY)
+        if str(env.get(name) or "")
+    }
+    if tokens:
+        payload["tokens"] = tokens
+    ngc = {
+        field: str(env[name])
+        for name, field in (
+            ("NGC_API_KEY", "api_key"),
+            ("NGC_ORG", "org"),
+            ("NGC_TEAM", "team"),
+        )
+        if str(env.get(name) or "")
+    }
+    if ngc:
+        payload["ngc"] = ngc
+    storage: dict[str, str] = {}
+    if env.get("AWS_ACCESS_KEY_ID"):
+        storage["aws_access_key_id"] = str(env["AWS_ACCESS_KEY_ID"])
+    if env.get("AWS_SECRET_ACCESS_KEY"):
+        storage["aws_secret_access_key"] = str(env["AWS_SECRET_ACCESS_KEY"])
+    endpoint = next(
+        (
+            str(env[name])
+            for name in (
+                "AWS_ENDPOINT_URL",
+                "NEBIUS_S3_ENDPOINT",
+                "NPA_STORAGE_ENDPOINT",
+            )
+            if str(env.get(name) or "")
+        ),
+        "",
+    )
+    bucket = next(
+        (
+            str(env[name])
+            for name in ("NEBIUS_S3_BUCKET", "NPA_CHECKPOINT_BUCKET")
+            if str(env.get(name) or "")
+        ),
+        "",
+    )
+    if endpoint:
+        storage["endpoint_url"] = endpoint
+    if bucket:
+        storage["bucket"] = bucket
+    if storage:
+        payload["storage"] = storage
+    warnings: list[str] = []
+    has_access = bool(env.get("AWS_ACCESS_KEY_ID"))
+    has_secret = bool(env.get("AWS_SECRET_ACCESS_KEY"))
+    if has_access != has_secret:
+        warnings.append(
+            "incomplete S3 credential pair detected; the available field was persisted, "
+            "but storage health will fail until both AWS_ACCESS_KEY_ID and "
+            "AWS_SECRET_ACCESS_KEY are supplied"
+        )
+    credentials_path = path or CREDENTIALS_PATH
+    persisted: list[str] = []
+    if payload:
+        write_credentials_file(payload, path=credentials_path)
+        persisted = list(detected)
+    return {
+        "detected": detected,
+        "persisted": persisted,
+        "sources": {name: "environment" for name in detected},
+        "warnings": warnings,
+        "path": str(credentials_path),
+    }
+
+
+def _validate_private_destination(path: Path) -> None:
+    """Refuse symlink/non-owner destinations before reading or replacing secrets."""
+
+    parent = path.parent
+    if parent.is_symlink():
+        raise OSError(f"refusing credential directory symlink: {parent}")
+    if path.is_symlink():
+        raise OSError(f"refusing credential file symlink: {path}")
+    if path.exists():
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError(f"credential destination is not a regular file: {path}")
+        if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
+            raise PermissionError(
+                f"credential file is not owned by the current user: {path}"
+            )
+
+
+@contextmanager
+def _private_store_lock(path: Path):
+    """Serialize read/modify/replace updates to one protected YAML store."""
+
+    _validate_private_destination(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
+    lock_path = path.with_name(f"{path.name}.lock")
+    if lock_path.is_symlink():
+        raise OSError(f"refusing credential lock symlink: {lock_path}")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        os.fchmod(lock.fileno(), 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        _validate_private_destination(path)
+        yield
+
+
+def update_private_yaml(
+    path: Path,
+    updater: Callable[[dict[str, Any]], Mapping[str, Any] | None],
+) -> Path:
+    """Lock and atomically update a protected YAML mapping.
+
+    The updater receives the latest document after the lock is acquired. This
+    prevents concurrent configure/agent commands from replacing one another's
+    successful fields with an older snapshot.
+    """
+
+    with _private_store_lock(path):
+        existing: dict[str, Any] = {}
+        if path.exists():
+            existing = _read_credentials_document(path)
+        updated = updater(existing)
+        if updated is None:
+            path.unlink(missing_ok=True)
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+            return path
+        return write_private_yaml(path, updated)
+
+
+def preflight_private_yaml_store(path: Path) -> Path:
+    """Prove an owner-only store can be locked and durably replaced unchanged."""
+
+    if path.exists():
+        return update_private_yaml(path, lambda existing: existing)
+    with _private_store_lock(path):
+        descriptor, raw_path = tempfile.mkstemp(
+            prefix=f".{path.name}.preflight.", dir=path.parent
+        )
+        candidate = Path(raw_path)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            candidate.unlink()
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except BaseException:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            candidate.unlink(missing_ok=True)
+            raise
+    return path
+
+
+def write_private_yaml(path: Path, data: Mapping[str, Any]) -> Path:
+    """Atomically write private YAML with owner-only file/directory modes.
+
+    The temporary file is created in the destination directory, flushed and
+    fsynced before ``os.replace``. A crash therefore leaves either the previous
+    complete document or the new complete document, never a truncated secret
+    file. The temporary file starts at 0600 and is removed on every failure.
+    """
+
+    _validate_private_destination(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:  # pragma: no cover - unusual filesystems (for example FAT)
+        pass
+    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    tmp_path = Path(raw_tmp)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(
+                dict(data), handle, default_flow_style=False, sort_keys=False
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        path.chmod(0o600)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    return path
 
 
 def storage_endpoint_url(endpoint: str) -> str:
@@ -378,9 +772,6 @@ def shared_credential_env(credentials: CredentialsConfig) -> dict[str, str]:
         env["HF_TOKEN"] = hf_token
         env["HUGGING_FACE_HUB_TOKEN"] = hf_token
     tokens = getattr(credentials, "tokens", {}) or {}
-    ai_cloud_key = resolve_ai_cloud_key(tokens)
-    if ai_cloud_key:
-        env[AI_CLOUD_ENV_KEY] = ai_cloud_key
     token_factory_key = resolve_token_factory_key(tokens)
     if token_factory_key:
         env[TOKEN_FACTORY_ENV_KEY] = token_factory_key

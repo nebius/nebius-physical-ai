@@ -15,8 +15,8 @@ def test_default_controller_resources_returns_kubernetes_default() -> None:
 
     assert resources == {
         "cloud": "kubernetes",
-        "cpus": 4,
-        "memory": 16,
+        "cpus": 2,
+        "memory": 8,
         "autostop": False,
     }
     assert "disk_size" not in resources
@@ -70,7 +70,7 @@ def test_apply_controller_override_preserves_explicitly_larger_kubernetes_contro
     assert config["jobs"]["controller"]["resources"] == expected
 
 
-def test_apply_controller_override_drops_kubernetes_disk_size() -> None:
+def test_apply_controller_override_drops_disk_and_preserves_larger_shape() -> None:
     config = apply_controller_override(
         {
             "jobs": {
@@ -86,7 +86,12 @@ def test_apply_controller_override_drops_kubernetes_disk_size() -> None:
         }
     )
 
-    assert config["jobs"]["controller"]["resources"] == controller_resources_kubernetes()
+    assert config["jobs"]["controller"]["resources"] == {
+        "cloud": "kubernetes",
+        "cpus": 4,
+        "memory": 16,
+        "autostop": False,
+    }
 
 
 def test_apply_controller_override_preserves_explicitly_larger_nebius_controller() -> None:

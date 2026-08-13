@@ -5,6 +5,11 @@ description: Use when deploying, launching, loading data into, or reviewing the 
 
 # FiftyOne
 
+The PAIDF worker image remains contract-attested and non-root for SkyPilot
+0.12.2, with passwordless sudo, SSH/rsync/service prerequisites, writable paths,
+and a forwarding entrypoint. Submit the verified immutable digest; never use a
+`runAsUser: 0` workflow override.
+
 FiftyOne is the dataset curation and visualization tool. It is CPU-only and does not require a GPU.
 
 ## Interfaces
@@ -56,7 +61,10 @@ from the augmented scenario variants, computes a GPU-free per-variant embedding
 `fob.compute_visualization(method="pca")`. The report records `curation_engine:
 fiftyone-brain`, per-variant `uniqueness`, near-duplicate clusters, and which
 variants were kept vs dropped. Outside the image (no FiftyOne) it degrades to a
-report-only counts path. The container functional smoke
+truthfully labeled report-only counts path for standalone callers. Pass
+`--require-fiftyone` to fail closed instead; the shipped PAIDF workflow always
+does this through the `workbench.fiftyone.curate_augmented` toolRef, so a claimed
+PAIDF FiftyOne review always means Brain actually ran. The container functional smoke
 (`docker/workbench/fiftyone/smoke_functional.py`) exercises this Brain path.
 
 The `npa-fiftyone` image bundles `mongod` (the prebuilt `fiftyone_db` wheel ships

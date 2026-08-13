@@ -4,31 +4,87 @@ from __future__ import annotations
 
 import base64
 import functools
+import hashlib
 import inspect
-import ipaddress
 import json
 import os
-import re
 import secrets
 import shlex
 import shutil
 import subprocess
+import ipaddress
+import tarfile
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
-
-if TYPE_CHECKING:
-    from npa.workflows.sim2real_health import CheckResult
+from typing import Any
 
 import httpx
 import typer
 
+from npa.cli._typer_defaults import resolve_typer_defaults
+from npa.clients.project_credential_store import (
+    persist_agent_service_account_id as _persist_project_agent_service_account_id,
+    persist_agent_terraform_credentials,
+)
+from npa.lifecycle_intent import OperationIntent, intent_boundary
+from npa.cli.agent_errors import _agent_deploy_failure_hint
+from npa.cli.agent_quota import (
+    _agent_check_compute_instance_quota,  # noqa: F401 - compatibility re-export
+    _agent_check_public_ip_quota,  # noqa: F401 - compatibility re-export
+    _agent_check_whole_path_capacity,
+    _agent_compute_instance_quota_result,  # noqa: F401 - compatibility re-export
+    _agent_public_ip_quota_result,  # noqa: F401 - compatibility re-export
+    _agent_whole_path_capacity_result,
+)
+from npa.cli.agent_assets import (  # noqa: F401 - re-exported for tests/callers
+    _agent_public_login_form_html,
+    _lichtblick_default_layout_json,
+    _nginx_agent_site_body,
+)
+from npa.cli.agent_env_files import (  # noqa: F401 - re-exported for tests/callers
+    _stage_private_text,
+    _write_agent_nebius_env,
+    _write_agent_operator_profile,
+    _write_agent_s3_env,
+)
+from npa.cli.agent_destroy import destroy_cmd as _destroy_cmd_impl
+from npa.cli.agent_inventory import agent_list_cmd
+from npa.cli.agent_preflight import (
+    _agent_hard_prereq_results,
+    _agent_nebius_auth_result,
+    _agent_storage_result,
+    _agent_token_factory_result,
+    _render_agent_checks,
+)
+from npa.cli.agent_network import (
+    _agent_ssh_egress_result,
+)
+from npa.cli.agent_payloads import (
+    agent_credentials_payload as _agent_credentials_payload,
+    coerce_cli_list as _coerce_cli_list,
+    tool_catalog_payload as _tool_catalog_payload,
+)
+from npa.cli.agent_setup_convergence import (
+    converge_remote_agent_setup,
+    reconcile_agent_setup as _reconcile_agent_setup,
+)
+from npa.cli.agent_terraform import (
+    _agent_terraform_state_exists,  # noqa: F401 - recovery hook re-export
+    _apply_agent_terraform,
+    _cleanup_orphan_agent_instances,  # noqa: F401 - recovery hook re-export
+    _destroy_agent_terraform,
+    _ensure_terraform_state_bucket,
+    _persist_agent_project_config,
+    _record_agent_destroy_event,  # noqa: F401 - recovery hook re-export
+    _resolve_destroy_tf_vars,  # noqa: F401 - recovery hook re-export
+)
 from npa.clients.config import (
     ConfigError,
     resolve_environment,
+    resolve_project_storage,
     resolve_ssh_config,
     resolve_terraform_state,
-    remove_agent_config,
     write_config,
 )
 from npa.clients.env import redact_value
@@ -45,18 +101,6 @@ from npa.cli.agent_access import (
     ACCESS_STATES,
     consistent_agent_service_account_id,
 )
-from npa.cli.agent_embed import embedded_python_source
-from npa.cli.agent_artifact_storage import (
-    _resolve_artifact_project_storage,
-    _resolve_deploy_storage_credentials,
-    _validate_artifact_prefix,
-)
-from npa.cli.agent_login import (
-    agent_mobile_login_help_html as _agent_mobile_login_help_html,
-    agent_public_login_form_html as _agent_public_login_form_html,
-    agent_strip_url_credentials_js as _agent_strip_url_credentials_js,
-)
-from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT, nginx_agent_site_body
 from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility exports
     AGENT_CHAT_QUEUE_CONTRACT,
     AGENT_FOXGLOVE_CONTRACT,
@@ -79,27 +123,24 @@ from npa.cli.agent_contracts import (  # noqa: F401 - public compatibility expor
     _embedded_agent_workflow_source,
     rendered_agent_ui_html,
 )
+from npa.cli.agent_embed import embedded_python_source
+from npa.cli.agent_site import DEFAULT_LICHTBLICK_PORT
 from npa.cli.agent_deployment import (
-    AgentConfig,
     DeploymentIdentityError,
-    agent_lifecycle_lock,
-    assert_live_deployment,
     assert_remote_owner_if_present,
-    assert_record_ownership,
-    build_agent_urls,
     build_deployment_manifest,
-    fetch_live_deployment,
-    normalize_workspace_label,
-    record_customer_url as _record_customer_url,
-    record_public_https as _record_public_https,
-    record_tls_verify as _record_tls_verify,
     verify_remote_deployment,
-    verify_persisted_remote_owner,
 )
 from npa.deploy import provisioner
 from npa.deploy.images import container_image_candidates
 from npa.deploy.provisioner import ProvisionerError
-from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.provisioning_journal import (
+    ProvisioningOperation,
+    current_operation,
+    emit_recovery_summary,
+    operation_context,
+    operation_heartbeats,
+)
 from npa.workbench.foxglove import (
     DEFAULT_FOXGLOVE_EMBED_SRC,
     FOXGLOVE_EMBED_SDK_INTEGRITY,
@@ -111,12 +152,21 @@ app = typer.Typer(
     help="Deploy and operate a public NPA chat agent VM.",
     no_args_is_help=True,
 )
+app.command("list")(agent_list_cmd)
 
 DEFAULT_AGENT_PORT = 8088
 DEFAULT_BACKEND_PORT = 8787
 DEFAULT_RERUN_PORT = 9090
 DEFAULT_PROJECT_ALIAS = "us-central1"
 DEFAULT_AGENT_NAME = "agent"
+# The public agent VM is CPU-only (gpu_platform="cpu-d3" below). Use a
+# driverless (non-CUDA) Ubuntu image: it is the correct base for a CPU host,
+# boots faster (no GPU driver install), and — unlike the CUDA image families —
+# is published across Nebius regions. The Terraform default is a CUDA image
+# (variables.tf: ubuntu24.04-cuda12), which is absent outside a few regions and
+# makes the boot-disk create fail with "Image family ... not found" (e.g. in
+# uk-south1). Pinning a driverless family here keeps agent deploy region-portable.
+DEFAULT_AGENT_IMAGE_FAMILY = "ubuntu24.04-driverless"
 DEFAULT_AGENT_USER = "npa"
 DEFAULT_LLM_PROVIDER = "token_factory"
 DEFAULT_LLM_MODEL = "nvidia/Cosmos3-Super-Reasoner"
@@ -132,8 +182,26 @@ AGENT_UI_VERSION = "2026081001"
 ARTIFACT_DISCOVERY_CONTRACT = "s3-source-qualified-v1"
 DEFAULT_HTTPS_PORT = 443
 AGENT_SOURCE_ROOT = "/opt/npa-agent/npa-src"
-_AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset({"s3_prefix"})
+_AGENT_TERRAFORM_RUNTIME_ONLY_VARS = frozenset(
+    {
+        "s3_prefix",
+        "s3_session_token",
+        # Backend HMAC credentials are supplied to Terraform only through the
+        # scrubbed subprocess environment. They must never become input vars,
+        # plan/state values, or compute-instance user-data.
+        "nebius_api_key",
+        "nebius_secret_key",
+    }
+)
 
+
+class AgentStorageCredentialError(RuntimeError):
+    """Configured/bootstrap storage cannot satisfy the deploy data-plane contract."""
+
+
+# Contract markers that must stay in the embedded agent UI/backend. verify-live,
+# smoke, and unit tests share this list so media-preview regressions cannot
+# silently disappear after a bootstrap drift or template edit.
 _AGENT_CHAT_EMBED = "__NPA_AGENT_CHAT_EMBED__"
 _AGENT_RECORDINGS_EMBED = "__NPA_AGENT_RECORDINGS_EMBED__"
 _AGENT_BACKEND_SHIP = "__NPA_AGENT_BACKEND_SHIP__"
@@ -181,27 +249,117 @@ def _embedded_agent_access_runtime_source() -> str:
     )
 
 
-def _fail(message: str) -> NoReturn:
+@dataclass(frozen=True)
+class AgentConfig:
+    project_alias: str
+    name: str
+    project_id: str
+    tenant_id: str
+    region: str
+    public_ip: str
+    instance_id: str
+    agent_url: str
+    rerun_url: str
+    sim_viz_url: str
+    sim_assets_url: str
+    cameras_api_url: str
+    auth_user: str
+    auth_secret_path: str
+    llm_provider: str
+    llm_model: str
+    service_account_id: str = ""
+    llm_models: tuple[str, ...] = ()
+    public_url: str = ""
+    public_https: bool = True
+    direct_url: str = ""
+    ssh_key_path: str = ""
+    credentials: dict[str, str] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "project_id": self.project_id,
+            "tenant_id": self.tenant_id,
+            "region": self.region,
+            "public_ip": self.public_ip,
+            "instance_id": self.instance_id,
+            "service_account_id": self.service_account_id,
+            "agent_url": self.agent_url,
+            "rerun_url": self.rerun_url,
+            "sim_viz_url": self.sim_viz_url,
+            "sim_assets_url": self.sim_assets_url,
+            "cameras_api_url": self.cameras_api_url,
+            "auth_user": self.auth_user,
+            "auth_secret_path": self.auth_secret_path,
+            "llm": {
+                "provider": self.llm_provider,
+                "model": self.llm_model,
+                "models": list(self.llm_models or (self.llm_model,)),
+            },
+        }
+        if self.public_url:
+            payload["public_url"] = self.public_url
+        if self.public_https:
+            payload["public_https"] = True
+        if self.direct_url:
+            payload["direct_url"] = self.direct_url
+        if self.ssh_key_path:
+            payload["ssh_key_path"] = self.ssh_key_path
+        if self.service_account_id:
+            payload["service_account_id"] = self.service_account_id
+        if self.credentials:
+            payload["credentials"] = dict(self.credentials)
+        return payload
+
+
+def build_agent_urls(
+    public_ip: str,
+    *,
+    agent_port: int = DEFAULT_AGENT_PORT,
+    public_https: bool = True,
+) -> dict[str, str]:
+    """Return customer-facing and operator-direct URLs for an agent VM."""
+    direct = f"http://{public_ip}:{agent_port}/"
+    if public_https:
+        base = f"https://{public_ip}/"
+    else:
+        base = direct
+    root = base.rstrip("/")
+    return {
+        "public_url": base,
+        "agent_url": base,
+        "rerun_url": f"{root}/rerun/",
+        "sim_viz_url": f"{root}/rerun/",
+        "sim_assets_url": f"{root}/assets/",
+        "cameras_api_url": f"{root}/assets/api/sim-assets/cameras",
+        "direct_url": direct,
+    }
+
+
+def _record_public_https(record: dict[str, Any]) -> bool:
+    if "public_https" in record:
+        return bool(record.get("public_https"))
+    public_url = str(record.get("public_url", "")).strip()
+    if public_url.startswith("https://"):
+        return True
+    agent_url = str(record.get("agent_url", "")).strip()
+    return agent_url.startswith("https://")
+
+
+def _record_tls_verify(record: dict[str, Any]) -> bool:
+    """Self-signed HTTPS on the VM public IP is expected; skip CA verification."""
+    return not _record_public_https(record)
+
+
+def _record_customer_url(record: dict[str, Any]) -> str:
+    public_url = str(record.get("public_url", "")).strip()
+    if public_url:
+        return public_url
+    return str(record.get("agent_url", "")).strip()
+
+
+def _fail(message: str) -> None:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(code=1)
-
-
-def _serialized_agent_lifecycle(func):
-    """Hold the project/name ownership lock for an entire lifecycle command."""
-    signature = inspect.signature(func)
-
-    @functools.wraps(func)
-    def wrapped(*args, **kwargs):
-        bound = signature.bind_partial(*args, **kwargs)
-        project = str(bound.arguments.get("project", DEFAULT_PROJECT_ALIAS))
-        name = str(bound.arguments.get("name", DEFAULT_AGENT_NAME))
-        try:
-            with agent_lifecycle_lock(project, name):
-                return func(*args, **kwargs)
-        except DeploymentIdentityError as exc:
-            _fail(str(exc))
-
-    return wrapped
 
 
 def _looks_like_compute_permission_denied(message: str) -> bool:
@@ -209,123 +367,33 @@ def _looks_like_compute_permission_denied(message: str) -> bool:
     return "permissiondenied" in lowered and "service compute" in lowered
 
 
-def _ensure_terraform_state_bucket(
-    *,
-    project_id: str,
-    bucket_name: str,
-) -> None:
-    """Ensure the Terraform backend bucket exists before terraform init.
+def _resolve_project_alias(project: str) -> str:
+    """Resolve an agent ``--project``: explicit value, else the configured
+    ``default_project``, else the only configured project, else the static
+    ``DEFAULT_PROJECT_ALIAS`` fallback.
 
-    Fresh deploys may receive reused credentials that point at a bucket deleted
-    out-of-band. In that case, recreate the bucket to keep fresh-setup
-    provisioning self-healing.
+    Commands default ``--project`` to "" so an omitted flag targets the operator's
+    configured default project rather than a hard-coded ``us-central1`` alias
+    (which risked tearing down / inspecting the wrong thing).
     """
-    project = str(project_id or "").strip()
-    bucket = str(bucket_name or "").strip()
-    if not project or not bucket:
-        return
-    from npa.clients.nebius import (
-        NebiusError,
-        bucket_exists,
-        ensure_bucket,
-    )
-
+    alias = str(project or "").strip()
+    if alias:
+        return alias
     try:
-        exists = bucket_exists(project, bucket)
-    except NebiusError:
-        # Let terraform init surface detailed auth/endpoint errors.
-        return
-    if exists:
-        return
-    typer.echo(f"  Terraform state bucket {bucket!r} missing; creating it ...")
-    ensure_bucket(project, bucket)
+        from npa.clients.config import default_project_name, list_projects
 
-
-def _persist_agent_project_config(
-    *,
-    project: str,
-    project_id: str,
-    tenant_id: str,
-    region: str,
-    merged_vars: dict[str, str],
-) -> None:
-    write_config(
-        {
-            "projects": {
-                project: {
-                    "project_id": project_id,
-                    "tenant_id": tenant_id,
-                    "region": region,
-                    "terraform_state": {
-                        "bucket": merged_vars.get("s3_bucket", ""),
-                        "endpoint": merged_vars.get("s3_endpoint", ""),
-                        "access_key": merged_vars.get("nebius_api_key", ""),
-                        "secret_key": merged_vars.get("nebius_secret_key", ""),
-                    },
-                }
-            }
-        }
-    )
-
-
-def _apply_agent_terraform(
-    *,
-    project: str,
-    name: str,
-    merged_vars: dict[str, str],
-    env_region: str,
-    require_empty_state: bool = False,
-) -> dict[str, Any]:
-    """Apply agent Terraform, retrying without VM SA attachment on compute IAM denial."""
-    tf_dir = provisioner.prepare_working_dir(
-        project,
-        name,
-        bucket=merged_vars.get("s3_bucket", ""),
-        region=env_region,
-        endpoint=merged_vars.get("s3_endpoint", ""),
-    )
-    try:
-        provisioner.init(
-            tf_dir=tf_dir,
-            backend_config={
-                "access_key": merged_vars.get("nebius_api_key", ""),
-                "secret_key": merged_vars.get("nebius_secret_key", ""),
-            },
-        )
-    except ProvisionerError as exc:
-        if require_empty_state:
-            raise DeploymentIdentityError(
-                "Unable to initialize and inspect the Terraform state namespace; "
-                "refusing to apply or destroy unknown resources"
-            ) from exc
-        raise
-    if require_empty_state:
-        try:
-            existing_resources = provisioner.state_list(tf_dir)
-        except ProvisionerError as exc:
-            raise DeploymentIdentityError(
-                "Unable to prove the Terraform state namespace is empty; "
-                "refusing to apply or destroy unknown resources"
-            ) from exc
-        if existing_resources:
-            raise DeploymentIdentityError(
-                "Terraform state already owns resources for this project/agent but "
-                "no matching immutable agent record exists; refusing to apply"
-            )
-    tf_vars = {key: value for key, value in merged_vars.items() if key not in _AGENT_TERRAFORM_RUNTIME_ONLY_VARS}
-    try:
-        return provisioner.apply(tf_dir=tf_dir, tf_vars=tf_vars)
-    except ProvisionerError as exc:
-        sa_id = str(merged_vars.get("service_account_id", "")).strip()
-        if sa_id and _looks_like_compute_permission_denied(str(exc)):
-            typer.echo(
-                "  Compute create denied with VM service-account attachment; "
-                "retrying without attached service_account_id ..."
-            )
-            retry_vars = dict(tf_vars)
-            retry_vars["service_account_id"] = ""
-            return provisioner.apply(tf_dir=tf_dir, tf_vars=retry_vars)
-        raise
+        configured = str(default_project_name() or "").strip()
+        projects = list_projects()
+    except Exception:  # noqa: BLE001 - best-effort; fall back to the static default
+        return DEFAULT_PROJECT_ALIAS
+    if configured and configured in projects:
+        return configured
+    # `default_project_name()` returns the literal "default" when the config has no
+    # default_project, which names no real stanza. A single configured project is
+    # the unambiguous target (matching `npa agent setup`).
+    if len(projects) == 1:
+        return next(iter(projects))
+    return configured or DEFAULT_PROJECT_ALIAS
 
 
 def _agent_record(project_alias: str, name: str) -> dict[str, Any]:
@@ -348,7 +416,31 @@ def _store_agent_record(project_alias: str, name: str, payload: dict[str, Any]) 
 
 
 def _remove_agent_record(project_alias: str, name: str) -> None:
-    remove_agent_config(project_alias, name)
+    from copy import deepcopy
+
+    from npa.clients.config import update_config_document
+
+    def remove(current: dict[str, Any]) -> dict[str, Any]:
+        data = deepcopy(current)
+        projects = data.get("projects", {})
+        if not isinstance(projects, dict):
+            return data
+        project = projects.get(project_alias, {})
+        if not isinstance(project, dict):
+            return data
+        agents = project.get("agents", {})
+        if not isinstance(agents, dict) or name not in agents:
+            return data
+        del agents[name]
+        if agents:
+            project["agents"] = agents
+        else:
+            project.pop("agents", None)
+        projects[project_alias] = project
+        data["projects"] = projects
+        return data
+
+    update_config_document(remove)
 
 
 def _agent_extra_ingress_ports(
@@ -363,49 +455,6 @@ def _agent_extra_ingress_ports(
     return sorted({port for port in extra if port != agent_port})
 
 
-def _agent_terraform_state_exists(project: str, name: str) -> bool:
-    tf_dir = provisioner.working_dir_path(project, name)
-    return (tf_dir / ".terraform").is_dir()
-
-
-def _resolve_destroy_tf_vars(
-    project: str,
-    name: str,
-    record: dict[str, Any] | None,
-) -> dict[str, str]:
-    state = resolve_terraform_state(project)
-    saved_env = resolve_environment(project)
-    region = str((record or {}).get("region", "") or (saved_env.region if saved_env else "") or "eu-north1")
-    project_id = str((record or {}).get("project_id", "") or (saved_env.project_id if saved_env else ""))
-    service_account_id = str((record or {}).get("service_account_id", "")).strip()
-    if not service_account_id:
-        creds = (record or {}).get("credentials", {})
-        if isinstance(creds, dict):
-            service_account_id = str(creds.get("service_account_id", "")).strip()
-    if not service_account_id:
-        service_account_id = _resolve_agent_service_account_id(project, record or {})
-    from npa.clients.nebius import get_iam_token
-
-    iam_token = get_iam_token()
-    return {
-        "nebius_project_id": project_id,
-        "nebius_region": region,
-        "service_account_id": service_account_id,
-        "iam_token": iam_token,
-        "instance_name": f"agent-{project}-{name}",
-        "server_port": str(DEFAULT_AGENT_PORT),
-        "workbench_type": "lerobot",
-        "gpu_platform": "cpu-d3",
-        "gpu_preset": "8vcpu-32gb",
-        "enable_preemptible": "false",
-        "nebius_api_key": state.access_key,
-        "nebius_secret_key": state.secret_key,
-        "s3_bucket": state.bucket,
-        "s3_endpoint": state.endpoint,
-        "extra_ingress_ports": "[]",
-    }
-
-
 def _cleanup_agent_ingress(instance_id: str) -> None:
     if not str(instance_id or "").strip():
         return
@@ -418,104 +467,42 @@ def _cleanup_agent_ingress(instance_id: str) -> None:
         typer.echo(f"  Warning: could not remove npa ingress rules: {exc}", err=True)
 
 
-_AGENT_INSTANCE_DESTROY_TARGETS = (
-    "null_resource.wait_for_cloud_init",
-    "nebius_compute_v1_instance.workbench",
-)
-
-
-def _cleanup_orphan_agent_instances(project_id: str, instance_name: str) -> None:
-    """Delete cloud VM instances matching the agent name but missing from TF state."""
-    project_id = str(project_id or "").strip()
-    instance_name = str(instance_name or "").strip()
-    if not project_id or not instance_name:
-        return
-    from npa.clients.nebius import NebiusError, _run, _run_json
-
-    try:
-        payload = _run_json(["compute", "instance", "list", "--parent-id", project_id])
-    except NebiusError:
-        return
-    items = payload.get("items", [])
-    if not isinstance(items, list):
-        return
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        meta = item.get("metadata", {})
-        if not isinstance(meta, dict):
-            continue
-        if str(meta.get("name", "")).strip() != instance_name:
-            continue
-        instance_id = str(meta.get("id", "")).strip()
-        if not instance_id:
-            continue
-        try:
-            _run(["compute", "instance", "delete", instance_id], check=False)
-            typer.echo(f"  Deleted orphan agent instance {instance_id}")
-        except NebiusError:
-            continue
-
-
-def _destroy_agent_terraform(
-    project: str,
-    name: str,
-    *,
-    record: dict[str, Any] | None = None,
-) -> None:
-    """Destroy the agent Terraform stack and optional npa-managed ingress rules."""
-    if not _agent_terraform_state_exists(project, name):
-        return
-    state = resolve_terraform_state(project)
-    if not state.bucket or not state.access_key or not state.secret_key:
-        _fail(
-            f"Terraform state backend is not configured for project {project!r}. "
-            "Run `npa configure` or redeploy once to persist terraform_state."
-        )
-    tf_vars = _resolve_destroy_tf_vars(project, name, record)
-    region = tf_vars["nebius_region"]
-    instance_id = str((record or {}).get("instance_id", "")).strip()
-    instance_name = tf_vars["instance_name"]
-    project_id = tf_vars["nebius_project_id"]
-    _cleanup_agent_ingress(instance_id)
-    _cleanup_orphan_agent_instances(project_id, instance_name)
-    tf_dir = provisioner.prepare_working_dir(
-        project,
-        name,
-        bucket=state.bucket,
-        region=region,
-        endpoint=state.endpoint,
-    )
-    provisioner.init(
-        tf_dir=tf_dir,
-        backend_config={"access_key": state.access_key, "secret_key": state.secret_key},
-    )
-
-    def _run_destroy() -> None:
-        provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
-
-    def _destroy_compute_first() -> None:
-        managed = set(provisioner.state_list(tf_dir))
-        targets = [t for t in _AGENT_INSTANCE_DESTROY_TARGETS if t in managed]
-        if targets:
-            provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars, targets=targets)
-
-    try:
-        _run_destroy()
-    except ProvisionerError as first_exc:
-        _cleanup_agent_ingress(instance_id)
-        try:
-            _destroy_compute_first()
-            _run_destroy()
-        except ProvisionerError:
-            raise first_exc from None
-
-
 def _auth_secret_path(project_alias: str, name: str) -> Path:
     return Path.home() / ".npa" / "agents" / project_alias / name / "auth.env"
 
 
-def _write_auth_secret(*, project_alias: str, name: str, user: str, password: str) -> Path:
+def _cleanup_agent_local_files(project_alias: str, name: str) -> None:
+    """Remove the local agent state + Terraform workdir after a destroy.
+
+    Two trees live under ``~/.npa`` for an agent: ``agents/<alias>/<name>/``
+    (auth.env + secrets — live basic-auth credentials, a stale-credential leak
+    if left) and ``workbenches/<alias>/<name>/`` (the Terraform workdir with the
+    provider cache and, in a local backend, ``terraform.tfstate``). Terraform has
+    already destroyed the VM by the time this runs, so both are safe to remove;
+    leaving the workdir behind was the teardown-report leftover.
+    """
+    agent_dir = Path.home() / ".npa" / "agents" / project_alias / name
+    shutil.rmtree(agent_dir, ignore_errors=True)
+
+    from npa.deploy import provisioner
+
+    tf_dir = provisioner.working_dir_path(project_alias, name)
+    shutil.rmtree(tf_dir, ignore_errors=True)
+
+    # Drop the now-empty <alias> parents so tearing down the last agent leaves no
+    # empty ~/.npa/{agents,workbenches}/<alias>/ tree behind (a sibling agent
+    # under the same alias keeps its parent non-empty, so it is preserved).
+    for parent in (agent_dir.parent, tf_dir.parent):
+        try:
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+        except OSError:
+            pass
+
+
+def _write_auth_secret(
+    *, project_alias: str, name: str, user: str, password: str
+) -> Path:
     path = _auth_secret_path(project_alias, name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"AGENT_USER={user}\nAGENT_PASSWORD={password}\n", encoding="utf-8")
@@ -536,23 +523,10 @@ def _load_auth_secret(path: str) -> tuple[str, str]:
     user = values.get("AGENT_USER", "")
     password = values.get("AGENT_PASSWORD", "")
     if not user or not password:
-        raise ValueError(f"auth secret missing AGENT_USER/AGENT_PASSWORD: {secret_path}")
+        raise ValueError(
+            f"auth secret missing AGENT_USER/AGENT_PASSWORD: {secret_path}"
+        )
     return user, password
-
-
-def _tool_catalog_keys() -> list[str]:
-    return sorted(TOOL_CATALOG.keys())
-
-
-def _tool_catalog_payload() -> dict[str, dict[str, Any]]:
-    payload: dict[str, dict[str, Any]] = {}
-    for key in _tool_catalog_keys():
-        entry = TOOL_CATALOG[key]
-        payload[key] = {
-            "description": entry.description,
-            "argv_template": list(entry.argv_template),
-        }
-    return payload
 
 
 def _resolve_deploy_llm_credentials() -> tuple[str, str]:
@@ -561,152 +535,6 @@ def _resolve_deploy_llm_credentials() -> tuple[str, str]:
 
     creds = load_credentials()
     return creds.token_factory_api_key, DEFAULT_LLM_MODEL
-
-
-def _resolve_operator_credentials() -> tuple[str, str]:
-    """Return Nebius AI Cloud key and Token Factory API key from operator credentials."""
-    from npa.clients.credentials import load_credentials
-
-    creds = load_credentials()
-    return creds.ai_cloud_api_key, creds.token_factory_api_key
-
-
-def _terraform_binary() -> str:
-    """Return the terraform binary path/name, honoring NPA_TERRAFORM_BIN."""
-    return (os.environ.get("NPA_TERRAFORM_BIN") or shutil.which("terraform") or "").strip()
-
-
-def _agent_hard_prereq_results(ssh_public_key_path: str) -> list[CheckResult]:
-    """Cheap, side-effect-free Route C prerequisites (terraform + SSH keys).
-
-    These are checked before any cloud IAM side effects or Terraform apply so a
-    missing binary or key surfaces up front instead of mid-run (after which a
-    transient SSH failure would auto-roll-back a freshly provisioned VM).
-    """
-    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
-
-    results: list[Any] = []
-
-    terraform = _terraform_binary()
-    if terraform:
-        results.append(
-            CheckResult(name="terraform", status=PASS, summary=f"terraform found ({terraform}).")
-        )
-    else:
-        results.append(
-            CheckResult(
-                name="terraform",
-                status=FAIL,
-                summary="terraform binary not found on PATH.",
-                remedy="Install it: https://developer.hashicorp.com/terraform/install",
-            )
-        )
-
-    pub_path = Path(ssh_public_key_path).expanduser()
-    if pub_path.is_file():
-        results.append(
-            CheckResult(name="ssh_public_key", status=PASS, summary=f"SSH public key present ({pub_path}).")
-        )
-    else:
-        priv_hint = str(pub_path)[:-4] if str(pub_path).endswith(".pub") else str(pub_path)
-        results.append(
-            CheckResult(
-                name="ssh_public_key",
-                status=FAIL,
-                summary=f"SSH public key not found: {pub_path}",
-                remedy=(
-                    f"Generate a keypair (`ssh-keygen -t ed25519 -f {priv_hint}`) "
-                    "or pass --ssh-public-key-path to an existing key."
-                ),
-            )
-        )
-
-    # The deploy flow uses the private key alongside the public key (pub path
-    # minus the .pub suffix) to bootstrap the VM over SSH. If --ssh-public-key-path
-    # is given without a .pub suffix, this resolves to the same path as the public
-    # key check above, which at worst yields a slightly redundant message.
-    priv_str = str(pub_path)[:-4] if str(pub_path).endswith(".pub") else str(pub_path)
-    priv_path = Path(priv_str)
-    if priv_path.is_file():
-        results.append(
-            CheckResult(name="ssh_private_key", status=PASS, summary=f"SSH private key present ({priv_path}).")
-        )
-    else:
-        results.append(
-            CheckResult(
-                name="ssh_private_key",
-                status=FAIL,
-                summary=f"SSH private key not found: {priv_path}",
-                remedy="The private key next to the public key is required to bootstrap the VM over SSH.",
-            )
-        )
-
-    return results
-
-
-def _agent_token_factory_result(tf_key: str | None = None) -> CheckResult:
-    """Token Factory key check (WARN): the headline chat feature needs it.
-
-    Pass a pre-resolved ``tf_key`` to avoid re-reading credentials when the
-    caller already has them.
-    """
-    from npa.workflows.sim2real_health import CheckResult, PASS, WARN
-
-    if tf_key is None:
-        tf_key, _ = _resolve_deploy_llm_credentials()
-    if tf_key:
-        return CheckResult(
-            name="token_factory", status=PASS, summary="Token Factory API key is configured."
-        )
-    return CheckResult(
-        name="token_factory",
-        status=WARN,
-        summary="Token Factory API key not found; agent chat will return 503 until it is set.",
-        remedy=(
-            "Get a key (starts with 'v1.') at https://tokenfactory.nebius.com/ and run "
-            "`npa configure --token-factory-key <key>`, then re-run `npa agent bootstrap`."
-        ),
-    )
-
-
-def _agent_nebius_auth_result() -> CheckResult:
-    """Live Nebius auth check (FAIL): deploy needs an authenticated profile to provision."""
-    from npa.workflows.sim2real_health import CheckResult, FAIL, PASS
-
-    try:
-        from npa.clients.nebius import get_iam_token
-
-        token = get_iam_token()
-    except Exception as exc:  # noqa: BLE001 - any auth/CLI error means "not ready"
-        return CheckResult(
-            name="nebius_profile",
-            status=FAIL,
-            summary="No authenticated Nebius CLI profile.",
-            remedy="Install/authenticate the Nebius CLI and run `npa configure`.",
-            details=(str(exc),),
-        )
-    if token:
-        return CheckResult(
-            name="nebius_profile", status=PASS, summary="Nebius CLI profile is authenticated."
-        )
-    return CheckResult(
-        name="nebius_profile",
-        status=FAIL,
-        summary="Nebius IAM token unavailable.",
-        remedy="Run `npa configure` / `nebius profile create` to authenticate.",
-    )
-
-
-def _render_agent_checks(results: list[CheckResult], *, output_json: bool) -> bool:
-    """Render agent preflight CheckResults; return True when any FAIL is present.
-
-    Uses the shared report renderer so agent and workbench-health preflight
-    output stay aligned.
-    """
-    from npa.workflows.sim2real_health import format_check_report, has_failure
-
-    typer.echo(format_check_report(results, output_json=output_json))
-    return has_failure(results)
 
 
 def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str]:
@@ -728,16 +556,220 @@ def _normalize_llm_models(models: list[str] | tuple[str, ...] | str) -> list[str
     return normalized
 
 
-def _agent_credentials_payload(creds: dict[str, str]) -> dict[str, str]:
-    """Normalize Nebius bootstrap output for persistence on the agent record."""
-    return {
-        "service_account_id": str(creds.get("service_account_id", "")).strip(),
-        "s3_bucket": str(creds.get("s3_bucket", "")).strip(),
-        "s3_prefix": str(creds.get("s3_prefix", "")).strip().strip("/"),
-        "s3_endpoint": str(creds.get("s3_endpoint", "")).strip(),
-        "access_key": str(creds.get("nebius_api_key", "")).strip(),
-        "secret_key": str(creds.get("nebius_secret_key", "")).strip(),
-    }
+def _storage_credentials_allow_writes(
+    *,
+    bucket: str,
+    endpoint: str,
+    access_key: str,
+    secret_key: str,
+    region: str,
+    prefix: str = "",
+) -> bool:
+    """Return True when credentials can list, write, and delete in the bucket."""
+    bucket_name = str(bucket or "").strip()
+    if not bucket_name:
+        return False
+    endpoint_url = str(endpoint or "").strip()
+    if not endpoint_url:
+        endpoint_url = (
+            f"https://storage.{str(region or '').strip() or 'eu-north1'}.nebius.cloud"
+        )
+    from npa.clients.storage_validation import probe_storage_write
+
+    normalized_prefix = str(prefix or "").strip().strip("/")
+    probe_prefix = "/".join(
+        part for part in (normalized_prefix, "npa-agent/preflight") if part
+    )
+    probe = probe_storage_write(
+        bucket=bucket_name,
+        endpoint_url=endpoint_url,
+        access_key_id=str(access_key or "").strip(),
+        secret_access_key=str(secret_key or "").strip(),
+        region=str(region or "").strip(),
+        prefix=probe_prefix,
+    )
+    return bool(probe.ok)
+
+
+def _resolve_deploy_storage_credentials(
+    *,
+    region: str,
+    bootstrap_creds: dict[str, str] | None = None,
+    project_alias: str = "",
+    emit_status: bool = True,
+) -> dict[str, str]:
+    """Resolve the exact writable-storage credentials agent deploy will use.
+
+    Project-scoped credentials are evaluated before shared and bootstrap
+    credentials. This is the same health-verified decision used by preflight,
+    setup, fresh-setup, and refresh; IAM access-key inventory is only reached
+    later when no configured candidate works and a caller explicitly supplies
+    freshly bootstrapped credentials.
+    """
+
+    candidate = dict(bootstrap_creds or {})
+    from npa.clients.credentials import load_credentials
+
+    project_name = str(project_alias or "").strip()
+    if project_name:
+        try:
+            project_storage = resolve_project_storage(
+                project_name,
+                include_shared_credentials=False,
+            )
+        except ConfigError:
+            project_storage = None
+        if project_storage is not None:
+            project_bucket = str(project_storage.checkpoint_bucket or "").strip()
+            project_prefix = ""
+            if project_bucket.startswith("s3://"):
+                rest = project_bucket[len("s3://"):]
+                project_bucket, _sep, project_prefix = rest.partition("/")
+                project_prefix = project_prefix.strip("/")
+            project_endpoint = str(
+                project_storage.endpoint_url
+                or f"https://storage.{region}.nebius.cloud"
+            ).strip()
+            project_access_key = str(project_storage.aws_access_key_id or "").strip()
+            project_secret_key = str(project_storage.aws_secret_access_key or "").strip()
+            if project_bucket and _storage_credentials_allow_writes(
+                bucket=project_bucket,
+                endpoint=project_endpoint,
+                access_key=project_access_key,
+                secret_key=project_secret_key,
+                region=region,
+                prefix=project_prefix,
+            ):
+                if emit_status:
+                    typer.echo(
+                        "  Using health-verified project artifact storage credentials."
+                    )
+                candidate["s3_bucket"] = project_bucket
+                candidate["s3_prefix"] = project_prefix
+                candidate["s3_endpoint"] = project_endpoint
+                candidate["nebius_api_key"] = project_access_key
+                candidate["nebius_secret_key"] = project_secret_key
+                return candidate
+
+    # With no selected project, resolve_project_storage(None) is the canonical
+    # shared/default storage view and may combine the configured bucket with the
+    # shared credential file. Never use this view for an explicit project: that
+    # path above deliberately disables shared credential injection first.
+    if not project_name:
+        try:
+            configured = resolve_project_storage(None)
+        except ConfigError:
+            configured = None
+        configured_bucket = str(
+            getattr(configured, "checkpoint_bucket", "") or ""
+        ).strip()
+        configured_prefix = ""
+        if configured_bucket.startswith("s3://"):
+            rest = configured_bucket[len("s3://") :]
+            configured_bucket, _sep, configured_prefix = rest.partition("/")
+            configured_prefix = configured_prefix.strip("/")
+        configured_endpoint = str(
+            getattr(configured, "endpoint_url", "")
+            or f"https://storage.{region}.nebius.cloud"
+        ).strip()
+        configured_access_key = str(
+            getattr(configured, "aws_access_key_id", "") or ""
+        ).strip()
+        configured_secret_key = str(
+            getattr(configured, "aws_secret_access_key", "") or ""
+        ).strip()
+        if configured_bucket and _storage_credentials_allow_writes(
+            bucket=configured_bucket,
+            endpoint=configured_endpoint,
+            access_key=configured_access_key,
+            secret_key=configured_secret_key,
+            region=region,
+            prefix=configured_prefix,
+        ):
+            if emit_status:
+                typer.echo(
+                    "  Using health-verified configured artifact storage credentials."
+                )
+            candidate["s3_bucket"] = configured_bucket
+            candidate["s3_prefix"] = configured_prefix
+            candidate["s3_endpoint"] = configured_endpoint
+            candidate["nebius_api_key"] = configured_access_key
+            candidate["nebius_secret_key"] = configured_secret_key
+            return candidate
+
+    shared = load_credentials(environ={})
+    shared_bucket = str(shared.s3_bucket or "").strip()
+    shared_prefix = ""
+    if shared_bucket.startswith("s3://"):
+        rest = shared_bucket[len("s3://"):]
+        shared_bucket, _sep, shared_prefix = rest.partition("/")
+        shared_prefix = shared_prefix.strip("/")
+    shared_endpoint = str(shared.s3_endpoint or f"https://storage.{region}.nebius.cloud").strip()
+    shared_access_key = str(shared.s3_access_key_id or "").strip()
+    shared_secret_key = str(shared.s3_secret_access_key or "").strip()
+    if shared_bucket and _storage_credentials_allow_writes(
+        bucket=shared_bucket,
+        endpoint=shared_endpoint,
+        access_key=shared_access_key,
+        secret_key=shared_secret_key,
+        region=region,
+        prefix=shared_prefix,
+    ):
+        if emit_status:
+            typer.echo(
+                "  Using health-verified shared artifact storage credentials."
+            )
+        candidate["s3_bucket"] = shared_bucket
+        candidate["s3_prefix"] = shared_prefix
+        candidate["s3_endpoint"] = shared_endpoint
+        candidate["nebius_api_key"] = shared_access_key
+        candidate["nebius_secret_key"] = shared_secret_key
+        return candidate
+
+    bucket = str(candidate.get("s3_bucket", "")).strip()
+    endpoint = str(candidate.get("s3_endpoint", "")).strip()
+    access_key = str(candidate.get("nebius_api_key", "")).strip()
+    secret_key = str(candidate.get("nebius_secret_key", "")).strip()
+    if _storage_credentials_allow_writes(
+        bucket=bucket,
+        endpoint=endpoint,
+        access_key=access_key,
+        secret_key=secret_key,
+        region=region,
+        prefix=str(candidate.get("s3_prefix", "")),
+    ):
+        return candidate
+    if project_name:
+        try:
+            saved_state = resolve_terraform_state(project_name)
+        except ConfigError:
+            saved_state = None
+        if saved_state is not None:
+            saved_bucket = str(getattr(saved_state, "bucket", "") or "").strip()
+            saved_endpoint = str(getattr(saved_state, "endpoint", "") or "").strip()
+            saved_access_key = str(getattr(saved_state, "access_key", "") or "").strip()
+            saved_secret_key = str(getattr(saved_state, "secret_key", "") or "").strip()
+            if _storage_credentials_allow_writes(
+                bucket=saved_bucket,
+                endpoint=saved_endpoint,
+                access_key=saved_access_key,
+                secret_key=saved_secret_key,
+                region=region,
+            ):
+                if emit_status:
+                    typer.echo(
+                        "  Bootstrap S3 key has no data-plane access; falling back "
+                        "to saved project terraform_state credentials."
+                    )
+                candidate["s3_bucket"] = saved_bucket
+                candidate["s3_endpoint"] = saved_endpoint
+                candidate["nebius_api_key"] = saved_access_key
+                candidate["nebius_secret_key"] = saved_secret_key
+                return candidate
+    raise AgentStorageCredentialError(
+        "unable to verify writable S3 credentials for deploy; "
+        "configure object-storage credentials with data-plane access before deploying the agent"
+    )
 
 
 def _resolve_agent_service_account_id(
@@ -763,20 +795,16 @@ def _resolve_agent_service_account_id(
     return ""
 
 
-def _persist_agent_service_account_id(service_account_id: str) -> None:
+def _persist_agent_service_account_id(
+    service_account_id: str, project_id: str = ""
+) -> None:
     """Write discovered SA id into ~/.npa/credentials.yaml when missing."""
-    sa_id = str(service_account_id or "").strip()
-    if not sa_id:
-        return
-    from npa.clients.credentials import write_credentials_file
-    from npa.clients.nebius import _saved_service_account_id
-
-    if _saved_service_account_id() == sa_id:
-        return
-    write_credentials_file({"nebius": {"service_account_id": sa_id}})
+    _persist_project_agent_service_account_id(project_id, service_account_id)
 
 
-def _creds_from_terraform_state(project_alias: str, record: dict[str, Any]) -> dict[str, str] | None:
+def _creds_from_terraform_state(
+    project_alias: str, record: dict[str, Any]
+) -> dict[str, str] | None:
     """Build a bootstrap-shaped credential dict from saved terraform remote-state keys."""
     try:
         tf_state = resolve_terraform_state(project_alias)
@@ -801,25 +829,6 @@ def _creds_from_terraform_state(project_alias: str, record: dict[str, Any]) -> d
     }
 
 
-def _credentials_block_from_storage(
-    *,
-    service_account_id: str,
-    s3_bucket: str,
-    s3_prefix: str = "",
-    s3_endpoint: str,
-    s3_access_key: str,
-    s3_secret_key: str,
-) -> dict[str, str]:
-    return {
-        "service_account_id": service_account_id.strip(),
-        "s3_bucket": s3_bucket.strip(),
-        "s3_prefix": s3_prefix.strip().strip("/"),
-        "s3_endpoint": s3_endpoint.strip(),
-        "access_key": s3_access_key.strip(),
-        "secret_key": s3_secret_key.strip(),
-    }
-
-
 def _resolve_agent_ssh_key(
     record: dict[str, Any],
     *,
@@ -836,40 +845,6 @@ def _resolve_agent_ssh_key(
     if env_key:
         return str(Path(env_key).expanduser())
     return str(Path(default_key).expanduser())
-
-
-def _verify_agent_record_remote_owner(
-    record: dict[str, Any],
-    expected: dict[str, str],
-    *,
-    ssh_user: str = "ubuntu",
-) -> None:
-    """Fail closed unless the saved VM manifest has the record's exact owner."""
-    host = str(record.get("public_ip") or "").strip()
-    key_path = _resolve_agent_ssh_key(record)
-    if not _is_routable_public_ip(host):
-        raise DeploymentIdentityError(
-            "saved agent record has no routable VM for ownership verification"
-        )
-    if not Path(key_path).expanduser().is_file():
-        raise DeploymentIdentityError(
-            "saved agent SSH key is unavailable for ownership verification"
-        )
-    ssh = SSHClient(
-        config=resolve_ssh_config(
-            ssh_host=host,
-            ssh_user=ssh_user,
-            ssh_key=key_path,
-            project=None,
-            name=None,
-        ).ssh
-    )
-    try:
-        verify_persisted_remote_owner(ssh, expected)
-    except SSHError as exc:
-        raise DeploymentIdentityError(
-            "unable to verify persisted VM ownership before lifecycle mutation"
-        ) from exc
 
 
 def _resolve_agent_storage_credentials(
@@ -889,12 +864,21 @@ def _resolve_agent_storage_credentials(
         ).strip()
         if bucket and access_key and secret_key:
             if not service_account_id:
-                service_account_id = _resolve_agent_service_account_id(project_alias, record)
+                service_account_id = _resolve_agent_service_account_id(
+                    project_alias, record
+                )
             return bucket, prefix, endpoint, access_key, secret_key, service_account_id
     try:
         tf_state = resolve_terraform_state(project_alias)
     except ConfigError:
-        return "", "", "", "", "", _resolve_agent_service_account_id(project_alias, record)
+        return (
+            "",
+            "",
+            "",
+            "",
+            "",
+            _resolve_agent_service_account_id(project_alias, record),
+        )
     service_account_id = _resolve_agent_service_account_id(project_alias, record)
     return (
         str(getattr(tf_state, "bucket", "") or ""),
@@ -920,7 +904,9 @@ def _write_agent_llm_env(
         return
     models_csv = ",".join(_normalize_llm_models(list(llm_models)))
     providers_csv = ",".join(
-        _normalize_llm_models([str(item) for item in llm_providers if str(item).strip()])
+        _normalize_llm_models(
+            [str(item) for item in llm_providers if str(item).strip()]
+        )
         or [DEFAULT_LLM_PROVIDER]
     )
     env_content = (
@@ -937,108 +923,21 @@ def _write_agent_llm_env(
     )
 
 
-def _write_agent_s3_env(
-    ssh: SSHClient,
-    *,
-    bucket: str,
-    prefix: str = "",
-    endpoint: str,
-    access_key: str,
-    secret_key: str,
-    region: str,
+def _store_project_environment(
+    *, project: str, project_id: str, tenant_id: str, region: str
 ) -> None:
-    """Stage S3 discovery credentials on the VM (read-only operator scope preferred)."""
-    if not (bucket.strip() and access_key.strip() and secret_key.strip()):
-        return
-    env_lines = [
-        f"NPA_AGENT_S3_BUCKET={bucket.strip()}",
-        f"NPA_AGENT_S3_PREFIX={prefix.strip().strip('/')}",
-        f"NPA_AGENT_S3_ENDPOINT={endpoint.strip()}",
-        f"AWS_ACCESS_KEY_ID={access_key.strip()}",
-        f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
-        f"AWS_REGION={region.strip() or 'eu-north1'}",
-        "",
-    ]
-    env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
-    ssh.run_or_raise(
-        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/s3.env >/dev/null "
-        "&& sudo chmod 600 /opt/npa-agent/s3.env"
-    )
-
-
-def _write_agent_operator_profile(
-    ssh: SSHClient,
-    *,
-    ssh_user: str,
-    project_alias: str,
-    project_id: str,
-    tenant_id: str,
-    region: str,
-    tf_api_key: str,
-    nebius_ai_key: str,
-    s3_bucket: str,
-    s3_prefix: str = "",
-    s3_endpoint: str,
-    s3_access_key: str,
-    s3_secret_key: str,
-    service_account_id: str = "",
-) -> None:
-    """Write ~/.npa/config.yaml + credentials.yaml on the agent VM for operator workflows."""
-    if not (project_alias and project_id and tenant_id and region):
-        return
-    config_payload: dict[str, Any] = {
-        "default_project": project_alias,
-        "projects": {
-            project_alias: {
-                "project_id": project_id,
-                "tenant_id": tenant_id,
-                "region": region,
-            }
-        },
-    }
-    credentials_payload: dict[str, Any] = {"tokens": {}}
-    tokens = credentials_payload["tokens"]
-    if isinstance(tokens, dict):
-        if nebius_ai_key.strip():
-            tokens["NEBIUS_AI_CLOUD_KEY"] = nebius_ai_key.strip()
-        if tf_api_key.strip():
-            tokens["NEBIUS_TOKEN_FACTORY_KEY"] = tf_api_key.strip()
-    storage_payload = {
-        "access_key_id": s3_access_key.strip(),
-        "secret_access_key": s3_secret_key.strip(),
-        "endpoint": s3_endpoint.strip(),
-        "bucket": "s3://" + s3_bucket.strip() + (("/" + s3_prefix.strip().strip("/") + "/") if s3_prefix.strip().strip("/") else ""),
-    }
-    if any(storage_payload.values()):
-        credentials_payload["storage"] = storage_payload
-    if service_account_id.strip():
-        credentials_payload["nebius"] = {"service_account_id": service_account_id.strip()}
-    config_b64 = base64.b64encode(json.dumps(config_payload, indent=2).encode("utf-8")).decode("ascii")
-    creds_b64 = base64.b64encode(json.dumps(credentials_payload, indent=2).encode("utf-8")).decode("ascii")
-    user_home = f"/home/{ssh_user}"
-    targets = [
-        (f"{user_home}/.npa", f"{ssh_user}:{ssh_user}"),
-        ("/root/.npa", "root:root"),
-    ]
-    commands: list[str] = []
-    for npa_dir, owner in targets:
-        config_path = f"{npa_dir}/config.yaml"
-        creds_path = f"{npa_dir}/credentials.yaml"
-        commands.extend(
-            [
-                f"sudo mkdir -p {shlex.quote(npa_dir)}",
-                f"echo {shlex.quote(config_b64)} | base64 -d | sudo tee {shlex.quote(config_path)} >/dev/null",
-                f"echo {shlex.quote(creds_b64)} | base64 -d | sudo tee {shlex.quote(creds_path)} >/dev/null",
-                f"sudo chown -R {shlex.quote(owner)} {shlex.quote(npa_dir)}",
-                f"sudo chmod 700 {shlex.quote(npa_dir)}",
-                f"sudo chmod 600 {shlex.quote(config_path)} {shlex.quote(creds_path)}",
-            ]
-        )
-    ssh.run_or_raise(" && ".join(commands))
-
-
-def _store_project_environment(*, project: str, project_id: str, tenant_id: str, region: str) -> None:
     """Persist a project-scoped Nebius environment like a fresh configure step."""
+    operation = current_operation()
+    if operation is not None:
+        operation.record_config_mutation(
+            store="config.yaml",
+            fields=[
+                "default_project",
+                f"projects.{project}.project_id",
+                f"projects.{project}.tenant_id",
+                f"projects.{project}.region",
+            ],
+        )
     write_config(
         {
             "default_project": project,
@@ -1053,55 +952,6 @@ def _store_project_environment(*, project: str, project_id: str, tenant_id: str,
     )
 
 
-def _write_agent_nebius_env(
-    ssh: SSHClient,
-    *,
-    project_alias: str,
-    agent_name: str,
-    project_id: str,
-    tenant_id: str,
-    region: str,
-    service_account_id: str,
-    bucket: str,
-    endpoint: str,
-    access_key: str,
-    secret_key: str,
-    iam_token: str = "",
-) -> None:
-    """Stage deterministic metadata-profile and S3 settings on the agent VM.
-
-    ``iam_token`` is retained for call compatibility but is deliberately never
-    persisted: a bootstrap token is short-lived and can shadow the VM's rotating
-    attached-service-account profile in the systemd process.
-    """
-    del iam_token
-    if not (project_id.strip() and access_key.strip() and secret_key.strip()):
-        return
-    env_lines = [
-        f"NPA_AGENT_PROJECT_ALIAS={project_alias.strip()}",
-        f"NPA_AGENT_NAME={agent_name.strip()}",
-        f"NEBIUS_PROJECT_ID={project_id.strip()}",
-        f"NEBIUS_TENANT_ID={tenant_id.strip()}",
-        f"NEBIUS_REGION={region.strip() or 'eu-north1'}",
-        f"NEBIUS_SERVICE_ACCOUNT_ID={service_account_id.strip()}",
-        "NEBIUS_PROFILE=cursor-sa",
-        "NPA_NEBIUS_PROFILE=cursor-sa",
-        "NPA_NEBIUS_CONFIG=/root/.nebius/config.yaml",
-        "NPA_NEBIUS_CREDENTIAL_SOURCE=instance_metadata",
-        f"NEBIUS_S3_BUCKET={bucket.strip()}",
-        f"NEBIUS_S3_ENDPOINT={endpoint.strip()}",
-        f"AWS_ACCESS_KEY_ID={access_key.strip()}",
-        f"AWS_SECRET_ACCESS_KEY={secret_key.strip()}",
-        f"AWS_REGION={region.strip() or 'eu-north1'}",
-    ]
-    env_lines.append("")
-    env_b64 = base64.b64encode("\n".join(env_lines).encode("utf-8")).decode("ascii")
-    ssh.run_or_raise(
-        f"echo {shlex.quote(env_b64)} | base64 -d | sudo tee /opt/npa-agent/nebius.env >/dev/null "
-        "&& sudo chmod 600 /opt/npa-agent/nebius.env"
-    )
-
-
 def _env_line_value(value: str) -> str:
     """Return ``value`` as a single safe ``KEY=value`` line fragment.
 
@@ -1111,44 +961,57 @@ def _env_line_value(value: str) -> str:
     return " ".join(str(value or "").split()).strip()
 
 
-def _create_agent_source_archive(commit: str) -> str:
-    """Package agent-side source from the exact declared immutable commit."""
+def _create_agent_source_archive() -> str:
+    """Package the NPA source tree needed for agent-side workflow execution."""
     repo_root = Path(__file__).resolve().parents[4]
-    immutable_commit = str(commit or "").strip()
-    if not re.fullmatch(r"[0-9a-f]{40}", immutable_commit):
-        raise ConfigError("Deployment manifest commit must be a full Git SHA")
+    include_roots = [
+        repo_root / "npa",
+        repo_root / "deploy" / "cluster",
+    ]
+    for path in include_roots:
+        if not path.exists():
+            raise ConfigError(f"Required agent source path is missing: {path}")
+
+    exclude_names = {
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".terraform",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+    }
+
     tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
     tmp.close()
-    result = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo_root),
-            "archive",
-            "--format=tar.gz",
-            f"--output={tmp.name}",
-            immutable_commit,
-            "npa",
-            "deploy/cluster",
-            "docs",
-            "skills",
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        Path(tmp.name).unlink(missing_ok=True)
-        raise ConfigError(
-            "Unable to archive the declared Git commit: "
-            + (result.stderr.strip() or f"git archive exited {result.returncode}")
+
+    def _filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        parts = set(Path(info.name).parts)
+        if parts & exclude_names:
+            return None
+        if info.name.endswith((".pyc", ".pyo")):
+            return None
+        return info
+
+    with tarfile.open(tmp.name, "w:gz") as archive:
+        archive.add(repo_root / "npa", arcname="npa", filter=_filter)
+        archive.add(
+            repo_root / "deploy" / "cluster", arcname="deploy/cluster", filter=_filter
         )
+        # Stage the repo-root docs/ + skills/ trees so the agent's retrieval
+        # corpus (Blueprint Phase H) can ground on them at
+        # /opt/npa-agent/npa-src/{docs,skills}. Text-only; excluded via _filter.
+        for extra in ("docs", "skills"):
+            extra_path = repo_root / extra
+            if extra_path.exists():
+                archive.add(extra_path, arcname=extra, filter=_filter)
     return tmp.name
 
 
-def _stage_agent_npa_source(ssh: SSHClient, *, commit: str) -> None:
+def _stage_agent_npa_source(ssh: SSHClient) -> None:
     """Upload NPA package source and deploy assets to the agent VM."""
-    archive_path = _create_agent_source_archive(commit)
+    archive_path = _create_agent_source_archive()
     remote_archive = f"/tmp/npa-agent-source-{secrets.token_hex(6)}.tar.gz"
     try:
         ssh.upload_file(archive_path, remote_archive)
@@ -1184,19 +1047,41 @@ def _is_routable_public_ip(value: str) -> bool:
     return True
 
 
-def _nginx_agent_site_body(
-    *,
-    backend_port: int,
-    rerun_port: int,
-    lichtblick_port: int = DEFAULT_LICHTBLICK_PORT,
-) -> str:
-    """Render the agent nginx site (policy lives in ``agent_site``)."""
-    return nginx_agent_site_body(
-        backend_port=backend_port,
-        rerun_port=rerun_port,
-        lichtblick_port=lichtblick_port,
-        ui_version=AGENT_UI_VERSION,
-    )
+def _agent_strip_url_credentials_js() -> str:
+    """JS to strip user:pass@ from the URL bar while keeping HTTP Basic auth session."""
+    return """    <script>
+    (function stripUrlCredentials() {
+      try {
+        if (location.username || location.password) {
+          const clean = location.protocol + "//" + location.host + location.pathname + location.search + location.hash;
+          history.replaceState(null, "", clean);
+        }
+      } catch (_err) { /* best-effort */ }
+    })();
+    </script>"""
+
+
+def _agent_mobile_login_help_html() -> str:
+    """Mobile certificate + sign-in troubleshooting (public pages)."""
+    return """    <details class="mobile-help" style="margin:20px 0;padding:12px 16px;border:1px solid #e0e0e0;border-radius:8px;background:#fffbeb;">
+      <summary style="font-weight:600;cursor:pointer;">Phone / tablet login help</summary>
+      <ol style="margin:12px 0 0;padding-left:20px;line-height:1.55;">
+        <li><strong>Accept the certificate first.</strong> Open <a href="/healthz">/healthz</a> (no login). If Safari/Chrome warns the connection is not private, tap <em>Show Details</em> → <em>visit this website</em> / <em>Proceed</em>.</li>
+        <li>Return here and use the sign-in form (mobile browsers block password-in-URL redirects).</li>
+        <li>If sign-in still fails, try <strong>Chrome on Android</strong> or use a desktop browser.</li>
+        <li>Username is prefilled; password is in your operator <code>auth.env</code> file.</li>
+      </ol>
+    </details>"""
+
+
+# Placeholder token the Lichtblick web bundle ships in its index.html inline
+# script: ``LICHTBLICK_SUITE_DEFAULT_LAYOUT = [/*...PLACEHOLDER*/][0];``. Replacing
+# the comment with a layout object is the upstream-supported self-hosting hook, so
+# the embedded viewer opens with the sim2real point cloud + camera already shown
+# (Lichtblick otherwise hides point-cloud topics and picks no image topic).
+LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER = (
+    "/*LICHTBLICK_SUITE_DEFAULT_LAYOUT_PLACEHOLDER*/"
+)
 
 
 def _bootstrap_agent_stack(
@@ -3451,10 +3336,39 @@ def _agent_k8s_backends(project: str = "") -> dict:
     config = _load_agent_config_yaml()
     alias = _agent_project_alias(project)
     ready, reason = _agent_npa_ready()
-    return assemble_k8s_backend_inventory(
+    cloud_clusters = _agent_cloud_mk8s_clusters(alias)
+    inventory = assemble_k8s_backend_inventory(
         config=config, alias=alias, clusters_root=Path.home() / ".npa" / "clusters",
-        cloud_clusters=_agent_cloud_mk8s_clusters(alias), npa_ready=ready,
+        cloud_clusters=cloud_clusters, npa_ready=ready,
         npa_error=reason, terraform_dir=NPA_CLUSTER_TERRAFORM_DIR,
+    )
+    inventory["agent_exists"] = _configured_healthy_agent_exists(alias, config)
+    return inventory
+
+
+def _configured_healthy_agent_exists(alias: str, config: dict | None = None) -> bool:
+    # True only for this running agent's exact configured project record.
+    payload = config if isinstance(config, dict) else _load_agent_config_yaml()
+    projects = payload.get("projects") if isinstance(payload, dict) else {{}}
+    project = projects.get(alias) if isinstance(projects, dict) else {{}}
+    if not isinstance(project, dict):
+        return False
+    project_id = str(project.get("project_id") or "").strip()
+    runtime_project_id = str(os.environ.get("NPA_PROJECT_ID") or "").strip()
+    if not project_id or project_id != runtime_project_id:
+        return False
+    agents = project.get("agents")
+    if not isinstance(agents, dict):
+        return False
+    runtime_agent_name = str(os.environ.get("NPA_AGENT_NAME") or "agent").strip()
+    record = agents.get(runtime_agent_name)
+    if not isinstance(record, dict):
+        return False
+    ready, _reason = _agent_npa_ready()
+    return bool(
+        ready
+        and str(record.get("project_id") or project_id).strip() == project_id
+        and str(record.get("public_ip") or "").strip()
     )
 
 
@@ -8268,19 +8182,16 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
         .replace(_AGENT_PROVENANCE_EMBED, agent_provenance_source)
         .replace(_AGENT_UI_HTML_EMBED, rendered_agent_ui_html())
     )
-    local_setup_script = ""
     # Use a unique remote path so concurrent bootstrap runs cannot clobber each other.
     remote_setup_script = f"/tmp/npa-agent-bootstrap-{secrets.token_hex(6)}.sh"
     try:
-        _stage_agent_npa_source(ssh, commit=str(deployment.get("commit") or ""))
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
-            handle.write(setup_script)
-            local_setup_script = handle.name
-        ssh.upload_file(local_setup_script, remote_setup_script)
-        ssh.run_or_raise(f"chmod 700 {shlex.quote(remote_setup_script)} && {shlex.quote(remote_setup_script)}")
+        _stage_agent_npa_source(ssh)
+        ssh.upload_private_text(setup_script, remote_setup_script)
+        ssh.run_or_raise(
+            f"chmod 700 {shlex.quote(remote_setup_script)} && {shlex.quote(remote_setup_script)}",
+            label="run agent bootstrap",
+        )
     finally:
-        if local_setup_script:
-            Path(local_setup_script).unlink(missing_ok=True)
         ssh.run(f"rm -f {shlex.quote(remote_setup_script)}")
     _write_agent_llm_env(
         ssh,
@@ -8338,6 +8249,67 @@ sudo systemctl enable --now npa-lichtblick 2>/dev/null || echo "npa-lichtblick s
             "sudo systemctl restart npa-agent-backend"
         )
     verify_remote_deployment(ssh, deployment, backend_port=backend_port)
+    _record_remote_setup_ready(
+        ssh,
+        project_alias=project_alias,
+        agent_name=agent_name,
+        project_id=project_id,
+        endpoint=host,
+    )
+
+
+def _record_remote_setup_ready(
+    ssh: SSHClient,
+    *,
+    project_alias: str,
+    agent_name: str,
+    project_id: str,
+    endpoint: str,
+) -> None:
+    """Atomically record non-secret evidence required for restart adoption."""
+
+    credential_paths = (
+        "/opt/npa-agent/llm.env",
+        "/opt/npa-agent/s3.env",
+        "/opt/npa-agent/nebius.env",
+    )
+    service_paths = (
+        "/opt/npa-agent/deployment.json",
+        "/etc/systemd/system/npa-agent-backend.service",
+    )
+    result = ssh.run_or_raise(
+        "sudo sha256sum "
+        + " ".join(shlex.quote(path) for path in (*service_paths, *credential_paths)),
+        label="fingerprint staged agent files",
+    )
+    if result is None:  # Lightweight rendered-backend test doubles.
+        service_fingerprint = credential_fingerprint = "fixture-fingerprint"
+    else:
+        _code, stdout, _stderr = result
+        rows = [line.split()[0] for line in stdout.splitlines() if line.split()]
+        if len(rows) != len(service_paths) + len(credential_paths):
+            raise SSHError("staged agent fingerprint inventory was incomplete")
+        service_fingerprint = hashlib.sha256(
+            "\n".join(rows[: len(service_paths)]).encode("ascii")
+        ).hexdigest()
+        credential_fingerprint = hashlib.sha256(
+            "\n".join(rows[len(service_paths) :]).encode("ascii")
+        ).hexdigest()
+    state = {
+        "phase": "remote_health_ready",
+        "project_alias": project_alias,
+        "agent_name": agent_name,
+        "project_id": project_id,
+        "endpoint": endpoint,
+        "service_fingerprint": service_fingerprint,
+        "credential_fingerprint": credential_fingerprint,
+        "credential_fingerprint_files": ["llm.env", "s3.env", "nebius.env"],
+    }
+    _stage_private_text(
+        ssh,
+        content=json.dumps(state, sort_keys=True) + "\n",
+        target="/opt/npa-agent/setup-state.json",
+    )
 
 
 def _health(
@@ -8353,7 +8325,6 @@ def _health(
     except httpx.HTTPError:
         return False, 0
     return response.status_code == 200, response.status_code
-
 
 _artifact_only_http_probe = agent_resources.artifact_only_http_probe
 
@@ -8461,9 +8432,13 @@ def _verify_artifact_only_live(
         f"state_sha256={result['state_sha256']}"
     )
 
-
 @app.command("preflight")
 def preflight_cmd(
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="Configured project alias whose writable S3 must be verified.",
+    ),
     ssh_public_key_path: str = typer.Option(
         "~/.ssh/id_ed25519.pub",
         "--ssh-public-key-path",
@@ -8472,37 +8447,247 @@ def preflight_cmd(
     skip_nebius: bool = typer.Option(
         False, "--skip-nebius", help="Skip the live Nebius authentication check."
     ),
+    agent_only: bool = typer.Option(False, "--agent-only"),
     output_json: bool = typer.Option(False, "--json", help="Print the report as JSON."),
 ) -> None:
     """Check Route C prerequisites before `npa agent deploy` / `fresh-setup`.
 
     Validates terraform, the SSH key pair, Nebius authentication, and the Token
-    Factory key with no cloud side effects, so late failures (which auto-roll-back
-    a freshly provisioned VM) surface up front. Exits non-zero on any FAIL.
+    Factory key with no cloud side effects. The Terraform check includes the
+    current-platform provider lock; the storage check executes the exact
+    health-verified credential selection deploy will reuse, without listing or
+    rotating IAM access keys. Exits non-zero on any FAIL.
     """
     results = list(_agent_hard_prereq_results(ssh_public_key_path))
     if not skip_nebius:
         results.append(_agent_nebius_auth_result())
+        try:
+            saved = resolve_environment(project or None)
+        except Exception:  # noqa: BLE001 - the shared result reports missing identity
+            saved = None
+        project_alias = _resolve_project_alias(project)
+        results.append(
+            _agent_whole_path_capacity_result(
+                str(getattr(saved, "project_id", "") or ""),
+                str(getattr(saved, "tenant_id", "") or ""),
+                str(getattr(saved, "region", "") or ""),
+                agent_exists=bool(
+                    _agent_record(project_alias, DEFAULT_AGENT_NAME).get("public_ip")
+                ),
+                include_paidf=not agent_only,
+            )
+        )
+    results.append(_agent_ssh_egress_result())
+    results.append(_agent_storage_result(project))
     results.append(_agent_token_factory_result())
     has_fail = _render_agent_checks(results, output_json=output_json)
     if has_fail:
         raise typer.Exit(code=1)
 
 
+def _transactional_agent_command(command: str):
+    """Run nested agent entrypoints in one durable operation context."""
+
+    def decorate(function):
+        signature = inspect.signature(function)
+
+        @functools.wraps(function)
+        def wrapped(*args, **kwargs):
+            parent = current_operation()
+            if parent is not None:
+                return function(*args, **kwargs)
+            bound = signature.bind_partial(*args, **kwargs)
+            bound.apply_defaults()
+            project = _resolve_project_alias(str(bound.arguments.get("project") or ""))
+            name = str(bound.arguments.get("name") or DEFAULT_AGENT_NAME).strip()
+            project_id = str(bound.arguments.get("project_id") or "").strip()
+            tenant_id = str(bound.arguments.get("tenant_id") or "").strip()
+            region = str(bound.arguments.get("region") or "").strip()
+            try:
+                saved = resolve_environment(project)
+            except ConfigError:
+                saved = None
+            if saved is not None:
+                project_id = project_id or saved.project_id
+                tenant_id = tenant_id or saved.tenant_id
+                region = saved.region or region
+            resume_argv = shlex.split(command) + ["--project", project, "--name", name]
+            for argument, flag, effective in (
+                ("project_id", "--project-id", project_id),
+                ("tenant_id", "--tenant-id", tenant_id),
+                ("region", "--region", region),
+                ("ssh_user", "--ssh-user", bound.arguments.get("ssh_user")),
+                (
+                    "ssh_public_key_path",
+                    "--ssh-public-key-path",
+                    bound.arguments.get("ssh_public_key_path"),
+                ),
+                ("agent_port", "--agent-port", bound.arguments.get("agent_port")),
+                ("backend_port", "--backend-port", bound.arguments.get("backend_port")),
+                ("rerun_port", "--rerun-port", bound.arguments.get("rerun_port")),
+                ("llm_model", "--llm-model", bound.arguments.get("llm_model")),
+                (
+                    "foxglove_embed_src",
+                    "--foxglove-embed-src",
+                    bound.arguments.get("foxglove_embed_src"),
+                ),
+                (
+                    "foxglove_org_slug",
+                    "--foxglove-org-slug",
+                    bound.arguments.get("foxglove_org_slug"),
+                ),
+                (
+                    "foxglove_live_url",
+                    "--foxglove-live-url",
+                    bound.arguments.get("foxglove_live_url"),
+                ),
+            ):
+                if argument in bound.arguments and effective not in (None, ""):
+                    resume_argv.extend([flag, str(effective)])
+            for model in _coerce_cli_list(bound.arguments.get("llm_models")):
+                resume_argv.extend(["--llm-models", str(model)])
+            from npa.provisioning_journal import operation_contains_secret
+
+            for tf_value in _coerce_cli_list(bound.arguments.get("tf_var")):
+                if operation_contains_secret([str(tf_value)]):
+                    raise ValueError(
+                        "Secret-shaped --tf-var values cannot be persisted in a crash-safe "
+                        "recovery plan; use the supported credential store instead."
+                    )
+                resume_argv.extend(["--tf-var", str(tf_value)])
+            if bool(bound.arguments.get("no_public_https")):
+                resume_argv.append("--no-public-https")
+            if bool(bound.arguments.get("agent_only")):
+                resume_argv.append("--agent-only")
+            if "wait_ssh" in bound.arguments:
+                resume_argv.append(
+                    "--wait-ssh"
+                    if bool(bound.arguments.get("wait_ssh"))
+                    else "--no-wait-ssh"
+                )
+            destroy_argv = [
+                "npa",
+                "agent",
+                "destroy",
+                "--project",
+                project,
+                "--name",
+                name,
+                "--yes",
+            ]
+            operation = ProvisioningOperation.prepare(
+                command=command,
+                project_alias=project,
+                project_id=project_id,
+                tenant_id=tenant_id,
+                region=region,
+                resource_type="agent",
+                requested_name=name,
+                ownership_source="agent-cli",
+                resume_command="",
+                destroy_command="",
+                resume_argv=resume_argv,
+                destroy_argv=destroy_argv,
+            )
+            exact_destroy_argv = [
+                "npa",
+                "agent",
+                "destroy",
+                "--operation-id",
+                operation.operation_id,
+                "--name",
+                name,
+                "--yes",
+            ]
+            if project_id:
+                exact_destroy_argv.extend(["--project-id", project_id])
+            if tenant_id:
+                exact_destroy_argv.extend(["--tenant-id", tenant_id])
+            if region:
+                exact_destroy_argv.extend(["--region", region])
+            operation.set_recovery_commands(
+                resume_argv=resume_argv, destroy_argv=exact_destroy_argv
+            )
+            with operation_context(operation):
+                try:
+                    result = function(*args, **kwargs)
+                except BaseException as exc:
+                    tf_dir = provisioner.working_dir_path(project, name)
+                    for candidate in (
+                        tf_dir / "errored.tfstate",
+                        tf_dir / "terraform.tfstate",
+                    ):
+                        if candidate.is_file():
+                            operation.preserve_state_file(
+                                candidate, name=candidate.stem
+                            )
+                    phase = str(operation.read().get("phase") or "")
+                    if phase == "prepared":
+                        operation.transition(
+                            "rolled-back",
+                            error=str(exc),
+                            details={
+                                "error_type": type(exc).__name__,
+                                "mutation_started": False,
+                            },
+                        )
+                    elif phase not in {
+                        "recovery-required",
+                        "rollback-incomplete",
+                        "rolled-back",
+                    }:
+                        operation.transition(
+                            "recovery-required",
+                            error=str(exc),
+                            details={"error_type": type(exc).__name__},
+                        )
+                    typer.echo(emit_recovery_summary(operation), err=True)
+                    raise
+                phase = str(operation.read().get("phase") or "")
+                if phase == "resource-created":
+                    operation.transition("state-durable", details={"verified": True})
+                operation.commit()
+                return result
+
+        return wrapped
+
+    return decorate
+
+
 @app.command("deploy")
-@_serialized_agent_lifecycle
+@resolve_typer_defaults
+@_transactional_agent_command("npa agent deploy")
 def deploy_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias to store config under."),
-    name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="NPA project alias to store config under (default: configured default_project).",
+    ),
+    name: str = typer.Option(
+        DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."
+    ),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
     region: str = typer.Option("eu-north1", "--region", help="Nebius region."),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
-    ssh_public_key_path: str = typer.Option("~/.ssh/id_ed25519.pub", "--ssh-public-key-path", help="SSH public key path for Terraform."),
-    tf_var: list[str] = typer.Option([], "--tf-var", help="Additional Terraform var key=value."),
-    agent_port: int = typer.Option(DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."),
-    backend_port: int = typer.Option(DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."),
-    rerun_port: int = typer.Option(DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."),
+    ssh_public_key_path: str = typer.Option(
+        "~/.ssh/id_ed25519.pub",
+        "--ssh-public-key-path",
+        help="SSH public key path for Terraform.",
+    ),
+    tf_var: list[str] = typer.Option(
+        [], "--tf-var", help="Additional Terraform var key=value."
+    ),
+    agent_only: bool = typer.Option(False, "--agent-only", help="Provision agent only."),
+    agent_port: int = typer.Option(
+        DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."
+    ),
+    backend_port: int = typer.Option(
+        DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."
+    ),
+    rerun_port: int = typer.Option(
+        DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."
+    ),
     llm_model: str = typer.Option(
         DEFAULT_LLM_MODEL,
         "--llm-model",
@@ -8536,38 +8721,34 @@ def deploy_cmd(
         "--no-public-https",
         help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
     ),
-    workspace_label: str = typer.Option(
-        "NPA Workbench",
-        "--workspace-label",
-        help="Non-secret workspace identity displayed with immutable Git provenance.",
-    ),
-    stock_demo: bool = typer.Option(
+    wait_ssh: bool = typer.Option(
         True,
-        "--stock-demo/--no-stock-demo",
-        help="Preload the stock Franka recording and history entry on startup.",
+        "--wait-ssh/--no-wait-ssh",
+        help=(
+            "Wait for the new VM's SSH and cloud-init before finishing (default). "
+            "--no-wait-ssh keeps the VM when this machine cannot reach a fresh "
+            "public IP on tcp/22 (VPN / split tunnel): it still bootstraps, but "
+            "npa cannot verify it, so check https://<ip>/healthz yourself."
+        ),
     ),
 ) -> None:
     """Provision VM + bootstrap the public NPA agent stack."""
-    try:
-        deployment = build_deployment_manifest(
-            project_alias=project,
-            name=name,
-            workspace_label=normalize_workspace_label(workspace_label),
-        )
-        existing = _agent_record(project, name)
-        if existing:
-            assert_record_ownership(existing, deployment)
-            _verify_agent_record_remote_owner(
-                existing, deployment, ssh_user=ssh_user
-            )
-        elif _agent_terraform_state_exists(project, name):
-            raise DeploymentIdentityError(
-                "Terraform state exists without an immutable agent record; "
-                "refusing to apply or adopt this namespace"
-            )
-        fresh_deployment = not bool(existing)
-    except DeploymentIdentityError as exc:
-        _fail(str(exc))
+    # Same resolution as status/destroy: an omitted --project must mean the
+    # operator's configured default_project. Deploying under the static
+    # us-central1 alias while status/destroy looked at the configured default left
+    # the agent unreachable by name — and destroy then reported success on an
+    # empty state while the real VM and its public IP kept running.
+    project = _resolve_project_alias(project)
+    # deploy_cmd is also called programmatically (fresh-setup, `agent setup`
+    # wrappers). Coerce list-valued options so an unresolved Typer default
+    # (OptionInfo) can never crash `for item in tf_var` / `list(llm_models)`.
+    tf_var = _coerce_cli_list(tf_var)
+    llm_models = _coerce_cli_list(llm_models)
+    # Expand ``~`` up front so the absolute path flows into Terraform vars and
+    # outputs (e.g. ssh_key_path). Terraform reads the key with pathexpand, but
+    # the raw var also lands in outputs consumed downstream, where an unexpanded
+    # ``~`` breaks non-shell consumers.
+    ssh_public_key_path = str(Path(ssh_public_key_path).expanduser())
     profile = os.environ.get("NPA_NEBIUS_PROFILE", "").strip()
     if profile and shutil.which("nebius"):
         subprocess.run(["nebius", "profile", "activate", profile], check=False)
@@ -8583,39 +8764,154 @@ def deploy_cmd(
     if not env_project_id or not env_tenant_id or not env_region:
         _fail("--project-id, --tenant-id, and --region are required")
 
-    # Fail fast on cheap, side-effect-free prerequisites BEFORE any cloud IAM
-    # side effects or Terraform apply: a missing terraform binary or SSH key
-    # otherwise surfaces mid-run (as a raw Terraform file() error or a late
-    # provisioner failure) after infrastructure has already been touched. Surface
-    # the Token Factory warning here too, rather than only after the VM exists.
+    # Compute placement follows the project's own region, not the --region flag
+    # (whose default can mismatch the project, e.g. alias us-central1 + default
+    # eu-north1). Resolve the project's real region and prefer it so the quota
+    # check, storage endpoint, and cloud-init all target where the VM lands.
+    try:
+        from npa.clients.nebius import get_project_region
+
+        real_region = get_project_region(env_project_id)
+    except Exception:  # noqa: BLE001
+        real_region = ""
+    if real_region and real_region != env_region:
+        typer.echo(
+            f"  Note: project {env_project_id} is in region {real_region!r}; using it "
+            f"instead of {env_region!r} (compute placement follows the project).",
+            err=True,
+        )
+        env_region = real_region
+
+    # Capacity is the first provider-backed gate. A quota/RBAC failure must not
+    # be preceded by the writable-storage probe (which briefly writes an S3
+    # object) or by Terraform/bootstrap activity.
+    _agent_exists = bool(_agent_record(project, name).get("public_ip"))
+    try:
+        _agent_check_whole_path_capacity(
+            env_project_id,
+            env_tenant_id,
+            env_region,
+            agent_exists=_agent_exists,
+            include_paidf=not agent_only,
+        )
+    except Exception as exc:
+        _fail(str(exc))
+
+    operation = current_operation()
+    if operation is not None:
+        operation.update_identity(
+            project_alias=project,
+            project_id=env_project_id,
+            tenant_id=env_tenant_id,
+            region=env_region,
+            allow_region_correction=True,
+        )
+        from npa.clients.config import CONFIG_PATH
+        from npa.clients.credentials import (
+            CREDENTIALS_PATH,
+            preflight_private_yaml_store,
+        )
+
+        preflight_private_yaml_store(CONFIG_PATH)
+        preflight_private_yaml_store(CREDENTIALS_PATH)
+
+    # Fail before IAM/Terraform. Storage writes and removes one isolated probe;
+    # missing binaries, SSH, or writable storage otherwise surface after cloud
+    # changes. Surface the Token Factory warning before the VM exists too.
     # Resolve the deploy LLM creds once and thread them through to the VM
     # bootstrap below.
     tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
     prereq_results = _agent_hard_prereq_results(ssh_public_key_path)
+    prereq_results.append(_agent_storage_result(project, env_region, name))
     tf_key_result = _agent_token_factory_result(tf_api_key)
     for result in prereq_results:
         if result.status == "FAIL":
             _fail(f"{result.summary} {result.remedy}".strip())
-    if tf_key_result.status == "WARN":
-        typer.echo(f"  Warning: {tf_key_result.summary}", err=True)
-        typer.echo(f"           {tf_key_result.remedy}", err=True)
+    # The deploy waits for the new VM's tcp/22 from this machine, so say up front
+    # when this host cannot open outbound SSH at all — otherwise that shows up as a
+    # five-minute wait and a rollback of a perfectly healthy VM.
+    for warn_result in (tf_key_result, _agent_ssh_egress_result()):
+        if warn_result.status == "WARN":
+            typer.echo(f"  Warning: {warn_result.summary}", err=True)
+            typer.echo(f"           {warn_result.remedy}", err=True)
 
-    from npa.clients.nebius import NebiusError, bootstrap_agent_environment, get_iam_token
+    # Mark mutation only immediately before the first provider/storage action.
+    if operation is not None:
+        operation.transition("mutating")
+
+    from npa.clients.nebius import (
+        NebiusError,
+        bootstrap_agent_environment,
+        get_iam_token,
+    )
 
     try:
+        configured_storage = _resolve_deploy_storage_credentials(
+            region=env_region,
+            project_alias=project,
+        )
+        if operation is not None:
+            from npa.clients.storage_validation import (
+                terraform_backend_fingerprint,
+                terraform_state_key,
+            )
+
+            backend_key = terraform_state_key(project, name)
+            operation.update_identity(
+                backend={
+                    "bucket": str(configured_storage.get("s3_bucket", "")),
+                    "endpoint": str(configured_storage.get("s3_endpoint", "")),
+                    "region": env_region,
+                    "state_key": backend_key,
+                    "addressing_style": "path",
+                    "credential_source": "project_resolver",
+                    "config_fingerprint": terraform_backend_fingerprint(
+                        bucket=str(configured_storage.get("s3_bucket", "")),
+                        state_key=backend_key,
+                        endpoint_url=str(configured_storage.get("s3_endpoint", "")),
+                        access_key_id=str(configured_storage.get("nebius_api_key", "")),
+                        secret_access_key=str(
+                            configured_storage.get("nebius_secret_key", "")
+                        ),
+                        region=env_region,
+                    ),
+                }
+            )
+            operation.record_resource(
+                resource_type="storage_bucket",
+                requested_name=str(configured_storage.get("s3_bucket", "")),
+                ownership="adopted",
+                ownership_source="configured-project-storage-write-probe",
+                project_id=env_project_id,
+            )
+
+        def _record_created_agent_resource(kind: str, metadata: dict[str, str]) -> None:
+            if operation is None:
+                return
+            operation.record_resource(
+                resource_type=f"agent_{kind}",
+                requested_name=str(metadata.get("name") or metadata.get("id") or kind),
+                provider_id=str(metadata.get("id") or ""),
+                ownership="created_by_this_operation",
+                ownership_source="agent-bootstrap-create-callback",
+                project_id=env_project_id,
+            )
+
         creds = bootstrap_agent_environment(
             env_project_id,
             env_tenant_id,
             env_region,
             on_status=lambda msg: typer.echo(f"  {msg}"),
+            on_resource_created=_record_created_agent_resource,
+            reuse_storage_credentials=configured_storage,
         )
-        creds = _resolve_deploy_storage_credentials(
-            region=env_region,
-            bootstrap_creds=creds,
-            project_alias=project,
-        )
-        iam_token = get_iam_token()
-    except NebiusError as exc:
+        # Bootstrap already resolves the operator token and returns it with the
+        # provider credentials.  Reuse that exact result so deploy does not make
+        # a second, environment-dependent CLI/profile lookup after successful
+        # bootstrap.  The fallback preserves compatibility with older/custom
+        # bootstrap implementations that omitted ``iam_token``.
+        iam_token = str(creds.get("iam_token") or "").strip() or get_iam_token()
+    except (AgentStorageCredentialError, NebiusError) as exc:
         _fail(f"Nebius bootstrap failed: {exc}")
 
     public_https = not no_public_https
@@ -8641,13 +8937,30 @@ def deploy_cmd(
             if extra_ingress_ports
             else "[]"
         ),
-        "workbench_type": "lerobot",
+        "workbench_type": "agent",
         "gpu_platform": "cpu-d3",
         "gpu_preset": "8vcpu-32gb",
+        "image_family": DEFAULT_AGENT_IMAGE_FAMILY,
         "ssh_user": ssh_user,
         "ssh_public_key_path": ssh_public_key_path,
         "enable_preemptible": "false",
+        "wait_for_ssh": "true" if wait_ssh else "false",
     }
+    operation = current_operation()
+    if operation is not None:
+        operation.update_identity(
+            project_alias=project,
+            project_id=env_project_id,
+            tenant_id=env_tenant_id,
+            region=env_region,
+            backend={
+                "bucket": str(creds.get("s3_bucket", "")),
+                "endpoint": str(creds.get("s3_endpoint", "")),
+                "region": env_region,
+            },
+            allow_region_correction=True,
+        )
+        merged_vars["operation_id"] = operation.operation_id
     for item in tf_var:
         if "=" not in item:
             _fail(f"Invalid --tf-var value {item!r}; expected key=value")
@@ -8657,6 +8970,12 @@ def deploy_cmd(
         _ensure_terraform_state_bucket(
             project_id=env_project_id,
             bucket_name=str(merged_vars.get("s3_bucket", "")),
+            endpoint=str(merged_vars.get("s3_endpoint", "")),
+            access_key=str(merged_vars.get("nebius_api_key", "")),
+            secret_key=str(merged_vars.get("nebius_secret_key", "")),
+            region=env_region,
+            project_alias=project,
+            agent_name=name,
         )
     except NebiusError as exc:
         _fail(f"Unable to provision Terraform state bucket: {exc}")
@@ -8667,56 +8986,116 @@ def deploy_cmd(
         region=env_region,
         merged_vars=merged_vars,
     )
+    terraform_vars = dict(merged_vars)
+    for credential_key in (
+        "nebius_api_key",
+        "nebius_secret_key",
+        "s3_session_token",
+    ):
+        terraform_vars.pop(credential_key, None)
 
     tf_outputs: dict[str, Any] = {}
-    try:
-        tf_outputs = _apply_agent_terraform(
-            project=project,
-            name=name,
-            merged_vars=merged_vars,
-            env_region=env_region,
-            require_empty_state=fresh_deployment,
+    typer.echo(
+        "  Phase 1/4: applying agent VM infrastructure (Terraform streams its own progress)."
+    )
+    if operation is not None:
+        operation.checkpoint(
+            "vm_mutation_started",
+            {
+                "setup_phase": "vm_mutation_started",
+                "project_id": env_project_id,
+                "requested_name": name,
+            },
         )
-    except DeploymentIdentityError as exc:
-        _fail(str(exc))
+    try:
+        with operation_heartbeats(
+            operation,
+            phase="terraform_apply",
+            emit=lambda payload: typer.echo(
+                "progress: " + json.dumps(payload, sort_keys=True), err=True
+            ),
+        ):
+            tf_outputs = _apply_agent_terraform(
+                project=project,
+                name=name,
+                merged_vars=terraform_vars,
+                env_region=env_region,
+                backend_credentials={
+                    "access_key": str(creds.get("nebius_api_key", "")),
+                    "secret_key": str(creds.get("nebius_secret_key", "")),
+                    "session_token": str(creds.get("s3_session_token", "")),
+                },
+            )
     except ProvisionerError as exc:
-        if fresh_deployment:
-            try:
-                _destroy_agent_terraform(project, name)
-            except ProvisionerError as cleanup_exc:
-                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        hint = _agent_deploy_failure_hint(str(exc))
+        if hint:
+            # Print the concise diagnosis last (the raw Terraform output already
+            # streamed above), so it is the final thing the operator sees.
+            _fail(hint)
         _fail(f"Terraform deploy failed: {exc}")
+
+    operation = current_operation()
+    if operation is not None and operation.read().get("phase") == "mutating":
+        # Mocked/embedded provisioners may return already-verified outputs without
+        # calling the Terraform wrapper that normally records this transition.
+        operation.transition("resource-created", details={"terraform": "completed"})
+        operation.transition("state-durable", details={"state": "provider-verified"})
+
+    typer.echo("  Phase 2/4: Terraform complete; resolving the new VM endpoint.")
 
     public_ip = str(tf_outputs.get("vm_ip", ""))
     instance_id = str(tf_outputs.get("instance_id", ""))
-    ssh_key_path = str(tf_outputs.get("ssh_key_path", "") or ssh_public_key_path.removesuffix(".pub"))
+    ssh_key_path = str(
+        tf_outputs.get("ssh_key_path", "") or ssh_public_key_path.removesuffix(".pub")
+    )
     if not _is_routable_public_ip(public_ip):
-        if fresh_deployment:
-            try:
-                _destroy_agent_terraform(
-                    project,
-                    name,
-                    record={"instance_id": instance_id, "project_id": env_project_id, "region": env_region},
-                )
-            except ProvisionerError as cleanup_exc:
-                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        try:
+            _destroy_agent_terraform(
+                project,
+                name,
+                record={
+                    "instance_id": instance_id,
+                    "project_id": env_project_id,
+                    "region": env_region,
+                },
+                rollback_operation=True,
+            )
+        except ProvisionerError as cleanup_exc:
+            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail("Terraform output did not include a routable public IP")
 
-    auth_password = secrets.token_urlsafe(18)
-    auth_path = _write_auth_secret(
-        project_alias=project,
-        name=name,
-        user=DEFAULT_AGENT_USER,
-        password=auth_password,
+    prior_record = _agent_record(project, name)
+    prior_matches = bool(
+        prior_record
+        and str(prior_record.get("project_id") or "") == env_project_id
+        and str(prior_record.get("instance_id") or "") == instance_id
+        and str(prior_record.get("public_ip") or "") == public_ip
     )
+    if prior_matches:
+        try:
+            _prior_user, auth_password = _load_auth_secret(
+                str(prior_record.get("auth_secret_path") or "")
+            )
+            auth_path = Path(str(prior_record.get("auth_secret_path") or ""))
+        except ValueError:
+            prior_matches = False
+    if not prior_matches:
+        auth_password = secrets.token_urlsafe(18)
+        auth_path = _write_auth_secret(
+            project_alias=project,
+            name=name,
+            user=DEFAULT_AGENT_USER,
+            password=auth_password,
+        )
     # tf_api_key / default_llm_model were resolved once up front (before Terraform).
     configured_llm_model = str(llm_model or "").strip() or default_llm_model
     # With no explicit --llm-models, seed the cost-ordered default ladder so
     # per-turn routing can reach every tier (cheap/standard/reasoning/vision)
     # out of the box. An explicit --llm-models acts as a governance allowlist.
     extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
-    configured_llm_models = _normalize_llm_models([configured_llm_model, *extra_llm_models])
-    nebius_ai_key, _ = _resolve_operator_credentials()
+    configured_llm_models = _normalize_llm_models(
+        [configured_llm_model, *extra_llm_models]
+    )
     # A missing Token Factory key is already surfaced up front (before Terraform)
     # by the deploy prerequisite check above.
     rollback_record = {
@@ -8725,50 +9104,132 @@ def deploy_cmd(
         "region": env_region,
         "service_account_id": str(creds.get("service_account_id", "")),
     }
-    try:
-        _bootstrap_agent_stack(
-            host=public_ip,
-            ssh_user=ssh_user,
-            ssh_key_path=ssh_key_path,
-            project_alias=project,
-            agent_name=name,
-            project_id=env_project_id,
-            tenant_id=env_tenant_id,
-            region=env_region,
-            auth_user=DEFAULT_AGENT_USER,
-            auth_password=auth_password,
-            agent_port=agent_port,
-            backend_port=backend_port,
-            rerun_port=rerun_port,
-            llm_model=configured_llm_model,
-            llm_models=configured_llm_models,
-            tf_api_key=tf_api_key,
-            nebius_ai_key=nebius_ai_key,
-            s3_bucket=str(merged_vars.get("s3_bucket", "")),
-            s3_prefix=str(merged_vars.get("s3_prefix", "")),
-            s3_endpoint=str(merged_vars.get("s3_endpoint", "")),
-            s3_access_key=str(merged_vars.get("nebius_api_key", "")),
-            s3_secret_key=str(merged_vars.get("nebius_secret_key", "")),
-            s3_region=env_region,
-            nebius_project_id=env_project_id,
-            nebius_tenant_id=env_tenant_id,
-            service_account_id=str(creds.get("service_account_id", "")),
-            public_https=public_https,
-            foxglove_embed_src=foxglove_embed_src,
-            foxglove_org_slug=foxglove_org_slug,
-            foxglove_live_url=foxglove_live_url,
-            deployment=deployment,
-            preload_stock_demo=stock_demo,
+    partial_urls = build_agent_urls(
+        public_ip, agent_port=agent_port, public_https=public_https
+    )
+    partial_record = {
+        **partial_urls,
+        "project_alias": project,
+        "name": name,
+        "project_id": env_project_id,
+        "tenant_id": env_tenant_id,
+        "region": env_region,
+        "public_ip": public_ip,
+        "instance_id": instance_id,
+        "auth_user": DEFAULT_AGENT_USER,
+        "auth_secret_path": str(auth_path),
+        "ssh_key_path": ssh_key_path,
+        "public_https": public_https,
+        "setup_state": "remote_bootstrap_pending",
+        "service_account_id": str(creds.get("service_account_id", "")),
+    }
+    _store_agent_record(project, name, partial_record)
+    if operation is not None:
+        operation.checkpoint(
+            "vm_identity_durable",
+            {
+                "setup_phase": "vm_identity_durable",
+                "instance_id": instance_id,
+                "endpoint": public_ip,
+                "auth_identity": DEFAULT_AGENT_USER,
+            },
         )
-    except DeploymentIdentityError as exc:
-        _fail(f"VM ownership verification failed: {exc}")
-    except (ConfigError, SSHError, ValueError) as exc:
-        if fresh_deployment:
-            try:
-                _destroy_agent_terraform(project, name, record=rollback_record)
-            except ProvisionerError as cleanup_exc:
-                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
-        _fail(f"VM bootstrap failed: {exc}")
+    prior_setup_state = str((prior_record or {}).get("setup_state") or "")
+    typer.echo(
+        "  Phase 3/4: reconciling or installing agent services over SSH; "
+        "package and image setup can be quiet for several minutes; secret-free "
+        "progress heartbeats continue during remote work. Diagnose remotely with "
+        f"`ssh -i {ssh_key_path} {ssh_user}@{public_ip} sudo "
+        "journalctl -u cloud-final -u npa-agent-backend -n 100`."
+    )
+    convergence = converge_remote_agent_setup(
+        operation=operation,
+        resuming=prior_matches
+        and prior_setup_state
+        in {"remote_bootstrap_pending", "reconciliation_indeterminate"},
+        bootstrap=_bootstrap_agent_stack,
+        reconcile=_reconcile_agent_setup,
+        bootstrap_kwargs={
+            "instance_id": instance_id,
+            "host": public_ip,
+            "ssh_user": ssh_user,
+            "ssh_key_path": ssh_key_path,
+            "project_alias": project,
+            "agent_name": name,
+            "project_id": env_project_id,
+            "tenant_id": env_tenant_id,
+            "region": env_region,
+            "auth_user": DEFAULT_AGENT_USER,
+            "auth_password": auth_password,
+            "agent_port": agent_port,
+            "backend_port": backend_port,
+            "rerun_port": rerun_port,
+            "llm_model": configured_llm_model,
+            "llm_models": configured_llm_models,
+            "tf_api_key": tf_api_key,
+            "s3_bucket": str(merged_vars.get("s3_bucket", "")),
+            "s3_prefix": str(merged_vars.get("s3_prefix", "")),
+            "s3_endpoint": str(merged_vars.get("s3_endpoint", "")),
+            "s3_access_key": str(merged_vars.get("nebius_api_key", "")),
+            "s3_secret_key": str(merged_vars.get("nebius_secret_key", "")),
+            "s3_region": env_region,
+            "nebius_project_id": env_project_id,
+            "nebius_tenant_id": env_tenant_id,
+            "service_account_id": str(creds.get("service_account_id", "")),
+            "public_https": public_https,
+            "foxglove_embed_src": foxglove_embed_src,
+            "foxglove_org_slug": foxglove_org_slug,
+            "foxglove_live_url": foxglove_live_url,
+        },
+        reconcile_kwargs={
+            "host": public_ip,
+            "ssh_user": ssh_user,
+            "ssh_key_path": ssh_key_path,
+            "project_alias": project,
+            "agent_name": name,
+            "project_id": env_project_id,
+            "auth_user": DEFAULT_AGENT_USER,
+            "auth_password": auth_password,
+            "agent_port": agent_port,
+            "public_https": public_https,
+        },
+        persist_pending=lambda state: _store_agent_record(
+            project, name, {**partial_record, "setup_state": state}
+        ),
+        status=lambda message: typer.echo(f"  {message}"),
+        progress=lambda payload: typer.echo(
+            "progress: " + json.dumps(payload, sort_keys=True), err=True
+        ),
+        transport_errors=(ConfigError, SSHError, ValueError),
+    )
+    reconciliation = convergence.evidence
+    bootstrap_error = convergence.primary_error
+    if reconciliation.get("state") == "healthy":
+        if bootstrap_error is not None:
+            typer.echo(
+                "  Remote reconciliation adopted the healthy agent after the local "
+                "transport ended without a success response.",
+                err=True,
+            )
+    elif bootstrap_error is not None:
+        # The VM identity is durable and may already have been mutated.  Preserve
+        # it for exact resume; a transport error is not authority to destroy it.
+        _fail(
+            "VM bootstrap transport failed and exact remote reconciliation is "
+            f"{reconciliation.get('state', 'indeterminate')}; rerun `npa agent "
+            f"fresh-setup --project {project} --name {name} ...` to resume the "
+            "first incomplete phase. The healthy VM will not be replaced. "
+            f"Primary transport error: {type(bootstrap_error).__name__}"
+        )
+    else:
+        _fail(
+            "remote bootstrap returned success but health reconciliation is "
+            f"{reconciliation.get('state', 'indeterminate')}; the operation remains resumable"
+        )
+
+    typer.echo(
+        "  Phase 4/4 probe: remote installer completed; checking ingress and service health."
+    )
 
     ingress_ports: list[int] = [agent_port, rerun_port]
     if public_https:
@@ -8776,15 +9237,18 @@ def deploy_cmd(
     try:
         ensure_ingress(vm_id=instance_id, ports=tuple(ingress_ports), tool="agent")
     except NetworkIngressError as exc:
-        if fresh_deployment:
-            try:
-                _destroy_agent_terraform(project, name, record=rollback_record)
-            except ProvisionerError as cleanup_exc:
-                typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
+        try:
+            _destroy_agent_terraform(
+                project,
+                name,
+                record=rollback_record,
+                rollback_operation=True,
+            )
+        except ProvisionerError as cleanup_exc:
+            typer.echo(f"  Warning: terraform rollback failed: {cleanup_exc}", err=True)
         _fail(f"npa network ensure-ingress failed: {exc}")
 
     urls = build_agent_urls(public_ip, agent_port=agent_port, public_https=public_https)
-    agent_credentials = _agent_credentials_payload(creds)
     record = AgentConfig(
         project_alias=project,
         name=name,
@@ -8808,11 +9272,29 @@ def deploy_cmd(
         direct_url=urls["direct_url"],
         ssh_key_path=ssh_key_path,
         service_account_id=str(creds.get("service_account_id", "")),
-        credentials=agent_credentials,
-        deployment=deployment,
-        preload_stock_demo=stock_demo,
     )
-    _store_agent_record(project, name, record.to_dict())
+    final_record = record.to_dict()
+    final_record["setup_state"] = "healthy"
+    final_record["setup_evidence"] = {
+        key: reconciliation.get(key)
+        for key in (
+            "state",
+            "service_fingerprint",
+            "credential_fingerprint",
+            "models_healthy",
+            "remote_phase",
+        )
+    }
+    _store_agent_record(project, name, final_record)
+    if operation is not None:
+        operation.checkpoint(
+            "health_verified",
+            {
+                **reconciliation,
+                "setup_phase": "health_verified",
+                "instance_id": instance_id,
+            },
+        )
     _persist_agent_project_config(
         project=project,
         project_id=env_project_id,
@@ -8841,18 +9323,38 @@ def deploy_cmd(
 
 
 @app.command("fresh-setup")
+@resolve_typer_defaults
+@_transactional_agent_command("npa agent fresh-setup")
 def fresh_setup_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias for this fresh environment."),
-    name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="NPA project alias for this fresh environment (default: configured default_project).",
+    ),
+    name: str = typer.Option(
+        DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."
+    ),
     project_id: str = typer.Option(..., "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option(..., "--tenant-id", help="Nebius tenant ID."),
     region: str = typer.Option("eu-north1", "--region", help="Nebius region."),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
-    ssh_public_key_path: str = typer.Option("~/.ssh/id_ed25519.pub", "--ssh-public-key-path", help="SSH public key path for Terraform."),
-    tf_var: list[str] = typer.Option([], "--tf-var", help="Additional Terraform var key=value."),
-    agent_port: int = typer.Option(DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."),
-    backend_port: int = typer.Option(DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."),
-    rerun_port: int = typer.Option(DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."),
+    ssh_public_key_path: str = typer.Option(
+        "~/.ssh/id_ed25519.pub",
+        "--ssh-public-key-path",
+        help="SSH public key path for Terraform.",
+    ),
+    tf_var: list[str] = typer.Option(
+        [], "--tf-var", help="Additional Terraform var key=value."
+    ),
+    agent_port: int = typer.Option(
+        DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."
+    ),
+    backend_port: int = typer.Option(
+        DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."
+    ),
+    rerun_port: int = typer.Option(
+        DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."
+    ),
     llm_model: str = typer.Option(
         DEFAULT_LLM_MODEL,
         "--llm-model",
@@ -8873,26 +9375,31 @@ def fresh_setup_cmd(
         "--replace",
         help="Destroy an existing agent with the same project/name before fresh deploy.",
     ),
-    workspace_label: str = typer.Option(
-        "NPA Workbench",
-        "--workspace-label",
-        help="Non-secret workspace identity displayed with immutable Git provenance.",
-    ),
-    stock_demo: bool = typer.Option(
-        True,
-        "--stock-demo/--no-stock-demo",
-        help="Preload the stock Franka recording and history entry on startup.",
-    ),
 ) -> None:
     """Initialize fresh project config and deploy a new agent from scratch."""
+    project = _resolve_project_alias(project)
     existing = _agent_record(project, name)
-    if existing and not replace:
+    existing_setup = str(existing.get("setup_state") or "") if existing else ""
+    resumable_existing = bool(
+        existing
+        and existing_setup
+        in {"remote_bootstrap_pending", "reconciliation_indeterminate"}
+        and str(existing.get("project_id") or "") == project_id.strip()
+        and str(existing.get("tenant_id") or "") == tenant_id.strip()
+    )
+    if existing and not replace and not resumable_existing:
         _fail(
             f"Agent {project}/{name} already exists. Use --replace or choose a new --project/--name."
         )
     if existing and replace:
         typer.echo(f"Replacing existing agent {project}/{name} ...")
         destroy_cmd(project=project, name=name)
+    elif resumable_existing:
+        typer.echo(
+            f"Resuming the exact incomplete agent setup for {project}/{name}; "
+            "the existing VM will be reconciled and retained.",
+            err=True,
+        )
     _store_project_environment(
         project=project,
         project_id=project_id.strip(),
@@ -8914,22 +9421,148 @@ def fresh_setup_cmd(
         llm_model=llm_model,
         llm_models=llm_models,
         no_public_https=no_public_https,
-        workspace_label=workspace_label,
-        stock_demo=stock_demo,
+    )
+
+
+@app.command("setup")
+@resolve_typer_defaults
+def setup_cmd(
+    name: str = typer.Option(
+        DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."
+    ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="NPA project alias to deploy into (default: interactive pick from `npa configure`).",
+    ),
+    ssh_public_key_path: str = typer.Option(
+        "~/.ssh/id_ed25519.pub",
+        "--ssh-public-key-path",
+        help="SSH public key for the VM.",
+    ),
+    replace: bool = typer.Option(
+        False,
+        "--replace",
+        help="Replace an existing agent with the same project/name.",
+    ),
+) -> None:
+    """Interactively deploy an agent VM into a project you already configured.
+
+    This is the simple path: run ``npa configure`` first to connect npa to Nebius
+    AI Cloud (which saves your accessible projects), then ``npa agent setup`` picks
+    one of those projects — reading tenant/project/region from ``~/.npa/config.yaml``
+    instead of re-typing ids — and deploys.
+
+    How the agent VM gets Nebius AI Cloud credentials: deploy provisions (or
+    reuses) an ``npa-agent`` service account in the project, grants it the tenant
+    ``editors`` role, and **attaches it to the VM**. Code on the VM then mints
+    short-lived IAM access tokens from the Nebius VM metadata endpoint
+    (``http://metadata.nebius.internal/v1/iam/sa/token/access_token``) on demand —
+    an auto-rotating, key-less credential. No static "AI Cloud key" is stored on
+    the VM. The same service account's access key provides S3 access.
+    """
+    from npa.clients.config import default_project_name, list_projects
+
+    projects = list_projects()
+    if not projects:
+        _fail(
+            "No Nebius projects configured. Run `npa configure` first to connect "
+            "npa to Nebius AI Cloud, then re-run `npa agent setup`."
+        )
+
+    alias = project.strip()
+    if alias and alias not in projects:
+        _fail(
+            f"Project alias {alias!r} is not configured. Available: {', '.join(projects)} (or run `npa configure`)."
+        )
+    if not alias:
+        aliases = list(projects)
+        if len(aliases) == 1:
+            alias = aliases[0]
+        else:
+            default_alias = default_project_name()
+            typer.echo("Configured Nebius projects:\n")
+            for i, candidate in enumerate(aliases, start=1):
+                stanza = projects[candidate] or {}
+                marker = "  *" if candidate == default_alias else "   "
+                typer.echo(
+                    f"{marker}{i:>2}. {candidate}  ({stanza.get('region', '?')})  [{stanza.get('project_id', '')}]"
+                )
+            default_pick = (
+                str(aliases.index(default_alias) + 1)
+                if default_alias in aliases
+                else "1"
+            )
+            raw = typer.prompt(
+                "\nDeploy the agent into which project? (number)",
+                default=default_pick,
+            )
+            choice = raw.strip()
+            idx = int(choice) - 1 if choice.isdigit() else int(default_pick) - 1
+            if not (0 <= idx < len(aliases)):
+                idx = int(default_pick) - 1
+            alias = aliases[idx]
+
+    stanza = projects.get(alias) or {}
+    project_id = str(stanza.get("project_id", "")).strip()
+    tenant_id = str(stanza.get("tenant_id", "")).strip()
+    region = str(stanza.get("region", "") or "eu-north1").strip()
+    if not project_id or not tenant_id:
+        _fail(
+            f"Project {alias!r} is missing project_id/tenant_id in ~/.npa/config.yaml. Re-run `npa configure`."
+        )
+
+    if not Path(ssh_public_key_path).expanduser().exists():
+        _fail(
+            f"SSH public key not found at {ssh_public_key_path}. Create one with "
+            "`ssh-keygen -t ed25519`, or pass --ssh-public-key-path."
+        )
+
+    typer.echo(
+        f"\nDeploying agent '{name}' into project '{alias}' "
+        f"({project_id}, {region}).\n"
+        "The VM will get an attached `npa-agent` service account for key-less "
+        "Nebius AI Cloud access.\n"
+    )
+    fresh_setup_cmd(
+        project=alias,
+        name=name,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        region=region,
+        ssh_public_key_path=ssh_public_key_path,
+        replace=replace,
     )
 
 
 @app.command("bootstrap")
-@_serialized_agent_lifecycle
+@resolve_typer_defaults
+@_transactional_agent_command("npa agent bootstrap")
 def bootstrap_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
-    name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias (default: configured default_project)."
+    ),
+    name: str = typer.Option(
+        DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."
+    ),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH username."),
-    ssh_key: str = typer.Option("", "--ssh-key", help="SSH private key path (defaults to agent record or NPA_SSH_KEY)."),
-    agent_port: int = typer.Option(DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."),
-    backend_port: int = typer.Option(DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."),
-    rerun_port: int = typer.Option(DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."),
-    llm_model: str = typer.Option("", "--llm-model", help="Override the active Token Factory model."),
+    ssh_key: str = typer.Option(
+        "",
+        "--ssh-key",
+        help="SSH private key path (defaults to agent record or NPA_SSH_KEY).",
+    ),
+    agent_port: int = typer.Option(
+        DEFAULT_AGENT_PORT, "--agent-port", help="Public agent UI port."
+    ),
+    backend_port: int = typer.Option(
+        DEFAULT_BACKEND_PORT, "--backend-port", help="Internal agent backend port."
+    ),
+    rerun_port: int = typer.Option(
+        DEFAULT_RERUN_PORT, "--rerun-port", help="Rerun service port."
+    ),
+    llm_model: str = typer.Option(
+        "", "--llm-model", help="Override the active Token Factory model."
+    ),
     llm_models: list[str] = typer.Option(
         [],
         "--llm-models",
@@ -8939,22 +9572,6 @@ def bootstrap_cmd(
         False,
         "--refresh-credentials",
         help="Re-provision the long-lived npa-agent service account and restage VM credentials.",
-    ),
-    artifact_project: str = typer.Option(
-        "",
-        "--artifact-project",
-        help=(
-            "Use artifact-storage credentials from this configured NPA project alias. "
-            "The selected credentials persist on the agent record."
-        ),
-    ),
-    artifact_prefix: str = typer.Option(
-        "",
-        "--artifact-prefix",
-        help=(
-            "Override the S3 namespace root used for run discovery (for example a "
-            "shared workflows root); persisted with the agent credentials."
-        ),
     ),
     foxglove_embed_src: str = typer.Option(
         "",
@@ -8979,46 +9596,12 @@ def bootstrap_cmd(
         "--no-public-https",
         help="Disable HTTPS on port 443 (customer access uses http://IP:agent-port only).",
     ),
-    workspace_label: str = typer.Option(
-        "",
-        "--workspace-label",
-        help="Workspace identity; defaults to the identity already recorded for this deployment.",
-    ),
-    stock_demo: bool | None = typer.Option(
-        None,
-        "--stock-demo/--no-stock-demo",
-        help="Override stock Franka preloading; defaults to the recorded deployment setting.",
-    ),
-    adopt_legacy_identity: bool = typer.Option(
-        False,
-        "--adopt-legacy-identity",
-        help="Explicitly claim a legacy record that has no immutable deployment owner.",
-    ),
 ) -> None:
     """Re-bootstrap agent UI/backend/nginx on an existing VM (refresh without Terraform)."""
+    project = _resolve_project_alias(project)
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
-    resolved_stock_demo = (
-        bool(record.get("preload_stock_demo", True))
-        if stock_demo is None or not isinstance(stock_demo, bool)
-        else bool(stock_demo)
-    )
-    recorded_deployment = record.get("deployment", {})
-    recorded_label = (
-        recorded_deployment.get("workspace_label", "")
-        if isinstance(recorded_deployment, dict)
-        else ""
-    )
-    try:
-        deployment = build_deployment_manifest(
-            project_alias=project,
-            name=name,
-            workspace_label=workspace_label or recorded_label,
-        )
-        assert_record_ownership(record, deployment, allow_legacy=adopt_legacy_identity)
-    except DeploymentIdentityError as exc:
-        _fail(str(exc))
     public_ip = str(record.get("public_ip", "")).strip()
     if not _is_routable_public_ip(public_ip):
         _fail("agent VM does not have a routable public IP")
@@ -9030,7 +9613,9 @@ def bootstrap_cmd(
             "Pass --ssh-key, set NPA_SSH_KEY, or redeploy to persist ssh_key_path on the agent record."
         )
     try:
-        auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
+        auth_user, auth_password = _load_auth_secret(
+            str(record.get("auth_secret_path", ""))
+        )
     except ValueError as exc:
         _fail(str(exc))
     tf_api_key, default_llm_model = _resolve_deploy_llm_credentials()
@@ -9041,13 +9626,16 @@ def bootstrap_cmd(
     # keeps any previously configured set.
     extra_llm_models = list(llm_models) if llm_models else list(DEFAULT_LLM_MODELS)
     resolved_llm_models = _normalize_llm_models([resolved_llm_model, *extra_llm_models])
-    nebius_ai_key, _ = _resolve_operator_credentials()
     llm_block = record.get("llm", {}) if isinstance(record.get("llm"), dict) else {}
     if isinstance(llm_block.get("models"), list):
         resolved_llm_models = _normalize_llm_models(
             [*resolved_llm_models, *[str(item) for item in llm_block.get("models", [])]]
         )
-    if not requested_llm_model and isinstance(llm_block.get("model"), str) and llm_block["model"].strip():
+    if (
+        not requested_llm_model
+        and isinstance(llm_block.get("model"), str)
+        and llm_block["model"].strip()
+    ):
         resolved_llm_model = llm_block["model"].strip()
     if resolved_llm_model not in resolved_llm_models:
         resolved_llm_models.insert(0, resolved_llm_model)
@@ -9059,24 +9647,43 @@ def bootstrap_cmd(
     project_id = str(record.get("project_id", "")).strip()
     tenant_id = str(record.get("tenant_id", "")).strip()
     region = str(record.get("region", "") or "eu-north1")
-    s3_bucket, s3_prefix, s3_endpoint, s3_access_key, s3_secret_key, service_account_id = (
-        _resolve_agent_storage_credentials(project, record)
-    )
+    (
+        s3_bucket,
+        s3_prefix,
+        s3_endpoint,
+        s3_access_key,
+        s3_secret_key,
+        service_account_id,
+    ) = _resolve_agent_storage_credentials(project, record)
     if not service_account_id:
         service_account_id = _resolve_agent_service_account_id(project, record)
     agent_credentials: dict[str, str] | None = None
     if refresh_credentials:
         if not (project_id and tenant_id and region):
-            _fail("agent record is missing project_id, tenant_id, or region for credential refresh")
+            _fail(
+                "agent record is missing project_id, tenant_id, or region for credential refresh"
+            )
         from npa.clients.nebius import NebiusError, bootstrap_agent_environment
 
         creds: dict[str, str] | None = None
         try:
+            try:
+                configured_storage = _resolve_deploy_storage_credentials(
+                    region=region,
+                    project_alias=project,
+                )
+            except AgentStorageCredentialError:
+                configured_storage = None
             creds = bootstrap_agent_environment(
                 project_id,
                 tenant_id,
                 region,
                 on_status=lambda msg: typer.echo(f"  {msg}"),
+                **(
+                    {"reuse_storage_credentials": configured_storage}
+                    if configured_storage is not None
+                    else {}
+                ),
             )
         except NebiusError as exc:
             typer.echo(
@@ -9086,8 +9693,14 @@ def bootstrap_cmd(
         if creds is None:
             creds = _creds_from_terraform_state(project, record)
         if creds is None:
-            _fail("Nebius credential refresh failed and no terraform_state fallback is configured")
-        creds = _resolve_deploy_storage_credentials(region=region, bootstrap_creds=creds)
+            _fail(
+                "Nebius credential refresh failed and no terraform_state fallback is configured"
+            )
+        creds = _resolve_deploy_storage_credentials(
+            region=region,
+            bootstrap_creds=creds,
+            project_alias=project,
+        )
         agent_credentials = _agent_credentials_payload(creds)
         refreshed_service_account_id = str(
             agent_credentials.get("service_account_id") or ""
@@ -9109,6 +9722,14 @@ def bootstrap_cmd(
             service_account_id = _resolve_agent_service_account_id(project, record)
             agent_credentials["service_account_id"] = service_account_id
         if s3_access_key and s3_secret_key:
+            persist_agent_terraform_credentials(
+                str(record.get("project_id") or ""),
+                alias=project,
+                bucket=s3_bucket,
+                endpoint=s3_endpoint,
+                access_key=s3_access_key,
+                secret_key=s3_secret_key,
+            )
             write_config(
                 {
                     "projects": {
@@ -9116,70 +9737,94 @@ def bootstrap_cmd(
                             "terraform_state": {
                                 "bucket": s3_bucket,
                                 "endpoint": s3_endpoint,
-                                "access_key": s3_access_key,
-                                "secret_key": s3_secret_key,
+                                "credential_source": "project_credentials_v2",
                             },
                         }
                     }
                 }
             )
-    if str(artifact_project or "").strip():
-        try:
-            (
-                s3_bucket,
-                project_artifact_prefix,
-                s3_endpoint,
-                s3_access_key,
-                s3_secret_key,
-            ) = _resolve_artifact_project_storage(
-                str(artifact_project).strip(), region=region
+    operation = current_operation()
+    resuming = str(record.get("setup_state") or "") in {
+        "remote_bootstrap_pending",
+        "reconciliation_indeterminate",
+    }
+    convergence = converge_remote_agent_setup(
+        operation=operation,
+        resuming=resuming,
+        bootstrap=_bootstrap_agent_stack,
+        reconcile=_reconcile_agent_setup,
+        bootstrap_kwargs={
+            "instance_id": str(record.get("instance_id") or ""),
+            "host": public_ip,
+            "ssh_user": ssh_user,
+            "ssh_key_path": ssh_key_path,
+            "project_alias": project,
+            "agent_name": name,
+            "project_id": str(record.get("project_id", "") or ""),
+            "tenant_id": str(record.get("tenant_id", "") or ""),
+            "region": str(record.get("region", "") or "eu-north1"),
+            "auth_user": auth_user,
+            "auth_password": auth_password,
+            "agent_port": agent_port,
+            "backend_port": backend_port,
+            "rerun_port": rerun_port,
+            "llm_model": resolved_llm_model,
+            "llm_models": resolved_llm_models,
+            "tf_api_key": tf_api_key,
+            "s3_bucket": s3_bucket,
+            "s3_prefix": s3_prefix,
+            "s3_endpoint": s3_endpoint,
+            "s3_access_key": s3_access_key,
+            "s3_secret_key": s3_secret_key,
+            "s3_region": region,
+            "nebius_project_id": project_id,
+            "nebius_tenant_id": tenant_id,
+            "service_account_id": service_account_id,
+            "public_https": public_https,
+            "foxglove_embed_src": foxglove_embed_src,
+            "foxglove_org_slug": foxglove_org_slug,
+            "foxglove_live_url": foxglove_live_url,
+        },
+        reconcile_kwargs={
+            "host": public_ip,
+            "ssh_user": ssh_user,
+            "ssh_key_path": ssh_key_path,
+            "project_alias": project,
+            "agent_name": name,
+            "project_id": project_id,
+            "auth_user": auth_user,
+            "auth_password": auth_password,
+            "agent_port": agent_port,
+            "public_https": public_https,
+        },
+        persist_pending=lambda state: _store_agent_record(
+            project, name, {**record, "setup_state": state}
+        ),
+        status=lambda message: typer.echo(f"  {message}"),
+        progress=lambda payload: typer.echo(
+            "progress: " + json.dumps(payload, sort_keys=True), err=True
+        ),
+        transport_errors=(ConfigError, SSHError, ValueError),
+    )
+    reconciliation = convergence.evidence
+    bootstrap_error = convergence.primary_error
+    if reconciliation.get("state") != "healthy":
+        updated_incomplete = dict(record)
+        updated_incomplete["setup_state"] = "reconciliation_indeterminate"
+        _store_agent_record(project, name, updated_incomplete)
+        if bootstrap_error is not None:
+            _fail(
+                "VM bootstrap transport failed; exact remote reconciliation is "
+                f"{reconciliation.get('state', 'indeterminate')}. Rerun this same "
+                "bootstrap command to resume without replacing the VM. Primary "
+                f"transport error: {type(bootstrap_error).__name__}"
             )
-        except ConfigError as exc:
-            _fail(f"unable to resolve artifact project storage: {exc}")
-        s3_prefix = project_artifact_prefix
-        typer.echo("  Using explicitly selected project artifact storage for the agent.")
-    if str(artifact_prefix or "").strip():
-        try:
-            s3_prefix = _validate_artifact_prefix(str(artifact_prefix))
-        except ValueError as exc:
-            _fail(str(exc))
-    try:
-        _bootstrap_agent_stack(
-            host=public_ip,
-            ssh_user=ssh_user,
-            ssh_key_path=ssh_key_path,
-            project_alias=project,
-            agent_name=name,
-            project_id=str(record.get("project_id", "") or ""),
-            tenant_id=str(record.get("tenant_id", "") or ""),
-            region=str(record.get("region", "") or "eu-north1"),
-            auth_user=auth_user,
-            auth_password=auth_password,
-            agent_port=agent_port,
-            backend_port=backend_port,
-            rerun_port=rerun_port,
-            llm_model=resolved_llm_model,
-            llm_models=resolved_llm_models,
-            tf_api_key=tf_api_key,
-            nebius_ai_key=nebius_ai_key,
-            s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
-            s3_endpoint=s3_endpoint,
-            s3_access_key=s3_access_key,
-            s3_secret_key=s3_secret_key,
-            s3_region=region,
-            nebius_project_id=project_id,
-            nebius_tenant_id=tenant_id,
-            service_account_id=service_account_id,
-            public_https=public_https,
-            foxglove_embed_src=foxglove_embed_src,
-            foxglove_org_slug=foxglove_org_slug,
-            foxglove_live_url=foxglove_live_url,
-            deployment=deployment,
-            preload_stock_demo=resolved_stock_demo,
+        _fail("remote bootstrap returned but exact health evidence is incomplete")
+    if bootstrap_error is not None:
+        typer.echo(
+            "  Remote reconciliation adopted the healthy agent after transport loss.",
+            err=True,
         )
-    except (ConfigError, SSHError, ValueError) as exc:
-        _fail(f"VM bootstrap failed: {exc}")
     instance_id = str(record.get("instance_id", "")).strip()
     if instance_id:
         ingress_ports: list[int] = [agent_port, rerun_port]
@@ -9197,29 +9842,42 @@ def bootstrap_cmd(
     updated = dict(record)
     updated.update(urls)
     updated["public_https"] = public_https
-    llm_payload = dict(updated.get("llm", {}) if isinstance(updated.get("llm"), dict) else {})
+    llm_payload = dict(
+        updated.get("llm", {}) if isinstance(updated.get("llm"), dict) else {}
+    )
     llm_payload["provider"] = DEFAULT_LLM_PROVIDER
     llm_payload["model"] = resolved_llm_model
     llm_payload["models"] = list(resolved_llm_models)
     updated["llm"] = llm_payload
     updated["ssh_key_path"] = ssh_key_path
-    updated["deployment"] = deployment
-    updated["preload_stock_demo"] = resolved_stock_demo
+    updated["setup_state"] = "healthy"
+    updated["setup_evidence"] = {
+        key: reconciliation.get(key)
+        for key in (
+            "state",
+            "service_fingerprint",
+            "credential_fingerprint",
+            "models_healthy",
+            "remote_phase",
+        )
+    }
     if service_account_id:
         updated["service_account_id"] = service_account_id
-        _persist_agent_service_account_id(service_account_id)
-    if s3_bucket and s3_access_key and s3_secret_key:
-        updated["credentials"] = _credentials_block_from_storage(
-            service_account_id=service_account_id,
-            s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
-            s3_endpoint=s3_endpoint,
-            s3_access_key=s3_access_key,
-            s3_secret_key=s3_secret_key,
-        )
-    elif refresh_credentials and agent_credentials is not None:
-        updated["credentials"] = agent_credentials
+        _persist_agent_service_account_id(service_account_id, project_id)
+    # Storage credentials remain in the owner-only project credential store and
+    # are re-resolved on resume. Do not duplicate them into config-backed agent
+    # records, operation journals, or teardown receipts.
+    updated.pop("credentials", None)
     _store_agent_record(project, name, updated)
+    if operation is not None:
+        operation.checkpoint(
+            "health_verified",
+            {
+                **reconciliation,
+                "setup_phase": "health_verified",
+                "instance_id": instance_id,
+            },
+        )
     typer.echo(f"Customer URL: {urls['public_url']}")
     typer.echo(f"bootstrapped: {project}/{name} at {urls['public_url']}")
     if public_https:
@@ -9227,17 +9885,35 @@ def bootstrap_cmd(
 
 
 @app.command("status")
+@intent_boundary(OperationIntent.OBSERVE)
 def status_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
-    name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias (default: configured default_project)."
+    ),
+    name: str = typer.Option(
+        DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."
+    ),
     output_json: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Show agent status, URLs, and health checks."""
+    project = _resolve_project_alias(project)
     record = _agent_record(project, name)
     if not record:
-        _fail(f"Agent config not found for {project}/{name}")
+        from npa.agent_status import partial_agent_status
+
+        payload = partial_agent_status(project, name)
+        if output_json:
+            typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            for key, value in payload.items():
+                typer.echo(f"{key}: {value}")
+        if payload.get("classification") == "NOT_FOUND":
+            raise typer.Exit(code=1)
+        return
     try:
-        auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
+        auth_user, auth_password = _load_auth_secret(
+            str(record.get("auth_secret_path", ""))
+        )
     except ValueError as exc:
         _fail(str(exc))
     agent_url = str(record.get("agent_url", ""))
@@ -9257,20 +9933,6 @@ def status_cmd(
     rerun_ok, rerun_code = _health(
         sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify
     )
-    recorded_deployment = record.get("deployment", {})
-    live_deployment: dict[str, Any] = {}
-    deployment_matches_record = False
-    deployment_error = ""
-    try:
-        live_deployment = fetch_live_deployment(
-            agent_url, user=auth_user, password=auth_password, verify=tls_verify
-        )
-        if isinstance(recorded_deployment, dict) and recorded_deployment:
-            assert_live_deployment(recorded_deployment, live_deployment)
-            deployment_matches_record = True
-    except (httpx.HTTPError, DeploymentIdentityError) as exc:
-        deployment_error = str(exc)
-    overall_health = bool(ui_ok and rerun_ok and deployment_matches_record)
     payload = {
         "project": project,
         "name": name,
@@ -9283,96 +9945,62 @@ def status_cmd(
         "sim_viz_url": sim_viz_url,
         "sim_assets_url": sim_assets_url,
         "cameras_api_url": cameras_api_url,
-        "health": overall_health,
+        "health": bool(ui_ok and rerun_ok),
         "ui_status_code": ui_code,
         "rerun_status_code": rerun_code,
         "llm": record.get("llm", {}),
-        "deployment": recorded_deployment,
-        "live_deployment": live_deployment,
-        "deployment_matches_record": deployment_matches_record,
-        "deployment_error": deployment_error,
-        "preload_stock_demo": bool(record.get("preload_stock_demo", True)),
     }
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        for key, value in payload.items():
-            typer.echo(f"{key}: {value}")
-    if not overall_health:
-        raise typer.Exit(code=1)
+        return
+    for key, value in payload.items():
+        typer.echo(f"{key}: {value}")
 
 
 @app.command("destroy")
-@_serialized_agent_lifecycle
-def destroy_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
-    name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
-) -> None:
-    """Destroy agent VM/resources and remove saved config entry."""
-    record = _agent_record(project, name)
-    if not record:
-        _fail(
-            f"Immutable agent record not found for {project}/{name}; refusing to "
-            "destroy Terraform state with unknown ownership"
-        )
-    recorded = record.get("deployment")
-    if not isinstance(recorded, dict) or not recorded:
-        _fail("agent record has no immutable deployment owner; refusing to destroy")
-    try:
-        expected = build_deployment_manifest(
-            project_alias=project,
-            name=name,
-            workspace_label=recorded.get("workspace_label", ""),
-        )
-        assert_record_ownership(record, expected)
-        _verify_agent_record_remote_owner(record, expected)
-    except DeploymentIdentityError as exc:
-        _fail(str(exc))
-    try:
-        _destroy_agent_terraform(project, name, record=record)
-    except ProvisionerError as exc:
-        _fail(f"Terraform destroy failed: {exc}")
-    _remove_agent_record(project, name)
-    typer.echo(f"destroyed: {project}/{name}")
+@resolve_typer_defaults
+@functools.wraps(_destroy_cmd_impl)
+def destroy_cmd(*args: Any, **kwargs: Any) -> None:
+    """Destroy agent VM/resources using exact live, receipt, or argument identity."""
+
+    _destroy_cmd_impl(*args, **kwargs)
 
 
 @app.command("verify-live")
 def verify_live_cmd(
-    project: str = typer.Option(DEFAULT_PROJECT_ALIAS, "--project", help="NPA project alias."),
-    name: str = typer.Option(DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."),
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias (default: configured default_project)."
+    ),
+    name: str = typer.Option(
+        DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."
+    ),
 ) -> None:
     """Exit 0 only when live infra checks and tests pass."""
+    project = _resolve_project_alias(project)
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
     public_ip = str(record.get("public_ip", "")).strip()
     region = str(record.get("region", "")).strip()
-    if not public_ip or public_ip in {"localhost", "127.0.0.1"} or public_ip.startswith("127."):
+    if (
+        not public_ip
+        or public_ip in {"localhost", "127.0.0.1"}
+        or public_ip.startswith("127.")
+    ):
         _fail("agent VM does not have a non-localhost public IP")
     if not _is_routable_public_ip(public_ip):
         _fail("agent VM does not have a non-localhost public IP")
     if not region:
         _fail("agent record is missing its deploy region")
     try:
-        auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
+        auth_user, auth_password = _load_auth_secret(
+            str(record.get("auth_secret_path", ""))
+        )
     except ValueError as exc:
         _fail(str(exc))
 
     customer_url = _record_customer_url(record)
     tls_verify = _record_tls_verify(record)
-    recorded_deployment = record.get("deployment", {})
-    if not isinstance(recorded_deployment, dict) or not recorded_deployment:
-        _fail("agent record is missing immutable deployment provenance")
-    try:
-        live_deployment = fetch_live_deployment(
-            str(record.get("agent_url", "")),
-            user=auth_user,
-            password=auth_password,
-            verify=tls_verify,
-        )
-        assert_live_deployment(recorded_deployment, live_deployment)
-    except (httpx.HTTPError, DeploymentIdentityError) as exc:
-        _fail(f"deployment provenance verification failed: {exc}")
     if customer_url:
         try:
             welcome_resp = httpx.get(
@@ -9381,7 +10009,9 @@ def verify_live_cmd(
                 verify=tls_verify,
             )
             if welcome_resp.status_code != 200:
-                _fail(f"public welcome page unhealthy (status={welcome_resp.status_code})")
+                _fail(
+                    f"public welcome page unhealthy (status={welcome_resp.status_code})"
+                )
             healthz_resp = httpx.get(
                 f"{customer_url.rstrip('/')}/healthz",
                 timeout=5.0,
@@ -9423,7 +10053,9 @@ def verify_live_cmd(
     if not isinstance(sim_viz_status, dict):
         _fail("sim viz status endpoint did not return JSON object")
 
-    sim_assets_base = str(record.get("sim_assets_url", record.get("agent_url", ""))).rstrip("/")
+    sim_assets_base = str(
+        record.get("sim_assets_url", record.get("agent_url", ""))
+    ).rstrip("/")
     if not sim_assets_base:
         _fail("sim_assets_url missing from agent config")
     try:
@@ -9437,7 +10069,11 @@ def verify_live_cmd(
         sim_assets_payload = sim_assets_resp.json()
     except Exception as exc:  # noqa: BLE001
         _fail(f"sim assets endpoint unhealthy: {exc}")
-    if not isinstance(sim_assets_payload, dict) or "scene_spec" not in sim_assets_payload or "robot_spec" not in sim_assets_payload:
+    if (
+        not isinstance(sim_assets_payload, dict)
+        or "scene_spec" not in sim_assets_payload
+        or "robot_spec" not in sim_assets_payload
+    ):
         _fail("sim assets endpoint missing scene_spec/robot_spec payload")
 
     try:
@@ -9451,21 +10087,11 @@ def verify_live_cmd(
         cameras_payload = cameras_resp.json()
     except Exception as exc:  # noqa: BLE001
         _fail(f"cameras endpoint unhealthy: {exc}")
-    cameras = cameras_payload.get("cameras", []) if isinstance(cameras_payload, dict) else []
+    cameras = (
+        cameras_payload.get("cameras", []) if isinstance(cameras_payload, dict) else []
+    )
     if not isinstance(cameras, list) or not cameras:
         _fail("cameras endpoint returned no cameras")
-
-    if not bool(record.get("preload_stock_demo", True)):
-        _verify_artifact_only_live(
-            record=record,
-            auth_user=auth_user,
-            auth_password=auth_password,
-            tls_verify=tls_verify,
-            project=project,
-            name=name,
-        )
-        typer.echo("verify-live: ok (artifact-only, read-only)")
-        return
 
     selection_body = {
         "robot_preset": "franka",
@@ -9540,7 +10166,10 @@ def verify_live_cmd(
         submitted_status = submitted_status_resp.json()
     except Exception as exc:  # noqa: BLE001
         _fail(f"submitted sim2real run status endpoint failed: {exc}")
-    if not isinstance(submitted_status, dict) or submitted_status.get("run_id") != submit_run_id:
+    if (
+        not isinstance(submitted_status, dict)
+        or submitted_status.get("run_id") != submit_run_id
+    ):
         _fail("submitted sim2real run status did not preserve run_id")
     if not submitted_status.get("rrd_uri"):
         _fail("submitted sim2real run status did not include rrd_uri")
@@ -9556,7 +10185,9 @@ def verify_live_cmd(
     except Exception as exc:  # noqa: BLE001
         _fail(f"submitted sim2real run rrd-blob endpoint failed: {exc}")
     if len(submitted_rrd_blob.content) < 64:
-        _fail("submitted sim2real run rrd-blob endpoint returned unexpectedly small payload")
+        _fail(
+            "submitted sim2real run rrd-blob endpoint returned unexpectedly small payload"
+        )
 
     try:
         load_demo_resp = httpx.post(
@@ -9647,7 +10278,9 @@ def verify_live_cmd(
         except httpx.HTTPError:
             continue
     if not rerun_static_ok:
-        _fail("rerun static asset probe failed (no /rerun/*.js|ico|version responded 200)")
+        _fail(
+            "rerun static asset probe failed (no /rerun/*.js|ico|version responded 200)"
+        )
 
     # Lichtblick embed probe (informational): the recordings alias serves the co-served
     # MCAP same-origin, and /lichtblick/ proxies the viewer sidecar. The sidecar is
@@ -9660,7 +10293,9 @@ def verify_live_cmd(
                 timeout=15.0,
                 verify=tls_verify,
             )
-            typer.echo(f"lichtblick embed probe {lichtblick_path} -> {lb_resp.status_code}")
+            typer.echo(
+                f"lichtblick embed probe {lichtblick_path} -> {lb_resp.status_code}"
+            )
         except httpx.HTTPError as exc:
             typer.echo(f"lichtblick embed probe {lichtblick_path} -> error: {exc}")
 
@@ -9676,10 +10311,7 @@ def verify_live_cmd(
     )
     typer.echo(format_bundle_budget_report(bundle_result))
     if not bundle_result.ok:
-        _fail(
-            "rerun bundle load budget failed: "
-            + "; ".join(bundle_result.errors[:4])
-        )
+        _fail("rerun bundle load budget failed: " + "; ".join(bundle_result.errors[:4]))
 
     try:
         health_resp = httpx.get(
@@ -9808,18 +10440,30 @@ def verify_live_cmd(
         _fail("UI html must not use lazy-loading on the Rerun iframe")
     if ".tab-panel[hidden]" in ui_html:
         _fail("UI html must not hide tab panels with display:none via hidden attribute")
-    if 'Mount the viewer immediately so "Loading application bundle" starts early' in ui_html:
-        _fail("UI must not mount Rerun before bundle warm (exposes Loading application bundle)")
+    if (
+        'Mount the viewer immediately so "Loading application bundle" starts early'
+        in ui_html
+    ):
+        _fail(
+            "UI must not mount Rerun before bundle warm (exposes Loading application bundle)"
+        )
     if "await waitUntilRerunPastBundleSplash(iframe, 45000)" in ui_html:
         _fail("UI must not block mount on long splash wait (latency)")
     if "await waitUntilRerunPastBundleSplash(iframe, 120000)" in ui_html:
         _fail("UI must not block mount on long splash wait (latency)")
-    load_art_src = ui_html.split("async function loadArtifact(payload)")[1].split("async function refresh()")[0]
+    load_art_src = ui_html.split("async function loadArtifact(payload)")[1].split(
+        "async function refresh()"
+    )[0]
     if "swapRerunRecordingInPlace" not in load_art_src:
-        _fail("loadArtifact must soft-swap Rerun recordings instead of always remounting wasm")
+        _fail(
+            "loadArtifact must soft-swap Rerun recordings instead of always remounting wasm"
+        )
     # Guard against regressions that put bare authenticated URLs on <video src>
     # (browsers omit Authorization headers for media elements under basic auth).
-    if '`<video controls src="${previewUrl}">`' in ui_html or '<video controls src="${previewUrl}">' in ui_html:
+    if (
+        '`<video controls src="${previewUrl}">`' in ui_html
+        or '<video controls src="${previewUrl}">' in ui_html
+    ):
         _fail("UI html must not assign artifact previewUrl directly to <video src>")
     if '`<img alt="artifact image" src="${previewUrl}"' in ui_html:
         _fail("UI html must not assign artifact previewUrl directly to <img src>")
@@ -9888,7 +10532,11 @@ def verify_live_cmd(
         chat_smoke = httpx.post(
             f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
             auth=(auth_user, auth_password),
-            json={"messages": [{"role": "user", "content": "what is the current sim2real status"}]},
+            json={
+                "messages": [
+                    {"role": "user", "content": "what is the current sim2real status"}
+                ]
+            },
             timeout=30.0,
             verify=tls_verify,
         )
@@ -9901,7 +10549,10 @@ def verify_live_cmd(
     reply = str(chat_payload.get("reply") or "")
     if "run_id" not in reply and "stage" not in reply:
         _fail("chat status reply missing run_id/stage fields")
-    if reply.strip().startswith("GET /api") or reply.strip() == "GET /api/sim-viz/status":
+    if (
+        reply.strip().startswith("GET /api")
+        or reply.strip() == "GET /api/sim-viz/status"
+    ):
         _fail("chat status reply returned raw GET path instead of unpacked status")
     if not chat_payload.get("grounded"):
         _fail("chat status reply expected grounded=true from intent router")
@@ -9913,7 +10564,11 @@ def verify_live_cmd(
         wf_chat = httpx.post(
             f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
             auth=(auth_user, auth_password),
-            json={"messages": [{"role": "user", "content": "create 2-step sim2real workflow"}]},
+            json={
+                "messages": [
+                    {"role": "user", "content": "create 2-step sim2real workflow"}
+                ]
+            },
             timeout=30.0,
             verify=tls_verify,
         )
@@ -9924,8 +10579,12 @@ def verify_live_cmd(
     if not isinstance(wf_payload, dict) or not wf_payload.get("workflow_yaml"):
         _fail("create-workflow chat did not return workflow_yaml")
     wf_yaml = str(wf_payload.get("workflow_yaml") or "")
-    if "augment" not in wf_yaml or "envgen" not in wf_yaml:
-        _fail("create-workflow chat yaml missing sim2real stages")
+    # Assert the chat authored a real npa.workflow spec, not specific stage names:
+    # the author's stage naming is not a stable contract (a valid 2-step sim2real
+    # spec may use finalize/heldout-eval rather than augment/envgen), and the
+    # validate + submit dry-run below already prove the spec is runnable.
+    if "apiVersion" not in wf_yaml or "npa.workflow" not in wf_yaml:
+        _fail("create-workflow chat yaml is not an npa.workflow spec")
     try:
         wf_validate = httpx.post(
             f"{agent_base}/api/workflows/validate",
@@ -10004,8 +10663,7 @@ def verify_live_cmd(
                     {
                         "role": "user",
                         "content": (
-                            "add an open source repo, containerize, push to registry, "
-                            "and run its declared smoke on live infra"
+                            "add an open source repo, containerize, push to registry, and run LeIsaac on live infra"
                         ),
                     }
                 ]
@@ -10020,9 +10678,17 @@ def verify_live_cmd(
     if not isinstance(onboard_payload, dict) or not onboard_payload.get("ok"):
         _fail("onboard_solution chat did not return ok=true")
     onboard_reply = str(onboard_payload.get("reply") or "")
-    if "npa workbench byof run" not in onboard_reply and "run_byof_repo.py" not in onboard_reply:
-        _fail("onboard_solution chat reply missing byof CLI or run_byof_repo.py command")
-    if "byof-onboard" not in onboard_reply and "skills/workflows/byof-onboard" not in onboard_reply:
+    if (
+        "npa workbench byof run" not in onboard_reply
+        and "run_byof_repo.py" not in onboard_reply
+    ):
+        _fail(
+            "onboard_solution chat reply missing byof CLI or run_byof_repo.py command"
+        )
+    if (
+        "byof-onboard" not in onboard_reply
+        and "skills/workflows/byof-onboard" not in onboard_reply
+    ):
         _fail("onboard_solution chat reply missing byof-onboard skill reference")
     if "--base-profile" not in onboard_reply and "--base-image" not in onboard_reply:
         _fail("onboard_solution chat reply missing base image guidance")
@@ -10045,9 +10711,20 @@ def verify_live_cmd(
     }
     if os.environ.get("NPA_AGENT_CHAT_LIVE") == "1":
         test_env["NPA_AGENT_CHAT_LIVE"] = "1"
+    # Run the local test gate with the *current* interpreter and the repo root
+    # (resolved from this file's location) as cwd, so the command works from any
+    # cwd within the source checkout. Previously it shelled out to a relative
+    # "npa/.venv/bin/python" and relative test paths, which raised
+    # FileNotFoundError unless invoked from the repo root. This gate is a
+    # source-tree dev/operator command (the npa/tests/ tree it runs is not
+    # shipped in a wheel), so the parents[4] repo-root resolution is expected.
+    import sys as _sys
+
+    repo_root = Path(__file__).resolve().parents[4]
+    py = _sys.executable or "python3"
     smoke = subprocess.run(
         [
-            "npa/.venv/bin/python",
+            py,
             "-m",
             "pytest",
             "npa/tests/smoke/test_agent_smoke.py",
@@ -10056,12 +10733,15 @@ def verify_live_cmd(
         ],
         check=False,
         env=test_env,
+        cwd=str(repo_root),
     )
     if smoke.returncode != 0:
-        _fail("pytest npa/tests/smoke/test_agent_smoke.py test_agent_chat_smoke.py failed")
+        _fail(
+            "pytest npa/tests/smoke/test_agent_smoke.py test_agent_chat_smoke.py failed"
+        )
     unit = subprocess.run(
         [
-            "npa/.venv/bin/python",
+            py,
             "-m",
             "pytest",
             "npa/tests/cli/test_agent.py",
@@ -10070,13 +10750,15 @@ def verify_live_cmd(
         ],
         check=False,
         env=test_env,
+        cwd=str(repo_root),
     )
     if unit.returncode != 0:
         _fail("pytest npa/tests/cli/test_agent.py failed")
     e2e = subprocess.run(
-        ["npa/.venv/bin/python", "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
+        [py, "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
         check=False,
         env=test_env,
+        cwd=str(repo_root),
     )
     if e2e.returncode != 0:
         _fail("pytest npa/tests/e2e/test_agent_live.py failed")

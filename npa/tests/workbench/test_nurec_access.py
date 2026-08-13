@@ -640,7 +640,13 @@ def test_spec_cpu_stages_do_not_request_a_gpu(monkeypatch) -> None:
             options=SkypilotRenderOptions(materialize_registry_secrets=False),
         )
         assert "accelerators" not in doc["resources"], name
-        assert "config" not in doc, f"{name} should not carry GPU pod_config"
+        pod_spec = (
+            doc.get("config", {})
+            .get("kubernetes", {})
+            .get("pod_config", {})
+            .get("spec", {})
+        )
+        assert "initContainers" not in pod_spec, f"{name} should not carry GPU pod_config"
 
 
 def test_renderer_installs_the_nurec_runtime_deps_the_vendor_image_lacks() -> None:
@@ -682,11 +688,12 @@ def test_renderer_nurec_rerun_pin_matches_the_packaged_extra() -> None:
     from npa.orchestration.npa_workflow.skypilot_render import NUREC_RERUN_PIN
 
     pyproject = (REPO_ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8")
-    viz_line = next(
-        line for line in pyproject.splitlines() if line.strip().startswith("viz = [")
+    # The `viz` extra is folded into the base install, so the pin is declared there.
+    pin_line = next(
+        line for line in pyproject.splitlines() if "rerun-sdk==" in line
     )
 
-    assert NUREC_RERUN_PIN in viz_line, f"{NUREC_RERUN_PIN} not in: {viz_line}"
+    assert NUREC_RERUN_PIN in pin_line, f"{NUREC_RERUN_PIN} not in: {pin_line}"
 
 
 def test_renderer_does_not_add_nurec_deps_to_other_tools() -> None:

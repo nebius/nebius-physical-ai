@@ -17,9 +17,17 @@ Two checks are wired, both real:
   VLM to answer it from a frame of the augmented clip. Upstream drives this
   through any OpenAI-compatible endpoint, so NPA points it at Nebius Token
   Factory (zero-GPU, hosted).
+- **Temporal consistency companion diagnostic** (:mod:`.temporal_consistency`) —
+  an NPA source-relative, two-sided residual for localized frame instability or
+  motion collapse. It is advisory by default, reported separately, and is not
+  attributed to the upstream project.
+- **Protected-appearance fidelity companion check** (:mod:`.appearance_fidelity`)
+  — a source-relative CIELAB comparison for excessive scene-wide colour cast,
+  localized material recolouring, or chroma-shift instability. It is advisory by
+  default and is not attributed to the upstream project.
 
 :func:`evaluate_run` is the stage entry point: it walks a Physical AI Data
-Factory run prefix, pairs every augmented variant with the run's source clip and
+Factory run prefix, pairs every augmented variant with its recorded source clip and
 its sampled appearance variables, runs both checks per variant, and writes one
 ``npa.cosmos_evaluator.report.v1`` report whose ``score`` the blueprint's quality
 gate reads.
@@ -32,6 +40,10 @@ from npa.workbench.cosmos_evaluator.attribute_verification import (
     AttributeVerificationResult,
     verify_attributes,
 )
+from npa.workbench.cosmos_evaluator.appearance_fidelity import (
+    AppearanceFidelityResult,
+    check_appearance_fidelity,
+)
 from npa.workbench.cosmos_evaluator.evaluate import (
     RESULT_FILENAME,
     ClipEvaluation,
@@ -42,6 +54,10 @@ from npa.workbench.cosmos_evaluator.evaluate import (
 from npa.workbench.cosmos_evaluator.hallucination import (
     HallucinationResult,
     check_hallucination,
+)
+from npa.workbench.cosmos_evaluator.temporal_consistency import (
+    TemporalConsistencyResult,
+    check_temporal_consistency,
 )
 from npa.workbench.cosmos_evaluator.upstream import (
     UPSTREAM_LICENSE,
@@ -66,12 +82,16 @@ __all__ = [
     "UPSTREAM_REPO",
     "AttributeVerificationCheck",
     "AttributeVerificationResult",
+    "AppearanceFidelityResult",
     "ClipEvaluation",
     "CosmosEvaluatorError",
     "CosmosEvaluatorStorageError",
     "EvaluateRunResult",
     "HallucinationResult",
+    "TemporalConsistencyResult",
     "check_hallucination",
+    "check_appearance_fidelity",
+    "check_temporal_consistency",
     "evaluate_run",
     "report_uri_for",
     "upstream_source_dir",
