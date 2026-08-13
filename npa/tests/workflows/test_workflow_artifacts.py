@@ -707,6 +707,7 @@ def test_duplicate_run_basenames_are_source_qualified_and_plain_lookup_fails_clo
 def test_run_ref_must_match_a_server_discovered_exact_source(monkeypatch) -> None:
     import npa.workflows.artifacts as A
 
+    A._run_list_cache_clear()
     artifact = A.Artifact(
         "safe-run",
         "authorized/safe-run/report.json",
@@ -731,6 +732,51 @@ def test_run_ref_must_match_a_server_discovered_exact_source(monkeypatch) -> Non
         )
         is None
     )
+
+
+def test_exact_run_ref_reuses_credential_scoped_server_observation(monkeypatch) -> None:
+    import npa.workflows.artifacts as A
+
+    A._run_list_cache_clear()
+    s3 = _PrefixAwareS3(
+        [
+            (
+                "authorized/safe-run/report.json",
+                "2026-08-10T00:00:00+00:00",
+            )
+        ]
+    )
+    try:
+        page = A.list_runs_cached_multi(
+            ["bucket"],
+            base_prefix="",
+            limit=100,
+            contains="safe-run",
+            s3=s3,
+        )
+        assert len(page.runs) == 1
+        monkeypatch.setattr(
+            A,
+            "find_run_artifact_matches",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("cached exact selector repeated full discovery")
+            ),
+        )
+
+        resolved = A.resolve_run_artifacts(
+            ["bucket"],
+            base_prefix="",
+            run_ref_or_id=page.runs[0].run_ref,
+            s3=s3,
+        )
+
+        assert resolved is not None
+        assert resolved.source_prefix == "authorized"
+        assert [item.key for item in resolved.artifacts] == [
+            "authorized/safe-run/report.json"
+        ]
+    finally:
+        A._run_list_cache_clear()
 
 
 def test_server_discovered_exact_source_survives_unrelated_truncated_scan(

@@ -2297,6 +2297,39 @@ def list_runs_cached(
     return page
 
 
+def _cached_server_discovered_run_summary(
+    *,
+    bucket: str,
+    source_prefix: str,
+    run_id: str,
+    s3,
+) -> RunSummary | None:
+    """Return an exact tuple previously emitted by this credential-scoped server.
+
+    A run reference is not itself an authorization capability. The run-list
+    cache, however, contains tuples the server positively observed through its
+    bounded discovery path. Reusing that observation avoids repeating a full
+    bucket walk for every idempotent export while absent/caller-invented tuples
+    continue through the fail-closed discovery path below.
+    """
+    identity = _s3_cache_identity(s3)
+    with _RUN_LIST_LOCK:
+        pages = [
+            page
+            for key, (_timestamp, page) in _RUN_LIST_CACHE.items()
+            if len(key) > 1 and key[1] == identity
+        ]
+    for page in pages:
+        for item in page.runs:
+            if (
+                item.bucket == bucket
+                and item.resolved_prefix == source_prefix
+                and item.run_id == run_id
+            ):
+                return item
+    return None
+
+
 def find_run_artifact_matches(
     bucket: str,
     *,
@@ -2372,6 +2405,28 @@ def resolve_run_artifacts(
         bucket, source_prefix, run_id = decode_run_ref(requested)
         if bucket not in configured:
             raise ArtifactDiscoveryError("run_ref bucket is not configured for this agent")
+        observed = _cached_server_discovered_run_summary(
+            bucket=bucket,
+            source_prefix=source_prefix,
+            run_id=run_id,
+            s3=s3,
+        )
+        if observed is not None:
+            return RunResolution(
+                run_id=run_id,
+                bucket=bucket,
+                source_prefix=source_prefix,
+                artifacts=[
+                    artifact
+                    for namespace in (observed.namespaces or (source_prefix,))
+                    for artifact in list_artifacts(
+                        bucket,
+                        run_id,
+                        prefix=namespace,
+                        s3=s3,
+                    )
+                ],
+            )
         # A run_ref is a stable selector, not an authorization capability. Prove
         # that its exact bucket/prefix tuple is present in the server-discovered
         # bounded run index before listing objects beneath a caller-supplied path.
