@@ -1600,7 +1600,7 @@ def _descriptor_preview_image(
     rng = np.random.default_rng(seed)
     yy = np.linspace(0, 1, height, dtype=np.float32)[:, None]
     xx = np.linspace(0, 1, width, dtype=np.float32)[None, :]
-    base = np.zeros((height, width, 3), dtype=np.uint8)
+    base: np.ndarray = np.zeros((height, width, 3), dtype=np.uint8)
     base[:, :, 0] = np.clip(34 + 42 * xx + accent[0] * 0.18, 0, 255).astype(np.uint8)
     base[:, :, 1] = np.clip(38 + 52 * yy + accent[1] * 0.14, 0, 255).astype(np.uint8)
     base[:, :, 2] = np.clip(46 + 28 * (1.0 - yy) + accent[2] * 0.18, 0, 255).astype(
@@ -2700,7 +2700,7 @@ def _decode_png_bytes(data: bytes) -> np.ndarray | None:
     # (Vectorizing across the bpp colour lanes instead was tried and is 2.5-4x
     # SLOWER than the original -- per-slice numpy overhead dwarfs 3-element math.)
     # Sub and Up are vectorizable, so those two still go through numpy.
-    recon = np.zeros((height, row_len), dtype=np.uint8)
+    recon: np.ndarray = np.zeros((height, row_len), dtype=np.uint8)
     prev: list[int] = [0] * row_len
     offset = 0
     for row in range(height):

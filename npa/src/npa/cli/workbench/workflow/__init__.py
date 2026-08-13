@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import hashlib
 import json
 import logging
@@ -693,7 +693,7 @@ def submit_cmd(
 
     prepared_npa = None
     deploy_targets = []
-    resolved_deploy_plans: dict[str, object] = {}
+    resolved_deploy_plans: dict[str, Any] = {}
     source_action = "not-required"
     planned_source_uri = ""
     if is_npa_spec:
@@ -2191,7 +2191,7 @@ def _preflight_submit_images(
 def _preflight_image_bootstrap_contracts(
     *,
     images: list[str],
-    pull_checks: list[object],
+    pull_checks: Sequence[object],
     context: str,
 ) -> list[dict[str, object]]:
     """Verify each selected digest, never a mutable tag, against one contract."""
@@ -2905,7 +2905,7 @@ def _latest_runtime_wave_states(
     for position, wave in enumerate(runtime_waves):
         key = str(wave.get("key") or "").strip() or f"__legacy_{position}"
         try:
-            attempt = int(wave.get("attempt") or 1)
+            attempt = int(str(wave.get("attempt") or 1))
         except (TypeError, ValueError):
             attempt = 1
         status = str(wave.get("status") or "").upper()
@@ -3351,23 +3351,23 @@ def _durable_workflow_status(
 
     job_id = str(manifest.get("sky_job_id") or "")
     live_status = ""
-    verification_errors: list[str] = []
+    legacy_verification_errors: list[str] = []
     if job_id and not cached:
         try:
             live = workflow_status(job_id, sky_bin=sky_bin or None)
             if live.error:
-                verification_errors.append(str(live.error))
+                legacy_verification_errors.append(str(live.error))
             elif str(live.status or "").upper() in {"", "UNKNOWN"}:
-                verification_errors.append(
+                legacy_verification_errors.append(
                     f"managed job {job_id} was not present in a parseable live queue response"
                 )
             else:
                 live_status = live.status
         except Exception as exc:
-            verification_errors.append(f"{type(exc).__name__}: {exc}")
+            legacy_verification_errors.append(f"{type(exc).__name__}: {exc}")
             live_status = ""
     status = _aggregate_stage_status(stages, live_status)
-    payload: dict[str, object] = {
+    legacy_payload: dict[str, object] = {
         "run_id": manifest.get("run_id") or _display_run_id(run_id),
         "workflow_name": manifest.get("workflow_name", ""),
         "status": status,
@@ -3384,19 +3384,19 @@ def _durable_workflow_status(
     }
     blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
     if blockers:
-        payload["blockers"] = blockers
+        legacy_payload["blockers"] = blockers
     last_known = str(status or manifest.get("status") or "UNKNOWN")
     if cached:
         verification_status = CACHED
         reason = "live controller query intentionally skipped (--cached)"
-    elif verification_errors:
+    elif legacy_verification_errors:
         verification_status = VERIFICATION_UNAVAILABLE
-        reason = "; ".join(verification_errors)
+        reason = "; ".join(legacy_verification_errors)
     else:
         verification_status = VERIFIED
         reason = ""
     return apply_verification(
-        payload,
+        legacy_payload,
         status=verification_status,
         target=job_id or state.uri,
         last_known_state=last_known,
@@ -3529,7 +3529,7 @@ def _manifest_pending_status(
             if isinstance(item, dict)
         ]
     if not steps and task_rows:
-        rows = sorted(task_rows, key=lambda item: int(item.get("task_id") or 0))
+        rows = sorted(task_rows, key=lambda item: int(str(item.get("task_id") or 0)))
         steps = [
             {
                 "state": str(row.get("task_name") or f"step-{index}"),
@@ -4195,6 +4195,7 @@ def status_cmd(
                         update_run_observation,
                     )
 
+                    last_known = result.get("last_known")
                     update_run_observation(
                         project=project,
                         workflow_identity=str(
@@ -4202,8 +4203,8 @@ def status_cmd(
                         ),
                         run_id=str(result.get("run_id") or resolved_run_id),
                         last_known_state=str(
-                            (result.get("last_known") or {}).get("state")
-                            if isinstance(result.get("last_known"), dict)
+                            last_known.get("state")
+                            if isinstance(last_known, dict)
                             else result.get("status")
                         ),
                         verification_status=str(
@@ -4931,6 +4932,7 @@ def cancel_cmd(
     """Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops."""
     resolved_run_id = ""
     identity = None
+    result: dict[str, Any]
     try:
         from npa.orchestration.npa_workflow.cancellation import (
             assess_run_cancellation,

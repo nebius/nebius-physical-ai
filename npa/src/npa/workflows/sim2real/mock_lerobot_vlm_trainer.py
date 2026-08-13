@@ -68,7 +68,7 @@ def summarize_signal_batch(payload: Any) -> dict[str, Any]:
     rewards: list[float] = []
     advantages: list[float] = []
     action_dim = DEFAULT_ACTION_DIM
-    weighted = np.zeros(DEFAULT_ACTION_DIM, dtype=np.float64)
+    weighted: np.ndarray = np.zeros(DEFAULT_ACTION_DIM, dtype=np.float64)
     weight_sum = 0.0
     step_count = 0
     for signal in signals or []:
@@ -82,9 +82,9 @@ def summarize_signal_batch(payload: Any) -> dict[str, Any]:
             target = (step.get("target") or {}).get("action_delta") or []
             if target:
                 action_dim = max(action_dim, len(target))
-                vec = np.zeros(action_dim, dtype=np.float64)
+                vec: np.ndarray = np.zeros(action_dim, dtype=np.float64)
                 if weighted.shape[0] < action_dim:
-                    grown = np.zeros(action_dim, dtype=np.float64)
+                    grown: np.ndarray = np.zeros(action_dim, dtype=np.float64)
                     grown[: weighted.shape[0]] = weighted
                     weighted = grown
                 for i, value in enumerate(target):
@@ -220,7 +220,11 @@ def update_policy(
 # --------------------------------------------------------------------------- #
 def save_checkpoint(policy: MlpPolicy, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(path, action_dim=np.array(policy.action_dim), **policy.to_weights())
+    np.savez(
+        path,
+        action_dim=np.array(policy.action_dim),
+        **policy.to_weights(),  # type: ignore[arg-type]
+    )
     # np.savez appends .npz if missing; normalize to the actual written file.
     return path if path.exists() else path.with_suffix(".npz")
 
@@ -321,7 +325,7 @@ def run_training(signal_json: str, *, run_id: str) -> dict[str, Any]:
     resume_uri = _env("NPA_SIM2REAL_RESUME_CHECKPOINT_URI")
     policy: MlpPolicy | None = None
     if resume_uri:
-        local = Path(resume_uri)
+        local: Path | None = Path(resume_uri)
         if resume_uri.startswith("s3://"):
             tmp = Path("/tmp/mock_trainer_resume.npz")
             local = tmp if _download_s3(resume_uri, tmp) else None

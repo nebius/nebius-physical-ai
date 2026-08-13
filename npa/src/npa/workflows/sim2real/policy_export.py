@@ -388,7 +388,7 @@ def _detect_normalization(
 def _make_forward_module(torch: Any, actor: Any, norm: Any | None) -> Any:
     nn = torch.nn
 
-    class _PolicyForward(nn.Module):
+    class _PolicyForward(nn.Module):  # type: ignore[name-defined]
         def __init__(self) -> None:
             super().__init__()
             self.actor = actor
