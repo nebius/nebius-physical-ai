@@ -76,3 +76,23 @@ class StateStore:
         with self._lock:
             data = self.load()
             return dict(data) if isinstance(data, dict) else self._default_factory()
+
+
+def preserve_latest_namespaces(
+    candidate: dict[str, Any],
+    latest: dict[str, Any],
+    namespaces: tuple[str, ...],
+) -> dict[str, Any]:
+    """Keep atomic namespaces when a legacy load-then-save caller is stale.
+
+    The agent still has older request handlers that call ``load`` and ``save``
+    separately.  A slow handler must not overwrite namespaces whose writers use
+    ``StateStore.mutate`` for an atomic transaction.
+    """
+
+    merged = dict(candidate)
+    for namespace in namespaces:
+        current = latest.get(namespace)
+        if isinstance(current, dict):
+            merged[namespace] = dict(current)
+    return merged

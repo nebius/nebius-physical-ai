@@ -538,6 +538,12 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "insights",
         "isaac-lab",
         "lancedb",
+        # Interactive LeIsaac sessions are lifecycle-bearing Kubernetes services:
+        # launch publishes the live capability and destroy removes the GPU/LBs.
+        # A finite npa.workflow stage would falsely report completion while the
+        # browser teleoperation session must remain live. CLI/core/Kubernetes
+        # coherence is covered by tests/workbench/test_leisaac.py instead.
+        "leisaac",
         "lerobot",
         # Static web viewer (caddy static server; no skypilot three-tier YAML).
         "lichtblick",

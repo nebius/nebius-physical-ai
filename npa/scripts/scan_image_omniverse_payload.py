@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove mechanically that a BUILT image carries no NVIDIA Omniverse Kit payload.
+"""Prove a BUILT image carries no restricted NVIDIA or LeIsaac runtime payload.
 
 This is the check the whole redistribution reclassification rests on. Reading a
 Dockerfile is not enough: the claim is about bytes in layers, so this inspects the built
@@ -45,6 +45,10 @@ from pathlib import Path
 
 # Path signatures that only a real Omniverse Kit / Isaac Sim install produces.
 PAYLOAD_SIGNATURES: tuple[tuple[str, str], ...] = (
+    (
+        r"(?i)(?:^|/)site-packages/imageio_ffmpeg/binaries/ffmpeg[^/]*$",
+        "an imageio-ffmpeg wheel-bundled static FFmpeg executable",
+    ),
     (r"(?i)site-packages/isaacsim/", "the isaacsim wheel's installed package tree"),
     (r"(?i)site-packages/isaaclab/", "the isaaclab wheel's installed package tree"),
     (
@@ -59,6 +63,22 @@ PAYLOAD_SIGNATURES: tuple[tuple[str, str], ...] = (
     (r"(?i)\.kit$", "a Kit app configuration file"),
     (r"(?i)omniverse", "an Omniverse-branded path"),
     (r"(?i)isaac.?sim.?assets", "Isaac Sim's bundled assets"),
+    (
+        r"(?i)(^|/)leisaac-cache/client/[^/]+/",
+        "a staged versioned NVIDIA WebRTC browser client",
+    ),
+    (
+        r"(?i)(^|/)omniverse-webrtc-streaming-library-[^/]+\.(tgz|tar\.gz)$",
+        "a staged NVIDIA WebRTC browser-client archive",
+    ),
+    (
+        r"(?i)(^|/)leisaac-cache/assets/runtime/.*\.(usd|usda|usdc)$",
+        "a staged LeIsaac runtime task asset",
+    ),
+    (
+        r"(?i)(^|/)leisaac/assets/(robots|scenes)/.*\.(usd|usda|usdc)$",
+        "a LeIsaac source-tree task asset",
+    ),
 )
 
 # Gated model weights are a separate licence axis from Omniverse Kit, and the workbench
@@ -196,7 +216,7 @@ class ScanReport:
 
     def to_dict(self) -> dict:
         return {
-            "format": "npa_omniverse_payload_scan_v1",
+            "format": "npa_restricted_payload_scan_v2",
             "image": self.image,
             "source": self.source,
             "digest": self.digest,
@@ -209,7 +229,7 @@ class ScanReport:
             # this marker instead of treating a partial listing as authoritative.
             "scan_complete": True,
             "entries_scanned": self.entries_scanned,
-            "verdict": "clean" if self.clean else "omniverse-payload-detected",
+            "verdict": "clean" if self.clean else "restricted-payload-detected",
             "payload_hits": self.payload_hits,
             "history_hits": self.history_hits,
             "allowlisted_paths_present": sorted(self.allowlisted_hits),
@@ -387,7 +407,9 @@ def main(argv: list[str] | None = None) -> int:
     for path in payload["allowlisted_paths_present"][:20]:
         print(f"                   {path}")
     if report.payload_hits:
-        print(f"\nOMNIVERSE PAYLOAD DETECTED ({len(report.payload_hits)} path(s)):")
+        print(
+            f"\nRESTRICTED RUNTIME PAYLOAD DETECTED ({len(report.payload_hits)} path(s)):"
+        )
         for hit in report.payload_hits:
             print(f"  {hit['path']}\n      -> {hit['why']}")
     if report.history_hits:

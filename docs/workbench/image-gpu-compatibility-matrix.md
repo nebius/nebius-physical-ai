@@ -74,6 +74,7 @@ The old `npa-cosmos:1.0.9` cu126 image stopped at Hopper. Its additive cu128/tor
 | `npa-loop-eval` | supported | **verified** [58] | **verified** [18] | **verified** [56] | **verified** [57] |
 | `npa-lerobot-vlm-rl` | supported | **verified** [55] | **verified** [17] | **verified** [53] | **verified** [54] |
 | `npa-isaac-lab` | supported | supported (headless) | supported | blocked | blocked |
+| `npa-leisaac` | not routed or validated by the current launcher | blocked (no RT cores) | supported (current hard-selected target) | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-sonic` | supported | supported (headless) | supported | blocked | blocked |
 | `npa-sonic-mujoco` | supported | supported (headless) | supported | blocked | blocked |
 | `npa-groot` | supported | supported | supported | blocked | blocked |

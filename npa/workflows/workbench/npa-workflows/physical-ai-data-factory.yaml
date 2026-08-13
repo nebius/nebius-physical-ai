@@ -470,8 +470,8 @@ states:
       output tree (clips/, metas/v0/, processed_videos/) under curated_clips_uri
       plus a summary at curator_report_uri, which the FiftyOne review stage merges.
       Runs in the npa-cosmos-curate image, which bakes the pinned upstream checkout
-      and an ffmpeg carrying libopenh264. Without that image the stage records
-      `engine: unavailable` with the reason instead of pretending to curate.
+      and an ffmpeg carrying libopenh264. The stage fails closed if the real
+      upstream curator cannot run or publish its output.
     needs: [annotate-augmented]
     toolRef: workbench.cosmos_curate.curate
     resources: cpu

@@ -104,8 +104,46 @@ def _resolved_artifact_for_content(
     run_id: str,
     key: str,
     requested_bucket: str = "",
+    exact_membership: bool = False,
 ):
     normalized_key = _safe_artifact_key(key)
+    if exact_membership:
+        # A load request that carries an exact bucket/key tuple must stay on the
+        # bounded membership path.  Re-listing the whole run here both loses the
+        # caller's source precision for duplicate basenames and can turn a
+        # single-object authorization check into a multi-second bucket scan.
+        normalized_run = validate_run_id(run_id)
+        run_bucket, normalized_key, normalized_run = (
+            _resolve_accessible_run_artifact(
+                s3=s3,
+                settings=settings,
+                run_id=normalized_run,
+                key=normalized_key,
+                bucket=requested_bucket,
+            )
+        )
+        key_parts = [part for part in normalized_key.split("/") if part]
+        run_index = key_parts.index(normalized_run)
+        source_prefix = "/".join(key_parts[:run_index])
+        relative_key = "/".join(key_parts[run_index + 1 :])
+        head = s3.head_object(Bucket=run_bucket, Key=normalized_key)
+        modified = head.get("LastModified")
+        if hasattr(modified, "isoformat"):
+            modified = modified.isoformat()
+        render = render_hint_for_object(key=normalized_key)
+        artifact = Artifact(
+            run_id=normalized_run,
+            key=normalized_key,
+            s3_uri=f"s3://{run_bucket}/{normalized_key}",
+            size=int(head.get("ContentLength") or 0),
+            last_modified=str(modified or ""),
+            render=render,
+            inline=is_inline_render(render),
+            role=artifact_role_for_relative_key(relative_key),
+            namespace=source_prefix or "<bucket-root>",
+            relative_key=relative_key,
+        )
+        return normalized_run, run_bucket, artifact
     try:
         normalized_run, run_bucket, artifacts, _ = _resolved_run_artifacts(
             s3, settings, run_id

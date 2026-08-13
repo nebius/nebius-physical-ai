@@ -1,0 +1,11 @@
+diff --git a/source/leisaac/pyproject.toml b/source/leisaac/pyproject.toml
+index a271d41..5ae8ef5 100644
+--- a/source/leisaac/pyproject.toml
++++ b/source/leisaac/pyproject.toml
+@@ -22,6 +22,5 @@ requires-python = ">=3.10"
+ dependencies = [
+     "deepdiff",
+-    "feetech-servo-sdk",
+     "psutil",
+     "pygame>=2.5.1,<2.7.0",
+     "pyserial",

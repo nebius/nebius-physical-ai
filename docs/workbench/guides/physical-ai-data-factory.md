@@ -234,10 +234,11 @@ Each curation/evaluation tool has its own CPU-only workbench image:
 | `npa-cosmos-curate` | `cosmos-curate` | conda-forge ffmpeg with `libopenh264`, baked in |
 | `npa-fiftyone` | `curate` | bundled `mongod`; real Brain uniqueness/similarity/PCA |
 
-Without the curator image the stage records `engine: unavailable` plus the reason
-and the required FiftyOne review still runs. If FiftyOne Brain is unavailable,
-the `curate` stage fails closed rather than presenting report-only counts as a
-FiftyOne review. Check what an environment resolves to with:
+Both curation stages fail closed: the Cosmos Curator command uses
+`--require-curator`, and the following `workbench.fiftyone.curate_augmented`
+toolRef must execute real FiftyOne Brain curation in the `npa-fiftyone` image.
+Missing engines, unpublished output, or an invalid preceding report stop the
+pipeline. Check what an environment resolves to with:
 
 ```bash
 npa workbench cosmos-evaluator engine --output text

@@ -13,6 +13,7 @@ from npa.cli.workbench.cosmos_evaluator import app as cosmos_evaluator_app
 from npa.cli.workbench.data import app as data_app
 from npa.cli.workbench.foxglove import app as foxglove_app
 from npa.cli.workbench.lichtblick import app as lichtblick_app
+from npa.cli.workbench.leisaac import app as leisaac_app
 from npa.cli.workbench.lerobot import app as lerobot_app
 from npa.cli.workbench.ltx2 import app as ltx2_app
 from npa.cli.workbench.mjlab import app as mjlab_app
@@ -63,6 +64,7 @@ app.add_typer(foxglove_app, name="foxglove")
 app.add_typer(genesis_app, name="genesis")
 app.add_typer(groot_app, name="groot")
 app.add_typer(isaac_lab_app, name="isaac-lab")
+app.add_typer(leisaac_app, name="leisaac")
 app.add_typer(nurec_app, name="nurec")
 app.add_typer(sonic_app, name="sonic")
 app.add_typer(mjlab_app, name="mjlab")

@@ -378,6 +378,95 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
         sys.modules.pop(module_name, None)
 
 
+def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
+    monkeypatch, tmp_path
+) -> None:
+    """An exact URI disambiguates same-named runs without weakening membership."""
+    import sys
+
+    module_name = "npa_rendered_exact_artifact_backend"
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name=module_name
+    )
+    uri = "s3://bucket-b/team/run-1/reports/preview.mp4"
+    authorization: dict[str, str] = {}
+
+    def _authorize(**kwargs):
+        authorization.update(
+            run_id=str(kwargs["run_id"]),
+            key=str(kwargs["key"]),
+            bucket=str(kwargs["bucket"]),
+        )
+        return "bucket-b", str(kwargs["key"]), "run-1"
+
+    try:
+        monkeypatch.setattr(module, "RECORDINGS_DIR", tmp_path / "recordings")
+        class _S3:
+            def head_object(self, **_kwargs):
+                return {"ContentLength": 24}
+
+        monkeypatch.setattr(module, "_agent_s3_client", lambda: (_S3(), {"bucket": "bucket-a"}))
+        monkeypatch.setattr(module, "_resolve_accessible_run_artifact", _authorize)
+        monkeypatch.setattr(
+            module,
+            "resolve_run_artifacts",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("plain run IDs must use exact URI membership")
+            ),
+        )
+        monkeypatch.setattr(
+            module,
+            "download_s3_uri",
+            lambda _uri, path, **_kwargs: (
+                path.parent.mkdir(parents=True, exist_ok=True),
+                path.write_bytes(b"\x00\x00\x00\x18ftypisom"),
+                path,
+            )[-1],
+        )
+        monkeypatch.setattr(module, "_load_state", lambda: {})
+        monkeypatch.setattr(module, "_agent_access_report", lambda: {})
+        monkeypatch.setattr(
+            module,
+            "_artifact_source_metadata",
+            lambda *_args: ("bucket-b", "project-b", "team"),
+        )
+        monkeypatch.setattr(
+            module,
+            "_apply_loaded_artifact",
+            lambda **kwargs: {
+                "artifact_preview_url": "/api/artifacts/file/preview.mp4",
+                "run_id": kwargs["run_id"],
+            },
+        )
+
+        run_ref = module.encode_run_ref("bucket-b", "team", "run-1")
+        loaded = module.sim_viz_load_artifact(
+            {"run_id": "run-1", "run_ref": run_ref, "s3_uri": uri}
+        )
+        assert loaded["ok"] is True
+        assert loaded["render"] == "video"
+        assert loaded["sim_viz"]["run_id"] == "run-1"
+        assert loaded["run_ref"] == run_ref
+        assert authorization == {
+            "run_id": "run-1",
+            "key": "team/run-1/reports/preview.mp4",
+            "bucket": "bucket-b",
+        }
+        with pytest.raises(module.HTTPException) as mismatch:
+            module.sim_viz_load_artifact(
+                {
+                    "run_id": "run-1",
+                    "run_ref": module.encode_run_ref(
+                        "bucket-b", "another-team", "run-1"
+                    ),
+                    "s3_uri": uri,
+                }
+            )
+        assert mismatch.value.status_code == 400
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_chat_memory_is_deployment_scoped_and_rejects_legacy_tenant_state(
     monkeypatch, tmp_path
 ) -> None:
@@ -870,6 +959,13 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
         "gpu_allocation_fallback",
         "gpu_allocation_routes",
         "artifact_routes",
+        "leisaac_registry",
+        "leisaac",
+        "leisaac_episodes",
+        "leisaac_bundles",
+        "leisaac_transport",
+        "leisaac_datachannel",
+        "leisaac_routes",
     ):
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
@@ -898,6 +994,8 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
         ("artifact_routes", "def register_artifact_routes"),
         ("canonical_mcap", "def prepare_canonical_mcap"),
         ("foxglove_cloud", "class FoxgloveCloudClient"),
+        ("leisaac", "def normalize_manifest"),
+        ("leisaac_routes", "def register_leisaac_routes"),
     ],
 )
 def test_shipped_agent_backend_modules_compile(monkeypatch, module, marker) -> None:
@@ -959,6 +1057,13 @@ def test_rendered_backend_imports_and_registers_foxglove_routes(monkeypatch, tmp
         "foxglove_cloud",
         "foxglove_routes",
         "artifact_routes",
+        "leisaac_registry",
+        "leisaac",
+        "leisaac_episodes",
+        "leisaac_bundles",
+        "leisaac_transport",
+        "leisaac_datachannel",
+        "leisaac_routes",
     ):
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
@@ -1676,6 +1781,11 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         "/foxglove/live",
         "/resources",
         "/tenant-resources",
+        "/leisaac/status",
+        "/leisaac/client/index.js",
+        "/leisaac/signal",
+        "/leisaac/signal/{signal_path:path}",
+        "/leisaac/backhaul",
     ):
         assert expected in paths, f"rendered backend did not register {expected}"
 
@@ -1908,6 +2018,20 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         "indexed-run-2",
     }
     assert second_runs["runs"][0]["resolved_prefix"]
+
+    query_calls: list[dict[str, object]] = []
+
+    def _query_index(_buckets, **kwargs):
+        query_calls.append(kwargs)
+        return _PagedRunPage()
+
+    monkeypatch.setattr(module, "list_runs_cached_multi", _query_index)
+    searched = module.artifacts_runs(limit=20, q="RUN-1")
+    assert [item["run_id"] for item in searched["runs"]] == ["indexed-run-1"]
+    assert searched["total_runs"] == 1
+    assert searched["query"] == "RUN-1"
+    assert query_calls[0]["contains"] == ""
+    assert query_calls[0]["lightweight"] is True
 
     with pytest.raises(module.HTTPException) as exc_info:
         module.artifacts_runs(
@@ -2452,6 +2576,9 @@ def test_rendered_backend_loads_real_skill_excerpts(monkeypatch, tmp_path):
         "foxglove_cloud",
         "foxglove_routes",
         "artifact_routes",
+        "leisaac_registry",
+        "leisaac",
+        "leisaac_routes",
     ):
         (package / f"{name}.py").write_text(
             _extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"

@@ -11,6 +11,32 @@ import typer
 from npa.workflows import data_factory_stages as dfs
 
 
+def _stub_real_fiftyone(
+    report: dict, augment_uri: str, keys: list[str], dedup_threshold: float | str
+) -> dict:
+    del augment_uri, keys, dedup_threshold
+    return {
+        **report,
+        "curation_engine": "fiftyone-brain",
+        "curated_kept": report["augmented_clips"],
+        "curated_dropped": 0,
+    }
+
+
+def _completed_curator_report(path: Path) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "engine": "cosmos-curator-stages",
+                "curated_uri": "s3://b/p/curated/",
+                "clip_count": 1,
+            }
+        )
+    )
+    return path
+
+
 def _mock_committed_manifest(
     monkeypatch: pytest.MonkeyPatch, keys: list[str], *, bucket: str = "b"
 ) -> None:
@@ -90,7 +116,7 @@ def test_prompt_from_combo_is_appearance_only() -> None:
     assert "warm color grade" in prompt
     assert "matte surface finish" in prompt
     assert "change appearance only" in prompt
-    assert "Preserve the exact input objects" in prompt
+    assert "Preserve every frame's exact input objects" in prompt
     assert "cloth" not in prompt
 
 
@@ -515,6 +541,7 @@ def test_curate_merges_the_cosmos_curator_report(tmp_path: Path, monkeypatch) ->
     )
     _mock_committed_manifest(monkeypatch, keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
     report = dfs.curate(
         "s3://b/p/cosmos_augmented/",
         str(tmp_path / "report.json"),
@@ -528,31 +555,32 @@ def test_curate_merges_the_cosmos_curator_report(tmp_path: Path, monkeypatch) ->
     assert report["multiply"]["mode"] == "multi-variant"
 
 
-def test_curate_records_a_missing_curator_report_without_failing(
+def test_curate_fails_closed_when_curator_report_is_missing(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
         dfs, "_list_keys", lambda uri: ["p/cosmos_augmented/aug-0/augmented_video.mp4"]
     )
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
-    report = dfs.curate(
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
+    with pytest.raises(RuntimeError, match="could not be loaded"):
+        dfs.curate(
         "s3://b/p/cosmos_augmented/",
         str(tmp_path / "report.json"),
         curator_report_uri=str(tmp_path / "absent.json"),
     )
-    assert report["cosmos_curator"]["status"] == "unavailable"
-    assert report["status"] == "curated"
 
 
-def test_curate_omits_the_curator_block_when_no_report_is_passed(
+def test_curate_fails_closed_when_no_curator_report_is_passed(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
         dfs, "_list_keys", lambda uri: ["p/cosmos_augmented/aug-0/augmented_video.mp4"]
     )
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
-    report = dfs.curate("s3://b/p/cosmos_augmented/", str(tmp_path / "report.json"))
-    assert "cosmos_curator" not in report
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
+    with pytest.raises(RuntimeError, match="report URI is required"):
+        dfs.curate("s3://b/p/cosmos_augmented/", str(tmp_path / "report.json"))
 
 
 def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
@@ -567,13 +595,19 @@ def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
     _mock_committed_manifest(monkeypatch, keys)
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
     written = {}
     monkeypatch.setattr(
         dfs,
         "_upload_json",
         lambda payload, uri: written.update(payload=payload, uri=uri) or uri,
     )
-    report = dfs.curate("s3://b/p/cosmos_augmented/", "s3://b/p/curation/report.json")
+    curator_report = _completed_curator_report(tmp_path / "curator.json")
+    report = dfs.curate(
+        "s3://b/p/cosmos_augmented/",
+        "s3://b/p/curation/report.json",
+        curator_report_uri=str(curator_report),
+    )
     assert report["video_count"] == 1
     assert report["frame_count"] == 2
     assert set(report["clip_ids"]) == {"aug-run"}
@@ -581,9 +615,32 @@ def test_curate_counts_augmented_set(tmp_path: Path, monkeypatch) -> None:
     assert report["status"] == "curated"
     # Single-variant limitation surfaced in the machine-readable report.
     assert report["multiply"]["mode"] == "single-variant"
-    # FiftyOne is not installed in the unit-test env, so curate degrades to the
-    # report-only path (real Brain curation only runs inside the npa-fiftyone image).
-    assert report["curation_engine"] == "report-only"
+    assert report["curation_engine"] == "fiftyone-brain"
+
+
+def test_curate_fails_closed_when_fiftyone_is_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from npa.workflows import data_factory_curate as dfc
+
+    monkeypatch.setattr(
+        dfs,
+        "_list_keys",
+        lambda uri: ["p/cosmos_augmented/aug-0/augmented_video.mp4"],
+    )
+    monkeypatch.setattr(
+        dfc,
+        "run_curation",
+        lambda **kwargs: (_ for _ in ()).throw(dfc.FiftyoneUnavailable("absent")),
+    )
+    with pytest.raises(dfc.FiftyoneUnavailable, match="absent"):
+        dfs.curate(
+            "s3://b/p/cosmos_augmented/",
+            "s3://b/p/curation/report.json",
+            curator_report_uri=str(
+                _completed_curator_report(tmp_path / "curator.json")
+            ),
+        )
 
 
 def test_generate_configs_feeds_first_augmentation_to_transfer(tmp_path: Path) -> None:
@@ -605,6 +662,37 @@ def test_generate_configs_feeds_first_augmentation_to_transfer(tmp_path: Path) -
     }
     # The prompt is what the augment stage feeds into Cosmos Transfer.
     assert combo["prompt"]
+
+
+def test_generate_configs_uses_leisaac_task_lineage_for_conditioning(
+    tmp_path: Path,
+) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    (input_dir / "leisaac-lineage.json").write_text(
+        json.dumps(
+            {
+                "schema": "npa.leisaac.paidf-input.v1",
+                "source": {
+                    "task": "LeIsaac-SO101-LiftCube-v0",
+                    "dataset_uri": "s3://bucket/dataset/versions/v1",
+                    "episode_index": 0,
+                },
+            }
+        )
+    )
+    manifest = dfs.generate_configs(str(tmp_path / "configs") + "/", 1, seed="lift")
+    combo = manifest["augmentations"][0]
+    assert set(combo) == {
+        "lighting",
+        "background",
+        "color_grade",
+        "surface_finish",
+        "prompt",
+    }
+    assert "red-cube lift motion" in combo["prompt"]
+    assert "Preserve every frame's exact input objects" in combo["prompt"]
+    assert manifest["source_leisaac"]["episode_index"] == 0
 
 
 def test_generate_configs_non_numeric_count_falls_back(tmp_path: Path) -> None:
@@ -667,8 +755,13 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: recorded)
     _mock_committed_manifest(monkeypatch, recorded, bucket="bkt")
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
     report = dfs.curate(
-        "s3://bkt/run1/cosmos_augmented/", "s3://bkt/run1/curation/report.json"
+        "s3://bkt/run1/cosmos_augmented/",
+        "s3://bkt/run1/curation/report.json",
+        curator_report_uri=str(
+            _completed_curator_report(tmp_path / "curator-interoperability.json")
+        ),
     )
     assert report["clip_ids"] == ["aug-run1"], report["clip_ids"]
     assert report["video_count"] == 1
@@ -700,7 +793,14 @@ def test_curate_reports_multi_variant_for_multiple_clips(
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
     _mock_committed_manifest(monkeypatch, keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
-    report = dfs.curate("s3://b/p/cosmos_augmented/", "s3://b/p/curation/report.json")
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
+    report = dfs.curate(
+        "s3://b/p/cosmos_augmented/",
+        "s3://b/p/curation/report.json",
+        curator_report_uri=str(
+            _completed_curator_report(tmp_path / "curator-multi.json")
+        ),
+    )
     assert report["augmented_clips"] == 3
     assert set(report["clip_ids"]) == {"aug-run-0", "aug-run-1", "aug-run-2"}
     assert report["video_count"] == 3
@@ -767,7 +867,9 @@ def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> Non
     assert report["multiply_mode"] == "single-variant"
 
 
-def test_curation_and_final_reports_carry_input_provenance(monkeypatch) -> None:
+def test_curation_and_final_reports_carry_input_provenance(
+    monkeypatch, tmp_path: Path
+) -> None:
     source = {
         "schema_version": "npa.paidf.input-provenance.v1",
         "source_kind": "upstream_sample",
@@ -784,12 +886,23 @@ def test_curation_and_final_reports_carry_input_provenance(monkeypatch) -> None:
             "physical-ai-data-factory/run/cosmos_augmented/aug-run/frame-00000.png"
         ],
     )
-    monkeypatch.setattr(dfs, "_download_json", lambda _uri: source)
+    curator_report = _completed_curator_report(tmp_path / "curator.json")
+    monkeypatch.setattr(
+        dfs,
+        "_download_json",
+        lambda uri: (
+            source
+            if str(uri).endswith("/input/provenance.json")
+            else json.loads(Path(uri).read_text())
+        ),
+    )
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    monkeypatch.setattr(dfs, "_enrich_with_fiftyone_curation", _stub_real_fiftyone)
 
     curated = dfs.curate(
         "s3://b/physical-ai-data-factory/run/cosmos_augmented/",
         "s3://b/physical-ai-data-factory/run/curation/report.json",
+        curator_report_uri=str(curator_report),
     )
     final = dfs.finalize(
         "s3://b/physical-ai-data-factory/run/",

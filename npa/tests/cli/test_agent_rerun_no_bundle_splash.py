@@ -84,6 +84,8 @@ def test_boot_page_warms_before_mount() -> None:
         "await Promise.all([refreshPromise, artifactsPromise, accessPromise, warmPromise])"
         not in boot
     )
+    assert "refreshLeIsaacCapability(activeRunId).catch(() => null)" in boot
+    assert "leisaacPromise" not in boot
     assert "await ensureFrankaRerunLoaded()" in boot
     # A restored run can require an expensive exact lookup across tenant S3.
     # Desktop first paint stays independent of that background discovery.

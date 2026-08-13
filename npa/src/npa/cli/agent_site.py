@@ -251,7 +251,10 @@ def nginx_agent_site_body(
     lichtblick_default_layout = _lichtblick_default_layout_script()
     lichtblick_worker = _lichtblick_worker_script()
     lichtblick_layout_placeholder = LICHTBLICK_DEFAULT_LAYOUT_PLACEHOLDER
-    return f"""  auth_basic "NPA Agent";
+    return f"""  # Use the query-free format installed by the bootstrap script. Browser
+  # signaling parameters and artifact URLs must never enter access logs.
+  access_log /var/log/nginx/npa-agent-access.log npa_agent_safe;
+  auth_basic "NPA Agent";
   auth_basic_user_file /etc/nginx/.npa-agent-htpasswd;
   # Describe-this / multimodal chat posts JPEG data-URLs; default 1m rejects them (413 → browser Failed to fetch).
   client_max_body_size 32m;
@@ -272,10 +275,90 @@ def nginx_agent_site_body(
     default_type text/html;
     add_header Cache-Control "no-store" always;
   }}
+  # Preferred LeIsaac transport uses two authenticated same-origin WebSockets.
+  # Separate sockets prevent a slow video client from head-of-line blocking
+  # ordered control acknowledgements. WebSocket frames must never be buffered.
+  location = /api/leisaac/transport/control {{
+    # Browser WebSocket APIs cannot attach Basic auth headers. A short-lived,
+    # same-origin HttpOnly cookie minted by the authenticated API is verified
+    # by FastAPI before the runtime is resolved or contacted.
+    auth_basic off;
+    rewrite ^/api/(.*)$ /$1 break;
+    proxy_pass http://127.0.0.1:{backend_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Origin $http_origin;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_connect_timeout 10s;
+    proxy_read_timeout 60s;
+    proxy_send_timeout 60s;
+  }}
+  location = /api/leisaac/transport/video {{
+    auth_basic off;
+    rewrite ^/api/(.*)$ /$1 break;
+    proxy_pass http://127.0.0.1:{backend_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Origin $http_origin;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_connect_timeout 10s;
+    proxy_read_timeout 60s;
+    proxy_send_timeout 60s;
+  }}
+  # Isaac Sim's browser client appends /sign_in to its configured signaling
+  # path.  This narrow authenticated prefix carries only WebSocket upgrades;
+  # the backend independently allowlists the bare path and /sign_in.
+  location ^~ /api/leisaac/signal {{
+    # API calls authenticate in the backend.  Without this explicit override,
+    # the more-specific location inherits server-level Basic Auth even though
+    # the general /api/ location disables it. Browser WebSocket handshakes do
+    # not inherit Cypress/HTTP navigation credentials and otherwise loop on
+    # 401 before the exact-origin backend policy can run.
+    auth_basic off;
+    rewrite ^/api/(.*)$ /$1 break;
+    proxy_pass http://127.0.0.1:{backend_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Origin $http_origin;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 900s;
+    proxy_send_timeout 900s;
+  }}
+  location = /api/leisaac/backhaul {{
+    rewrite ^/api/(.*)$ /$1 break;
+    proxy_pass http://127.0.0.1:{backend_port}/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 30s;
+    proxy_read_timeout 900s;
+    proxy_send_timeout 900s;
+  }}
   location /api/ {{
     proxy_pass http://127.0.0.1:{backend_port}/;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
