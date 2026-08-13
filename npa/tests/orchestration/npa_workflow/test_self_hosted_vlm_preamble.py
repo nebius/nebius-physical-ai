@@ -144,11 +144,14 @@ def test_preamble_uses_python_not_curl_for_the_health_wait() -> None:
     assert "urllib.request" in preamble
 
 
-def test_preamble_has_no_braced_expansion() -> None:
-    """A `${var}` would trip the rendered-YAML placeholder guard."""
+def test_preamble_is_valid_author_controlled_shell_after_render() -> None:
+    """The placeholder guard accepts the preamble in a real ``setup`` field."""
 
-    assert_no_unresolved_placeholders(render_self_hosted_vlm_preamble({}))
-    assert "${" not in render_self_hosted_vlm_preamble({})
+    rendered = yaml.safe_dump(
+        {"name": "self-hosted-vlm", "setup": render_self_hosted_vlm_preamble({})},
+        sort_keys=False,
+    )
+    assert_no_unresolved_placeholders(rendered)
 
 
 def test_config_overrides_model_port_and_trust() -> None:

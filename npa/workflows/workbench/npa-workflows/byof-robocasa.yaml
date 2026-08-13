@@ -29,11 +29,7 @@ config:
   smoke_command: |
     export MUJOCO_GL=egl
     export PYOPENGL_PLATFORM=egl
-    NVIDIA_DRIVER_CAPABILITIES="$(printenv NVIDIA_DRIVER_CAPABILITIES || true)"
-    if [ -z "$NVIDIA_DRIVER_CAPABILITIES" ]; then
-      NVIDIA_DRIVER_CAPABILITIES=all
-    fi
-    export NVIDIA_DRIVER_CAPABILITIES
+    export NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-all}"
     # Ensure HF hub + imageio ffmpeg backend are present (rollout video writer).
     # Keep gymnasium pinned: >=1 wrappers drop __getattr__ and break env.sim video.
     python3 -m pip install --quiet --no-cache-dir huggingface_hub "imageio[ffmpeg]" "gymnasium==0.29.1" 2>/dev/null ||

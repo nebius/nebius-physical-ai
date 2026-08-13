@@ -24,7 +24,7 @@ config:
     ln -sf /opt/google-cloud-sdk/bin/gsutil /usr/local/bin/gsutil || true
   workload: solution-smoke
   smoke_command: |
-    export PATH="/opt/google-cloud-sdk/bin:/usr/local/bin:$PATH"
+    export PATH="/opt/google-cloud-sdk/bin:/usr/local/bin:${PATH}"
     /opt/venv/bin/python - <<'PY'
     import json
     import os

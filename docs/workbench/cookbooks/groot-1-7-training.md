@@ -124,6 +124,7 @@ Pixel-level nonblank rendering and “Describe this” remain browser E2E gates.
 ## Kubernetes image prerequisites
 
 `npa/docker/workbench/groot/Dockerfile.k8s-prereqs` adds the system packages the
-SkyPilot Kubernetes bootstrap requires. The workflow pod runs these isolated
-stages as root through an explicit pod security context; the image does not add
-passwordless sudo or a `NOPASSWD:ALL` policy.
+SkyPilot Kubernetes bootstrap requires. Both the canonical and derived images
+run as `ubuntu`, provide passwordless sudo for SkyPilot's in-pod package/SSH
+bootstrap, and retain a forwarding entrypoint; the workflow does not override
+the pod to uid 0.

@@ -126,16 +126,6 @@ def _load_config(path: Path) -> dict[str, object]:
     return config
 
 
-@pytest.mark.parametrize("spec_path", SOLUTION_SPECS, ids=lambda path: path.name)
-def test_solution_commands_have_no_braced_shell_expansions(spec_path: Path) -> None:
-    """Keep BYOF commands renderable by the SkyPilot placeholder guard."""
-
-    config = _load_config(spec_path)
-    for key in ("build_command", "smoke_command"):
-        command = str(config.get(key) or "")
-        assert "${" not in command, f"{spec_path.name} {key} contains ${{...}}"
-
-
 def _load_wan_input_contract():
     spec = importlib.util.spec_from_file_location(
         "npa_wan_input_contract_test", WAN_INPUT_CONTRACT_PATH

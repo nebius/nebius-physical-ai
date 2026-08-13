@@ -166,7 +166,6 @@ __all__ = [
     "parse_json_output",
     "parse_json_payload",
     "parse_runtime_json",
-    "project_args",
     "resolve_spec_path",
     "seed_live_workflow_inputs",
     "selected_submit_cases",
@@ -185,12 +184,6 @@ def assume_decision_for(name: str, *, mode: str = "promote") -> str:
     if name in DYNAMIC_SPECS:
         return "loop_back" if mode == "loop" else "promote_checkpoint"
     return ""
-
-
-def project_args(e2e_project: str | None) -> list[str]:
-    """Route workflow operations to the project selected for live fixtures."""
-
-    return ["--project", e2e_project] if e2e_project else []
 
 
 def live_bucket(e2e_project: str | None) -> str:

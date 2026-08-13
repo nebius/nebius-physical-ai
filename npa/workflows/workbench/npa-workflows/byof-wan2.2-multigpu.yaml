@@ -31,11 +31,7 @@ config:
     set -euo pipefail
     # User-provided prompt crosses the shell boundary only as base64 data.
     export WAN22_PROMPT_B64="{{config.prompt|base64}}"
-    WAN22_CACHE_DIR="$(printenv WAN22_CACHE_DIR || true)"
-    if [ -z "$WAN22_CACHE_DIR" ]; then
-      WAN22_CACHE_DIR=/workspace/model-cache/wan2.2
-    fi
-    export WAN22_CACHE_DIR
+    export WAN22_CACHE_DIR="${WAN22_CACHE_DIR:-/workspace/model-cache/wan2.2}"
     export WAN22_EXPECTED_WORLD_SIZE="4"
     export WAN22_OUTPUT_NAME="wan2_2_ti2v_5b_multigpu.mp4"
     # The runtime pins NCCL 2.27.7: the formerly pinned 2.26.2 initialized all
@@ -63,11 +59,11 @@ config:
     export NCCL_DEBUG_SUBSYS="INIT,COLL,ENV"
     # The wrapper replaces this with one deterministic filename per rank before
     # process-group initialization so the logs can enter verified RRD lineage.
-    export NCCL_DEBUG_FILE="$NPA_SMOKE_OUTPUT_DIR/wan2_2_multigpu_nccl_unbound.%p.log"
+    export NCCL_DEBUG_FILE="${NPA_SMOKE_OUTPUT_DIR}/wan2_2_multigpu_nccl_unbound.%p.log"
     wan-runtime ensure
-    OUT_DIR="$NPA_SMOKE_OUTPUT_DIR"
-    CHECKPOINT_FILE="$OUT_DIR/checkpoint_dir.txt"
-    WRAPPER="$OUT_DIR/wan22_distributed_wrapper.py"
+    OUT_DIR="${NPA_SMOKE_OUTPUT_DIR}"
+    CHECKPOINT_FILE="${OUT_DIR}/checkpoint_dir.txt"
+    WRAPPER="${OUT_DIR}/wan22_distributed_wrapper.py"
 
     # Fetch immutable public weights/tokenizer at run time and build the
     # directory layout expected by upstream generate.py without copying bytes.
@@ -104,7 +100,7 @@ config:
         str(overlay) + "\n", encoding="utf-8"
     )
     PY
-    CHECKPOINT_DIR="$(tr -d '\n' < "$CHECKPOINT_FILE")"
+    CHECKPOINT_DIR="$(tr -d '\n' < "${CHECKPOINT_FILE}")"
     export WAN22_PROMPT="$(/opt/wan-base/bin/python - <<'PY'
     import base64
     import os
@@ -119,7 +115,7 @@ config:
     PY
     )"
 
-    cat > "$WRAPPER" <<'PY'
+    cat > "${WRAPPER}" <<'PY'
     from __future__ import annotations
 
     import ctypes
@@ -417,14 +413,14 @@ config:
     # that environment is copied from the runtime cache into the work pod.
     /opt/byof/.venv/bin/python -m torch.distributed.run \
       --standalone --nnodes=1 --nproc_per_node=4 \
-      "$WRAPPER" \
+      "${WRAPPER}" \
       --task ti2v-5B \
       --size '1280*704' \
-      --ckpt_dir "$CHECKPOINT_DIR" \
+      --ckpt_dir "${CHECKPOINT_DIR}" \
       --dit_fsdp --t5_fsdp --ulysses_size 4 \
-      --prompt "$WAN22_PROMPT" \
+      --prompt "${WAN22_PROMPT}" \
       --frame_num 17 --sample_steps 8 --base_seed 42 \
-      --save_file "$OUT_DIR/$WAN22_OUTPUT_NAME"
+      --save_file "${OUT_DIR}/${WAN22_OUTPUT_NAME}"
 
     /opt/byof/.venv/bin/python - <<'PY'
     from __future__ import annotations

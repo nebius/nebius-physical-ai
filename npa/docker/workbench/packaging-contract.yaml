@@ -292,7 +292,8 @@ images:
     isaac_runtime_fetch: true
     tier: interactive
     ports: [8080]
-    notes: "EXPOSE 8080 without default server CMD; promote to service when ready."
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root ubuntu runtime user, no default sshd service, and no baked credentials."
+    notes: "EXPOSE 8080 without default server CMD; canonical and derived repair builds grant passwordless sudo solely for SkyPilot's in-pod bootstrap; promote to service when ready."
     redistribution: public
   retargeting:
     dockerfile: retargeting/Dockerfile
