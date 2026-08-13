@@ -59,7 +59,9 @@ def main(argv: list[str]) -> int:
             item for item in os.environ.get("NPA_LTX_OUTPUTS", "").split(",") if item
         )
         model_files = tuple(
-            item for item in os.environ.get("NPA_LTX_MODEL_FILES", "").split(",") if item
+            item
+            for item in os.environ.get("NPA_LTX_MODEL_FILES", "").split(",")
+            if item
         )
         record = licensing.ProvenanceRecord(
             declaration=declaration,

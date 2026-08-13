@@ -65,10 +65,15 @@ test "$rc" = 78
 caches_are_empty
 
 set +e
-env NPA_LTX_ACCEPT_COMMUNITY_LICENSE=YES \
+# `-u HF_TOKEN` rather than `HF_TOKEN=`: an empty assignment still reads as a
+# token assignment, both to a human skimming for leaked credentials and to the
+# image's own secret scanner, which flagged this line. Unsetting says what is
+# meant and leaves nothing that looks like a secret in a shipped file.
+env -u HF_TOKEN \
+    NPA_LTX_ACCEPT_COMMUNITY_LICENSE=YES \
     NPA_LTX_ENTITY_CLASS=community \
     NPA_LTX_USE_CLASS=non-commercial \
-    HF_TOKEN= ltx-runtime fetch-weights >/dev/null 2>/tmp/ltx-err
+    ltx-runtime fetch-weights >/dev/null 2>/tmp/ltx-err
 rc=$?
 set -e
 test "$rc" = 78

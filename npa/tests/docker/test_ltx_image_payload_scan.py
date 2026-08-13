@@ -9,6 +9,7 @@ must not trip it.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import sys
@@ -273,6 +274,75 @@ class TestBuildTimeFetchIsDetected:
         assert "cuda_base" in _kinds(
             scanner.scan(_tar(tmp_path / "r.tar", CLEAN_ROOTFS), config)
         )
+
+
+class TestTheAuditedBaseImageBytes:
+    """The base image's own OpenSSH/ffmpeg binaries are audited by identity.
+
+    `openssh-server` and `ffmpeg` are installed on purpose — the SkyPilot
+    bootstrap contract needs the first and the output validator decodes with the
+    second — and their binaries contain key-format literals and a CUDA/NVENC ELF
+    reference. The first real scan of a real build failed on exactly those,
+    because this scanner passed empty allowlists on a wrong assumption about its
+    own image.
+
+    What makes the fix an audit rather than a hole is that the entries are
+    path *and* exact SHA-256, so substituted bytes at an audited path still fail.
+    """
+
+    def test_the_allowlists_are_wired_up_and_not_empty(self) -> None:
+        assert scanner.AUDITED_SECRET_LITERAL_FILE_SHA256
+        assert scanner.AUDITED_LITERAL_LIBRARY_SHA256
+        assert "usr/sbin/sshd" in scanner.AUDITED_SECRET_LITERAL_FILE_SHA256
+
+    def test_substituted_bytes_at_an_audited_path_are_caught(
+        self, tmp_path: Path
+    ) -> None:
+        """A path alone must not be enough, or this would be a blanket exemption."""
+
+        rootfs = dict(CLEAN_ROOTFS) | {
+            "usr/sbin/sshd": b"-----BEGIN OPENSSH PRIVATE KEY-----\nnot the real sshd\n"
+        }
+        findings = scanner.scan(_tar(tmp_path / "r.tar", rootfs), CLEAN_CONFIG)
+
+        assert "audited_literal_byte_drift" in _kinds(findings)
+
+    def test_the_exact_audited_bytes_are_accepted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other half: matching bytes must actually pass, or the scan is unusable.
+
+        The real sshd is not available here, so this pins a stand-in through the
+        same code path the real hashes take.
+        """
+
+        payload = b"-----BEGIN OPENSSH PRIVATE KEY-----\nstand-in for the real sshd\n"
+        monkeypatch.setitem(
+            scanner.AUDITED_SECRET_LITERAL_FILE_SHA256,
+            "usr/sbin/sshd",
+            hashlib.sha256(payload).hexdigest(),
+        )
+        rootfs = dict(CLEAN_ROOTFS) | {"usr/sbin/sshd": payload}
+
+        assert scanner.scan(_tar(tmp_path / "r.tar", rootfs), CLEAN_CONFIG) == []
+
+    def test_an_unaudited_secret_still_fails(self, tmp_path: Path) -> None:
+        """Auditing the base must not have opened the door to a real leaked key."""
+
+        rootfs = dict(CLEAN_ROOTFS) | {
+            "opt/npa/ltx2/id_ed25519": b"-----BEGIN OPENSSH PRIVATE KEY-----\nleaked\n"
+        }
+        findings = scanner.scan(_tar(tmp_path / "r.tar", rootfs), CLEAN_CONFIG)
+
+        assert "credential_content" in _kinds(findings)
+
+    def test_a_real_cuda_library_still_fails_despite_the_audited_libav(
+        self, tmp_path: Path
+    ) -> None:
+        rootfs = dict(CLEAN_ROOTFS) | {"usr/lib/x86_64-linux-gnu/libcudart.so.13": b"x"}
+        findings = scanner.scan(_tar(tmp_path / "r.tar", rootfs), CLEAN_CONFIG)
+
+        assert "cuda_library" in _kinds(findings)
 
 
 class TestSharedWalkerPolicyIsRestored:
