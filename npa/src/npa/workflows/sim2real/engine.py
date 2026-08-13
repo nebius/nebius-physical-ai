@@ -32,57 +32,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    # The runtime facade installs these names from the bounded legacy modules
-    # below. Explicit type-only imports keep that dynamic compatibility surface
-    # reviewable without making canonical code import the legacy implementation.
-    from npa.workflows.sim2real.legacy_components import (
-        _apply_reference_adapter_heldout_gate as _apply_reference_adapter_heldout_gate,
-        _config_from_workflow_state as _config_from_workflow_state,
-        _convert_eval_to_signal as _convert_eval_to_signal,
-        _effective_k8s_parallelism as _effective_k8s_parallelism,
-        _inner_loop_progress_score as _inner_loop_progress_score,
-        _run_policy_rollouts_via_command as _run_policy_rollouts_via_command,
-        _run_trainer_via_command as _run_trainer_via_command,
-        _signal_training_imports as _signal_training_imports,
-        _storage_client as _storage_client,
-        convert_vlm_eval_to_rl_signal as convert_vlm_eval_to_rl_signal,
-        evaluate_rollout_with_vlm as evaluate_rollout_with_vlm,
-        generate_action_rollouts as generate_action_rollouts,
-        run_cosmos2_transfer_component as run_cosmos2_transfer_component,
-        run_envgen_sharded_component as run_envgen_sharded_component,
-        run_inner_loop as run_inner_loop,
-        run_policy_rollout_component as run_policy_rollout_component,
-        signal_mapping_rules as signal_mapping_rules,
-    )
-    from npa.workflows.sim2real.legacy_artifacts import (
-        _write_stage as _write_stage,
-        run_cosmos2_transfer_component_from_s3 as run_cosmos2_transfer_component_from_s3,
-    )
-    from npa.workflows.sim2real.legacy_heldout import (
-        _component_heldout_payload as _component_heldout_payload,
-        _component_vlm_payload as _component_vlm_payload,
-        _consume_stage_assets as _consume_stage_assets,
-        _normalize_heldout_report as _normalize_heldout_report,
-        _resolve_heldout_robot as _resolve_heldout_robot,
-        _resolve_heldout_scene as _resolve_heldout_scene,
-        _resolve_isaac_scene as _resolve_isaac_scene,
-        run_heldout_eval as run_heldout_eval,
-        run_heldout_eval_component_from_s3 as run_heldout_eval_component_from_s3,
-        run_vlm_eval_component_from_s3 as run_vlm_eval_component_from_s3,
-    )
-    from npa.workflows.sim2real.legacy_isaac import (
-        _heldout_render_step_indices as _heldout_render_step_indices,
-        _isaac_extract_rgb_frame as _isaac_extract_rgb_frame,
-        _isaac_import_mesh_to_usd as _isaac_import_mesh_to_usd,
-        _read_component_env_records as _read_component_env_records,
-        _resolve_env_records_s3_uri as _resolve_env_records_s3_uri,
-        _write_render_png as _write_render_png,
-    )
-    from npa.workflows.sim2real.legacy_orchestration import (
-        run_finalize as run_finalize,
-        run_preamble as run_preamble,
-        run_single_outer_iteration as run_single_outer_iteration,
-    )
+    # Runtime installs exactly each bounded module's explicit ``__all__`` below.
+    # Mirror that finite contract for type checking without growing this facade
+    # into a second inventory that must be updated symbol by symbol.
+    from npa.workflows.sim2real.legacy_artifacts import *  # noqa: F403
+    from npa.workflows.sim2real.legacy_components import *  # noqa: F403
+    from npa.workflows.sim2real.legacy_heldout import *  # noqa: F403
+    from npa.workflows.sim2real.legacy_isaac import *  # noqa: F403
+    from npa.workflows.sim2real.legacy_orchestration import *  # noqa: F403
 
 
 LEGACY_COMPATIBILITY_UNTIL = "2027-02-01"
